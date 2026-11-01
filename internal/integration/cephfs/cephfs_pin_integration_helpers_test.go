@@ -14,11 +14,12 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, group *cephfs.SubvolumeGroup, setting cephfs.PinSetting) *cephfs.PinOverrideHandle {
+func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, group *subvolume.Group, setting subvolume.PinSetting) *subvolume.PinOverrideHandle {
 	t.Helper()
 	change, err := group.OverridePin(ctx, setting)
 	cephFSPinTrackRestore(t, change)
@@ -28,7 +29,7 @@ func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesyste
 	return change
 }
 
-func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, volume *cephfs.Subvolume, setting cephfs.PinSetting) *cephfs.PinOverrideHandle {
+func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, volume *subvolume.Subvolume, setting subvolume.PinSetting) *subvolume.PinOverrideHandle {
 	t.Helper()
 	change, err := volume.OverridePin(ctx, setting)
 	cephFSPinTrackRestore(t, change)
@@ -38,7 +39,7 @@ func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesyst
 	return change
 }
 
-func cephFSPinTrackRestore(t *testing.T, change *cephfs.PinOverrideHandle) {
+func cephFSPinTrackRestore(t *testing.T, change *subvolume.PinOverrideHandle) {
 	t.Helper()
 	if change == nil {
 		return
@@ -84,7 +85,7 @@ func cephFSPinWaitConfig(t *testing.T, parent context.Context, cluster *ceph.Con
 	}
 }
 
-func cephFSPinWaitAuthority(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, bases map[string]bool, exportRank int, kind cephfs.PinType) {
+func cephFSPinWaitAuthority(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, bases map[string]bool, exportRank int, kind subvolume.PinType) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
@@ -131,11 +132,11 @@ func cephFSPinWaitAuthority(t *testing.T, parent context.Context, cluster *ceph.
 					}
 					evidence := subtree.Dir.Path
 					switch kind {
-					case cephfs.PinExport:
+					case subvolume.PinExport:
 						if subtree.ExportPin != exportRank || active.Rank != exportRank {
 							continue
 						}
-					case cephfs.PinDistributed:
+					case subvolume.PinDistributed:
 						if !subtree.Distributed || subtree.Target != active.Rank || subtree.Dir.Fragment == "" {
 							continue
 						}
@@ -147,7 +148,7 @@ func cephFSPinWaitAuthority(t *testing.T, parent context.Context, cluster *ceph.
 							continue
 						}
 						fragmentOwners[evidence] = active.Rank
-					case cephfs.PinRandom:
+					case subvolume.PinRandom:
 						if !subtree.Random || subtree.Target != active.Rank {
 							continue
 						}

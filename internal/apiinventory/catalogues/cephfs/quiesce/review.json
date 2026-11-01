@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "cephfs/quiesce",
+  "declarations_sha256": "d2eb07bae40329883ce1b41cd3df67d2513f3e2ff7a3c448e2f71a649ebfd61c",
+  "members_sha256": "91bfc2e96ab3e8bb8eefdf192c0e55852c4b5a2104a78b0c3b15919871b7f6e9",
+  "declarations": 7,
+  "members": 8,
+  "review": "api-naming.md",
+  "page": "cephfs/quiesce/README.md"
+}

@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"context"
@@ -6,9 +6,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 )
 
-func snapshotFixture(t *testing.T) (*Filesystem, *poolFixtureContainer, *Subvolume, *SubvolumeSnapshot) {
+func snapshotFixture(t *testing.T) (*fstest.Filesystem, *poolFixtureContainer, *Subvolume, *Snapshot) {
 	t.Helper()
 	fs, ctr := subvolumeFixture()
 	ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"no"}`
@@ -16,7 +18,7 @@ func snapshotFixture(t *testing.T) (*Filesystem, *poolFixtureContainer, *Subvolu
 	for _, group := range []string{"_nogroup", "restores"} {
 		ctr.Output["fixture /volumes/"+group+"/copy"] = `{"version":2,"type":"clone","state":"pending","path":"/volumes/` + group + `/copy/10000000-0000-4000-8000-000000000001","inode":71,"birth_time":"2026-10-03T00:02:00.123456","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"}}`
 	}
-	volume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	volume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +39,7 @@ func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
 	if duplicate, err := volume.CreateSnapshot(t.Context(), "checkpoint"); err == nil || duplicate != nil {
 		t.Fatal("duplicate native snapshot adopted")
 	}
-	if err := (&SubvolumeSnapshot{Name: "checkpoint"}).Remove(t.Context()); err == nil {
+	if err := (&Snapshot{Name: "checkpoint"}).Remove(t.Context()); err == nil {
 		t.Fatal("external descriptor granted snapshot removal")
 	}
 	ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"yes","pending_clones":[{"name":"copy","target_group":"restores"}]}`
@@ -120,7 +122,7 @@ func TestCephFSSnapshotReplacementAndUnknownRemoval(t *testing.T) {
 
 func TestCephFSSnapshotPartialCreateAndCloneDuplicate(t *testing.T) {
 	fs, ctr := subvolumeFixture()
-	volume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	volume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,18 +228,18 @@ func TestCephFSClonePartialSubmissionFailureAndSourceReplacement(t *testing.T) {
 
 func TestCephFSSnapshotAndCloneDecodeRejectInvalidState(t *testing.T) {
 	for _, data := range []string{`null`, `{}`, `{"created_at":"t","data_pool":"data","has_pending_clones":"true"}`, `{"created_at":"t","data_pool":"data","has_pending_clones":"yes"}`, `{"created_at":"t","data_pool":"data","has_pending_clones":"no","pending_clones":[{"name":"copy"}]}`, `{"created_at":"t","data_pool":"data","has_pending_clones":"yes","pending_clones":[{"name":"copy"},{"name":"copy"}]}`} {
-		if _, err := decodeCephFSSnapshotInfo([]byte(data)); err == nil {
+		if _, err := decodeSnapshotInfo([]byte(data)); err == nil {
 			t.Fatalf("invalid snapshot info accepted: %s", data)
 		}
 	}
 	for _, data := range []string{`null`, `{}`, `{"status":{"state":"unknown"}}`, `{"status":{"state":"pending"}}`, `{"status":{"state":"failed","source":{"volume":"f","subvolume":"s","snapshot":"p"},"failure":{"errno":"bad"}}}`} {
-		if _, err := decodeCephFSCloneStatus([]byte(data)); err == nil {
+		if _, err := decodeCloneStatus([]byte(data)); err == nil {
 			t.Fatalf("invalid clone status accepted: %s", data)
 		}
 	}
 	for _, field := range []string{"error_msg", "errstr"} {
 		data := `{"status":{"state":"failed","source":{"volume":"f","subvolume":"s","snapshot":"p"},"failure":{"errno":"122","` + field + `":"Disk quota exceeded"}}}`
-		status, err := decodeCephFSCloneStatus([]byte(data))
+		status, err := decodeCloneStatus([]byte(data))
 		if err != nil || status.FailureErrno != 122 || status.FailureMessage != "Disk quota exceeded" {
 			t.Fatalf("native failure variant rejected: %+v %v", status, err)
 		}

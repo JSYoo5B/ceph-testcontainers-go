@@ -176,11 +176,3 @@ func validateExistingPool(name string) error {
 	}
 	return nil
 }
-
-func clientEntity(name string) (string, error) {
-	id := strings.TrimPrefix(name, "client.")
-	if !naming.ClientID.MatchString(id) {
-		return "", errors.New("client name must be an ID or client.ID using letters, digits, dots, underscores or hyphens")
-	}
-	return "client." + id, nil
-}

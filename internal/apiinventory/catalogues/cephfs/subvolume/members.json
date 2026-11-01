@@ -1,0 +1,124 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/subvolume",
+  "count": 82,
+  "types": {
+    "cephfs/subvolume.Authorization": [
+      "Authorization.Access field string",
+      "Authorization.AuthID field string",
+      "Authorization.Client field *ceph.ClientConfig",
+      "Authorization.DataPool field string",
+      "Authorization.FilesystemName field string",
+      "Authorization.GroupName field string",
+      "Authorization.Path field string",
+      "Authorization.PoolNamespace field string",
+      "Authorization.SubvolumeName field string"
+    ],
+    "cephfs/subvolume.AuthorizationConfig": [
+      "AuthorizationConfig.Access field string",
+      "AuthorizationConfig.ClientID field string"
+    ],
+    "cephfs/subvolume.AuthorizedClient": [
+      "AuthorizedClient.Access field string",
+      "AuthorizedClient.AuthID field string"
+    ],
+    "cephfs/subvolume.Clone": [
+      "Clone.FilesystemName field string",
+      "Clone.GroupName field string",
+      "Clone.Name field string"
+    ],
+    "cephfs/subvolume.CloneConfig": [
+      "CloneConfig.DataPool field string",
+      "CloneConfig.GroupName field string",
+      "CloneConfig.Name field string"
+    ],
+    "cephfs/subvolume.CloneStatus": [
+      "CloneStatus.FailureErrno field int",
+      "CloneStatus.FailureMessage field string",
+      "CloneStatus.Progress field map[string]string",
+      "CloneStatus.SourceFilesystem field string",
+      "CloneStatus.SourceGroup field string",
+      "CloneStatus.SourceSnapshot field string",
+      "CloneStatus.SourceSubvolume field string",
+      "CloneStatus.State field string"
+    ],
+    "cephfs/subvolume.Config": [
+      "Config.DataPool field string",
+      "Config.GroupName field string",
+      "Config.Name field string",
+      "Config.NamespaceIsolated field bool",
+      "Config.SizeBytes field int64"
+    ],
+    "cephfs/subvolume.Group": [
+      "Group.FilesystemName field string",
+      "Group.Name field string",
+      "Group.Path field string"
+    ],
+    "cephfs/subvolume.GroupConfig": [
+      "GroupConfig.DataPool field string",
+      "GroupConfig.Name field string",
+      "GroupConfig.SizeBytes field int64"
+    ],
+    "cephfs/subvolume.GroupMetadata": [
+      "GroupMetadata.BytesUsed field int64",
+      "GroupMetadata.CreatedAt field string",
+      "GroupMetadata.DataPool field string",
+      "GroupMetadata.Name field string",
+      "GroupMetadata.Path field string",
+      "GroupMetadata.QuotaBytes field int64"
+    ],
+    "cephfs/subvolume.Metadata": [
+      "Metadata.BytesUsed field int64",
+      "Metadata.CreatedAt field string",
+      "Metadata.DataPool field string",
+      "Metadata.GroupName field string",
+      "Metadata.Name field string",
+      "Metadata.Path field string",
+      "Metadata.PoolNamespace field string",
+      "Metadata.QuotaBytes field int64",
+      "Metadata.State field string",
+      "Metadata.Type field string"
+    ],
+    "cephfs/subvolume.PinPolicy": [
+      "PinPolicy.Distributed field bool",
+      "PinPolicy.ExportRank field int",
+      "PinPolicy.Inode field uint64",
+      "PinPolicy.Path field string",
+      "PinPolicy.RandomProbability field float64"
+    ],
+    "cephfs/subvolume.PinSetting": [
+      "PinSetting.Type field PinType",
+      "PinSetting.Value field float64"
+    ],
+    "cephfs/subvolume.Snapshot": [
+      "Snapshot.FilesystemName field string",
+      "Snapshot.GroupName field string",
+      "Snapshot.Name field string",
+      "Snapshot.Path field string",
+      "Snapshot.SubvolumeName field string"
+    ],
+    "cephfs/subvolume.SnapshotMetadata": [
+      "SnapshotMetadata.CreatedAt field string",
+      "SnapshotMetadata.DataPool field string",
+      "SnapshotMetadata.GroupName field string",
+      "SnapshotMetadata.HasPendingClones field bool",
+      "SnapshotMetadata.Name field string",
+      "SnapshotMetadata.OrphanClonesCount field int",
+      "SnapshotMetadata.Path field string",
+      "SnapshotMetadata.PendingClones field []SnapshotPendingClone",
+      "SnapshotMetadata.SubvolumeName field string"
+    ],
+    "cephfs/subvolume.SnapshotPendingClone": [
+      "SnapshotPendingClone.GroupName field string `json:\"target_group\"`",
+      "SnapshotPendingClone.Name field string `json:\"name\"`"
+    ],
+    "cephfs/subvolume.Subvolume": [
+      "Subvolume embed volHandle",
+      "Subvolume.FilesystemName field string",
+      "Subvolume.GroupName field string",
+      "Subvolume.Name field string",
+      "Subvolume.Path field string"
+    ]
+  }
+}

@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -30,15 +31,15 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: groupName})
+	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: groupName})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "source", GroupName: groupName, SizeBytes: 8 << 20, NamespaceIsolated: true})
+	source, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "source", GroupName: groupName, SizeBytes: 8 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceInfo, err := fs.SubvolumeInfo(ctx, source.Name, source.GroupName)
+	sourceInfo, err := subvolume.Info(ctx, fs, source.Name, source.GroupName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	// Retention removes only the live incarnation and its custom metadata. Ceph
 	// keeps a snapshot-retained descriptor, while no live getpath remains.
 	command("fs", "subvolume", "rm", filesystem, source.Name, "--group_name", groupName, "--retain-snapshots")
-	retained, err := fs.SubvolumeInfo(ctx, source.Name, groupName)
+	retained, err := subvolume.Info(ctx, fs, source.Name, groupName)
 	if err != nil || retained.State != "snapshot-retained" || retained.Path != "" {
 		t.Fatalf("native retained descriptor=%+v error=%v", retained, err)
 	}
@@ -97,7 +98,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	if err := source.Resize(ctx, 16<<20); err == nil {
 		t.Fatal("typed old handle resized a retained incarnation")
 	}
-	if clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "unsafe-adoption", GroupName: groupName}); err == nil || clone != nil {
+	if clone, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: "unsafe-adoption", GroupName: groupName}); err == nil || clone != nil {
 		t.Fatal("typed old snapshot handle adopted raw retained state")
 	}
 	retainedSnapshotPath := strings.TrimSpace(string(command("fs", "subvolume", "snapshot", "getpath", filesystem, source.Name, snapshot.Name, "--group_name", groupName)))
@@ -124,7 +125,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	restored, err := fs.SubvolumeInfo(ctx, "restored", groupName)
+	restored, err := subvolume.Info(ctx, fs, "restored", groupName)
 	if err != nil || restored.State != "complete" || restored.Path == source.Path || restored.QuotaBytes != 8<<20 || restored.DataPool != sourceInfo.DataPool || restored.PoolNamespace != sourceInfo.PoolNamespace {
 		t.Fatalf("retained snapshot clone native layout=%+v error=%v", restored, err)
 	}
@@ -136,7 +137,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	// purging. Retry only that native EAGAIN; never force cleanup or adopt a
 	// concurrently created complete descriptor.
 	for {
-		current, err := fs.SubvolumeInfo(ctx, source.Name, groupName)
+		current, err := subvolume.Info(ctx, fs, source.Name, groupName)
 		if err != nil || current.State != "snapshot-retained" {
 			t.Fatalf("retained source changed before recreation: %+v error=%v", current, err)
 		}
@@ -154,7 +155,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	recreated, err := fs.SubvolumeInfo(ctx, source.Name, groupName)
+	recreated, err := subvolume.Info(ctx, fs, source.Name, groupName)
 	if err != nil || recreated.State != "complete" || recreated.Path == source.Path || recreated.CreatedAt == sourceInfo.CreatedAt {
 		t.Fatalf("retained name did not receive a fresh native incarnation: %+v error=%v", recreated, err)
 	}
@@ -188,7 +189,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	for _, name := range []string{source.Name, "restored"} {
 		command("fs", "subvolume", "rm", filesystem, name, "--group_name", groupName)
 	}
-	names, err := fs.Subvolumes(ctx, groupName)
+	names, err := subvolume.Names(ctx, fs, groupName)
 	if err != nil || slices.Contains(names, source.Name) || slices.Contains(names, "restored") {
 		t.Fatalf("raw retained recipe logical cleanup failed: %v error=%v", names, err)
 	}

@@ -14,6 +14,8 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/quiesce"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -29,10 +31,10 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	}
 	cluster, client := harness.NewServiceCluster(t, opts...)
 	fs := cephfs.Filesystems(cluster)[0]
-	volumes := make([]*cephfs.Subvolume, 3)
+	volumes := make([]*subvolume.Subvolume, 3)
 	for i, name := range []string{"paused-a", "paused-b", "outside"} {
 		var err error
-		volumes[i], err = fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: name, NamespaceIsolated: true})
+		volumes[i], err = subvolume.Create(ctx, fs, subvolume.Config{Name: name, NamespaceIsolated: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,7 +48,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	// A fixed shell program receives each variable as a positional argument.
 	harness.FencingExec(t, ctx, client, []string{"sh", "-c", `python3 /tmp/tc-quiesce.py "$@" >/tmp/tc-quiesce.log 2>&1 &`, "quiesce", filesystem, volumes[0].Path, volumes[1].Path, volumes[2].Path})
 	quiesceWait(t, ctx, client, "ready")
-	q, err := fs.QuiesceSubvolumes(ctx, volumes[:2], cephfs.QuiesceConfig{Timeout: 20 * time.Second, Expiration: 60 * time.Second})
+	q, err := quiesce.Start(ctx, fs, volumes[:2], quiesce.Config{Timeout: 20 * time.Second, Expiration: 60 * time.Second})
 	if err != nil {
 		t.Fatalf("quiesce initial: %v", err)
 	}
@@ -61,7 +63,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	if blocked.Completed != 0 || !blocked.OutsideOK {
 		t.Fatalf("writes not paused or unrelated volume blocked: %+v", blocked)
 	}
-	snapshots := make([]*cephfs.SubvolumeSnapshot, 2)
+	snapshots := make([]*subvolume.Snapshot, 2)
 	for i, volume := range volumes[:2] {
 		snapshots[i], err = volume.CreateSnapshot(ctx, "frozen")
 		if err != nil {
@@ -88,7 +90,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	expires, err := fs.QuiesceSubvolumes(ctx, volumes[:2], cephfs.QuiesceConfig{Timeout: 20 * time.Second, Expiration: 8 * time.Second})
+	expires, err := quiesce.Start(ctx, fs, volumes[:2], quiesce.Config{Timeout: 20 * time.Second, Expiration: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	}
 	// A readonly query never adopts a new version. Preserve an outside edit,
 	// then use an explicit raw command with its fresh version for cleanup.
-	changed, err := fs.QuiesceSubvolumes(ctx, volumes[:2], cephfs.QuiesceConfig{Timeout: 20 * time.Second, Expiration: 30 * time.Second})
+	changed, err := quiesce.Start(ctx, fs, volumes[:2], quiesce.Config{Timeout: 20 * time.Second, Expiration: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +154,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	}
 	stop()
 	requestCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	timedOut, requestErr := fs.QuiesceSubvolumes(requestCtx, volumes[:1], cephfs.QuiesceConfig{Timeout: 3 * time.Second, Expiration: 20 * time.Second})
+	timedOut, requestErr := quiesce.Start(requestCtx, fs, volumes[:1], quiesce.Config{Timeout: 3 * time.Second, Expiration: 20 * time.Second})
 	stop()
 	if requestErr == nil || timedOut == nil {
 		t.Fatalf("unresponsive native client did not refuse a consistent checkpoint: handle=%v error=%v", timedOut, requestErr)

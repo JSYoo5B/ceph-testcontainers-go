@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -91,15 +92,15 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if _, err := fs.AddDataPool(ctx, unused); err == nil {
 		t.Fatal("native retained tag was silently cleared for reattachment")
 	}
-	if volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "detached", DataPool: unused}); err == nil || volume != nil {
+	if volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "detached", DataPool: unused}); err == nil || volume != nil {
 		t.Fatal("detached pool accepted for volume creation")
 	}
 	// A pool attached after startup can serve namespace-isolated volume data.
-	volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "live", DataPool: replicated, NamespaceIsolated: true})
+	volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "live", DataPool: replicated, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := fs.SubvolumeInfo(ctx, volume.Name, volume.GroupName)
+	info, err := subvolume.Info(ctx, fs, volume.Name, volume.GroupName)
 	if err != nil || info.DataPool != replicated || info.PoolNamespace == "" {
 		t.Fatalf("dynamic volume layout=%+v error=%v", info, err)
 	}
@@ -117,7 +118,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "ec-copy", DataPool: erasure})
+	clone, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: "ec-copy", DataPool: erasure})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clonedInfo, err := fs.SubvolumeInfo(ctx, cloned.Name, cloned.GroupName)
+	clonedInfo, err := subvolume.Info(ctx, fs, cloned.Name, cloned.GroupName)
 	if err != nil || clonedInfo.DataPool != erasure || clonedInfo.PoolNamespace != "" {
 		t.Fatalf("dynamic clone layout=%+v error=%v", clonedInfo, err)
 	}

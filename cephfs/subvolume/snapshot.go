@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"context"
@@ -11,16 +11,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
-// SubvolumeSnapshot is an owned snapshot of a confirmed subvolume. Its
-// public fields describe creation; mutations use the captured private identity.
-// Snapshot creation does not quiesce concurrent application writers.
-type SubvolumeSnapshot struct {
+// Snapshot is an owned snapshot of a confirmed subvolume. Its public fields
+// describe creation; mutations use the captured private identity. Snapshot
+// creation does not quiesce concurrent application writers.
+type Snapshot struct {
 	Name, SubvolumeName, GroupName, FilesystemName, Path string
-	identity                                             *cephFSSnapshotIdentity
+	identity                                             *snapshotRecord
 }
 
 // SnapshotPendingClone identifies a native clone still using a snapshot.
@@ -30,9 +32,9 @@ type SnapshotPendingClone struct {
 	GroupName string `json:"target_group"`
 }
 
-// SubvolumeSnapshotInfo contains current native snapshot metadata. Path
+// SnapshotMetadata contains current native snapshot metadata. Path
 // identifies the frozen data directory, including Ceph's incarnation UUID.
-type SubvolumeSnapshotInfo struct {
+type SnapshotMetadata struct {
 	Name, SubvolumeName, GroupName, Path, CreatedAt, DataPool string
 	HasPendingClones                                          bool
 	PendingClones                                             []SnapshotPendingClone
@@ -47,58 +49,58 @@ type CloneConfig struct {
 	Name, GroupName, DataPool string
 }
 
-// SubvolumeClone is an asynchronous, owned clone request. SubvolumeClone.Wait
-// returns a usable subvolume only after native cloning completes. A non-nil
-// descriptor on error records the attempted request but cannot be adopted or
-// canceled automatically. Cluster cleanup removes incomplete data too.
-type SubvolumeClone struct {
+// Clone is an asynchronous, owned clone request. Clone.Wait returns a usable
+// subvolume only after native cloning completes. A non-nil descriptor on error
+// records the attempted request but cannot be adopted or canceled
+// automatically. Cluster cleanup removes incomplete data too.
+type Clone struct {
 	Name, GroupName, FilesystemName string
-	identity                        *cephFSCloneIdentity
+	identity                        *cloneRecord
 }
 
-// SubvolumeCloneStatus reports native pending, in-progress, complete,
+// CloneStatus reports native pending, in-progress, complete,
 // failed or canceled state. FailureErrno is zero when no native failure was
 // recorded. Source fields are normally absent after successful completion.
-type SubvolumeCloneStatus struct {
+type CloneStatus struct {
 	State, SourceFilesystem, SourceSubvolume, SourceGroup, SourceSnapshot string
 	FailureErrno                                                          int
 	FailureMessage                                                        string
 	Progress                                                              map[string]string
 }
 
-type cephFSSnapshotIdentity struct {
-	subvolume                        *cephFSVolumeIdentity
+type snapshotRecord struct {
+	subvolume                        *volumeRecord
 	name, path, createdAt, dataPool  string
 	ready, removed, removalAttempted bool
 }
 
-type cephFSCloneIdentity struct {
-	filesystem                *Filesystem
+type cloneRecord struct {
+	filesystem                *fsbase.Core
 	filesystemID              int64
-	source                    *cephFSSnapshotIdentity
+	source                    *snapshotRecord
 	name, group, dataPool     string
 	submitted                 bool
 	subvolume                 *Subvolume
-	incarnation               *cephFSCloneIncarnation
+	incarnation               *cloneIncarnation
 	removed, removalAttempted bool
 }
 
-func (fs *Filesystem) checkSnapshotSubvolume(ctx context.Context, fsID int64, identity *cephFSVolumeIdentity) error {
-	if err := fs.validateVolumeHandle(identity); err != nil {
+func checkSnapshotSubvolume(ctx context.Context, fs *fsbase.Core, fsID int64, identity *volumeRecord) error {
+	if err := validateVolumeHandle(fs, identity); err != nil {
 		return err
 	}
-	if identity.removed {
+	if identity.Removed {
 		return errors.New("snapshot source subvolume has been removed")
 	}
-	info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.Volumes().SubvolumeInfo(ctx, identity.Name, identity.Group)
 	if err != nil {
 		return err
 	}
-	return fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt)
+	return identity.CheckIdentity(fsID, info.Path, info.CreatedAt)
 }
 
-func snapshotNames(ctx context.Context, v fsbase.VolumeCommands, identity *cephFSVolumeIdentity) ([]string, error) {
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "ls", v.Name(), identity.name}, identity.group)
+func snapshotNames(ctx context.Context, v fsbase.VolumeCommands, identity *volumeRecord) ([]string, error) {
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "ls", v.Name(), identity.Name}, identity.Group)
 	data, err := v.Cluster().Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
@@ -119,15 +121,15 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	if err := fs.checkSnapshotSubvolume(ctx, fsID, subvolume.identity); err != nil {
+	if err := checkSnapshotSubvolume(ctx, fs, fsID, subvolume.identity); err != nil {
 		return nil, err
 	}
-	return snapshotNames(ctx, fs.base().Volumes(), subvolume.identity)
+	return snapshotNames(ctx, fs.Volumes(), subvolume.identity)
 }
 
 // CreateSnapshot creates a fresh snapshot without modifying an existing
@@ -136,39 +138,39 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 // not race the native preflight and creation.
 //
 //purpose:construction
-func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*SubvolumeSnapshot, error) {
+func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*Snapshot, error) {
 	fs, err := subvolume.filesystem()
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCephFSVolumeName(name, false); err != nil {
+	if err := validateName(name, false); err != nil {
 		return nil, err
 	}
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	if err := fs.checkSnapshotSubvolume(ctx, fsID, subvolume.identity); err != nil {
+	if err := checkSnapshotSubvolume(ctx, fs, fsID, subvolume.identity); err != nil {
 		return nil, err
 	}
-	names, err := snapshotNames(ctx, fs.base().Volumes(), subvolume.identity)
+	names, err := snapshotNames(ctx, fs.Volumes(), subvolume.identity)
 	if err != nil {
 		return nil, err
 	}
 	if slices.Contains(names, name) {
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume snapshot %q already exists", name))
 	}
-	identity := &cephFSSnapshotIdentity{subvolume: subvolume.identity, name: name}
-	snapshot := &SubvolumeSnapshot{Name: name, SubvolumeName: subvolume.identity.name, GroupName: subvolume.identity.group, FilesystemName: fs.base().Name(), identity: identity}
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "create", fs.base().Name(), subvolume.identity.name, name}, subvolume.identity.group)
-	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
+	identity := &snapshotRecord{subvolume: subvolume.identity, name: name}
+	snapshot := &Snapshot{Name: name, SubvolumeName: subvolume.identity.Name, GroupName: subvolume.identity.Group, FilesystemName: fs.Name(), identity: identity}
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "create", fs.Name(), subvolume.identity.Name, name}, subvolume.identity.Group)
+	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
 		return snapshot, err
 	}
-	info, err := subvolumeSnapshotInfo(ctx, fs.base().Volumes(), identity.subvolume.name, identity.subvolume.group, identity.name)
+	info, err := snapshotInfo(ctx, fs.Volumes(), identity.subvolume.Name, identity.subvolume.Group, identity.name)
 	if err != nil {
 		return snapshot, err
 	}
@@ -177,29 +179,34 @@ func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*S
 	return snapshot, nil
 }
 
-// SubvolumeSnapshotInfo queries native metadata for any existing snapshot.
-// Reading an external snapshot does not grant mutation ownership.
+// SnapshotInfo queries native metadata for any existing snapshot of a
+// subvolume in fs. Reading an external snapshot does not grant mutation
+// ownership.
 //
 //purpose:observation
-func (fs *Filesystem) SubvolumeSnapshotInfo(ctx context.Context, subvolumeName, groupName, snapshotName string) (*SubvolumeSnapshotInfo, error) {
-	if err := validateCephFSVolumeName(subvolumeName, false); err != nil {
+func SnapshotInfo(ctx context.Context, fs *cephfs.Filesystem, subvolumeName, groupName, snapshotName string) (*SnapshotMetadata, error) {
+	return lookupSnapshot(ctx, coreOf(fs), subvolumeName, groupName, snapshotName)
+}
+
+func lookupSnapshot(ctx context.Context, fs *fsbase.Core, subvolumeName, groupName, snapshotName string) (*SnapshotMetadata, error) {
+	if err := validateName(subvolumeName, false); err != nil {
 		return nil, err
 	}
-	if err := validateCephFSVolumeName(groupName, true); err != nil {
+	if err := validateName(groupName, true); err != nil {
 		return nil, err
 	}
-	if err := validateCephFSVolumeName(snapshotName, false); err != nil {
+	if err := validateName(snapshotName, false); err != nil {
 		return nil, err
 	}
-	ctx, _, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, _, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	return subvolumeSnapshotInfo(ctx, fs.base().Volumes(), subvolumeName, groupName, snapshotName)
+	return snapshotInfo(ctx, fs.Volumes(), subvolumeName, groupName, snapshotName)
 }
 
-func decodeCephFSSnapshotInfo(data []byte) (*SubvolumeSnapshotInfo, error) {
+func decodeSnapshotInfo(data []byte) (*SnapshotMetadata, error) {
 	var raw struct {
 		CreatedAt         string                 `json:"created_at"`
 		DataPool          string                 `json:"data_pool"`
@@ -217,23 +224,23 @@ func decodeCephFSSnapshotInfo(data []byte) (*SubvolumeSnapshotInfo, error) {
 		return nil, errors.New("decode subvolume snapshot info: contradictory pending clone state")
 	}
 	for i, clone := range raw.PendingClones {
-		if validateCephFSVolumeName(clone.Name, false) != nil || validateCephFSVolumeName(clone.GroupName, true) != nil {
+		if validateName(clone.Name, false) != nil || validateName(clone.GroupName, true) != nil {
 			return nil, errors.New("decode subvolume snapshot info: invalid pending clone name")
 		}
 		if slices.Contains(raw.PendingClones[:i], clone) {
 			return nil, errors.New("decode subvolume snapshot info: duplicate pending clone")
 		}
 	}
-	return &SubvolumeSnapshotInfo{CreatedAt: raw.CreatedAt, DataPool: raw.DataPool, HasPendingClones: raw.HasPendingClones == "yes", PendingClones: raw.PendingClones, OrphanClonesCount: raw.OrphanClonesCount}, nil
+	return &SnapshotMetadata{CreatedAt: raw.CreatedAt, DataPool: raw.DataPool, HasPendingClones: raw.HasPendingClones == "yes", PendingClones: raw.PendingClones, OrphanClonesCount: raw.OrphanClonesCount}, nil
 }
 
-func subvolumeSnapshotInfo(ctx context.Context, v fsbase.VolumeCommands, subvolumeName, groupName, snapshotName string) (*SubvolumeSnapshotInfo, error) {
+func snapshotInfo(ctx context.Context, v fsbase.VolumeCommands, subvolumeName, groupName, snapshotName string) (*SnapshotMetadata, error) {
 	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "info", v.Name(), subvolumeName, snapshotName}, groupName)
 	data, err := v.Cluster().Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
 	}
-	info, err := decodeCephFSSnapshotInfo(data)
+	info, err := decodeSnapshotInfo(data)
 	if err != nil {
 		return nil, err
 	}
@@ -250,14 +257,14 @@ func subvolumeSnapshotInfo(ctx context.Context, v fsbase.VolumeCommands, subvolu
 	return info, nil
 }
 
-func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, identity *cephFSSnapshotIdentity) (*SubvolumeSnapshotInfo, error) {
+func checkSnapshotIdentity(ctx context.Context, fs *fsbase.Core, fsID int64, identity *snapshotRecord) (*SnapshotMetadata, error) {
 	if identity.removed {
 		return nil, errors.New("subvolume snapshot has been removed")
 	}
-	if err := fs.checkSnapshotSubvolume(ctx, fsID, identity.subvolume); err != nil {
+	if err := checkSnapshotSubvolume(ctx, fs, fsID, identity.subvolume); err != nil {
 		return nil, err
 	}
-	info, err := subvolumeSnapshotInfo(ctx, fs.base().Volumes(), identity.subvolume.name, identity.subvolume.group, identity.name)
+	info, err := snapshotInfo(ctx, fs.Volumes(), identity.subvolume.Name, identity.subvolume.Group, identity.name)
 	if err != nil {
 		return nil, err
 	}
@@ -273,12 +280,12 @@ func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, ide
 // successful deletion. Source data and completed clones are preserved.
 //
 //purpose:lifetime
-func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
+func (snapshot *Snapshot) Remove(ctx context.Context) error {
 	fs, err := snapshot.filesystem()
 	if err != nil {
 		return err
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
 	}
@@ -287,11 +294,11 @@ func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	if err := fs.checkSnapshotSubvolume(ctx, fsID, identity.subvolume); err != nil {
+	if err := checkSnapshotSubvolume(ctx, fs, fsID, identity.subvolume); err != nil {
 		return err
 	}
 	if identity.removalAttempted {
-		names, err := snapshotNames(ctx, fs.base().Volumes(), identity.subvolume)
+		names, err := snapshotNames(ctx, fs.Volumes(), identity.subvolume)
 		if err != nil {
 			return err
 		}
@@ -300,16 +307,16 @@ func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 			return nil
 		}
 	}
-	info, err := fs.checkSnapshotIdentity(ctx, fsID, identity)
+	info, err := checkSnapshotIdentity(ctx, fs, fsID, identity)
 	if err != nil {
 		return err
 	}
 	if info.HasPendingClones || info.OrphanClonesCount > 0 {
 		return servicehook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
 	}
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.base().Name(), identity.subvolume.name, identity.name}, identity.subvolume.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.Name(), identity.subvolume.Name, identity.name}, identity.subvolume.Group)
 	identity.removalAttempted = true
-	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
+	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
 		return err
 	}
 	identity.removed = true
@@ -323,18 +330,18 @@ func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 // edits must not race submission. A failed command or identity read returns a
 // non-nil descriptor for inspection, but cannot be adopted or mutated through
 // this API. Failed/canceled targets are retained until explicit
-// SubvolumeClone.RemovePartial or raw Ceph cleanup.
+// Clone.RemovePartial or raw Ceph cleanup.
 //
 //purpose:construction
-func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig) (*SubvolumeClone, error) {
+func (snapshot *Snapshot) Clone(ctx context.Context, config CloneConfig) (*Clone, error) {
 	fs, err := snapshot.filesystem()
 	if err != nil {
 		return nil, err
 	}
-	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, 0); err != nil {
+	if err := validateConfig(fs, config.Name, config.GroupName, config.DataPool, 0); err != nil {
 		return nil, err
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
@@ -343,41 +350,41 @@ func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig
 	if selectedPool == "" {
 		selectedPool = snapshot.identity.dataPool
 	}
-	if err := fs.base().CheckSubvolumeDataPool(ctx, selectedPool); err != nil {
+	if err := fs.CheckSubvolumeDataPool(ctx, selectedPool); err != nil {
 		return nil, err
 	}
-	if _, err := fs.checkSnapshotIdentity(ctx, fsID, snapshot.identity); err != nil {
+	if _, err := checkSnapshotIdentity(ctx, fs, fsID, snapshot.identity); err != nil {
 		return nil, err
 	}
-	names, err := fs.base().Volumes().SubvolumeNames(ctx, config.GroupName)
+	names, err := fs.Volumes().SubvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("clone target subvolume %q already exists", config.Name))
 	}
-	identity := &cephFSCloneIdentity{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
-	clone := &SubvolumeClone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.base().Name(), identity: identity}
+	identity := &cloneRecord{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
+	clone := &Clone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.Name(), identity: identity}
 	source := snapshot.identity.subvolume
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "clone", fs.base().Name(), source.name, snapshot.identity.name, config.Name}, source.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "clone", fs.Name(), source.Name, snapshot.identity.name, config.Name}, source.Group)
 	if config.GroupName != "" {
 		args = append(args, "--target_group_name", config.GroupName)
 	}
 	if config.DataPool != "" {
 		args = append(args, "--pool_layout", config.DataPool)
 	}
-	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
+	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
 		return clone, err
 	}
 	identity.submitted = true
-	identity.incarnation, err = readCloneIncarnation(ctx, fs.base().Volumes(), identity)
+	identity.incarnation, err = readCloneIncarnation(ctx, fs.Volumes(), identity)
 	if err != nil {
 		return clone, err
 	}
 	return clone, nil
 }
 
-func decodeCephFSCloneStatus(data []byte) (*SubvolumeCloneStatus, error) {
+func decodeCloneStatus(data []byte) (*CloneStatus, error) {
 	var raw struct {
 		Status *struct {
 			State  string `json:"state"`
@@ -401,7 +408,7 @@ func decodeCephFSCloneStatus(data []byte) (*SubvolumeCloneStatus, error) {
 	if raw.Status == nil || !slices.Contains([]string{"pending", "in-progress", "complete", "failed", "canceled"}, raw.Status.State) {
 		return nil, errors.New("decode CephFS clone status: missing or unknown state")
 	}
-	status := &SubvolumeCloneStatus{State: raw.Status.State, Progress: raw.Status.Progress}
+	status := &CloneStatus{State: raw.Status.State, Progress: raw.Status.Progress}
 	if source := raw.Status.Source; source != nil {
 		if source.Volume == "" || source.Subvolume == "" || source.Snapshot == "" {
 			return nil, errors.New("decode CephFS clone status: incomplete source")
@@ -424,8 +431,8 @@ func decodeCephFSCloneStatus(data []byte) (*SubvolumeCloneStatus, error) {
 	return status, nil
 }
 
-func (fs *Filesystem) validateCloneHandle(clone *SubvolumeClone) error {
-	if fs == nil || fs.base().Cluster() == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted || clone.identity.removed {
+func validateCloneHandle(fs *fsbase.Core, clone *Clone) error {
+	if fs == nil || fs.Cluster() == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted || clone.identity.removed {
 		return servicehook.Invalid(errors.New("clone must be a successfully submitted resource created by this filesystem"))
 	}
 	if clone.identity.incarnation == nil {
@@ -434,32 +441,32 @@ func (fs *Filesystem) validateCloneHandle(clone *SubvolumeClone) error {
 	return nil
 }
 
-func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, identity *cephFSCloneIdentity) (*SubvolumeCloneStatus, error) {
+func cloneStatus(ctx context.Context, fs *fsbase.Core, fsID int64, identity *cloneRecord) (*CloneStatus, error) {
 	if identity.filesystemID != fsID {
 		return nil, errors.New("CephFS filesystem was replaced outside this fixture; refusing clone adoption")
 	}
-	args := fsbase.AppendGroup([]string{"fs", "clone", "status", fs.base().Name(), identity.name}, identity.group)
-	data, err := fs.base().Cluster().Ceph(ctx, append(args, "--format", "json")...)
+	args := fsbase.AppendGroup([]string{"fs", "clone", "status", fs.Name(), identity.name}, identity.group)
+	data, err := fs.Cluster().Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
 	}
-	status, err := decodeCephFSCloneStatus(data)
+	status, err := decodeCloneStatus(data)
 	if err != nil {
 		return nil, err
 	}
 	source := identity.source.subvolume
-	if status.SourceFilesystem != "" && (status.SourceFilesystem != fs.base().Name() || status.SourceSubvolume != source.name || status.SourceGroup != source.group || status.SourceSnapshot != identity.source.name) {
+	if status.SourceFilesystem != "" && (status.SourceFilesystem != fs.Name() || status.SourceSubvolume != source.Name || status.SourceGroup != source.Group || status.SourceSnapshot != identity.source.name) {
 		return nil, errors.New("native clone source was replaced outside this fixture")
 	}
 	if identity.subvolume != nil {
-		if identity.subvolume.identity.removed {
+		if identity.subvolume.identity.Removed {
 			return nil, errors.New("completed clone subvolume has been removed")
 		}
-		info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
+		info, err := fs.Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
 		if err != nil {
 			return nil, err
 		}
-		if err := fs.checkVolumeIdentity(fsID, identity.subvolume.identity, info.Path, info.CreatedAt); err != nil {
+		if err := identity.subvolume.identity.CheckIdentity(fsID, info.Path, info.CreatedAt); err != nil {
 			return nil, err
 		}
 	}
@@ -471,23 +478,23 @@ func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, iden
 // native UUID, inode and birth time too.
 //
 //purpose:observation
-func (clone *SubvolumeClone) Status(ctx context.Context) (*SubvolumeCloneStatus, error) {
+func (clone *Clone) Status(ctx context.Context) (*CloneStatus, error) {
 	fs, err := clone.filesystem()
 	if err != nil {
 		return nil, err
 	}
-	if err := fs.validateCloneHandle(clone); err != nil {
+	if err := validateCloneHandle(fs, clone); err != nil {
 		return nil, err
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	if err := fs.checkCloneIncarnation(ctx, clone.identity); err != nil {
+	if err := checkCloneIncarnation(ctx, fs, clone.identity); err != nil {
 		return nil, err
 	}
-	return fs.subvolumeCloneStatus(ctx, fsID, clone.identity)
+	return cloneStatus(ctx, fs, fsID, clone.identity)
 }
 
 // Wait waits within the cluster startup timeout or the caller's
@@ -496,15 +503,15 @@ func (clone *SubvolumeClone) Status(ctx context.Context) (*SubvolumeCloneStatus,
 // successful result supports existing Subvolume.Resize/Subvolume.Remove methods.
 //
 //purpose:observation
-func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
+func (clone *Clone) Wait(ctx context.Context) (*Subvolume, error) {
 	fs, err := clone.filesystem()
 	if err != nil {
 		return nil, err
 	}
-	if err := fs.validateCloneHandle(clone); err != nil {
+	if err := validateCloneHandle(fs, clone); err != nil {
 		return nil, err
 	}
-	timeout := servicehook.StartupTimeout(fs.base().Cluster())
+	timeout := servicehook.StartupTimeout(fs.Cluster())
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
@@ -529,17 +536,17 @@ func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
 // waitStep is one poll of Wait. It holds the subvolume operation gate only for
 // its own step and reports the completed subvolume once the native clone is
 // complete.
-func (clone *SubvolumeClone) waitStep(ctx context.Context, fs *Filesystem) (*Subvolume, bool, error) {
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+func (clone *Clone) waitStep(ctx context.Context, fs *fsbase.Core) (*Subvolume, bool, error) {
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, false, err
 	}
 	defer done()
 	identity := clone.identity
-	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
 		return nil, false, err
 	}
-	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+	status, err := cloneStatus(ctx, fs, fsID, identity)
 	if err != nil {
 		return nil, false, err
 	}
@@ -561,9 +568,9 @@ func (clone *SubvolumeClone) waitStep(ctx context.Context, fs *Filesystem) (*Sub
 
 // adoptCompleted records the subvolume of a complete clone once its native
 // type, state, pool and path match the submission.
-func (clone *SubvolumeClone) adoptCompleted(ctx context.Context, fs *Filesystem, fsID int64) error {
+func (clone *Clone) adoptCompleted(ctx context.Context, fs *fsbase.Core, fsID int64) error {
 	identity := clone.identity
-	info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return err
 	}
@@ -573,7 +580,6 @@ func (clone *SubvolumeClone) adoptCompleted(ctx context.Context, fs *Filesystem,
 	if identity.incarnation != nil && info.Path != identity.incarnation.Path {
 		return errors.New("completed clone incarnation differs from its submission identity")
 	}
-	identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.base().Name(), Path: info.Path,
-		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
+	identity.subvolume = newSubvolume(&volumeRecord{Volume: volbase.Volume{Core: fs, FilesystemID: fsID, Name: identity.name, Group: identity.group, Path: info.Path, CreatedAt: info.CreatedAt, Ready: true}})
 	return nil
 }

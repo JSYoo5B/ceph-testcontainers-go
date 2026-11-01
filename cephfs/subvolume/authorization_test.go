@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
@@ -139,23 +140,23 @@ func (ctr *cephFSAuthFixtureContainer) Exec(ctx context.Context, argv []string, 
 	return code, &stream, nil
 }
 
-func cephFSAuthorizationFixture(t *testing.T) (*Filesystem, *cephFSAuthFixtureContainer, *Subvolume) {
+func cephFSAuthorizationFixture(t *testing.T) (*fstest.Filesystem, *cephFSAuthFixtureContainer, *Subvolume) {
 	t.Helper()
 	fs, pool := subvolumeFixture()
-	volume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768, NamespaceIsolated: true})
+	volume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctr := &cephFSAuthFixtureContainer{poolFixtureContainer: pool, auth: make(map[string]*cephFSAuthFixtureEntry), grants: make(map[string]string)}
-	fs.base().Cluster().Container = ctr
-	testhelper.TestSetConfig(fs.base().Cluster(), []byte("[global]\nmon_host = fixture\n"))
+	fs.Core.Cluster().Container = ctr
+	testhelper.TestSetConfig(fs.Core.Cluster(), []byte("[global]\nmon_host = fixture\n"))
 	ctr.Calls = nil
 	return fs, ctr, volume
 }
 
-func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
+func TestCephFSAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +167,8 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	if _, err := grant.Client.ConnectionConfig(); err != nil {
 		t.Fatal("confirmed principal has no credentials", err)
 	}
-	listing, err := fs.SubvolumeAuthorizedClients(t.Context(), volume.Name, volume.GroupName)
-	if err != nil || !slices.Equal(listing, []SubvolumeAuthorizedClient{{AuthID: "writer", Access: "rw"}}) {
+	listing, err := authorizedClients(t.Context(), fs.Core, volume.Name, volume.GroupName)
+	if err != nil || !slices.Equal(listing, []AuthorizedClient{{AuthID: "writer", Access: "rw"}}) {
 		t.Fatal("native authorized_list shape was not decoded", listing, err)
 	}
 	if err := volume.Remove(t.Context()); err == nil {
@@ -209,7 +210,7 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationRefusesExistingAndUnisolatedPrincipals(t *testing.T) {
+func TestCephFSAuthorizationRefusesExistingAndUnisolatedPrincipals(t *testing.T) {
 	for _, test := range []string{"existing", "namespace"} {
 		t.Run(test, func(t *testing.T) {
 			_, ctr, volume := cephFSAuthorizationFixture(t)
@@ -219,7 +220,7 @@ func TestCephFSSubvolumeAuthorizationRefusesExistingAndUnisolatedPrincipals(t *t
 				key := "fs subvolume info fixture volume --group_name group --format json"
 				ctr.Output[key] = strings.ReplaceAll(ctr.Output[key], `"pool_namespace":"fsvolumens_group_volume"`, `"pool_namespace":""`)
 			}
-			if grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
+			if grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
 				t.Fatal("existing principal or pool-wide layout was adopted")
 			}
 			for _, call := range ctr.Calls {
@@ -231,10 +232,10 @@ func TestCephFSSubvolumeAuthorizationRefusesExistingAndUnisolatedPrincipals(t *t
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationPartialReplyAndDeauthorizeRetry(t *testing.T) {
+func TestCephFSAuthorizationPartialReplyAndDeauthorizeRetry(t *testing.T) {
 	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.Fail, ctr.applyFail = "fs subvolume authorize fixture volume writer --group_name group --access_level rw --allow_existing_id", true
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.identity.authorized || !grant.identity.authorizeAttempted || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("uncertain grant was adopted or leaked a key")
 	}
@@ -256,35 +257,35 @@ func TestCephFSSubvolumeAuthorizationPartialReplyAndDeauthorizeRetry(t *testing.
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testing.T) {
+func TestCephFSAuthorizationOutsideIdentityEditsRefuseMutation(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		edit func(*Filesystem, *cephFSAuthFixtureContainer)
+		edit func(*fstest.Filesystem, *cephFSAuthFixtureContainer)
 	}{
-		{"key", func(_ *Filesystem, c *cephFSAuthFixtureContainer) { c.auth["client.writer"].Key = "REPLACED" }},
-		{"namespace", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
+		{"key", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) { c.auth["client.writer"].Key = "REPLACED" }},
+		{"namespace", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) {
 			key := "fs subvolume info fixture volume --group_name group --format json"
 			c.Output[key] = strings.ReplaceAll(c.Output[key], "fsvolumens_group_volume", "replacement")
 		}},
-		{"UUID", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
+		{"UUID", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) {
 			key := "fs subvolume info fixture volume --group_name group --format json"
 			c.Output[key] = strings.ReplaceAll(c.Output[key], "unique-id", "replacement")
 		}},
-		{"pool ID", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
+		{"pool ID", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) {
 			key := "osd pool ls detail --format json"
 			c.Output[key] = strings.ReplaceAll(c.Output[key], `"pool_id":3`, `"pool_id":4`)
 		}},
-		{"metadata access", func(_ *Filesystem, c *cephFSAuthFixtureContainer) { c.grants["writer"] = "r" }},
-		{"caps", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
+		{"metadata access", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) { c.grants["writer"] = "r" }},
+		{"caps", func(_ *fstest.Filesystem, c *cephFSAuthFixtureContainer) {
 			c.auth["client.writer"].Caps["osd"] = "allow *"
 		}},
-		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) {
-			testhelper.TestSetClosed(fs.base().Cluster(), true)
+		{"closed", func(fs *fstest.Filesystem, _ *cephFSAuthFixtureContainer) {
+			testhelper.TestSetClosed(fs.Core.Cluster(), true)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs, c, volume := cephFSAuthorizationFixture(t)
-			grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+			grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -306,10 +307,10 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationReadbackMismatchIsNotConfirmed(t *testing.T) {
+func TestCephFSAuthorizationReadbackMismatchIsNotConfirmed(t *testing.T) {
 	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.corruptCap = true
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.identity.authorized {
 		t.Fatal("native pool-wide capability was accepted")
 	}
@@ -327,9 +328,9 @@ func TestCephFSSubvolumeAuthorizationReadbackMismatchIsNotConfirmed(t *testing.T
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationLostReplyPreservesLaterOutsideCaps(t *testing.T) {
+func TestCephFSAuthorizationLostReplyPreservesLaterOutsideCaps(t *testing.T) {
 	_, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,38 +353,38 @@ func TestCephFSSubvolumeAuthorizationLostReplyPreservesLaterOutsideCaps(t *testi
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationDecoderAndCanceledValidation(t *testing.T) {
+func TestCephFSAuthorizationDecoderAndCanceledValidation(t *testing.T) {
 	for _, data := range []string{`null`, `{}`, `[{}]`, `[{"writer":"r","reader":"r"}]`, `[{"writer":"r"},{"writer":"rw"}]`, `[{"--unsafe":"r"}]`, `[{"writer":"*"}]`} {
-		if _, err := decodeSubvolumeAuthorizedClients([]byte(data)); err == nil {
+		if _, err := decodeAuthorizedClients([]byte(data)); err == nil {
 			t.Fatal("invalid authorized_list accepted", data)
 		}
 	}
 	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if grant, err := volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
+	if grant, err := volume.Authorize(ctx, AuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
 		t.Fatal("canceled context created a principal")
 	}
 	if len(ctr.Calls) != 0 {
 		t.Fatal("canceled operation reached native commands")
 	}
 	for _, access := range []string{"", "w", "rws"} {
-		if _, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: access}); err == nil {
+		if _, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: access}); err == nil {
 			t.Fatal("invalid access accepted", access)
 		}
 	}
-	if err := (&SubvolumeAuthorization{}).Deauthorize(t.Context()); err == nil {
+	if err := (&Authorization{}).Deauthorize(t.Context()); err == nil {
 		t.Fatal("external descriptor allowed deauthorization")
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) {
+func TestCephFSAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) {
 	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "client.client.writer", Access: "r"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "client.client.writer", Access: "r"})
 	if err != nil || grant.AuthID != "client.writer" || grant.Client.Name() != "client.client.writer" {
 		t.Fatal("native raw auth ID was normalized as a qualified entity", grant, err)
 	}
-	listing, err := fs.SubvolumeAuthorizedClients(t.Context(), volume.Name, volume.GroupName)
+	listing, err := authorizedClients(t.Context(), fs.Core, volume.Name, volume.GroupName)
 	if err != nil || len(listing) != 1 || listing[0].AuthID != "client.writer" {
 		t.Fatal("native raw auth ID prefix was discarded", listing, err)
 	}
@@ -395,10 +396,10 @@ func TestCephFSSubvolumeAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) 
 	}
 }
 
-func TestCephFSSubvolumeAuthorizationPartialPrincipalDoesNotGrantOrEraseData(t *testing.T) {
+func TestCephFSAuthorizationPartialPrincipalDoesNotGrantOrEraseData(t *testing.T) {
 	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.Fail = "auth get client.writer"
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.Client == nil || !clientCreated(grant.Client) || clientReady(grant.Client) || grant.identity.authorizeAttempted || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("unconfirmed principal was granted or leaked a key")
 	}
@@ -417,7 +418,7 @@ func TestCephFSSubvolumeAuthorizationPartialPrincipalDoesNotGrantOrEraseData(t *
 
 func TestCephFSSubvolumeEvictionRetryAndReplacementKeyRefusal(t *testing.T) {
 	_, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), AuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}

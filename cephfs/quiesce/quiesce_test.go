@@ -1,4 +1,4 @@
-package cephfs
+package quiesce
 
 import (
 	"bytes"
@@ -13,11 +13,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 type quiesceTestControl struct {
-	*poolFixtureContainer
+	*clustertest.CannedCommandContainer
 	id, state               string
 	version                 uint64
 	members                 map[string]any
@@ -29,7 +33,7 @@ type quiesceTestControl struct {
 func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	args := argv[3:]
 	if len(args) < 2 || args[0] != "fs" || args[1] != "quiesce" {
-		return f.poolFixtureContainer.Exec(ctx, argv, opts...)
+		return f.CannedCommandContainer.Exec(ctx, argv, opts...)
 	}
 	flag := func(name string) string {
 		for i, arg := range args {
@@ -74,21 +78,21 @@ func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tc
 	return 0, bytes.NewReader(append(header[:], data...)), nil
 }
 
-func quiesceFixture(t *testing.T) (*Filesystem, *quiesceTestControl, *Subvolume) {
+// quiesceFixture returns the shared filesystem with the confirmed identity of
+// its subvolume "volume" in "group", as cephfs/subvolume records it.
+func quiesceFixture(t *testing.T) (*fstest.Filesystem, *quiesceTestControl, *volbase.Volume) {
 	t.Helper()
-	fs, control := subvolumeFixture()
-	volume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", DataPool: "additional", SizeBytes: 32768, NamespaceIsolated: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fake := &quiesceTestControl{poolFixtureContainer: control}
-	fs.base().Cluster().Container = fake
+	fs := fstest.NewFilesystem()
+	volume := &volbase.Volume{Core: fs.Core, FilesystemID: 41, Name: "volume", Group: "group",
+		Path: "/volumes/group/volume/unique-id", CreatedAt: "2026-10-03 00:00:01.123456", Ready: true}
+	fake := &quiesceTestControl{CannedCommandContainer: fs.Control}
+	fs.Core.Cluster().Container = fake
 	return fs, fake, volume
 }
 
 func TestCephFSQuiesceVersionReleaseAndCopiedHandle(t *testing.T) {
 	fs, control, volume := quiesceFixture(t)
-	q, err := fs.QuiesceSubvolumes(t.Context(), []*Subvolume{volume}, QuiesceConfig{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
+	q, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, Config{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +117,7 @@ func TestCephFSQuiesceOutsideEditsAndExpiryRefused(t *testing.T) {
 	for _, change := range []string{"version", "members", "expiry"} {
 		t.Run(change, func(t *testing.T) {
 			fs, control, volume := quiesceFixture(t)
-			q, err := fs.QuiesceSubvolumes(t.Context(), []*Subvolume{volume}, QuiesceConfig{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
+			q, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, Config{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +139,7 @@ func TestCephFSQuiesceOutsideEditsAndExpiryRefused(t *testing.T) {
 func TestCephFSQuiesceUncertainRepliesRetainRecoveryHandle(t *testing.T) {
 	fs, control, volume := quiesceFixture(t)
 	control.lostCreate = true
-	q, err := fs.QuiesceSubvolumes(t.Context(), []*Subvolume{volume}, QuiesceConfig{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
+	q, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, Config{Timeout: 10 * time.Second, Expiration: 30 * time.Second})
 	if err == nil || q == nil || !q.state.confirmed {
 		t.Fatal("lost persisted create lost its lease", err)
 	}
@@ -150,19 +154,29 @@ func TestCephFSQuiesceUncertainRepliesRetainRecoveryHandle(t *testing.T) {
 
 func TestCephFSQuiesceValidationAndDecoder(t *testing.T) {
 	fs, control, volume := quiesceFixture(t)
-	for _, config := range []QuiesceConfig{{}, {Timeout: time.Second}, {Expiration: time.Second}} {
-		if _, err := fs.QuiesceSubvolumes(t.Context(), []*Subvolume{volume}, config); err == nil || control.mutations != 0 {
+	for _, config := range []Config{{}, {Timeout: time.Second}, {Expiration: time.Second}} {
+		if _, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, config); err == nil || control.mutations != 0 {
 			t.Fatal("unbounded quiesce accepted")
 		}
 	}
-	for _, volumes := range [][]*Subvolume{nil, {nil}, {&Subvolume{}}, {volume, volume}} {
-		if _, err := fs.QuiesceSubvolumes(t.Context(), volumes, QuiesceConfig{Timeout: time.Second, Expiration: time.Second}); err == nil || control.mutations != 0 {
+	foreign := *volume
+	foreign.Core = fstest.NewFilesystem().Core
+	unconfirmed := *volume
+	unconfirmed.Ready = false
+	removed := *volume
+	removed.Removed = true
+	for _, volumes := range [][]*volbase.Volume{nil, {nil}, {&foreign}, {&unconfirmed}, {&removed}, {volume, volume}} {
+		if _, err := start(t.Context(), fs.Core, volumes, Config{Timeout: time.Second, Expiration: time.Second}); err == nil || control.mutations != 0 {
 			t.Fatal("invalid quiesce member accepted")
 		}
 	}
+	// A handle that package subvolume did not create has no volume identity.
+	if _, err := Start(t.Context(), nil, []*subvolume.Subvolume{{Name: "volume", GroupName: "group"}}, Config{Timeout: time.Second, Expiration: time.Second}); err == nil || control.mutations != 0 {
+		t.Fatal("an unowned subvolume descriptor was accepted")
+	}
 	base := `{"sets":{"id":{"version":12,"state":{"name":"QUIESCED"},"timeout":10.0,"expiration":30.0,"members":{"file:/volumes/owned":{"excluded":false}}}}}`
 	for _, data := range []string{"null", `{"sets":{}}`, strings.Replace(base, `"version":12`, `"version":0`, 1), strings.Replace(base, "QUIESCED", "unknown", 1), strings.Replace(base, `"excluded":false`, `"excluded":true`, 1), strings.Replace(base, "file:/", "inode:", 1)} {
-		if _, err := decodeCephFSQuiesce([]byte(data), "id"); err == nil {
+		if _, err := decodeSet([]byte(data), "id"); err == nil {
 			t.Fatal("invalid native quiesce state accepted", data)
 		}
 	}

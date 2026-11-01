@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"context"
@@ -10,18 +10,19 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
 )
 
-type cephFSCloneIncarnation struct {
+type cloneIncarnation struct {
 	Path      string `json:"path"`
 	Inode     uint64 `json:"inode"`
 	BirthTime string `json:"birth_time"`
 }
 
-type cephFSCloneMetadata struct {
-	cephFSCloneIncarnation
+type cloneMetadata struct {
+	cloneIncarnation
 	Version     int `json:"version"`
 	Type, State string
 	Source      map[string]string `json:"source"`
@@ -34,17 +35,17 @@ type cephFSCloneMetadata struct {
 // conservatively. No native libraries or cgo are linked by the Go module.
 // Sources: ceph v20.2.4 volumes/fs/operations/versions/{subvolume_v2,
 // metadata_manager}.py and volumes/fs/async_cloner.py.
-func readCloneIncarnation(ctx context.Context, v fsbase.VolumeCommands, identity *cephFSCloneIdentity) (*cephFSCloneIncarnation, error) {
-	base := path.Join(path.Dir(path.Dir(path.Dir(identity.source.subvolume.path))), cephFSNativeGroup(identity.group), identity.name)
+func readCloneIncarnation(ctx context.Context, v fsbase.VolumeCommands, identity *cloneRecord) (*cloneIncarnation, error) {
+	base := path.Join(path.Dir(path.Dir(path.Dir(identity.source.subvolume.Path))), nativeGroup(identity.group), identity.name)
 	control, err := v.Cluster().ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS clone CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, v.Name(), base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cloneIdentityScript, v.Name(), base)
 	if err != nil {
 		return nil, fmt.Errorf("read native clone incarnation: %w", err)
 	}
-	var metadata cephFSCloneMetadata
+	var metadata cloneMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("decode native clone incarnation: %w", err)
 	}
@@ -58,27 +59,27 @@ func readCloneIncarnation(ctx context.Context, v fsbase.VolumeCommands, identity
 		return nil, errors.New("unsupported native clone incarnation state")
 	}
 	source := identity.source.subvolume
-	if len(metadata.Source) != 0 && (metadata.Source["volume"] != v.Name() || metadata.Source["group"] != source.group || metadata.Source["subvolume"] != source.name || metadata.Source["snapshot"] != identity.source.name) {
+	if len(metadata.Source) != 0 && (metadata.Source["volume"] != v.Name() || metadata.Source["group"] != source.Group || metadata.Source["subvolume"] != source.Name || metadata.Source["snapshot"] != identity.source.name) {
 		return nil, errors.New("native clone metadata source does not match this request")
 	}
 	if metadata.State != "complete" && len(metadata.Source) == 0 {
 		return nil, errors.New("incomplete clone has no native source metadata")
 	}
-	return &metadata.cephFSCloneIncarnation, nil
+	return &metadata.cloneIncarnation, nil
 }
 
-func cephFSNativeGroup(group string) string {
+func nativeGroup(group string) string {
 	if group == "" {
 		return "_nogroup"
 	}
 	return group
 }
 
-func (fs *Filesystem) checkCloneIncarnation(ctx context.Context, identity *cephFSCloneIdentity) error {
+func checkCloneIncarnation(ctx context.Context, fs *fsbase.Core, identity *cloneRecord) error {
 	if identity.incarnation == nil {
 		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
-	current, err := readCloneIncarnation(ctx, fs.base().Volumes(), identity)
+	current, err := readCloneIncarnation(ctx, fs.Volumes(), identity)
 	if err != nil {
 		return err
 	}
@@ -88,8 +89,8 @@ func (fs *Filesystem) checkCloneIncarnation(ctx context.Context, identity *cephF
 	return nil
 }
 
-func (fs *Filesystem) cloneSourceDetached(ctx context.Context, fsID int64, identity *cephFSCloneIdentity) (bool, error) {
-	info, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source)
+func cloneSourceDetached(ctx context.Context, fs *fsbase.Core, fsID int64, identity *cloneRecord) (bool, error) {
+	info, err := checkSnapshotIdentity(ctx, fs, fsID, identity.source)
 	if err != nil {
 		return false, err
 	}
@@ -117,15 +118,15 @@ func (fs *Filesystem) cloneSourceDetached(ctx context.Context, fsID int64, ident
 // native volumes metadata captured immediately after submission.
 //
 //purpose:condition
-func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
+func (clone *Clone) Cancel(ctx context.Context) error {
 	fs, err := clone.filesystem()
 	if err != nil {
 		return err
 	}
-	if err := fs.validateCloneHandle(clone); err != nil {
+	if err := validateCloneHandle(fs, clone); err != nil {
 		return err
 	}
-	timeout := servicehook.StartupTimeout(fs.base().Cluster())
+	timeout := servicehook.StartupTimeout(fs.Cluster())
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request := true
@@ -149,42 +150,42 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 // cancelStep is one poll of Cancel. It holds the subvolume operation gate only
 // for its own step, sends the native cancel on the first poll alone and reports
 // whether the clone is canceled with its source detached.
-func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, request bool) (bool, error) {
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+func (clone *Clone) cancelStep(ctx context.Context, fs *fsbase.Core, request bool) (bool, error) {
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return false, err
 	}
 	defer done()
 	identity := clone.identity
-	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
 		return false, err
 	}
-	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+	status, err := cloneStatus(ctx, fs, fsID, identity)
 	if err != nil {
 		return false, err
 	}
 	if status.State == "canceled" {
-		return fs.cloneSourceDetached(ctx, fsID, identity)
+		return cloneSourceDetached(ctx, fs, fsID, identity)
 	}
 	if status.State != "pending" && status.State != "in-progress" {
 		return false, fmt.Errorf("clone is %s; cannot cancel", status.State)
 	}
-	if _, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source); err != nil {
+	if _, err := checkSnapshotIdentity(ctx, fs, fsID, identity.source); err != nil {
 		return false, err
 	}
 	if !request {
 		return false, nil
 	}
-	args := fsbase.AppendGroup([]string{"fs", "clone", "cancel", fs.base().Name(), identity.name}, identity.group)
-	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
+	args := fsbase.AppendGroup([]string{"fs", "clone", "cancel", fs.Name(), identity.name}, identity.group)
+	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
 		return false, err
 	}
-	status, err = fs.subvolumeCloneStatus(ctx, fsID, identity)
+	status, err = cloneStatus(ctx, fs, fsID, identity)
 	if err != nil {
 		return false, err
 	}
 	if status.State == "canceled" {
-		return fs.cloneSourceDetached(ctx, fsID, identity)
+		return cloneSourceDetached(ctx, fs, fsID, identity)
 	}
 	return false, nil
 }
@@ -199,7 +200,7 @@ func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, req
 // without deleting a subsequently recreated same-named target.
 //
 //purpose:lifetime
-func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
+func (clone *Clone) RemovePartial(ctx context.Context) error {
 	fs, err := clone.filesystem()
 	if err != nil {
 		return err
@@ -207,7 +208,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
 		return errors.New("partial clone must have been submitted by this filesystem")
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
 	}
@@ -216,7 +217,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	names, err := fs.base().Volumes().SubvolumeNames(ctx, identity.group)
+	names, err := fs.Volumes().SubvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -227,17 +228,17 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 		}
 		return errors.New("partial clone disappeared outside this fixture")
 	}
-	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
 		return err
 	}
-	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+	status, err := cloneStatus(ctx, fs, fsID, identity)
 	if err != nil {
 		return err
 	}
 	if status.State != "failed" && status.State != "canceled" {
 		return fmt.Errorf("clone is %s; only failed or canceled targets support partial cleanup", status.State)
 	}
-	detached, err := fs.cloneSourceDetached(ctx, fsID, identity)
+	detached, err := cloneSourceDetached(ctx, fs, fsID, identity)
 	if err != nil {
 		return err
 	}
@@ -245,11 +246,11 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 		return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
 	}
 	identity.removalAttempted = true
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.base().Name(), identity.name}, identity.group)
-	if _, err := fs.base().Cluster().Ceph(ctx, append(args, "--force")...); err != nil {
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.Name(), identity.name}, identity.group)
+	if _, err := fs.Cluster().Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}
-	names, err = fs.base().Volumes().SubvolumeNames(ctx, identity.group)
+	names, err = fs.Volumes().SubvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -260,7 +261,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	return nil
 }
 
-const cephFSCloneIdentityScript = `import cephfs, configparser, json, os, stat, sys, threading
+const cloneIdentityScript = `import cephfs, configparser, json, os, stat, sys, threading
 filesystem, base = sys.argv[1:]
 deadline = threading.Timer(30, lambda: os._exit(124))
 deadline.daemon = True

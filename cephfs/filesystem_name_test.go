@@ -91,9 +91,10 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 // exported field exactly once; no code reads the name through config (an
 // unlocked read of config is the F5 question). The list is exact so a new
 // reader is reviewed. fsbase's own guard pins that DescriptorIntact is its only
-// read of the bound address.
+// read of the bound address; volbase's guard pins that volbase.Begin is the
+// only caller of DescriptorIntact in the feature packages.
 func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
-	allowedExported := []string{"beginSubvolumeOperation", "beginSessionOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
+	allowedExported := []string{"beginSessionOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {

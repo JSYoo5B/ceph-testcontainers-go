@@ -1,4 +1,4 @@
-package cephfs
+package quiesce
 
 import (
 	"context"
@@ -11,19 +11,23 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
-// QuiesceConfig bounds reaching the I/O pause and its lifetime. Both
-// durations must be at least one second. Expiration is a native safety timer;
-// observing Status does not extend it. This fixture does not pause processes.
-type QuiesceConfig struct {
+// Config bounds reaching the I/O pause and its lifetime. Both durations must
+// be at least one second. Expiration is a native safety timer; observing
+// Status does not extend it. This fixture does not pause processes.
+type Config struct {
 	Timeout, Expiration time.Duration
 }
 
-// QuiesceState describes one native set. Version changes on native state
-// transitions or edits. Members are native file: paths, not mutable handle fields.
-type QuiesceState struct {
+// State describes one native set. Version changes on native state transitions
+// or edits. Members are native file: paths, not mutable handle fields.
+type State struct {
 	ID                  string
 	Version             uint64
 	State               string
@@ -31,17 +35,17 @@ type QuiesceState struct {
 	Members             []string
 }
 
-// Quiesce owns a newly created, unique native quiesce set. Copies share
-// state. Release confirms the captured QUIESCED version, so an outside edit or
+// Set owns a newly created, unique native quiesce set. Copies share state.
+// Release confirms the captured QUIESCED version, so an outside edit or
 // expiration cannot masquerade as a consistent checkpoint. An uncertain create
 // may return a non-nil handle plus an error; retain it or let its native timer
 // expire before terminating the cluster. Never externally edit this set ID.
-type Quiesce struct {
-	filesystem *Filesystem
-	state      *cephFSQuiesceIdentity
+type Set struct {
+	filesystem *fsbase.Core
+	state      *setRecord
 }
 
-type cephFSQuiesceIdentity struct {
+type setRecord struct {
 	id                                    string
 	filesystemID                          int64
 	members                               []string
@@ -54,69 +58,82 @@ type cephFSQuiesceIdentity struct {
 // ceph fs quiesce <fs> --set-id <id> --query.
 //
 //purpose:observation
-func (q *Quiesce) ID() string {
+func (q *Set) ID() string {
 	if q == nil || q.state == nil {
 		return ""
 	}
 	return q.state.id
 }
 
-// QuiesceSubvolumes pauses I/O to confirmed owned subvolumes as one native set.
-// It uses --if-version=0 to create exclusively, validates every current resource
+// Start pauses I/O to confirmed owned subvolumes of fs as one native set. It
+// uses --if-version=0 to create exclusively, validates every current resource
 // identity, and awaits QUIESCED with finite native timeout and expiration.
 // Existing sets and application writers remain caller-owned. Take checkpoints
 // with client/admin APIs while paused, then explicitly Release. Multiple native
 // sets can overlap paths; releasing this set does not cancel other sets.
 //
 //purpose:condition
-func (fs *Filesystem) QuiesceSubvolumes(ctx context.Context, volumes []*Subvolume, config QuiesceConfig) (*Quiesce, error) {
+func Start(ctx context.Context, fs *cephfs.Filesystem, volumes []*subvolume.Subvolume, config Config) (*Set, error) {
+	var core *fsbase.Core
+	if fs != nil {
+		core = fsbase.Of(fs)
+	}
+	members := make([]*volbase.Volume, len(volumes))
+	for i, volume := range volumes {
+		if volume != nil {
+			members[i] = volbase.Of(volume)
+		}
+	}
+	return start(ctx, core, members, config)
+}
+
+func start(ctx context.Context, fs *fsbase.Core, volumes []*volbase.Volume, config Config) (*Set, error) {
 	if config.Timeout < time.Second || config.Expiration < time.Second || len(volumes) == 0 {
 		return nil, errors.New("quiesce requires subvolumes and timeout/expiration of at least one second")
 	}
 	for _, volume := range volumes {
-		if fs == nil || volume == nil || volume.identity == nil || volume.identity.filesystem != fs {
+		if fs == nil || volume == nil || volume.Core != fs {
 			return nil, errors.New("quiesce members must be confirmed subvolumes owned by this filesystem")
 		}
 	}
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
 	members := make([]string, 0, len(volumes))
 	names := make([]string, 0, len(volumes))
-	for _, volume := range volumes {
-		identity := volume.identity
-		if !identity.ready || identity.removed {
+	for _, identity := range volumes {
+		if !identity.Ready || identity.Removed {
 			return nil, errors.New("quiesce member is not live and confirmed")
 		}
-		info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
+		info, err := fs.Volumes().SubvolumeInfo(ctx, identity.Name, identity.Group)
 		if err != nil {
 			return nil, err
 		}
-		if err := fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt); err != nil {
+		if err := identity.CheckIdentity(fsID, info.Path, info.CreatedAt); err != nil {
 			return nil, err
 		}
-		member := "file:" + identity.path
+		member := "file:" + identity.Path
 		if slices.Contains(members, member) {
 			return nil, errors.New("quiesce members must be distinct")
 		}
 		members = append(members, member)
-		name := identity.name
-		if identity.group != "" {
-			name = identity.group + "/" + name
+		name := identity.Name
+		if identity.Group != "" {
+			name = identity.Group + "/" + name
 		}
 		names = append(names, name)
 	}
 	slices.Sort(members)
-	q := &Quiesce{filesystem: fs, state: &cephFSQuiesceIdentity{
+	q := &Set{filesystem: fs, state: &setRecord{
 		id: "tc-" + uuid.NewString(), filesystemID: fsID, members: members, await: config.Timeout,
 	}}
-	args := []string{"fs", "quiesce", fs.base().Name(), "--set-id", q.state.id, "--if-version", "0",
+	args := []string{"fs", "quiesce", fs.Name(), "--set-id", q.state.id, "--if-version", "0",
 		"--timeout", quiesceSeconds(config.Timeout), "--expiration", quiesceSeconds(config.Expiration),
 		"--await-for", quiesceSeconds(config.Timeout)}
 	args = append(args, names...)
-	_, setErr := fs.base().Cluster().Ceph(ctx, args...)
+	_, setErr := fs.Cluster().Ceph(ctx, args...)
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
 	state, readErr := q.read(readCtx)
@@ -146,11 +163,11 @@ func quiesceNativeSeconds(duration time.Duration) float64 {
 // versions as permission to release an externally edited set.
 //
 //purpose:observation
-func (q *Quiesce) Status(ctx context.Context) (*QuiesceState, error) {
+func (q *Set) Status(ctx context.Context) (*State, error) {
 	if q == nil || q.filesystem == nil || q.state == nil {
 		return nil, errors.New("quiesce handle is unavailable")
 	}
-	ctx, fsID, done, err := q.filesystem.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, q.filesystem)
 	if err != nil {
 		return nil, err
 	}
@@ -168,12 +185,12 @@ func (q *Quiesce) Status(ctx context.Context) (*QuiesceState, error) {
 // records are retained by the QDB and disposed of with the cluster.
 //
 //purpose:condition,lifetime
-func (q *Quiesce) Release(ctx context.Context) error {
+func (q *Set) Release(ctx context.Context) error {
 	if q == nil || q.filesystem == nil || q.state == nil {
 		return errors.New("quiesce handle is unavailable")
 	}
 	fs := q.filesystem
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
 	}
@@ -199,7 +216,7 @@ func (q *Quiesce) Release(ctx context.Context) error {
 		return servicehook.Invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))
 	}
 	q.state.releaseAttempted = true
-	_, setErr := fs.base().Cluster().Ceph(ctx, "fs", "quiesce", fs.base().Name(), "--set-id", q.state.id,
+	_, setErr := fs.Cluster().Ceph(ctx, "fs", "quiesce", fs.Name(), "--set-id", q.state.id,
 		"--release", "--if-version", strconv.FormatUint(q.state.version, 10), "--await-for", quiesceSeconds(q.state.await))
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
@@ -214,12 +231,12 @@ func (q *Quiesce) Release(ctx context.Context) error {
 	return errors.Join(setErr, readErr)
 }
 
-func (q *Quiesce) read(ctx context.Context) (*QuiesceState, error) {
-	data, err := q.filesystem.base().Cluster().Ceph(ctx, "fs", "quiesce", q.filesystem.base().Name(), "--set-id", q.state.id, "--query", "--format", "json")
+func (q *Set) read(ctx context.Context) (*State, error) {
+	data, err := q.filesystem.Cluster().Ceph(ctx, "fs", "quiesce", q.filesystem.Name(), "--set-id", q.state.id, "--query", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
-	state, err := decodeCephFSQuiesce(data, q.state.id)
+	state, err := decodeSet(data, q.state.id)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +246,7 @@ func (q *Quiesce) read(ctx context.Context) (*QuiesceState, error) {
 	return state, nil
 }
 
-func decodeCephFSQuiesce(data []byte, id string) (*QuiesceState, error) {
+func decodeSet(data []byte, id string) (*State, error) {
 	var database struct {
 		Sets map[string]struct {
 			Version    uint64  `json:"version"`
@@ -261,5 +278,5 @@ func decodeCephFSQuiesce(data []byte, id string) (*QuiesceState, error) {
 		members = append(members, path)
 	}
 	slices.Sort(members)
-	return &QuiesceState{ID: id, Version: set.Version, State: set.State.Name, Timeout: set.Timeout, Expiration: set.Expiration, Members: members}, nil
+	return &State{ID: id, Version: set.Version, State: set.State.Name, Timeout: set.Timeout, Expiration: set.Expiration, Members: members}, nil
 }

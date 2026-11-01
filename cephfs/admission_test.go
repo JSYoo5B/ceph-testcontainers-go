@@ -68,11 +68,7 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 	fs, _, _, _ := cephFSContextAdmissionFixture()
 	fs.base().ReplaceNative(nil)
-	_, _, _, err := fs.beginSubvolumeOperation(t.Context())
-	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
-		t.Fatalf("subvolume refusal changed: %v", err)
-	}
-	_, _, _, err = fs.beginSessionOperation(t.Context())
+	_, _, _, err := fs.beginSessionOperation(t.Context())
 	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
 		t.Fatalf("session refusal changed: %v", err)
 	}
@@ -91,7 +87,6 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for name, begin := range map[string]func() error{
-		"subvolume": func() error { _, _, _, err := fs.beginSubvolumeOperation(canceled); return err },
 		"data pool": func() error { _, _, err := fs.beginDataPoolOperation(canceled); return err },
 		"session":   func() error { _, _, _, err := fs.beginSessionOperation(canceled); return err },
 	} {
@@ -104,12 +99,15 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
 // and the division of work. The core's Admit (fsbase) owns the admission
-// lifetime: it is called only by the three flows, each flow passes its own
-// Check function, and none takes or releases setupMu or the topology mutex
-// itself. fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that
-// Admit takes setupMu first and holds no predicate.
+// lifetime: in package cephfs it is called only by the session and data-pool
+// flows, each flow passes its own Check function, and none takes or releases
+// setupMu or the topology mutex itself. volbase's
+// TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal pins the same for
+// the subvolume flow, volbase.Begin, which the feature packages share.
+// fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that Admit
+// takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	begins := []string{"beginSubvolumeOperation", "beginDataPoolOperation", "beginSessionOperation"}
+	begins := []string{"beginDataPoolOperation", "beginSessionOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
 	files := parseCephFSProductionFiles(t)
@@ -143,7 +141,7 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 		}
 	}
 	slices.Sort(callers["Admit"])
-	if !reflect.DeepEqual(callers, map[string][]string{"Admit": {"beginDataPoolOperation", "beginSessionOperation", "beginSubvolumeOperation"}}) {
+	if !reflect.DeepEqual(callers, map[string][]string{"Admit": {"beginDataPoolOperation", "beginSessionOperation"}}) {
 		t.Errorf("Admit caller table changed: %v", callers)
 	}
 	if len(lockCalls) != 0 {

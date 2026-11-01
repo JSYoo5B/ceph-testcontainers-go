@@ -2,14 +2,8 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 93,
+  "count": 36,
   "entries": [
-    {
-      "current": "cephfs.CloneConfig",
-      "kind": "type",
-      "proposed": "cephfs.CloneConfig",
-      "decision": "baseline"
-    },
     {
       "current": "cephfs.Config",
       "kind": "type",
@@ -65,22 +59,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.Filesystem.CreateSubvolume",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config SubvolumeConfig) (*Subvolume, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.CreateSubvolume",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.CreateSubvolumeGroup",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config SubvolumeGroupConfig) (*SubvolumeGroup, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.CreateSubvolumeGroup",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.Filesystem.DataPools",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]DataPoolState, error)",
@@ -113,14 +91,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.Filesystem.QuiesceSubvolumes",
-      "kind": "method",
-      "signature": "func(ctx context.Context, volumes []*Subvolume, config QuiesceConfig) (*Quiesce, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.QuiesceSubvolumes",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.Filesystem.Remove",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -150,54 +120,6 @@
       "signature": "func(ctx context.Context) ([]Session, error)",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.Sessions",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SubvolumeAuthorizedClients",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SubvolumeAuthorizedClients",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SubvolumeGroupInfo",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (*SubvolumeGroupInfo, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SubvolumeGroupInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SubvolumeGroups",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]string, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SubvolumeGroups",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SubvolumeInfo",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name, groupName string) (*SubvolumeInfo, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SubvolumeInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SubvolumeSnapshotInfo",
-      "kind": "method",
-      "signature": "func(ctx context.Context, subvolumeName, groupName, snapshotName string) (*SubvolumeSnapshotInfo, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SubvolumeSnapshotInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.Subvolumes",
-      "kind": "method",
-      "signature": "func(ctx context.Context, groupName string) ([]string, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.Subvolumes",
       "decision": "baseline"
     },
     {
@@ -250,98 +172,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.PinDistributed",
-      "kind": "const",
-      "proposed": "cephfs.PinDistributed",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinExport",
-      "kind": "const",
-      "proposed": "cephfs.PinExport",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinOverrideHandle",
-      "kind": "type",
-      "proposed": "cephfs.PinOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*PinOverrideHandle",
-      "proposed": "cephfs.PinOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinPolicy",
-      "kind": "type",
-      "proposed": "cephfs.PinPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinRandom",
-      "kind": "const",
-      "proposed": "cephfs.PinRandom",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinSetting",
-      "kind": "type",
-      "proposed": "cephfs.PinSetting",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.PinType",
-      "kind": "type",
-      "proposed": "cephfs.PinType",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Quiesce",
-      "kind": "type",
-      "proposed": "cephfs.Quiesce",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Quiesce.ID",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Quiesce",
-      "proposed": "cephfs.Quiesce.ID",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Quiesce.Release",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Quiesce",
-      "proposed": "cephfs.Quiesce.Release",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Quiesce.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*QuiesceState, error)",
-      "receiver": "*Quiesce",
-      "proposed": "cephfs.Quiesce.Status",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.QuiesceConfig",
-      "kind": "type",
-      "proposed": "cephfs.QuiesceConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.QuiesceState",
-      "kind": "type",
-      "proposed": "cephfs.QuiesceState",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.Run",
       "kind": "function",
       "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
@@ -372,12 +202,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*SessionTimeoutsOverrideHandle",
       "proposed": "cephfs.SessionTimeoutsOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotPendingClone",
-      "kind": "type",
-      "proposed": "cephfs.SnapshotPendingClone",
       "decision": "baseline"
     },
     {
@@ -427,236 +251,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Filesystem, error)",
       "proposed": "cephfs.Start",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume",
-      "kind": "type",
-      "proposed": "cephfs.Subvolume",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.Authorize",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error)",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.Authorize",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.CreateSnapshot",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (*SubvolumeSnapshot, error)",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.CreateSnapshot",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.OverridePin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error)",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.OverridePin",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.PinPolicy",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*PinPolicy, error)",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.PinPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.Remove",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.Remove",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.Resize",
-      "kind": "method",
-      "signature": "func(ctx context.Context, sizeBytes int64) error",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.Resize",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Subvolume.Snapshots",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]string, error)",
-      "receiver": "*Subvolume",
-      "proposed": "cephfs.Subvolume.Snapshots",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeAuthorization",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeAuthorization",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeAuthorization.Deauthorize",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeAuthorization",
-      "proposed": "cephfs.SubvolumeAuthorization.Deauthorize",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeAuthorization.EvictClients",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeAuthorization",
-      "proposed": "cephfs.SubvolumeAuthorization.EvictClients",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeAuthorizationConfig",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeAuthorizationConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeAuthorizedClient",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeAuthorizedClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeClone",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeClone",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeClone.Cancel",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeClone",
-      "proposed": "cephfs.SubvolumeClone.Cancel",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeClone.RemovePartial",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeClone",
-      "proposed": "cephfs.SubvolumeClone.RemovePartial",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeClone.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*SubvolumeCloneStatus, error)",
-      "receiver": "*SubvolumeClone",
-      "proposed": "cephfs.SubvolumeClone.Status",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeClone.Wait",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*Subvolume, error)",
-      "receiver": "*SubvolumeClone",
-      "proposed": "cephfs.SubvolumeClone.Wait",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeCloneStatus",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeCloneStatus",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeConfig",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroup",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeGroup",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroup.OverridePin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error)",
-      "receiver": "*SubvolumeGroup",
-      "proposed": "cephfs.SubvolumeGroup.OverridePin",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroup.PinPolicy",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*PinPolicy, error)",
-      "receiver": "*SubvolumeGroup",
-      "proposed": "cephfs.SubvolumeGroup.PinPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroup.Remove",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeGroup",
-      "proposed": "cephfs.SubvolumeGroup.Remove",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroup.Resize",
-      "kind": "method",
-      "signature": "func(ctx context.Context, sizeBytes int64) error",
-      "receiver": "*SubvolumeGroup",
-      "proposed": "cephfs.SubvolumeGroup.Resize",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroupConfig",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeGroupConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeGroupInfo",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeGroupInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeInfo",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeSnapshot",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeSnapshot",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeSnapshot.Clone",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config CloneConfig) (*SubvolumeClone, error)",
-      "receiver": "*SubvolumeSnapshot",
-      "proposed": "cephfs.SubvolumeSnapshot.Clone",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeSnapshot.Remove",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SubvolumeSnapshot",
-      "proposed": "cephfs.SubvolumeSnapshot.Remove",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SubvolumeSnapshotInfo",
-      "kind": "type",
-      "proposed": "cephfs.SubvolumeSnapshotInfo",
       "decision": "baseline"
     },
     {

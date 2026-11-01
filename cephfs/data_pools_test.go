@@ -138,9 +138,6 @@ func TestCephFSDataPoolAttachmentIdentityAndLiveSelection(t *testing.T) {
 	if _, err := fs.AddDataPool(t.Context(), "extra"); err == nil {
 		t.Fatal("confirmed repeated attachment accepted")
 	}
-	if err := fs.validateSubvolumeConfig("volume", "", "extra", 0); err != nil {
-		t.Fatal("dynamic pool rejected by old static whitelist", err)
-	}
 	ctr.attached = false
 	if err := fs.base().CheckSubvolumeDataPool(t.Context(), "extra"); err == nil {
 		t.Fatal("externally detached pool accepted for volume creation")

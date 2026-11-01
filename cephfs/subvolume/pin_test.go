@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"bytes"
@@ -13,6 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -29,14 +32,14 @@ func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 	}
 	fs, control, volume, _ := cephFSPinFixture()
 	foreign := *volume
-	foreign.identity = &cephFSVolumeIdentity{filesystem: &Filesystem{}, ready: true}
+	foreign.identity = &volumeRecord{Volume: volbase.Volume{Core: fsbase.NewCore(fsbase.Params{}), Ready: true}}
 	if change, err := (&foreign).OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource was adopted")
 	}
 	if _, err := (&foreign).PinPolicy(t.Context()); err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource policy was queried")
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), true)
+	testhelper.TestSetClosed(fs.Core.Cluster(), true)
 	if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("closed cluster queried or changed directory pins")
 	}
@@ -60,14 +63,14 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 		t.Fatal("overlapping same-field override accepted")
 	}
 	copy := *change
-	if err := copy.Restore(t.Context()); err != nil || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
+	if err := copy.Restore(t.Context()); err != nil || len(pinOverridesOf(fs.Core).byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 		t.Fatalf("copy did not restore shared override: %v", err)
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), true)
+	testhelper.TestSetClosed(fs.Core.Cluster(), true)
 	if err := change.Restore(t.Context()); err != nil || len(control.mutations) != 2 {
 		t.Fatal("verified restore was not idempotent after cluster termination")
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), false)
+	testhelper.TestSetClosed(fs.Core.Cluster(), false)
 	group.Name, group.Path = "foreign", "/foreign"
 	groupChange, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil || !slices.Equal(control.mutations[2], []string{"fs", "subvolumegroup", "pin", "fixture", "group", "export", "1"}) {
@@ -80,7 +83,7 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 
 func TestCephFSPinIndependentFieldsPreserveOutsidePolicies(t *testing.T) {
 	_, control, _, group := cephFSPinFixture()
-	groupPath := group.identity.path
+	groupPath := group.identity.Path
 	control.policies[groupPath].Distributed = true
 	control.policies[groupPath].RandomProbability = 0.01
 	export, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
@@ -123,9 +126,9 @@ func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
 			case "pool":
 				control.native.Output["osd pool ls detail --format json"] = strings.ReplaceAll(control.native.Output["osd pool ls detail --format json"], `"pool_id":1`, `"pool_id":99`)
 			case "removed":
-				volume.identity.removed = true
+				volume.identity.Removed = true
 			}
-			if err := change.Restore(t.Context()); err == nil || len(control.mutations) != 1 || len(fs.pins.byField) != 1 {
+			if err := change.Restore(t.Context()); err == nil || len(control.mutations) != 1 || len(pinOverridesOf(fs.Core).byField) != 1 {
 				t.Fatalf("outside %s change was overwritten: error=%v mutations=%v", scenario, err, control.mutations)
 			}
 		})
@@ -133,16 +136,18 @@ func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
 }
 
 func TestCephFSPinRankFeasibilityRequiresOwnedActiveNativeRank(t *testing.T) {
-	for _, scenario := range []string{"outside topology", "foreign daemon", "recovering daemon"} {
-		fs, control, volume, _ := cephFSPinFixture()
+	for _, scenario := range []string{"outside topology", "foreign daemon", "recovering daemon", "replaced filesystem"} {
+		_, control, volume, _ := cephFSPinFixture()
 		rank := float64(1)
 		switch scenario {
 		case "outside topology":
 			rank = 2
 		case "foreign daemon":
-			fs.mds.roster.daemons = fs.mds.roster.daemons[:1]
+			control.ranks.Active[1].Owned = false
 		case "recovering daemon":
-			control.native.Output["fs dump --format json"] = strings.Replace(control.native.Output["fs dump --format json"], `"name":"b","rank":1,"gid":102,"state":"up:active"`, `"name":"b","rank":1,"gid":102,"state":"up:replay"`, 1)
+			control.ranks.Active[1].State = "up:replay"
+		case "replaced filesystem":
+			control.ranks.FilesystemID = 42
 		}
 		if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: rank}); change != nil || err == nil || len(control.mutations) != 0 {
 			t.Fatalf("infeasible %s rank accepted: handle=%v error=%v", scenario, change, err)
@@ -165,12 +170,12 @@ func TestCephFSPinUncertainApplyAndRestoreRemainReconciliable(t *testing.T) {
 			if scenario == "restore lost reply" || scenario == "restore false success" {
 				control.lostReply = scenario == "restore lost reply"
 				control.falseSuccess = scenario == "restore false success"
-				if err := change.Restore(t.Context()); err == nil || change.state.restored || len(fs.pins.byField) == 0 {
+				if err := change.Restore(t.Context()); err == nil || change.state.restored || len(pinOverridesOf(fs.Core).byField) == 0 {
 					t.Fatal("uncertain restore was marked complete before verified readback")
 				}
 				control.lostReply, control.falseSuccess = false, false
 			}
-			if err := change.Restore(t.Context()); err != nil || !change.state.restored || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
+			if err := change.Restore(t.Context()); err != nil || !change.state.restored || len(pinOverridesOf(fs.Core).byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 				t.Fatalf("fresh-context restoration did not reconcile original policy: %v", err)
 			}
 			if scenario == "restore lost reply" && len(control.mutations) != 2 {
@@ -211,23 +216,32 @@ type cephFSPinTestControl struct {
 	lostReply, falseSuccess bool
 	failReadAfterMutation   bool
 	override                string
+	ranks                   fsbase.ActiveRanks
 }
 
-func cephFSPinFixture() (*Filesystem, *cephFSPinTestControl, *Subvolume, *SubvolumeGroup) {
+func cephFSPinFixture() (*fstest.Filesystem, *cephFSPinTestControl, *Subvolume, *Group) {
 	fs, native := subvolumeFixture()
 	native.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":2,"metadata_pool":1,"data_pools":[2,3],"info":{"a":{"name":"a","rank":0,"gid":101,"state":"up:active"},"b":{"name":"b","rank":1,"gid":102,"state":"up:active"}}}}],"standbys":[]}`
-	fs.mds.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}, {ID: "b", FilesystemName: "fixture"}}
+	// The owned-rank view cephfs derives from the FSMap and its MDS roster:
+	// two owned active ranks.
 	control := &cephFSPinTestControl{native: native, policies: map[string]*PinPolicy{
 		"/volumes/group":        {Path: "/volumes/group", Inode: 102, ExportRank: 0},
 		"/volumes/group/volume": {Path: "/volumes/group/volume", Inode: 103, ExportRank: 0},
-	}}
-	fs.base().Cluster().Container = control
-	volume := &Subvolume{Name: "volume", GroupName: "group", FilesystemName: "fixture", Path: "/volumes/group/volume/unique-id", identity: &cephFSVolumeIdentity{
-		filesystem: fs, filesystemID: 41, name: "volume", group: "group", path: "/volumes/group/volume/unique-id", createdAt: "2026-10-03 00:00:01.123456", ready: true,
-	}}
-	group := &SubvolumeGroup{Name: "group", FilesystemName: "fixture", Path: "/volumes/group", identity: &cephFSVolumeIdentity{
-		filesystem: fs, filesystemID: 41, name: "group", path: "/volumes/group", createdAt: "2026-10-03 00:00:00.123456", ready: true,
-	}}
+	}, ranks: fsbase.ActiveRanks{FilesystemID: 41, MaxMDS: 2, Active: []fsbase.ActiveRank{
+		{Rank: 0, State: "up:active", Owned: true}, {Rank: 1, State: "up:active", Owned: true},
+	}}}
+	fs.ActiveRanks = func(context.Context) (*fsbase.ActiveRanks, error) {
+		ranks := control.ranks
+		ranks.Active = slices.Clone(ranks.Active)
+		return &ranks, nil
+	}
+	fs.Core.Cluster().Container = control
+	volume := newSubvolume(&volumeRecord{Volume: volbase.Volume{
+		Core: fs.Core, FilesystemID: 41, Name: "volume", Group: "group", Path: "/volumes/group/volume/unique-id", CreatedAt: "2026-10-03 00:00:01.123456", Ready: true,
+	}})
+	group := &Group{Name: "group", FilesystemName: "fixture", Path: "/volumes/group", identity: &volumeRecord{Volume: volbase.Volume{
+		Core: fs.Core, FilesystemID: 41, Name: "group", Path: "/volumes/group", CreatedAt: "2026-10-03 00:00:00.123456", Ready: true,
+	}}}
 	return fs, control, volume, group
 }
 
@@ -238,7 +252,7 @@ func (c *cephFSPinTestControl) Exec(ctx context.Context, args []string, opts ...
 			return 0, nil, errors.New("native readback unavailable")
 		}
 		policy := c.policies[args[len(args)-1]]
-		data, _ := json.Marshal(map[string]any{"path": policy.Path, "inode": policy.Inode, "export": strconv.Itoa(policy.ExportRank), "distributed": strconv.Itoa(int(cephFSPinValue(policy, PinDistributed))), "random": strconv.FormatFloat(policy.RandomProbability, 'g', 6, 64)})
+		data, _ := json.Marshal(map[string]any{"path": policy.Path, "inode": policy.Inode, "export": strconv.Itoa(policy.ExportRank), "distributed": strconv.Itoa(int(pinValue(policy, PinDistributed))), "random": strconv.FormatFloat(policy.RandomProbability, 'g', 6, 64)})
 		if c.override != "" {
 			data = []byte(c.override)
 		}

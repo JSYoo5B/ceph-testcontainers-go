@@ -1,4 +1,4 @@
-package cephfs
+package subvolume
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -34,7 +35,7 @@ func cloneLifecycleStatus(state string) string {
 	return `{"status":{"state":"` + state + `","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"}}}`
 }
 
-func cloneLifecycleFixture(t *testing.T) (*Filesystem, *cloneLifecycleFixtureContainer, *SubvolumeClone) {
+func cloneLifecycleFixture(t *testing.T) (*fstest.Filesystem, *cloneLifecycleFixtureContainer, *Clone) {
 	t.Helper()
 	fs, base, _, snapshot := snapshotFixture(t)
 	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores"})
@@ -45,7 +46,7 @@ func cloneLifecycleFixture(t *testing.T) (*Filesystem, *cloneLifecycleFixtureCon
 	base.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("pending")
 	base.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"yes","pending_clones":[{"name":"copy","target_group":"restores"}]}`
 	ctr := &cloneLifecycleFixtureContainer{poolFixtureContainer: base, cancelApplies: true, removeApplies: true}
-	fs.base().Cluster().Container = ctr
+	fs.Core.Cluster().Container = ctr
 	ctr.Calls = nil
 	return fs, ctr, clone
 }
@@ -119,22 +120,22 @@ func TestCephFSCloneLostCancelAndCleanupRepliesConverge(t *testing.T) {
 func TestCephFSCloneReplacedTargetAndSourceRefuseMutation(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		edit func(*cloneLifecycleFixtureContainer, *SubvolumeClone)
+		edit func(*cloneLifecycleFixtureContainer, *Clone)
 	}{
-		{"UUID", func(c *cloneLifecycleFixtureContainer, _ *SubvolumeClone) {
+		{"UUID", func(c *cloneLifecycleFixtureContainer, _ *Clone) {
 			c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002")
 		}},
-		{"inode", func(c *cloneLifecycleFixtureContainer, _ *SubvolumeClone) {
+		{"inode", func(c *cloneLifecycleFixtureContainer, _ *Clone) {
 			c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], `"inode":71`, `"inode":72`)
 		}},
-		{"birth time", func(c *cloneLifecycleFixtureContainer, _ *SubvolumeClone) {
+		{"birth time", func(c *cloneLifecycleFixtureContainer, _ *Clone) {
 			c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], "00:02:00.123456", "00:03:00.123456")
 		}},
-		{"source snapshot", func(c *cloneLifecycleFixtureContainer, _ *SubvolumeClone) {
+		{"source snapshot", func(c *cloneLifecycleFixtureContainer, _ *Clone) {
 			c.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = strings.ReplaceAll(c.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"], "00:01:00.123456", "00:03:00.123456")
 		}},
-		{"uncaptured incarnation", func(_ *cloneLifecycleFixtureContainer, c *SubvolumeClone) { c.identity.incarnation = nil }},
-		{"unknown metadata version", func(c *cloneLifecycleFixtureContainer, _ *SubvolumeClone) {
+		{"uncaptured incarnation", func(_ *cloneLifecycleFixtureContainer, c *Clone) { c.identity.incarnation = nil }},
+		{"unknown metadata version", func(c *cloneLifecycleFixtureContainer, _ *Clone) {
 			c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], `"version":2`, `"version":3`)
 		}},
 	} {
@@ -250,7 +251,7 @@ func TestCephFSCloneLifecycleCanceledContextAndClosedClusterRefuseMutation(t *te
 	if err := clone.RemovePartial(ctx); err == nil {
 		t.Fatal("partial cleanup ignored canceled context")
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), true)
+	testhelper.TestSetClosed(fs.Core.Cluster(), true)
 	if err := clone.Cancel(t.Context()); err == nil {
 		t.Fatal("closed cluster allowed cancellation")
 	}

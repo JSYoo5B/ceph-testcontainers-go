@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -34,48 +35,48 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "tenant", SizeBytes: 32 << 20, DataPool: extraPool})
+	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "tenant", SizeBytes: 32 << 20, DataPool: extraPool})
 	if err != nil {
 		t.Fatal(err)
 	}
-	subvolume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data", GroupName: group.Name, SizeBytes: 1 << 20, NamespaceIsolated: true})
+	volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "data", GroupName: group.Name, SizeBytes: 1 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
-	if err != nil || info.Path != subvolume.Path || info.DataPool != extraPool || info.PoolNamespace == "" || info.QuotaBytes != 1<<20 || info.State != "complete" {
+	info, err := subvolume.Info(ctx, fs, volume.Name, group.Name)
+	if err != nil || info.Path != volume.Path || info.DataPool != extraPool || info.PoolNamespace == "" || info.QuotaBytes != 1<<20 || info.State != "complete" {
 		t.Fatalf("created subvolume has unexpected native metadata: %+v error=%v", info, err)
 	}
-	groupInfo, err := fs.SubvolumeGroupInfo(ctx, group.Name)
+	groupInfo, err := subvolume.GroupInfo(ctx, fs, group.Name)
 	if err != nil || groupInfo.DataPool != extraPool || groupInfo.QuotaBytes != 32<<20 || groupInfo.Path != group.Path {
 		t.Fatalf("unexpected native group metadata: %+v error=%v", groupInfo, err)
 	}
-	if duplicate, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
+	if duplicate, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
 		t.Fatal("duplicate group accepted and could have changed quota/layout")
 	}
-	if duplicate, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: subvolume.Name, GroupName: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
+	if duplicate, err := subvolume.Create(ctx, fs, subvolume.Config{Name: volume.Name, GroupName: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
 		t.Fatal("duplicate subvolume accepted and could have changed quota/layout")
 	}
-	unchanged, err := fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
+	unchanged, err := subvolume.Info(ctx, fs, volume.Name, group.Name)
 	if err != nil || unchanged.Path != info.Path || unchanged.QuotaBytes != info.QuotaBytes || unchanged.PoolNamespace != info.PoolNamespace || unchanged.DataPool != info.DataPool {
 		t.Fatalf("duplicate request altered subvolume: %+v error=%v", unchanged, err)
 	}
 
 	// The same name in the default group has a different path, layout and data.
-	defaultSubvolume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data"})
-	if err != nil || defaultSubvolume.Path == subvolume.Path {
+	defaultSubvolume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "data"})
+	if err != nil || defaultSubvolume.Path == volume.Path {
 		t.Fatalf("default group did not isolate same-named subvolume: %+v error=%v", defaultSubvolume, err)
 	}
-	defaultInfo, err := fs.SubvolumeInfo(ctx, defaultSubvolume.Name, "")
+	defaultInfo, err := subvolume.Info(ctx, fs, defaultSubvolume.Name, "")
 	if err != nil || defaultInfo.DataPool != fs.DataPool || defaultInfo.QuotaBytes != 0 {
 		t.Fatalf("default subvolume did not inherit default layout/unlimited quota: %+v error=%v", defaultInfo, err)
 	}
-	groups, err := fs.SubvolumeGroups(ctx)
+	groups, err := subvolume.GroupNames(ctx, fs)
 	if err != nil || !slices.Equal(groups, []string{"tenant"}) {
 		t.Fatalf("unexpected groups: %v error=%v", groups, err)
 	}
 	for _, groupName := range []string{"", "tenant"} {
-		names, err := fs.Subvolumes(ctx, groupName)
+		names, err := subvolume.Names(ctx, fs, groupName)
 		if err != nil || !slices.Equal(names, []string{"data"}) {
 			t.Fatalf("unexpected group %q subvolumes: %v error=%v", groupName, names, err)
 		}
@@ -93,7 +94,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "quota-denied", "tenant", 1<<20)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, defaultInfo, "grow", "default", 0)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "verify", "tenant", 1<<20)
-	if err := subvolume.Resize(ctx, 8<<20); err != nil {
+	if err := volume.Resize(ctx, 8<<20); err != nil {
 		t.Fatal(err)
 	}
 	// Once the subvolume limit is larger than the write, independently prove
@@ -101,11 +102,11 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err := group.Resize(ctx, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	groupInfo, err = fs.SubvolumeGroupInfo(ctx, group.Name)
+	groupInfo, err = subvolume.GroupInfo(ctx, fs, group.Name)
 	if err != nil || groupInfo.QuotaBytes != 1<<20 || groupInfo.Path != group.Path {
 		t.Fatalf("group quota did not shrink above existing usage: %+v error=%v", groupInfo, err)
 	}
-	info, err = fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
+	info, err = subvolume.Info(ctx, fs, volume.Name, group.Name)
 	if err != nil || info.QuotaBytes != 8<<20 {
 		t.Fatalf("subvolume quota did not grow: %+v error=%v", info, err)
 	}
@@ -115,7 +116,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err := group.Resize(ctx, 64<<20); err != nil {
 		t.Fatal(err)
 	}
-	info, err = fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
+	info, err = subvolume.Info(ctx, fs, volume.Name, group.Name)
 	if err != nil || info.QuotaBytes != 8<<20 {
 		t.Fatalf("subvolume quota did not grow: %+v error=%v", info, err)
 	}
@@ -126,7 +127,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	usageCtx, usageCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer usageCancel()
 	for {
-		info, err = fs.SubvolumeInfo(usageCtx, subvolume.Name, group.Name)
+		info, err = subvolume.Info(usageCtx, fs, volume.Name, group.Name)
 		if err == nil && info.BytesUsed >= (256<<10)+(2<<20) {
 			break
 		}
@@ -136,23 +137,23 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	if err := subvolume.Resize(ctx, 64); err == nil {
+	if err := volume.Resize(ctx, 64); err == nil {
 		t.Fatal("subvolume quota shrank below used bytes")
 	}
 	if err := group.Resize(ctx, 64); err == nil {
 		t.Fatal("group quota shrank below used bytes")
 	}
-	if err := subvolume.Resize(ctx, 0); err != nil {
+	if err := volume.Resize(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := group.Resize(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	info, err = fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
+	info, err = subvolume.Info(ctx, fs, volume.Name, group.Name)
 	if err != nil || info.QuotaBytes != 0 {
 		t.Fatalf("subvolume quota did not become unlimited: %+v error=%v", info, err)
 	}
-	groupInfo, err = fs.SubvolumeGroupInfo(ctx, group.Name)
+	groupInfo, err = subvolume.GroupInfo(ctx, fs, group.Name)
 	if err != nil || groupInfo.QuotaBytes != 0 {
 		t.Fatalf("group quota did not become unlimited: %+v error=%v", groupInfo, err)
 	}
@@ -160,12 +161,12 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err := group.Remove(ctx); err == nil {
 		t.Fatal("nonempty group was removed")
 	}
-	if err := (&cephfs.Subvolume{Name: subvolume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: subvolume.Path}).Remove(ctx); err == nil {
+	if err := (&subvolume.Subvolume{Name: volume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: volume.Path}).Remove(ctx); err == nil {
 		t.Fatal("unowned public descriptor removed a native subvolume")
 	}
 
-	copyBeforeRemoval := *subvolume
-	if err := subvolume.Remove(ctx); err != nil {
+	copyBeforeRemoval := *volume
+	if err := volume.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := (&copyBeforeRemoval).Remove(ctx); err != nil {
@@ -183,26 +184,26 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	// Recreating a name must not let a stale copied handle affect the new group.
-	replacementGroup, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "tenant"})
+	replacementGroup, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "tenant"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := (&copyGroupBeforeRemoval).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	groups, err = fs.SubvolumeGroups(ctx)
+	groups, err = subvolume.GroupNames(ctx, fs)
 	if err != nil || !slices.Equal(groups, []string{"tenant"}) {
 		t.Fatal("stale handle affected replacement group")
 	}
 	if err := replacementGroup.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	groups, err = fs.SubvolumeGroups(ctx)
+	groups, err = subvolume.GroupNames(ctx, fs)
 	if err != nil || len(groups) != 0 {
 		t.Fatalf("named group remained after removal: %v error=%v", groups, err)
 	}
 	for _, groupName := range []string{""} {
-		names, err := fs.Subvolumes(ctx, groupName)
+		names, err := subvolume.Names(ctx, fs, groupName)
 		if err != nil || len(names) != 0 {
 			t.Fatalf("subvolume remained after removal: %v error=%v", names, err)
 		}
@@ -216,7 +217,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	t.Log("native CephFS volumes: existing filesystem/MDS/pools, group/default-group isolation, selected additional pool and RADOS namespace, duplicate refusal, actual subvolume/group EDQUOT write denial with preexisting bytes and independent neighbor retained, quota extension recovered the same payload in a fresh session, unlimited/no-shrink, safe removal and copied-handle replacement protection passed")
 }
 
-func cephFSSubvolumeIO(t *testing.T, parent context.Context, client testcontainers.Container, filesystem string, info *cephfs.SubvolumeInfo, phase, token string, quota int64, ancestorQuota ...string) {
+func cephFSSubvolumeIO(t *testing.T, parent context.Context, client testcontainers.Container, filesystem string, info *subvolume.Metadata, phase, token string, quota int64, ancestorQuota ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()

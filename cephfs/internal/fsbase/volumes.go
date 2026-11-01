@@ -31,7 +31,7 @@ func (v VolumeCommands) Cluster() *ceph.Container { return v.cluster }
 func (v VolumeCommands) Name() string { return v.name }
 
 // GroupInfo is the native metadata of one subvolume group, in the field order
-// of cephfs.SubvolumeGroupInfo, which converts it.
+// of subvolume.GroupMetadata, which converts it.
 type GroupInfo struct {
 	Name       string
 	Path       string
@@ -42,7 +42,7 @@ type GroupInfo struct {
 }
 
 // SubvolumeInfo is the native metadata of one subvolume, in the field order
-// of cephfs.SubvolumeInfo, which converts it.
+// of subvolume.Metadata, which converts it.
 type SubvolumeInfo struct {
 	Name          string
 	GroupName     string

@@ -100,7 +100,6 @@ type Filesystem struct {
 	config Config
 	// mds is the MDS state the fleet owns; see mdsState.
 	mds             mdsState
-	pins            pinOverrides
 	sessionTimeouts *cephFSSessionTimeoutsState
 	// schedules holds the directories with a snapshot schedule lease that is
 	// not restored yet.

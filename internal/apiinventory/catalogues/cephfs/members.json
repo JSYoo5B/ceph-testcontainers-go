@@ -2,13 +2,8 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs",
-  "count": 154,
+  "count": 65,
   "types": {
-    "cephfs.CloneConfig": [
-      "CloneConfig.DataPool field string",
-      "CloneConfig.GroupName field string",
-      "CloneConfig.Name field string"
-    ],
     "cephfs.Config": [
       "Config.ActiveMDS field int",
       "Config.AdditionalDataPools field []ceph.PoolConfig",
@@ -60,29 +55,6 @@
       "MDSStatus.Rank field int `json:\"rank\"`",
       "MDSStatus.State field string `json:\"state\"`"
     ],
-    "cephfs.PinPolicy": [
-      "PinPolicy.Distributed field bool",
-      "PinPolicy.ExportRank field int",
-      "PinPolicy.Inode field uint64",
-      "PinPolicy.Path field string",
-      "PinPolicy.RandomProbability field float64"
-    ],
-    "cephfs.PinSetting": [
-      "PinSetting.Type field PinType",
-      "PinSetting.Value field float64"
-    ],
-    "cephfs.QuiesceConfig": [
-      "QuiesceConfig.Expiration field time.Duration",
-      "QuiesceConfig.Timeout field time.Duration"
-    ],
-    "cephfs.QuiesceState": [
-      "QuiesceState.Expiration field float64",
-      "QuiesceState.ID field string",
-      "QuiesceState.Members field []string",
-      "QuiesceState.State field string",
-      "QuiesceState.Timeout field float64",
-      "QuiesceState.Version field uint64"
-    ],
     "cephfs.Session": [
       "Session.Address field string",
       "Session.Caps field int",
@@ -97,10 +69,6 @@
     "cephfs.SessionTimeouts": [
       "SessionTimeouts.Autoclose field time.Duration",
       "SessionTimeouts.Timeout field time.Duration"
-    ],
-    "cephfs.SnapshotPendingClone": [
-      "SnapshotPendingClone.GroupName field string `json:\"target_group\"`",
-      "SnapshotPendingClone.Name field string `json:\"name\"`"
     ],
     "cephfs.SnapshotSchedule": [
       "SnapshotSchedule.Path field string",
@@ -126,101 +94,6 @@
       "SnapshotScheduleStatus.Retention field map[string]int",
       "SnapshotScheduleStatus.Schedule field string",
       "SnapshotScheduleStatus.Start field time.Time"
-    ],
-    "cephfs.Subvolume": [
-      "Subvolume.FilesystemName field string",
-      "Subvolume.GroupName field string",
-      "Subvolume.Name field string",
-      "Subvolume.Path field string"
-    ],
-    "cephfs.SubvolumeAuthorization": [
-      "SubvolumeAuthorization.Access field string",
-      "SubvolumeAuthorization.AuthID field string",
-      "SubvolumeAuthorization.Client field *ceph.ClientConfig",
-      "SubvolumeAuthorization.DataPool field string",
-      "SubvolumeAuthorization.FilesystemName field string",
-      "SubvolumeAuthorization.GroupName field string",
-      "SubvolumeAuthorization.Path field string",
-      "SubvolumeAuthorization.PoolNamespace field string",
-      "SubvolumeAuthorization.SubvolumeName field string"
-    ],
-    "cephfs.SubvolumeAuthorizationConfig": [
-      "SubvolumeAuthorizationConfig.Access field string",
-      "SubvolumeAuthorizationConfig.ClientID field string"
-    ],
-    "cephfs.SubvolumeAuthorizedClient": [
-      "SubvolumeAuthorizedClient.Access field string",
-      "SubvolumeAuthorizedClient.AuthID field string"
-    ],
-    "cephfs.SubvolumeClone": [
-      "SubvolumeClone.FilesystemName field string",
-      "SubvolumeClone.GroupName field string",
-      "SubvolumeClone.Name field string"
-    ],
-    "cephfs.SubvolumeCloneStatus": [
-      "SubvolumeCloneStatus.FailureErrno field int",
-      "SubvolumeCloneStatus.FailureMessage field string",
-      "SubvolumeCloneStatus.Progress field map[string]string",
-      "SubvolumeCloneStatus.SourceFilesystem field string",
-      "SubvolumeCloneStatus.SourceGroup field string",
-      "SubvolumeCloneStatus.SourceSnapshot field string",
-      "SubvolumeCloneStatus.SourceSubvolume field string",
-      "SubvolumeCloneStatus.State field string"
-    ],
-    "cephfs.SubvolumeConfig": [
-      "SubvolumeConfig.DataPool field string",
-      "SubvolumeConfig.GroupName field string",
-      "SubvolumeConfig.Name field string",
-      "SubvolumeConfig.NamespaceIsolated field bool",
-      "SubvolumeConfig.SizeBytes field int64"
-    ],
-    "cephfs.SubvolumeGroup": [
-      "SubvolumeGroup.FilesystemName field string",
-      "SubvolumeGroup.Name field string",
-      "SubvolumeGroup.Path field string"
-    ],
-    "cephfs.SubvolumeGroupConfig": [
-      "SubvolumeGroupConfig.DataPool field string",
-      "SubvolumeGroupConfig.Name field string",
-      "SubvolumeGroupConfig.SizeBytes field int64"
-    ],
-    "cephfs.SubvolumeGroupInfo": [
-      "SubvolumeGroupInfo.BytesUsed field int64",
-      "SubvolumeGroupInfo.CreatedAt field string",
-      "SubvolumeGroupInfo.DataPool field string",
-      "SubvolumeGroupInfo.Name field string",
-      "SubvolumeGroupInfo.Path field string",
-      "SubvolumeGroupInfo.QuotaBytes field int64"
-    ],
-    "cephfs.SubvolumeInfo": [
-      "SubvolumeInfo.BytesUsed field int64",
-      "SubvolumeInfo.CreatedAt field string",
-      "SubvolumeInfo.DataPool field string",
-      "SubvolumeInfo.GroupName field string",
-      "SubvolumeInfo.Name field string",
-      "SubvolumeInfo.Path field string",
-      "SubvolumeInfo.PoolNamespace field string",
-      "SubvolumeInfo.QuotaBytes field int64",
-      "SubvolumeInfo.State field string",
-      "SubvolumeInfo.Type field string"
-    ],
-    "cephfs.SubvolumeSnapshot": [
-      "SubvolumeSnapshot.FilesystemName field string",
-      "SubvolumeSnapshot.GroupName field string",
-      "SubvolumeSnapshot.Name field string",
-      "SubvolumeSnapshot.Path field string",
-      "SubvolumeSnapshot.SubvolumeName field string"
-    ],
-    "cephfs.SubvolumeSnapshotInfo": [
-      "SubvolumeSnapshotInfo.CreatedAt field string",
-      "SubvolumeSnapshotInfo.DataPool field string",
-      "SubvolumeSnapshotInfo.GroupName field string",
-      "SubvolumeSnapshotInfo.HasPendingClones field bool",
-      "SubvolumeSnapshotInfo.Name field string",
-      "SubvolumeSnapshotInfo.OrphanClonesCount field int",
-      "SubvolumeSnapshotInfo.Path field string",
-      "SubvolumeSnapshotInfo.PendingClones field []SnapshotPendingClone",
-      "SubvolumeSnapshotInfo.SubvolumeName field string"
     ]
   }
 }

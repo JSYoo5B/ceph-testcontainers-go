@@ -1,90 +1,87 @@
-package cephfs
+package subvolume
 
 import (
+	"context"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
-func subvolumeFixture() (*Filesystem, *poolFixtureContainer) {
-	ctr := &poolFixtureContainer{Output: map[string]string{
-		"mgr module ls --format json":                                       `{"enabled_modules":["volumes"],"always_on_modules":[]}`,
-		"fs volume ls --format json":                                        `[{"name":"fixture"}]`,
-		"fs dump --format json":                                             `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":1,"metadata_pool":1,"data_pools":[2,3],"info":{}}}],"standbys":[]}`,
-		"osd pool ls detail --format json":                                  `[{"pool_id":1,"pool_name":"metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"data","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":3,"pool_name":"additional","type":1,"size":2,"min_size":1,"pg_num":8}]`,
-		"fs subvolumegroup info fixture group --format json":                `{"bytes_quota":65536,"bytes_used":0,"data_pool":"additional","created_at":"2026-10-03 00:00:00.123456"}`,
-		"fs subvolumegroup getpath fixture group":                           "/volumes/group\n",
-		"fs subvolume info fixture volume --group_name group --format json": `{"path":"/volumes/group/volume/unique-id","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"fsvolumens_group_volume","created_at":"2026-10-03 00:00:01.123456","state":"complete","type":"subvolume"}`,
-	}}
-	cluster := poolFixtureCluster(ctr, 2)
-	fs := newFilesystem(cluster, Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "additional"}}}, nil)
-	fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 41, MetadataPool: 1, DefaultPool: 2, Attachments: make(map[string]*fsbase.PoolAttachment)})
-	filesystems(cluster).byName = map[string]*Filesystem{"fixture": fs}
-	return fs, ctr
+// poolFixtureContainer is the canned CLI fake the cephfs tests share.
+type poolFixtureContainer = clustertest.CannedCommandContainer
+
+// subvolumeFixture returns the shared synthetic filesystem "fixture" with its
+// volumes module, group and subvolume output.
+func subvolumeFixture() (*fstest.Filesystem, *poolFixtureContainer) {
+	fs := fstest.NewFilesystem()
+	return fs, fs.Control
 }
 
+func assertAdmissionGate(t *testing.T, fs *fstest.Filesystem, gate string, operation func(context.Context) error) {
+	t.Helper()
+	fstest.AssertAdmissionGate(t, fs.Core.Cluster(), fs.SetupMu, gate, operation)
+}
+
+func assertAdmissionReleased(t *testing.T, fs *fstest.Filesystem) {
+	t.Helper()
+	fstest.AssertAdmissionReleased(t, fs.Core.Cluster(), fs.SetupMu)
+}
+
+func clientOwner(client *ceph.ClientConfig) *ceph.Container {
+	owner, _, _, _ := testhelper.TestClientState(client)
+	return owner
+}
+
+func clientCreated(client *ceph.ClientConfig) bool {
+	_, created, _, _ := testhelper.TestClientState(client)
+	return created
+}
+
+func clientReady(client *ceph.ClientConfig) bool {
+	_, _, ready, _ := testhelper.TestClientState(client)
+	return ready
+}
+
+func clientRevoked(client *ceph.ClientConfig) bool { return servicehook.ClientRevoked(client) }
+
 func TestCephFSSubvolumeValidationPreventsCommands(t *testing.T) {
-	for _, config := range []SubvolumeConfig{
+	for _, config := range []Config{
 		{}, {Name: "_nogroup"}, {Name: ".."}, {Name: "--option"}, {Name: "bad/path"},
 		{Name: "name", GroupName: "_nogroup"}, {Name: "name", SizeBytes: -1},
 		{Name: "name", DataPool: "--option"}, {Name: strings.Repeat("a", 129)},
 	} {
 		fs, ctr := subvolumeFixture()
-		if subvolume, err := fs.CreateSubvolume(t.Context(), config); err == nil || subvolume != nil || len(ctr.Calls) != 0 {
+		if subvolume, err := create(t.Context(), fs.Core, config); err == nil || subvolume != nil || len(ctr.Calls) != 0 {
 			t.Fatalf("invalid config executed commands: config=%+v handle=%+v error=%v calls=%v", config, subvolume, err, ctr.Calls)
 		}
 	}
 	fs, ctr := subvolumeFixture()
-	if _, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: -1}); err == nil || len(ctr.Calls) != 0 {
+	if _, err := createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: -1}); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("negative group quota reached native CLI")
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), true)
-	if _, err := fs.SubvolumeGroups(t.Context()); err == nil || len(ctr.Calls) != 0 {
+	testhelper.TestSetClosed(fs.Core.Cluster(), true)
+	if _, err := groupNames(t.Context(), fs.Core); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("terminated cluster accepted subvolume operation")
 	}
 }
 
-func TestCephFSSubvolumeValidationSnapshotsConcurrentConfigReplacement(t *testing.T) {
+// The validation reads no filesystem configuration: a data pool attached after
+// creation, which no configured name lists, passes it, and the native
+// membership check after the setup gate decides. It runs no command.
+func TestCephFSSubvolumeValidationReadsNoConfiguredPoolList(t *testing.T) {
 	fs, ctr := subvolumeFixture()
-	// The chosen pool exists in every complete configuration, alternating
-	// between default and additional placement. Reading separate fields from
-	// different revisions could reject it even though neither revision does.
-	first := Config{Name: "fixture", DataPool: ceph.PoolConfig{Name: "other"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "selected"}}, ActiveMDS: 1}
-	second := Config{Name: "fixture", DataPool: ceph.PoolConfig{Name: "selected"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "other"}}, ActiveMDS: 2}
-	servicehook.Lock(fs.base().Cluster())
-	fs.config = first
-	servicehook.Unlock(fs.base().Cluster())
-	var writer sync.WaitGroup
-	writer.Add(1)
-	start := make(chan struct{})
-	go func() {
-		defer writer.Done()
-		<-start
-		for i := range 20000 {
-			servicehook.Lock(fs.base().Cluster())
-			if i%2 == 0 {
-				fs.config = second
-			} else {
-				fs.config = first
-			}
-			servicehook.Unlock(fs.base().Cluster())
-		}
-	}()
-	close(start)
-	for range 20000 {
-		if err := fs.validateSubvolumeConfig("volume", "group", "selected", 1<<20); err != nil {
-			writer.Wait()
-			t.Fatalf("validation read an inconsistent configuration: %v", err)
-		}
+	if err := validateConfig(fs.Core, "volume", "group", "extra", 1<<20); err != nil {
+		t.Fatal("dynamic pool rejected by a static whitelist", err)
 	}
-	writer.Wait()
+	if err := validateConfig(nil, "volume", "group", "", 0); err == nil {
+		t.Fatal("an unavailable filesystem passed validation")
+	}
 	if len(ctr.Calls) != 0 {
 		t.Fatal("validation executed native commands")
 	}
@@ -95,12 +92,12 @@ func TestCephFSSubvolumeDuplicatePreflightPreservesResources(t *testing.T) {
 		fs, ctr := subvolumeFixture()
 		if group {
 			ctr.Output["fs subvolumegroup ls fixture --format json"] = `[{"name":"group"}]`
-			if handle, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: 1}); err == nil || handle != nil {
+			if handle, err := createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: 1}); err == nil || handle != nil {
 				t.Fatal("existing group accepted for native idempotent modification")
 			}
 		} else {
 			ctr.Output["fs subvolume ls fixture --group_name group --format json"] = `[{"name":"volume"}]`
-			if handle, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 1}); err == nil || handle != nil {
+			if handle, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 1}); err == nil || handle != nil {
 				t.Fatal("existing subvolume accepted for native idempotent modification")
 			}
 		}
@@ -114,12 +111,12 @@ func TestCephFSSubvolumeDuplicatePreflightPreservesResources(t *testing.T) {
 
 func TestCephFSSubvolumeCreationOwnershipAndPrivateIdentity(t *testing.T) {
 	fs, ctr := subvolumeFixture()
-	group, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: 65536, DataPool: "additional"})
-	if err != nil || group.Path != "/volumes/group" || !group.identity.ready {
+	group, err := createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: 65536, DataPool: "additional"})
+	if err != nil || group.Path != "/volumes/group" || !group.identity.Ready {
 		t.Fatalf("group creation failed: %+v error=%v", group, err)
 	}
-	subvolume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768, DataPool: "additional", NamespaceIsolated: true})
-	if err != nil || !subvolume.identity.ready || subvolume.Path != "/volumes/group/volume/unique-id" {
+	subvolume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768, DataPool: "additional", NamespaceIsolated: true})
+	if err != nil || !subvolume.identity.Ready || subvolume.Path != "/volumes/group/volume/unique-id" {
 		t.Fatalf("subvolume creation failed: %+v error=%v", subvolume, err)
 	}
 	want := []string{"fs", "subvolume", "create", "fixture", "volume", "--group_name", "group", "--size", "32768", "--pool_layout", "additional", "--namespace-isolated"}
@@ -143,7 +140,7 @@ func TestCephFSSubvolumeCreationOwnershipAndPrivateIdentity(t *testing.T) {
 func TestCephFSSubvolumeReplacedResourcesRefuseMutation(t *testing.T) {
 	for _, changed := range []string{"path", "birth-time", "filesystem-id"} {
 		fs, ctr := subvolumeFixture()
-		subvolume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+		subvolume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +163,7 @@ func TestCephFSSubvolumeReplacedResourcesRefuseMutation(t *testing.T) {
 		}
 	}
 	fs, ctr := subvolumeFixture()
-	group, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: 65536})
+	group, err := createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: 65536})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +176,8 @@ func TestCephFSSubvolumeReplacedResourcesRefuseMutation(t *testing.T) {
 func TestCephFSSubvolumePartialCreationAndSafeRetryableRemoval(t *testing.T) {
 	fs, ctr := subvolumeFixture()
 	ctr.Fail = "fs subvolume create fixture volume --group_name group --size 32768"
-	subvolume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
-	if err == nil || subvolume == nil || subvolume.identity.ready {
+	subvolume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	if err == nil || subvolume == nil || subvolume.identity.Ready {
 		t.Fatal("failed native create lost partial handle or marked it ready")
 	}
 	before := len(ctr.Calls)
@@ -188,12 +185,12 @@ func TestCephFSSubvolumePartialCreationAndSafeRetryableRemoval(t *testing.T) {
 		t.Fatal("unconfirmed resource was mutated")
 	}
 	ctr.Fail = ""
-	subvolume, err = fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	subvolume, err = create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctr.Fail = "fs subvolume rm fixture volume --group_name group"
-	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.removed {
+	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.Removed {
 		t.Fatal("failed native removal lost retry handle")
 	}
 	ctr.Fail = ""
@@ -219,7 +216,7 @@ func TestCephFSSubvolumePartialCreationAndSafeRetryableRemoval(t *testing.T) {
 
 func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *testing.T) {
 	fs, ctr := subvolumeFixture()
-	subvolume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	subvolume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +233,7 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 	if err := (&copyBefore).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !subvolume.identity.removed || !copyBefore.identity.removed {
+	if !subvolume.identity.Removed || !copyBefore.identity.Removed {
 		t.Fatal("copied descriptor does not share lifecycle")
 	}
 	for _, call := range ctr.Calls {
@@ -247,7 +244,7 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 	if err := subvolume.Resize(t.Context(), 65536); err == nil {
 		t.Fatal("removed original handle accepted quota mutation")
 	}
-	group, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: 65536})
+	group, err := createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: 65536})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,9 +257,9 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 	}
 }
 
-func TestCephFSSubvolumeSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T) {
+func TestCephFSSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T) {
 	fs, ctr := subvolumeFixture()
-	subvolume, err := fs.CreateSubvolume(t.Context(), SubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
+	subvolume, err := create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +275,7 @@ func TestCephFSSubvolumeSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T)
 	}
 	subvolume.identity.removalAttempted = true
 	ctr.Output["fs dump --format json"] = strings.ReplaceAll(ctr.Output["fs dump --format json"], `"id":41`, `"id":42`)
-	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.removed {
+	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.Removed {
 		t.Fatal("replacement FS listing falsely confirmed old removal")
 	}
 }
@@ -286,7 +283,7 @@ func TestCephFSSubvolumeSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T)
 func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing.T) {
 	fs, ctr := subvolumeFixture()
 	ctr.Output["mgr module ls --format json"] = `{"enabled_modules":[],"always_on_modules":["status"]}`
-	if _, err := fs.SubvolumeGroups(t.Context()); err != nil {
+	if _, err := groupNames(t.Context(), fs.Core); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.ContainsFunc(ctr.Calls, func(call []string) bool { return slices.Equal(call, []string{"mgr", "module", "enable", "volumes"}) }) {
@@ -294,7 +291,7 @@ func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing
 	}
 	ctr.Calls = nil
 	ctr.Fail = "mgr module enable volumes"
-	if _, err := fs.SubvolumeGroups(t.Context()); err == nil {
+	if _, err := groupNames(t.Context(), fs.Core); err == nil {
 		t.Fatal("MGR module failure was ignored")
 	}
 	for _, call := range ctr.Calls {
@@ -302,8 +299,8 @@ func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing
 			t.Fatal("volume operations ran without MGR module readiness")
 		}
 	}
-	testhelper.TestSetClosed(fs.base().Cluster(), true)
-	_, err := fs.SubvolumeGroups(t.Context())
+	testhelper.TestSetClosed(fs.Core.Cluster(), true)
+	_, err := groupNames(t.Context(), fs.Core)
 	if err == nil {
 		t.Fatal("closed filesystem accepted")
 	}

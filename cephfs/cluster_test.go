@@ -2,11 +2,12 @@ package cephfs
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -34,42 +35,15 @@ func assertContextLockQueued(t *testing.T, mutex *sync.Mutex, operation func(con
 	clustertest.AssertContextLockQueued(t, mutex, operation)
 }
 
-// assertSnapshotReadLockQueued holds mutex as a writer and checks that
-// operation waits for it, returns the caller's deadline and leaves the gate
-// to the writer.
-func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation func(context.Context) error) {
-	t.Helper()
-	mutex.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			mutex.Unlock()
-		}
-	}()
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- operation(ctx) }()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("queued snapshot lost caller deadline: %v", err)
-		}
-	case <-time.After(500 * time.Millisecond):
-		mutex.Unlock()
-		locked = false
-		select {
-		case _ = <-done:
-		case <-time.After(time.Second):
-		}
-		t.Fatal("snapshot remained queued after caller deadline")
-	}
-	if mutex.TryRLock() {
-		mutex.RUnlock()
-		t.Fatal("snapshot unlocked the busy writer gate")
-	}
-	mutex.Unlock()
-	locked = false
+// filesystemFixture returns the registered filesystem "fixture" of the shared
+// synthetic output, with its native identity captured.
+func filesystemFixture() (*Filesystem, *poolFixtureContainer) {
+	ctr := &poolFixtureContainer{Output: fstest.Output()}
+	cluster := poolFixtureCluster(ctr, 2)
+	fs := newFilesystem(cluster, Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "additional"}}}, nil)
+	fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 41, MetadataPool: 1, DefaultPool: 2, Attachments: make(map[string]*fsbase.PoolAttachment)})
+	filesystems(cluster).byName = map[string]*Filesystem{"fixture": fs}
+	return fs, ctr
 }
 
 // setServices replaces the service containers the cluster owns.
@@ -81,23 +55,6 @@ func setServices(c *ceph.Container, services map[string]testcontainers.Container
 		servicehook.SetService(c, name, ctr)
 	}
 }
-
-func clientOwner(client *ceph.ClientConfig) *ceph.Container {
-	owner, _, _, _ := testhelper.TestClientState(client)
-	return owner
-}
-
-func clientCreated(client *ceph.ClientConfig) bool {
-	_, created, _, _ := testhelper.TestClientState(client)
-	return created
-}
-
-func clientReady(client *ceph.ClientConfig) bool {
-	_, _, ready, _ := testhelper.TestClientState(client)
-	return ready
-}
-
-func clientRevoked(client *ceph.ClientConfig) bool { return servicehook.ClientRevoked(client) }
 
 // preparedFilesystems returns the filesystem configurations that prepared
 // service bootstraps would create.

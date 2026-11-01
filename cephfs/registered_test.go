@@ -68,7 +68,7 @@ func TestRegistryOwnershipIsReadOnlyThroughRegistered(t *testing.T) {
 }
 
 func TestRegisteredRefusesClosedAndReplacedFilesystems(t *testing.T) {
-	fs, _ := subvolumeFixture()
+	fs, _ := filesystemFixture()
 	if !fs.base().Registered() {
 		t.Fatal("a live filesystem is not registered")
 	}
