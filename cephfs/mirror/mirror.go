@@ -987,9 +987,11 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 //
 // Success means Ceph accepted the policy change; a sync in progress can still
 // finish. Use BeginDirectoryRemoval to prove that the daemons released the
-// directory. A pending tracked removal of the same path is retried instead. It
-// does not wait for an idle policy: wait until the other directories report
-// mapped first (see RebalanceDirectories).
+// directory. A pending tracked removal of the same path is retried instead.
+// The native remove is sent only once every directory that the native policy
+// tracks is mapped or stalled, which includes an earlier removed directory
+// having left the policy; a policy that stays busy for two minutes fails the
+// call before anything is sent. See RebalanceDirectories for why.
 //
 //purpose:condition,lifetime
 func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) error {
@@ -1022,6 +1024,9 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
+	if err := mirror.waitNativePolicyIdle(ctx); err != nil {
+		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
+	}
 	mirror.ops.supersedeDirectoryAddition(directory)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
@@ -1052,7 +1057,8 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 // with Ceph 20.2.4 and 19.2.5 fs snapshot mirror remove, ls, dirmap and show
 // distribution stop answering for the filesystem until the active MGR restarts
 // (ceph mgr fail). The fixture removes a path only while every tracked
-// directory is mapped (or stalled with no daemon running); it cannot fence a
+// directory is mapped (or stalled with no daemon running), here as in
+// RemoveDirectory and BeginDirectoryRemoval; it cannot fence a
 // daemon that joins, restarts or times out, or another client that changes
 // directories meanwhile. Failover from a dead daemon to a survivor works
 // without it.
@@ -1096,34 +1102,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	if mirror.pendingDirectoryRelease == nil {
 		mirror.pendingDirectoryRelease = make(map[string]bool)
 	}
-	list := func(ctx context.Context) ([]string, error) {
-		data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.SourceFilesystem)
-		if err != nil {
-			return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
-		}
-		var directories []string
-		if err := json.Unmarshal(data, &directories); err != nil || directories == nil {
-			return nil, errors.New("source did not return a CephFS mirror directory list")
-		}
-		return directories, nil
-	}
-	// state returns the state of directory in the native mirroring policy, such
-	// as "mapped" or "unmapping", or an error matching fs.ErrNotExist once the
-	// policy no longer tracks it.
-	state := func(ctx context.Context, directory string) (string, error) {
-		data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
-		if err != nil {
-			return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
-		}
-		var status struct {
-			State string `json:"state"`
-		}
-		if err := json.Unmarshal(data, &status); err != nil || status.State == "" {
-			return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-		}
-		return status.State, nil
-	}
-	return rebalanceCephFSMirrorDirectories(ctx, directories, list, state,
+	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.nativePolicyDirectories, mirror.nativePolicyState,
 		func(commandCtx context.Context, operation, directory string) error {
 			mirror.ops.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
@@ -1132,6 +1111,57 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 			}
 			return err
 		}, mirror.pendingDirectoryRelease, 500*time.Millisecond)
+}
+
+// nativePolicyDirectories lists the directories that the source filesystem's
+// native mirroring policy tracks.
+func (mirror *Mirror) nativePolicyDirectories(ctx context.Context) ([]string, error) {
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.SourceFilesystem)
+	if err != nil {
+		return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
+	}
+	var directories []string
+	if err := json.Unmarshal(data, &directories); err != nil || directories == nil {
+		return nil, errors.New("source did not return a CephFS mirror directory list")
+	}
+	return directories, nil
+}
+
+// nativePolicyState returns the state of directory in the native mirroring
+// policy, such as "mapped" or "unmapping", or an error matching
+// fs.ErrNotExist once the policy no longer tracks it. The null state that
+// v20.2.4 reports for a transient UNASSOCIATED directory is "unassociated".
+func (mirror *Mirror) nativePolicyState(ctx context.Context, directory string) (string, error) {
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+	if err != nil {
+		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
+	}
+	var status struct {
+		State json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil || len(status.State) == 0 {
+		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
+	}
+	if string(status.State) == "null" {
+		return "unassociated", nil
+	}
+	var state string
+	if err := json.Unmarshal(status.State, &state); err != nil || state == "" {
+		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
+	}
+	return state, nil
+}
+
+// waitNativePolicyIdle is the admission of a single native directory remove,
+// as rebalanceCephFSMirrorDirectories admits each of its own: it waits until
+// every directory that the native policy tracks is mapped or stalled. A
+// directory being acquired, released or shuffled has a daemon acknowledgement
+// on its way, and a directory removed earlier stays in the policy, unmapping,
+// until its own acknowledgement and mapping removal are done; a remove sent
+// meanwhile can deadlock the MGR's mirroring module. Mirror.mu is held.
+func (mirror *Mirror) waitNativePolicyIdle(ctx context.Context) error {
+	_, err := waitCephFSMirrorPolicyIdle(ctx, mirror.nativePolicyDirectories, mirror.nativePolicyState, 500*time.Millisecond)
+	return err
 }
 
 // The intent slice is deliberately unchanged throughout partial mutation. A

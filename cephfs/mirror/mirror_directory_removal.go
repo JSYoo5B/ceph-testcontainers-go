@@ -63,7 +63,9 @@ type DirectoryRemovalDaemonStatus struct {
 // On a retry after an uncertain reply a policy that is already gone is not
 // removed again; a policy still present is resent only after the original
 // assigned daemon and cohort are checked again, waiting while the assignment
-// moves and refusing if another daemon took over. While the removal is not
+// moves and refusing if another daemon took over. Like RemoveDirectory, the
+// native remove waits until every directory that the native policy tracks is
+// mapped or stalled. While the removal is not
 // Released, AddDirectory, AddDaemon, RebalanceDirectories, peer removal,
 // RebootstrapPeer and removal of other paths are refused. Released means the
 // policy is gone and every original daemon reports released in its original
@@ -320,6 +322,9 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	}
 	if err := r.confirmCohort(ctx, true); err != nil {
 		return err
+	}
+	if err := r.original.mirror.waitNativePolicyIdle(ctx); err != nil {
+		return cephFSObserveQuery("wait for an idle native CephFS mirror policy before removal", err)
 	}
 	if err := r.peerPolicy(ctx); err != nil {
 		return err
