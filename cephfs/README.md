@@ -3,11 +3,13 @@
 Import `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` to give an
 application that uses CephFS (libcephfs, go-ceph, the Python binding) a
 disposable cluster with the filesystem state its integration test needs:
-filesystems and their MDS topology, data pools, client session limits and
-snapshot schedules. Subvolume groups and subvolumes, snapshots and clones,
-principals restricted to one subvolume and directory pins are in
+filesystems, their MDS topology and data pools. The feature packages act on
+those filesystems: subvolume groups and subvolumes, snapshots and clones,
+principals restricted to one subvolume and directory pins in
 [`cephfs/subvolume`](subvolume/README.md), quiesce sets in
-[`cephfs/quiesce`](quiesce/README.md). File I/O belongs to the client under
+[`cephfs/quiesce`](quiesce/README.md), client sessions and their limits in
+[`cephfs/session`](session/README.md), snapshot schedules in
+[`cephfs/snapschedule`](snapschedule/README.md). File I/O belongs to the client under
 test; the package never mounts CephFS on the test host. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
@@ -23,8 +25,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `ceph.Run`, `rbd.Run` and `rgw.Run`), and `cephfs.Start` adds one to a
    running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
-   `ScaleMDS`, `AddDataPool`, `AddSnapshotSchedule`,
-   `OverrideSessionTimeouts`; in [`cephfs/subvolume`](subvolume/README.md)
+   `ScaleMDS`, `AddDataPool`; `snapschedule.Add`, `session.OverrideTimeouts`;
+   in [`cephfs/subvolume`](subvolume/README.md)
    `subvolume.CreateGroup` / `subvolume.Create` (quotas, data pools, RADOS
    namespaces), `Subvolume.CreateSnapshot` and `Snapshot.Clone`,
    `Subvolume.Authorize` (a principal for one subvolume) and
@@ -33,7 +35,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `cluster.WithClient()` (admin keyring) or `grant.Client.WithIdentity()` (one
    principal), and pass it `fs.FilesystemName` and the subvolume path.
 4. **Reproduce conditions and observe**: stop an MDS or `fault.Pause` a client,
-   `quiesce.Start`, then check `MDSStatus`, `WaitReady`, `Sessions`,
+   `quiesce.Start`, then check `MDSStatus`, `WaitReady`, `session.List`,
    `subvolume.Info`, `Clone.Status`, `DataPools` and the `ceph` observation
    APIs.
 5. **Clean up**: terminate the cluster; it removes owned filesystems,
@@ -80,7 +82,7 @@ if err != nil {
   race them with raw `ceph fs` edits on the same resources.
 - Clients: no kernel or FUSE mount. Clients are userspace libraries in Linux
   containers, or the test process with host networking on a Linux Docker host.
-  The fixture's own libcephfs probes appear briefly in `Sessions`.
+  The fixture's own libcephfs probes appear briefly in `session.List`.
 - MDS: names, keys, entrypoint and networking are fixed; each MDS has a
   128 MiB cache. Damaged-metadata recovery, multi-rank replacement and
   `MDS.AddReplacement` with standbys are not provided.
@@ -92,7 +94,7 @@ if err != nil {
   `session_timeout` (60 s) when another client wants its capabilities, otherwise
   after `session_autoclose` (300 s), and its address stays blocklisted for an
   hour; a mount against a silent MDS fails after `client_mount_timeout` (300 s).
-  Shorten what a test waits for with `OverrideSessionTimeouts` and client
+  Shorten what a test waits for with `session.OverrideTimeouts` and client
   options.
 
 ## Reference

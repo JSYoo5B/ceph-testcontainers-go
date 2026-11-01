@@ -181,3 +181,18 @@ func TestCephFSQuiesceValidationAndDecoder(t *testing.T) {
 		}
 	}
 }
+
+// A Set that Start did not return refuses every operation without a command.
+func TestSetWithoutAStartIsUnavailable(t *testing.T) {
+	for name, q := range map[string]*Set{"nil": nil, "zero": {}} {
+		if q.ID() != "" {
+			t.Errorf("%s: ID = %q", name, q.ID())
+		}
+		if _, err := q.Status(t.Context()); err == nil || err.Error() != "quiesce handle is unavailable" {
+			t.Errorf("%s: Status error = %v", name, err)
+		}
+		if err := q.Release(t.Context()); err == nil || err.Error() != "quiesce handle is unavailable" {
+			t.Errorf("%s: Release error = %v", name, err)
+		}
+	}
+}

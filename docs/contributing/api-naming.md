@@ -84,9 +84,13 @@ discussed.
    handle. Keep a domain word where the package covers multiple fault or
    service kinds; do not remove every repeated word mechanically.
 2. A reversible change of cluster-wide policy is an `override.SetX` function
-   (or a service package's `OverrideX` method) that saves the prior state and
-   returns a handle with an explicit `Restore`. It implies no expiry,
-   context-cancellation rollback or scope-exit cleanup.
+   that saves the prior state and returns a handle with an explicit
+   `Restore`. A reversible change of one service resource's policy is an
+   `OverrideX` method of that resource's handle
+   (`subvolume.Subvolume.OverridePin`), or, for a setting of a parent that a
+   feature package owns, an `OverrideX` function of that package taking the
+   parent handle (`session.OverrideTimeouts(ctx, fs, limits)`). Either form
+   implies no expiry, context-cancellation rollback or scope-exit cleanup.
    `override.SetFullRatios` is the established example.
 3. Use `AddX`, `StartX` or `ApplyX` when the operation owns a new resource or
    disruption rather than adopting arbitrary existing state. The returned

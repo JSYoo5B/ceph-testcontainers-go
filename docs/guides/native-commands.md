@@ -707,7 +707,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `auth` changes to identities created by `CreateClient`, or to daemon identities | `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, daemon restarts | `ClientConfig.UpdateCaps`, `ClientConfig.Delete` |
 | `mon add`/`mon remove`, editing `/etc/ceph/ceph.conf` in any container | MON membership and the `mon_host` bookkeeping | `AddMonitor`, `MonitorContainer.Remove`, `RefreshMonitorConfig` |
 | `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `Filesystem.Remove` | `ScaleMDS`, `Filesystem.Remove` |
-| `fs set session_timeout`/`session_autoclose` | `OverrideSessionTimeouts` | `OverrideSessionTimeouts` |
+| `fs set session_timeout`/`session_autoclose` | `session.OverrideTimeouts` | `session.OverrideTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | `cephfs/subvolume` handles, which check native identity | The `cephfs/subvolume` functions and handles |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `Gateway.ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
