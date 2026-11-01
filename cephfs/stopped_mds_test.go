@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -572,7 +573,7 @@ func TestStoppedMDSAllowsIndependentSiblingAndCurrentAttachments(t *testing.T) {
 	native.native["filesystems"] = append(native.native["filesystems"].([]any), map[string]any{"id": 8, "mdsmap": sibling})
 	native.native["standbys"] = []any{coldMDSTestRow("independent-standby", "up:standby", 91, -1, 8)}
 	before := coldMDSTestJSON(native.native)
-	if err := target.RemoveStopped(t.Context()); err != nil || old.removes != 1 || coldMDSTestJSON(native.native) != before || !slices.Equal(target.identity.scope.dataPools, []int64{1, 2}) || !slices.Equal(target.identity.scope.poolNames, []string{"target-data", "extra"}) {
+	if err := target.RemoveStopped(t.Context()); err != nil || old.removes != 1 || coldMDSTestJSON(native.native) != before || !slices.Equal(target.identity.scope.DataPools, []int64{1, 2}) || !slices.Equal(target.identity.scope.PoolNames, []string{"target-data", "extra"}) {
 		t.Fatalf("independent sibling/current attachment was destroyed or overconstrained: %v", err)
 	}
 	native.readsOnly(t)

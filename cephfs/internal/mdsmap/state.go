@@ -1,9 +1,8 @@
-package cephfs
+package mdsmap
 
-// cephFSMDSRowStateAccepted reports whether state is a daemon state the strict
-// native-map decoders accept in a daemon row: decodeColdMDSMap,
-// decodeStoppedMDSMap and decodeMDSReplacementMap. It is the single copy of the
-// list that each of them used to write out.
+// StateAccepted reports whether state is a daemon state the strict
+// native-map decoders accept in a daemon row: DecodeCold,
+// DecodeStopped and DecodeReplacement. It is the one copy of the list.
 //
 // The twelve names are the "up:" names of ceph_mds_state_name in the pinned
 // Ceph source (src/common/ceph_strings.cc) except up:oneshot-replay. The
@@ -14,7 +13,7 @@ package cephfs
 // differ between the decoders (which accepted states are then refused as
 // "boot", "standby" or "standby-replay" for a given position) stay in each
 // decoder.
-func cephFSMDSRowStateAccepted(state string) bool {
+func StateAccepted(state string) bool {
 	switch state {
 	case "up:boot", "up:standby", "up:standby-replay", "up:creating", "up:starting",
 		"up:replay", "up:resolve", "up:reconnect", "up:rejoin", "up:clientreplay",

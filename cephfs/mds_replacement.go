@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
@@ -18,7 +19,7 @@ type cephFSMDSReplacement struct {
 	name      string
 	daemon    *MDS
 	identity  *cephFSMDSIdentity
-	scope     *cephFSMDSRemovalScope
+	scope     *mdsmap.Scope
 	completed bool
 }
 
@@ -356,7 +357,7 @@ func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *ce
 // commands) and returns the decoded scope. The decoding itself is
 // decodeMDSReplacementMap, a function of its arguments. The cluster mutex is
 // held by its callers, as before the split.
-func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIdentity, r *cephFSMDSReplacement) (*cephFSMDSRemovalScope, bool, error) {
+func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIdentity, r *cephFSMDSReplacement) (*mdsmap.Scope, bool, error) {
 	pools, err := f.id.readNativePools(ctx)
 	if err != nil {
 		return nil, false, clusterutil.OperationError(ctx, "read original MDS replacement pools", err)
@@ -371,5 +372,5 @@ func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIde
 	if err != nil {
 		return nil, false, err
 	}
-	return state.scope, state.ready, ctx.Err()
+	return state.Scope, state.Ready, ctx.Err()
 }
