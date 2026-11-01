@@ -453,8 +453,12 @@ func CephFSDataPool(t *testing.T, ctx context.Context, m *CephFSSingleMDS, inode
 }
 
 // waitPoolFull observes, bounded, the current OSDMap until pool's "full"
-// flag is full, and returns that epoch.
-func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, pool int64, full bool) uint32 {
+// flag is full, and returns the first epoch after since from which every
+// epoch up to the observed one carries that flag value. The observed epoch
+// can be newer than the change: the MON publishes further epochs while the
+// OSDs report their fullness, and a client needs only the epoch that changed
+// the flag. With since 0 it returns the observed epoch.
+func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, pool int64, full bool, since uint32) uint32 {
 	t.Helper()
 	seen, err := Observe(ctx, 2*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (uint32, bool, error) {
 		dump, err := cephfsOSDMapAt(probeCtx, cluster, 0)
@@ -470,21 +474,63 @@ func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, po
 	if err != nil {
 		t.Fatalf("pool %d full=%t not observed (last e%d): %v", pool, full, seen.Value, err)
 	}
-	return seen.Value
+	first := seen.Value
+	for since != 0 && first-1 > since {
+		dump, err := cephfsOSDMapAt(ctx, cluster, first-1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if flagged, found := dump.poolFull(pool); !found || flagged != full {
+			break
+		}
+		first--
+	}
+	return first
+}
+
+// waitOSDsHold observes, bounded, every OSD's own newest map until each
+// holds target or a newer epoch. An OSD shares its maps with a client whose
+// operation carries an older epoch, but only up to the epoch it holds itself,
+// so a poke sent before the OSDs hold target can leave the client below it.
+func waitOSDsHold(t *testing.T, ctx context.Context, src MapEvidenceSources, target uint32) {
+	t.Helper()
+	seen, err := Observe(ctx, time.Minute, mapEvidenceCallBound, 500*time.Millisecond, func(probeCtx context.Context) (map[int]uint64, bool, error) {
+		held := map[int]uint64{}
+		for _, id := range src.OSDs {
+			out, err := src.OSDAdmin(probeCtx, id, "status")
+			if err != nil {
+				return held, false, nil
+			}
+			view := ParseOSDMapRange(out)
+			if view.NewestMap == nil {
+				return held, false, nil
+			}
+			held[id] = *view.NewestMap
+		}
+		for _, newest := range held {
+			if newest < uint64(target) {
+				return held, false, nil
+			}
+		}
+		return held, true, nil
+	})
+	if err != nil {
+		t.Fatalf("OSDs holding e%d not observed (newest maps %v): %v", target, seen.Value, err)
+	}
 }
 
 // RunCephFSOSDFullRetainedClient fills the OSDs of a live client's file
 // while the client keeps its mount and fd. Full ratios of 0.0001, 0.0002
 // and 0.0003, through override.SetFullRatios, make the OSDs report themselves
 // full, and the MON flags the file's data pool full in OSDMap epoch F. Once
-// the client holds epoch F (it reads a file that another client wrote, and
-// the OSD shares the map with it), its write returns ENOSPC (28) and its
-// file keeps the base size; fsync, mkdir and stat, which only need the MDS,
-// return 0. After Restore the MON clears the flag; once the client holds
-// that map (it reads a second such file), the same client, without
-// remounting, writes and fsyncs the tail with 0, a client in another
-// container reads every byte, and the client keeps its session and is not
-// blocklisted.
+// every OSD holds epoch F, the client reads a file that another client wrote
+// and the OSD shares the map with it; with F its write returns ENOSPC (28)
+// and its file keeps the base size; fsync, mkdir and stat, which only need
+// the MDS, return 0. After Restore the MON clears the flag in epoch D; once
+// every OSD holds D and the client holds it (it reads a second such file),
+// the same client, without remounting, writes and fsyncs the tail with 0, a
+// client in another container reads every byte, and the client keeps its
+// session and is not blocklisted.
 func RunCephFSOSDFullRetainedClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -506,7 +552,7 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 	// full ratios.
 	defer func() { t.Log(receipt.Line()) }()
 	mapSources := retainedMapSources(t, m.Cluster, m.Client, asok)
-	notFull := waitPoolFull(t, ctx, m.Cluster, pool, false)
+	notFull := waitPoolFull(t, ctx, m.Cluster, pool, false, 0)
 	receipt.NotFullEpoch = &notFull
 	receipt.Phase("pool-not-full")
 	writeCtx, stopWrite := context.WithTimeout(ctx, 2*time.Minute)
@@ -531,9 +577,11 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatal("apply full ratios:", err)
 	}
 	receipt.Phase("ratios-applied")
-	full := waitPoolFull(t, ctx, m.Cluster, pool, true)
+	full := waitPoolFull(t, ctx, m.Cluster, pool, true, notFull)
 	receipt.FullEpoch = &full
 	receipt.Phase("pool-full")
+	waitOSDsHold(t, ctx, mapSources, full)
+	receipt.Phase("osds-hold-full-map")
 	health, err := ObserveCluster(m.Cluster).HealthDetails(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -572,9 +620,11 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 		receipt.RestoreError = err.Error()
 		t.Fatal("restore full ratios:", err)
 	}
-	drained := waitPoolFull(t, ctx, m.Cluster, pool, false)
+	drained := waitPoolFull(t, ctx, m.Cluster, pool, false, full)
 	receipt.DrainedEpoch = &drained
 	receipt.Phase("pool-drained")
+	waitOSDsHold(t, ctx, mapSources, drained)
+	receipt.Phase("osds-hold-drained-map")
 	actor.Open(t, ctx, "repoke")
 	if poked := actor.Receipt(t, ctx, 4); poked.Full != hex.EncodeToString(probeBytes) {
 		t.Fatalf("repoke receipt = %+v", poked)
