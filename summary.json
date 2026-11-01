@@ -32331,8 +32331,8 @@
      }
     },
     "8f47c96c270b8d54": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -32360,16 +32360,16 @@
       "profile_id": "multicluster-rbd_mirror_path_fault-6c16eabb",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestRBDMirrorPeerPathCut": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestRBDMirrorPeerPathCut/bridge": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -32462,17 +32462,17 @@
    },
    "incomparable_rows": 0,
    "recent": {
-    "attempts": 9,
+    "attempts": 12,
     "failed": 0,
     "kinds": {
-     "passed": 9
+     "passed": 12
     },
-    "rows": 9
+    "rows": 12
    },
    "recent_messenger_attempts_by_status": {
-    "not_selected": 9
+    "not_selected": 12
    },
-   "rows": 9
+   "rows": 12
   },
   "multicluster-rgw_sync_fixtures_account-9c10ccea@19.2.5": {
    "configs": {
@@ -63067,8 +63067,8 @@
      }
     },
     "3b90ff932b6cf71a": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -63096,44 +63096,44 @@
       "profile_id": "recovery-container_pause-b288784c",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestMessengerFaultInjection": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerFaultInjection/host": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerFaultInjection/host/client-blackhole": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerFaultInjection/host/client-delay": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerFaultInjection/host/mds-client-blackhole": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestPausedOSDFaults": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestPausedOSDFaults/host": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestPausedOSDFaults/host/frozen_down": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestPausedOSDFaults/host/frozen_up": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -63647,7 +63647,7 @@
    "recent_messenger_attempts_by_status": {
     "not_selected": 20
    },
-   "rows": 76
+   "rows": 79
   },
   "recovery-ec_admission-422f15fb@19.2.5": {
    "configs": {
@@ -118086,8 +118086,8 @@
      }
     },
     "6ebf1498d505e9e7": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -118114,48 +118114,48 @@
       "profile_id": "short-client_auth-166fa706",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestClientKeyReplacement": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientKeyReplacement/aes": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientKeyReplacement/aes256k": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientKeyReplacement/three_MONs": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation/aes": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation/aes256k": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation/late_restore": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation/no_capabilities": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestClientRevocation/three_MONs": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -118468,7 +118468,7 @@
    "recent_messenger_attempts_by_status": {
     "not_selected": 20
    },
-   "rows": 76
+   "rows": 79
   },
   "short-cluster_fixtures-01b0969f-bridge@19.2.5": {
    "configs": {
@@ -138973,8 +138973,8 @@
   "short-messenger_policy-09c1080d@20.2.4": {
    "configs": {
     "3bd3e07012b9f9b0": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -139003,24 +139003,24 @@
       "profile_id": "short-messenger_policy-09c1080d",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestClientMessengerPolicyOverridesSecureOnly": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerPolicy": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerPolicyV2Only": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerV2OnlyCRC": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -139505,7 +139505,7 @@
    "recent_messenger_attempts_by_status": {
     "not_selected": 20
    },
-   "rows": 76
+   "rows": 79
   },
   "short-messenger_receipts-a7a05d0e@19.2.5": {
    "configs": {
@@ -162357,8 +162357,8 @@
      }
     },
     "a1666e743be05db6": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -162385,16 +162385,16 @@
       "profile_id": "short-rados_fixtures_watchers-52f45dc3",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestPausedObjectWatcher": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestPausedObjectWatcher/host": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -162579,7 +162579,7 @@
    "recent_messenger_attempts_by_status": {
     "not_selected": 20
    },
-   "rows": 76
+   "rows": 79
   },
   "short-rados_mutation_contracts-f835a8f7@19.2.5": {
    "configs": {
@@ -189023,8 +189023,8 @@
      }
     },
     "7f375916a76df577": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -189052,24 +189052,24 @@
       "profile_id": "short-rgw_notifications-86874b7e",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestRGWBucketNotifications": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestRGWBucketNotifications/bridge": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestRGWBucketNotifications/bridge/direct": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestRGWBucketNotifications/bridge/persistent": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -189178,17 +189178,17 @@
    },
    "incomparable_rows": 0,
    "recent": {
-    "attempts": 6,
+    "attempts": 9,
     "failed": 0,
     "kinds": {
-     "passed": 6
+     "passed": 9
     },
-    "rows": 6
+    "rows": 9
    },
    "recent_messenger_attempts_by_status": {
-    "not_selected": 6
+    "not_selected": 9
    },
-   "rows": 6
+   "rows": 9
   },
   "short-rgw_notifications-f977b08a-host@19.2.5": {
    "configs": {
@@ -213788,8 +213788,8 @@
      }
     },
     "b9305b693464513b": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
+     "attempts": 4,
+     "classification": "confirmed_pass",
      "excluded": {},
      "failed": 0,
      "first_failure": null,
@@ -213818,24 +213818,24 @@
       "profile_id": "topology-messenger_secure-ab6987e1",
       "release": "20.2.4"
      },
-     "last_run_id": "41282371778",
-     "passed": 1,
+     "last_run_id": "41301609953",
+     "passed": 4,
      "tests": {
       "TestMessengerV2SecureOnly": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerV2SecureOnly/host": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerV2SecureServices": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       },
       "TestMessengerV2SecureServices/host": {
        "failed": 0,
-       "ran": 1
+       "ran": 4
       }
      }
     },
@@ -214008,7 +214008,7 @@
    "recent_messenger_attempts_by_status": {
     "not_selected": 20
    },
-   "rows": 76
+   "rows": 79
   },
   "topology-mon_majority_loss-0b8eea6b@19.2.5": {
    "configs": {
@@ -245395,6 +245395,6 @@
    "rows": 10
   }
  },
- "rows": 13782,
+ "rows": 13803,
  "schema": "ceph-scenario-history/v1/classification"
 }
