@@ -1,6 +1,7 @@
 package cephfs
 
 import (
+	"context"
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -24,9 +25,9 @@ type mdsState struct {
 
 // newFilesystem returns the unregistered descriptor of the filesystem that
 // the validated config describes, bound to its own foundation core. The core
-// receives the registry's setup gate, the registry's liveness predicate and
-// the address of the exported FilesystemName, which only the
-// descriptor-integrity refusals read.
+// receives the registry's setup gate, the registry's liveness predicate, the
+// address of the exported FilesystemName, which only the descriptor-integrity
+// refusals read, and the reader of the owned active ranks.
 func newFilesystem(c *ceph.Container, config Config, opts []testcontainers.ContainerCustomizer) *Filesystem {
 	fs := &Filesystem{FilesystemName: config.Name, MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name, config: config, mds: mdsState{roster: newMDSRoster(opts)}}
 	for _, pool := range config.AdditionalDataPools {
@@ -35,9 +36,24 @@ func newFilesystem(c *ceph.Container, config Config, opts []testcontainers.Conta
 	fs.fsHandle = fsbase.NewHandle(fsbase.NewCore(fsbase.Params{
 		Cluster: c, Name: config.Name, DescriptorName: &fs.FilesystemName,
 		MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name,
-		SetupMu: setupGate(c), Live: ownsRegistryEntry,
+		SetupMu: setupGate(c), Live: ownsRegistryEntry, ActiveRanks: fs.activeRanks,
 	}))
 	return fs
+}
+
+// activeRanks is the rank reader of fs's core: MDSStatus, reduced to the
+// active ranks with the ownership of their daemons, which only the roster
+// knows.
+func (fs *Filesystem) activeRanks(ctx context.Context) (*fsbase.ActiveRanks, error) {
+	status, err := fs.MDSStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ranks := &fsbase.ActiveRanks{FilesystemID: status.FilesystemID, MaxMDS: status.MaxMDS}
+	for _, active := range status.Active {
+		ranks.Active = append(ranks.Active, fsbase.ActiveRank{Rank: active.Rank, State: active.State, Owned: active.Owned})
+	}
+	return ranks, nil
 }
 
 // setupGate returns the address of the cluster registry's setupMu; nil for a

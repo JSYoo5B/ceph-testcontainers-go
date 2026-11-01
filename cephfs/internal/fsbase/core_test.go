@@ -1,13 +1,17 @@
 package fsbase
 
 import (
+	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
@@ -93,7 +97,8 @@ func TestOfReturnsTheEmbeddedCoreAndRegisteredFollowsLiveness(t *testing.T) {
 // Registered, after the Closed test; the descriptor address is read only by
 // DescriptorIntact; the native identity is assigned only by
 // CaptureNativePools and the test mutator; the setup gate is used only by
-// Admit (see TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder).
+// Admit (see TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder) and by
+// WithSetupGate; the injected rank reader is called only by ActiveRanks.
 func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 	sites := map[string][]string{}
 	var registered *ast.FuncDecl
@@ -109,8 +114,8 @@ func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch node := n.(type) {
 				case *ast.CallExpr:
-					if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "live" {
-						sites["live"] = append(sites["live"], fn.Name.Name)
+					if sel, ok := node.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "live" || sel.Sel.Name == "activeRanks") {
+						sites[sel.Sel.Name] = append(sites[sel.Sel.Name], fn.Name.Name)
 					}
 				case *ast.SelectorExpr:
 					if node.Sel.Name == "descriptorName" || node.Sel.Name == "setupMu" {
@@ -135,7 +140,8 @@ func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 		"live":           {"Registered"},
 		"descriptorName": {"DescriptorIntact"},
 		"native":         {"CaptureNativePools", "ReplaceNative"},
-		"setupMu":        {"Admit"},
+		"setupMu":        {"Admit", "WithSetupGate"},
+		"activeRanks":    {"ActiveRanks"},
 	}
 	for key, list := range want {
 		if !slices.Equal(sites[key], list) {
@@ -217,5 +223,32 @@ func TestFoundationKeepsNoStateOfItsOwn(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWithSetupGateWaitsForTheGateAndActiveRanksNeedsAReader(t *testing.T) {
+	var gate sync.Mutex
+	core := NewCore(Params{SetupMu: &gate})
+	gate.Lock()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	ran := false
+	if err := core.WithSetupGate(ctx, func() { ran = true }); !errors.Is(err, context.DeadlineExceeded) || ran {
+		t.Fatalf("a held setup gate was not awaited: ran=%v err=%v", ran, err)
+	}
+	gate.Unlock()
+	if err := core.WithSetupGate(t.Context(), func() { ran = gate.TryLock() }); err != nil || ran {
+		t.Fatalf("the read did not run with the gate held: %v", err)
+	}
+	if !gate.TryLock() {
+		t.Fatal("WithSetupGate kept the gate")
+	}
+	gate.Unlock()
+	if _, err := core.ActiveRanks(t.Context()); err == nil {
+		t.Fatal("a core without a rank reader reported ranks")
+	}
+	var missing *Core
+	if _, err := missing.ActiveRanks(t.Context()); err == nil {
+		t.Fatal("a nil core reported ranks")
 	}
 }

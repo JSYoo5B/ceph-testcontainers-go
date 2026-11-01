@@ -1,6 +1,8 @@
 package fsbase
 
 import (
+	"context"
+	"errors"
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -28,6 +30,8 @@ type Core struct {
 	setupMu *sync.Mutex
 	// live is the registry's liveness predicate.
 	live func(*Core) bool
+	// activeRanks is the filesystem's owned-MDS rank reader.
+	activeRanks func(context.Context) (*ActiveRanks, error)
 	// native is written once by CaptureNativePools; see the package lock
 	// contract.
 	native *NativeIdentity
@@ -54,12 +58,33 @@ type Params struct {
 	// Live reports whether the registry still holds this Core under its name.
 	// It runs with the topology mutex held and takes no lock.
 	Live func(*Core) bool
+	// ActiveRanks reads the filesystem's active ranks with the ownership of
+	// their daemons, which only the MDS roster of package cephfs knows. It
+	// takes the cluster mutex itself, so the caller must not hold it.
+	ActiveRanks func(context.Context) (*ActiveRanks, error)
+}
+
+// ActiveRanks is the MDS topology of one filesystem as an export pin
+// admission reads it: the native FSMap ID, max_mds and the active ranks.
+type ActiveRanks struct {
+	FilesystemID int64
+	MaxMDS       int
+	Active       []ActiveRank
+}
+
+// ActiveRank is one active rank: its native state and whether a daemon of
+// this filesystem holds it.
+type ActiveRank struct {
+	Rank  int
+	State string
+	Owned bool
 }
 
 // NewCore returns the Core of one filesystem. It does not register it.
 func NewCore(p Params) *Core {
 	return &Core{cluster: p.Cluster, name: p.Name, descriptorName: p.DescriptorName,
-		metadataPool: p.MetadataPool, dataPool: p.DataPool, setupMu: p.SetupMu, live: p.Live}
+		metadataPool: p.MetadataPool, dataPool: p.DataPool, setupMu: p.SetupMu, live: p.Live,
+		activeRanks: p.ActiveRanks}
 }
 
 // Handle binds a descriptor to its Core. It has only unexported members, so
@@ -124,6 +149,15 @@ func (c *Core) Native() *NativeIdentity { return c.native }
 //
 //testdouble:test-mutator
 func (c *Core) ReplaceNative(native *NativeIdentity) { c.native = native }
+
+// ActiveRanks reads the active ranks through the reader package cephfs
+// injected. Its errors are passed through as is.
+func (c *Core) ActiveRanks(ctx context.Context) (*ActiveRanks, error) {
+	if c == nil || c.activeRanks == nil {
+		return nil, errors.New("cephfs cluster is unavailable")
+	}
+	return c.activeRanks(ctx)
+}
 
 // Volumes returns the command transport of the filesystem's volumes module.
 func (c *Core) Volumes() VolumeCommands {

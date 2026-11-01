@@ -5,9 +5,10 @@
 // transport of the MGR volumes module with the readers more than one feature
 // needs, and the native pool reads with the subvolume data-pool checks.
 //
-// Package cephfs owns the filesystem registry and constructs each Core with
-// NewCore, passing the registry's setup gate, its liveness predicate and the
-// address of the exported descriptor name. fsbase keeps no registry, no
+// Package cephfs owns the filesystem registry and the MDS roster and
+// constructs each Core with NewCore, passing the registry's setup gate, its
+// liveness predicate, the address of the exported descriptor name and the
+// reader of the owned active ranks. fsbase keeps no registry, no
 // global state and no mutex of its own. A Filesystem embeds a Handle, so
 // *cephfs.Filesystem satisfies Owner, and Of returns its Core; Handle has no
 // exported member, so nothing is promoted into the public API.
@@ -17,6 +18,9 @@
 // filesystem creation, removal, MDS topology changes and every admitted
 // operation; Admit takes both locks in that order, releases the topology
 // mutex before it returns and leaves the setup gate to the returned release.
+// WithSetupGate takes the setup gate alone for a short read of feature state
+// that it guards. ActiveRanks takes the topology mutex itself, so it runs with
+// the setup gate held or none, never with the topology mutex.
 // The cluster and the name are fixed at construction and need no lock. The
 // native identity is written once, by CaptureNativePools during creation with
 // the setup gate held and the topology mutex taken around the write, before

@@ -74,3 +74,17 @@ func (c *Core) Admit(ctx context.Context, spec AdmissionSpec) (context.Context, 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	return ctx, func() { cancel(); c.setupMu.Unlock() }, nil
 }
+
+// WithSetupGate runs read with the setup gate held, taking the gate through
+// ctx, and releases it before it returns. It takes no other lock: a read of
+// feature state that the setup gate guards, such as a restoration handle's
+// confirmed state, uses it to return early without an admission, so it also
+// works on a removed filesystem or a terminated cluster.
+func (c *Core) WithSetupGate(ctx context.Context, read func()) error {
+	if err := clusterutil.LockMutex(ctx, c.setupMu); err != nil {
+		return err
+	}
+	defer c.setupMu.Unlock()
+	read()
+	return nil
+}
