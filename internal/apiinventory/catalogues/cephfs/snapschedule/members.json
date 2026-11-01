@@ -1,0 +1,33 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/snapschedule",
+  "count": 19,
+  "types": {
+    "cephfs/snapschedule.Config": [
+      "Config.Path field string",
+      "Config.Repeat field string",
+      "Config.Retention field map[string]int",
+      "Config.Start field time.Time"
+    ],
+    "cephfs/snapschedule.Lease": [
+      "Lease.Path field string",
+      "Lease.Repeat field string",
+      "Lease.Retention field map[string]int",
+      "Lease.Start field time.Time"
+    ],
+    "cephfs/snapschedule.Status": [
+      "Status.Active field bool",
+      "Status.Added field time.Time",
+      "Status.Created field int",
+      "Status.First field time.Time",
+      "Status.Last field time.Time",
+      "Status.Path field string",
+      "Status.Pruned field int",
+      "Status.Raw field json.RawMessage",
+      "Status.Retention field map[string]int",
+      "Status.Schedule field string",
+      "Status.Start field time.Time"
+    ]
+  }
+}

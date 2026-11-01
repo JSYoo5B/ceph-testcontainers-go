@@ -1,4 +1,4 @@
-package cephfs
+package snapschedule
 
 import (
 	"context"
@@ -18,7 +18,9 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
 type fakeSchedule struct {
@@ -114,7 +116,7 @@ func (f *fakeSnapSchedule) apply(args []string) (int, string) {
 		}
 		f.clock = f.clock.Add(time.Second)
 		f.known[args[3]] = true
-		f.schedules = append(f.schedules, fakeSchedule{args[3], args[4], start, f.clock.Format(snapshotScheduleTime)})
+		f.schedules = append(f.schedules, fakeSchedule{args[3], args[4], start, f.clock.Format(nativeTime)})
 		return 0, "Schedule set for path " + args[3]
 	case strings.HasPrefix(command, "fs snap-schedule remove "):
 		before := len(f.schedules)
@@ -170,16 +172,19 @@ func (f *fakeSnapSchedule) state() string {
 	return strings.Join(parts, "; ")
 }
 
-func snapScheduleFilesystem(fake *fakeSnapSchedule) *Filesystem {
-	return newFilesystem(poolFixtureCluster(fake, 1), Config{Name: "tc"}, nil)
+// snapScheduleFilesystem returns the core of the filesystem "tc" over a
+// synthetic cluster whose control container is fake. Schedules take no
+// admission, so the core needs no registry state.
+func snapScheduleFilesystem(fake *fakeSnapSchedule) *fsbase.Core {
+	return fsbase.NewCore(fsbase.Params{Cluster: testhelper.TestCluster(fake, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 1}), Name: "tc"})
 }
 
-var leaseSchedule = SnapshotSchedule{Path: "/", Repeat: "2h", Start: time.Date(2030, 3, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"d": 1, "n": 2}}
+var leaseSchedule = Config{Path: "/", Repeat: "2h", Start: time.Date(2030, 3, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"d": 1, "n": 2}}
 
-func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
+func TestLeaseLifecycle(t *testing.T) {
 	fake := newFakeSnapSchedule()
 	fs := snapScheduleFilesystem(fake)
-	lease, err := fs.AddSnapshotSchedule(t.Context(), leaseSchedule)
+	lease, err := add(t.Context(), fs, leaseSchedule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +192,7 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 	if err != nil || status.Schedule != "2h" || !status.Start.Equal(leaseSchedule.Start) || !maps.Equal(status.Retention, leaseSchedule.Retention) {
 		t.Fatalf("status %+v, %v", status, err)
 	}
-	if again, err := fs.AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || again != nil {
+	if again, err := add(t.Context(), fs, Config{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || again != nil {
 		t.Fatalf("a second lease of the directory: %v", err)
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -199,7 +204,7 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	next, err := fs.AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"})
+	next, err := add(t.Context(), fs, Config{Path: "/", Repeat: "1h"})
 	if err != nil {
 		t.Fatalf("a lease after Restore: %v", err)
 	}
@@ -211,9 +216,9 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 // A schedule with the lease's path and repeat that another client added after
 // removing the lease's is not the lease's: Restore refuses it and stays
 // retryable.
-func TestSnapshotScheduleLeaseRefusesAReplacement(t *testing.T) {
+func TestLeaseRefusesAReplacement(t *testing.T) {
 	fake := newFakeSnapSchedule()
-	lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+	lease, err := add(t.Context(), snapScheduleFilesystem(fake), Config{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,24 +247,24 @@ func TestSnapshotScheduleLeaseRefusesAReplacement(t *testing.T) {
 
 // Restore continues from the directory's current state: retention rules that
 // are already gone, by another client or an earlier call, are skipped.
-func TestSnapshotScheduleLeaseResumesCleanup(t *testing.T) {
-	for name, interrupt := range map[string]func(*testing.T, *fakeSnapSchedule, *SnapshotScheduleLease){
-		"rule removed natively": func(t *testing.T, fake *fakeSnapSchedule, _ *SnapshotScheduleLease) {
+func TestLeaseResumesCleanup(t *testing.T) {
+	for name, interrupt := range map[string]func(*testing.T, *fakeSnapSchedule, *Lease){
+		"rule removed natively": func(t *testing.T, fake *fakeSnapSchedule, _ *Lease) {
 			fake.native(t, "fs snap-schedule retention remove / d 1")
 		},
-		"earlier Restore stopped at the schedule": func(t *testing.T, fake *fakeSnapSchedule, lease *SnapshotScheduleLease) {
+		"earlier Restore stopped at the schedule": func(t *testing.T, fake *fakeSnapSchedule, lease *Lease) {
 			fake.refused["fs snap-schedule remove"] = true
 			if err := lease.Restore(t.Context()); err == nil {
 				t.Fatal("the injected failure did not stop Restore")
 			}
 		},
-		"earlier Restore stopped at the second rule": func(t *testing.T, fake *fakeSnapSchedule, lease *SnapshotScheduleLease) {
+		"earlier Restore stopped at the second rule": func(t *testing.T, fake *fakeSnapSchedule, lease *Lease) {
 			fake.refused["fs snap-schedule retention remove / n"] = true
 			if err := lease.Restore(t.Context()); err == nil {
 				t.Fatal("the injected failure did not stop Restore")
 			}
 		},
-		"reply of the schedule removal lost": func(t *testing.T, fake *fakeSnapSchedule, lease *SnapshotScheduleLease) {
+		"reply of the schedule removal lost": func(t *testing.T, fake *fakeSnapSchedule, lease *Lease) {
 			fake.lost["fs snap-schedule remove"] = true
 			if err := lease.Restore(t.Context()); err == nil {
 				t.Fatal("the injected failure did not stop Restore")
@@ -268,7 +273,7 @@ func TestSnapshotScheduleLeaseResumesCleanup(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := newFakeSnapSchedule()
-			lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
+			lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +291,7 @@ func TestSnapshotScheduleLeaseResumesCleanup(t *testing.T) {
 // A lease returned with an error removes what the module lists of its
 // request: a schedule whose add reply was lost, and of its retention only
 // the rules that were set.
-func TestSnapshotScheduleLeaseAfterAFailedAdd(t *testing.T) {
+func TestLeaseAfterAFailedAdd(t *testing.T) {
 	for name, fault := range map[string]func(*fakeSnapSchedule){
 		"schedule add reply lost": func(f *fakeSnapSchedule) { f.lost["fs snap-schedule add"] = true },
 		"schedule add refused":    func(f *fakeSnapSchedule) { f.refused["fs snap-schedule add"] = true },
@@ -296,7 +301,7 @@ func TestSnapshotScheduleLeaseAfterAFailedAdd(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := newFakeSnapSchedule()
 			fault(fake)
-			lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
+			lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
 			if err == nil || lease == nil {
 				t.Fatalf("%v, %v", lease, err)
 			}
@@ -313,11 +318,11 @@ func TestSnapshotScheduleLeaseAfterAFailedAdd(t *testing.T) {
 // Retention belongs to the directory: a rule of the lease that another
 // schedule shares is refused, and a rule that outlived the lease's schedule
 // is still removed.
-func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
-	schedule := SnapshotSchedule{Path: "/", Repeat: "3h", Start: time.Date(2030, 4, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}}
+func TestLeaseDirectoryRetention(t *testing.T) {
+	schedule := Config{Path: "/", Repeat: "3h", Start: time.Date(2030, 4, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}}
 	t.Run("schedule of another repeat", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
+		lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +338,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	})
 	t.Run("schedule removed natively", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
+		lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -344,7 +349,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	})
 	t.Run("schedule removed, another one added", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
+		lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,7 +371,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				fake := newFakeSnapSchedule()
-				lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
+				lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -383,10 +388,10 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	})
 }
 
-func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
+func TestLeaseRefusals(t *testing.T) {
 	t.Run("changed rule", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
+		lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,7 +409,7 @@ func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
 		fake := newFakeSnapSchedule()
 		fake.native(t, "fs snap-schedule add / 6h")
 		before := fake.state()
-		if lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || fake.state() != before {
+		if lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || fake.state() != before {
 			t.Fatalf("%v, %v, %s", lease, err, fake.state())
 		}
 	})
@@ -413,7 +418,7 @@ func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
 		fake.native(t, "fs snap-schedule add / 6h")
 		fake.native(t, "fs snap-schedule retention add / n 3")
 		fake.native(t, "fs snap-schedule remove / 6h")
-		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
+		lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
 		if !errors.Is(err, ceph.ErrInvalidRequest) || lease == nil {
 			t.Fatalf("a directory with retention left: %v, %v", lease, err)
 		}

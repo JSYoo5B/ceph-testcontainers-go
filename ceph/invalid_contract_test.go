@@ -29,10 +29,10 @@ import (
 // the former cephfs package are now split across cephfs and the packages it
 // was decomposed into.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 35, "rgw": 60,
+	"rbd": 28, "cephfs": 23, "rgw": 60,
 	"cephfs/subvolume": 26, "cephfs/quiesce": 1, "cephfs/internal/fsbase": 1,
-	"cephfs/session": 2,
-	"rbd/mirror":     28, "cephfs/mirror": 15,
+	"cephfs/session": 2, "cephfs/snapschedule": 12,
+	"rbd/mirror": 28, "cephfs/mirror": 15,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare

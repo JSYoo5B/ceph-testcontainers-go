@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs",
-  "count": 54,
+  "count": 35,
   "types": {
     "cephfs.Config": [
       "Config.ActiveMDS field int",
@@ -54,31 +54,6 @@
       "MDSStatus.Owned field bool `json:\"owned\"`",
       "MDSStatus.Rank field int `json:\"rank\"`",
       "MDSStatus.State field string `json:\"state\"`"
-    ],
-    "cephfs.SnapshotSchedule": [
-      "SnapshotSchedule.Path field string",
-      "SnapshotSchedule.Repeat field string",
-      "SnapshotSchedule.Retention field map[string]int",
-      "SnapshotSchedule.Start field time.Time"
-    ],
-    "cephfs.SnapshotScheduleLease": [
-      "SnapshotScheduleLease.Path field string",
-      "SnapshotScheduleLease.Repeat field string",
-      "SnapshotScheduleLease.Retention field map[string]int",
-      "SnapshotScheduleLease.Start field time.Time"
-    ],
-    "cephfs.SnapshotScheduleStatus": [
-      "SnapshotScheduleStatus.Active field bool",
-      "SnapshotScheduleStatus.Added field time.Time",
-      "SnapshotScheduleStatus.Created field int",
-      "SnapshotScheduleStatus.First field time.Time",
-      "SnapshotScheduleStatus.Last field time.Time",
-      "SnapshotScheduleStatus.Path field string",
-      "SnapshotScheduleStatus.Pruned field int",
-      "SnapshotScheduleStatus.Raw field json.RawMessage",
-      "SnapshotScheduleStatus.Retention field map[string]int",
-      "SnapshotScheduleStatus.Schedule field string",
-      "SnapshotScheduleStatus.Start field time.Time"
     ]
   }
 }

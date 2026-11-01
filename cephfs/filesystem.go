@@ -100,9 +100,6 @@ type Filesystem struct {
 	config Config
 	// mds is the MDS state the fleet owns; see mdsState.
 	mds mdsState
-	// schedules holds the directories with a snapshot schedule lease that is
-	// not restored yet.
-	schedules scheduleLeases
 }
 
 // MDSStatus records a metadata daemon's current native FSMap identity. GID

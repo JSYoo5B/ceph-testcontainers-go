@@ -1,0 +1,57 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs/snapschedule",
+  "count": 7,
+  "entries": [
+    {
+      "current": "cephfs/snapschedule.Add",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem, schedule Config) (*Lease, error)",
+      "proposed": "cephfs/snapschedule.Add",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Config",
+      "kind": "type",
+      "proposed": "cephfs/snapschedule.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Lease",
+      "kind": "type",
+      "proposed": "cephfs/snapschedule.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Lease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Lease",
+      "proposed": "cephfs/snapschedule.Lease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Lease.Snapshots",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]string, error)",
+      "receiver": "*Lease",
+      "proposed": "cephfs/snapschedule.Lease.Snapshots",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Lease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Lease",
+      "proposed": "cephfs/snapschedule.Lease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Status",
+      "kind": "type",
+      "proposed": "cephfs/snapschedule.Status",
+      "decision": "baseline"
+    }
+  ]
+}

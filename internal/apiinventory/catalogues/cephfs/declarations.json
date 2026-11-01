@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 29,
+  "count": 22,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -48,14 +48,6 @@
       "signature": "func(ctx context.Context, name string) (*DataPool, error)",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.AddDataPool",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.AddSnapshotSchedule",
-      "kind": "method",
-      "signature": "func(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.AddSnapshotSchedule",
       "decision": "baseline"
     },
     {
@@ -152,48 +144,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
       "proposed": "cephfs.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotSchedule",
-      "kind": "type",
-      "proposed": "cephfs.SnapshotSchedule",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotScheduleLease",
-      "kind": "type",
-      "proposed": "cephfs.SnapshotScheduleLease",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotScheduleLease.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SnapshotScheduleLease",
-      "proposed": "cephfs.SnapshotScheduleLease.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotScheduleLease.Snapshots",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]string, error)",
-      "receiver": "*SnapshotScheduleLease",
-      "proposed": "cephfs.SnapshotScheduleLease.Snapshots",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotScheduleLease.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (SnapshotScheduleStatus, error)",
-      "receiver": "*SnapshotScheduleLease",
-      "proposed": "cephfs.SnapshotScheduleLease.Status",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SnapshotScheduleStatus",
-      "kind": "type",
-      "proposed": "cephfs.SnapshotScheduleStatus",
       "decision": "baseline"
     },
     {

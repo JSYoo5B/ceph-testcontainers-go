@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -55,11 +56,12 @@ func TestScaleMDSOwnershipUsesCreationIdentityNotEditedDescriptor(t *testing.T) 
 }
 
 // F5: ScaleMDS replaces the whole config struct under the cluster mutex while
-// the snapshot-schedule methods run without either lock. They read the
-// immutable name, so overlapping them is race free. Run it with -race: before
-// the name was separated, the unlocked read of config.Name was a data race.
+// the feature packages (cephfs/snapschedule, which takes no lock) read the
+// filesystem through its core: the immutable name and the command transport.
+// Overlapping them is race free. Run it with -race: before the name was
+// separated, the unlocked read of config.Name was a data race.
 func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
-	fs := snapScheduleFilesystem(newFakeSnapSchedule())
+	fs, _ := filesystemFixture()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -75,8 +77,8 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			if _, err := snapshotScheduleStatuses(t.Context(), fs.base().Volumes(), "/"); err != nil {
-				t.Errorf("status read failed: %v", err)
+			if v := fsbase.Of(fs).Volumes(); v.Name() != "fixture" || v.Cluster() == nil {
+				t.Errorf("the command transport changed: %q", v.Name())
 				return
 			}
 		}
