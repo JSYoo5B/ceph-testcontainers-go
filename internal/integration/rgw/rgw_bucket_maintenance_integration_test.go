@@ -100,7 +100,7 @@ func TestRGWBucketMaintenance(t *testing.T) {
 			}
 			payload := bytes.Repeat([]byte("bucket maintenance durable bytes\n"), 2048)
 			client.Request(t, ctx, http.MethodPut, "/"+limited+"/kept", payload, http.StatusOK)
-			admin("user", "stats", "--uid", user.ID(), "--sync-stats")
+			harness.RGWSyncStats(t, ctx, cluster, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
 			deadline := time.Now().Add(2 * time.Minute)
 			for {
 				code, body, _ := harness.RGWMaintenanceRequest(t, ctx, client, http.MethodPut, "/"+limited+"/rejected", []byte("over quota"))

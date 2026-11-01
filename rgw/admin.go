@@ -162,11 +162,14 @@ type UserInfo struct {
 // and name variants, --conf/-c, --keyring/-k, --name/-n, --id, --mon-host/-m,
 // --cluster and similar flags.
 //
-// The call is bounded by ctx and by the cluster's startup timeout, and no
-// radosgw-admin outlives it: a small sh supervisor in the gateway container
-// stops the command with SIGTERM, then SIGKILL after 2 s, 15 s before the bound
-// (at half the bound for a short one; ceph.ErrNativeFailure, "radosgw-admin
-// still ran after Ns and was stopped"), when ctx ends first (Admin then stops
+// The call is bounded by ctx alone, like Container.Ceph: the cluster's startup
+// timeout bounds bootstrap, readiness and the typed operations, not a native
+// command whose duration the caller chooses, so give ctx the deadline the
+// command needs. No radosgw-admin outlives the call: a small sh supervisor in
+// the gateway container stops the command with SIGTERM, then SIGKILL after
+// 2 s, 15 s before ctx's deadline (at half the remaining time for a short one;
+// ceph.ErrNativeFailure, "radosgw-admin still ran after Ns and was stopped"),
+// when ctx ends first (Admin then stops
 // it under its own budget of about 10 s and returns ctx's error only after the
 // command is gone; a call that ends before Docker started the command makes
 // sure it never starts), or when the cluster's Terminate starts. When Admin
@@ -193,13 +196,12 @@ func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := adminContext(ctx, g.owner)
-	defer cancel()
 	return g.adminCommand(ctx, args...)
 }
 
-// adminContext bounds an admin operation by the cluster's startup timeout. A
-// handle calls it before it has resolved a gateway, so it takes the owner.
+// adminContext bounds a typed admin operation by the cluster's startup
+// timeout. A handle calls it before it has resolved a gateway, so it takes the
+// owner. Admin does not: its caller's ctx is the native command's budget.
 func adminContext(ctx context.Context, owner *ceph.Container) (context.Context, context.CancelFunc) {
 	if servicehook.StartupTimeout(owner) > 0 {
 		return context.WithTimeout(ctx, servicehook.StartupTimeout(owner))

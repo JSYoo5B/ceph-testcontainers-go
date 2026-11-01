@@ -34,8 +34,10 @@ cluster's startup timeout, 3 minutes by default. Change it with
 context deadline applies to each operation. This covers, for example,
 bootstrap, `AddOSD`, `OSDContainer.Remove`, `WaitForClean`, `WaitForPGClean`,
 `WaitForQuorum`, `Pool.WaitForPGCount`, `DeepScrubPG`, `RepairPG`,
-`cephfs.Filesystem.WaitReady`, `subvolume.Clone.Wait` and
-`rgw.Gateway.Admin`.
+`cephfs.Filesystem.WaitReady`, `subvolume.Clone.Wait` and the typed RGW
+user, account and placement helpers. Native escape hatches whose duration you
+choose, such as `Container.Ceph`, `rgw.Gateway.Admin` and
+`multisite.Fixture.ZoneAdmin`, are bounded by your context alone.
 
 Some operations have their own fixed upper bound, which your context can only
 shorten:
