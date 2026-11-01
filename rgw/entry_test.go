@@ -82,7 +82,7 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 	operations := map[string]func(context.Context, *ceph.Container) error{
 		"Remove": func(ctx context.Context, c *ceph.Container) error {
-			return (&Gateway{GatewayName: "queued", owner: c}).Remove(ctx)
+			return testGateway(c, nil, Config{Name: "queued"}).Remove(ctx)
 		},
 		"StartBridge": func(ctx context.Context, c *ceph.Container) error {
 			_, err := Start(ctx, c, Config{Name: "queued"})

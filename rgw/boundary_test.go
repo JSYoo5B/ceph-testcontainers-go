@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// TestPackageDoesNotImportMultisite keeps the dependency one way: package
-// rgw/multisite imports rgw, never the reverse. The check covers production
-// and test sources of this package.
-func TestPackageDoesNotImportMultisite(t *testing.T) {
+// TestPackageDoesNotImportItsFeaturePackages keeps the dependency one way:
+// packages rgw/account, rgw/placement and rgw/multisite import rgw, never the
+// reverse. The check covers production and test sources of this package.
+func TestPackageDoesNotImportItsFeaturePackages(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("list sources: %v", err)
@@ -32,8 +32,10 @@ func TestPackageDoesNotImportMultisite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.HasSuffix(imported, "/rgw/multisite") {
-				t.Errorf("%s imports %s; rgw must not import its child package", path, imported)
+			for _, feature := range []string{"/rgw/account", "/rgw/placement", "/rgw/multisite"} {
+				if strings.HasSuffix(imported, feature) {
+					t.Errorf("%s imports %s; rgw must not import its feature package", path, imported)
+				}
 			}
 		}
 	}

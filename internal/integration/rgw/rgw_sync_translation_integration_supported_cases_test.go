@@ -12,6 +12,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 )
 
 func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
@@ -38,7 +39,7 @@ func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "tag-ia")
-		pipe := multisite.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multisite.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
+		pipe := multisite.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multisite.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*placement.Placement{"destination": secondaryPlacement}}
 		if err := selected.CreatePipe(ctx, pipe); err != nil {
 			t.Fatal(err)
 		}

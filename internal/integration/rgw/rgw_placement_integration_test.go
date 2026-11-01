@@ -20,6 +20,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -93,19 +94,19 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 			t.Log(line)
 		}
 	})
-	config := rgw.PlacementConfig{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}
-	sourcePlacement, err := fixture.Source.CreatePlacement(ctx, config)
+	config := placement.Config{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []placement.StorageClass{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}
+	sourcePlacement, err := placement.Create(ctx, fixture.Source, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationPlacement, err := fixture.Destination.CreatePlacement(ctx, config)
+	destinationPlacement, err := placement.Create(ctx, fixture.Destination, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sourcePlacement.RealmID == "" || sourcePlacement.RealmID != destinationPlacement.RealmID || sourcePlacement.ZonegroupID != destinationPlacement.ZonegroupID || sourcePlacement.ZoneID == destinationPlacement.ZoneID {
 		t.Fatal("multisite placement scopes are not exact native identities")
 	}
-	if err := fixture.Destination.ApplyPlacement(ctx, destinationPlacement); err == nil {
+	if err := destinationPlacement.Apply(ctx, fixture.Destination); err == nil {
 		t.Fatal("secondary zone published a realm placement")
 	}
 	// Native period update can stage a change without publishing it. Restore
@@ -132,7 +133,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.Source.ApplyPlacement(ctx, sourcePlacement); err == nil || !strings.Contains(err.Error(), "existing staging period") {
+	if err := sourcePlacement.Apply(ctx, fixture.Source); err == nil || !strings.Contains(err.Error(), "existing staging period") {
 		t.Fatalf("unrelated staged policy was not refused before overwrite: %v", err)
 	}
 	stagedAfter, err := fixture.Source.Admin(ctx, stagingArgs...)
@@ -150,18 +151,18 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	checkpoint := func(label string) {
 		t.Log(timeline.Gateways(ctx, label, rgwPlacementReplicaBounds.Inspect, gateways, []string{"source", "destination"}))
 	}
-	if err := fixture.Source.ApplyPlacement(ctx, sourcePlacement); err != nil {
+	if err := sourcePlacement.Apply(ctx, fixture.Source); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint("after source ApplyPlacement")
+	checkpoint("after source Apply")
 	if err := fixture.PullDestinationPeriod(ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint("after PullDestinationPeriod")
-	if err := fixture.Destination.ReloadPlacement(ctx, destinationPlacement); err != nil {
+	if err := destinationPlacement.Reload(ctx, fixture.Destination); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint("after destination ReloadPlacement")
+	checkpoint("after destination Reload")
 	for _, option := range []string{"rgw_sync_lease_period", "rgw_meta_sync_poll_interval", "rgw_data_sync_poll_interval"} {
 		value, err := clusters[1].Ceph(ctx, "config", "get", "client.admin", option)
 		if err != nil {
@@ -194,7 +195,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	}
 	rgwPlacementPoolPayload(t, ctx, clusters[1], "tc-realm-ia", "replicated STANDARD_IA", payload)
 	for _, gateway := range []*rgw.Gateway{fixture.Source, fixture.Destination} {
-		state, err := (map[*rgw.Gateway]*rgw.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway]).Status(ctx)
+		state, err := (map[*rgw.Gateway]*placement.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway]).Status(ctx)
 		if err != nil || state.DefaultPlacement != "default-placement" {
 			t.Fatal("realm publication changed native default or lost zone-local mapping")
 		}

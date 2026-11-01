@@ -5,7 +5,9 @@ multisite realm across independent disposable clusters, so that a test can
 check how its S3 application behaves with replication: objects written in one
 zone appearing in another, a zone outage, a planned metadata master failover,
 selective sync with sync policies. Ordinary gateway use (users, tenants,
-quotas, placement) stays in [`rgw`](../README.md). See
+quotas) stays in [`rgw`](../README.md), accounts in
+[`rgw/account`](../account/README.md) and placement in
+[`rgw/placement`](../placement/README.md). See
 [API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
 ## Order of use
@@ -69,7 +71,7 @@ if err != nil {
   any gateway restart.
 - To test a zone outage, stop one gateway, keep working through the other,
   start it again and wait with `WaitSyncReady`.
-- A gateway restart in one zone, including `rgw.Gateway.ReloadPlacement` and a
+- A gateway restart in one zone, including `placement.Placement.Reload` and a
   stopped zone, interrupts the other zones' data sync with it. On Tentacle
   20.2.4 the peer gateway's data-sync thread has intermittently crashed with
   SIGSEGV (exit 139, not OOM) about one sync backoff after such an outage. This

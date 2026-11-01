@@ -82,8 +82,8 @@ one to finish regardless of `ctx`, then apply `ctx` to their native work.
 Examples are `override.SetOSDFlag`, `override.SetMGRModule`,
 `override.AddBlocklist` and their `Restore` methods, `ConfigHandle.Restore`,
 `Pool.SetQuota`,
-`Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
-and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
+`Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user helpers,
+the `rgw/account` and `rgw/placement` helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
 for example removing temporary keyring files. So a deadline bounds how long
 native work runs, but does not guarantee that every call returns before the
 deadline while another operation holds the cluster.

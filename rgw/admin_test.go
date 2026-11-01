@@ -9,13 +9,14 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -48,14 +49,14 @@ func (ctr *rgwAdminTestContainer) State(context.Context) (*container.State, erro
 }
 
 func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if rgwAdminCancel(args) {
+	if gwtest.IsCancel(args) {
 		return 0, nil, nil
 	}
 	original := args
 	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
 		ctr.limits = append(ctr.limits, args[5])
 	}
-	args = rgwAdminArgv(args)
+	args = gwtest.Argv(args)
 	ctr.calls = append(ctr.calls, slices.Clone(args))
 	if len(ctr.responses) == 0 {
 		return 1, nil, errors.New("unexpected radosgw-admin invocation")
@@ -74,7 +75,7 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(response.data)
-	return rgwAdminReply(original, response.code, &stream)
+	return gwtest.Reply(original, response.code, &stream)
 }
 
 func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gateway, *rgwAdminTestContainer) {
@@ -83,26 +84,7 @@ func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gate
 	}
 	ctr := &rgwAdminTestContainer{id: "gateway", responses: responses}
 	owner := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
-	return registerTestGateway(&Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}), ctr
-}
-
-// registerTestGateway records g in its cluster's gateway registry, where the
-// user, account and placement handles find the gateway they run through.
-func registerTestGateway(g *Gateway) *Gateway {
-	gateways(g.owner).byName[g.config.Name] = g
-	return g
-}
-
-func rgwAdminFixture(id, secret string, suspended bool, quota Quota) string {
-	suspendedInt := 0
-	if suspended {
-		suspendedInt = 1
-	}
-	return fmt.Sprintf(`{"user_id":%q,"type":"rgw","display_name":"Testcontainers","email":"test@example.org","suspended":%d,"admin":false,"system":false,"max_buckets":1000,"caps":[],"keys":[{"access_key":"PRIVATE-ACCESS","secret_key":%q}],"user_quota":{"enabled":%t,"max_size":%d,"max_objects":%d},"bucket_quota":{"enabled":false,"max_size":-1,"max_objects":-1}}`, id, suspendedInt, secret, quota.Enabled, quota.MaxSizeBytes, quota.MaxObjects)
-}
-
-func rgwAdminOwnedTestUser(gateway *Gateway) *User {
-	return &User{owner: gateway.owner, scope: gateway.config, id: "test-user", accessKey: "PRIVATE-ACCESS", secretKey: "PRIVATE-SECRET", state: &rgwUserState{created: true, identity: &rgwUserCreationIdentity{originalType: "rgw"}}}
+	return registerTestGateway(testGateway(owner, ctr, config)), ctr
 }
 
 func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
@@ -150,7 +132,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	gateway, ctr = newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `[]`}, rgwAdminResponse{data: native}, rgwAdminResponse{data: "PRIVATE-SECRET cap failure", code: 1})
 	user, err := gateway.CreateUser(t.Context(), UserConfig{ID: "test-user", AdminCaps: "users=read;usage=read"})
-	if err == nil || user == nil || !user.state.created || strings.Contains(err.Error(), "PRIVATE") {
+	if err == nil || user == nil || !user.base().State.Created || strings.Contains(err.Error(), "PRIVATE") {
 		t.Fatal("caps failure lost the created owned user or exposed credentials")
 	}
 	key, secret, err := user.Credentials()
@@ -168,7 +150,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 		}
 	}
 	ctr.responses = []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}}
-	if err := user.Remove(t.Context()); err != nil || !user.state.removed {
+	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("capability setup failure prevented removing a confirmed owned identity")
 	}
 }
@@ -184,7 +166,7 @@ func TestRGWCreationWithoutConfirmedKeysCannotAdoptNativeIdentity(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `[]`}, rgwAdminResponse{data: test.output}, rgwAdminResponse{data: native})
 			user, err := gateway.CreateUser(t.Context(), UserConfig{ID: "test-user"})
-			if err == nil || user == nil || !user.state.created || strings.Contains(err.Error(), "PRIVATE") {
+			if err == nil || user == nil || !user.base().State.Created || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatal("unconfirmed successful native creation lost its partial handle or exposed keys")
 			}
 			if access, secret, err := user.Credentials(); err == nil || access != "" || secret != "" {
@@ -207,28 +189,29 @@ func TestRGWOwnedUserGuardsClusterScopeAndReplacedKeys(t *testing.T) {
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	gateway, ctr := newRGWAdminTestGateway(Config{Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
 	user := rgwAdminOwnedTestUser(gateway)
-	foreign := *user
-	foreign.owner = testCluster(nil, testhelper.TestConfig{}, nil)
-	if err := (&foreign).Suspend(t.Context(), true); err == nil || len(ctr.calls) != 0 {
+	foreign := editedUser(user, func(u *gwbase.User) {
+		u.Origin = testOrigin(testCluster(nil, testhelper.TestConfig{}, nil), Config{Realm: "a", Zonegroup: "b", Zone: "c"})
+	})
+	if err := foreign.Suspend(t.Context(), true); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("a handle whose cluster has no gateway reached native mutation")
 	}
-	foreign = *user
-	foreign.scope.Zone = "other"
-	if err := (&foreign).SetQuota(t.Context(), Quota{}); err == nil || len(ctr.calls) != 0 {
+	foreign = editedUser(user, func(u *gwbase.User) {
+		u.Origin = testOrigin(gateway.base().Cluster(), Config{Realm: "a", Zonegroup: "b", Zone: "other"})
+	})
+	if err := foreign.SetQuota(t.Context(), Quota{}); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("a handle whose scope has no gateway reached native mutation")
 	}
-	foreign = *user
-	foreign.secretKey = "REPLACED"
-	if err := (&foreign).Suspend(t.Context(), true); err == nil || len(ctr.calls) != 1 {
+	foreign = editedUser(user, func(u *gwbase.User) { u.SecretKey = "REPLACED" })
+	if err := foreign.Suspend(t.Context(), true); err == nil || len(ctr.calls) != 1 {
 		t.Fatal("replaced native credentials allowed a user mutation")
 	}
 
 	// Ownership belongs to the Ceph scope: once the creating gateway is
 	// removed, the handle runs through a replacement in the same scope.
 	replacement := &rgwAdminTestContainer{id: "replacement", responses: []rgwAdminResponse{{data: native}}}
-	servicehook.SetService(gateway.owner, "rgw:replacement", replacement)
-	delete(gateways(gateway.owner).byName, gateway.config.Name)
-	registerTestGateway(&Gateway{Container: replacement, owner: gateway.owner, config: Config{Name: "replacement", Realm: "a", Zonegroup: "b", Zone: "c"}})
+	servicehook.SetService(gateway.base().Cluster(), "rgw:replacement", replacement)
+	delete(gateways(gateway.base().Cluster()).byName, gateway.config.Name)
+	registerTestGateway(testGateway(gateway.base().Cluster(), replacement, Config{Name: "replacement", Realm: "a", Zonegroup: "b", Zone: "c"}))
 	if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() || len(replacement.calls) != 1 {
 		t.Fatal("same-scope replacement gateway could not use an owned identity")
 	}
@@ -253,8 +236,8 @@ func TestRGWHandleSkipsUnexecutableGatewaysInItsScope(t *testing.T) {
 			first, firstCtr := newRGWAdminTestGateway(Config{Name: "a-first", Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
 			tc.set(firstCtr)
 			second := &rgwAdminTestContainer{id: "second", responses: []rgwAdminResponse{{data: native}}}
-			servicehook.SetService(first.owner, rgwServiceName(Config{Name: "b-second"}), second)
-			registerTestGateway(&Gateway{Container: second, owner: first.owner, config: Config{Name: "b-second", Realm: scope.Realm, Zonegroup: scope.Zonegroup, Zone: scope.Zone}})
+			servicehook.SetService(first.base().Cluster(), rgwServiceName(Config{Name: "b-second"}), second)
+			registerTestGateway(testGateway(first.base().Cluster(), second, Config{Name: "b-second", Realm: scope.Realm, Zonegroup: scope.Zonegroup, Zone: scope.Zone}))
 			user := rgwAdminOwnedTestUser(first)
 			if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() {
 				t.Fatalf("the executable same-scope gateway did not serve the handle: %v", err)
@@ -307,13 +290,13 @@ func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{data: "user still owns buckets PRIVATE-SECRET", code: 1}, rgwAdminResponse{data: `["test-user"]`},
 		rgwAdminResponse{data: native}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{})
 	user := rgwAdminOwnedTestUser(gateway)
-	if err := user.Remove(t.Context()); err == nil || user.state.removed {
+	if err := user.Remove(t.Context()); err == nil || user.base().State.Removed {
 		t.Fatal("failed user removal lost its handle")
 	}
 	if _, err := user.Info(t.Context()); err != nil {
 		t.Fatal("failed removal prevented further native inspection")
 	}
-	if err := user.Remove(t.Context()); err != nil || !user.state.removed {
+	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("empty owned user could not be removed")
 	}
 	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 8 {
@@ -332,7 +315,7 @@ func TestRGWRemovalHandlesLostReplyAndSharedHandleCopies(t *testing.T) {
 		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{err: errors.New("reply lost after native removal")}, rgwAdminResponse{data: `[]`})
 	user := rgwAdminOwnedTestUser(gateway)
 	copy := *user
-	if err := (&copy).Remove(t.Context()); err != nil || !user.state.removed {
+	if err := (&copy).Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("native removal with lost reply did not reconcile absence across handle copies")
 	}
 	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 4 {
@@ -348,53 +331,12 @@ func TestRGWRemovalHandlesLostReplyAndSharedHandleCopies(t *testing.T) {
 	}
 }
 
-func TestRGWNativePolicyDecoderAcceptsModernAndLegacyLimits(t *testing.T) {
-	modern := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{Enabled: true, MaxSizeBytes: 987654, MaxObjects: 3})
-	native, err := decodeRGWUser([]byte(modern))
-	if err != nil || native.info.UserQuota.MaxSizeBytes != 987654 || native.info.Suspended {
-		t.Fatal("modern RGW policy was not decoded")
-	}
-	quota, err := decodeRGWQuota([]byte(`{"enabled":true,"max_size_kb":1024,"max_objects":-1}`))
-	if err != nil || quota != (Quota{Enabled: true, MaxSizeBytes: 1048576, MaxObjects: -1}) {
-		t.Fatal("legacy quota KiB was not converted to bytes")
-	}
-	for _, data := range []string{`{"max_objects":1}`, `{"max_size_kb":9223372036854775807,"max_objects":1}`, `{"PRIVATE-SECRET":"invalid"}`} {
-		if _, err := decodeRGWQuota([]byte(data)); err == nil || strings.Contains(err.Error(), "PRIVATE") {
-			t.Fatal("invalid quota accepted or secret included in decode error")
-		}
-	}
+// The native decoder half of this test is in gwbase
+// (TestDecodeUserAcceptsModernAndLegacyLimits).
+func TestRGWUserConfigRejectsInvalidIdentityAndCapabilities(t *testing.T) {
 	for _, config := range []UserConfig{{ID: "--foreign"}, {DisplayName: "bad\nname"}, {AdminCaps: "users=admin"}, {AdminCaps: "--admin=*"}, {AdminCaps: "users="}} {
 		if _, err := normalizeRGWUserConfig(config); err == nil {
 			t.Fatalf("invalid user configuration accepted: %v", config)
 		}
 	}
-}
-
-// rgwAdminArgv strips the shell supervisor of a radosgw-admin call, so a fake
-// sees the radosgw-admin command line.
-func rgwAdminArgv(args []string) []string {
-	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
-		return args[7:]
-	}
-	return args
-}
-
-// rgwAdminCancel reports the canceler of a supervised call, which a fake
-// confirms: its supervisor never ran.
-func rgwAdminCancel(args []string) bool {
-	return len(args) > 2 && args[0] == "sh" && args[2] == supervised.ShellCancelScript
-}
-
-// rgwAdminReply answers a call as the gateway's supervisor does: it ends the
-// standard error of a call that original wrapped with the supervisor's end
-// line.
-func rgwAdminReply(original []string, code int, stream *bytes.Buffer) (int, io.Reader, error) {
-	if len(original) > 2 && original[2] == supervised.ShellScript {
-		end := []byte(supervised.ShellEndPrefix + strconv.Itoa(code) + "\n")
-		header := [8]byte{byte(stdcopy.Stderr)}
-		binary.BigEndian.PutUint32(header[4:], uint32(len(end)))
-		stream.Write(header[:])
-		stream.Write(end)
-	}
-	return code, stream, nil
 }

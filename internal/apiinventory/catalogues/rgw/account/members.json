@@ -1,0 +1,31 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rgw/account",
+  "count": 17,
+  "types": {
+    "rgw/account.Account": [
+      "Account embed handle"
+    ],
+    "rgw/account.Config": [
+      "Config.Email field string",
+      "Config.ID field string",
+      "Config.MaxBuckets field *int",
+      "Config.Name field string",
+      "Config.Tenant field string"
+    ],
+    "rgw/account.Metadata": [
+      "Metadata.AccountQuota field rgw.Quota",
+      "Metadata.BucketQuota field rgw.Quota",
+      "Metadata.Email field string",
+      "Metadata.ID field string",
+      "Metadata.MaxBuckets field int",
+      "Metadata.MaxGroups field int",
+      "Metadata.MaxKeys field int",
+      "Metadata.MaxRoles field int",
+      "Metadata.MaxUsers field int",
+      "Metadata.Name field string",
+      "Metadata.Tenant field string"
+    ]
+  }
+}

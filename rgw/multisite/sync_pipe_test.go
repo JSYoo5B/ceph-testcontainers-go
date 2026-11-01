@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"reflect"
 	"strings"
 	"testing"
@@ -84,7 +85,7 @@ func TestRGWSyncPipeRefusesUnconfirmedPrincipalsAndClassMappings(t *testing.T) {
 		{DestinationOwner: &rgw.User{}},
 		{User: &rgw.User{}},
 		{DestinationStorageClass: "STANDARD_IA"},
-		{DestinationPlacements: map[string]*rgw.Placement{"destination": {}}},
+		{DestinationPlacements: map[string]*placement.Placement{"destination": {}}},
 		{SourceBucket: &SyncBucketSelector{Name: "*"}},
 	} {
 		f, cli, _, _ := newRGWSyncTestFixture()
@@ -164,10 +165,10 @@ func TestRGWSyncPipeRefusesForeignPlacementWithMatchingNativeIDs(t *testing.T) {
 			zoneID = zone.ID
 		}
 	}
-	foreign := &rgw.Placement{Name: "tiered", RealmID: g.realmID, ZonegroupID: g.groupID, ZoneID: zoneID}
+	foreign := &placement.Placement{Name: "tiered", RealmID: g.realmID, ZonegroupID: g.groupID, ZoneID: zoneID}
 	config := SyncPipeConfig{ID: "class", SourceZones: []string{"source"}, DestinationZones: []string{"destination"},
 		SourceBucket: &SyncBucketSelector{Name: "bucket"}, DestinationBucket: &SyncBucketSelector{Name: "output"},
-		DestinationStorageClass: "COLD", DestinationPlacements: map[string]*rgw.Placement{"destination": foreign}}
+		DestinationStorageClass: "COLD", DestinationPlacements: map[string]*placement.Placement{"destination": foreign}}
 	err = g.CreatePipe(t.Context(), config)
 	if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "not owned by the destination zone's cluster") {
 		t.Fatalf("foreign placement with matching native IDs returned %v", err)

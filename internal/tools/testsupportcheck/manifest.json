@@ -4,7 +4,8 @@
     "internal/clusteraccess",
     "internal/clustertest",
     "internal/integration/harness",
-    "internal/testhelper"
+    "internal/testhelper",
+    "rgw/internal/gwtest"
   ],
   "harness_packages": [
     "internal/integration/harness"

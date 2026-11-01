@@ -73,7 +73,7 @@ func newHostGateway(t *testing.T) (*Gateway, *hostGateway) {
 	})
 	config := Config{Name: "default"}
 	owner := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
-	return registerTestGateway(&Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}), ctr
+	return registerTestGateway(testGateway(owner, ctr, config)), ctr
 }
 
 func (ctr *hostGateway) GetContainerID() string { return "gateway" }
@@ -283,7 +283,7 @@ func TestRGWAdminStopsItsCommandWhenTheClusterTerminates(t *testing.T) {
 	pid, err := adminAfterStart(t, gateway, ctr, ctx, func() {
 		terminateCtx, stop := context.WithTimeout(t.Context(), 20*time.Second)
 		defer stop()
-		terminated <- gateway.owner.Terminate(terminateCtx)
+		terminated <- gateway.base().Cluster().Terminate(terminateCtx)
 	})
 	if err == nil || !strings.Contains(err.Error(), "terminated") {
 		t.Fatalf("an Admin call that Terminate ended: %v", err)

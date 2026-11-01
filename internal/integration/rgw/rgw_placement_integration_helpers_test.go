@@ -19,6 +19,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -213,20 +214,20 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	client.Request(t, ctx, http.MethodPut, defaultBucket, nil, http.StatusOK)
 	client.Request(t, ctx, http.MethodPut, defaultBucket+"/original", defaultPayload, http.StatusOK)
 	inline := false
-	config := rgw.PlacementConfig{Name: "tc-tiered", IndexPool: "tc-rgw-index", DataExtraPool: "tc-rgw-extra", InlineData: &inline,
-		StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-rgw-standard"}, {Name: "STANDARD_IA", DataPool: "tc-rgw-ec"}}}
-	placement, err := gateway.CreatePlacement(ctx, config)
+	config := placement.Config{Name: "tc-tiered", IndexPool: "tc-rgw-index", DataExtraPool: "tc-rgw-extra", InlineData: &inline,
+		StorageClasses: []placement.StorageClass{{Name: "STANDARD", DataPool: "tc-rgw-standard"}, {Name: "STANDARD_IA", DataPool: "tc-rgw-ec"}}}
+	target, err := placement.Create(ctx, gateway, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := placement.Status(ctx)
-	if err != nil || state.DefaultPlacement != "default-placement" || placement.ZoneID == "" || placement.ZonegroupID == "" || state.LocationConstraint == "" {
+	state, err := target.Status(ctx)
+	if err != nil || state.DefaultPlacement != "default-placement" || target.ZoneID == "" || target.ZonegroupID == "" || state.LocationConstraint == "" {
 		t.Fatalf("native placement policy: %+v %v", state, err)
 	}
-	if _, err := gateway.CreatePlacement(ctx, config); err == nil {
+	if _, err := placement.Create(ctx, gateway, config); err == nil {
 		t.Fatal("existing placement could be overwritten")
 	}
-	if err := gateway.ApplyPlacement(ctx, placement); err != nil {
+	if err := target.Apply(ctx, gateway); err != nil {
 		t.Fatal(err)
 	}
 	// Docker bridge restarts may publish a new port. Native host mode reuses
@@ -238,13 +239,13 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if actual := rgwFixtureWaitStatus(t, ctx, client, defaultBucket+"/original", http.StatusOK); !bytes.Equal(actual, defaultPayload) {
 		t.Fatal("placement activation changed an existing default bucket")
 	}
-	createBody := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + placement.LocationConstraint + `</LocationConstraint></CreateBucketConfiguration>`)
+	createBody := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + target.LocationConstraint + `</LocationConstraint></CreateBucketConfiguration>`)
 	client.Request(t, ctx, http.MethodPut, tieredBucket, createBody, http.StatusOK)
 	var bucketStats struct {
 		PlacementRule string `json:"placement_rule"`
 	}
 	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(tieredBucket, "/"))
-	if err != nil || json.Unmarshal(data, &bucketStats) != nil || bucketStats.PlacementRule != placement.Name {
+	if err != nil || json.Unmarshal(data, &bucketStats) != nil || bucketStats.PlacementRule != target.Name {
 		t.Fatalf("bucket did not retain named placement target: %s %v", data, err)
 	}
 	payload := bytes.Repeat([]byte("tiered-data-actual-pool\n"), 4096)

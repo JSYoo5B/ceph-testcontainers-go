@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 )
 
 func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
@@ -37,7 +37,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "low-standard", "high-ia")
-		base := multisite.SyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
+		base := multisite.SyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*placement.Placement{"destination": secondaryPlacement}}
 		low := base
 		low.ID = "low-standard"
 		low.Priority = 1

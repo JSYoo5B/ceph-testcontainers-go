@@ -13,7 +13,8 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 )
 
 // SyncBucketSelector identifies a preexisting bucket. Its current native
@@ -246,7 +247,7 @@ func (g *SyncGroup) ownedPrincipal(ctx context.Context, user *rgw.User) (rgw.Use
 	// remote UID.
 	unconfirmed := multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 	if !slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
-		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && rgwhook.UserServedBy(user, zone.Gateway)
+		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && gwbase.UserOf(user).ServedBy(gwbase.Of(zone.Gateway))
 	}) {
 		return rgw.UserInfo{}, unconfirmed
 	}
@@ -300,15 +301,19 @@ func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig,
 		if zone == nil || zone.Gateway == nil {
 			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
-		placement := config.DestinationPlacements[name]
-		if !rgwhook.PlacementServedBy(placement, zone.Gateway) {
+		owned := config.DestinationPlacements[name]
+		// The placement's pools and resources live in the cluster of the
+		// gateway that created it. Matching native realm, zonegroup and zone
+		// IDs do not show this: a period can be imported into another storage
+		// cluster.
+		if !gwbase.Of(zone.Gateway).SameCluster(gwbase.OriginOf(owned)) {
 			return multisiteInvalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
 		}
-		state, err := placement.Status(ctx)
+		state, err := owned.Status(ctx)
 		if err != nil {
 			return err
 		}
-		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c rgw.StorageClassConfig) bool { return c.Name == config.DestinationStorageClass }) {
+		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c placement.StorageClass) bool { return c.Name == config.DestinationStorageClass }) {
 			return multisiteInvalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
 		}
 		_, period, err := f.syncPolicyMaster(ctx)

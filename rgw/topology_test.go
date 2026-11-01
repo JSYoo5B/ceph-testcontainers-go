@@ -49,11 +49,9 @@ func TestGatewayRemovalRetainsFailedCleanup(t *testing.T) {
 
 func TestGatewayRemovalRefusesAStaleDescriptor(t *testing.T) {
 	oldCtr, newCtr := &terminationFixtureContainer{}, &terminationFixtureContainer{}
-	old := &Gateway{Container: oldCtr, GatewayName: "a"}
-	successor := &Gateway{Container: newCtr, GatewayName: "a"}
 	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": oldCtr})
-	old.owner = cluster
-	successor.owner = cluster
+	old := testGateway(cluster, oldCtr, Config{Name: "a"})
+	successor := testGateway(cluster, newCtr, Config{Name: "a"})
 	gateways(cluster).byName["a"] = old
 	if err := old.Remove(t.Context()); err != nil || oldCtr.terminations != 1 {
 		t.Fatalf("remove the gateway: %v", err)

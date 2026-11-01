@@ -1,0 +1,97 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/account",
+  "count": 12,
+  "entries": [
+    {
+      "current": "rgw/account.Account",
+      "kind": "type",
+      "proposed": "rgw/account.Account",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Account",
+      "proposed": "rgw/account.Account.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Account",
+      "proposed": "rgw/account.Account.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Account",
+      "proposed": "rgw/account.Account.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.Info",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Metadata, error)",
+      "receiver": "*Account",
+      "proposed": "rgw/account.Account.Info",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Account",
+      "proposed": "rgw/account.Account.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.SetBucketQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota rgw.Quota) error",
+      "receiver": "*Account",
+      "proposed": "rgw/account.Account.SetBucketQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.SetQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota rgw.Quota) error",
+      "receiver": "*Account",
+      "proposed": "rgw/account.Account.SetQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Account.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Account",
+      "proposed": "rgw/account.Account.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Config",
+      "kind": "type",
+      "proposed": "rgw/account.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Create",
+      "kind": "function",
+      "signature": "func(ctx context.Context, g *rgw.Gateway, config Config) (*Account, error)",
+      "proposed": "rgw/account.Create",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/account.Metadata",
+      "kind": "type",
+      "proposed": "rgw/account.Metadata",
+      "decision": "baseline"
+    }
+  ]
+}

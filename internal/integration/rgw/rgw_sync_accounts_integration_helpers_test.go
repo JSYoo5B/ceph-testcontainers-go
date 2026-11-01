@@ -20,6 +20,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -75,16 +76,16 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, err := link.Source.CreateAccount(ctx, rgw.AccountConfig{Name: "tc-sync-account"})
+	owned, err := account.Create(ctx, link.Source, account.Config{Name: "tc-sync-account"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := account.CreateRootUser(ctx, rgw.UserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root"})
+	root, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root", Account: owned})
 	if err != nil {
 		t.Fatal(err)
 	}
 	info, err := root.Info(ctx)
-	if err != nil || info.AccountID != account.ID() || info.Type != "root" || info.Admin || info.System {
+	if err != nil || info.AccountID != owned.ID() || info.Type != "root" || info.Admin || info.System {
 		t.Fatal("native root identity was not confirmed against its creation-owned account")
 	}
 	primary := rgwSyncUserClient(t, root, sourceEndpoint, link.Source.Region)
@@ -126,15 +127,15 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	primary.Request(t, ctx, http.MethodPut, input+"/replica/initial", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, secondary, output+"/replica/initial", http.StatusOK, payload)
 	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
-	outputIdentity := captureRGWSyncAccountBucket(t, ctx, link.Source, output, account.ID(), "")
-	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, account.ID(), outputIdentity)
+	outputIdentity := captureRGWSyncAccountBucket(t, ctx, link.Source, output, owned.ID(), "")
+	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, owned.ID(), outputIdentity)
 	waitRGWSyncBucketPolicy(t, ctx, primary, output, nil)
 	waitRGWSyncBucketPolicy(t, ctx, secondary, output, nil)
 
 	// Deny the native replication action while retaining normal client access.
 	// The destination's replicated bucket policy is observed before the write.
 	deny, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Deny", "Principal": "*", "Action": "s3:ReplicateObject", "Resource": "*"}}})
-	captureRGWSyncAccountBucket(t, ctx, link.Source, output, account.ID(), outputIdentity)
+	captureRGWSyncAccountBucket(t, ctx, link.Source, output, owned.ID(), outputIdentity)
 	harness.S3FeatureRequest(t, ctx, primary, http.MethodPut, output+"?policy", deny, nil, http.StatusNoContent)
 	waitRGWSyncBucketPolicy(t, ctx, secondary, output, deny)
 	primary.Request(t, ctx, http.MethodPut, input+"/replica/denied", payload, http.StatusOK)
@@ -151,8 +152,8 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	// replication worker cannot satisfy the negative test merely by doing nothing.
 	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
 	requireRGWObjectsAbsent(t, ctx, time.Second, rgwAbsentObject{secondary, output + "/replica/denied"})
-	captureRGWSyncAccountBucket(t, ctx, link.Source, output, account.ID(), outputIdentity)
-	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, account.ID(), outputIdentity)
+	captureRGWSyncAccountBucket(t, ctx, link.Source, output, owned.ID(), outputIdentity)
+	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, owned.ID(), outputIdentity)
 	harness.S3FeatureRequest(t, ctx, primary, http.MethodDelete, output+"?policy", nil, nil, http.StatusNoContent)
 	waitRGWSyncBucketPolicy(t, ctx, secondary, output, nil)
 	primary.Request(t, ctx, http.MethodPut, input+"/replica/after-policy-clear", payload, http.StatusOK)
