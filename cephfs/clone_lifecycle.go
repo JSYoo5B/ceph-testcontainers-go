@@ -175,7 +175,7 @@ func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, req
 	if !request {
 		return false, nil
 	}
-	args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.base().Name(), identity.name}, identity.group)
+	args := fsbase.AppendGroup([]string{"fs", "clone", "cancel", fs.base().Name(), identity.name}, identity.group)
 	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
 		return false, err
 	}
@@ -216,7 +216,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	names, err := subvolumeNames(ctx, fs.base().Volumes(), identity.group)
+	names, err := fs.base().Volumes().SubvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -245,11 +245,11 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 		return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
 	}
 	identity.removalAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.base().Name(), identity.name}, identity.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.base().Name(), identity.name}, identity.group)
 	if _, err := fs.base().Cluster().Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}
-	names, err = subvolumeNames(ctx, fs.base().Volumes(), identity.group)
+	names, err = fs.base().Volumes().SubvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}

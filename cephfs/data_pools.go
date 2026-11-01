@@ -197,46 +197,6 @@ func (fs *Filesystem) confirmDataPoolAttachment(ctx context.Context, identity *f
 	return nil
 }
 
-// checkSubvolumeDataPool runs while the setup gate is held. Selection is sticky even after a partial
-// native create, so removal never assumes unknown partial resources are safe.
-func (fs *Filesystem) checkSubvolumeDataPool(ctx context.Context, name string) error {
-	if fs.base().Native() == nil {
-		return errors.New("filesystem has no confirmed creation identity")
-	}
-	state, err := fs.base().ReadNativePools(ctx)
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		return nil
-	}
-	pool, err := state.PoolByName(name)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(state.DataPools, pool.ID) {
-		return errors.New("selected pool is not currently registered to this filesystem")
-	}
-	if identity := fs.base().Native().Attachments[name]; identity != nil && identity.ID == pool.ID {
-		identity.Used = true
-	}
-	return nil
-}
-
-// A named group's layout can select an additional pool even when callers
-// omit DataPool. Record that selection before the native create, including
-// unknown-success failures, so later group removal cannot erase its history.
-func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, group string) error {
-	if name == "" && group != "" && fs.base().Native() != nil {
-		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group)
-		if err != nil {
-			return err
-		}
-		name = info.DataPool
-	}
-	return fs.checkSubvolumeDataPool(ctx, name)
-}
-
 // RemoveUnused removes only the FSMap registration of a fresh helper
 // attachment. A pool selected even once by a managed group/subvolume/clone is
 // refused, including partial creations. Native groups/subvolumes must have no
@@ -309,15 +269,15 @@ func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 }
 
 func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) error {
-	if err := ensureVolumesModule(ctx, fs.base().Volumes()); err != nil {
+	if err := fs.base().Volumes().EnsureVolumesModule(ctx); err != nil {
 		return err
 	}
-	groups, err := subvolumeGroupNames(ctx, fs.base().Volumes())
+	groups, err := fs.base().Volumes().SubvolumeGroupNames(ctx)
 	if err != nil {
 		return err
 	}
 	for _, group := range groups {
-		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group)
+		info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, group)
 		if err != nil {
 			return fmt.Errorf("cannot prove group pool is unused: %w", err)
 		}
@@ -326,12 +286,12 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 		}
 	}
 	for _, group := range append([]string{""}, groups...) {
-		names, err := subvolumeNames(ctx, fs.base().Volumes(), group)
+		names, err := fs.base().Volumes().SubvolumeNames(ctx, group)
 		if err != nil {
 			return err
 		}
 		for _, volume := range names {
-			info, err := subvolumeInfo(ctx, fs.base().Volumes(), volume, group)
+			info, err := fs.base().Volumes().SubvolumeInfo(ctx, volume, group)
 			if err != nil {
 				return fmt.Errorf("cannot prove subvolume/clone pool is unused: %w", err)
 			}

@@ -165,3 +165,47 @@ func (state *NativePools) PoolByName(name string) (ceph.PoolState, error) {
 	}
 	return ceph.PoolState{}, fmt.Errorf("native pool %q is absent", name)
 }
+
+// CheckSubvolumeDataPool refuses a data pool name that is not currently
+// registered to this filesystem and marks a recorded attachment used. It runs
+// while the setup gate is held. Selection is sticky even after a partial
+// native create, so removal never assumes unknown partial resources are safe.
+func (c *Core) CheckSubvolumeDataPool(ctx context.Context, name string) error {
+	if c.native == nil {
+		return errors.New("filesystem has no confirmed creation identity")
+	}
+	state, err := c.ReadNativePools(ctx)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return nil
+	}
+	pool, err := state.PoolByName(name)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(state.DataPools, pool.ID) {
+		return errors.New("selected pool is not currently registered to this filesystem")
+	}
+	if identity := c.native.Attachments[name]; identity != nil && identity.ID == pool.ID {
+		identity.Used = true
+	}
+	return nil
+}
+
+// CheckSubvolumeCreationPool is CheckSubvolumeDataPool for a subvolume
+// creation: a named group's layout can select an additional pool even when
+// callers omit DataPool. Record that selection before the native create,
+// including unknown-success failures, so later group removal cannot erase its
+// history.
+func (c *Core) CheckSubvolumeCreationPool(ctx context.Context, name, group string) error {
+	if name == "" && group != "" && c.native != nil {
+		info, err := c.Volumes().SubvolumeGroupInfo(ctx, group)
+		if err != nil {
+			return err
+		}
+		name = info.DataPool
+	}
+	return c.CheckSubvolumeDataPool(ctx, name)
+}

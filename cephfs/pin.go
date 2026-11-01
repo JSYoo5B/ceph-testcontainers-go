@@ -343,13 +343,13 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	}
 	identity := target.identity
 	if target.group {
-		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), identity.name)
+		info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, identity.name)
 		if err != nil {
 			return "", err
 		}
 		return identity.path, fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt)
 	}
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), identity.name, identity.group)
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return "", err
 	}
@@ -369,7 +369,7 @@ func pinCommand(ctx context.Context, v fsbase.VolumeCommands, target cephFSPinTa
 	if target.group {
 		args[1] = "subvolumegroup"
 	} else {
-		args = appendSubvolumeGroup(args, identity.group)
+		args = fsbase.AppendGroup(args, identity.group)
 	}
 	return v.Cluster().Ceph(ctx, args...)
 }

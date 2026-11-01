@@ -118,8 +118,8 @@ func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthoriz
 // it must be active, complete, the same incarnation and in an isolated pool
 // namespace of a pool registered with this filesystem. The subvolume
 // operation gate is held.
-func (fs *Filesystem) authorizationTarget(ctx context.Context, fsID int64, volume *Subvolume) (*SubvolumeInfo, ceph.PoolState, error) {
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), volume.identity.name, volume.identity.group)
+func (fs *Filesystem) authorizationTarget(ctx context.Context, fsID int64, volume *Subvolume) (*fsbase.SubvolumeInfo, ceph.PoolState, error) {
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, volume.identity.name, volume.identity.group)
 	if err != nil {
 		return nil, ceph.PoolState{}, err
 	}
@@ -164,7 +164,7 @@ func (fs *Filesystem) grantAuthorization(ctx context.Context, volume *Subvolume,
 	}
 	volume.identity.authorizations[identity] = struct{}{}
 	identity.authorizeAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorize", fs.base().Name(), volume.identity.name, identity.client.User()}, volume.identity.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "authorize", fs.base().Name(), volume.identity.name, identity.client.User()}, volume.identity.group)
 	args = append(args, "--access_level", identity.access, "--allow_existing_id")
 	if _, err := servicehook.AuthCommand(ctx, fs.base().Cluster(), "authorize owned subvolume client", args...); err != nil {
 		return err
@@ -212,7 +212,7 @@ func decodeSubvolumeAuthorizedClients(data []byte) ([]SubvolumeAuthorizedClient,
 }
 
 func nativeAuthorizedClients(ctx context.Context, v fsbase.VolumeCommands, name, group string) ([]SubvolumeAuthorizedClient, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorized_list", v.Name(), name}, group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "authorized_list", v.Name(), name}, group)
 	data, err := v.Cluster().Ceph(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func (fs *Filesystem) checkAuthorizationVolume(ctx context.Context, fsID int64, 
 	if identity.volume.removed {
 		return errors.New("authorized subvolume was removed")
 	}
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), identity.volume.name, identity.volume.group)
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, identity.volume.name, identity.volume.group)
 	if err != nil {
 		return err
 	}
@@ -466,7 +466,7 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 		return err
 	}
 	identity.remainingCaps, identity.deauthAttempted = remaining, true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "deauthorize", fs.base().Name(), identity.volume.name, identity.client.User()}, identity.volume.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "deauthorize", fs.base().Name(), identity.volume.name, identity.client.User()}, identity.volume.group)
 	if _, err := servicehook.AuthCommand(ctx, fs.base().Cluster(), "deauthorize owned subvolume client", args...); err != nil {
 		return err
 	}
@@ -522,7 +522,7 @@ func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
 	if err := fs.checkNativeAuthorization(ctx, identity, false); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "evict", fs.base().Name(), identity.volume.name, identity.client.User()}, identity.volume.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "evict", fs.base().Name(), identity.volume.name, identity.client.User()}, identity.volume.group)
 	_, err = servicehook.AuthCommand(ctx, fs.base().Cluster(), fmt.Sprintf("evict owned %s sessions at subvolume root", identity.client.Name()), args...)
 	return err
 }

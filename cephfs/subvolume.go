@@ -2,17 +2,13 @@ package cephfs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -165,88 +161,11 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 		done()
 		return ctx, 0, func() {}, err
 	}
-	if err := ensureVolumesModule(ctx, fs.base().Volumes()); err != nil {
+	if err := fs.base().Volumes().EnsureVolumesModule(ctx); err != nil {
 		done()
 		return ctx, 0, func() {}, err
 	}
 	return ctx, state.ID, done, nil
-}
-
-func ensureVolumesModule(ctx context.Context, v fsbase.VolumeCommands) error {
-	data, err := v.Cluster().Ceph(ctx, "mgr", "module", "ls", "--format", "json")
-	if err != nil {
-		return fmt.Errorf("inspect MGR volumes module: %w", err)
-	}
-	var modules struct {
-		Enabled  []string        `json:"enabled_modules"`
-		AlwaysOn json.RawMessage `json:"always_on_modules"`
-	}
-	if err := json.Unmarshal(data, &modules); err != nil {
-		return fmt.Errorf("decode MGR modules: %w", err)
-	}
-	if modules.Enabled == nil && len(modules.AlwaysOn) == 0 {
-		return errors.New("decode MGR modules: missing enabled/always-on module listing")
-	}
-	enabled := slices.Contains(modules.Enabled, "volumes")
-	var always []string
-	if json.Unmarshal(modules.AlwaysOn, &always) == nil {
-		enabled = enabled || slices.Contains(always, "volumes")
-	}
-	if !enabled {
-		if _, err := v.Cluster().Ceph(ctx, "mgr", "module", "enable", "volumes"); err != nil {
-			return fmt.Errorf("enable MGR volumes module: %w", err)
-		}
-	}
-	return clusterutil.Poll(ctx, func() (bool, error) {
-		data, err := v.Cluster().Ceph(ctx, "fs", "volume", "ls", "--format", "json")
-		if err != nil {
-			return false, err
-		}
-		names, err := decodeCephFSVolumeNames(data)
-		return slices.Contains(names, v.Name()), err
-	})
-}
-
-func decodeCephFSVolumeNames(data []byte) ([]string, error) {
-	var entries []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(data, &entries); err != nil || entries == nil {
-		return nil, fmt.Errorf("decode CephFS resource listing: expected JSON array (error: %v)", err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Name == "" || slices.Contains(names, entry.Name) {
-			return nil, errors.New("decode CephFS resource listing: empty or duplicate name")
-		}
-		names = append(names, entry.Name)
-	}
-	slices.Sort(names)
-	return names, nil
-}
-
-func subvolumeNames(ctx context.Context, v fsbase.VolumeCommands, group string) ([]string, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "ls", v.Name()}, group)
-	data, err := v.Cluster().Ceph(ctx, append(args, "--format", "json")...)
-	if err != nil {
-		return nil, err
-	}
-	return decodeCephFSVolumeNames(data)
-}
-
-func subvolumeGroupNames(ctx context.Context, v fsbase.VolumeCommands) ([]string, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "subvolumegroup", "ls", v.Name(), "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeCephFSVolumeNames(data)
-}
-
-func appendSubvolumeGroup(args []string, group string) []string {
-	if group != "" {
-		args = append(args, "--group_name", group)
-	}
-	return args
 }
 
 func appendSubvolumeLayout(args []string, size int64, pool string) []string {
@@ -276,10 +195,10 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 		return nil, err
 	}
 	defer done()
-	if err := fs.checkSubvolumeDataPool(ctx, config.DataPool); err != nil {
+	if err := fs.base().CheckSubvolumeDataPool(ctx, config.DataPool); err != nil {
 		return nil, err
 	}
-	names, err := subvolumeGroupNames(ctx, fs.base().Volumes())
+	names, err := fs.base().Volumes().SubvolumeGroupNames(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +211,7 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
 		return group, fmt.Errorf("create subvolume group %q: %w", config.Name, err)
 	}
-	info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), config.Name)
+	info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, config.Name)
 	if err != nil {
 		return group, err
 	}
@@ -319,10 +238,10 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 		return nil, err
 	}
 	defer done()
-	if err := fs.checkSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
+	if err := fs.base().CheckSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
 		return nil, err
 	}
-	names, err := subvolumeNames(ctx, fs.base().Volumes(), config.GroupName)
+	names, err := fs.base().Volumes().SubvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +250,7 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 	}
 	subvolume := &Subvolume{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.base().Name(),
 		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: config.Name, group: config.GroupName}}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "create", fs.base().Name(), config.Name}, config.GroupName)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "create", fs.base().Name(), config.Name}, config.GroupName)
 	args = appendSubvolumeLayout(args, config.SizeBytes, config.DataPool)
 	if config.NamespaceIsolated {
 		args = append(args, "--namespace-isolated")
@@ -339,7 +258,7 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
 		return subvolume, fmt.Errorf("create subvolume %q: %w", config.Name, err)
 	}
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), config.Name, config.GroupName)
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, config.Name, config.GroupName)
 	if err != nil {
 		return subvolume, err
 	}
@@ -362,7 +281,7 @@ func (fs *Filesystem) SubvolumeGroups(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer done()
-	return subvolumeGroupNames(ctx, fs.base().Volumes())
+	return fs.base().Volumes().SubvolumeGroupNames(ctx)
 }
 
 // Subvolumes lists native names in groupName, sorted by name. Empty selects the
@@ -378,7 +297,7 @@ func (fs *Filesystem) Subvolumes(ctx context.Context, groupName string) ([]strin
 		return nil, err
 	}
 	defer done()
-	return subvolumeNames(ctx, fs.base().Volumes(), groupName)
+	return fs.base().Volumes().SubvolumeNames(ctx, groupName)
 }
 
 // SubvolumeGroupInfo queries the current native group quota/layout and path.
@@ -393,7 +312,8 @@ func (fs *Filesystem) SubvolumeGroupInfo(ctx context.Context, name string) (*Sub
 		return nil, err
 	}
 	defer done()
-	return subvolumeGroupInfo(ctx, fs.base().Volumes(), name)
+	info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, name)
+	return (*SubvolumeGroupInfo)(info), err
 }
 
 // SubvolumeInfo queries current metadata. name identifies the subvolume and an
@@ -413,83 +333,8 @@ func (fs *Filesystem) SubvolumeInfo(ctx context.Context, name, groupName string)
 		return nil, err
 	}
 	defer done()
-	return subvolumeInfo(ctx, fs.base().Volumes(), name, groupName)
-}
-
-type cephFSVolumeRawInfo struct {
-	Path          string          `json:"path"`
-	DataPool      string          `json:"data_pool"`
-	PoolNamespace string          `json:"pool_namespace"`
-	Quota         json.RawMessage `json:"bytes_quota"`
-	BytesUsed     int64           `json:"bytes_used"`
-	CreatedAt     string          `json:"created_at"`
-	State         string          `json:"state"`
-	Type          string          `json:"type"`
-}
-
-func decodeCephFSVolumeQuota(raw json.RawMessage) (int64, error) {
-	if string(raw) == `"infinite"` {
-		return 0, nil
-	}
-	var quota int64
-	if err := json.Unmarshal(raw, &quota); err != nil || quota < 0 || string(raw) == "null" {
-		return 0, errors.New("decode CephFS quota: expected a non-negative integer or infinite")
-	}
-	return quota, nil
-}
-
-func validateCephFSVolumeInfo(raw cephFSVolumeRawInfo) error {
-	if raw.Path == "" || !path.IsAbs(raw.Path) || path.Clean(raw.Path) != raw.Path || raw.Path == "/" || raw.CreatedAt == "" || raw.DataPool == "" || raw.BytesUsed < 0 {
-		return errors.New("decode CephFS volume metadata: missing or invalid path, birth time, pool or used bytes")
-	}
-	return nil
-}
-
-func subvolumeGroupInfo(ctx context.Context, v fsbase.VolumeCommands, name string) (*SubvolumeGroupInfo, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "subvolumegroup", "info", v.Name(), name, "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	var raw cephFSVolumeRawInfo
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("decode subvolume group info: %w", err)
-	}
-	data, err = v.Cluster().Ceph(ctx, "fs", "subvolumegroup", "getpath", v.Name(), name)
-	if err != nil {
-		return nil, err
-	}
-	raw.Path = strings.TrimSpace(string(data))
-	if err := validateCephFSVolumeInfo(raw); err != nil {
-		return nil, err
-	}
-	quota, err := decodeCephFSVolumeQuota(raw.Quota)
-	if err != nil {
-		return nil, err
-	}
-	return &SubvolumeGroupInfo{Name: name, Path: raw.Path, DataPool: raw.DataPool, QuotaBytes: quota, BytesUsed: raw.BytesUsed, CreatedAt: raw.CreatedAt}, nil
-}
-
-func subvolumeInfo(ctx context.Context, v fsbase.VolumeCommands, name, group string) (*SubvolumeInfo, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "info", v.Name(), name}, group)
-	data, err := v.Cluster().Ceph(ctx, append(args, "--format", "json")...)
-	if err != nil {
-		return nil, err
-	}
-	var raw cephFSVolumeRawInfo
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("decode subvolume info: %w", err)
-	}
-	if raw.State == "snapshot-retained" {
-		return &SubvolumeInfo{Name: name, GroupName: group, State: raw.State, Type: raw.Type}, nil
-	}
-	if err := validateCephFSVolumeInfo(raw); err != nil {
-		return nil, err
-	}
-	quota, err := decodeCephFSVolumeQuota(raw.Quota)
-	if err != nil {
-		return nil, err
-	}
-	return &SubvolumeInfo{Name: name, GroupName: group, Path: raw.Path, DataPool: raw.DataPool, PoolNamespace: raw.PoolNamespace, QuotaBytes: quota, BytesUsed: raw.BytesUsed, CreatedAt: raw.CreatedAt, State: raw.State, Type: raw.Type}, nil
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, name, groupName)
+	return (*SubvolumeInfo)(info), err
 }
 
 func (fs *Filesystem) validateVolumeHandle(identity *cephFSVolumeIdentity) error {
@@ -542,7 +387,7 @@ func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error 
 	if group.identity.removed {
 		return errors.New("subvolume group has been removed")
 	}
-	info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group.identity.name)
+	info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, group.identity.name)
 	if err != nil {
 		return err
 	}
@@ -577,14 +422,14 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	if subvolume.identity.removed {
 		return errors.New("subvolume has been removed")
 	}
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), subvolume.identity.name, subvolume.identity.group)
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
 	if err != nil {
 		return err
 	}
 	if err := fs.checkVolumeIdentity(fsID, subvolume.identity, info.Path, info.CreatedAt); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "resize", fs.base().Name(), subvolume.identity.name, quota}, subvolume.identity.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "resize", fs.base().Name(), subvolume.identity.name, quota}, subvolume.identity.group)
 	_, err = fs.base().Cluster().Ceph(ctx, append(args, "--no_shrink")...)
 	return err
 }
@@ -614,7 +459,7 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if group.identity.removalAttempted {
-		names, err := subvolumeGroupNames(ctx, fs.base().Volumes())
+		names, err := fs.base().Volumes().SubvolumeGroupNames(ctx)
 		if err != nil {
 			return err
 		}
@@ -623,7 +468,7 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 			return nil
 		}
 	}
-	info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group.identity.name)
+	info, err := fs.base().Volumes().SubvolumeGroupInfo(ctx, group.identity.name)
 	if err != nil {
 		return err
 	}
@@ -670,7 +515,7 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if subvolume.identity.removalAttempted {
-		names, err := subvolumeNames(ctx, fs.base().Volumes(), subvolume.identity.group)
+		names, err := fs.base().Volumes().SubvolumeNames(ctx, subvolume.identity.group)
 		if err != nil {
 			return err
 		}
@@ -679,14 +524,14 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 			return nil
 		}
 	}
-	info, err := subvolumeInfo(ctx, fs.base().Volumes(), subvolume.identity.name, subvolume.identity.group)
+	info, err := fs.base().Volumes().SubvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
 	if err != nil {
 		return err
 	}
 	if err := fs.checkVolumeIdentity(fsID, subvolume.identity, info.Path, info.CreatedAt); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.base().Name(), subvolume.identity.name}, subvolume.identity.group)
+	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.base().Name(), subvolume.identity.name}, subvolume.identity.group)
 	subvolume.identity.removalAttempted = true
 	if _, err := fs.base().Cluster().Ceph(ctx, args...); err != nil {
 		return err

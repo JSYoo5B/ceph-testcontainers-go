@@ -142,7 +142,7 @@ func TestCephFSDataPoolAttachmentIdentityAndLiveSelection(t *testing.T) {
 		t.Fatal("dynamic pool rejected by old static whitelist", err)
 	}
 	ctr.attached = false
-	if err := fs.checkSubvolumeDataPool(t.Context(), "extra"); err == nil {
+	if err := fs.base().CheckSubvolumeDataPool(t.Context(), "extra"); err == nil {
 		t.Fatal("externally detached pool accepted for volume creation")
 	}
 }
@@ -340,7 +340,7 @@ func TestCephFSUnusedDataPoolRemovalRefusesReferencesAndExternalEdits(t *testing
 		edit func(*Filesystem, *cephFSDataPoolsFixture, *DataPool)
 	}{
 		{"managed use", func(fs *Filesystem, _ *cephFSDataPoolsFixture, p *DataPool) {
-			if err := fs.checkSubvolumeDataPool(t.Context(), p.Name); err != nil {
+			if err := fs.base().CheckSubvolumeDataPool(t.Context(), p.Name); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -398,7 +398,7 @@ func TestCephFSDataPoolInheritedGroupSelectionIsStickyBeforeCreate(t *testing.T)
 	}
 	c.output["fs subvolumegroup info fixture group --format json"] = `{"data_pool":"extra","created_at":"now","bytes_quota":"infinite","bytes_used":0}`
 	c.output["fs subvolumegroup getpath fixture group"] = "/volumes/group"
-	if err := fs.checkSubvolumeCreationPool(t.Context(), "", "group"); err != nil {
+	if err := fs.base().CheckSubvolumeCreationPool(t.Context(), "", "group"); err != nil {
 		t.Fatal(err)
 	}
 	if !attachment.identity.record.Used {
