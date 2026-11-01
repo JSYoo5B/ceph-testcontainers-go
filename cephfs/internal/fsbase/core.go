@@ -11,7 +11,9 @@ import (
 
 // Core identifies one filesystem to every operation on it: the cluster, the
 // authoritative name and the native pool identity. Each filesystem descriptor
-// holds its own Core, so comparing two Core pointers compares filesystems.
+// holds its own Core, so comparing two Core pointers compares filesystems. A
+// value copy of a descriptor shares the Handle but is not the bound owner, so
+// Of gives it a detached Core that is never registered.
 //
 // cluster and name are captured before the descriptor is published and are
 // never written again, so they need no lock to read. name is the one
@@ -35,6 +37,11 @@ type Core struct {
 	// native is written once by CaptureNativePools; see the package lock
 	// contract.
 	native *NativeIdentity
+	// owner is the descriptor Bind bound to this Core, and detached the Core
+	// that Of returns for any other Owner sharing the Handle. Both are written
+	// once, before the descriptor is published.
+	owner    Owner
+	detached *Core
 }
 
 // Params are the construction arguments of a Core. Package cephfs passes the
@@ -100,8 +107,29 @@ func (h Handle) core() *Core { return h.c }
 // Handle satisfy it.
 type Owner interface{ core() *Core }
 
-// Of returns the Core of o. o must not be a nil pointer.
-func Of(o Owner) *Core { return o.core() }
+// Bind makes o the one owner of its Core. The descriptor keeps
+// descriptor-local mutable state (its config and MDS roster), so a value copy
+// of it must not pass as the registered filesystem: Of returns the bound Core
+// only for o itself. Bind runs once, before o is published.
+func Bind(o Owner) {
+	c := o.core()
+	c.owner = o
+	detached := *c
+	detached.live = func(*Core) bool { return false }
+	detached.owner, detached.detached = nil, nil
+	c.detached = &detached
+}
+
+// Of returns the Core of o. For an Owner that shares a bound Core but is not
+// its bound owner (a value copy of the descriptor), it returns the detached
+// Core, which Registered always refuses. o must not be a nil pointer.
+func Of(o Owner) *Core {
+	c := o.core()
+	if c == nil || c.owner == nil || c.owner == o {
+		return c
+	}
+	return c.detached
+}
 
 // Cluster returns the owning cluster; nil for a nil Core.
 func (c *Core) Cluster() *ceph.Container {

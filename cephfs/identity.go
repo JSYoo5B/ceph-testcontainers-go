@@ -38,6 +38,7 @@ func newFilesystem(c *ceph.Container, config Config, opts []testcontainers.Conta
 		MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name,
 		SetupMu: setupGate(c), Live: ownsRegistryEntry, ActiveRanks: fs.activeRanks,
 	}))
+	fsbase.Bind(fs)
 	return fs
 }
 
