@@ -623,7 +623,10 @@ def attempt_kind(row):
     failed_phase = first.get("phase")
     if failed_phase in INFRASTRUCTURE_PHASES:
         return "runner_failure"
-    if failed_phase == "images":
+    # A native failure that only a registry pull caused, for example of Ryuk,
+    # ran no Ceph assertion (tag_scenarios.registry_transport).
+    if failed_phase == "images" or (failed_phase == "native"
+                                    and first.get("classification") == "native-registry-transport"):
         return "image_failure"
     if failed_phase == "cleanup":
         return "cleanup_failure"

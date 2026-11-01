@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 
+import registry_pull
 import run_image_matrix as images
 
 
@@ -97,6 +98,8 @@ GO_TOOL_TAGS = frozenset(("cgo", "gc", "gccgo", "unix", "race", "msan", "asan", 
 # the same lines for per-test durations.
 RUN_LINE = re.compile(r"=== RUN\s+(Test\S+)")
 RESULT_LINE = re.compile(r"\s*--- (PASS|FAIL|SKIP): (Test\S+) \(([0-9.]+)s\)")
+# go test -v names the test whose output follows.
+TEST_MARKER = re.compile(r"=== (?:RUN|CONT|NAME|PAUSE)\s+(Test\S+)\s*")
 # Ceph bug compatibility tags (docs/guides/bug-compatibility.md) select
 # an implementation path, never tests. Only an explicit, registered selection
 # enables one; discovery never collects them as capabilities.
@@ -1250,7 +1253,32 @@ def strict_completion(log, profile, network, execution=GO_TEST):
     return module.validate(log, case, execution=execution)
 
 
-def failure_kind(exit_code, report, strict):
+def registry_transport(log, failed_tests):
+    """The failed tests whose own output carries a Docker daemon registry
+    transport error, such as testcontainers-go failing to pull Ryuk or a
+    test's image, and whether these explain every failure.
+
+    A failed test with a failed subtest is explained by its subtests. A panic
+    or a Go timeout is never explained."""
+    found, current = {}, None
+    lines = log.splitlines()
+    for line in lines:
+        marker = TEST_MARKER.fullmatch(line)
+        if marker:
+            current = marker[1]
+            continue
+        if current is not None and current not in found:
+            failure = registry_pull.daemon_transport_failure(line)
+            if failure is not None:
+                found[current] = failure
+    failed = [name for name in failed_tests if name != "package failure"]
+    leaves = [name for name in failed if not any(other.startswith(name + "/") for other in failed)]
+    tests = {name: found[name] for name in leaves if name in found}
+    panicked = any(line.startswith("panic:") for line in lines)
+    return {"tests": tests, "explains_every_failure": bool(leaves) and len(tests) == len(leaves) and not panicked}
+
+
+def failure_kind(exit_code, report, strict, transport=None):
     if exit_code == 0 and report["passed"] and (strict is None or strict["passed"]):
         return "passed"
     if exit_code != 0 and not report["failed_tests"]:
@@ -1258,6 +1286,9 @@ def failure_kind(exit_code, report, strict):
     if report["skipped_tests"]:
         return "incomplete-skipped-fixture"
     if report["failed_tests"]:
+        # No Ceph assertion ran in a test that failed reaching a registry.
+        if transport and transport["explains_every_failure"]:
+            return "native-registry-transport"
         return "native-test-failure"
     return "incomplete-native-proof"
 
@@ -1459,11 +1490,16 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     cases = selected_suite_cases(catalog, profile["package"], profile["tags"], expected)
     completed = completion(text, expected, native_package, execution, cases)
     strict = strict_completion(text, profile, network, execution)
+    transport = registry_transport(text, completed["failed_tests"])
+    for name, failure in transport["tests"].items():
+        print("Registry transport before Ceph assertions: %s at the %s %s" % (name, failure["stage"],
+                                                                            registry_pull.describe(failure)))
     result = {"schema": SCHEMA, "profile": profile, "command": command, "execution": execution,
               "network": network, "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
               "go_environment": dict(GO_EXECUTION_ENV),
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
-              "classification": failure_kind(exit_code, completed, strict),
+              "classification": failure_kind(exit_code, completed, strict, transport),
+              "registry_transport": transport["tests"],
               "source": [{"path": file["path"], "sha256": file["sha256"]} for file in catalog]}
     result["test_artifacts"] = test_artifacts(artifacts)
     if receipt is not None:

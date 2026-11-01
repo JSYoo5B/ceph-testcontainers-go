@@ -387,7 +387,7 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
 | Free the runner's preinstalled directories | n/a | Ceph batches only. `runner_storage.py free` removes the runner image's Android SDK, .NET, Haskell, CodeQL and Boost directories, which no job uses, and writes `runner-storage/storage-free.json`. It never touches Docker resources and refuses to run outside a GitHub-hosted runner. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. Never builds. |
+| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. With `--reaper` it also pulls the Ryuk image that the `go.mod` version of testcontainers-go starts (its `ReaperDefaultImage`), so that no test reaches Docker Hub to start its reaper. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
 | Record runner storage after the tests | n/a | Ceph batches only, also after a failure. Writes `runner-storage/storage-after.json`. |
@@ -737,7 +737,7 @@ has been run on Docker Desktop, whose kernel has NBD built in.
 | `tag-scenario-<id>-<release>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `runner-storage/` (see below); `phases.json`; `history-row.json` |
 | `runtime-cleanup-<id>-<release>` | `before.json` and `after.json`: engine identity and labelled resources before and after |
 | `runtime-cleanup-<id>-<release>-baseline` | Only when the baseline itself failed |
-| `scenario-images-<id>-<release>` | `summary.json` with resolved role image IDs, digests and platform |
+| `scenario-images-<id>-<release>` | `summary.json` with resolved role image IDs, digests and platform, the Ryuk image under `reaper`, every pull attempt under `pulls`, and the `pull-<role>[-<attempt>].log` files |
 | `plan-<category>-<release>` | `tag-plan.json` (selected profiles) and `tag-dispatch.json` (the expanded matrix with network scope, repetitions, run, attempt, release and category) |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage and the `code` batch results |
 
@@ -746,10 +746,17 @@ composite action) has already failed at upload time.
 
 `native/report.json`:
 - `classification`: `passed`; `native-test-failure` (a test failed, panicked
-  or hit the Go timeout); `incomplete-skipped-fixture` (a skip);
+  or hit the Go timeout); `native-registry-transport` (every failed test
+  failed on a Docker daemon registry transport error in its own output, such
+  as testcontainers-go pulling Ryuk or a test's own image, so no Ceph
+  assertion of it ran; scenario history counts it as an image failure);
+  `incomplete-skipped-fixture` (a skip);
   `process-or-build-failure` (non-zero exit without a failure line);
   `incomplete-native-proof` (exit 0 but a pass rule or strict checker failed);
 - `completion.errors`, `completion.failed_tests`, `completion.skipped_tests`;
+- `registry_transport`: each failed test with such an error, and its stage
+  (`reaper` or `image`), reason, registry phase (`resolve`, `token`,
+  `manifest`, `blob`) and endpoint without query or user information;
 - `compiled_tests`, `command`, `elapsed_seconds`, `exit_code`,
   `strict_completion`;
 - `test_artifacts`: files left in `native/test-artifacts/` with sizes and the
@@ -779,8 +786,8 @@ space.
 | Go module preparation | `modules/modules.log`, `modules/modules-report.json` | Proxy and origin both failed, or `go.sum` lacks an entry. |
 | Compilation | `compile/compile.log`, `compile/compile-report.json` | A test calls a helper that only another batch compiles; run `plan --verify` (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). |
 | Docker baseline | the step log, `runtime-cleanup-<id>-<release>-baseline` | Docker was not ready within 60 seconds. |
-| Published image preparation | `scenario-images-<id>-<release>` | A role image is missing from the registry or could not be pulled. |
-| Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. A health wait that sees only `MON_DISK_LOW` points at runner storage: read `runner-storage/`. |
+| Published image preparation | `scenario-images-<id>-<release>` | A role image is missing from the registry or could not be pulled. `classification: registry-transport` and `registry_failure` (role, reason, phase, endpoint, attempts) mean the registry was not reached after the bounded retries; nothing about the image is established. |
+| Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. A health wait that sees only `MON_DISK_LOW` points at runner storage: read `runner-storage/`. `native-registry-transport` points at a registry that a test's own pull could not reach: testcontainers-go does not retry the daemon's HTTP 500 for it, and no Ceph assertion of that test ran. |
 | Docker resource cleanup | `runtime-cleanup-<id>-<release>/after.json` | A test left a container, network or volume behind, for example by not registering cleanup when `Run` returned an error. |
 
 Failed integration tests print the last 16 KB (8 KB in the multicluster and

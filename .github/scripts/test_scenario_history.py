@@ -696,6 +696,9 @@ class ClassifyTest(unittest.TestCase):
             job.native(TRUNCATED_LOG, "native-test-failure", 45.0)
         elif result == "image":
             job.phases(images="failure")
+        elif result == "registry":
+            job.phases(native="failure")
+            job.native(FAILING_LOG, "native-registry-transport")
         elif result == "cancelled":
             job.phases(native="cancelled")
         elif result == "timeout":
@@ -753,6 +756,15 @@ class ClassifyTest(unittest.TestCase):
         recent = self.profile(rows)["recent"]
         self.assertEqual((recent["rows"], recent["attempts"], recent["failed"]), (4, 2, 0))
         self.assertEqual(history.attempt_kind(self.attempt("timeout")), "timeout")
+
+    def test_native_registry_transport_is_an_image_failure_not_a_scenario_failure(self):
+        rows = [self.attempt("passed", "1"), self.attempt("registry", "2")]
+        self.assertEqual(history.attempt_kind(rows[1]), "image_failure")
+        self.assertEqual(rows[1]["first_failure"]["classification"], "native-registry-transport")
+        config = self.only_config(rows)
+        self.assertEqual((config["attempts"], config["failed"]), (1, 0))
+        self.assertEqual(config["excluded"], {"image_failure": 1})
+        self.assertEqual(history.attempt_kind(self.attempt("failed", "3")), "assertion_failure")
 
     def test_another_tree_or_image_is_another_configuration(self):
         base = self.attempt()

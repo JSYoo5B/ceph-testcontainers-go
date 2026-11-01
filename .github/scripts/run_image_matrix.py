@@ -5,7 +5,11 @@ An absent image is explicitly pulled for the Docker engine's native platform.
 Existing references are resolved once to local image IDs before invoking make.
 This is module compatibility evidence, not the separate image contract checker.
 Preparation mode resolves those same images without executing compatibility tests,
-or, with --roles, only the role images that a batch declares.
+or, with --roles, only the role images that a batch declares. With --reaper it
+also resolves the Ryuk image that the built testcontainers-go module starts,
+so that no Go test reaches a registry to start its reaper. A pull that fails
+on a registry transport error is retried a bounded number of times
+(registry_pull.py); the summary records every attempt.
 """
 
 import argparse
@@ -21,6 +25,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+import registry_pull
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +71,12 @@ EXPECTED_PACKAGES = (
 )
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 DIGEST = IMAGE_ID
+TESTCONTAINERS = "github.com/testcontainers/testcontainers-go"
+# testcontainers-go names its Ryuk image in this file and constant; the module
+# version comes from go.mod, so the image follows a dependency update.
+REAPER_SOURCE = "internal/config/config.go"
+REAPER_CONSTANT = re.compile(r'^\s*const\s+ReaperDefaultImage\s*=\s*"([a-z0-9][a-z0-9./_-]*:[A-Za-z0-9._-]+)"',
+                             re.MULTILINE)
 RUN = re.compile(r"^=== RUN[ \t]+(Test[A-Za-z0-9_]+)(?:[ \t]*)$")
 RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0-9]+)?s\)[ \t]*$")
 
@@ -85,6 +97,8 @@ def parse_arguments(argv=None):
     parser.add_argument("--roles",
                         help="Comma-separated roles to prepare, essential included; default all five dependency roles. "
                              "Requires --prepare-only and --layout roles")
+    parser.add_argument("--reaper", action="store_true",
+                        help="Also resolve the Ryuk image of the testcontainers-go module in go.mod")
     parser.add_argument("--digests", default="",
                         help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
                              "Requires --layout roles")
@@ -173,6 +187,7 @@ def source_manifest(root):
     # label as proof of unmodified source. Generated output is never included.
     paths = {root / "Makefile", root / "go.mod", root / "go.sum",
              root / ".github/scripts/run_image_matrix.py",
+             root / ".github/scripts/registry_pull.py",
              root / ".github/ceph-role-images.json"}
     for directory in ("ceph", "cephfs", "rgw", "rbd", "internal"):
         paths.update((root / directory).rglob("*.go"))
@@ -189,6 +204,22 @@ def source_manifest(root):
         raise RuntimeError("go.mod has no module declaration")
     digest = hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {"files": files, "sha256": digest, "module": module.group(1)}
+
+
+def reaper_reference(listed):
+    """The Ryuk image of the testcontainers-go module that `go list -m -f
+    '{{.Dir}}'` printed as listed."""
+    directory = Path(listed.strip())
+    if not directory.is_absolute():
+        raise RuntimeError("go list printed no module directory for " + TESTCONTAINERS)
+    try:
+        text = (directory / REAPER_SOURCE).read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError("cannot read the Ryuk image of " + TESTCONTAINERS + ": " + type(error).__name__) from None
+    found = REAPER_CONSTANT.findall(text)
+    if len(found) != 1:
+        raise RuntimeError(TESTCONTAINERS + " names no single ReaperDefaultImage in " + REAPER_SOURCE)
+    return found[0]
 
 
 def completed_tests(path, module):
@@ -316,7 +347,8 @@ def main(argv=None):
         revision = os.environ.get("GITHUB_SHA")
         if revision and re.fullmatch(r"[a-fA-F0-9]{40}", revision):
             summary["source"]["declared_github_revision"] = revision.lower()
-        for executable in (("docker",) if args.prepare_only else ("go", "make", "docker")):
+        for executable in ((("go", "docker") if args.reaper else ("docker",)) if args.prepare_only
+                           else ("go", "make", "docker")):
             if shutil.which(executable) is None:
                 raise RuntimeError(executable + " is required on the caller's PATH")
         if not args.prepare_only:
@@ -341,7 +373,29 @@ def main(argv=None):
                                     args.digests)
         if args.digests:
             summary["pinned_digests"] = args.digests
-        for role, reference in references.items():
+
+        def pull(role, reference):
+            def attempt(number):
+                name = "pull-" + role + (".log" if number == 1 else "-" + str(number) + ".log")
+                code = stream(["docker", "pull", "--platform", platform, reference], name)
+                return code, (output / name).read_text(encoding="utf-8", errors="replace")
+
+            passed, attempts = registry_pull.pull(attempt)
+            summary.setdefault("pulls", {})[role] = attempts
+            if passed:
+                return
+            last = attempts[-1]
+            message = role + " image pull failed (exit " + str(last["exit_code"]) + ")"
+            if last.get("transport"):
+                # The registry was not reached; nothing about the image or a
+                # Ceph test is established.
+                summary["classification"] = "registry-transport"
+                summary["registry_failure"] = {"role": role, "reference": reference,
+                                               "attempts": len(attempts)} | last["transport"]
+                message += " after " + str(len(attempts)) + " attempts: " + registry_pull.describe(last["transport"])
+            raise RuntimeError(message)
+
+        def resolve(role, reference):
             # Ordinary inspection keeps this native-only runner compatible
             # with engines predating the inspect --platform API (1.49).
             inspect = ["docker", "image", "inspect", "--", reference]
@@ -351,9 +405,7 @@ def main(argv=None):
                 # image and must not cause an unrelated registry pull.
                 if not re.search(r"\bNo such (?:image|object):", result.stderr, re.IGNORECASE):
                     raise RuntimeError(role + " image inspection failed; image absence was not confirmed")
-                pull_code = stream(["docker", "pull", "--platform", platform, reference], "pull-" + role + ".log")
-                if pull_code:
-                    raise RuntimeError(role + " image pull failed (exit " + str(pull_code) + ")")
+                pull(role, reference)
                 result = capture(inspect)
                 if result.returncode:
                     raise RuntimeError(role + " image is unavailable after pull")
@@ -372,8 +424,18 @@ def main(argv=None):
             if (not isinstance(repo_digests, list) or any(not isinstance(value, str)
                     or re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", value) is None for value in repo_digests)):
                 raise RuntimeError(role + " image has invalid registry digest metadata")
-            summary["images"][role] = {"reference": reference, "image_id": image_id,
-                                      "repo_digests": repo_digests, "platform": platform}
+            return {"reference": reference, "image_id": image_id, "repo_digests": repo_digests, "platform": platform}
+
+        for role, reference in references.items():
+            summary["images"][role] = resolve(role, reference)
+        if args.reaper:
+            # Ryuk is no Ceph role: it is kept apart from the role images and
+            # their environment. testcontainers-go starts it by this tag and
+            # pulls only an absent image.
+            listed = capture(["go", "list", "-m", "-f", "{{.Dir}}", TESTCONTAINERS])
+            if listed.returncode:
+                raise RuntimeError("go list cannot locate " + TESTCONTAINERS)
+            summary["reaper"] = resolve("reaper", reaper_reference(listed.stdout))
         images = summary["images"]
         summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]

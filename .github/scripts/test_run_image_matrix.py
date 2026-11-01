@@ -40,12 +40,18 @@ class Runtime:
         self.make_log = passing_log()
         self.make_code = 0
         self.pull_code = 0
+        # (exit code, output) of successive pulls; pull_code once exhausted.
+        self.pull_results = []
         self.go_code = 0
+        self.module_dir = None
+        self.list_code = 0
 
     def capture(self, command, **kwargs):
         self.capture_commands.append(command)
         if command == ["go", "version"]:
             return subprocess.CompletedProcess(command, self.go_code, "go version go1.25.0 darwin/arm64\n", "")
+        if command == ["go", "list", "-m", "-f", "{{.Dir}}", runner.TESTCONTAINERS]:
+            return subprocess.CompletedProcess(command, self.list_code, str(self.module_dir) + "\n", "")
         if command == ["docker", "info", "--format", "{{json .}}"]:
             return subprocess.CompletedProcess(command, 0, json.dumps(self.info), "")
         if command[:4] == ["docker", "image", "inspect", "--"]:
@@ -68,8 +74,9 @@ class Runtime:
             self.make_environment = kwargs["env"].copy()
             output, code = self.make_log, self.make_code
         elif command[:3] == ["docker", "pull", "--platform"]:
-            self.pulled.add(command[-1])
-            output, code = "pulled\n", self.pull_code
+            code, output = self.pull_results.pop(0) if self.pull_results else (self.pull_code, "pulled\n")
+            if code == 0:
+                self.pulled.add(command[-1])
         else:
             raise AssertionError("unexpected streaming command: " + repr(command))
         process = mock.Mock()
@@ -88,12 +95,20 @@ class MatrixTests(unittest.TestCase):
         self.write("go.mod", "module " + MODULE + "\n\ngo 1.25.0\n")
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
+        self.write(".github/scripts/registry_pull.py", SCRIPT.with_name("registry_pull.py").read_text())
         self.write(".github/ceph-role-images.json", (SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
         self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.DEFAULT_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
         self.write("ceph/internal/scripts/essential.sh", "#!/bin/sh\n")
         self.runtime = Runtime()
         self.output = self.root / "artifacts" / "result"
+
+    def reaper_module(self, source='const ReaperDefaultImage = "testcontainers/ryuk:0.14.0"\n'):
+        directory = Path(self.directory.name) / "testcontainers-go@v0.44.0"
+        (directory / "internal/config").mkdir(parents=True, exist_ok=True)
+        (directory / "internal/config/config.go").write_text("package config\n\n" + source)
+        self.runtime.module_dir = directory
+        return directory
 
     def write(self, relative, value):
         path = self.root / relative
@@ -495,6 +510,95 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 1)
         self.assertEqual(len(self.runtime.stream_commands), 1)
         self.assertIn("exit 7", self.summary()["error"])
+
+    def test_reaper_is_resolved_apart_from_the_roles_and_never_exported(self):
+        self.reaper_module()
+        env_file = self.write("github-env", "")
+        self.runtime.missing.add("testcontainers/ryuk:0.14.0")
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential",
+                                      "--reaper", "--github-env", str(env_file)], missing_executable="make"), 0)
+        report = self.summary()
+        self.assertEqual(set(report["images"]), {"essential"})
+        self.assertEqual(report["reaper"]["reference"], "testcontainers/ryuk:0.14.0")
+        self.assertRegex(report["reaper"]["image_id"], r"^sha256:[a-f0-9]{64}$")
+        self.assertEqual(self.runtime.stream_commands,
+                         [["docker", "pull", "--platform", "linux/arm64", "testcontainers/ryuk:0.14.0"]])
+        self.assertEqual([record["exit_code"] for record in report["pulls"]["reaper"]], [0])
+        self.assertEqual(list(report["prepared_environment"]), ["CEPH_TEST_ESSENTIAL_IMAGE"])
+        self.assertEqual(len(env_file.read_text().splitlines()), 1)
+
+    def test_present_reaper_is_not_pulled(self):
+        self.reaper_module()
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential", "--reaper"]), 0)
+        self.assertFalse(self.runtime.stream_commands)
+        self.assertNotIn("pulls", self.summary())
+
+    def test_reaper_needs_go_and_a_single_constant(self):
+        self.reaper_module()
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--reaper"], missing_executable="go"), 1)
+        self.assertIn("go is required", self.summary()["error"])
+        for source in ("", 'const ReaperDefaultImage = "testcontainers/ryuk"\n',
+                       'const ReaperDefaultImage = "a:1"\nconst ReaperDefaultImage = "b:2"\n'):
+            with self.subTest(source=source):
+                self.reaper_module(source)
+                self.output = self.root / "artifacts" / ("reaper-" + str(len(self.runtime.capture_commands)))
+                env_file = self.write("github-env", "")
+                self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--reaper",
+                                              "--github-env", str(env_file)]), 1)
+                self.assertIn("ReaperDefaultImage", self.summary()["error"])
+                self.assertEqual(env_file.read_text(), "")
+        self.runtime.list_code = 1
+        self.output = self.root / "artifacts" / "reaper-list"
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--reaper"]), 1)
+        self.assertIn("go list cannot locate", self.summary()["error"])
+
+    def test_role_pull_transport_failure_is_retried_and_recorded(self):
+        reference = runner.image_references("official", "roles", "20.2.4")["essential"]
+        self.runtime.missing.add(reference)
+        eof = ('Error response from daemon: Head "https://ghcr.io/v2/x/manifests/sha256:' + "8" * 64 +
+               '": Get "https://ghcr.io/token?account=a&scope=b": EOF\n')
+        self.runtime.pull_results = [(1, eof), (0, "pulled\n")]
+        with mock.patch.object(runner.registry_pull.time, "sleep") as sleep:
+            self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential"]), 0)
+        sleep.assert_called_once_with(runner.registry_pull.DELAYS[0])
+        report = self.summary()
+        self.assertTrue(report["preparation_passed"])
+        attempts = report["pulls"]["essential"]
+        self.assertEqual([record["exit_code"] for record in attempts], [1, 0])
+        self.assertEqual(attempts[0]["transport"], {"reason": "eof", "phase": "token", "endpoint": "https://ghcr.io/token"})
+        self.assertTrue((self.output / "pull-essential.log").exists())
+        self.assertTrue((self.output / "pull-essential-2.log").exists())
+        self.assertNotIn("classification", report)
+
+    def test_exhausted_transport_retries_classify_the_preparation_failure(self):
+        reference = runner.image_references("official", "roles", "20.2.4")["essential"]
+        self.runtime.missing.add(reference)
+        timeout = 'Error response from daemon: Get "https://ghcr.io/v2/": net/http: TLS handshake timeout\n'
+        self.runtime.pull_results = [(1, timeout)] * 3
+        env_file = self.write("github-env", "")
+        with mock.patch.object(runner.registry_pull.time, "sleep"):
+            self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential",
+                                          "--github-env", str(env_file)]), 1)
+        report = self.summary()
+        self.assertEqual(len(self.runtime.stream_commands), 3)
+        self.assertEqual(report["classification"], "registry-transport")
+        self.assertEqual(report["registry_failure"],
+                         {"role": "essential", "reference": reference, "attempts": 3,
+                          "reason": "tls-handshake-timeout", "phase": "registry", "endpoint": "https://ghcr.io/v2/"})
+        self.assertIn("after 3 attempts: registry transport tls-handshake-timeout", report["error"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertEqual(env_file.read_text(), "")
+
+    def test_registry_refusal_is_not_retried_or_classified(self):
+        self.runtime.missing.add(runner.DEFAULT_IMAGE)
+        self.runtime.pull_results = [(1, "Error response from daemon: manifest unknown\n")]
+        with mock.patch.object(runner.registry_pull.time, "sleep") as sleep:
+            self.assertEqual(self.invoke(), 1)
+        sleep.assert_not_called()
+        report = self.summary()
+        self.assertEqual(len(self.runtime.stream_commands), 1)
+        self.assertNotIn("classification", report)
+        self.assertEqual(report["error"], "all image pull failed (exit 1)")
 
     def test_missing_caller_go_is_error_and_has_report_without_docker(self):
         self.assertEqual(self.invoke(missing_executable="go"), 1)
