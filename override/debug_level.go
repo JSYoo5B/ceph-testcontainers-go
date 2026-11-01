@@ -75,8 +75,8 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 // cluster's startup timeout, as does every call.
 //
 // Restore with a context of its own, not the workload's, so that an ended
-// workload still restores. With TerminateOnCleanup, register the removal of
-// clients first and then Finalization.Cleanup with Restore: the cleanups run
+// workload still restores. With finalize.TerminateOnCleanup, register the
+// removal of clients first and then Finalization.Cleanup with Restore: the cleanups run
 // in reverse order after the failure archive, so a known failure is archived
 // while the level is still raised, the restoration runs before the clients
 // are removed, and a failed restoration triggers an after-cleanup archive and

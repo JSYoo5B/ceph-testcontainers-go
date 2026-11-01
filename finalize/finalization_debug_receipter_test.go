@@ -8,6 +8,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // staticReceipter is a foreign DebugLevelReceipter that returns a fixed receipt.
@@ -133,3 +134,6 @@ func manifestText(t *testing.T, directory string) string {
 // isNilInterface compares the interface itself, as TrackDebugLevel's first
 // check does; a typed nil pointer stored in it is not nil.
 func isNilInterface(r DebugLevelReceipter) bool { return r == nil }
+
+// A real handle feeds TrackDebugLevel through the narrow interface.
+var _ DebugLevelReceipter = (*override.DebugLevelHandle)(nil)

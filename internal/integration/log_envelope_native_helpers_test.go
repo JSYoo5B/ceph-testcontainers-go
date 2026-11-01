@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 )
 
 // The names of the two log expectations of the envelope scenario. The probe
@@ -29,13 +29,13 @@ const envelopeProbePattern = `.*Health check failed: noout flag\(s\) set \(OSDMA
 
 // envelopeConfig is the verification policy of the scenario for one quoted
 // sentinel token.
-func envelopeConfig(name, token string) ceph.VerificationConfig {
-	return ceph.VerificationConfig{
+func envelopeConfig(name, token string) finalize.VerificationConfig {
+	return finalize.VerificationConfig{
 		Name:        name,
 		MaxFindings: 4096,
-		Logs: []ceph.LogExpectation{
-			{Name: envelopeProbeName, Required: true, Daemon: envelopeSource, Event: ceph.LogClusterWarning, Pattern: envelopeProbePattern},
-			{Name: envelopeQuotedName, Required: true, Daemon: envelopeSource, Event: ceph.LogClusterWarning, Pattern: `.*` + regexp.QuoteMeta(token) + `.*`},
+		Logs: []finalize.LogExpectation{
+			{Name: envelopeProbeName, Required: true, Daemon: envelopeSource, Event: finalize.LogClusterWarning, Pattern: envelopeProbePattern},
+			{Name: envelopeQuotedName, Required: true, Daemon: envelopeSource, Event: finalize.LogClusterWarning, Pattern: `.*` + regexp.QuoteMeta(token) + `.*`},
 		},
 	}
 }
@@ -95,7 +95,7 @@ func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
 // real WRN probe satisfied the required warning, the INF entries that quote
 // a warning marker did not, nothing was left uninspected, and both sides
 // agree. Missing, empty or wrongly shaped evidence is an error, never a pass.
-func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe, quoted envelopeRaw) error {
+func judgeEnvelopeEvidence(report *finalize.VerificationReport, token string, probe, quoted envelopeRaw) error {
 	if report == nil {
 		return errors.New("no report")
 	}
@@ -105,7 +105,7 @@ func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe,
 	var problems []string
 	fail := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 
-	index := slices.IndexFunc(report.Sources, func(source ceph.VerificationSource) bool { return source.Source == envelopeSource })
+	index := slices.IndexFunc(report.Sources, func(source finalize.VerificationSource) bool { return source.Source == envelopeSource })
 	if index < 0 {
 		fail("no %s source", envelopeSource)
 	} else {
@@ -126,8 +126,8 @@ func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe,
 	if report.Logs.OmittedFindings != 0 {
 		fail("%d findings were omitted", report.Logs.OmittedFindings)
 	}
-	find := func(name string) *ceph.ExpectationResult {
-		i := slices.IndexFunc(report.Logs.Expectations, func(result ceph.ExpectationResult) bool { return result.Name == name })
+	find := func(name string) *finalize.ExpectationResult {
+		i := slices.IndexFunc(report.Logs.Expectations, func(result finalize.ExpectationResult) bool { return result.Name == name })
 		if i < 0 {
 			fail("no expectation %s", name)
 			return nil
@@ -144,7 +144,7 @@ func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe,
 		if strings.Contains(finding.Text, token) {
 			fail("an event was derived from the quoted token: %+v", finding)
 		}
-		if finding.Expectation == envelopeProbeName && (finding.Source != envelopeSource || finding.Event != string(ceph.LogClusterWarning)) {
+		if finding.Expectation == envelopeProbeName && (finding.Source != envelopeSource || finding.Event != string(finalize.LogClusterWarning)) {
 			fail("probe finding %+v", finding)
 		}
 	}

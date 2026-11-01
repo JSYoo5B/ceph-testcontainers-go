@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -30,10 +31,10 @@ func TestOSDDebugLevel(t *testing.T) {
 	defer cancel()
 	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
-	var finalization *ceph.Finalization
+	var finalization *finalize.Finalization
 	if cluster != nil {
 		var registerErr error
-		finalization, registerErr = cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true, Scenario: "osd-debug-level"})
+		finalization, registerErr = finalize.TerminateOnCleanup(t, cluster, finalize.Config{Archive: true, Scenario: "osd-debug-level"})
 		if registerErr != nil {
 			_ = cluster.Terminate(context.WithoutCancel(ctx))
 			t.Fatal(registerErr)

@@ -8,23 +8,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 )
 
 const envelopeFixtureToken = "envelopequote0123abcd"
 
-func envelopeFixtureReport() *ceph.VerificationReport {
-	return &ceph.VerificationReport{
-		Sources: []ceph.VerificationSource{
+func envelopeFixtureReport() *finalize.VerificationReport {
+	return &finalize.VerificationReport{
+		Sources: []finalize.VerificationSource{
 			{Source: "mgr.a", ContainerID: "c2", ImageID: "sha256:image", StartedAt: "2026-10-26T01:00:00Z", LogDriver: "json-file", LogBytes: 10},
 			{Source: envelopeSource, ContainerID: "c1", ImageID: "sha256:image", StartedAt: "2026-10-26T01:00:00Z", LogDriver: "json-file", LogBytes: 4096},
 		},
-		Logs: ceph.VerificationCheck{
-			Outcome: ceph.VerificationUnexpected,
-			Findings: []ceph.VerificationFinding{
-				{Source: envelopeSource, Event: string(ceph.LogClusterWarning), Text: "Health check failed: noout flag(s) set (OSDMAP_FLAGS)", Expectation: envelopeProbeName},
+		Logs: finalize.VerificationCheck{
+			Outcome: finalize.VerificationUnexpected,
+			Findings: []finalize.VerificationFinding{
+				{Source: envelopeSource, Event: string(finalize.LogClusterWarning), Text: "Health check failed: noout flag(s) set (OSDMAP_FLAGS)", Expectation: envelopeProbeName},
 			},
-			Expectations: []ceph.ExpectationResult{
+			Expectations: []finalize.ExpectationResult{
 				{Name: envelopeProbeName, Required: true, MinCount: 1, Matched: 2, Satisfied: true},
 				{Name: envelopeQuotedName, Required: true, MinCount: 1},
 			},
@@ -47,56 +47,58 @@ func TestEnvelopeEvidenceAcceptsTheDiscriminatingObservation(t *testing.T) {
 func TestEnvelopeEvidenceRefusesMissingOrBrokenEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*ceph.VerificationReport, *envelopeRaw, *envelopeRaw)
+		mutate func(*finalize.VerificationReport, *envelopeRaw, *envelopeRaw)
 		want   string
 	}{
-		{"missing MON source", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources = r.Sources[:1] }, "no mon.a source"},
-		{"no sources at all", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources = nil }, "no mon.a source"},
-		{"unidentified generation", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].ContainerID = "" }, "not identified"},
-		{"missing image", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].ImageID = "" }, "not identified"},
-		{"rotating driver", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogDriver = "local" }, "non-rotating"},
-		{"empty driver", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogDriver = "" }, "non-rotating"},
-		{"empty log stream", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogBytes = 0 }, "stream is empty"},
-		{"log gap", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
-			r.Logs.Gaps = []ceph.VerificationGap{{Source: "osd.0", Reason: "driver not covered"}}
+		{"missing MON source", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources = r.Sources[:1] }, "no mon.a source"},
+		{"no sources at all", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources = nil }, "no mon.a source"},
+		{"unidentified generation", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].ContainerID = "" }, "not identified"},
+		{"missing image", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].ImageID = "" }, "not identified"},
+		{"rotating driver", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogDriver = "local" }, "non-rotating"},
+		{"empty driver", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogDriver = "" }, "non-rotating"},
+		{"empty log stream", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Sources[1].LogBytes = 0 }, "stream is empty"},
+		{"log gap", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
+			r.Logs.Gaps = []finalize.VerificationGap{{Source: "osd.0", Reason: "driver not covered"}}
 		}, "log gaps"},
-		{"omitted findings", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Logs.OmittedFindings = 1 }, "omitted"},
-		{"no expectations", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations = nil }, "no expectation warning-probe"},
-		{"probe expectation absent", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
+		{"omitted findings", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Logs.OmittedFindings = 1 }, "omitted"},
+		{"no expectations", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations = nil }, "no expectation warning-probe"},
+		{"probe expectation absent", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
 			r.Logs.Expectations = r.Logs.Expectations[1:]
 		}, "no expectation warning-probe"},
-		{"quoted expectation absent", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
+		{"quoted expectation absent", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
 			r.Logs.Expectations = r.Logs.Expectations[:1]
 		}, "no expectation quoted-info"},
-		{"probe unsatisfied", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
+		{"probe unsatisfied", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
 			r.Logs.Expectations[0].Satisfied, r.Logs.Expectations[0].Matched = false, 0
 		}, "did not satisfy warning-probe"},
-		{"probe satisfied without a match", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations[0].Matched = 0 }, "did not satisfy warning-probe"},
-		{"quoted expectation satisfied", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
+		{"probe satisfied without a match", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations[0].Matched = 0 }, "did not satisfy warning-probe"},
+		{"quoted expectation satisfied", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
 			r.Logs.Expectations[1].Satisfied, r.Logs.Expectations[1].Matched = true, 1
 		}, "satisfied quoted-info"},
-		{"quoted expectation matched but unsatisfied", func(r *ceph.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations[1].Matched = 1 }, "satisfied quoted-info"},
-		{"finding from the token", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
-			r.Logs.Findings = append(r.Logs.Findings, ceph.VerificationFinding{Source: envelopeSource, Event: string(ceph.LogClusterWarning), Text: "x " + envelopeFixtureToken})
+		{"quoted expectation matched but unsatisfied", func(r *finalize.VerificationReport, _, _ *envelopeRaw) { r.Logs.Expectations[1].Matched = 1 }, "satisfied quoted-info"},
+		{"finding from the token", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
+			r.Logs.Findings = append(r.Logs.Findings, finalize.VerificationFinding{Source: envelopeSource, Event: string(finalize.LogClusterWarning), Text: "x " + envelopeFixtureToken})
 		}, "derived from the quoted token"},
-		{"probe finding of another kind", func(r *ceph.VerificationReport, _, _ *envelopeRaw) {
-			r.Logs.Findings[0].Event = string(ceph.LogClusterError)
+		{"probe finding of another kind", func(r *finalize.VerificationReport, _, _ *envelopeRaw) {
+			r.Logs.Findings[0].Event = string(finalize.LogClusterError)
 		}, "probe finding"},
-		{"no raw WRN probe", func(_ *ceph.VerificationReport, probe, _ *envelopeRaw) { probe.Priorities = map[string]int{"INF": 1} }, "no WRN probe line"},
-		{"nil raw probe", func(_ *ceph.VerificationReport, probe, _ *envelopeRaw) { probe.Priorities = nil }, "no WRN probe line"},
-		{"no raw INF quote", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities = map[string]int{} }, "no INF line"},
-		{"only an unrecognized quote", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) {
+		{"no raw WRN probe", func(_ *finalize.VerificationReport, probe, _ *envelopeRaw) {
+			probe.Priorities = map[string]int{"INF": 1}
+		}, "no WRN probe line"},
+		{"nil raw probe", func(_ *finalize.VerificationReport, probe, _ *envelopeRaw) { probe.Priorities = nil }, "no WRN probe line"},
+		{"no raw INF quote", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities = map[string]int{} }, "no INF line"},
+		{"only an unrecognized quote", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) {
 			quoted.Priorities, quoted.Unrecognized = map[string]int{}, 1
 		}, "no INF line"},
-		{"quote outside any envelope", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Unrecognized = 1 }, "literal severity marker outside any recognized envelope"},
-		{"literal marker in the command echo", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) {
+		{"quote outside any envelope", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) { quoted.Unrecognized = 1 }, "literal severity marker outside any recognized envelope"},
+		{"literal marker in the command echo", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) {
 			*quoted = rawEnvelopeCounts([]string{
 				"2026-10-26T01:02:03.123+0000 7f3a1c0e5640  0 log_channel(cluster) log [INF] : " + envelopeFixtureToken + " quotes [WRN]",
 				`2026-10-26T01:02:03.100+0000 7f3a1c0e5640  0 mon.a@0(leader) e1 handle_command mon_command([{"prefix": "log", "logtext": ["` + envelopeFixtureToken + ` quotes [WRN]"]}] v 0)`,
 			}, envelopeFixtureToken)
 		}, "literal severity marker outside any recognized envelope"},
-		{"quote also in a WRN line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["WRN"] = 1 }, "void"},
-		{"quote also in an ERR line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["ERR"] = 1 }, "void"},
+		{"quote also in a WRN line", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["WRN"] = 1 }, "void"},
+		{"quote also in an ERR line", func(_ *finalize.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["ERR"] = 1 }, "void"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

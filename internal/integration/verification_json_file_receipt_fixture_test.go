@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 )
 
 // These fixtures are synthetic: they build the receipt of the native
@@ -35,9 +36,9 @@ func jsonFileFixtureID(role string, n int) string {
 	return fmt.Sprintf("jfr-noise-%s-%02d", jsonFileFixtureNonce, n)
 }
 
-func jsonFileFixtureFinding(id, expectation string) ceph.VerificationFinding {
-	return ceph.VerificationFinding{
-		Source: "mon.a", ContainerID: "container-mon-a", Event: string(ceph.LogClusterWarning), Time: jsonFileFixtureBase.Add(2 * time.Second).Format(time.RFC3339Nano),
+func jsonFileFixtureFinding(id, expectation string) finalize.VerificationFinding {
+	return finalize.VerificationFinding{
+		Source: "mon.a", ContainerID: "container-mon-a", Event: string(finalize.LogClusterWarning), Time: jsonFileFixtureBase.Add(2 * time.Second).Format(time.RFC3339Nano),
 		Text:        "cluster 2026-10-26T10:00:02.000000+0000 mon.a (mon.0) 7 : cluster [WRN] " + id,
 		Expectation: expectation,
 	}
@@ -79,24 +80,24 @@ func jsonFileFixtureReceipt() jsonFileReceipt {
 		holds[ev.ID] = ev.Role != jsonFileRoleEarly && ev.Role != jsonFileRoleQuote
 	}
 
-	report := &ceph.VerificationReport{
+	report := &finalize.VerificationReport{
 		SchemaVersion: 1,
-		Outcome:       ceph.VerificationUnexpected,
-		Window:        ceph.VerificationWindow{Phase: "test", StartedAt: at(0), EndedAt: at(60), EvaluatedAt: at(60)},
-		Sources: []ceph.VerificationSource{{Source: "mon.a", Role: "mon", Name: "a", ContainerID: "container-mon-a", ImageID: "sha256:image",
+		Outcome:       finalize.VerificationUnexpected,
+		Window:        finalize.VerificationWindow{Phase: "test", StartedAt: at(0), EndedAt: at(60), EvaluatedAt: at(60)},
+		Sources: []finalize.VerificationSource{{Source: "mon.a", Role: "mon", Name: "a", ContainerID: "container-mon-a", ImageID: "sha256:image",
 			StartedAt: "2026-10-26T09:50:00Z", RestartCount: 0, State: "running", LogDriver: "json-file", LogBytes: 4096}},
-		Logs: ceph.VerificationCheck{
-			Outcome: ceph.VerificationUnexpected, Permitted: 2,
-			Findings: []ceph.VerificationFinding{
+		Logs: finalize.VerificationCheck{
+			Outcome: finalize.VerificationUnexpected, Permitted: 2,
+			Findings: []finalize.VerificationFinding{
 				jsonFileFixtureFinding(jsonFileFixtureID(jsonFileRoleEarly, 0), jsonFileEarlyName),
 				jsonFileFixtureFinding(jsonFileFixtureID(jsonFileRoleTail, 0), jsonFileTailName),
 			},
-			Expectations: []ceph.ExpectationResult{
+			Expectations: []finalize.ExpectationResult{
 				{Name: jsonFileEarlyName, Required: true, MinCount: 1, Matched: 1, Satisfied: true},
 				{Name: jsonFileTailName, Required: true, MinCount: 1, Matched: 1, Satisfied: true},
 				{Name: jsonFileQuoteName, Required: true, MinCount: 1},
 			},
-			Gaps: []ceph.VerificationGap{},
+			Gaps: []finalize.VerificationGap{},
 		},
 	}
 	generation := jsonFileGeneration{ContainerID: "container-mon-a", StartedAt: "2026-10-26T09:50:00Z", LogDriver: "json-file", Present: true}
@@ -178,10 +179,10 @@ func TestJSONFileReceiptRefusesMissingOrBrokenEvidence(t *testing.T) {
 		{"clock sample before is after the window end", func(r *jsonFileReceipt) { r.ClockBefore = r.Report.Window.EndedAt.Add(time.Second) }, "do not bracket"},
 		{"clock sample after precedes the window end", func(r *jsonFileReceipt) { r.ClockAfter = r.Report.Window.EndedAt.Add(-time.Second) }, "do not bracket"},
 		{"a log gap", func(r *jsonFileReceipt) {
-			r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "osd.0", Reason: "log stream ends inside a frame"}}
+			r.Report.Logs.Gaps = []finalize.VerificationGap{{Source: "osd.0", Reason: "log stream ends inside a frame"}}
 		}, "log gaps"},
 		{"a gap of the source", func(r *jsonFileReceipt) {
-			r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "mon.a", Reason: "1 log lines have no valid timestamp"}}
+			r.Report.Logs.Gaps = []finalize.VerificationGap{{Source: "mon.a", Reason: "1 log lines have no valid timestamp"}}
 		}, "disposition is \"gapped\""},
 		{"omitted findings", func(r *jsonFileReceipt) { r.Report.Logs.OmittedFindings = 1; r.Report.Logs.Permitted++ }, "findings were omitted"},
 		{"counts do not cover the findings", func(r *jsonFileReceipt) { r.Report.Logs.Permitted = 1 }, "retains 2 findings"},
@@ -249,7 +250,7 @@ func TestJSONFileReceiptRefusesMissingOrBrokenEvidence(t *testing.T) {
 		}, "was received 2 times"},
 		{"early finding from another source", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Source = "mon.b" }, "finding of " + early},
 		{"early finding from another container", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].ContainerID = "container-other" }, "finding of " + early},
-		{"early finding of another kind", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Event = string(ceph.LogClusterError) }, "finding of " + early},
+		{"early finding of another kind", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Event = string(finalize.LogClusterError) }, "finding of " + early},
 		{"early finding without expectation", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Expectation = "" }, "finding of " + early},
 		{"early finding truncated", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Truncated = true }, "finding of " + early},
 		{"early finding without time", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Time = "" }, "finding of " + early},
@@ -338,8 +339,8 @@ func TestJSONFileReceiptRefusedSourceIsASeparateResult(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := jsonFileFixtureReceipt()
-			r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "mon.a", Reason: tc.reason}}
-			r.Report.Logs.Outcome = ceph.VerificationIncomplete
+			r.Report.Logs.Gaps = []finalize.VerificationGap{{Source: "mon.a", Reason: tc.reason}}
+			r.Report.Logs.Outcome = finalize.VerificationIncomplete
 			if got := jsonFileDisposition(r.Report, r.Source); got != "rejected" {
 				t.Fatalf("disposition %q", got)
 			}
@@ -354,7 +355,7 @@ func TestJSONFileReceiptRefusedSourceIsASeparateResult(t *testing.T) {
 	}
 	// A gap of another source does not make this source rejected.
 	r := jsonFileFixtureReceipt()
-	r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "osd.0", Reason: `log driver "local" is not covered; only json-file without rotation is`}}
+	r.Report.Logs.Gaps = []finalize.VerificationGap{{Source: "osd.0", Reason: `log driver "local" is not covered; only json-file without rotation is`}}
 	if got := jsonFileDisposition(r.Report, r.Source); got != "observed" {
 		t.Fatalf("disposition %q", got)
 	}
@@ -391,12 +392,12 @@ func TestJSONFileRawLinesUseTheStructuralPriority(t *testing.T) {
 }
 
 func TestJSONFileTailFromAnswersPerWholeID(t *testing.T) {
-	artifact := ceph.DiagnosticArtifact{Kind: "container-logs", Data: "line one\n\nline jfr-noise-aa-11 two\nlast jfr-tail-aa\n"}
+	artifact := diagnostics.Artifact{Kind: "container-logs", Data: "line one\n\nline jfr-noise-aa-11 two\nlast jfr-tail-aa\n"}
 	tail := jsonFileTailFrom(artifact, 8, []string{"jfr-noise-aa-1", "jfr-noise-aa-11", "jfr-tail-aa", "jfr-early-aa"})
 	if tail.Lines != 3 || tail.Requested != 8 || tail.Holds["jfr-noise-aa-1"] || !tail.Holds["jfr-noise-aa-11"] || !tail.Holds["jfr-tail-aa"] || tail.Holds["jfr-early-aa"] {
 		t.Fatalf("tail %+v", tail)
 	}
-	failed := jsonFileTailFrom(ceph.DiagnosticArtifact{Error: "boom", Truncated: true}, 8, []string{"x"})
+	failed := jsonFileTailFrom(diagnostics.Artifact{Error: "boom", Truncated: true}, 8, []string{"x"})
 	if failed.Error != "boom" || !failed.Truncated || failed.Lines != 0 || failed.Holds["x"] {
 		t.Fatalf("failed tail %+v", failed)
 	}
@@ -458,8 +459,8 @@ func TestJSONFileQuoteCommandHidesTheMarkerFromTheEcho(t *testing.T) {
 func TestJSONFileReceiptRefusesTheFirstNativeShape(t *testing.T) {
 	r := jsonFileFixtureReceipt()
 	quote := jsonFileFixtureID(jsonFileRoleQuote, 0)
-	r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "mon.a", Reason: "1 log lines carry an [ERR], [SEC] or [WRN] marker without a supported log envelope, so their severity was not classified"}}
-	r.Report.Logs.Outcome = ceph.VerificationUnexpected
+	r.Report.Logs.Gaps = []finalize.VerificationGap{{Source: "mon.a", Reason: "1 log lines carry an [ERR], [SEC] or [WRN] marker without a supported log envelope, so their severity was not classified"}}
+	r.Report.Logs.Outcome = finalize.VerificationUnexpected
 	raw := r.Raw[quote]
 	raw.Unrecognized = 1
 	r.Raw[quote] = raw

@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -51,15 +52,15 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 		owned = append(owned, harness.ToolkitContainer(t, cluster))
 	}
 	observed := append(slices.Clone(owned), client)
-	config := ceph.DiagnosticsConfig{
+	config := diagnostics.Config{
 		Timeout: time.Minute, OperationTimeout: 10 * time.Second,
 		MaxOutputBytes: 256 << 10, LogTail: 50, Concurrency: 4,
-		AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "probe", Container: client}},
+		AdditionalContainers: []diagnostics.Target{{Role: "client", Name: "probe", Container: client}},
 	}
-	collect := func(t *testing.T, phase string, expectError bool) *ceph.DiagnosticsReport {
+	collect := func(t *testing.T, phase string, expectError bool) *diagnostics.Report {
 		t.Helper()
 		before := diagnosticsCaptureState(t, ctx, cluster, observed, true)
-		report, err := cluster.CollectDiagnostics(ctx, config)
+		report, err := diagnostics.Collect(ctx, cluster, config)
 		if report == nil || (err != nil) != expectError {
 			t.Fatalf("%s collection: report present=%t error present=%t; expected error=%t; error=%v; failed artifacts=%s", phase, report != nil, err != nil, expectError, err, diagnosticsArtifactErrors(report))
 		}
@@ -118,7 +119,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 		config.AdditionalContainers = append(config.AdditionalContainers,
-			ceph.DiagnosticsContainer{Role: "client", Name: "removed-probe", Container: removed})
+			diagnostics.Target{Role: "client", Name: "removed-probe", Container: removed})
 		report := collect(t, "removed caller-owned client", true)
 		for _, kind := range []string{"container-inspect", "container-logs"} {
 			artifact := diagnosticsFindArtifact(t, report, kind, "", removed.GetContainerID())
@@ -136,7 +137,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 		deadlineCtx, deadlineCancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
 		defer deadlineCancel()
 		started := time.Now()
-		report, err := cluster.CollectDiagnostics(deadlineCtx, config)
+		report, err := diagnostics.Collect(deadlineCtx, cluster, config)
 		if report == nil || !errors.Is(err, context.DeadlineExceeded) || report.Complete {
 			t.Fatal("expired deadline did not return an inspectable incomplete report and deadline error")
 		}
@@ -303,7 +304,7 @@ func diagnosticsFSID(t *testing.T, ctx context.Context, cluster *ceph.Container)
 	return status.FSID
 }
 
-func diagnosticsAssertReport(t *testing.T, report *ceph.DiagnosticsReport, host, incomplete bool) {
+func diagnosticsAssertReport(t *testing.T, report *diagnostics.Report, host, incomplete bool) {
 	t.Helper()
 	if report.SchemaVersion != 1 || report.HostNetwork != host || report.Closed || report.Complete == incomplete || report.StartedAt.IsZero() || report.FinishedAt.Before(report.StartedAt) {
 		t.Fatal("diagnostics report lost schema/network/lifecycle/completeness/timing metadata")
@@ -313,7 +314,7 @@ func diagnosticsAssertReport(t *testing.T, report *ceph.DiagnosticsReport, host,
 	}
 }
 
-func diagnosticsAssertCoverage(t *testing.T, report *ceph.DiagnosticsReport, containers []testcontainers.Container, host, native bool) {
+func diagnosticsAssertCoverage(t *testing.T, report *diagnostics.Report, containers []testcontainers.Container, host, native bool) {
 	t.Helper()
 	for _, container := range containers {
 		for _, kind := range []string{"container-inspect", "container-logs"} {
@@ -350,7 +351,7 @@ func diagnosticsAssertCoverage(t *testing.T, report *ceph.DiagnosticsReport, con
 
 // Collection errors have already passed through the API redactor. Preserve only
 // failure identities and those safe explanations; never dump artifact Data.
-func diagnosticsArtifactErrors(report *ceph.DiagnosticsReport) string {
+func diagnosticsArtifactErrors(report *diagnostics.Report) string {
 	if report == nil {
 		return "report unavailable"
 	}
@@ -363,9 +364,9 @@ func diagnosticsArtifactErrors(report *ceph.DiagnosticsReport) string {
 	return strings.Join(failures, "; ")
 }
 
-func diagnosticsFindArtifact(t *testing.T, report *ceph.DiagnosticsReport, kind, name, containerID string) ceph.DiagnosticArtifact {
+func diagnosticsFindArtifact(t *testing.T, report *diagnostics.Report, kind, name, containerID string) diagnostics.Artifact {
 	t.Helper()
-	var matches []ceph.DiagnosticArtifact
+	var matches []diagnostics.Artifact
 	for _, artifact := range report.Artifacts {
 		if artifact.Kind == kind && (name == "" || artifact.Name == name) && (containerID == "" || artifact.ContainerID == containerID) {
 			matches = append(matches, artifact)
@@ -377,7 +378,7 @@ func diagnosticsFindArtifact(t *testing.T, report *ceph.DiagnosticsReport, kind,
 	return matches[0]
 }
 
-func diagnosticsCountKind(report *ceph.DiagnosticsReport, kind string) int {
+func diagnosticsCountKind(report *diagnostics.Report, kind string) int {
 	count := 0
 	for _, artifact := range report.Artifacts {
 		if artifact.Kind == kind {
@@ -483,7 +484,7 @@ func testCanceledDiagnostics(t *testing.T) {
 	defer cancelCall()
 	done := make(chan error, 1)
 	go func() {
-		_, err := cluster.CollectDiagnostics(callCtx, ceph.DiagnosticsConfig{Timeout: 2 * time.Minute, OperationTimeout: time.Minute})
+		_, err := diagnostics.Collect(callCtx, cluster, diagnostics.Config{Timeout: 2 * time.Minute, OperationTimeout: time.Minute})
 		done <- err
 	}()
 	deadline := time.Now().Add(time.Minute)

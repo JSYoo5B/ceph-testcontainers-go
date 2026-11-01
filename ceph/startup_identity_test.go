@@ -113,7 +113,7 @@ var startupIdentityCallers = map[string]stateCaller{
 	"monitorJoinOptions":      {"fact", []string{"ownedLabel"}},
 	"startJoiningMonitor":     {"fact", []string{"ownedLabel"}},
 	"OwnedLabel":              {"fact", []string{"ownedLabel"}},
-	"TerminateOnCleanup":      {"fact", []string{"ownerID"}},
+	"Owner":                   {"fact", []string{"ownerID"}},
 	"checkDualStackAddresses": {"fact", []string{"firstMonitorImage"}},
 	"startedContainer":        {"fact", []string{"ownedLabel"}},
 	"ensureControlPlane":      {"fact", []string{"ownedLabel"}},
@@ -127,7 +127,6 @@ var startupIdentityCallers = map[string]stateCaller{
 	"monitorGenerations":      {"fact", []string{"ownedLabel"}},
 	"startManager":            {"fact", []string{"ownedLabel"}},
 	"startService":            {"fact", []string{"ownedLabel"}},
-	"startVerification":       {"fact", []string{"ownerID"}},
 	"terminate":               {"fact", []string{"ownerID", "removeLabeledContainers"}},
 }
 

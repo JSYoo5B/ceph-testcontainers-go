@@ -3,19 +3,16 @@ package override
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
-
-// A real handle feeds Finalization.TrackDebugLevel through the narrow
-// interface, so ceph never names the override type.
-var _ ceph.DebugLevelReceipter = (*DebugLevelHandle)(nil)
 
 // TestSetDebugLevelRefusalsReturnNotAppliedHandles is the table of the refusals
 // that happen before a window is opened. Every row returns a non-nil handle, a

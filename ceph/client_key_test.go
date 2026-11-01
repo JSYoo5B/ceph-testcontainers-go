@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -528,18 +529,18 @@ func TestCopiedClientDescriptorsGoStale(t *testing.T) {
 	})
 }
 
-// requireRedacted checks that diagnostics redact each owned client key
-// even where it appears without a key= label.
+// requireRedacted checks that the secrets of the evidence inventory redact
+// each owned client key, even where it appears without a key= label.
 func requireRedacted(t *testing.T, c *Container, keys ...string) {
 	t.Helper()
 	// The fake cluster has no Docker containers to list.
 	c.Container = nil
 	c.fleet.osdHandles.replace(nil)
-	snapshot, err := c.diagnosticsSnapshot(t.Context(), diagnosticsUnitConfig(t))
+	inv, err := c.evidenceInventory(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	redact := diagnosticsRedactor(snapshot.secrets)
+	redact := evidence.Redactor(inv.Secrets)
 	for i, key := range keys {
 		if strings.Contains(redact("opaque observation "+key+" end"), key) {
 			t.Errorf("diagnostics keep owned client key %d of %d", i+1, len(keys))

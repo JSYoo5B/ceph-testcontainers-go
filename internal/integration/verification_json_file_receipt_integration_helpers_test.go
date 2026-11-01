@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -205,10 +207,10 @@ func testVerificationJSONFileNativeReceipt(t *testing.T) {
 	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	recorder := &jsonFileFinalizer{TB: t}
-	var finalization *ceph.Finalization
+	var finalization *finalize.Finalization
 	if cluster != nil {
 		var registerErr error
-		finalization, registerErr = cluster.TerminateOnCleanup(recorder, ceph.FinalizationConfig{Scenario: "verification-json-file-receipt"})
+		finalization, registerErr = finalize.TerminateOnCleanup(recorder, cluster, finalize.Config{Scenario: "verification-json-file-receipt"})
 		if registerErr != nil {
 			_ = cluster.Terminate(context.WithoutCancel(ctx))
 			t.Fatal(registerErr)
@@ -264,13 +266,13 @@ func testVerificationJSONFileNativeReceipt(t *testing.T) {
 	}
 	suffix := hex.EncodeToString(nonce)
 	early, quote, tail := "jfr-early-"+suffix, "jfr-quote-"+suffix, "jfr-tail-"+suffix
-	expectation := func(name, id string) ceph.LogExpectation {
-		return ceph.LogExpectation{Name: name, Required: true, Daemon: jsonFileSource, Event: ceph.LogClusterWarning, Pattern: `.*` + regexp.QuoteMeta(id) + `.*`}
+	expectation := func(name, id string) finalize.LogExpectation {
+		return finalize.LogExpectation{Name: name, Required: true, Daemon: jsonFileSource, Event: finalize.LogClusterWarning, Pattern: `.*` + regexp.QuoteMeta(id) + `.*`}
 	}
-	policy, err := finalization.Verify(ctx, ceph.VerificationConfig{
+	policy, err := finalization.Verify(ctx, finalize.VerificationConfig{
 		Name:        "json-file-receipt",
 		MaxFindings: 4096,
-		Logs:        []ceph.LogExpectation{expectation(jsonFileEarlyName, early), expectation(jsonFileTailName, tail), expectation(jsonFileQuoteName, quote)},
+		Logs:        []finalize.LogExpectation{expectation(jsonFileEarlyName, early), expectation(jsonFileTailName, tail), expectation(jsonFileQuoteName, quote)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -328,11 +330,11 @@ func testVerificationJSONFileNativeReceipt(t *testing.T) {
 
 	// The diagnostic tail, which the noise overflowed.
 	started := time.Now()
-	diagnostics, diagErr := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{LogTail: jsonFileTailLines})
+	collected, diagErr := diagnostics.Collect(ctx, cluster, diagnostics.Config{LogTail: jsonFileTailLines})
 	receipt.Elapsed.Diagnostics = time.Since(started)
-	artifact := ceph.DiagnosticArtifact{Error: "no container-logs artifact for the source"}
-	if diagnostics != nil {
-		for _, candidate := range diagnostics.Artifacts {
+	artifact := diagnostics.Artifact{Error: "no container-logs artifact for the source"}
+	if collected != nil {
+		for _, candidate := range collected.Artifacts {
 			if candidate.Kind == "container-logs" && candidate.ContainerID == monID {
 				artifact = candidate
 			}
@@ -420,7 +422,7 @@ func jsonFileWaitRaw(ctx context.Context, docker *mobycl.Client, id string, ids 
 
 // logVerificationReceiptReport logs the check's outcome, counts and gaps; the
 // receipt carries the rest.
-func logVerificationReceiptReport(t *testing.T, report *ceph.VerificationReport) {
+func logVerificationReceiptReport(t *testing.T, report *finalize.VerificationReport) {
 	t.Helper()
 	t.Logf("verification %s: window %s to %s, logs %s with %d permitted and %d unexpected, %d gaps",
 		report.Outcome, report.Window.StartedAt.Format(time.RFC3339Nano), report.Window.EndedAt.Format(time.RFC3339Nano),

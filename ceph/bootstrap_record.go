@@ -15,7 +15,7 @@ import (
 // mu is a leaf below Container.mu:
 // newOSDLaunchRecipe, currentMonitorBootstrapAddresses, refreshMonitorConfigAfterRemoval
 // and the snapshot readers take it while the topology lock is held, and
-// diagnosticsSnapshot, the health and pool readers and ClusterIdentity take it
+// evidenceInventory, the health and pool readers and ClusterIdentity take it
 // without it. No method of the type takes another lock or calls into Container,
 // so a holder of mu never waits for Container.mu or any other lock.
 //

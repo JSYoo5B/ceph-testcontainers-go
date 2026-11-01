@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -146,7 +147,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 			}
 			root := filepath.Join(t.ArtifactDir(), "failure-archives")
 			tb := &controlledFailureTB{TB: t}
-			finalization, err := cluster.TerminateOnCleanup(tb, ceph.FinalizationConfig{Archive: true, ArchiveDirectory: root, Scenario: "capture-raw-copy"})
+			finalization, err := finalize.TerminateOnCleanup(tb, cluster, finalize.Config{Archive: true, ArchiveDirectory: root, Scenario: "capture-raw-copy"})
 			if err != nil {
 				t.Fatal(err)
 			}

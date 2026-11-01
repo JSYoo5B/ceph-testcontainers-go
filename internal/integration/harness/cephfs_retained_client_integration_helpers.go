@@ -22,6 +22,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -233,7 +234,7 @@ func (run *CephFSActorRun) exited(ctx context.Context) string {
 	if len(stderr) > 4096 {
 		stderr = stderr[len(stderr)-4096:]
 	}
-	if redacted, err := run.cluster.RedactSecrets(ctx, stderr); err == nil {
+	if redacted, err := diagnostics.Redact(ctx, run.cluster, stderr); err == nil {
 		stderr = redacted
 	}
 	return fmt.Sprintf("exit=%d timed_out=%t err=%v stderr=%s", run.Result.ExitCode, run.Result.TimedOut, run.Err, stderr)

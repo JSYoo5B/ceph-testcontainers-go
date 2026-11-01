@@ -1125,22 +1125,6 @@ func (f *launchUnavailableTarget) Exec(ctx context.Context, args []string, opts 
 	return f.nativeTarget.Exec(ctx, args, opts...)
 }
 
-func TestRedactSecretsUsesTheClusterSecrets(t *testing.T) {
-	cluster := &Container{bootstrap: bootstrapRecord{keyring: []byte("[client.admin]\n\tkey = AQBsecretadminkey==\n")}}
-	cluster.ledger.authRecords.addSecret("AQBreplacedclientkey==")
-	data := []byte("admin AQBsecretadminkey== client AQBreplacedclientkey== app opaque-value \x00\xff")
-	redacted, err := cluster.RedactSecrets(t.Context(), data, "opaque-value")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "admin [REDACTED] client [REDACTED] app [REDACTED] \x00\xff"; string(redacted) != want {
-		t.Fatalf("redacted %q, want %q", redacted, want)
-	}
-	if string(data) != "admin AQBsecretadminkey== client AQBreplacedclientkey== app opaque-value \x00\xff" {
-		t.Fatal("RedactSecrets changed its input")
-	}
-}
-
 // receiptLossNativeTarget runs each supervisor exec to completion and then
 // loses its final inspection with cause, as when Docker answers the
 // ExecInspect after the output has been drained.

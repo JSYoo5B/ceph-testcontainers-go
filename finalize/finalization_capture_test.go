@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
 	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
 )
 
@@ -298,3 +299,9 @@ func TestFinalizationRedactsArchivedCaptureMetadata(t *testing.T) {
 		t.Error("the settled report was modified in place")
 	}
 }
+
+// The capture package's session is what Capture and CaptureWithFile take.
+var (
+	_ CaptureSettler    = (*capture.Session)(nil)
+	_ CaptureFileSource = (*capture.Session)(nil)
+)

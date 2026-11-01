@@ -19,13 +19,14 @@ import (
 	"unicode/utf8"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// monReplacementCluster is the part of *ceph.Container that a recorded MON
+// monReplacementCluster is the part of harness.WithSockets that a recorded MON
 // replacement uses: the membership operations and read-only observations
 // through public APIs. Membership is listed with the context getters, so a
 // held topology mutex cannot outlive an observation's bound.
@@ -34,7 +35,7 @@ type monReplacementCluster interface {
 	RemoveMonitor(context.Context, string) error
 	QuorumStatus(context.Context) (ceph.QuorumStatus, error)
 	AdminSocket(context.Context, string, ...string) ([]byte, error)
-	CollectDiagnostics(context.Context, ceph.DiagnosticsConfig) (*ceph.DiagnosticsReport, error)
+	CollectDiagnostics(context.Context, diagnostics.Config) (*diagnostics.Report, error)
 	Monitors(context.Context) ([]*ceph.MonitorContainer, error)
 	Managers(context.Context) ([]*ceph.ManagerContainer, error)
 	OSDs(context.Context) ([]*ceph.OSDContainer, error)
@@ -364,7 +365,7 @@ type monReplacementBundle struct {
 	Failure          *monReplacementSnapshot `json:"failure,omitempty"`
 	Debug            []monReplacementDebug   `json:"debug"`
 	Traces           []monReplacementTrace   `json:"traces"`
-	Diagnostics      *ceph.DiagnosticsReport `json:"diagnostics,omitempty"`
+	Diagnostics      *diagnostics.Report     `json:"diagnostics,omitempty"`
 	DiagnosticsError string                  `json:"diagnostics_error,omitempty"`
 }
 
@@ -376,7 +377,7 @@ type monReplacementRecorder struct {
 	Token, Cluster string
 	cluster        monReplacementCluster
 	bounds         monReplacementBounds
-	additional     []ceph.DiagnosticsContainer
+	additional     []diagnostics.Target
 	exec           []monReplacementExecDaemon
 	execSocket     func(context.Context, monReplacementExecDaemon, ...string) ([]byte, error)
 	bundled        bool
@@ -388,7 +389,7 @@ type monReplacementRecorder struct {
 	help           map[string]map[string]bool
 }
 
-func newMonReplacementRecorder(label string, cluster monReplacementCluster, bounds monReplacementBounds, additional ...ceph.DiagnosticsContainer) *monReplacementRecorder {
+func newMonReplacementRecorder(label string, cluster monReplacementCluster, bounds monReplacementBounds, additional ...diagnostics.Target) *monReplacementRecorder {
 	return &monReplacementRecorder{Token: uuid.NewString()[:8], Cluster: label, cluster: cluster, bounds: bounds, additional: additional,
 		execSocket: monReplacementExecSocket, help: make(map[string]map[string]bool)}
 }
@@ -624,7 +625,7 @@ func (r *monReplacementRecorder) collect(parent context.Context, failed monRepla
 	bundle := &monReplacementBundle{Token: r.Token, Cluster: r.Cluster, Failed: failed, Phases: r.Phases, Baseline: r.Baseline}
 	bundle.Failure = r.snapshot(ctx, true)
 	bundle.Traces = r.traces(ctx)
-	report, err := r.cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{
+	report, err := r.cluster.CollectDiagnostics(ctx, diagnostics.Config{
 		Timeout: r.bounds.Bundle / 2, OperationTimeout: r.bounds.Query, MaxOutputBytes: 32 << 10, LogTail: 400,
 		AdditionalContainers: r.additional,
 	})
