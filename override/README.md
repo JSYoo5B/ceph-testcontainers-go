@@ -67,4 +67,4 @@ uncertain outcome, is in go doc:
 or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/override`. Scenarios
 that combine overrides with faults are in
 [Fault injection](../docs/guides/fault-injection.md); failure archives in
-[finalize](../finalize/README.md).
+[finalize](../ceph/finalize/README.md).

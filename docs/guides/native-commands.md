@@ -673,10 +673,10 @@ runs.
 
 ## Diagnostics
 
-[diagnostics.Collect](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/diagnostics#Collect) gathers a
+[diagnostics.Collect](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics#Collect) gathers a
 bounded, read-only, JSON-serializable snapshot with a fixed set of Ceph
 queries, also from partially bootstrapped or terminated clusters, and
-[diagnostics.CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/diagnostics#CollectCrashMetadata) adds the
+[diagnostics.CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics#CollectCrashMetadata) adds the
 daemons' crash reports.
 
 - Call it with a fresh context; a canceled test context cannot collect.
@@ -727,9 +727,9 @@ refuse to overwrite outside edits.
 - [`ceph`](../../ceph/README.md): `Ceph`, `RunNativeCommand`,
   `ControlContainer`, `ClientContainer`, `WithClient`, `CreateClient`,
   `ConnectionConfig`.
-- [`diagnostics`](../../diagnostics/README.md): `Collect`,
+- [`diagnostics`](../../ceph/diagnostics/README.md): `Collect`,
   `CollectCrashMetadata`, `Redact`.
-- [`finalize`](../../finalize/README.md): `TerminateOnCleanup`, which writes
+- [`finalize`](../../ceph/finalize/README.md): `TerminateOnCleanup`, which writes
   both reports into a failure archive.
 - [`override`](../../override/README.md): `SetConfig` and the other restorable
   changes.

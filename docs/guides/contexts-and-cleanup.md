@@ -318,7 +318,7 @@ reports that daemons wrote; it also reads containers that have stopped.
 
 To run post-test checks, write both reports into a failure archive and remove
 caller-owned clients before `Terminate` on one ordered path, register
-[`finalize.TerminateOnCleanup`](../../finalize/README.md) right after
+[`finalize.TerminateOnCleanup`](../../ceph/finalize/README.md) right after
 `ceph.Run` instead of `testcontainers.CleanupContainer`. Each of its phases
 uses a fresh context bounded by its own timeout in `finalize.Config`.
 
@@ -528,9 +528,9 @@ func TestSomething(t *testing.T) {
 
 - [`ceph`](../../ceph/README.md): `Run`, `Terminate`, `WithStartupTimeout`,
   `RunNativeCommand`, context-aware getters.
-- [`diagnostics`](../../diagnostics/README.md): `Collect`,
+- [`diagnostics`](../../ceph/diagnostics/README.md): `Collect`,
   `CollectCrashMetadata`, `Redact`.
-- [`finalize`](../../finalize/README.md): `TerminateOnCleanup` and the
+- [`finalize`](../../ceph/finalize/README.md): `TerminateOnCleanup` and the
   `Finalization` checks, cleanups and failure archive.
 - [`override`](../../override/README.md): the override calls and their
   restoration handles.

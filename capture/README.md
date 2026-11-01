@@ -76,4 +76,4 @@ The full contract of every type and function is in go doc:
 [pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/capture)
 or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/capture`. Error
 categories are described in [Errors](../docs/guides/errors.md); failure
-archives in [finalize](../finalize/README.md).
+archives in [finalize](../ceph/finalize/README.md).

@@ -290,7 +290,7 @@ archive from `diagnostics.Collect`, `diagnostics.CollectCrashMetadata`,
 verification reports and capture reports, and `Finalization.Verify` checks log
 lines and new crashes against expected events. The phases and their order are
 in the godoc of `finalize.Finalization` and in the
-[finalize](../../finalize/README.md) package page; this section describes the
+[finalize](../../ceph/finalize/README.md) package page; this section describes the
 archive layout and the verification model.
 
 ### The failure archive
@@ -308,8 +308,8 @@ test never share one:
 | `diagnostics.json` | The `diagnostics.Report`, absent when the collector returned none. |
 | `crash-metadata.json` | The `diagnostics.CrashMetadataReport`, absent when the collector returned none. |
 | `verification-<n>-<name>.json` | The `finalize.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
-| `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#Finalization.Capture) that returned one, numbered by registration order. |
-| `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
+| `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#Finalization.Capture) that returned one, numbered by registration order. |
+| `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
 
 The manifest's execution identity has the Go version and platform, the VCS
@@ -389,7 +389,7 @@ Limits:
 Opt-in post-test verification of a dedicated cluster: the log lines and the
 new crashes of its daemons between the activation and the end of the test,
 each against its own expected events. `Verify` activates it on a
-`Finalization` from [finalize.TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#TerminateOnCleanup) and adds a check
+`Finalization` from [finalize.TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#TerminateOnCleanup) and adds a check
 named `verification <name>`, so it runs before the failure archive and the
 cleanups. A verification that is not clean fails the test, and with
 `Archive` its report is archived with the diagnostics before anything is
@@ -543,10 +543,10 @@ Limits:
   early event has left the 24-line diagnostic tail, the selected generation
   and its configuration are unchanged, no log gap, omitted finding or
   truncated finding is reported, and cleanup passes. The same run checks that
-  an INF line quoting a warning cannot satisfy a required warning (see the
-  #206 receipt on #47). This does not qualify other releases, daemon roles or
-  log formats, rotating, restarted or removed generations, or continuous
-  collection, and current gaps stay incomplete coverage. Native crash
+  an INF line quoting a warning cannot satisfy a required warning
+  (`TestVerificationJSONFileNativeReceipt`). This does not qualify other
+  releases, daemon roles or log formats, rotating, restarted or removed
+  generations, or continuous collection, and current gaps stay incomplete coverage. Native crash
   completion timing and measured collection-resource defaults remain
   unestablished; the configured limits and their loss accounting are separate
   evidence.
