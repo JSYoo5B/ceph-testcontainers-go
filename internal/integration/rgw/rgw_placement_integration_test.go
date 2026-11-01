@@ -87,7 +87,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 			sites = append(sites, rgwDiagnosticSite{Name: site.name, Gateway: site.gateway,
 				Commands:  [][]string{{"sync", "status"}, {"metadata", "sync", "status"}, {"data", "sync", "status", "--source-zone", fixture.SourceZoneID}, {"sync", "error", "list"}},
 				Redact:    func(data []byte) string { return rgwPlacementSafeDiagnostic(data, site.gateway) },
-				RedactLog: func(data []byte) string { return rgwPlacementSafeLogDiagnostic(data, site.gateway) }})
+				RedactLog: func(data []byte) string { return rgwPlacementSafeLogDiagnostic(data, site.gateway) }, CrashExcerpt: true})
 		}
 		for _, line := range rgwFailureDiagnostics(context.Background(), rgwDefaultDiagnosticBounds, sites) {
 			t.Log(line)
