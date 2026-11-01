@@ -33,8 +33,12 @@ Documentation for a published release is available at its Git tag.
   backup and restore.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
-- [`cephfs`](cephfs/README.md): filesystems and MDS topology, subvolumes,
-  snapshots and clones, client authorization and sessions.
+- [`cephfs`](cephfs/README.md): filesystems and MDS topology, data pools,
+  client sessions and snapshot schedules.
+  - [`cephfs/subvolume`](cephfs/subvolume/README.md): subvolume groups and
+    subvolumes, snapshots and clones, subvolume principals and pins.
+  - [`cephfs/quiesce`](cephfs/quiesce/README.md): quiesce sets over owned
+    subvolumes.
   - [`cephfs/mirror`](cephfs/mirror/README.md): snapshot mirroring between two
     clusters.
 - [`rgw`](rgw/README.md): S3 and Swift gateways, users, accounts and quotas,

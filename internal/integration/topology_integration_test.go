@@ -139,7 +139,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			// The MGR learns a new filesystem from its own FSMap subscription,
 			// which can trail the MON's commit; after the MON replacement it
 			// did, and a raw volumes command right after Start returned
-			// ENOENT. CreateSubvolumeGroup first waits until the active MGR
+			// ENOENT. subvolume.CreateGroup first waits until the active MGR
 			// lists the filesystem, so each create runs against a MGR that
 			// knows it, before and after the failover.
 			if _, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "before-failover"}); err != nil {

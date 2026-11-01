@@ -118,7 +118,14 @@ discussed.
 10. An operation that acts on one resource handle is a method of that handle,
     named without the resource word: `volume.Resize(ctx, n)`,
     `snapshot.Clone(ctx, cfg)`, `grant.Deauthorize(ctx)`, not
-    `fs.ResizeSubvolume(ctx, volume, n)`. The handle carries the identity its
-    parent recorded, so a handle cannot be passed to a foreign parent. Creation,
-    listing and name-based queries stay on the parent (`fs.CreateSubvolume`,
-    `fs.SubvolumeInfo`).
+    `subvolume.Resize(ctx, fs, volume, n)`. The handle carries the identity its
+    parent recorded, so a handle cannot be passed to a foreign parent.
+    Creation, listing and name-based queries of a feature that has its own
+    package are functions of that package that take the existing parent:
+    `subvolume.Create(ctx, fs, cfg)`, `subvolume.Info(ctx, fs, name, group)`.
+    They act on an existing fixture and start no container, so they are not
+    entry points; the package's `Run` conventions are unchanged. Inside the
+    feature package the names drop the package word (`subvolume.Create`, not
+    `subvolume.CreateSubvolume`). A query whose name would collide with its
+    returned type keeps the noun of the native observation, and the type takes
+    another noun (`subvolume.Info` returns `*subvolume.Metadata`).

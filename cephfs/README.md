@@ -3,10 +3,12 @@
 Import `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` to give an
 application that uses CephFS (libcephfs, go-ceph, the Python binding) a
 disposable cluster with the filesystem state its integration test needs:
-filesystems and their MDS topology, data pools, subvolume groups and
-subvolumes, snapshots and clones, principals restricted to one subvolume,
-directory pins, quiesce sets and client session limits. File I/O belongs to the
-client under test; the package never mounts CephFS on the test host. See
+filesystems and their MDS topology, data pools, client session limits and
+snapshot schedules. Subvolume groups and subvolumes, snapshots and clones,
+principals restricted to one subvolume and directory pins are in
+[`cephfs/subvolume`](subvolume/README.md), quiesce sets in
+[`cephfs/quiesce`](quiesce/README.md). File I/O belongs to the client under
+test; the package never mounts CephFS on the test host. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ```
@@ -21,18 +23,19 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `ceph.Run`, `rbd.Run` and `rgw.Run`), and `cephfs.Start` adds one to a
    running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
-   `ScaleMDS`, `AddDataPool`, `CreateSubvolumeGroup` / `CreateSubvolume`
-   (quotas, data pools, RADOS namespaces), `Subvolume.CreateSnapshot` and
-   `SubvolumeSnapshot.Clone`, `Subvolume.Authorize` (a principal for one
-   subvolume), `Subvolume.OverridePin`, `AddSnapshotSchedule`,
-   `OverrideSessionTimeouts`.
+   `ScaleMDS`, `AddDataPool`, `AddSnapshotSchedule`,
+   `OverrideSessionTimeouts`; in [`cephfs/subvolume`](subvolume/README.md)
+   `subvolume.CreateGroup` / `subvolume.Create` (quotas, data pools, RADOS
+   namespaces), `Subvolume.CreateSnapshot` and `Snapshot.Clone`,
+   `Subvolume.Authorize` (a principal for one subvolume) and
+   `Subvolume.OverridePin`.
 3. **Hand it to the SUT**: run the client in a container attached with
    `cluster.WithClient()` (admin keyring) or `grant.Client.WithIdentity()` (one
    principal), and pass it `fs.FilesystemName` and the subvolume path.
 4. **Reproduce conditions and observe**: stop an MDS or `fault.Pause` a client,
-   `QuiesceSubvolumes`, then check `MDSStatus`, `WaitReady`, `Sessions`,
-   `SubvolumeInfo`, `SubvolumeClone.Status`, `DataPools` and the `ceph`
-   observation APIs.
+   `quiesce.Start`, then check `MDSStatus`, `WaitReady`, `Sessions`,
+   `subvolume.Info`, `Clone.Status`, `DataPools` and the `ceph` observation
+   APIs.
 5. **Clean up**: terminate the cluster; it removes owned filesystems,
    subvolumes, principals and daemons. Use the handles' `Remove`,
    `Deauthorize` and `Restore` only to test those steps or to restore state
@@ -45,7 +48,7 @@ if err != nil {
 	t.Fatal(err)
 }
 fs := cephfs.Filesystems(cluster.Container)[0] // tc-cephfs
-volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "app", SizeBytes: 64 << 20})
+volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "app", SizeBytes: 64 << 20})
 if err != nil {
 	t.Fatal(err)
 }
@@ -81,7 +84,7 @@ if err != nil {
 - MDS: names, keys, entrypoint and networking are fixed; each MDS has a
   128 MiB cache. Damaged-metadata recovery, multi-rank replacement and
   `MDS.AddReplacement` with standbys are not provided.
-- Snapshots do not pause writers: use `QuiesceSubvolumes` or application
+- Snapshots do not pause writers: use `quiesce.Start` or application
   synchronisation. Quota enforcement and usage accounting are native and can
   lag writes; removal moves data to Ceph's trash and purges asynchronously.
 - Native timing: a dead MDS is replaced only after `mds_beacon_grace` (15 s)
