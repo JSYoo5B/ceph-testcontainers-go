@@ -12,7 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -33,9 +33,9 @@ func mdsOpsInFlight(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Conte
 
 // clientSession returns the actor client's session, or nil when the MDS has
 // none.
-func clientSession(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) *cephfs.Session {
+func clientSession(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) *cephfssession.Session {
 	t.Helper()
-	sessions, err := h.FS.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, h.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func killActor(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) s
 // testCephFSClientKilledDuringUnsafeRequest holds one rename unsafe
 // (HoldCephFSUnsafeRename) and SIGKILLs the client's process, so the client
 // never sees the safe reply. Session timeouts are shortened to 30 s and 60 s
-// through OverrideSessionTimeouts before the kill. The MDS keeps the request
+// through session.OverrideTimeouts before the kill. The MDS keeps the request
 // in flight, unsafe, while the pause holds its journal. After the pause is
 // restored the MDS journals the request and replies to the dead session; the
 // MDS keeps its GID. The session stays open until autoclose, as for an idle
@@ -92,8 +92,8 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	h := harness.HoldCephFSUnsafeRename(t, ctx)
 	tid := h.Held.Tid
 
-	short := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: time.Minute}
-	change, err := h.FS.OverrideSessionTimeouts(ctx, short)
+	short := cephfssession.Limits{Timeout: 30 * time.Second, Autoclose: time.Minute}
+	change, err := cephfssession.OverrideTimeouts(ctx, h.FS, short)
 	if change != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

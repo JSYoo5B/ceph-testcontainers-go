@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -451,7 +452,7 @@ func testCephFSSessionAdmission(t *testing.T) {
 	}
 
 	// Lifecycle, with renewals every 10 s.
-	change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute})
+	change, err := cephfssession.OverrideTimeouts(ctx, fs, cephfssession.Limits{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute})
 	if change != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

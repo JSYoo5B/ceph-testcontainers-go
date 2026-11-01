@@ -23,6 +23,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -330,14 +331,14 @@ func CephFSRawSessionSummary(session map[string]json.RawMessage) string {
 
 // CephFSRetainedSession waits until rank serves client with an open session
 // and returns it.
-func CephFSRetainedSession(t *testing.T, parent context.Context, fs *cephfs.Filesystem, client uint64, rank int) cephfs.Session {
+func CephFSRetainedSession(t *testing.T, parent context.Context, fs *cephfs.Filesystem, client uint64, rank int) cephfssession.Session {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
-	var last []cephfs.Session
+	var last []cephfssession.Session
 	var lastErr error
 	for {
-		last, lastErr = fs.Sessions(ctx)
+		last, lastErr = cephfssession.List(ctx, fs)
 		for _, session := range last {
 			if session.ID == client && session.Rank == rank && session.State == "open" {
 				return session
@@ -523,7 +524,7 @@ func RunCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...test
 	if session.PID != strconv.Itoa(baseline.PID) || session.EntityID != "admin" || session.Address == "" || session.Caps == 0 {
 		t.Fatalf("actor session = %+v, want PID %d", session, baseline.PID)
 	}
-	var rankZero cephfs.Session
+	var rankZero cephfssession.Session
 	if failedRank != 0 {
 		rankZero = CephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
 	}
@@ -1079,11 +1080,11 @@ func RunCephFSLateReconnect(t *testing.T) {
 	if reconnectFirst == 0 || held < 5*time.Second || held > time.Minute {
 		t.Fatalf("rank 0 states %v, up:reconnect for %s, want the 10 s window", states, held)
 	}
-	sessions, err := fs.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.ContainsFunc(sessions, func(s cephfs.Session) bool { return s.ID == baseline.Client }) {
+	if slices.ContainsFunc(sessions, func(s cephfssession.Session) bool { return s.ID == baseline.Client }) {
 		t.Fatalf("the frozen client.%d kept a session: %+v", baseline.Client, sessions)
 	}
 	entries, err := ObserveCluster(cluster).BlocklistEntries(ctx)

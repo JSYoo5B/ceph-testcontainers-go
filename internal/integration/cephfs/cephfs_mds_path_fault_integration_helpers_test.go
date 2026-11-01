@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -226,8 +227,8 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	// marks a session that it has not heard from stale after 30 s. Autoclose
 	// stays far beyond the window, and no other client wants the caps, so
 	// the MDS has no reason to evict.
-	limits := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute}
-	change, err := fs.OverrideSessionTimeouts(ctx, limits)
+	limits := cephfssession.Limits{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute}
+	change, err := cephfssession.OverrideTimeouts(ctx, fs, limits)
 	if change != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

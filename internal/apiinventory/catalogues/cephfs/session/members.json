@@ -1,0 +1,23 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/session",
+  "count": 11,
+  "types": {
+    "cephfs/session.Limits": [
+      "Limits.Autoclose field time.Duration",
+      "Limits.Timeout field time.Duration"
+    ],
+    "cephfs/session.Session": [
+      "Session.Address field string",
+      "Session.Caps field int",
+      "Session.EntityID field string",
+      "Session.Hostname field string",
+      "Session.ID field uint64",
+      "Session.PID field string",
+      "Session.Rank field int",
+      "Session.Root field string",
+      "Session.State field string"
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs/session",
+  "count": 7,
+  "entries": [
+    {
+      "current": "cephfs/session.Limits",
+      "kind": "type",
+      "proposed": "cephfs/session.Limits",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.List",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem) ([]Session, error)",
+      "proposed": "cephfs/session.List",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.OverrideTimeouts",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem, requested Limits) (*TimeoutsOverrideHandle, error)",
+      "proposed": "cephfs/session.OverrideTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Session",
+      "kind": "type",
+      "proposed": "cephfs/session.Session",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Timeouts",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem) (Limits, error)",
+      "proposed": "cephfs/session.Timeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.TimeoutsOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs/session.TimeoutsOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.TimeoutsOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*TimeoutsOverrideHandle",
+      "proposed": "cephfs/session.TimeoutsOverrideHandle.Restore",
+      "decision": "baseline"
+    }
+  ]
+}

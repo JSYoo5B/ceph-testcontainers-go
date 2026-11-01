@@ -99,8 +99,7 @@ type Filesystem struct {
 	// mutex held.
 	config Config
 	// mds is the MDS state the fleet owns; see mdsState.
-	mds             mdsState
-	sessionTimeouts *cephFSSessionTimeoutsState
+	mds mdsState
 	// schedules holds the directories with a snapshot schedule lease that is
 	// not restored yet.
 	schedules scheduleLeases

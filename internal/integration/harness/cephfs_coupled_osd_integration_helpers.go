@@ -17,7 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -359,11 +359,11 @@ func RunCephFSBlocklistEpochBarrier(t *testing.T) {
 // sessionOf reports whether the MDS lists a session of client.
 func sessionOf(t *testing.T, ctx context.Context, m *CephFSSingleMDS, client uint64) bool {
 	t.Helper()
-	sessions, err := m.FS.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, m.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return slices.ContainsFunc(sessions, func(s cephfs.Session) bool { return s.ID == client })
+	return slices.ContainsFunc(sessions, func(s cephfssession.Session) bool { return s.ID == client })
 }
 
 // cephFSFullActor keeps one mount with an admin socket and one O_RDWR fd. It

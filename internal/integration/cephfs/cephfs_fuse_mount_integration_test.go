@@ -27,6 +27,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
@@ -301,7 +302,7 @@ func (f *fuseMount) Wait(t *testing.T, ctx context.Context, bound time.Duration)
 type fuseMountState struct {
 	mounted   bool
 	processes []string
-	session   cephfs.Session
+	session   cephfssession.Session
 	sessioned bool
 }
 
@@ -327,7 +328,7 @@ done; true`, "sh", f.point)
 		return state, fmt.Errorf("list ceph-fuse processes: exit %d: %v", code, err)
 	}
 	state.processes = strings.Fields(pids)
-	sessions, err := fs.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, fs)
 	if err != nil {
 		return state, err
 	}
@@ -559,7 +560,7 @@ func (f *fuseMount) staleState(t *testing.T, ctx context.Context, fs *cephfs.Fil
 // what a fixture must do after a killed or cancelled ceph-fuse, and waits
 // until both are gone. It returns whether the evicted address was
 // blocklisted.
-func (f *fuseMount) cleanStale(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, session cephfs.Session) bool {
+func (f *fuseMount) cleanStale(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, session cephfssession.Session) bool {
 	t.Helper()
 	harness.ExecOutput(t, ctx, f.ctr, "umount", f.point)
 	if _, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "client", "evict", "id="+strconv.FormatUint(session.ID, 10)); err != nil {

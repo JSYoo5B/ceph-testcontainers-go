@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -84,7 +85,7 @@ func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context)
 // noEviction requires that every client keeps its open rank 0 session, now
 // on the current MDS, with the address and PID it had before, and that no
 // blocklist entry names its address.
-func (m *cephFSStandbyFailover) noEviction(t *testing.T, ctx context.Context, before map[uint64]cephfs.Session) {
+func (m *cephFSStandbyFailover) noEviction(t *testing.T, ctx context.Context, before map[uint64]cephfssession.Session) {
 	t.Helper()
 	entries, err := harness.ObserveCluster(m.Cluster).BlocklistEntries(ctx)
 	if err != nil {
@@ -149,7 +150,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	if holder.client == contender.client || holder.inode != contender.inode {
 		t.Fatalf("holder client.%d inode %d, contender client.%d inode %d", holder.client, holder.inode, contender.client, contender.inode)
 	}
-	sessions := map[uint64]cephfs.Session{
+	sessions := map[uint64]cephfssession.Session{
 		holder.client:    harness.CephFSRetainedSession(t, ctx, m.FS, holder.client, 0),
 		contender.client: harness.CephFSRetainedSession(t, ctx, m.FS, contender.client, 0),
 	}
@@ -346,7 +347,7 @@ func testCephFSJournaledRenameAcrossMDSCrash(t *testing.T) {
 	if *replayed.Replayed == 0 || *replayed.ExpirePos > *logBefore.WritePos || *replayed.WritePos < *logAfter.WritePos {
 		t.Fatalf("new mds.%s did not replay the journal up to %d: %s", m.MDS.Name, *logAfter.WritePos, replayed)
 	}
-	m.noEviction(t, ctx, map[uint64]cephfs.Session{h.Baseline.Client: session})
+	m.noEviction(t, ctx, map[uint64]cephfssession.Session{h.Baseline.Client: session})
 	raw := harness.CephFSRawSessionSummary(harness.CephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, h.Baseline.Client))
 	h.Finish(t, ctx)
 	reader := h.ReadNamespace(t, ctx)

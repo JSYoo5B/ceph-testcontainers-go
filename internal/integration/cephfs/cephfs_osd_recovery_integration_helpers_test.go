@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
+
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -342,11 +343,11 @@ func testCephFSOSDRecovery(t *testing.T) {
 	if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
 		t.Fatalf("client.%d %s was blocklisted: %+v", session.ID, session.Address, entries)
 	}
-	sessions, err := m.FS.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, m.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.ContainsFunc(sessions, func(s cephfs.Session) bool { return s.ID == opened.Client }) {
+	if slices.ContainsFunc(sessions, func(s cephfssession.Session) bool { return s.ID == opened.Client }) {
 		t.Fatalf("client.%d still has a session after it unmounted: %+v", opened.Client, sessions)
 	}
 	t.Logf("CEPHFS_OSD_RECOVERY_RECEIPT %s: writer client.%d (%s) inode=%d object %s in pg %s acting %v; osd.%d stopped with noout, norecover and nobackfill (%s): %s, %s; the append and fsync returned 0 in %d ms; osd.%d up again: %s; the next append and fsync returned 0 in %d ms, then %s; with recovery released the pools were active+clean after %s through states %v; the writer read %d bytes through its fd and reader client.%d read every byte; the session stayed open, no blocklist entry, same MDS GID",

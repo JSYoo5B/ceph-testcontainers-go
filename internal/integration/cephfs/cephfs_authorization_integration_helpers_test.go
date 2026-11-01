@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -163,8 +164,8 @@ finally:
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := fs.Sessions(ctx)
-	if err != nil || !slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+	sessions, err := cephfssession.List(ctx, fs)
+	if err != nil || !slices.ContainsFunc(sessions, func(session cephfssession.Session) bool {
 		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
 	}) {
 		t.Fatalf("owned client did not retain its exact mounted session: %+v error=%v", sessions, err)
@@ -178,8 +179,8 @@ finally:
 	if err := crashed.EvictClients(ctx); err != nil {
 		t.Fatal(err)
 	}
-	sessions, err = fs.Sessions(ctx)
-	if err != nil || slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+	sessions, err = cephfssession.List(ctx, fs)
+	if err != nil || slices.ContainsFunc(sessions, func(session cephfssession.Session) bool {
 		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
 	}) {
 		t.Fatalf("crashed owned client's mounted session remains after explicit eviction: %+v error=%v", sessions, err)

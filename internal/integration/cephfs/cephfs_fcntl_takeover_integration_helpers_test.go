@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -273,7 +274,7 @@ finally:
 		t.Fatalf("standby takeover: %+v, %v", after, err)
 	}
 	m.MDS = after.Active[0]
-	var retained []cephfs.Session
+	var retained []cephfssession.Session
 	for i, mount := range mounts {
 		state := mount.ready(t, ctx, m.FS)
 		if state.session.ID != states[i].session.ID || state.session.Address != states[i].session.Address || state.session.PID != states[i].session.PID || state.processes[0] != states[i].processes[0] ||
@@ -360,7 +361,7 @@ finally:
 		t.Fatal(err)
 	}
 	receipt, err := json.Marshal(map[string]any{"fsid": status.FSID, "filesystem": m.FS.FilesystemName, "before_mds": old, "successor": successor, "after_mds": after.Active[0], "old_container": oldCID,
-		"before_sessions": []cephfs.Session{states[0].session, states[1].session}, "retained_sessions": retained, "fuse_process_starts": processStarts, "fuse_images": images,
+		"before_sessions": []cephfssession.Session{states[0].session, states[1].session}, "retained_sessions": retained, "fuse_process_starts": processStarts, "fuse_images": images,
 		"holder_fd": holder.first, "contender_fd": contender.first, "holder_lock": holderLocked, "disjoint": disjoint, "disjoint_unlock": disjointUnlock, "pre_denied": preDenied, "pre_lock": preLock, "post_denied": postDenied, "post_lock": postLock,
 		"holder_requests_before_post_proof": 1, "holder_unlock": unlocked, "contender_granted": granted, "write_bytes": len(updated), "independent_reader": independent.Client,
 		"fd_inode": independent.Inode, "mount_cleanup": cleaned, "old_mds_rejoined": true})

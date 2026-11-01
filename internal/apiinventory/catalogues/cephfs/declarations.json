@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 36,
+  "count": 29,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -83,14 +83,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.Filesystem.OverrideSessionTimeouts",
-      "kind": "method",
-      "signature": "func(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.OverrideSessionTimeouts",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.Filesystem.Remove",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -104,22 +96,6 @@
       "signature": "func(ctx context.Context, active, standby int) (returnErr error)",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.ScaleMDS",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.SessionTimeouts",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (SessionTimeouts, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.SessionTimeouts",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.Sessions",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]Session, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.Sessions",
       "decision": "baseline"
     },
     {
@@ -176,32 +152,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
       "proposed": "cephfs.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Session",
-      "kind": "type",
-      "proposed": "cephfs.Session",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SessionTimeouts",
-      "kind": "type",
-      "proposed": "cephfs.SessionTimeouts",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SessionTimeoutsOverrideHandle",
-      "kind": "type",
-      "proposed": "cephfs.SessionTimeoutsOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.SessionTimeoutsOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SessionTimeoutsOverrideHandle",
-      "proposed": "cephfs.SessionTimeoutsOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -266,7 +266,7 @@ func testCephFSFlockContention(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, session := range []struct {
-		before cephfs.Session
+		before cephfssession.Session
 		client uint64
 	}{{holderSession, holder.client}, {contenderSession, contender.client}} {
 		if after := harness.CephFSRetainedSession(t, ctx, m.FS, session.client, 0); after.Address != session.before.Address || after.PID != session.before.PID {

@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -197,7 +198,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		t.Fatalf("mds.%s advertises %s but its container has %s", m.MDS.Name, mdsIP, ip)
 	}
 	for _, client := range []struct {
-		session cephfs.Session
+		session cephfssession.Session
 		ctr     string
 	}{{writerSession, m.Client.GetContainerID()}, {waiterSession, harness.ToolkitContainer(t, m.Cluster).GetContainerID()}} {
 		address, _, _ := strings.Cut(client.session.Address, "/")
@@ -335,7 +336,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if writer.Published(ctx, 3) || waiter.Published(ctx, 2) {
 		t.Fatalf("a held call returned during the cut: %s", state.raw)
 	}
-	for _, session := range []cephfs.Session{writerSession, waiterSession} {
+	for _, session := range []cephfssession.Session{writerSession, waiterSession} {
 		if during := harness.CephFSRetainedSession(t, ctx, m.FS, session.ID, 0); during.Address != session.Address {
 			t.Fatalf("client.%d session during the cut %+v, before %+v", session.ID, during, session)
 		}
@@ -404,7 +405,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, session := range []cephfs.Session{writerSession, waiterSession} {
+	for _, session := range []cephfssession.Session{writerSession, waiterSession} {
 		if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
 			t.Fatalf("client.%d %s was blocklisted: %+v", session.ID, session.Address, entries)
 		}
