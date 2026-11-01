@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
@@ -146,6 +147,61 @@ func TestRGWPublishZoneEndpointCommitsTheGroupEndpointOnlyForAGroupMaster(t *tes
 	}
 	if want := []string{"zone modify --endpoints http://host:2", "zonegroup modify --endpoints http://host:2", "period update --commit"}; !slices.Equal(cli.ops, want) {
 		t.Fatalf("group master endpoint: %q", cli.ops)
+	}
+}
+
+// rgwHostGatewayContainer is a host-mode gateway container whose address the
+// endpoint reads; log records its stops and starts with the CLI's operations.
+type rgwHostGatewayContainer struct {
+	rgwLifecycleContainer
+	log *[]string
+}
+
+func (c *rgwHostGatewayContainer) ContainerIP(context.Context) (string, error) {
+	return "192.0.2.10", nil
+}
+func (c *rgwHostGatewayContainer) Stop(ctx context.Context, timeout *time.Duration) error {
+	*c.log = append(*c.log, "gateway stop")
+	return c.rgwLifecycleContainer.Stop(ctx, timeout)
+}
+func (c *rgwHostGatewayContainer) Start(ctx context.Context) error {
+	*c.log = append(*c.log, "gateway start")
+	return c.rgwLifecycleContainer.Start(ctx)
+}
+
+type rgwLoggedCLI struct {
+	rgwScriptCLI
+	log *[]string
+}
+
+func (c *rgwLoggedCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := c.rgwScriptCLI.Exec(ctx, args, opts...)
+	*c.log = append(*c.log, c.ops[len(c.ops)-1])
+	return code, out, err
+}
+
+// A host gateway learns its port at its first start. Its endpoint is committed
+// while it is stopped, and it starts again only afterwards, so it never
+// reloads that period in process during its initial metadata sync.
+func TestRGWHostEndpointIsCommittedWhileTheGatewayIsStopped(t *testing.T) {
+	var log []string
+	cli := &rgwLoggedCLI{log: &log}
+	f := newPhaseFixture(&cli.rgwScriptCLI, &cli.rgwScriptCLI)
+	ctr := &rgwHostGatewayContainer{rgwLifecycleContainer: rgwLifecycleContainer{running: true}, log: &log}
+	endpoint, err := f.publishHostEndpoint(t.Context(), &rgw.Gateway{Container: ctr}, cli, "c", true)
+	if err != nil || endpoint != "http://192.0.2.10:7480" {
+		t.Fatalf("endpoint %q: %v", endpoint, err)
+	}
+	want := []string{"gateway stop", "zone modify --endpoints http://192.0.2.10:7480", "zonegroup modify --endpoints http://192.0.2.10:7480", "period update --commit", "gateway start"}
+	if !slices.Equal(log, want) || !ctr.running {
+		t.Fatalf("order %q, running %t", log, ctr.running)
+	}
+	// A failed commit leaves the gateway stopped rather than serving an
+	// unknown period.
+	log = nil
+	cli.fail = map[string]bool{"period update --commit": true}
+	if _, err := f.publishHostEndpoint(t.Context(), &rgw.Gateway{Container: ctr}, cli, "c", false); err == nil || ctr.running || slices.Contains(log, "gateway start") {
+		t.Fatalf("a failed commit: %v, running %t, %q", err, ctr.running, log)
 	}
 }
 

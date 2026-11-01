@@ -172,9 +172,9 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 	if err := f.recordPairIdentities(ctx); err != nil {
 		return f, err
 	}
-	// Both gateways started against an earlier bootstrap period before
-	// allocated endpoints were committed when the zones use host networking or
-	// separate zonegroups.
+	// With host networking or separate zonegroups, the source gateway started
+	// against a period that the destination's join and endpoint commits have
+	// since replaced.
 	reload := setup.sourceHostNetwork || setup.config.destinationZonegroup != setup.config.Zonegroup
 	if err := f.finishPairBootstrap(ctx, reload); err != nil {
 		return f, err
@@ -326,10 +326,8 @@ func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup p
 	if !setup.sourceHostNetwork {
 		return nil
 	}
-	if f.realm.sourceURL, err = f.Source.DaemonEndpoint(ctx); err != nil {
-		return err
-	}
-	return f.realm.publishZoneEndpoint(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.sourceURL, true)
+	f.realm.sourceURL, err = f.publishHostEndpoint(ctx, f.Source, f.realm.sourceClient, f.realm.config.SourceZone, true)
+	return err
 }
 
 // joinDestinationZone joins the destination to the realm through the source,
@@ -350,10 +348,36 @@ func (f *Fixture) joinDestinationZone(ctx context.Context, image string, setup p
 	if !setup.destinationHostNetwork {
 		return nil
 	}
-	if f.realm.destinationURL, err = f.Destination.DaemonEndpoint(ctx); err != nil {
-		return err
+	f.realm.destinationURL, err = f.publishHostEndpoint(ctx, f.Destination, f.realm.destinationClient, f.realm.config.DestinationZone, newGroup != "")
+	return err
+}
+
+// publishHostEndpoint commits a host-mode gateway's actual listener as its
+// zone's endpoint while the gateway is stopped, then starts it again on the
+// same port, and returns the endpoint. A host gateway chooses its port when it
+// first starts, so that start serves a period without the zone's endpoint.
+// Committing the endpoint while it still runs would make it reload the period
+// in process, during its initial metadata full sync and before it holds the
+// system user to accept the master's period push. Started after the commit,
+// it loads the final period once at startup, as a bridge gateway does. The
+// restart rebinds the released port, which another process could take in
+// between; the start then fails and is not retried.
+func (f *Fixture) publishHostEndpoint(ctx context.Context, gateway *rgw.Gateway, client testcontainers.Container, zone string, groupMaster bool) (string, error) {
+	endpoint, err := gateway.DaemonEndpoint(ctx)
+	if err != nil {
+		return "", err
 	}
-	return f.realm.publishZoneEndpoint(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.destinationURL, newGroup != "")
+	grace := 3 * time.Second
+	if err := gateway.Stop(ctx, &grace); err != nil {
+		return endpoint, fmt.Errorf("stop RGW zone %s before publishing its endpoint: %w", zone, err)
+	}
+	if err := f.realm.publishZoneEndpoint(ctx, client, zone, endpoint, groupMaster); err != nil {
+		return endpoint, err
+	}
+	if err := gateway.Start(ctx); err != nil {
+		return endpoint, fmt.Errorf("start RGW zone %s after publishing its endpoint: %w", zone, err)
+	}
+	return endpoint, nil
 }
 
 // recordPairIdentities reads the native realm, zone and zonegroup IDs and

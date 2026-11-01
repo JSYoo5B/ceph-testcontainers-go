@@ -389,10 +389,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 		return &state.Zone, err
 	}
 	if addition.hostNetwork {
-		if state.PeerEndpoint, err = state.Gateway.DaemonEndpoint(ctx); err != nil {
-			return &state.Zone, err
-		}
-		if err := f.realm.publishZoneEndpoint(ctx, state.client, config.Name, state.PeerEndpoint, createGroup); err != nil {
+		if state.PeerEndpoint, err = f.publishHostEndpoint(ctx, state.Gateway, state.client, config.Name, createGroup); err != nil {
 			return &state.Zone, err
 		}
 	}
@@ -406,7 +403,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err := f.realm.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
 		return &state.Zone, err
 	}
-	if err := f.topology.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !addition.hostNetwork }); err != nil {
+	if err := f.topology.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state }); err != nil {
 		return &state.Zone, err
 	}
 	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
@@ -559,9 +556,10 @@ func (r *rgwRealmAccess) committedPeriod(ctx context.Context, zone *rgwZoneState
 
 func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
 	for _, zone := range states {
-		// A bridge gateway starts after its endpoint was committed, so the
-		// new zone already loaded the final period. Avoid interrupting its
-		// initial metadata full sync just to reload the same configuration.
+		// A new zone's gateway starts, in host mode starts again, after its
+		// endpoint was committed, so it already loaded the final period.
+		// Avoid interrupting its initial metadata full sync just to reload
+		// the same configuration.
 		if skip != nil && skip(zone) {
 			continue
 		}
