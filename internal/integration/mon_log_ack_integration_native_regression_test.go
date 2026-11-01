@@ -240,7 +240,7 @@ func logAckContainerLog(t *testing.T, ctx context.Context, ctr interface {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	raw, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
