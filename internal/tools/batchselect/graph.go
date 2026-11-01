@@ -80,15 +80,27 @@ func listError(p listedPackage) error {
 // with tags: the external test package when there is one, otherwise the
 // package with its internal test files.
 func testPackage(root string, env []string, pattern, tags string) (listedPackage, error) {
+	target, own, err := testPackages(root, env, pattern, tags)
+	if err == nil && own != nil {
+		err = errors.New("a package with both its own and external test files is not analysed")
+	}
+	return target, err
+}
+
+// testPackages is testPackage that accepts a package with both its own and
+// external test files: it then returns the external test package and the
+// package that it imports, the package's own test variant or the plain
+// package.
+func testPackages(root string, env []string, pattern, tags string) (listedPackage, *listedPackage, error) {
 	packages, err := goList(root, env, "-test", "-tags="+tags, pattern)
 	if err != nil {
-		return listedPackage{}, err
+		return listedPackage{}, nil, err
 	}
 	var plain, internal, external *listedPackage
 	for i := range packages {
 		p := &packages[i]
 		if err := listError(*p); err != nil {
-			return listedPackage{}, err
+			return listedPackage{}, nil, err
 		}
 		switch {
 		case p.ForTest == "" && !strings.HasSuffix(p.ImportPath, ".test"):
@@ -100,20 +112,22 @@ func testPackage(root string, env []string, pattern, tags string) (listedPackage
 		}
 	}
 	if plain == nil {
-		return listedPackage{}, fmt.Errorf("go list found no package %s", pattern)
+		return listedPackage{}, nil, fmt.Errorf("go list found no package %s", pattern)
 	}
 	if len(plain.CgoFiles) > 0 {
-		return listedPackage{}, errors.New("cgo files are not analysed")
+		return listedPackage{}, nil, errors.New("cgo files are not analysed")
 	}
 	switch {
-	case external != nil && (internal != nil || len(plain.GoFiles) > 0):
-		return listedPackage{}, errors.New("a package with both its own and external test files is not analysed")
+	case external != nil && internal != nil:
+		return *external, internal, nil
+	case external != nil && len(plain.GoFiles) > 0:
+		return *external, plain, nil
 	case external != nil:
-		return *external, nil
+		return *external, nil, nil
 	case internal != nil:
-		return *internal, nil
+		return *internal, nil, nil
 	}
-	return *plain, nil
+	return *plain, nil, nil
 }
 
 func realPath(path string) (string, error) {
@@ -141,14 +155,33 @@ type graph struct {
 	reverse   [][]int
 	// imports are the import paths of each file.
 	imports map[string][]string
+	// values are the string constants that each node uses, when load was
+	// asked for them.
+	values [][]value
+}
+
+// loadOptions select what load accepts and records beyond the graph.
+type loadOptions struct {
+	// mixed accepts a package with both its own and external test files:
+	// the package that the external one imports joins the graph from source.
+	mixed bool
+	// values records the string constants of every node.
+	values bool
 }
 
 // load type-checks the test package of pattern under tags, with the
 // non-test packages of the with directories from source, and builds the
 // declaration reference graph of all of them.
-func load(root, pattern string, with []string, tags, goos, goarch string) (*graph, error) {
+func load(root, pattern string, with []string, tags, goos, goarch string, opts loadOptions) (*graph, error) {
 	env := goEnv(goos, goarch)
-	target, err := testPackage(root, env, pattern, tags)
+	var target listedPackage
+	var own *listedPackage
+	var err error
+	if opts.mixed {
+		target, own, err = testPackages(root, env, pattern, tags)
+	} else {
+		target, err = testPackage(root, env, pattern, tags)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +205,7 @@ func load(root, pattern string, with []string, tags, goos, goarch string) (*grap
 	imports := []string{}
 	for _, p := range append([]listedPackage{target}, companions...) {
 		for _, path := range p.Imports {
-			if strings.Contains(path, " [") {
+			if strings.Contains(path, " [") && !opts.mixed {
 				return nil, fmt.Errorf("the test package imports the test variant %s", path)
 			}
 			if path != "unsafe" && path != "C" {
@@ -181,7 +214,22 @@ func load(root, pattern string, with []string, tags, goos, goarch string) (*grap
 		}
 	}
 	exports := map[string]string{}
-	if len(imports) > 0 {
+	if opts.mixed {
+		// A dependency that imports the package under test is rebuilt for its
+		// test as "dep [pkg.test]"; only the test build lists its export data.
+		deps, err := goList(root, env, "-export", "-deps", "-test", "-tags="+tags, pattern)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range deps {
+			if err := listError(p); err != nil {
+				return nil, err
+			}
+			if p.Export != "" {
+				exports[p.ImportPath] = p.Export
+			}
+		}
+	} else if len(imports) > 0 {
 		deps, err := goList(root, env, append([]string{"-export", "-deps", "-tags=" + tags}, imports...)...)
 		if err != nil {
 			return nil, err
@@ -241,6 +289,10 @@ func load(root, pattern string, with []string, tags, goos, goarch string) (*grap
 	lookup := func(path string) (io.ReadCloser, error) {
 		if mapped, ok := target.ImportMap[path]; ok {
 			path = mapped
+		} else if own != nil {
+			if mapped, ok := own.ImportMap[path]; ok {
+				path = mapped
+			}
 		}
 		export, ok := exports[path]
 		if !ok || export == "" {
@@ -250,6 +302,10 @@ func load(root, pattern string, with []string, tags, goos, goarch string) (*grap
 	}
 	var typeErrors []error
 	info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+	if opts.values {
+		info.Types = map[ast.Expr]types.TypeAndValue{}
+	}
+	var parsed [][]*ast.File
 	checked := map[string]*types.Package{}
 	exported := importer.ForCompiler(fset, "gc", lookup)
 	config := types.Config{
@@ -263,20 +319,69 @@ func load(root, pattern string, with []string, tags, goos, goarch string) (*grap
 		Error: func(err error) { typeErrors = append(typeErrors, err) },
 	}
 	var pkgs []*types.Package
-	// Companions first: the test package imports them from source.
-	for _, p := range append(companions, target) {
+	check := func(p listedPackage, path string) (*types.Package, error) {
 		files, err := parse(p)
 		if err != nil {
 			return nil, err
 		}
-		pkg, _ := config.Check(p.ImportPath, fset, files, info)
+		pkg, _ := config.Check(path, fset, files, info)
 		if len(typeErrors) > 0 {
 			return nil, fmt.Errorf("type check: %v", typeErrors[0])
 		}
-		checked[p.ImportPath] = pkg
 		pkgs = append(pkgs, pkg)
+		parsed = append(parsed, files)
+		return pkg, nil
 	}
-	g.link(pkgs, info)
+	// The package's own test variant is checked from source for its own
+	// tests and declarations, but the external test package imports it from
+	// export data, like the dependencies that import it: one package must have
+	// one identity. Its objects that the external package uses are mapped
+	// back to their declarations by file and line.
+	var ownPath string
+	if own != nil {
+		ownPath = own.ImportPath
+		if own.ForTest != "" {
+			ownPath = own.ForTest
+		}
+		if _, err := check(*own, ownPath); err != nil {
+			return nil, err
+		}
+	}
+	// Companions first: the test package imports them from source.
+	for _, p := range append(companions, target) {
+		pkg, err := check(p, p.ImportPath)
+		if err != nil {
+			return nil, err
+		}
+		checked[p.ImportPath] = pkg
+	}
+	var resolve func(types.Object) int
+	if ownPath != "" {
+		resolve = func(obj types.Object) int {
+			if obj.Pkg() == nil || obj.Pkg().Path() != ownPath || !obj.Pos().IsValid() {
+				return -1
+			}
+			position := fset.Position(obj.Pos())
+			file, err := realPath(position.Filename)
+			if err != nil {
+				return -1
+			}
+			rel, err := filepath.Rel(absRoot, file)
+			if err != nil {
+				return -1
+			}
+			for _, n := range g.fileNodes[filepath.ToSlash(rel)] {
+				if fset.Position(g.nodes[n].pos).Line <= position.Line && position.Line <= fset.Position(g.nodes[n].end).Line {
+					return n
+				}
+			}
+			return -1
+		}
+	}
+	g.link(pkgs, info, resolve)
+	if opts.values {
+		g.collectValues(parsed, info)
+	}
 	return g, nil
 }
 
@@ -303,7 +408,10 @@ func (g *graph) at(order []int, pos token.Pos) int {
 //
 // A method's receiver is not an edge to its type, or reaching one method
 // would reach all of them.
-func (g *graph) link(pkgs []*types.Package, info *types.Info) {
+//
+// resolve, when set, maps an object of a package that was imported from
+// export data, although its declarations are in the graph, to its node.
+func (g *graph) link(pkgs []*types.Package, info *types.Info, resolve func(types.Object) int) {
 	order := make([]int, len(g.nodes))
 	for i := range order {
 		order[i] = i
@@ -373,6 +481,8 @@ func (g *graph) link(pkgs []*types.Package, info *types.Info) {
 		}
 		if slices.Contains(pkgs, obj.Pkg()) {
 			add(from, g.at(order, obj.Pos()))
+		} else if resolve != nil {
+			add(from, resolve(obj))
 		}
 	}
 	g.reverse = make([][]int, len(g.nodes))

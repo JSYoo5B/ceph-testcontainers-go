@@ -43,6 +43,7 @@ type monitorTopology struct {
 	adminClient    func(...ClientContainerOptions) testcontainers.CustomizeRequestOption
 	runDaemon      func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	checkAddresses func(context.Context) error
+	killMonitor    func(context.Context, testcontainers.Container) error
 }
 
 // monitorTopology returns the cluster's MON and MGR membership. The caller
@@ -72,6 +73,7 @@ func (c *Container) monitorTopology() monitorTopology {
 			return targets
 		},
 		adminClient: c.adminClient, runDaemon: c.runDaemon, checkAddresses: c.checkDualStackAddresses,
+		killMonitor: c.killMonitor,
 	}
 }
 

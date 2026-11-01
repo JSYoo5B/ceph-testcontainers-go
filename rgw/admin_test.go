@@ -33,6 +33,9 @@ type rgwAdminTestContainer struct {
 	id        string
 	responses []rgwAdminResponse
 	calls     [][]string
+	// limits holds the supervisor's own stop limit, in seconds, of each
+	// supervised call in calls.
+	limits []string
 	// stopped makes State report an exited container; paused and restarting
 	// report a container whose Running flag stays true but refuses Exec.
 	stopped, paused, restarting bool
@@ -49,6 +52,9 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 		return 0, nil, nil
 	}
 	original := args
+	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
+		ctr.limits = append(ctr.limits, args[5])
+	}
 	args = rgwAdminArgv(args)
 	ctr.calls = append(ctr.calls, slices.Clone(args))
 	if len(ctr.responses) == 0 {

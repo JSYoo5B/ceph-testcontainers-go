@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -172,10 +173,9 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 	if err := f.recordPairIdentities(ctx); err != nil {
 		return f, err
 	}
-	// Both gateways started against an earlier bootstrap period before
-	// allocated endpoints were committed when the zones use host networking or
-	// separate zonegroups.
-	reload := setup.sourceHostNetwork || setup.config.destinationZonegroup != setup.config.Zonegroup
+	// With separate zonegroups, the source gateway started against a period
+	// whose zonegroup map the destination's new group has since changed.
+	reload := setup.config.destinationZonegroup != setup.config.Zonegroup
 	if err := f.finishPairBootstrap(ctx, reload); err != nil {
 		return f, err
 	}
@@ -297,17 +297,17 @@ func pairAliases(suffix string) (source, destination string) {
 	return "rgw-primary-" + suffix, "rgw-secondary-" + suffix
 }
 
-// bootstrapSourceZone creates the realm, the master zonegroup and zone and the
-// system user on the source, starts its gateway and, in host mode, commits the
-// gateway's actual listener as the master endpoint.
+// bootstrapSourceZone creates the realm, the master zonegroup and zone, with
+// the endpoint its gateway will serve, and the system user on the source,
+// then starts its gateway.
 func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup pairSetup, bridge *testcontainers.DockerNetwork, opts ...testcontainers.ContainerCustomizer) error {
 	sourceAlias, destinationAlias := pairAliases(setup.suffix)
-	f.realm.sourceURL, f.realm.destinationURL = "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
-	if setup.sourceHostNetwork {
-		// A named host gateway chooses its port at startup. Commit the fresh
-		// zone without endpoints first, then publish its actual owned listener.
-		f.realm.sourceURL, f.realm.destinationURL = "", ""
+	source, err := reserveZoneEndpoint(ctx, setup.config.Source, setup.sourceHostNetwork, sourceAlias)
+	if err != nil {
+		return err
 	}
+	defer source.releaseUnused(ctx)
+	f.realm.sourceURL, f.realm.destinationURL = source.endpoint, "http://"+destinationAlias+":7480"
 	f.realm.systemAccess, f.realm.systemSecret = strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
 	if err := f.realm.runZoneCommands(ctx, f.realm.sourceClient, f.realm.config.SourceZone, [][]string{
 		{"realm", "create", "--default"},
@@ -319,41 +319,62 @@ func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup p
 	}); err != nil {
 		return err
 	}
-	var err error
-	if f.Source, err = f.runGateway(ctx, image, setup.config.Source, bridge, sourceAlias, f.realm.config.SourceZone, opts...); err != nil {
-		return err
-	}
-	if !setup.sourceHostNetwork {
-		return nil
-	}
-	if f.realm.sourceURL, err = f.Source.DaemonEndpoint(ctx); err != nil {
-		return err
-	}
-	return f.realm.publishZoneEndpoint(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.sourceURL, true)
+	f.Source, err = f.runGateway(ctx, image, setup.config.Source, bridge, sourceAlias, f.realm.config.SourceZone, source.start, opts...)
+	return err
 }
 
-// joinDestinationZone joins the destination to the realm through the source,
-// starts its gateway and, in host mode, commits its actual listener.
+// joinDestinationZone joins the destination, with the endpoint its gateway
+// will serve, to the realm through the source, then starts its gateway.
 func (f *Fixture) joinDestinationZone(ctx context.Context, image string, setup pairSetup, bridge *testcontainers.DockerNetwork, opts ...testcontainers.ContainerCustomizer) error {
 	newGroup := ""
 	if f.realm.config.destinationZonegroup != f.realm.config.Zonegroup {
 		newGroup = f.realm.config.destinationZonegroup
 	}
+	_, destinationAlias := pairAliases(setup.suffix)
+	destination, err := reserveZoneEndpoint(ctx, setup.config.Destination, setup.destinationHostNetwork, destinationAlias)
+	if err != nil {
+		return err
+	}
+	defer destination.releaseUnused(ctx)
+	f.realm.destinationURL = destination.endpoint
 	if err := f.realm.joinZone(ctx, zoneJoin{client: f.realm.destinationClient, zone: f.realm.config.DestinationZone, masterURL: f.realm.sourceURL, endpoint: f.realm.destinationURL, newGroup: newGroup}); err != nil {
 		return err
 	}
-	_, destinationAlias := pairAliases(setup.suffix)
-	var err error
-	if f.Destination, err = f.runGateway(ctx, image, setup.config.Destination, bridge, destinationAlias, f.realm.config.DestinationZone, opts...); err != nil {
-		return err
+	f.Destination, err = f.runGateway(ctx, image, setup.config.Destination, bridge, destinationAlias, f.realm.config.DestinationZone, destination.start, opts...)
+	return err
+}
+
+// zoneEndpoint is the peer endpoint that a zone's gateway will serve, known
+// before the gateway exists, so that the zone is committed with it and the
+// gateway's first start already loads a period that contains it. A bridge
+// gateway serves its alias in the HTTP bridge. A host gateway serves a host
+// port reserved for it, and start starts it on that port.
+type zoneEndpoint struct {
+	endpoint string
+	start    rgwhook.GatewayStart
+	release  func(context.Context) error
+}
+
+func reserveZoneEndpoint(ctx context.Context, cluster *ceph.Container, hostNetwork bool, alias string) (zoneEndpoint, error) {
+	if !hostNetwork {
+		return zoneEndpoint{endpoint: "http://" + alias + ":7480"}, nil
 	}
-	if !setup.destinationHostNetwork {
-		return nil
+	endpoint, start, release, err := rgwhook.ReserveGatewayPort(ctx, cluster)
+	if err != nil {
+		return zoneEndpoint{}, err
 	}
-	if f.realm.destinationURL, err = f.Destination.DaemonEndpoint(ctx); err != nil {
-		return err
+	return zoneEndpoint{endpoint: endpoint, start: start, release: release}, nil
+}
+
+// releaseUnused frees a host port reservation that no gateway took. The
+// cluster's Terminate frees one whose release failed.
+func (z zoneEndpoint) releaseUnused(ctx context.Context) {
+	if z.release == nil {
+		return
 	}
-	return f.realm.publishZoneEndpoint(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.destinationURL, newGroup != "")
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_ = z.release(ctx)
 }
 
 // recordPairIdentities reads the native realm, zone and zonegroup IDs and
@@ -448,8 +469,7 @@ func (f *Fixture) issueS3Credentials(ctx context.Context, suffix string) error {
 // zoneJoin is a fresh zone joining the realm through its CLI client: it pulls
 // the realm from the metadata master, creates the zone (with newGroup, first
 // that zonegroup, with the zone as its master) and commits the period.
-// endpoint is the committed peer endpoint; it is empty in host mode until the
-// zone's gateway listens.
+// endpoint is the peer endpoint that the zone's gateway will serve.
 type zoneJoin struct {
 	client                              testcontainers.Container
 	zone, masterURL, endpoint, newGroup string
@@ -467,16 +487,6 @@ func (r *rgwRealmAccess) joinZone(ctx context.Context, join zoneJoin) error {
 	}
 	commands = append(commands, rgwEndpointArgs(create, join.endpoint), []string{"period", "update", "--commit"})
 	return r.runZoneCommands(ctx, join.client, join.zone, commands)
-}
-
-// publishZoneEndpoint commits a host-mode gateway's actual listener as the
-// zone's endpoint and, for a zonegroup master, as the group's endpoint.
-func (r *rgwRealmAccess) publishZoneEndpoint(ctx context.Context, client testcontainers.Container, zone, endpoint string, groupMaster bool) error {
-	commands := [][]string{{"zone", "modify", "--endpoints", endpoint}}
-	if groupMaster {
-		commands = append(commands, []string{"zonegroup", "modify", "--endpoints", endpoint})
-	}
-	return r.runZoneCommands(ctx, client, zone, append(commands, []string{"period", "update", "--commit"}))
 }
 
 func (r *rgwRealmAccess) runZoneCommands(ctx context.Context, client testcontainers.Container, zone string, commands [][]string) error {
@@ -517,12 +527,19 @@ func rgwSetupImage(override, clusterRGWImage string) (string, error) {
 	return image, nil
 }
 
-func (f *Fixture) runGateway(ctx context.Context, image string, cluster *ceph.Container, bridge *testcontainers.DockerNetwork, alias, zone string, opts ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
+// runGateway starts zone's gateway with start, the starter of a reserved host
+// port, or with rgw.Start when start is nil.
+func (f *Fixture) runGateway(ctx context.Context, image string, cluster *ceph.Container, bridge *testcontainers.DockerNetwork, alias, zone string, start rgwhook.GatewayStart, opts ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
 	moduleOpts := []testcontainers.ContainerCustomizer{testcontainers.WithImage(image)}
 	if bridge != nil {
 		moduleOpts = append(moduleOpts, network.WithNetwork([]string{alias}, bridge))
 	}
-	gateway, err := rgw.Start(ctx, cluster, rgw.Config{
+	if start == nil {
+		start = func(ctx context.Context, config rgw.Config, opts ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
+			return rgw.Start(ctx, cluster, config, opts...)
+		}
+	}
+	gateway, err := start(ctx, rgw.Config{
 		Name: alias, Realm: f.realm.config.Realm, Zonegroup: f.realm.zoneGroupName(zone), Zone: zone,
 		Region: f.realm.zoneGroupName(zone), SkipUserCreation: true,
 	}, append(moduleOpts, opts...)...)

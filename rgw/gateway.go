@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -94,6 +95,13 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 // are applied last; preserve the required command, network and listener settings.
 // A non-nil result returned with an error remains owned by the cluster for cleanup.
 func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
+	return startGatewayOn(ctx, c, config, nil, opts...)
+}
+
+// startGatewayOn is startGateway on the host port that reserved holds, when
+// it is not nil: one attempt, without moving to another port on a conflict,
+// because the caller has already published that port.
+func startGatewayOn(ctx context.Context, c *ceph.Container, config Config, reserved *hostPortReservation, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
 	facts, err := ceph.FactsOf(c)
 	if err != nil {
 		return nil, err
@@ -107,7 +115,7 @@ func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ..
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, opts...)
+	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, reserved, opts...)
 	var rgw *Gateway
 	if ctr != nil {
 		rgw = &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, publicAddress: facts.PublicAddress, networkName: facts.NetworkName, owner: c, config: config}
@@ -299,9 +307,12 @@ func hostReadiness(c *ceph.Container, port int, endpoint string) *wait.NopStrate
 	}).WithStartupTimeout(servicehook.StartupTimeout(c))
 }
 
-func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
+func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, reserved *hostPortReservation, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
 	serviceName := rgwServiceName(config)
 	if !facts.UsesHostNetwork {
+		if reserved != nil {
+			return nil, 0, 0, servicehook.Invalid(errors.New("a reserved RGW host port needs a host-network cluster"))
+		}
 		tlsPort := 0
 		if config.TLS != nil {
 			tlsPort = 7481
@@ -309,6 +320,17 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 		opts := append(namedDaemonOptions(c, facts, 7480, tlsPort, config), customizers...)
 		ctr, err := servicehook.StartService(ctx, c, serviceName, servicehook.ServiceImage(c, "rgw"), opts...)
 		return ctr, 7480, tlsPort, err
+	}
+	if reserved != nil {
+		if config.TLS != nil {
+			return nil, 0, 0, servicehook.Invalid(errors.New("a reserved RGW host port serves plain HTTP only"))
+		}
+		ports, release, err := reserved.take()
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		ctr, port, tlsPort, _, err := startHostAttempt(ctx, c, facts, config, ports, release, customizers...)
+		return ctr, port, tlsPort, err
 	}
 	for attempt := 0; attempt < servicehook.HostPortAttempts(); attempt++ {
 		count := 1
@@ -319,39 +341,98 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("reserve RGW host port: %w", err)
 		}
-		port := ports[0]
-		tlsPort := 0
-		if config.TLS != nil {
-			tlsPort = ports[1]
+		ctr, port, tlsPort, conflict, err := startHostAttempt(ctx, c, facts, config, ports, release, customizers...)
+		if err == nil || !conflict || attempt+1 == servicehook.HostPortAttempts() || ctx.Err() != nil {
+			return ctr, port, tlsPort, err
 		}
-		// Create the target while the reservation still holds its socket. Only
-		// release immediately before Start, minimizing the unavoidable bind race.
-		opts := append(namedDaemonOptions(c, facts, port, tlsPort, config), customizers...)
-		opts = append(opts, testcontainers.WithNoStart())
-		ctr, createErr := servicehook.StartService(ctx, c, serviceName, servicehook.ServiceImage(c, "rgw"), opts...)
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		releaseErr := release(cleanupCtx)
+		cleanupErr := discardNamedAttempt(cleanupCtx, c, serviceName, ctr)
 		cancel()
-		if createErr != nil || releaseErr != nil {
-			return ctr, port, tlsPort, errors.Join(createErr, releaseErr)
+		if cleanupErr != nil {
+			return ctr, port, tlsPort, errors.Join(err, cleanupErr)
 		}
-		if err := ctr.Start(ctx); err != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			conflict := servicehook.IsPortConflict(cleanupCtx, ctr)
-			if !conflict || attempt+1 == servicehook.HostPortAttempts() || ctx.Err() != nil {
-				cancel()
-				return ctr, port, tlsPort, fmt.Errorf("start RGW on host port %d: %w", port, err)
-			}
-			cleanupErr := discardNamedAttempt(cleanupCtx, c, serviceName, ctr)
-			cancel()
-			if cleanupErr != nil {
-				return ctr, port, tlsPort, errors.Join(err, cleanupErr)
-			}
-			continue
-		}
-		return ctr, port, tlsPort, nil
 	}
 	return nil, 0, 0, errors.New("RGW host port attempts exhausted")
+}
+
+// startHostAttempt creates a host gateway on ports while their reservation
+// still holds them, releases them immediately before Start, minimizing the
+// unavoidable bind race, and starts it. conflict reports a Start that failed
+// because another process took the port.
+func startHostAttempt(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, ports []int, release func(context.Context) error, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, bool, error) {
+	port := ports[0]
+	tlsPort := 0
+	if config.TLS != nil {
+		tlsPort = ports[1]
+	}
+	opts := append(namedDaemonOptions(c, facts, port, tlsPort, config), customizers...)
+	opts = append(opts, testcontainers.WithNoStart())
+	ctr, createErr := servicehook.StartService(ctx, c, rgwServiceName(config), servicehook.ServiceImage(c, "rgw"), opts...)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	releaseErr := release(cleanupCtx)
+	cancel()
+	if createErr != nil || releaseErr != nil {
+		return ctr, port, tlsPort, false, errors.Join(createErr, releaseErr)
+	}
+	if err := ctr.Start(ctx); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		conflict := servicehook.IsPortConflict(cleanupCtx, ctr)
+		cancel()
+		return ctr, port, tlsPort, conflict, fmt.Errorf("start RGW on host port %d: %w", port, err)
+	}
+	return ctr, port, tlsPort, false, nil
+}
+
+// hostPortReservation holds one host port of a host-network cluster for a
+// gateway that starts later, so that a multisite zone can commit the
+// gateway's endpoint before the gateway first serves a period. It is used
+// once: by the start that takes it, or by releaseUnused.
+type hostPortReservation struct {
+	mu      sync.Mutex
+	ports   []int
+	release func(context.Context) error
+	used    bool
+}
+
+// reserveGatewayPort reserves a host port for a plain-HTTP gateway of c and
+// returns the peer endpoint that DaemonEndpoint returns once a gateway runs
+// on it.
+func reserveGatewayPort(ctx context.Context, c *ceph.Container) (*hostPortReservation, string, error) {
+	facts, err := ceph.FactsOf(c)
+	if err != nil {
+		return nil, "", err
+	}
+	if !facts.UsesHostNetwork {
+		return nil, "", servicehook.Invalid(errors.New("an RGW host port reservation needs a host-network cluster"))
+	}
+	ports, release, err := servicehook.ReserveHostPorts(ctx, c, 1)
+	if err != nil {
+		return nil, "", fmt.Errorf("reserve RGW host port: %w", err)
+	}
+	endpoint := "http://" + net.JoinHostPort(facts.PublicAddress, strconv.Itoa(ports[0]))
+	return &hostPortReservation{ports: ports, release: release}, endpoint, nil
+}
+
+func (r *hostPortReservation) take() ([]int, func(context.Context) error, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.used {
+		return nil, nil, servicehook.Invalid(errors.New("the RGW host port reservation was already used"))
+	}
+	r.used = true
+	return r.ports, r.release, nil
+}
+
+// releaseUnused frees a reservation that no gateway took; after a start took it,
+// it does nothing.
+func (r *hostPortReservation) releaseUnused(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.used {
+		return nil
+	}
+	r.used = true
+	return r.release(ctx)
 }
 
 func discardAttempt(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) error {

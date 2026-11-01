@@ -69,6 +69,13 @@ if err != nil {
   any gateway restart.
 - To test a zone outage, stop one gateway, keep working through the other,
   start it again and wait with `WaitSyncReady`.
+- A gateway restart in one zone, including `rgw.Gateway.ReloadPlacement` and a
+  stopped zone, interrupts the other zones' data sync with it. On Tentacle
+  20.2.4 the peer gateway's data-sync thread has intermittently crashed with
+  SIGSEGV (exit 139, not OOM) about one sync backoff after such an outage. This
+  is a crash in RGW itself. The fixture does not restart the crashed gateway or
+  repeat requests, so writes through it fail; check the gateway's state before
+  blaming the restarted zone.
 - The fixture owns its gateways, setup clients and the HTTP bridge between
   zones; `Terminate` leaves realm, zone configuration and data in the clusters.
   Do not edit periods or zones while topology changes or `SyncGroup.Apply` run.

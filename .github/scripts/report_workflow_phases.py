@@ -13,6 +13,7 @@ PHASES = (
     ("compile", "Compilation", "SCENARIO_COMPILE_OUTCOME"),
     ("docker", "Docker baseline", "SCENARIO_DOCKER_OUTCOME"),
     ("images", "Published image preparation", "SCENARIO_IMAGES_OUTCOME"),
+    ("test_images", "Ryuk and test image preparation", "SCENARIO_TEST_IMAGES_OUTCOME"),
     ("native", "Native assertions and completion", "SCENARIO_NATIVE_OUTCOME"),
     ("cleanup", "Docker resource cleanup", "SCENARIO_CLEANUP_OUTCOME"),
 )

@@ -1143,6 +1143,45 @@ class BinaryReuseTests(unittest.TestCase):
         self.assertEqual(engine.failure_kind(1, report, None), "process-or-build-failure")
         self.assertEqual(engine.failure_kind(0, report, None), "passed")
 
+    def test_registry_transport_explains_only_failures_whose_own_output_reached_no_registry(self):
+        ryuk = ('    helpers_test.go:144: create ceph network: allocate bridge subnet: reaper: new reaper: run '
+                'container: Error response from daemon: Head "https://registry-1.docker.io/v2/testcontainers/ryuk/'
+                'manifests/0.14.0": Get "https://auth.docker.io/token?account=githubactions&scope=x": net/http: '
+                'TLS handshake timeout: failed to create network')
+        log = ("=== RUN   TestFlock\n" + ryuk + "\n--- FAIL: TestFlock (10.24s)\n"
+               "=== RUN   TestRename\n--- PASS: TestRename (45.07s)\nFAIL\n")
+        package = "example/internal/integration"
+        report = engine.completion(log, ["TestFlock", "TestRename"], package, "test-binary")
+        transport = engine.registry_transport(log, report["failed_tests"])
+        self.assertEqual(transport, {"tests": {"TestFlock": {"stage": "reaper", "reason": "tls-handshake-timeout",
+                                                             "phase": "token",
+                                                             "endpoint": "https://auth.docker.io/token"}},
+                                     "explains_every_failure": True})
+        self.assertEqual(engine.failure_kind(1, report, None, transport), "native-registry-transport")
+        self.assertEqual(engine.failure_kind(1, report, None), "native-test-failure")
+
+        # A parallel subtest's line belongs to the test the last marker named.
+        parallel = ("=== RUN   TestA\n=== PAUSE TestA\n=== RUN   TestB\n=== PAUSE TestB\n=== CONT  TestA\n"
+                    "=== RUN   TestA/host\n=== CONT  TestB\n    b_test.go:9: wait for health: HEALTH_WARN\n"
+                    "=== NAME  TestA/host\n" + ryuk.replace("reaper: new reaper: run container: ", "") + "\n"
+                    "--- FAIL: TestB (90.00s)\n--- FAIL: TestA (5.00s)\n    --- FAIL: TestA/host (5.00s)\nFAIL\n")
+        report = engine.completion(parallel, ["TestA", "TestB"], package, "test-binary")
+        transport = engine.registry_transport(parallel, report["failed_tests"])
+        self.assertEqual(list(transport["tests"]), ["TestA/host"])
+        self.assertEqual(transport["tests"]["TestA/host"]["stage"], "image")
+        self.assertFalse(transport["explains_every_failure"])
+        self.assertEqual(engine.failure_kind(1, report, None, transport), "native-test-failure")
+
+        for unexplained in (log.replace("FAIL\n", "panic: test timed out after 1m0s\nFAIL\n"),
+                            log.replace("TLS handshake timeout", "manifest unknown"),
+                            log.replace("=== RUN   TestRename\n", "=== RUN   TestRename\n" + ryuk + "\n")
+                               .replace("=== RUN   TestFlock\n" + ryuk, "=== RUN   TestFlock\n    x_test.go:1: assert")):
+            with self.subTest(log=unexplained[-80:]):
+                report = engine.completion(unexplained, ["TestFlock", "TestRename"], package, "test-binary")
+                transport = engine.registry_transport(unexplained, report["failed_tests"])
+                self.assertFalse(transport["explains_every_failure"])
+                self.assertEqual(engine.failure_kind(1, report, None, transport), "native-test-failure")
+
     def test_strict_checkers_accept_only_the_declared_execution_format(self):
         import check_scenario_quiescence as quiescence
         import check_scenario_receivers as receivers

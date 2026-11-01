@@ -634,6 +634,11 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   from the error, which carries a `*ceph.NativeFailure` without a reason.
 - Do not modify users that the fixture created with `CreateUser` while it
   uses them.
+- The call is bounded by `ctx` alone, not by the cluster's startup timeout.
+  Give a slow maintenance command, such as `user stats --sync-stats` or
+  `reshard process`, a deadline that fits it. When the deadline is near, the
+  gateway's supervisor stops `radosgw-admin` and Admin reports that it was
+  stopped; the command is never repeated.
 
 Commands that RGW tests commonly need:
 

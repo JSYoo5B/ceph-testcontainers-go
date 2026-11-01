@@ -27,8 +27,10 @@ import (
 type mdsPathDirection int
 
 const (
-	// mdsToClient drops the MDS's packets to the client: the client's
-	// requests reach the MDS, its replies do not.
+	// mdsToClient drops the MDS's packets to the client, TCP
+	// acknowledgements included: the MDS's replies never arrive, and what the
+	// client sends reaches the MDS only until its first retransmission
+	// timeout, after which the client's TCP holds every later byte unsent.
 	mdsToClient mdsPathDirection = iota
 	// clientToMDS drops the client's packets to the MDS: nothing the client
 	// sends reaches the MDS, while the MDS's messages reach the client.
@@ -42,21 +44,99 @@ func (d mdsPathDirection) String() string {
 	return "client-to-mds"
 }
 
+// trigger is how the actor sends its mkdir: the moment its frozen container
+// thaws when the MDS's packets are cut, at the gate when the client's are.
+func (d mdsPathDirection) trigger() string {
+	if d == mdsToClient {
+		return "thaw"
+	}
+	return "gate"
+}
+
+// cutFreeze is how long the client stays frozen around the MDS's cut; the
+// actor takes a gap of 2 s as the thaw.
+const cutFreeze = 4 * time.Second
+
+// requireMDSMkdirExposed waits, during the MDS's cut, until the MDS lists the
+// client's mkdir tid in flight or in its history, and returns where it was
+// found. If it never does, the client's TCP socket to the MDS is in the
+// failure: a send queue that holds bytes under a running retransmission
+// timer means the mkdir never left the client.
+func requireMDSMkdirExposed(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, mds, mdsAddr string, clientID, tid uint64) string {
+	t.Helper()
+	seen, err := harness.Observe(ctx, 30*time.Second, 15*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (string, bool, error) {
+		for _, dump := range []string{"dump_ops_in_flight", "dump_historic_ops"} {
+			data, err := cluster.Ceph(probeCtx, "tell", "mds."+mds, dump)
+			if err != nil {
+				return "", false, fmt.Errorf("%s of mds.%s: %w", dump, mds, err)
+			}
+			ops, err := harness.ParseMDSRequestOps(data)
+			if err != nil {
+				return "", false, fmt.Errorf("%s of mds.%s: %w", dump, mds, err)
+			}
+			if op, ok := harness.FindMDSRequest(ops, clientID, "mkdir", tid); ok {
+				return fmt.Sprintf("%s %v", dump, op.Events()), true, nil
+			}
+		}
+		return "", false, nil
+	})
+	if err != nil {
+		t.Fatalf("mds.%s never listed client.%d's pending mkdir tid %d during the cut, so the cut held it before the MDS (client socket to %s: %s): %v",
+			mds, clientID, tid, mdsAddr, clientSocket(ctx, cluster, client, mdsAddr), err)
+	}
+	return seen.Value
+}
+
+// clientSocket returns the client container's /proc/net/tcp entry for its
+// connection to the IPv4 address and port addr, whose tx_queue and
+// retransmission columns say whether bytes wait unacknowledged or unsent.
+func clientSocket(ctx context.Context, cluster *ceph.Container, client testcontainers.Container, addr string) string {
+	peer, err := netip.ParseAddrPort(addr)
+	if err != nil || !peer.Addr().Is4() {
+		return fmt.Sprintf("address %q is not IPv4", addr)
+	}
+	b := peer.Addr().As4()
+	remote := fmt.Sprintf("%02X%02X%02X%02X:%04X", b[3], b[2], b[1], b[0], peer.Port())
+	read, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv: []string{"cat", "/proc/net/tcp"}, Timeout: 15 * time.Second,
+		MaxStdout: 256 << 10, MaxStderr: 4 << 10, Label: "client TCP sockets",
+	})
+	if err != nil || read.ExitCode != 0 {
+		return fmt.Sprintf("unread: exit=%d err=%v", read.ExitCode, err)
+	}
+	var lines []string
+	for line := range strings.SplitSeq(string(read.Stdout), "\n") {
+		if fields := strings.Fields(line); len(fields) > 6 && fields[2] == remote {
+			lines = append(lines, strings.Join(fields[1:7], " "))
+		}
+	}
+	if len(lines) == 0 {
+		return "no socket to " + remote
+	}
+	return "local remote st tx_queue:rx_queue tr:when retrnsmt = " + strings.Join(lines, "; ")
+}
+
 // cephFSPathCutActor keeps one libcephfs mount, with its own admin socket,
 // and one O_RDWR fd open for its whole run. It writes and fsyncs the base
 // bytes and publishes receipt 1. At the "metadata" gate it starts a thread
 // that creates a new directory and publishes receipt 4, with its inode, when
 // the mkdir returns; the main thread publishes receipt 2 once the thread runs.
+// With the trigger "thaw" the thread first waits until its own 10 ms sleep
+// takes 2 s or more, which a freeze of the container does, so that the mkdir
+// is sent the moment the container thaws; it reports that gap as frozen_ms.
+// With "gate" it sends the mkdir at once.
 // At the "data" gate the main thread appends the tail through the same fd and
 // syncs the data only (fsync with syncdataonly), which needs the OSDs and no
 // MDS reply, and publishes receipt 3. After the "finish" gate it joins the
 // thread, reads the file back through the fd, closes and unmounts, and
 // publishes receipt 5. Arguments: filesystem, work directory, token,
-// directory, file, new directory, admin socket, base and tail in hex.
+// directory, file, new directory, admin socket, base and tail in hex, and
+// the trigger.
 const cephFSPathCutActor harness.CephFSActorScript = harness.CephFSActorHelpers + `
 import threading
 directory, path, created, asok = sys.argv[4].encode(), sys.argv[5].encode(), sys.argv[6].encode(), sys.argv[7]
-base, tail = bytes.fromhex(sys.argv[8]), bytes.fromhex(sys.argv[9])
+base, tail, trigger = bytes.fromhex(sys.argv[8]), bytes.fromhex(sys.argv[9]), sys.argv[10]
+assert trigger in ("gate", "thaw")
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
 fs.conf_set("admin_socket", asok)
@@ -74,9 +154,23 @@ fs.fsync(fd, 0)
 stat = fs.fstat(fd)
 publish(1, client=fs.get_instance_id(), inode=stat.st_ino, size=stat.st_size)
 gate("metadata")
+def thawed():
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        before = time.monotonic()
+        time.sleep(0.01)
+        gap = time.monotonic() - before
+        if gap >= 2:
+            return int(gap * 1000)
+    return 0
 def metadata():
-    started = time.monotonic()
     result = {}
+    if trigger == "thaw":
+        result["frozen_ms"] = thawed()
+        if not result["frozen_ms"]:
+            publish(4, errno=-1, error="the container was not frozen")
+            return
+    started = time.monotonic()
     try:
         fs.mkdir(os.path.basename(created), 0o755)
         result["inode"] = fs.stat(created).st_ino
@@ -213,7 +307,18 @@ func findClientRequest(ops []harness.MDSRequestOp, client, tid uint64) (harness.
 // moves on and cap_ttl stays, and the MDS, which defers marking a session
 // stale while nobody waits on its caps, keeps it open. With the MDS's packets
 // cut, the MDS has completed and journaled the mkdir; with the client's cut,
-// it never saw it. After the restore the mkdir returns, the client holds no
+// it never saw it.
+//
+// The MDS's cut drops its TCP acknowledgements too. The client sends
+// client_metrics every second, so anything it sends after the cut starts a
+// retransmission timer, and once that fires the client's TCP sends no new
+// byte: a mkdir issued later stays in its socket and never reaches the MDS,
+// which then has no record of it. So for that direction the client container
+// is frozen with fault.Pause before the cut and thawed after it, and the
+// actor sends the mkdir the moment it thaws, together with whatever the
+// client's own tick sends then, before any retransmission timeout. The MDS
+// must then list the mkdir during the cut, which establishes that it was
+// exposed before the window starts. After the restore the mkdir returns, the client holds no
 // request, the session is open with the same GID and not blocklisted, and a
 // client in another container reads the bytes and the new directory.
 func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
@@ -248,7 +353,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	const workdir = "/tmp/mds-path-actor"
 	asok := workdir + "/client.asok"
 	actor := harness.StartCephFSActor(t, ctx, cluster, client, cephFSPathCutActor, fs.FilesystemName, workdir,
-		"/pathcut", "/pathcut/file", "/pathcut/created", asok, hex.EncodeToString(base), hex.EncodeToString(tail))
+		"/pathcut", "/pathcut/file", "/pathcut/created", asok, hex.EncodeToString(base), hex.EncodeToString(tail), direction.trigger())
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len(base)) {
 		t.Fatalf("baseline receipt = %+v", baseline)
@@ -319,6 +424,31 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	if direction == clientToMDS {
 		target, peer = client, mdsIP
 	}
+	var frozen *fault.PauseLease
+	var pausedAt time.Time
+	if direction == mdsToClient {
+		// The actor's thread waits for the thaw; nothing is pending yet, so
+		// the client's connection to the MDS holds no request when it freezes.
+		actor.Open(t, ctx, "metadata")
+		actor.Receipt(t, ctx, 2)
+		if requests, err := clientRequests(ctx, cluster, client, asok); err != nil || len(requests) != 0 {
+			t.Fatalf("the client lists requests before the freeze: %+v, %v", requests, err)
+		}
+		frozen, err = fault.Pause(ctx, cluster, client)
+		if frozen != nil {
+			t.Cleanup(func() {
+				resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+				defer stop()
+				if err := frozen.Resume(resumeCtx); err != nil {
+					t.Errorf("resume the client: %v", err)
+				}
+			})
+		}
+		if err != nil {
+			t.Fatal("freeze the client:", err)
+		}
+		pausedAt = time.Now()
+	}
 	lease, err := fault.ApplyNetworkProfile(ctx, cluster, target, fault.NetworkProfile{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
@@ -339,8 +469,19 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 
 	// The metadata request goes out into the cut; the client's own
 	// admin socket names it.
-	actor.Open(t, ctx, "metadata")
-	actor.Receipt(t, ctx, 2)
+	if direction == mdsToClient {
+		// The actor sends the mkdir when it sees a gap of 2 s; hold the
+		// freeze past that.
+		if hold := time.Until(pausedAt.Add(cutFreeze)); hold > 0 {
+			time.Sleep(hold)
+		}
+		if err := frozen.Resume(ctx); err != nil {
+			t.Fatal("thaw the client:", err)
+		}
+	} else {
+		actor.Open(t, ctx, "metadata")
+		actor.Receipt(t, ctx, 2)
+	}
 	submitted, err := harness.Observe(ctx, 30*time.Second, 20*time.Second, 500*time.Millisecond, func(probeCtx context.Context) ([]harness.ClientMDSRequest, bool, error) {
 		requests, err := clientRequests(probeCtx, cluster, client, asok)
 		return requests, err == nil && len(requests) > 0, err
@@ -353,6 +494,11 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		t.Fatal(err)
 	}
 	t.Logf("pending at +%s: %+v", time.Since(cutAt).Round(time.Millisecond), pending)
+	var exposure string
+	if direction == mdsToClient {
+		exposure = requireMDSMkdirExposed(t, ctx, cluster, client, m.MDS.Name, v2.Addr, baseline.Client, pending.TID)
+		t.Logf("exposed at +%s: %s", time.Since(cutAt).Round(time.Millisecond), exposure)
+	}
 
 	// Data I/O on the open file: the tail is appended and synced to the OSDs.
 	actor.Open(t, ctx, "data")
@@ -421,7 +567,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		// The request reached the MDS, which created the directory,
 		// journaled it and replied; only the replies are lost.
 		if err := requireMDSMkdirCompleted(historic, historicFound, baseline.Client, pending.TID, "created"); err != nil {
-			t.Fatalf("mds.%s did not complete the client's mkdir: %v", m.MDS.Name, err)
+			t.Fatalf("mds.%s did not complete the client's mkdir, which it held during the cut (%s): %v", m.MDS.Name, exposure, err)
 		}
 	case direction == clientToMDS && historicFound:
 		t.Fatalf("mds.%s saw the client's mkdir through the cut: %q", m.MDS.Name, historic.Description)
@@ -437,7 +583,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 
 	created := actor.Receipt(t, ctx, 4)
 	took := time.Since(restored).Round(time.Second)
-	if created.Errno != 0 || created.Error != "" || created.Inode == 0 {
+	if created.Errno != 0 || created.Error != "" || created.Inode == 0 || (direction == mdsToClient) != (created.FrozenMS > 0) {
 		t.Fatalf("metadata receipt after the restore: %+v", created)
 	}
 	// The mkdir can return on the early reply; the client drops the request
@@ -505,9 +651,9 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	for _, sample := range samples {
 		timeline = append(timeline, sample.String())
 	}
-	t.Logf("CEPHFS_MDS_PATH_RECEIPT %s %s: %s on %s drops packets to %s (%d dropped); client.%d (%s) and mds.%s gid %d (%s); pending %s tid %d at the MDS: in flight %t, historic %t %v; data sync returned in %d ms at +%s and RADOS object %s held %d bytes; window (session_timeout 30 s, mds_defer_session_stale=%s): %s; after the restore the mkdir returned in %s (%d ms in all) and the client held no request after %s, session %s, not blocklisted, same GID; reader client.%d read %d bytes and the new directory",
+	t.Logf("CEPHFS_MDS_PATH_RECEIPT %s %s: %s on %s drops packets to %s (%d dropped); client.%d (%s) and mds.%s gid %d (%s); pending %s tid %d at the MDS: in flight %t, historic %t %v, during the cut %q (sent after a freeze of %d ms); data sync returned in %d ms at +%s and RADOS object %s held %d bytes; window (session_timeout 30 s, mds_defer_session_stale=%s): %s; after the restore the mkdir returned in %s (%d ms in all) and the client held no request after %s, session %s, not blocklisted, same GID; reader client.%d read %d bytes and the new directory",
 		m.Version, direction, lease.ContainerID[:12], lease.Interface, peer, cut.Drops, baseline.Client, clientIP, m.MDS.Name, m.MDS.GID, mdsIP,
-		pending.Op, pending.TID, inFlightFound, historicFound, historic.Events(), synced.ElapsedMS, syncedAt, object.Object, object.Size,
+		pending.Op, pending.TID, inFlightFound, historicFound, historic.Events(), exposure, created.FrozenMS, synced.ElapsedMS, syncedAt, object.Object, object.Size,
 		deferStale, strings.Join(timeline, "; "), took, created.ElapsedMS, safeAfter, reopened.Value, independent.Client, independent.Size)
 }
 

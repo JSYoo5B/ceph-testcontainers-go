@@ -43,6 +43,7 @@ var residualFieldVerdicts = map[string]string{
 	"faults":                   "owner",
 	"debugLevels":              "owner",
 	"daemonRunner":             "seam",
+	"monitorKiller":            "seam",
 }
 
 // containerFieldTypes returns the declared fields of the struct typeName in

@@ -131,21 +131,36 @@ func TestRGWZoneCommandsStopAtTheFirstFailure(t *testing.T) {
 	}
 }
 
-func TestRGWPublishZoneEndpointCommitsTheGroupEndpointOnlyForAGroupMaster(t *testing.T) {
-	cli := &rgwScriptCLI{}
-	f := newPhaseFixture(cli, cli)
-	if err := f.realm.publishZoneEndpoint(t.Context(), cli, "b", "http://host:1", false); err != nil {
-		t.Fatal(err)
+// A bridge zone serves its alias in the HTTP bridge, so its endpoint needs no
+// reservation and its gateway starts through rgw.Start.
+func TestRGWBridgeZoneEndpointIsItsAlias(t *testing.T) {
+	endpoint, err := reserveZoneEndpoint(t.Context(), nil, false, "rgw-zone-x")
+	if err != nil || endpoint.endpoint != "http://rgw-zone-x:7480" || endpoint.start != nil || endpoint.release != nil {
+		t.Fatalf("bridge endpoint %+v: %v", endpoint, err)
 	}
-	if want := []string{"zone modify --endpoints http://host:1", "period update --commit"}; !slices.Equal(cli.ops, want) {
-		t.Fatalf("member endpoint: %q", cli.ops)
+	endpoint.releaseUnused(t.Context())
+}
+
+// A zone's gateway starts through the starter of its reserved host port, so
+// it binds the port that the zone was committed with.
+func TestRGWZoneGatewayStartsOnItsReservedPort(t *testing.T) {
+	f := newPhaseFixture(&rgwScriptCLI{}, &rgwScriptCLI{})
+	var started []rgw.Config
+	gateway := &rgw.Gateway{Container: &rgwLifecycleContainer{running: true}}
+	start := func(_ context.Context, config rgw.Config, _ ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
+		started = append(started, config)
+		return gateway, nil
 	}
-	cli.ops = nil
-	if err := f.realm.publishZoneEndpoint(t.Context(), cli, "a", "http://host:2", true); err != nil {
-		t.Fatal(err)
+	got, err := f.runGateway(t.Context(), "image", nil, nil, "rgw-zone-x", "c", start)
+	if err != nil || got != gateway || len(started) != 1 || started[0].Zone != "c" || started[0].Name != "rgw-zone-x" || !started[0].SkipUserCreation {
+		t.Fatalf("gateway %v, starts %+v: %v", got, started, err)
 	}
-	if want := []string{"zone modify --endpoints http://host:2", "zonegroup modify --endpoints http://host:2", "period update --commit"}; !slices.Equal(cli.ops, want) {
-		t.Fatalf("group master endpoint: %q", cli.ops)
+	// A failed start still returns the partial gateway for cleanup.
+	failed := func(context.Context, rgw.Config, ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
+		return gateway, errors.New("start RGW on host port 1: port is already allocated")
+	}
+	if got, err := f.runGateway(t.Context(), "image", nil, nil, "rgw-zone-x", "c", failed); got != gateway || err == nil || !strings.Contains(err.Error(), "run RGW zone c") {
+		t.Fatalf("failed start: %v %v", got, err)
 	}
 }
 

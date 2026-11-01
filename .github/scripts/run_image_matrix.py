@@ -5,7 +5,9 @@ An absent image is explicitly pulled for the Docker engine's native platform.
 Existing references are resolved once to local image IDs before invoking make.
 This is module compatibility evidence, not the separate image contract checker.
 Preparation mode resolves those same images without executing compatibility tests,
-or, with --roles, only the role images that a batch declares.
+or, with --roles, only the role images that a batch declares. A pull that
+fails on a registry transport error is retried a bounded number of times
+(registry_pull.py); the summary records every attempt.
 """
 
 import argparse
@@ -21,6 +23,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+import registry_pull
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -173,6 +177,7 @@ def source_manifest(root):
     # label as proof of unmodified source. Generated output is never included.
     paths = {root / "Makefile", root / "go.mod", root / "go.sum",
              root / ".github/scripts/run_image_matrix.py",
+             root / ".github/scripts/registry_pull.py",
              root / ".github/ceph-role-images.json"}
     for directory in ("ceph", "cephfs", "rgw", "rbd", "internal"):
         paths.update((root / directory).rglob("*.go"))
@@ -341,39 +346,24 @@ def main(argv=None):
                                     args.digests)
         if args.digests:
             summary["pinned_digests"] = args.digests
+
         for role, reference in references.items():
-            # Ordinary inspection keeps this native-only runner compatible
-            # with engines predating the inspect --platform API (1.49).
-            inspect = ["docker", "image", "inspect", "--", reference]
-            result = capture(inspect)
-            if result.returncode:
-                # Permission/daemon/API errors are not evidence of an absent
-                # image and must not cause an unrelated registry pull.
-                if not re.search(r"\bNo such (?:image|object):", result.stderr, re.IGNORECASE):
-                    raise RuntimeError(role + " image inspection failed; image absence was not confirmed")
-                pull_code = stream(["docker", "pull", "--platform", platform, reference], "pull-" + role + ".log")
-                if pull_code:
-                    raise RuntimeError(role + " image pull failed (exit " + str(pull_code) + ")")
-                result = capture(inspect)
-                if result.returncode:
-                    raise RuntimeError(role + " image is unavailable after pull")
-            inspected = json.loads(result.stdout)
-            if not isinstance(inspected, list) or len(inspected) != 1 or not isinstance(inspected[0], dict):
-                raise RuntimeError(role + " image inspection has an invalid shape")
-            image = inspected[0]
-            image_id = image.get("Id")
-            if not isinstance(image_id, str) or IMAGE_ID.fullmatch(image_id) is None:
-                raise RuntimeError(role + " image has no immutable local image ID")
-            if image.get("Os") != "linux" or image.get("Architecture") != platform.split("/")[1]:
-                raise RuntimeError(role + " image platform differs from the native Docker engine")
-            repo_digests = image.get("RepoDigests")
-            if repo_digests is None:
-                repo_digests = []
-            if (not isinstance(repo_digests, list) or any(not isinstance(value, str)
-                    or re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", value) is None for value in repo_digests)):
-                raise RuntimeError(role + " image has invalid registry digest metadata")
-            summary["images"][role] = {"reference": reference, "image_id": image_id,
-                                      "repo_digests": repo_digests, "platform": platform}
+            def attempt(number, role=role, reference=reference):
+                name = "pull-" + role + (".log" if number == 1 else "-" + str(number) + ".log")
+                code = stream(["docker", "pull", "--platform", platform, reference], name)
+                return code, (output / name).read_text(encoding="utf-8", errors="replace")
+
+            try:
+                summary["images"][role] = registry_pull.resolve(
+                    role, reference, platform, lambda value: capture(["docker", "image", "inspect", "--", value]),
+                    attempt, summary.setdefault("pulls", {}))
+            except registry_pull.PreparationError as error:
+                if error.failure:
+                    summary["classification"] = "registry-transport"
+                    summary["registry_failure"] = error.failure
+                raise
+        if not summary["pulls"]:
+            del summary["pulls"]
         images = summary["images"]
         summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]

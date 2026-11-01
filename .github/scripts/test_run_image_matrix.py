@@ -40,6 +40,8 @@ class Runtime:
         self.make_log = passing_log()
         self.make_code = 0
         self.pull_code = 0
+        # (exit code, output) of successive pulls; pull_code once exhausted.
+        self.pull_results = []
         self.go_code = 0
 
     def capture(self, command, **kwargs):
@@ -68,8 +70,9 @@ class Runtime:
             self.make_environment = kwargs["env"].copy()
             output, code = self.make_log, self.make_code
         elif command[:3] == ["docker", "pull", "--platform"]:
-            self.pulled.add(command[-1])
-            output, code = "pulled\n", self.pull_code
+            code, output = self.pull_results.pop(0) if self.pull_results else (self.pull_code, "pulled\n")
+            if code == 0:
+                self.pulled.add(command[-1])
         else:
             raise AssertionError("unexpected streaming command: " + repr(command))
         process = mock.Mock()
@@ -88,6 +91,7 @@ class MatrixTests(unittest.TestCase):
         self.write("go.mod", "module " + MODULE + "\n\ngo 1.25.0\n")
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
+        self.write(".github/scripts/registry_pull.py", SCRIPT.with_name("registry_pull.py").read_text())
         self.write(".github/ceph-role-images.json", (SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
         self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.DEFAULT_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
@@ -495,6 +499,54 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 1)
         self.assertEqual(len(self.runtime.stream_commands), 1)
         self.assertIn("exit 7", self.summary()["error"])
+
+    def test_role_pull_transport_failure_is_retried_and_recorded(self):
+        reference = runner.image_references("official", "roles", "20.2.4")["essential"]
+        self.runtime.missing.add(reference)
+        eof = ('Error response from daemon: Head "https://ghcr.io/v2/x/manifests/sha256:' + "8" * 64 +
+               '": Get "https://ghcr.io/token?account=a&scope=b": EOF\n')
+        self.runtime.pull_results = [(1, eof), (0, "pulled\n")]
+        with mock.patch.object(runner.registry_pull.time, "sleep") as sleep:
+            self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential"]), 0)
+        sleep.assert_called_once_with(runner.registry_pull.DELAYS[0])
+        report = self.summary()
+        self.assertTrue(report["preparation_passed"])
+        attempts = report["pulls"]["essential"]
+        self.assertEqual([record["exit_code"] for record in attempts], [1, 0])
+        self.assertEqual(attempts[0]["transport"], {"reason": "eof", "phase": "token", "endpoint": "https://ghcr.io/token"})
+        self.assertTrue((self.output / "pull-essential.log").exists())
+        self.assertTrue((self.output / "pull-essential-2.log").exists())
+        self.assertNotIn("classification", report)
+
+    def test_exhausted_transport_retries_classify_the_preparation_failure(self):
+        reference = runner.image_references("official", "roles", "20.2.4")["essential"]
+        self.runtime.missing.add(reference)
+        timeout = 'Error response from daemon: Get "https://ghcr.io/v2/": net/http: TLS handshake timeout\n'
+        self.runtime.pull_results = [(1, timeout)] * 3
+        env_file = self.write("github-env", "")
+        with mock.patch.object(runner.registry_pull.time, "sleep"):
+            self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential",
+                                          "--github-env", str(env_file)]), 1)
+        report = self.summary()
+        self.assertEqual(len(self.runtime.stream_commands), 3)
+        self.assertEqual(report["classification"], "registry-transport")
+        self.assertEqual(report["registry_failure"],
+                         {"image": "essential", "reference": reference, "attempts": 3,
+                          "reason": "tls-handshake-timeout", "phase": "registry", "endpoint": "https://ghcr.io/v2/"})
+        self.assertIn("after 3 attempts: registry transport tls-handshake-timeout", report["error"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertEqual(env_file.read_text(), "")
+
+    def test_registry_refusal_is_not_retried_or_classified(self):
+        self.runtime.missing.add(runner.DEFAULT_IMAGE)
+        self.runtime.pull_results = [(1, "Error response from daemon: manifest unknown\n")]
+        with mock.patch.object(runner.registry_pull.time, "sleep") as sleep:
+            self.assertEqual(self.invoke(), 1)
+        sleep.assert_not_called()
+        report = self.summary()
+        self.assertEqual(len(self.runtime.stream_commands), 1)
+        self.assertNotIn("classification", report)
+        self.assertEqual(report["error"], "all image pull failed (exit 1)")
 
     def test_missing_caller_go_is_error_and_has_report_without_docker(self):
         self.assertEqual(self.invoke(missing_executable="go"), 1)

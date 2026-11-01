@@ -44,7 +44,7 @@ SCHEMA = "ceph-scenario-history/v1"
 MISSING = "missing"
 # The workflow phases of report_workflow_phases.py, in execution order, and
 # the receipt that is each phase's own evidence.
-PHASES = ("modules", "compile", "docker", "images", "native", "cleanup")
+PHASES = ("modules", "compile", "docker", "images", "test_images", "native", "cleanup")
 WORKFLOW_OUTCOMES = {"success": "success", "failure": "failure", "cancelled": "cancelled",
                      "skipped": "skipped", "": "not_run"}
 # The execution key fields that ingest needs to tell two attempts apart.
@@ -296,6 +296,7 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
     native = evidence.json("scenario", "native/report.json")
     log = evidence.text("scenario", "native/native.log")
     phases = evidence.json("scenario", "phases.json")
+    test_images = evidence.json("scenario", "test-images/summary.json")
     before = evidence.json("cleanup", "before.json")
     after = evidence.json("cleanup", "after.json")
     summary = evidence.json("images", "summary.json")
@@ -389,7 +390,7 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
                               for role, image in sorted((summary.get("images") or {}).items())
                               if isinstance(image, dict)}}
 
-    own = {"modules": modules, "compile": compiled, "docker": before, "images": summary,
+    own = {"modules": modules, "compile": compiled, "docker": before, "images": summary, "test_images": test_images,
            "native": native, "cleanup": after}
     rows = []
     for name in PHASES:
@@ -623,7 +624,10 @@ def attempt_kind(row):
     failed_phase = first.get("phase")
     if failed_phase in INFRASTRUCTURE_PHASES:
         return "runner_failure"
-    if failed_phase == "images":
+    # A native failure that only a registry pull caused, for example of Ryuk,
+    # ran no Ceph assertion (tag_scenarios.registry_transport).
+    if failed_phase in ("images", "test_images") or (failed_phase == "native"
+                                                     and first.get("classification") == "native-registry-transport"):
         return "image_failure"
     if failed_phase == "cleanup":
         return "cleanup_failure"

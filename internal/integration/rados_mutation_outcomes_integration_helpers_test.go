@@ -5,7 +5,9 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -241,9 +243,12 @@ func osdUpFrom(t *testing.T, ctx context.Context, cluster *ceph.Container, id in
 
 // holdDispatchDelay makes the OSD sleep for delay at each of the points where
 // osd_debug_inject_dispatch_delay_probability applies, so every client
-// operation waits several times delay before it runs.
+// operation waits several times delay before it runs. The OSDMap is settled
+// first (settleOSDMapForDispatchDelay), so that an operation's cost under the
+// delay is its own sleeps and the queue ahead of it, not a map wait.
 func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string, delay time.Duration) func() {
 	t.Helper()
+	settleOSDMapForDispatchDelay(t, ctx, cluster, osd)
 	var holds []*override.ConfigHandle
 	restore := func() {
 		for i := len(holds) - 1; i >= 0; i-- {
@@ -267,4 +272,150 @@ func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		}
 	}
 	return restore
+}
+
+// settleOSDMapForDispatchDelay returns once the MON has recorded the OSD's
+// beacon and every PG of the OSD has applied the MON's current OSDMap epoch,
+// the epoch that the clients of the delayed phase receive.
+//
+// While the dispatch delay is held, a new epoch costs the OSD two sleeps per
+// map in consume_map and each PG two more for the peering item that advances
+// it. An operation stamped with the new epoch that reaches a PG still on the
+// old one waits for the map and is requeued, paying the queue's two sleeps
+// again: one extra cycle that a client timeout sized for the delay cannot
+// absorb. An idle cluster still publishes one such epoch on its own. A booted
+// OSD sends its first beacon only once the host's monotonic clock exceeds
+// osd_beacon_report_interval (300 s by default), because the time of its
+// last beacon starts at the clock's zero. That beacon carries the time of the
+// purged_snaps scrub the OSD ran before it booted, and the MON records it in
+// osd_xinfo as a new epoch that changes nothing else. On a freshly booted CI
+// host the cluster starts before that point, so the epoch arrives at a host
+// uptime of about 300 s, wherever the test happens to be. send_beacon makes
+// the OSD send that beacon now, before the delay.
+func settleOSDMapForDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string) {
+	t.Helper()
+	id, err := strconv.Atoi(strings.TrimPrefix(osd, "osd."))
+	if err != nil || !strings.HasPrefix(osd, "osd.") {
+		t.Fatalf("%q is not an osd.<id>", osd)
+	}
+	if _, err := harness.AdminSocket(t, ctx, cluster, osd, "send_beacon"); err != nil {
+		t.Fatalf("%s send_beacon: %v", osd, err)
+	}
+	var last string
+	for deadline := time.Now().Add(time.Minute); ; {
+		epoch, settled, reason := osdMapSettledForDispatchDelay(ctx, cluster, osd, id)
+		if settled {
+			t.Logf("%s: every PG applied OSDMap e%d, which holds the OSD's beacon, before the dispatch delay", osd, epoch)
+			return
+		}
+		last = reason
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			t.Fatalf("%s: the OSDMap did not settle before the dispatch delay: %s", osd, last)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// osdMapSettledForDispatchDelay reads the MON's epoch, the PGs of the OSD and
+// each PG's applied epoch, then the MON's epoch again. It reports the epoch
+// when the OSD's beacon is recorded, every PG holds that epoch and no newer
+// one was published meanwhile, and otherwise why not.
+func osdMapSettledForDispatchDelay(ctx context.Context, cluster *ceph.Container, osd string, id int) (uint32, bool, string) {
+	dump, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
+	if err != nil {
+		return 0, false, fmt.Sprintf("osd dump: %v", err)
+	}
+	epoch, beaconed, err := parseBeaconedOSDMap(dump, id)
+	if err != nil {
+		return 0, false, err.Error()
+	}
+	if !beaconed {
+		return epoch, false, fmt.Sprintf("OSDMap e%d does not hold a beacon of %s yet", epoch, osd)
+	}
+	listed, err := cluster.Ceph(ctx, "pg", "ls-by-osd", osd, "--format", "json")
+	if err != nil {
+		return epoch, false, fmt.Sprintf("pg ls-by-osd %s: %v", osd, err)
+	}
+	pgs, err := parsePGIDs(listed)
+	if err != nil {
+		return epoch, false, err.Error()
+	}
+	for _, pg := range pgs {
+		out, err := cluster.Ceph(ctx, "pg", pg, "query", "--format", "json")
+		if err != nil {
+			return epoch, false, fmt.Sprintf("pg %s query: %v", pg, err)
+		}
+		applied, err := harness.ParsePGMapEpoch(out)
+		if err != nil {
+			return epoch, false, fmt.Sprintf("pg %s: %v", pg, err)
+		}
+		if applied < epoch {
+			return epoch, false, fmt.Sprintf("pg %s applied e%d, the MON has e%d", pg, applied, epoch)
+		}
+	}
+	again, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
+	if err != nil {
+		return epoch, false, fmt.Sprintf("osd dump: %v", err)
+	}
+	now, _, err := parseBeaconedOSDMap(again, id)
+	if err != nil {
+		return epoch, false, err.Error()
+	}
+	if now != epoch {
+		return now, false, fmt.Sprintf("the MON published e%d while the PGs were read at e%d", now, epoch)
+	}
+	return epoch, true, ""
+}
+
+// parseBeaconedOSDMap returns the epoch of an "osd dump" and whether its
+// osd_xinfo for OSD id holds a last_purged_snaps_scrub, which only a beacon
+// sets; until then the field is the zero time "0.000000".
+func parseBeaconedOSDMap(dump []byte, id int) (uint32, bool, error) {
+	var parsed struct {
+		Epoch *uint32 `json:"epoch"`
+		XInfo []struct {
+			OSD                  *int    `json:"osd"`
+			LastPurgedSnapsScrub *string `json:"last_purged_snaps_scrub"`
+		} `json:"osd_xinfo"`
+	}
+	if err := json.Unmarshal(dump, &parsed); err != nil {
+		return 0, false, fmt.Errorf("osd dump: %w", err)
+	}
+	if parsed.Epoch == nil || *parsed.Epoch == 0 {
+		return 0, false, errors.New("osd dump has no epoch")
+	}
+	for _, info := range parsed.XInfo {
+		if info.OSD == nil || *info.OSD != id {
+			continue
+		}
+		if info.LastPurgedSnapsScrub == nil {
+			return *parsed.Epoch, false, fmt.Errorf("osd dump e%d: osd_xinfo of osd.%d has no last_purged_snaps_scrub", *parsed.Epoch, id)
+		}
+		stamp := *info.LastPurgedSnapsScrub
+		return *parsed.Epoch, stamp != "" && strings.Trim(stamp, "0.") != "", nil
+	}
+	return *parsed.Epoch, false, fmt.Errorf("osd dump e%d has no osd_xinfo of osd.%d", *parsed.Epoch, id)
+}
+
+// parsePGIDs returns the PG IDs of a "pg ls-by-osd" answer.
+func parsePGIDs(out []byte) ([]string, error) {
+	var listed struct {
+		PGStats *[]struct {
+			PGID string `json:"pgid"`
+		} `json:"pg_stats"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return nil, fmt.Errorf("pg ls-by-osd: %w", err)
+	}
+	if listed.PGStats == nil || len(*listed.PGStats) == 0 {
+		return nil, errors.New("pg ls-by-osd lists no PG")
+	}
+	pgs := make([]string, 0, len(*listed.PGStats))
+	for _, pg := range *listed.PGStats {
+		if pg.PGID == "" {
+			return nil, errors.New("pg ls-by-osd lists a PG without pgid")
+		}
+		pgs = append(pgs, pg.PGID)
+	}
+	return pgs, nil
 }

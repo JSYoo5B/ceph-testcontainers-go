@@ -153,6 +153,9 @@ type CephFSActorReceipt struct {
 	Closed bool   `json:"closed"`
 	// ElapsedMS is how long the unsafe-window actor's operation took.
 	ElapsedMS int64 `json:"elapsed_ms"`
+	// FrozenMS is how long the path-cut actor's thread saw its container
+	// frozen before it sent its request.
+	FrozenMS int64 `json:"frozen_ms"`
 	// Count is the number of records that the stream actor wrote.
 	Count int64 `json:"count"`
 	// CloseErrno is the errno of a failed close or unmount.

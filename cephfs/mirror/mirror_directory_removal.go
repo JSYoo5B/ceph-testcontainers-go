@@ -24,6 +24,27 @@ type DirectoryRemoval struct {
 	generation                                 uint64
 	requestAcknowledged, completed, superseded bool
 	processQuiescenceAcknowledged              bool
+	// requestAttempted records that a native remove was sent, whatever its
+	// reply; a remove without an acknowledgement is uncertain and never
+	// sent again.
+	requestAttempted bool
+}
+
+// errCephFSUncertainRemoval is the cause of a refusal to send a remove again
+// after one whose reply was lost: a policy that still shows the path mapped
+// does not prove that the MGR dropped the first, which can still wait behind
+// the mirroring module's policy lock.
+var errCephFSUncertainRemoval = errors.New("an uncertain native CephFS mirror directory remove is not sent again")
+
+// uncertainRemoval reports the native mapping of a path whose earlier remove
+// is uncertain, without sending anything. It is retryable: a later call that
+// finds the path gone from the policy completes the request.
+func uncertainRemoval(ctx context.Context, m *Mirror, directory string) error {
+	state := "unread"
+	if mapping, err := m.readCephFSObservedMapping(ctx, directory); err == nil {
+		state = mapping.State
+	}
+	return &cephFSObservationError{message: fmt.Sprintf("%v: the native policy still tracks %s, %s", errCephFSUncertainRemoval, directory, state), cause: errCephFSUncertainRemoval}
 }
 
 // DirectoryRemovalStatus observes the original path registration.
@@ -60,10 +81,17 @@ type DirectoryRemovalDaemonStatus struct {
 // stopping, restarting or removing the cohort can prevent a release proof.
 // External policy, filesystem and direct container writers must not race it.
 //
-// On a retry after an uncertain reply a policy that is already gone is not
-// removed again; a policy still present is resent only after the original
-// assigned daemon and cohort are checked again, waiting while the assignment
-// moves and refusing if another daemon took over. While the removal is not
+// A remove that was sent and whose reply was lost is never sent again, whether
+// this receipt, RemoveDirectory or RebalanceDirectories sent it: a retry
+// that finds the policy gone continues to the release proof, and one that
+// still finds the path tracked returns a retryable error naming its native
+// state, even when that state is mapped, because the first remove can still
+// wait in the MGR. The caller decides whether to keep retrying. Before the
+// first remove the original assigned daemon and cohort are checked again,
+// waiting while the assignment moves and refusing if another daemon took
+// over. Like RemoveDirectory, the
+// native remove waits until every directory that the native policy tracks is
+// mapped or stalled. While the removal is not
 // Released, AddDirectory, AddDaemon, RebalanceDirectories, peer removal,
 // RebootstrapPeer and removal of other paths are refused. Released means the
 // policy is gone and every original daemon reports released in its original
@@ -288,8 +316,8 @@ func (r *DirectoryRemoval) forgetDesiredPolicy() {
 }
 
 // Called under mirror.mu. Only the exact retained original path is retried.
-// Native MGR serializes remove/purging. An uncertain transport may cause more
-// than one CLI attempt; no exactly-once invocation or error-text parsing is used.
+// The native remove is sent at most once per receipt; no error-text parsing is
+// used.
 func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if err := r.checkHandle(); err != nil {
 		return err
@@ -308,6 +336,12 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS directory removal policy", nil)
 	}
+	// RemoveDirectory and RebalanceDirectories record their uncertain removes
+	// in pendingDirectoryRelease, so a remove sent through either of them is
+	// not sent again through this receipt.
+	if r.requestAttempted || r.original.mirror.pendingDirectoryRelease[r.directory] {
+		return uncertainRemoval(ctx, r.original.mirror, r.directory)
+	}
 	mapping, err := r.original.mirror.readCephFSObservedMapping(ctx, r.directory)
 	if err != nil {
 		return err
@@ -320,6 +354,9 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	}
 	if err := r.confirmCohort(ctx, true); err != nil {
 		return err
+	}
+	if err := r.original.mirror.waitNativePolicyIdle(ctx); err != nil {
+		return cephFSObserveQuery("wait for an idle native CephFS mirror policy before removal", err)
 	}
 	if err := r.peerPolicy(ctx); err != nil {
 		return err
@@ -345,6 +382,12 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	r.requestAttempted = true
+	m := r.original.mirror
+	if m.pendingDirectoryRelease == nil {
+		m.pendingDirectoryRelease = make(map[string]bool)
+	}
+	m.pendingDirectoryRelease[r.directory] = true
 	if _, err := r.original.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.original.sourceFilesystem, r.directory); err != nil {
 		return cephFSObserveQuery("remove original CephFS mirror directory", err)
 	}

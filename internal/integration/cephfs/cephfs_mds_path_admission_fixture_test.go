@@ -211,7 +211,7 @@ func runPathCutActor(t *testing.T, script string) (fakeMkdir, error) {
 	ctx, stop := context.WithTimeout(context.Background(), time.Minute)
 	defer stop()
 	args := []string{"-c", "import sys\nsys.path.insert(0, " + fmt.Sprintf("%q", module) + ")\n" + script,
-		"fs", work, "token", "/pathcut", "/pathcut/file", "/pathcut/created", "/unused", "00", "01"}
+		"fs", work, "token", "/pathcut", "/pathcut/file", "/pathcut/created", "/unused", "00", "01", "gate"}
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	cmd.Env = append(os.Environ(), "FAKE_OPS="+ops, "PYTHONDONTWRITEBYTECODE=1")
 	if out, err := cmd.CombinedOutput(); err != nil {

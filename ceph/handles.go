@@ -352,12 +352,15 @@ func (m *ManagerContainer) RotateKey(ctx context.Context) error {
 // current map running. A handle of a removed monitor returns an error.
 //
 // It refuses a removal that would leave fewer than a majority of the current
-// map running; add a replacement first. MON a can be removed too; the embedded
+// map running; add a replacement first. As in Ceph's manual procedure, the
+// MON's process is killed before the mon remove, so that no warm daemon or
+// client can take the leaving MON as its session while the survivors renumber
+// their ranks and drop their sessions. MON a can be removed too; the embedded
 // container of Container is then gone and fixture commands use the control
-// container. If the mon remove reply is lost, the call returns an error
-// without resending; calling Remove again with a fresh context reads the
-// current membership, skips the completed native step and finishes the
-// container and configuration cleanup. MON a is described by a fresh
+// container. If the mon remove fails or its reply is lost, the MON stays
+// killed and the call returns an error without resending; calling Remove
+// again with a fresh context reads the current membership, skips the
+// completed native step and finishes the container and configuration cleanup. MON a is described by a fresh
 // descriptor on every listing, so a handle is matched by name and container,
 // not by pointer identity.
 //
