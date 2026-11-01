@@ -1,15 +1,17 @@
-package ceph
+package monstore
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
 // monStoreAdapterFiles are the production files of the MON store adapters.
-var monStoreAdapterFiles = []string{"mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_inspect_engine.go", "mon_store_json.go"}
+var monStoreAdapterFiles = []string{"monmap.go", "inspect_container.go", "inspect_engine.go", "json.go"}
 
 // monStoreAdapterSymbols are the package-level names the adapter files add.
 // Production code outside those files must not mention them until a slice adds
@@ -50,7 +52,7 @@ func TestMonStoreAdaptersHaveNoProductionCaller(t *testing.T) {
 }
 
 func TestMonStoreAdaptersGuardDetectsACaller(t *testing.T) {
-	src := `package ceph
+	src := `package monstore
 func use() { _, _ = decodeMonStoreMember(nil, nil, ""); _ = monStoreContainerInspector{} }
 `
 	parsed, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", src, 0)
@@ -96,7 +98,7 @@ func TestMonStoreAdaptersDeclareEverySymbolOfTheTable(t *testing.T) {
 }
 
 // monStoreEngineFile is the one adapter file that may import the moby client.
-const monStoreEngineFile = "mon_store_inspect_engine.go"
+const monStoreEngineFile = "inspect_engine.go"
 
 // TestMonStoreAdaptersHaveNoLockAndNoDockerClient pins that the adapters add
 // no mutex, that only the engine file imports the moby client, and that none
@@ -124,5 +126,60 @@ func TestMonStoreAdaptersHaveNoLockAndNoDockerClient(t *testing.T) {
 			}
 			return true
 		})
+	}
+}
+
+// parseProductionFiles parses the package's non-test files by name.
+func parseProductionFiles(t *testing.T) map[string]*ast.File {
+	t.Helper()
+	return parseProductionFilesIn(t, ".")
+}
+
+// parseProductionFilesIn parses the non-test files of dir by name.
+func parseProductionFilesIn(t *testing.T, dir string) map[string]*ast.File {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]*ast.File{}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[filepath.Base(file)] = parsed
+	}
+	return out
+}
+
+// receiverTypeName returns the type name of a method receiver, or "".
+func receiverTypeName(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return ""
+	}
+	typ := fn.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	if id, ok := typ.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
+// TestPackageAddsNoMutex pins that no record, adapter or inspector of the
+// package has a lock of its own: a State is used under the cluster's topology
+// lock, so a mutex here would add a lock domain to the cluster's lock order.
+func TestPackageAddsNoMutex(t *testing.T) {
+	for name, parsed := range parseProductionFiles(t) {
+		for _, imp := range parsed.Imports {
+			if strings.HasPrefix(imp.Path.Value, `"sync`) {
+				t.Errorf("%s imports %s", name, imp.Path.Value)
+			}
+		}
 	}
 }

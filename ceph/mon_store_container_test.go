@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
@@ -46,7 +47,7 @@ func TestMonitorStorageVolumeNeedsIPv4AndOneCarrier(t *testing.T) {
 }
 
 // generationRequest applies what Create passes to the runner to a request.
-func generationRequest(t *testing.T, launch monStoreLaunch) (testcontainers.GenericContainerRequest, error) {
+func generationRequest(t *testing.T, launch monstore.Launch) (testcontainers.GenericContainerRequest, error) {
 	t.Helper()
 	c := &Container{}
 	c.nets.public = &testcontainers.DockerNetwork{Name: "tc-public"}
@@ -66,7 +67,7 @@ func generationRequest(t *testing.T, launch monStoreLaunch) (testcontainers.Gene
 }
 
 func TestMonitorGenerationCreatesOnTheStoreVolumeWithoutStarting(t *testing.T) {
-	first, err := generationRequest(t, monStoreLaunch{volume: "tc-ceph-mon-volume-1", mode: monStoreFormat, generation: 1})
+	first, err := generationRequest(t, monstore.Launch{Volume: "tc-ceph-mon-volume-1", Mode: monstore.Format, Generation: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +84,8 @@ func TestMonitorGenerationCreatesOnTheStoreVolumeWithoutStarting(t *testing.T) {
 	if _, set := first.Env["CEPH_MON_STORE_MODE"]; set {
 		t.Fatal("a first generation must be allowed to format")
 	}
-	endpoint := &monStoreEndpoint{ip: "172.30.0.5", network: "tc-public"}
-	later, err := generationRequest(t, monStoreLaunch{volume: "tc-ceph-mon-volume-1", mode: monStoreRequire, generation: 2, endpoint: endpoint})
+	endpoint := &monstore.Endpoint{IP: "172.30.0.5", Network: "tc-public"}
+	later, err := generationRequest(t, monstore.Launch{Volume: "tc-ceph-mon-volume-1", Mode: monstore.Require, Generation: 2, Endpoint: endpoint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +100,12 @@ func TestMonitorGenerationCreatesOnTheStoreVolumeWithoutStarting(t *testing.T) {
 	if settings["tc-public"] == nil || settings["tc-public"].IPAMConfig == nil || settings["tc-public"].IPAMConfig.IPv4Address.String() != "172.30.0.5" {
 		t.Fatalf("address request %+v", settings["tc-public"])
 	}
-	for name, e := range map[string]*monStoreEndpoint{
-		"IPv6":          {ip: "fd00::5", network: "tc-public"},
-		"other network": {ip: "172.30.0.5", network: "elsewhere"},
-		"host ports":    {ip: "127.0.0.1", ports: []int{3300}},
+	for name, e := range map[string]*monstore.Endpoint{
+		"IPv6":          {IP: "fd00::5", Network: "tc-public"},
+		"other network": {IP: "172.30.0.5", Network: "elsewhere"},
+		"host ports":    {IP: "127.0.0.1", Ports: []int{3300}},
 	} {
-		if _, err := generationRequest(t, monStoreLaunch{volume: "v", mode: monStoreRequire, generation: 2, endpoint: e}); err == nil {
+		if _, err := generationRequest(t, monstore.Launch{Volume: "v", Mode: monstore.Require, Generation: 2, Endpoint: e}); err == nil {
 			t.Errorf("%s: an address the bridge cannot give was requested", name)
 		}
 	}
@@ -120,7 +121,7 @@ func TestMonitorGenerationClearsBeforeCreating(t *testing.T) {
 	}
 	gens := c.monitorGenerations("b", noRecipe, []string{"true"})
 	gens.beforeCreate = func(context.Context) error { return errors.New("socket busy") }
-	if _, err := gens.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreFormat, generation: 1}, "img"); err == nil || created != 0 {
+	if _, err := gens.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Format, Generation: 1}, "img"); err == nil || created != 0 {
 		t.Fatalf("a failed preparation still created a container: %v %d", err, created)
 	}
 }
@@ -143,7 +144,7 @@ func TestReplaceMonitorRefusesBeforeTouchingAnything(t *testing.T) {
 	if _, err := mon.Replace(t.Context()); err == nil {
 		t.Fatal("a handle the cluster does not own was replaced")
 	}
-	if c.monStores.count() != 0 {
+	if c.monStores.Store(mon.DaemonName) != nil {
 		t.Fatal("a refused replacement published a store")
 	}
 	if _, err := (*MonitorContainer)(nil).Replace(t.Context()); !errors.Is(err, ErrInvalidRequest) {

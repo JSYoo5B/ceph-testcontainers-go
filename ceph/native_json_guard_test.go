@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// The pool usage and MON store readers gained the shared nesting limit, and
-// pool usage now refuses null for a known field, which it used to decode as
-// absent.
-func TestPoolUsageAndMONStoreJSONGainedTheSharedGuards(t *testing.T) {
+// The pool usage reader has the shared nesting limit and refuses null for a
+// known field; the MON store reader's guard is tested in its package.
+func TestPoolUsageJSONHasTheSharedGuards(t *testing.T) {
 	deep := strings.Repeat("[", 100) + "0" + strings.Repeat("]", 100)
 	var ids []struct {
 		ID   *int64 `json:"pool_id"`
@@ -22,11 +21,5 @@ func TestPoolUsageAndMONStoreJSONGainedTheSharedGuards(t *testing.T) {
 	}
 	if err := poolUsageJSON([]byte(`[{"pool_id":7,"pool_name":"fixture","future":null}]`), &ids); err != nil {
 		t.Fatalf("pool usage refused null in an unknown field: %v", err)
-	}
-	if err := monStoreJSONCheck([]byte(`{"mons":` + deep + `}`)); err == nil {
-		t.Fatal("MON store JSON accepted nesting beyond the shared limit")
-	}
-	if err := monStoreJSONCheck([]byte(`{"a":{"b":1,"b":2}}`)); err == nil || strings.Contains(err.Error(), `"b"`) {
-		t.Fatalf("MON store duplicate key: %v", err)
 	}
 }

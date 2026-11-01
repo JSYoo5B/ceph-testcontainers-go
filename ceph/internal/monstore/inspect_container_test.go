@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // ---- the listing script, executed against a temporary directory ----
@@ -375,7 +377,7 @@ func TestMonStoreInspectRequestIsReadOnlyIsolatedAndOwned(t *testing.T) {
 	}
 	if req.volume != monStoreTestVolume || req.target != "/store" || !req.readOnlyMount || req.networkMode != "none" ||
 		!slices.Equal(req.capDrop, []string{"ALL"}) || !req.noNewPrivileges || !req.readOnlyRootfs || req.privileged || req.autoRemove ||
-		req.labels[clusterOwnerLabel] != "owner-1" || req.labels[monStoreInspectorLabel] != "token-1" || len(req.labels) != 2 ||
+		req.labels[clusterutil.OwnerLabel] != "owner-1" || req.labels[monStoreInspectorLabel] != "token-1" || len(req.labels) != 2 ||
 		req.user != "167:167" || req.cmd[len(req.cmd)-1] != "/store" || !slices.Equal(req.entrypoint, []string{"python3"}) {
 		t.Fatalf("request %+v", req)
 	}
@@ -391,8 +393,8 @@ func TestMonStoreInspectRequestIsReadOnlyIsolatedAndOwned(t *testing.T) {
 		"privileged":        func(r *monStoreInspectRequest) { r.privileged = true },
 		"auto remove":       func(r *monStoreInspectRequest) { r.autoRemove = true },
 		"volume removal":    func(r *monStoreInspectRequest) { r.keepVolumesOnRemove = false },
-		"no owned label":    func(r *monStoreInspectRequest) { delete(r.labels, clusterOwnerLabel) },
-		"empty owned label": func(r *monStoreInspectRequest) { r.labels[clusterOwnerLabel] = "" },
+		"no owned label":    func(r *monStoreInspectRequest) { delete(r.labels, clusterutil.OwnerLabel) },
+		"empty owned label": func(r *monStoreInspectRequest) { r.labels[clusterutil.OwnerLabel] = "" },
 		"no token":          func(r *monStoreInspectRequest) { delete(r.labels, monStoreInspectorLabel) },
 		"extra label":       func(r *monStoreInspectRequest) { r.labels["x"] = "y" },
 		"other target":      func(r *monStoreInspectRequest) { r.target = "/var/lib/ceph" },
@@ -631,7 +633,7 @@ func TestMonStoreContainerInspectorRefusesWithoutDispatchingAnything(t *testing.
 }
 
 // TestMonStoreInspectorAndMonmapAdaptersFeedVerifyStopped runs the real script
-// output and the decoded monmap through the preflight of mon_store_inspect.go.
+// output and the decoded monmap through the preflight of inspect.go.
 func TestMonStoreInspectorAndMonmapAdaptersFeedVerifyStopped(t *testing.T) {
 	ins, _ := monStoreInspectorFixture(t)
 	dump := monStoreDecode(t, monStoreMonDumpFixture(t))

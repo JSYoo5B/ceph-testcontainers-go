@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -154,7 +155,7 @@ func TestMonStoreMobyEngineCreateTranslatesTheRequest(t *testing.T) {
 	if cfg.Image != req.image || cfg.User != "167:167" || cfg.Tty || !slices.Equal(cfg.Entrypoint, []string{"python3"}) || !slices.Equal(cfg.Cmd, req.cmd) {
 		t.Errorf("config %+v", cfg)
 	}
-	if !maps.Equal(cfg.Labels, map[string]string{clusterOwnerLabel: "owner-1", monStoreInspectorLabel: "token-1"}) {
+	if !maps.Equal(cfg.Labels, map[string]string{clusterutil.OwnerLabel: "owner-1", monStoreInspectorLabel: "token-1"}) {
 		t.Errorf("labels %v", cfg.Labels)
 	}
 	want := mount.Mount{Type: mount.TypeVolume, Source: "store-volume-a", Target: "/store", ReadOnly: true, VolumeOptions: &mount.VolumeOptions{NoCopy: true}}
@@ -167,9 +168,9 @@ func TestMonStoreMobyEngineCreateTranslatesTheRequest(t *testing.T) {
 		t.Errorf("host config %+v", host)
 	}
 	// The options own their data: a later change of the request changes nothing.
-	req.labels[clusterOwnerLabel] = "changed"
+	req.labels[clusterutil.OwnerLabel] = "changed"
 	req.cmd[0] = "changed"
-	if cfg.Labels[clusterOwnerLabel] != "owner-1" || cfg.Cmd[0] != "-I" {
+	if cfg.Labels[clusterutil.OwnerLabel] != "owner-1" || cfg.Cmd[0] != "-I" {
 		t.Error("the create options alias the request")
 	}
 }
@@ -183,7 +184,7 @@ func TestMonStoreMobyEngineCreateRefusesAnInvalidRequestBeforeDocker(t *testing.
 		"capabilities":      func(r *monStoreInspectRequest) { r.capDrop = nil },
 		"writable rootfs":   func(r *monStoreInspectRequest) { r.readOnlyRootfs = false },
 		"removal of volume": func(r *monStoreInspectRequest) { r.keepVolumesOnRemove = false },
-		"no owned label":    func(r *monStoreInspectRequest) { delete(r.labels, clusterOwnerLabel) },
+		"no owned label":    func(r *monStoreInspectRequest) { delete(r.labels, clusterutil.OwnerLabel) },
 	}
 	for name, mutate := range cases {
 		d := &monStoreInspectDockerFake{}
@@ -411,7 +412,7 @@ func TestMonStoreInspectorOnTheDockerEngineKeepsALostCreateFindable(t *testing.T
 	}
 	// The container exists and carries the label that Terminate's scan selects.
 	labels, ok := d.existing[monStoreFakeContainerID]
-	if !ok || labels[clusterOwnerLabel] != "owner-1" || labels[monStoreInspectorLabel] != "token-1" {
+	if !ok || labels[clusterutil.OwnerLabel] != "owner-1" || labels[monStoreInspectorLabel] != "token-1" {
 		t.Fatalf("existing %v", d.existing)
 	}
 }
@@ -478,7 +479,7 @@ func TestMonStoreInspectorOnTheDockerEngineWithholdsTheListingWhenRemovalFails(t
 		t.Fatalf("files %+v err %v", files, err)
 	}
 	// The container is left in place, labelled, for the cluster's teardown scan.
-	if labels, ok := d.existing[monStoreFakeContainerID]; !ok || labels[clusterOwnerLabel] != "owner-1" {
+	if labels, ok := d.existing[monStoreFakeContainerID]; !ok || labels[clusterutil.OwnerLabel] != "owner-1" {
 		t.Fatalf("existing %v", d.existing)
 	}
 	// A failed removal beside a failed run keeps both errors.

@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 )
 
 // This file is the live monmap adapter behind the monStoreMonmap port of
-// mon_store_inspect.go. It reads two native documents and decodes them
+// inspect.go. It reads two native documents and decodes them
 // strictly:
 //
 //   - "ceph mon dump --format json": MonmapMonitor::preprocess_command and

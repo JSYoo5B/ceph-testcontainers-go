@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -18,76 +18,76 @@ const (
 	monStoreMonLabel   = "org.testcontainers.ceph.mon-volume-mon"
 )
 
-// monStorePhase is the state of one MON store volume. The zero value is not a
+// Phase is the state of one MON store volume. The zero value is not a
 // phase, so a record that was never published is detectable.
-type monStorePhase int
+type Phase int
 
 const (
-	// monStorePlanned: the record is published and the volume create was not
+	// Planned: the record is published and the volume create was not
 	// requested, or was requested and its outcome is unknown.
-	monStorePlanned monStorePhase = iota + 1
-	// monStoreCreated: the volume exists and passed the metadata checks.
-	monStoreCreated
-	// monStoreFresh: a first generation was requested and mkfs may have run.
-	monStoreFresh
-	// monStoreBound: the first generation reached its ready check and the
+	Planned Phase = iota + 1
+	// Created: the volume exists and passed the metadata checks.
+	Created
+	// Fresh: a first generation was requested and mkfs may have run.
+	Fresh
+	// Bound: the first generation reached its ready check and the
 	// identity was recorded.
-	monStoreBound
-	// monStoreDetached: bound, with no attachment, and the identity was
+	Bound
+	// Detached: bound, with no attachment, and the identity was
 	// re-recorded after the last generation stopped.
-	monStoreDetached
-	// monStoreReleased: the volume removal is confirmed.
-	monStoreReleased
+	Detached
+	// Released: the volume removal is confirmed.
+	Released
 )
 
-func (p monStorePhase) String() string {
+func (p Phase) String() string {
 	switch p {
-	case monStorePlanned:
+	case Planned:
 		return "planned"
-	case monStoreCreated:
+	case Created:
 		return "created"
-	case monStoreFresh:
+	case Fresh:
 		return "fresh"
-	case monStoreBound:
+	case Bound:
 		return "bound"
-	case monStoreDetached:
+	case Detached:
 		return "detached"
-	case monStoreReleased:
+	case Released:
 		return "released"
 	}
 	return "unset"
 }
 
-// monStoreMode is what the MON entrypoint must do with the data directory of a
+// Mode is what the MON entrypoint must do with the data directory of a
 // generation.
-type monStoreMode int
+type Mode int
 
 const (
-	// monStoreFormat: the store is new; mkfs may run when store.db is absent.
-	monStoreFormat monStoreMode = iota + 1
-	// monStoreRequire: the store must already exist; the generation refuses to
+	// Format: the store is new; mkfs may run when store.db is absent.
+	Format Mode = iota + 1
+	// Require: the store must already exist; the generation refuses to
 	// format when store.db is absent.
-	monStoreRequire
+	Require
 )
 
-// monStoreLaunch is what dispatch hands to the container creation: the volume
+// Launch is what dispatch hands to the container creation: the volume
 // to mount at the MON data directory, the mode, and the generation number.
-type monStoreLaunch struct {
-	volume     string
-	mode       monStoreMode
-	generation int
-	// endpoint is the address the container must bind: the one recorded from
+type Launch struct {
+	Volume     string
+	Mode       Mode
+	Generation int
+	// Endpoint is the address the container must bind: the one recorded from
 	// the first generation. It is nil for the first generation, whose address
 	// the container side chooses and startGeneration records after it is ready.
-	endpoint *monStoreEndpoint
+	Endpoint *Endpoint
 }
 
-// monStoreAttachment is the one container that may use the volume. pending is
+// Attachment is the one container that may use the volume. pending is
 // true until the creation request returned a container ID: a pending attachment
 // is an unknown creation outcome, which is never replayed.
-type monStoreAttachment struct {
+type Attachment struct {
 	generation int
-	id         string
+	ID         string
 	pending    bool
 }
 
@@ -95,41 +95,44 @@ type monStoreAttachment struct {
 // of the OSD volume, the container list that finds a volume user independently
 // of the ledger, and the container inspection of a recorded attachment.
 type monStoreDocker interface {
-	osdMemoryVolumeClient
+	VolumeCreate(context.Context, mobycl.VolumeCreateOptions) (mobycl.VolumeCreateResult, error)
+	VolumeInspect(context.Context, string, mobycl.VolumeInspectOptions) (mobycl.VolumeInspectResult, error)
+	VolumeRemove(context.Context, string, mobycl.VolumeRemoveOptions) (mobycl.VolumeRemoveResult, error)
+	Close() error
 	ContainerList(context.Context, mobycl.ContainerListOptions) (mobycl.ContainerListResult, error)
 	ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error)
 }
 
-// monStoreVolume is the record of one MON's store: an ordinary Docker local
+// Volume is the record of one MON's store: an ordinary Docker local
 // named volume owned by the cluster, one per MON name. Container.mu guards it;
-// see monStoreState. It models the OSD volume of osd_volume_storage.go with one
+// see State. It models the OSD volume of osd_volume_storage.go with one
 // volume per MON and no helper container (design note D1, D6).
-type monStoreVolume struct {
+type Volume struct {
 	mon, name, owner, createdAt string
-	phase                       monStorePhase
+	Phase                       Phase
 	// createRequested is set before the create call. A planned record with it
 	// set has an unknown create outcome and is never created again.
 	createRequested bool
 	generation      int
-	attachment      *monStoreAttachment
+	Attachment      *Attachment
 	identity        *monStoreIdentity
-	// endpoint is the address the first generation bound, recorded after its
+	// Endpoint is the address the first generation bound, recorded after its
 	// ready check; hold is the exact hold on it while a replacement is created
-	// (mon_store_address.go).
-	endpoint *monStoreEndpoint
-	hold     monStoreEndpointHold
+	// (address.go).
+	Endpoint *Endpoint
+	hold     EndpointHold
 	// verified is set by verify and consumed by the dispatch of a generation
 	// that must find the retained store.
 	verified  bool
 	newClient func(context.Context) (monStoreDocker, error)
 }
 
-func newMonStoreVolume(mon string) *monStoreVolume {
+func newMonStoreVolume(mon string) *Volume {
 	owner := uuid.NewString()
-	return &monStoreVolume{mon: mon, name: "tc-ceph-mon-volume-" + owner, owner: owner, phase: monStorePlanned}
+	return &Volume{mon: mon, name: "tc-ceph-mon-volume-" + owner, owner: owner, Phase: Planned}
 }
 
-func (s *monStoreVolume) client(ctx context.Context) (monStoreDocker, error) {
+func (s *Volume) client(ctx context.Context) (monStoreDocker, error) {
 	if s.newClient != nil {
 		return s.newClient(ctx)
 	}
@@ -139,7 +142,7 @@ func (s *monStoreVolume) client(ctx context.Context) (monStoreDocker, error) {
 // validate accepts only the volume this record created: exact name, local
 // driver, owner and MON labels, no driver options, a creation timestamp that
 // has not changed.
-func (s *monStoreVolume) validate(v volume.Volume) error {
+func (s *Volume) validate(v volume.Volume) error {
 	if v.Name != s.name || v.Driver != "local" || v.Labels[monStoreOwnerLabel] != s.owner || v.Labels[monStoreMonLabel] != s.mon || len(v.Options) != 0 || v.CreatedAt == "" {
 		return fmt.Errorf("MON %s store volume identity, ownership or ordinary local driver differs", s.mon)
 	}
@@ -149,12 +152,12 @@ func (s *monStoreVolume) validate(v volume.Volume) error {
 	return nil
 }
 
-// create requests the volume once. The request is recorded before it is made,
+// Create requests the volume once. The request is recorded before it is made,
 // so a lost reply leaves a record that is not created again; only a release
 // settles it.
-func (s *monStoreVolume) create(ctx context.Context) (err error) {
-	if s.phase != monStorePlanned {
-		return fmt.Errorf("MON %s store is %s, not planned", s.mon, s.phase)
+func (s *Volume) Create(ctx context.Context) (err error) {
+	if s.Phase != Planned {
+		return fmt.Errorf("MON %s store is %s, not planned", s.mon, s.Phase)
 	}
 	if s.createRequested {
 		return fmt.Errorf("MON %s store volume create outcome is unknown; it is not replayed, terminate this cluster", s.mon)
@@ -176,11 +179,11 @@ func (s *monStoreVolume) create(ctx context.Context) (err error) {
 		return err
 	}
 	s.createdAt = result.Volume.CreatedAt
-	s.phase = monStoreCreated
+	s.Phase = Created
 	return nil
 }
 
-func (s *monStoreVolume) inspect(ctx context.Context) (err error) {
+func (s *Volume) inspect(ctx context.Context) (err error) {
 	docker, err := s.client(ctx)
 	if err != nil {
 		return err
@@ -197,71 +200,71 @@ func (s *monStoreVolume) inspect(ctx context.Context) (err error) {
 // over what it mounts. It publishes the pending attachment before the caller
 // creates the container, so a lost reply stays owned. It never creates a
 // volume: a bound store whose volume is missing, changed or foreign fails here.
-func (s *monStoreVolume) dispatch(ctx context.Context) (monStoreLaunch, error) {
-	mode := monStoreRequire
-	switch s.phase {
-	case monStoreCreated:
-		mode = monStoreFormat
-	case monStoreBound:
+func (s *Volume) dispatch(ctx context.Context) (Launch, error) {
+	mode := Require
+	switch s.Phase {
+	case Created:
+		mode = Format
+	case Bound:
 		// A store bound with an identity needs it verified for each generation.
 		// A store marked ready without one (ready) is retained by its volume
 		// and the require-store mode alone: the volume is validated below and a
 		// missing store makes the generation fail instead of formatting.
 		if s.identity != nil && !s.verified {
-			return monStoreLaunch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
+			return Launch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
 		}
-	case monStoreDetached:
+	case Detached:
 		if s.identity == nil {
-			return monStoreLaunch{}, fmt.Errorf("MON %s store has no recorded identity", s.mon)
+			return Launch{}, fmt.Errorf("MON %s store has no recorded identity", s.mon)
 		}
 		if !s.verified {
-			return monStoreLaunch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
+			return Launch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
 		}
-	case monStoreFresh:
-		return monStoreLaunch{}, fmt.Errorf("MON %s store is fresh: discard it after its first generation is gone", s.mon)
+	case Fresh:
+		return Launch{}, fmt.Errorf("MON %s store is fresh: discard it after its first generation is gone", s.mon)
 	default:
-		return monStoreLaunch{}, fmt.Errorf("MON %s store is %s and cannot be mounted", s.mon, s.phase)
+		return Launch{}, fmt.Errorf("MON %s store is %s and cannot be mounted", s.mon, s.Phase)
 	}
-	if s.attachment != nil {
-		return monStoreLaunch{}, fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
+	if s.Attachment != nil {
+		return Launch{}, fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
 	}
 	if err := s.inspect(ctx); err != nil {
-		return monStoreLaunch{}, err
+		return Launch{}, err
 	}
 	s.generation++
-	s.attachment = &monStoreAttachment{generation: s.generation, pending: true}
+	s.Attachment = &Attachment{generation: s.generation, pending: true}
 	s.verified = false
-	switch s.phase {
-	case monStoreCreated:
-		s.phase = monStoreFresh
-	case monStoreDetached:
-		s.phase = monStoreBound
+	switch s.Phase {
+	case Created:
+		s.Phase = Fresh
+	case Detached:
+		s.Phase = Bound
 	}
-	return monStoreLaunch{volume: s.name, mode: mode, generation: s.generation}, nil
+	return Launch{Volume: s.name, Mode: mode, Generation: s.generation}, nil
 }
 
 // recordContainer records the container ID that the creation request returned,
 // also when it returned an error with a partial container. Without an ID the
 // attachment stays pending: an unknown outcome.
-func (s *monStoreVolume) recordContainer(id string) error {
-	if s.attachment == nil || !s.attachment.pending {
+func (s *Volume) recordContainer(id string) error {
+	if s.Attachment == nil || !s.Attachment.pending {
 		return fmt.Errorf("MON %s store has no pending creation to record", s.mon)
 	}
 	if id == "" {
 		return fmt.Errorf("MON %s store creation returned no container ID; the outcome stays unknown", s.mon)
 	}
-	s.attachment.id, s.attachment.pending = id, false
+	s.Attachment.ID, s.Attachment.pending = id, false
 	return nil
 }
 
 // bind records the identity of the store once the first generation passed its
 // ready check. It needs a known attachment: a generation whose creation outcome
 // is unknown cannot be bound.
-func (s *monStoreVolume) bind(identity monStoreIdentity) error {
-	if s.phase != monStoreFresh {
-		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.phase)
+func (s *Volume) bind(identity monStoreIdentity) error {
+	if s.Phase != Fresh {
+		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.Phase)
 	}
-	if s.attachment == nil || s.attachment.pending || s.attachment.id == "" {
+	if s.Attachment == nil || s.Attachment.pending || s.Attachment.ID == "" {
 		return fmt.Errorf("MON %s store has no known attachment to bind", s.mon)
 	}
 	if err := identity.validate(); err != nil {
@@ -269,21 +272,21 @@ func (s *monStoreVolume) bind(identity monStoreIdentity) error {
 	}
 	cloned := identity.clone()
 	s.identity = &cloned
-	s.phase = monStoreBound
+	s.Phase = Bound
 	return nil
 }
 
 // ready records that the first generation reached its ready check, without an
 // identity: the store is retained by its volume alone. It needs a known
 // attachment, as bind does.
-func (s *monStoreVolume) ready() error {
-	if s.phase != monStoreFresh {
-		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.phase)
+func (s *Volume) ready() error {
+	if s.Phase != Fresh {
+		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.Phase)
 	}
-	if s.attachment == nil || s.attachment.pending || s.attachment.id == "" {
+	if s.Attachment == nil || s.Attachment.pending || s.Attachment.ID == "" {
 		return fmt.Errorf("MON %s store has no known attachment to mark ready", s.mon)
 	}
-	s.phase = monStoreBound
+	s.Phase = Bound
 	return nil
 }
 
@@ -291,11 +294,11 @@ func (s *monStoreVolume) ready() error {
 // fingerprint and address vector. The keyring digest, shape and FSID are the
 // bound ones and must not change; the store content legitimately changed while
 // a generation ran.
-func (s *monStoreVolume) detach(observed monStoreIdentity) error {
-	if s.phase != monStoreBound || s.identity == nil {
-		return fmt.Errorf("MON %s store is %s, not bound", s.mon, s.phase)
+func (s *Volume) detach(observed monStoreIdentity) error {
+	if s.Phase != Bound || s.identity == nil {
+		return fmt.Errorf("MON %s store is %s, not bound", s.mon, s.Phase)
 	}
-	if s.attachment != nil {
+	if s.Attachment != nil {
 		return fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
 	}
 	if err := observed.validate(); err != nil {
@@ -308,18 +311,18 @@ func (s *monStoreVolume) detach(observed monStoreIdentity) error {
 	}
 	cloned := observed.clone()
 	s.identity = &cloned
-	s.phase = monStoreDetached
+	s.Phase = Detached
 	s.verified = false
 	return nil
 }
 
 // requireRetained admits an observation of the stopped store: the record holds
 // a retained identity and no generation is attached.
-func (s *monStoreVolume) requireRetained() error {
-	if (s.phase != monStoreBound && s.phase != monStoreDetached) || s.identity == nil {
-		return fmt.Errorf("MON %s store is %s and holds no retained identity", s.mon, s.phase)
+func (s *Volume) requireRetained() error {
+	if (s.Phase != Bound && s.Phase != Detached) || s.identity == nil {
+		return fmt.Errorf("MON %s store is %s and holds no retained identity", s.mon, s.Phase)
 	}
-	if s.attachment != nil {
+	if s.Attachment != nil {
 		return fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
 	}
 	return nil
@@ -328,7 +331,7 @@ func (s *monStoreVolume) requireRetained() error {
 // verify compares an observation of the stopped store with the recorded
 // identity, without writing anything else. A mismatch refuses the next
 // generation; a match admits exactly one dispatch.
-func (s *monStoreVolume) verify(observed monStoreIdentity) error {
+func (s *Volume) verify(observed monStoreIdentity) error {
 	s.verified = false
 	if err := s.requireRetained(); err != nil {
 		return err
@@ -348,11 +351,11 @@ func (s *monStoreVolume) verify(observed monStoreIdentity) error {
 // be empty: the ledger alone is not trusted. A pending attachment has no ID to
 // inspect and is settled only by the list, and only afterScan, that is after
 // Terminate removed the containers carrying the cluster's label.
-func (s *monStoreVolume) confirmGone(ctx context.Context, afterScan bool) (err error) {
-	if s.attachment == nil {
+func (s *Volume) confirmGone(ctx context.Context, afterScan bool) (err error) {
+	if s.Attachment == nil {
 		return nil
 	}
-	if s.attachment.pending && !afterScan {
+	if s.Attachment.pending && !afterScan {
 		return fmt.Errorf("MON %s store creation outcome is unknown; only the labeled-container scan of Terminate settles it", s.mon)
 	}
 	docker, err := s.client(ctx)
@@ -360,10 +363,10 @@ func (s *monStoreVolume) confirmGone(ctx context.Context, afterScan bool) (err e
 		return err
 	}
 	defer func() { err = errors.Join(err, docker.Close()) }()
-	if !s.attachment.pending {
-		_, err := docker.ContainerInspect(ctx, s.attachment.id, mobycl.ContainerInspectOptions{})
+	if !s.Attachment.pending {
+		_, err := docker.ContainerInspect(ctx, s.Attachment.ID, mobycl.ContainerInspectOptions{})
 		if err == nil {
-			return fmt.Errorf("MON %s store container %.12s still exists", s.mon, s.attachment.id)
+			return fmt.Errorf("MON %s store container %.12s still exists", s.mon, s.Attachment.ID)
 		}
 		if !errdefs.IsNotFound(err) {
 			return fmt.Errorf("inspect MON %s store container: %w", s.mon, err)
@@ -376,16 +379,16 @@ func (s *monStoreVolume) confirmGone(ctx context.Context, afterScan bool) (err e
 	if len(users.Items) != 0 {
 		return fmt.Errorf("MON %s store volume is used by %d container(s)", s.mon, len(users.Items))
 	}
-	s.attachment = nil
+	s.Attachment = nil
 	return nil
 }
 
 // release removes the volume, never forced. It needs the attachment confirmed
 // gone and the volume to still be the one this record created: a changed or
 // foreign volume is never removed. A volume that is confirmed missing settles
-// the record. A hold on the MON's address is released first (mon_store_address.go).
-func (s *monStoreVolume) release(ctx context.Context, afterScan bool) (err error) {
-	if s.phase == monStoreReleased {
+// the record. A hold on the MON's address is released first (address.go).
+func (s *Volume) release(ctx context.Context, afterScan bool) (err error) {
+	if s.Phase == Released {
 		return nil
 	}
 	// A retained address hold is released before anything else, and the record
@@ -396,8 +399,8 @@ func (s *monStoreVolume) release(ctx context.Context, afterScan bool) (err error
 	if err := s.confirmGone(ctx, afterScan); err != nil {
 		return err
 	}
-	if s.phase == monStorePlanned && !s.createRequested {
-		s.phase = monStoreReleased
+	if s.Phase == Planned && !s.createRequested {
+		s.Phase = Released
 		return nil
 	}
 	docker, err := s.client(ctx)
@@ -407,7 +410,7 @@ func (s *monStoreVolume) release(ctx context.Context, afterScan bool) (err error
 	defer func() { err = errors.Join(err, docker.Close()) }()
 	inspected, err := docker.VolumeInspect(ctx, s.name, mobycl.VolumeInspectOptions{})
 	if errdefs.IsNotFound(err) {
-		s.phase = monStoreReleased
+		s.Phase = Released
 		return nil
 	}
 	if err != nil {
@@ -419,16 +422,16 @@ func (s *monStoreVolume) release(ctx context.Context, afterScan bool) (err error
 	if _, err := docker.VolumeRemove(ctx, s.name, mobycl.VolumeRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("remove owned MON %s store volume: %w", s.mon, err)
 	}
-	s.phase = monStoreReleased
+	s.Phase = Released
 	return nil
 }
 
 // discardFresh removes the volume of a store whose first generation never
 // reached ready. It is the only discard before termination, and only for a
 // fresh store whose attachment is confirmed gone.
-func (s *monStoreVolume) discardFresh(ctx context.Context) error {
-	if s.phase != monStoreFresh {
-		return fmt.Errorf("MON %s store is %s; only a fresh store is discarded", s.mon, s.phase)
+func (s *Volume) discardFresh(ctx context.Context) error {
+	if s.Phase != Fresh {
+		return fmt.Errorf("MON %s store is %s; only a fresh store is discarded", s.mon, s.Phase)
 	}
 	return s.release(ctx, false)
 }

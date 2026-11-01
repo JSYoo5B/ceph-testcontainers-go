@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -18,7 +19,7 @@ type hostGenerations struct {
 	recipes   [][]int
 	reserved  [][]int
 	allocator *hostNetworkFixtureContainer
-	listeners []monitorListener
+	listeners []monstore.Listener
 }
 
 func newHostGenerations(t *testing.T) *hostGenerations {
@@ -47,13 +48,13 @@ func newHostGenerations(t *testing.T) *hostGenerations {
 		}
 		return &hostPortLease{Ports: slices.Clone(ports), ctr: h.allocator}, nil
 	}
-	h.listening = func(context.Context, testcontainers.Container) ([]monitorListener, error) { return h.listeners, nil }
+	h.listening = func(context.Context, testcontainers.Container) ([]monstore.Listener, error) { return h.listeners, nil }
 	return h
 }
 
 func TestHostMonitorGenerationReservesItsFirstPortsUntilCreated(t *testing.T) {
 	h := newHostGenerations(t)
-	id, err := h.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreFormat, generation: 1}, "img")
+	id, err := h.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Format, Generation: 1}, "img")
 	if err != nil || id != "gen-1" {
 		t.Fatalf("create: %q %v", id, err)
 	}
@@ -74,7 +75,7 @@ func TestHostMonitorGenerationReservesItsFirstPortsUntilCreated(t *testing.T) {
 func TestHostMonitorGenerationKeepsAFailedReleaseOwned(t *testing.T) {
 	h := newHostGenerations(t)
 	h.allocator.terminationErr = errors.New("allocator removal failed")
-	if _, err := h.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreFormat, generation: 1}, "img"); err == nil {
+	if _, err := h.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Format, Generation: 1}, "img"); err == nil {
 		t.Fatal("a reservation that was not released did not fail the creation")
 	}
 	if h.c.portLeases.count() != 1 {
@@ -84,23 +85,23 @@ func TestHostMonitorGenerationKeepsAFailedReleaseOwned(t *testing.T) {
 
 func TestHostMonitorGenerationRecreatesOnTheRecordedPorts(t *testing.T) {
 	h := newHostGenerations(t)
-	endpoint := &monStoreEndpoint{ip: "127.0.0.1", ports: []int{41000, 41001}}
-	id, err := h.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreRequire, generation: 2, endpoint: endpoint}, "img")
+	endpoint := &monstore.Endpoint{IP: "127.0.0.1", Ports: []int{41000, 41001}}
+	id, err := h.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Require, Generation: 2, Endpoint: endpoint}, "img")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(h.reserved) != 0 {
 		t.Fatalf("a later generation reserved ports itself: %v", h.reserved)
 	}
-	if !slices.Equal(h.recipes[0], endpoint.ports) || !slices.Equal(h.ports[id], endpoint.ports) {
+	if !slices.Equal(h.recipes[0], endpoint.Ports) || !slices.Equal(h.ports[id], endpoint.Ports) {
 		t.Fatalf("recipe ports %v, recorded %v", h.recipes, h.ports[id])
 	}
-	for name, e := range map[string]*monStoreEndpoint{
-		"bridge network": {ip: "127.0.0.1", network: "tc-public"},
-		"other address":  {ip: "127.0.0.2", ports: []int{41000, 41001}},
-		"one port":       {ip: "127.0.0.1", ports: []int{41000}},
+	for name, e := range map[string]*monstore.Endpoint{
+		"bridge network": {IP: "127.0.0.1", Network: "tc-public"},
+		"other address":  {IP: "127.0.0.2", Ports: []int{41000, 41001}},
+		"one port":       {IP: "127.0.0.1", Ports: []int{41000}},
 	} {
-		if _, err := h.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreRequire, generation: 2, endpoint: e}, "img"); err == nil {
+		if _, err := h.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Require, Generation: 2, Endpoint: e}, "img"); err == nil {
 			t.Errorf("%s: an endpoint the host network cannot give was used", name)
 		}
 	}
@@ -108,7 +109,7 @@ func TestHostMonitorGenerationRecreatesOnTheRecordedPorts(t *testing.T) {
 
 func TestHostMonitorHoldTakesTheExactPorts(t *testing.T) {
 	h := newHostGenerations(t)
-	hold, err := h.Hold(t.Context(), monStoreEndpoint{ip: "127.0.0.1", ports: []int{41001, 41000}})
+	hold, err := h.Hold(t.Context(), monstore.Endpoint{IP: "127.0.0.1", Ports: []int{41001, 41000}})
 	if err != nil || hold == nil {
 		t.Fatalf("hold: %v %v", hold, err)
 	}
@@ -118,28 +119,28 @@ func TestHostMonitorHoldTakesTheExactPorts(t *testing.T) {
 	if err := hold.Release(t.Context()); err != nil || h.allocator.terminations != 1 {
 		t.Fatalf("release: %v %d", err, h.allocator.terminations)
 	}
-	if _, err := h.Hold(t.Context(), monStoreEndpoint{ip: "127.0.0.2", ports: []int{41000, 41001}}); err == nil || len(h.reserved) != 1 {
+	if _, err := h.Hold(t.Context(), monstore.Endpoint{IP: "127.0.0.2", Ports: []int{41000, 41001}}); err == nil || len(h.reserved) != 1 {
 		t.Fatal("another address was held")
 	}
 	h.reserve = func(context.Context, int, []int) (*hostPortLease, error) { return nil, errors.New("port 41000 in use") }
-	if hold, err := h.Hold(t.Context(), monStoreEndpoint{ip: "127.0.0.1", ports: []int{41000, 41001}}); err == nil || hold != nil {
+	if hold, err := h.Hold(t.Context(), monstore.Endpoint{IP: "127.0.0.1", Ports: []int{41000, 41001}}); err == nil || hold != nil {
 		t.Fatalf("a failed hold returned %v %v", hold, err)
 	}
 }
 
 func TestHostMonitorObserveRequiresTheCreatedPorts(t *testing.T) {
 	h := newHostGenerations(t)
-	id, err := h.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreFormat, generation: 1}, "img")
+	id, err := h.Create(t.Context(), monstore.Launch{Volume: "v", Mode: monstore.Format, Generation: 1}, "img")
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.created[id] = generationDouble{id: id}
-	h.listeners = []monitorListener{{IP: "127.0.0.1", Port: 41001}, {IP: "127.0.0.1", Port: 41000}}
+	h.listeners = []monstore.Listener{{IP: "127.0.0.1", Port: 41001}, {IP: "127.0.0.1", Port: 41000}}
 	got, err := h.Observe(t.Context(), id)
-	if err != nil || !got.equal(monStoreEndpoint{ip: "127.0.0.1", ports: []int{41000, 41001}}) {
+	if err != nil || !got.Equal(monstore.Endpoint{IP: "127.0.0.1", Ports: []int{41000, 41001}}) {
 		t.Fatalf("observe: %+v %v", got, err)
 	}
-	for name, listeners := range map[string][]monitorListener{
+	for name, listeners := range map[string][]monstore.Listener{
 		"missing port":  {{IP: "127.0.0.1", Port: 41000}},
 		"extra port":    {{IP: "127.0.0.1", Port: 41000}, {IP: "127.0.0.1", Port: 41001}, {IP: "127.0.0.1", Port: 6800}},
 		"other port":    {{IP: "127.0.0.1", Port: 41000}, {IP: "127.0.0.1", Port: 3300}},

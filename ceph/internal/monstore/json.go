@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"slices"
 )
 
-// monStoreState is the owned MON store volumes of one cluster, by MON name: the
+// State is the owned MON store volumes of one cluster, by MON name: the
 // ownership primitive of docs/internals/mon-volume-storage.md. It sits beside
 // osdStorageState and is shaped like it.
 //
@@ -28,19 +28,19 @@ import (
 // user whose create reply was lost.
 //
 //testdouble:nil-default-hook
-type monStoreState struct {
+type State struct {
 	// records is published before the volume is created, so a lost create reply
 	// stays owned for cleanup, and a record leaves it only when its release or
 	// discard succeeded.
-	records map[string]*monStoreVolume
+	records map[string]*Volume
 
 	// monDocker replaces the Docker client of the store volumes in tests.
 	//testdouble:nil-default-hook
 	monDocker func(context.Context) (monStoreDocker, error)
 }
 
-// begin allocates and publishes the record of mon before its volume exists.
-func (s *monStoreState) begin(mon string) (*monStoreVolume, error) {
+// Begin allocates and publishes the record of mon before its volume exists.
+func (s *State) Begin(mon string) (*Volume, error) {
 	if mon == "" {
 		return nil, errors.New("MON store needs a MON name")
 	}
@@ -50,20 +50,20 @@ func (s *monStoreState) begin(mon string) (*monStoreVolume, error) {
 	r := newMonStoreVolume(mon)
 	r.newClient = s.monDocker
 	if s.records == nil {
-		s.records = map[string]*monStoreVolume{}
+		s.records = map[string]*Volume{}
 	}
 	s.records[mon] = r
 	return r, nil
 }
 
-// store returns the record of mon, or nil.
-func (s *monStoreState) store(mon string) *monStoreVolume { return s.records[mon] }
+// Store returns the record of mon, or nil.
+func (s *State) Store(mon string) *Volume { return s.records[mon] }
 
 // count returns the number of published records.
-func (s *monStoreState) count() int { return len(s.records) }
+func (s *State) count() int { return len(s.records) }
 
 // names returns the MON names with a record, sorted.
-func (s *monStoreState) names() []string {
+func (s *State) names() []string {
 	return slices.Sorted(func(yield func(string) bool) {
 		for name := range s.records {
 			if !yield(name) {
@@ -74,16 +74,16 @@ func (s *monStoreState) names() []string {
 }
 
 // volumeName returns the volume the MON mounts, or "" without a record.
-func (s *monStoreState) volumeName(mon string) string {
+func (s *State) volumeName(mon string) string {
 	if r := s.records[mon]; r != nil {
 		return r.name
 	}
 	return ""
 }
 
-// discardFresh discards the fresh store of mon after its first generation is
+// DiscardFresh discards the fresh store of mon after its first generation is
 // gone, and forgets the record only when the volume removal succeeded.
-func (s *monStoreState) discardFresh(ctx context.Context, mon string) error {
+func (s *State) DiscardFresh(ctx context.Context, mon string) error {
 	r := s.records[mon]
 	if r == nil {
 		return fmt.Errorf("MON %s has no store", mon)
@@ -95,10 +95,10 @@ func (s *monStoreState) discardFresh(ctx context.Context, mon string) error {
 	return nil
 }
 
-// retire releases the store of a MON that left the membership for good, and
+// Retire releases the store of a MON that left the membership for good, and
 // forgets the record only when the release succeeded. A MON without a record
-// has nothing to retire.
-func (s *monStoreState) retire(ctx context.Context, mon string) error {
+// has nothing to Retire.
+func (s *State) Retire(ctx context.Context, mon string) error {
 	r := s.records[mon]
 	if r == nil {
 		return nil
@@ -110,24 +110,24 @@ func (s *monStoreState) retire(ctx context.Context, mon string) error {
 	return nil
 }
 
-// releaseStores is the first Terminate stage: it releases every store whose
+// ReleaseStores is the first Terminate stage: it releases every store whose
 // attachment is confirmed gone, in MON name order, and forgets a record only
 // when its release succeeded. A failure does not stop the other stores.
-func (s *monStoreState) releaseStores(ctx context.Context) error {
+func (s *State) ReleaseStores(ctx context.Context) error {
 	return s.releaseEach(ctx, false)
 }
 
-// retryStores is the second Terminate stage, after the labeled-container scan:
+// RetryStores is the second Terminate stage, after the labeled-container scan:
 // it repeats the release only when the first stage failed (previous), and
 // returns previous otherwise.
-func (s *monStoreState) retryStores(ctx context.Context, previous error) error {
+func (s *State) RetryStores(ctx context.Context, previous error) error {
 	if previous == nil || len(s.records) == 0 {
 		return previous
 	}
 	return s.releaseEach(ctx, true)
 }
 
-func (s *monStoreState) releaseEach(ctx context.Context, afterScan bool) error {
+func (s *State) releaseEach(ctx context.Context, afterScan bool) error {
 	var errs []error
 	for _, name := range s.names() {
 		if err := s.records[name].release(ctx, afterScan); err != nil {

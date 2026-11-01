@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/google/uuid"
 )
 
@@ -19,7 +20,7 @@ import (
 // (still the recommendation, not an owner decision), the listing the container
 // prints, the parser of that listing and the driver that runs one container
 // through a small engine interface. It implements the monStoreInspector port of
-// mon_store_inspect.go.
+// inspect.go.
 //
 // What is here is checked Docker-free: the request is built and validated as
 // data, the listing script is executed by the tests against a temporary
@@ -199,7 +200,7 @@ type monStoreInspectRequest struct {
 var monStoreOwnerUser = regexp.MustCompile(`^[0-9]{1,10}:[0-9]{1,10}$`)
 
 // newMonStoreInspectRequest builds the request for one inspection of volume.
-// owner is the cluster's owner ID (the value of clusterOwnerLabel).
+// owner is the cluster's owner ID (the value of clusterutil.OwnerLabel).
 func newMonStoreInspectRequest(image, user, owner, volume, token string) (monStoreInspectRequest, error) {
 	switch {
 	case image == "":
@@ -218,7 +219,7 @@ func newMonStoreInspectRequest(image, user, owner, volume, token string) (monSto
 		user:            user,
 		entrypoint:      []string{"python3"},
 		cmd:             []string{"-I", "-c", monStoreInspectScriptSource(), monStoreInspectMountTarget},
-		labels:          map[string]string{clusterOwnerLabel: owner, monStoreInspectorLabel: token},
+		labels:          map[string]string{clusterutil.OwnerLabel: owner, monStoreInspectorLabel: token},
 		volume:          volume,
 		target:          monStoreInspectMountTarget,
 		readOnlyMount:   true,
@@ -253,7 +254,7 @@ func (r monStoreInspectRequest) validate() error {
 	add(r.privileged, "the inspector is privileged")
 	add(r.autoRemove, "the engine removes the container on its own")
 	add(!r.keepVolumesOnRemove, "removal may take volumes with it")
-	add(r.labels[clusterOwnerLabel] == "", "no owned label")
+	add(r.labels[clusterutil.OwnerLabel] == "", "no owned label")
 	add(r.labels[monStoreInspectorLabel] == "", "no inspection label")
 	add(len(r.labels) != 2, "unexpected labels")
 	add(!slices.Equal(r.entrypoint, []string{"python3"}) || len(r.cmd) != 4 || r.cmd[0] != "-I" || r.cmd[1] != "-c" || r.cmd[2] != monStoreInspectScriptSource() || r.cmd[3] != monStoreInspectMountTarget, "the command is not the listing script")

@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 type monStoreGenerationsFake struct {
 	docker      *monStoreDockerFake
 	events      []string
-	launches    []monStoreLaunch
+	launches    []Launch
 	images      []string
 	next        int
 	createErr   error
@@ -32,7 +32,7 @@ type monStoreGenerationsFake struct {
 	removeCalls int
 	// Address side. bound is what each created container binds; stolen holds
 	// the ports another process owns; held the ports under an exact hold.
-	bound      map[string]monStoreEndpoint
+	bound      map[string]Endpoint
 	stolen     map[int]bool
 	held       map[int]bool
 	startErr   error
@@ -47,7 +47,7 @@ type monStoreGenerationsFake struct {
 	onEvent func(event string)
 }
 
-var monStoreFakeAddress = monStoreEndpoint{ip: "192.0.2.10", ports: []int{3300, 6789}}
+var monStoreFakeAddress = Endpoint{IP: "192.0.2.10", Ports: []int{3300, 6789}}
 
 func (g *monStoreGenerationsFake) record(event string) {
 	g.events = append(g.events, event)
@@ -88,17 +88,17 @@ func (h *monStoreHoldFake) Release(context.Context) error {
 	return nil
 }
 
-func (g *monStoreGenerationsFake) Hold(_ context.Context, a monStoreEndpoint) (monStoreEndpointHold, error) {
+func (g *monStoreGenerationsFake) Hold(_ context.Context, a Endpoint) (EndpointHold, error) {
 	g.holdCalls++
-	g.record(fmt.Sprintf("hold %v", a.ports))
+	g.record(fmt.Sprintf("hold %v", a.Ports))
 	if g.holdErr != nil && g.partialHold {
 		if g.held == nil {
 			g.held = map[int]bool{}
 		}
-		for _, p := range a.ports {
+		for _, p := range a.Ports {
 			g.held[p] = true
 		}
-		return &monStoreHoldFake{g: g, ports: a.ports}, g.holdErr
+		return &monStoreHoldFake{g: g, ports: a.Ports}, g.holdErr
 	}
 	if g.holdErr != nil {
 		return nil, g.holdErr
@@ -106,7 +106,7 @@ func (g *monStoreGenerationsFake) Hold(_ context.Context, a monStoreEndpoint) (m
 	if g.nilHold {
 		return (*monStoreHoldFake)(nil), nil
 	}
-	for _, p := range a.ports {
+	for _, p := range a.Ports {
 		if g.stolen[p] {
 			return nil, fmt.Errorf("port %d is taken", p)
 		}
@@ -114,10 +114,10 @@ func (g *monStoreGenerationsFake) Hold(_ context.Context, a monStoreEndpoint) (m
 	if g.held == nil {
 		g.held = map[int]bool{}
 	}
-	for _, p := range a.ports {
+	for _, p := range a.Ports {
 		g.held[p] = true
 	}
-	return &monStoreHoldFake{g: g, ports: a.ports}, nil
+	return &monStoreHoldFake{g: g, ports: a.Ports}, nil
 }
 
 func (g *monStoreGenerationsFake) Start(_ context.Context, id string) error {
@@ -125,7 +125,7 @@ func (g *monStoreGenerationsFake) Start(_ context.Context, id string) error {
 	if g.startErr != nil {
 		return g.startErr
 	}
-	for _, p := range g.bound[id].ports {
+	for _, p := range g.bound[id].Ports {
 		if g.stolen[p] {
 			return fmt.Errorf("port %d is already in use", p)
 		}
@@ -133,18 +133,18 @@ func (g *monStoreGenerationsFake) Start(_ context.Context, id string) error {
 	return nil
 }
 
-func (g *monStoreGenerationsFake) Observe(_ context.Context, id string) (monStoreEndpoint, error) {
+func (g *monStoreGenerationsFake) Observe(_ context.Context, id string) (Endpoint, error) {
 	g.record("observe " + id)
 	if g.observeErr != nil {
-		return monStoreEndpoint{}, g.observeErr
+		return Endpoint{}, g.observeErr
 	}
 	return g.bound[id].clone(), nil
 }
 
-func (g *monStoreGenerationsFake) Create(_ context.Context, launch monStoreLaunch, image string) (string, error) {
+func (g *monStoreGenerationsFake) Create(_ context.Context, launch Launch, image string) (string, error) {
 	g.launches = append(g.launches, launch)
 	defer func() {
-		g.record(fmt.Sprintf("create gen%d %s %s", launch.generation, image, map[monStoreMode]string{monStoreFormat: "format", monStoreRequire: "require"}[launch.mode]))
+		g.record(fmt.Sprintf("create gen%d %s %s", launch.Generation, image, map[Mode]string{Format: "format", Require: "require"}[launch.Mode]))
 	}()
 	g.images = append(g.images, image)
 	if g.createErr != nil {
@@ -157,11 +157,11 @@ func (g *monStoreGenerationsFake) Create(_ context.Context, launch monStoreLaunc
 	id := fmt.Sprintf("ctr-%d", g.next)
 	g.docker.existing[id] = true
 	if g.bound == nil {
-		g.bound = map[string]monStoreEndpoint{}
+		g.bound = map[string]Endpoint{}
 	}
 	g.bound[id] = monStoreFakeAddress.clone()
-	if launch.endpoint != nil {
-		g.bound[id] = launch.endpoint.clone()
+	if launch.Endpoint != nil {
+		g.bound[id] = launch.Endpoint.clone()
 	}
 	return id, nil
 }
@@ -183,10 +183,10 @@ func (g *monStoreGenerationsFake) Remove(_ context.Context, id string) error {
 	return nil
 }
 
-func monStoreGenerationFixture(t *testing.T) (*monStoreVolume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreGenerationFixture(t *testing.T) (*Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	_, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	return r, d, &monStoreGenerationsFake{docker: d}
@@ -194,10 +194,10 @@ func monStoreGenerationFixture(t *testing.T) (*monStoreVolume, *monStoreDockerFa
 
 // monStoreRunningFixture has a first generation, from image "old", that
 // reached its ready check.
-func monStoreRunningFixture(t *testing.T) (*monStoreVolume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreRunningFixture(t *testing.T) (*Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	r, d, g := monStoreGenerationFixture(t)
-	if _, err := r.startGeneration(t.Context(), g, "old"); err != nil {
+	if _, err := r.StartGeneration(t.Context(), g, "old"); err != nil {
 		t.Fatal(err)
 	}
 	return r, d, g
@@ -205,15 +205,15 @@ func monStoreRunningFixture(t *testing.T) (*monStoreVolume, *monStoreDockerFake,
 
 func TestMonStoreFirstGenerationFormatsAndIsReadyWithoutAnIdentity(t *testing.T) {
 	r, d, g := monStoreGenerationFixture(t)
-	id, err := r.startGeneration(t.Context(), g, "old")
+	id, err := r.StartGeneration(t.Context(), g, "old")
 	if err != nil || id != "ctr-1" {
 		t.Fatalf("%q %v", id, err)
 	}
 	if want := []string{"create gen1 old format", "start ctr-1", "ready ctr-1", "observe ctr-1"}; !slices.Equal(g.events, want) {
 		t.Fatalf("events %v, want %v", g.events, want)
 	}
-	if g.launches[0].volume != r.name || r.phase != monStoreBound || r.identity != nil || r.attachment == nil || r.attachment.pending || r.attachment.id != "ctr-1" {
-		t.Fatalf("state after the first generation: phase %s identity %v attachment %+v", r.phase, r.identity, r.attachment)
+	if g.launches[0].Volume != r.name || r.Phase != Bound || r.identity != nil || r.Attachment == nil || r.Attachment.pending || r.Attachment.ID != "ctr-1" {
+		t.Fatalf("state after the first generation: phase %s identity %v attachment %+v", r.Phase, r.identity, r.Attachment)
 	}
 	if d.creates != 1 {
 		t.Fatalf("volume creates %d", d.creates)
@@ -223,7 +223,7 @@ func TestMonStoreFirstGenerationFormatsAndIsReadyWithoutAnIdentity(t *testing.T)
 func TestMonStoreReplaceRemovesTheOldContainerThenStartsTheNewImageOnTheSameVolume(t *testing.T) {
 	r, d, g := monStoreRunningFixture(t)
 	creates, volume := d.creates, r.name
-	id, err := r.replaceGeneration(t.Context(), g, "new")
+	id, err := r.ReplaceGeneration(t.Context(), g, "new")
 	if err != nil || id != "ctr-2" {
 		t.Fatalf("%q %v", id, err)
 	}
@@ -231,17 +231,17 @@ func TestMonStoreReplaceRemovesTheOldContainerThenStartsTheNewImageOnTheSameVolu
 	if !slices.Equal(g.events, want) {
 		t.Fatalf("events %v, want %v", g.events, want)
 	}
-	if g.launches[0].volume != g.launches[1].volume || g.launches[1].volume != volume || r.name != volume {
+	if g.launches[0].Volume != g.launches[1].Volume || g.launches[1].Volume != volume || r.name != volume {
 		t.Fatalf("the generations did not mount one volume: %+v", g.launches)
 	}
 	if d.creates != creates || d.removals != 0 {
 		t.Fatalf("the replacement created %d or removed %d volumes", d.creates-creates, d.removals)
 	}
-	if r.phase != monStoreBound || r.generation != 2 || r.attachment == nil || r.attachment.id != "ctr-2" {
-		t.Fatalf("state after the replacement: phase %s generation %d attachment %+v", r.phase, r.generation, r.attachment)
+	if r.Phase != Bound || r.generation != 2 || r.Attachment == nil || r.Attachment.ID != "ctr-2" {
+		t.Fatalf("state after the replacement: phase %s generation %d attachment %+v", r.Phase, r.generation, r.Attachment)
 	}
 	// And again, with the image going back: nothing depends on the direction.
-	if _, err := r.replaceGeneration(t.Context(), g, "old"); err != nil || r.generation != 3 || g.launches[2].mode != monStoreRequire {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "old"); err != nil || r.generation != 3 || g.launches[2].Mode != Require {
 		t.Fatalf("third generation: %v %+v", err, g.launches)
 	}
 }
@@ -259,36 +259,36 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 		t.Run(name, func(t *testing.T) {
 			r, d, g := monStoreRunningFixture(t)
 			apply(d, g)
-			if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil {
+			if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil {
 				t.Fatal("the replacement went on")
 			}
-			if len(g.launches) != 1 || r.generation != 1 || r.attachment == nil {
-				t.Fatalf("a second container was dispatched: launches %d generation %d attachment %+v", len(g.launches), r.generation, r.attachment)
+			if len(g.launches) != 1 || r.generation != 1 || r.Attachment == nil {
+				t.Fatalf("a second container was dispatched: launches %d generation %d attachment %+v", len(g.launches), r.generation, r.Attachment)
 			}
 		})
 	}
 	// Control: with none of those the same call succeeds.
 	r, _, g := monStoreRunningFixture(t)
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err != nil {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testing.T) {
-	cases := map[string]func(r *monStoreVolume, d *monStoreDockerFake){
-		"volume missing":        func(_ *monStoreVolume, d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
-		"volume foreign":        func(_ *monStoreVolume, d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
-		"volume changed":        func(_ *monStoreVolume, d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
-		"identity not verified": func(r *monStoreVolume, _ *monStoreDockerFake) { r.identity = &monStoreIdentity{} },
+	cases := map[string]func(r *Volume, d *monStoreDockerFake){
+		"volume missing":        func(_ *Volume, d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
+		"volume foreign":        func(_ *Volume, d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
+		"volume changed":        func(_ *Volume, d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
+		"identity not verified": func(r *Volume, _ *monStoreDockerFake) { r.identity = &monStoreIdentity{} },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {
 			r, d, g := monStoreRunningFixture(t)
 			apply(r, d)
-			if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil {
+			if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil {
 				t.Fatal("the replacement went on")
 			}
-			if g.removeCalls != 0 || len(g.launches) != 1 || r.attachment == nil || d.creates != 1 {
+			if g.removeCalls != 0 || len(g.launches) != 1 || r.Attachment == nil || d.creates != 1 {
 				t.Fatalf("the old generation was touched: removes %d launches %d creates %d", g.removeCalls, len(g.launches), d.creates)
 			}
 		})
@@ -297,16 +297,16 @@ func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testi
 
 func TestMonStoreReplaceIsRefusedWithoutAReadyGeneration(t *testing.T) {
 	r, _, g := monStoreGenerationFixture(t) // created, no generation yet
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
 		t.Fatalf("a store without a generation was replaced: %v %v", err, g.events)
 	}
 	r, _, g = monStoreGenerationFixture(t)
 	g.readyErr = errors.New("never ready")
-	if _, err := r.startGeneration(t.Context(), g, "old"); err == nil || r.phase != monStoreFresh {
-		t.Fatalf("a first generation that never got ready: %v, phase %s", err, r.phase)
+	if _, err := r.StartGeneration(t.Context(), g, "old"); err == nil || r.Phase != Fresh {
+		t.Fatalf("a first generation that never got ready: %v, phase %s", err, r.Phase)
 	}
 	g.events = nil
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
 		t.Fatalf("a fresh store was replaced: %v %v", err, g.events)
 	}
 }
@@ -314,24 +314,24 @@ func TestMonStoreReplaceIsRefusedWithoutAReadyGeneration(t *testing.T) {
 func TestMonStoreFailedNewGenerationKeepsTheVolumeAndTheRecordAndNeverFormats(t *testing.T) {
 	r, d, g := monStoreRunningFixture(t)
 	g.readyErr = errors.New("new image never got ready")
-	id, err := r.replaceGeneration(t.Context(), g, "new")
+	id, err := r.ReplaceGeneration(t.Context(), g, "new")
 	if err == nil || id != "ctr-2" {
 		t.Fatalf("%q %v", id, err)
 	}
-	if r.phase != monStoreBound || r.attachment == nil || r.attachment.id != "ctr-2" || d.removals != 0 {
-		t.Fatalf("state after the failed start: phase %s attachment %+v removals %d", r.phase, r.attachment, d.removals)
+	if r.Phase != Bound || r.Attachment == nil || r.Attachment.ID != "ctr-2" || d.removals != 0 {
+		t.Fatalf("state after the failed start: phase %s attachment %+v removals %d", r.Phase, r.Attachment, d.removals)
 	}
 	// The failed container is removed and the next generation, from the old
 	// image again, requires the same store.
 	g.readyErr = nil
-	if err := r.stopGeneration(t.Context(), g); err != nil || r.attachment != nil {
+	if err := r.StopGeneration(t.Context(), g); err != nil || r.Attachment != nil {
 		t.Fatalf("stop the failed generation: %v", err)
 	}
-	if _, err := r.startGeneration(t.Context(), g, "old"); err != nil {
+	if _, err := r.StartGeneration(t.Context(), g, "old"); err != nil {
 		t.Fatal(err)
 	}
 	for i, l := range g.launches[1:] {
-		if l.mode != monStoreRequire || l.volume != r.name {
+		if l.Mode != Require || l.Volume != r.name {
 			t.Fatalf("launch %d: %+v", i+1, l)
 		}
 	}
@@ -340,41 +340,41 @@ func TestMonStoreFailedNewGenerationKeepsTheVolumeAndTheRecordAndNeverFormats(t 
 func TestMonStoreUnknownCreateOutcomeIsNotReplayedAndAPartialContainerIsRecorded(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	g.createErr = errors.New("reply lost")
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || r.attachment == nil || !r.attachment.pending {
-		t.Fatalf("the lost reply: %v, attachment %+v", err, r.attachment)
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || r.Attachment == nil || !r.Attachment.pending {
+		t.Fatalf("the lost reply: %v, attachment %+v", err, r.Attachment)
 	}
 	creates := len(g.launches)
 	g.createErr = nil
-	if _, err := r.startGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != creates {
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != creates {
 		t.Fatalf("an unknown outcome was replayed: %v", err)
 	}
-	if err := r.stopGeneration(t.Context(), g); err == nil {
+	if err := r.StopGeneration(t.Context(), g); err == nil {
 		t.Fatal("a pending attachment was stopped without an ID")
 	}
 	// A partial container: the ID is recorded, so it can be removed.
 	r, _, g = monStoreRunningFixture(t)
 	g.createErr, g.partialID = errors.New("start failed"), "ctr-partial"
-	if id, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || id != "ctr-partial" || r.attachment == nil || r.attachment.pending || r.attachment.id != "ctr-partial" {
-		t.Fatalf("the partial container: %q %v %+v", id, err, r.attachment)
+	if id, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || id != "ctr-partial" || r.Attachment == nil || r.Attachment.pending || r.Attachment.ID != "ctr-partial" {
+		t.Fatalf("the partial container: %q %v %+v", id, err, r.Attachment)
 	}
-	if err := r.stopGeneration(t.Context(), g); err != nil || r.attachment != nil {
+	if err := r.StopGeneration(t.Context(), g); err != nil || r.Attachment != nil {
 		t.Fatalf("remove the partial container: %v", err)
 	}
 }
 
 func TestMonStoreGenerationsRefuseABadImageAndANilContainerSide(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
-	if _, err := r.replaceGeneration(t.Context(), g, ""); err == nil || g.removeCalls != 0 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, ""); err == nil || g.removeCalls != 0 {
 		t.Fatalf("an empty image: %v", err)
 	}
 	var typedNil *monStoreGenerationsFake
-	if _, err := r.replaceGeneration(t.Context(), typedNil, "new"); err == nil {
+	if _, err := r.ReplaceGeneration(t.Context(), typedNil, "new"); err == nil {
 		t.Fatal("a typed nil container side was accepted")
 	}
-	if _, err := r.replaceGeneration(t.Context(), nil, "new"); err == nil {
+	if _, err := r.ReplaceGeneration(t.Context(), nil, "new"); err == nil {
 		t.Fatal("a nil container side was accepted")
 	}
-	if err := r.stopGeneration(t.Context(), nil); err == nil {
+	if err := r.StopGeneration(t.Context(), nil); err == nil {
 		t.Fatal("stop accepted a nil container side")
 	}
 }
@@ -384,7 +384,7 @@ func TestMonStoreGenerationsRefuseABadImageAndANilContainerSide(t *testing.T) {
 func TestMonStoreIdentityBoundStoreStillNeedsItsVerification(t *testing.T) {
 	_, r, d := monStoreBoundFixture(t)
 	g := &monStoreGenerationsFake{docker: d}
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || g.removeCalls != 0 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || g.removeCalls != 0 {
 		t.Fatalf("an unverified identity-bound store was replaced: %v", err)
 	}
 	if err := r.verify(monStoreIdentityFixture()); err == nil {
@@ -397,13 +397,13 @@ func TestMonStoreIdentityBoundStoreStillNeedsItsVerification(t *testing.T) {
 	if err := r.confirmGone(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.dispatch(t.Context()); err == nil || r.attachment != nil {
+	if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil {
 		t.Fatalf("an unverified identity-bound store was dispatched: %v", err)
 	}
 	if err := r.verify(monStoreIdentityFixture()); err != nil {
 		t.Fatal(err)
 	}
-	if launch, err := r.dispatch(t.Context()); err != nil || launch.mode != monStoreRequire {
+	if launch, err := r.dispatch(t.Context()); err != nil || launch.Mode != Require {
 		t.Fatalf("a verified store: %+v %v", launch, err)
 	}
 }
@@ -413,7 +413,7 @@ func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 	if err := r.ready(); err == nil {
 		t.Fatal("a planned store was marked ready")
 	}
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.ready(); err == nil {
@@ -422,14 +422,14 @@ func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 	if _, err := r.dispatch(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ready(); err == nil || r.phase != monStoreFresh {
+	if err := r.ready(); err == nil || r.Phase != Fresh {
 		t.Fatalf("a store with a pending attachment was marked ready: %v", err)
 	}
 	if err := r.recordContainer("ctr-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ready(); err != nil || r.phase != monStoreBound || r.identity != nil {
-		t.Fatalf("ready: %v phase %s", err, r.phase)
+	if err := r.ready(); err != nil || r.Phase != Bound || r.identity != nil {
+		t.Fatalf("ready: %v phase %s", err, r.Phase)
 	}
 }
 
@@ -437,14 +437,14 @@ func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 
 func TestMonStoreFirstGenerationRecordsItsAddressAndLaterOnesAreCreatedForIt(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
-	if r.endpoint == nil || !r.endpoint.equal(monStoreFakeAddress) || g.launches[0].endpoint != nil {
-		t.Fatalf("recorded %+v, first launch %+v", r.endpoint, g.launches[0].endpoint)
+	if r.Endpoint == nil || !r.Endpoint.Equal(monStoreFakeAddress) || g.launches[0].Endpoint != nil {
+		t.Fatalf("recorded %+v, first launch %+v", r.Endpoint, g.launches[0].Endpoint)
 	}
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err != nil {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err != nil {
 		t.Fatal(err)
 	}
-	if l := g.launches[1]; l.endpoint == nil || !l.endpoint.equal(monStoreFakeAddress) || l.endpoint == r.endpoint {
-		t.Fatalf("the replacement was not created for a copy of the recorded address: %+v", l.endpoint)
+	if l := g.launches[1]; l.Endpoint == nil || !l.Endpoint.Equal(monStoreFakeAddress) || l.Endpoint == r.Endpoint {
+		t.Fatalf("the replacement was not created for a copy of the recorded address: %+v", l.Endpoint)
 	}
 }
 
@@ -456,7 +456,7 @@ func TestMonStoreHoldKeepsAThirdPartyOutWhileTheReplacementIsCreated(t *testing.
 			stolen[event] = g.steal(3300)
 		}
 	}
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err != nil {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err != nil {
 		t.Fatal(err)
 	}
 	for event, ok := range stolen {
@@ -476,11 +476,11 @@ func TestMonStoreAPortTakenBeforeTheHoldFailsClosedWithoutADispatch(t *testing.T
 			g.steal(6789)
 		}
 	}
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil {
 		t.Fatal("the replacement went on without its address")
 	}
-	if len(g.launches) != 1 || r.generation != 1 || r.attachment != nil || r.hold != nil || d.creates != 1 || d.removals != 0 || r.phase != monStoreBound {
-		t.Fatalf("launches %d generation %d attachment %+v hold %v creates %d removals %d phase %s", len(g.launches), r.generation, r.attachment, r.hold, d.creates, d.removals, r.phase)
+	if len(g.launches) != 1 || r.generation != 1 || r.Attachment != nil || r.hold != nil || d.creates != 1 || d.removals != 0 || r.Phase != Bound {
+		t.Fatalf("launches %d generation %d attachment %+v hold %v creates %d removals %d phase %s", len(g.launches), r.generation, r.Attachment, r.hold, d.creates, d.removals, r.Phase)
 	}
 }
 
@@ -491,14 +491,14 @@ func TestMonStoreAPortTakenInTheWindowBeforeStartFailsClosed(t *testing.T) {
 			g.steal(3300)
 		}
 	}
-	id, err := r.replaceGeneration(t.Context(), g, "new")
+	id, err := r.ReplaceGeneration(t.Context(), g, "new")
 	if err == nil || id != "ctr-2" {
 		t.Fatalf("%q %v", id, err)
 	}
-	if r.attachment == nil || r.attachment.id != "ctr-2" || r.attachment.pending || r.phase != monStoreBound || d.removals != 0 || r.hold != nil || slices.Contains(g.events, "ready ctr-2") {
-		t.Fatalf("state after the failed start: attachment %+v phase %s removals %d", r.attachment, r.phase, d.removals)
+	if r.Attachment == nil || r.Attachment.ID != "ctr-2" || r.Attachment.pending || r.Phase != Bound || d.removals != 0 || r.hold != nil || slices.Contains(g.events, "ready ctr-2") {
+		t.Fatalf("state after the failed start: attachment %+v phase %s removals %d", r.Attachment, r.Phase, d.removals)
 	}
-	if want := monStoreRequire; g.launches[1].mode != want {
+	if want := Require; g.launches[1].Mode != want {
 		t.Fatalf("the replacement formatted: %+v", g.launches[1])
 	}
 }
@@ -508,33 +508,33 @@ func TestMonStoreReplacementThatBoundAnotherAddressIsReportedAndNotRecorded(t *t
 	g.onEvent = func(event string) {
 		if strings.HasPrefix(event, "create gen2") {
 			other := g.bound["ctr-2"].clone()
-			other.ports = []int{3301, 6789}
+			other.Ports = []int{3301, 6789}
 			g.bound["ctr-2"] = other
 		}
 	}
-	if id, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || id != "ctr-2" {
+	if id, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || id != "ctr-2" {
 		t.Fatalf("%q %v", id, err)
 	}
-	if !r.endpoint.equal(monStoreFakeAddress) {
-		t.Fatalf("the recorded address was replaced: %+v", r.endpoint)
+	if !r.Endpoint.Equal(monStoreFakeAddress) {
+		t.Fatalf("the recorded address was replaced: %+v", r.Endpoint)
 	}
 }
 
 func TestMonStoreHoldReleaseFailureStopsBeforeTheStartAndIsRetried(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	g.releaseErr = errors.New("allocator removal timed out")
-	id, err := r.replaceGeneration(t.Context(), g, "new")
-	if err == nil || id != "ctr-2" || slices.Contains(g.events, "start ctr-2") || r.hold == nil || r.attachment == nil || r.attachment.id != "ctr-2" {
-		t.Fatalf("%q %v hold %v attachment %+v", id, err, r.hold, r.attachment)
+	id, err := r.ReplaceGeneration(t.Context(), g, "new")
+	if err == nil || id != "ctr-2" || slices.Contains(g.events, "start ctr-2") || r.hold == nil || r.Attachment == nil || r.Attachment.ID != "ctr-2" {
+		t.Fatalf("%q %v hold %v attachment %+v", id, err, r.hold, r.Attachment)
 	}
 	// The next generation first releases the leftover hold, so there is never
 	// more than one; that needs the created container gone first.
 	g.releaseErr = nil
-	if err := r.stopGeneration(t.Context(), g); err != nil {
+	if err := r.StopGeneration(t.Context(), g); err != nil {
 		t.Fatal(err)
 	}
 	before := g.holdCalls
-	if _, err := r.startGeneration(t.Context(), g, "new"); err != nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != before+1 {
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err != nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != before+1 {
 		t.Fatalf("%v hold %v held %v", err, r.hold, g.held)
 	}
 	if err := r.releaseAddressHold(t.Context()); err != nil {
@@ -550,7 +550,7 @@ func TestMonStoreFailedCreationReleasesTheHold(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, _, g := monStoreRunningFixture(t)
 			apply(g)
-			if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || slices.Contains(g.events, "start ctr-partial") {
+			if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || slices.Contains(g.events, "start ctr-partial") {
 				t.Fatalf("%v hold %v held %v", err, r.hold, g.held)
 			}
 		})
@@ -562,8 +562,8 @@ func TestMonStoreFailedCreationReleasesTheHold(t *testing.T) {
 	if err := r.confirmGone(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
-	r.endpoint = &monStoreEndpoint{ip: "192.0.2.10", ports: []int{3300}}
-	if _, err := r.startGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != 1 {
+	r.Endpoint = &Endpoint{IP: "192.0.2.10", Ports: []int{3300}}
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != 1 {
 		t.Fatalf("%v hold %v held %v holds %d", err, r.hold, g.held, g.holdCalls)
 	}
 }
@@ -571,7 +571,7 @@ func TestMonStoreFailedCreationReleasesTheHold(t *testing.T) {
 func TestMonStorePartialHoldReturnedWithAnErrorStaysOwnedAndIsReleased(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	g.holdErr, g.partialHold = errors.New("allocator half started"), true
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
 		t.Fatalf("a partial hold went on: %v", err)
 	}
 	if r.hold != nil || len(g.held) != 0 || !slices.Contains(g.events, "release") {
@@ -582,7 +582,7 @@ func TestMonStorePartialHoldReturnedWithAnErrorStaysOwnedAndIsReleased(t *testin
 func TestMonStorePartialHoldWhoseReleaseFailsIsRetainedForRetry(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	g.holdErr, g.partialHold, g.releaseErr = errors.New("allocator half started"), true, errors.New("removal timed out")
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
 		t.Fatalf("%v", err)
 	}
 	if r.hold == nil || len(g.held) == 0 {
@@ -591,26 +591,26 @@ func TestMonStorePartialHoldWhoseReleaseFailsIsRetainedForRetry(t *testing.T) {
 	// The next attempt releases the leftover first, so the ports are free again
 	// before a new hold is taken.
 	g.holdErr, g.partialHold, g.releaseErr = nil, false, nil
-	if _, err := r.startGeneration(t.Context(), g, "new"); err != nil || r.hold != nil || len(g.held) != 0 {
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err != nil || r.hold != nil || len(g.held) != 0 {
 		t.Fatalf("%v hold %v held %v", err, r.hold, g.held)
 	}
 }
 
 // monStoreHeldFixture leaves a store whose old generation is removed and whose
 // hold is retained after a failed release, in a state that owns its record.
-func monStoreHeldFixture(t *testing.T) (*monStoreState, *monStoreVolume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreHeldFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	st, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	g := &monStoreGenerationsFake{docker: d}
-	if _, err := r.startGeneration(t.Context(), g, "old"); err != nil {
+	if _, err := r.StartGeneration(t.Context(), g, "old"); err != nil {
 		t.Fatal(err)
 	}
 	g.holdErr, g.partialHold, g.releaseErr = errors.New("allocator half started"), true, errors.New("removal timed out")
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || r.hold == nil || r.attachment != nil {
-		t.Fatalf("setup: %v hold %v attachment %+v", err, r.hold, r.attachment)
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || r.hold == nil || r.Attachment != nil {
+		t.Fatalf("setup: %v hold %v attachment %+v", err, r.hold, r.Attachment)
 	}
 	return st, r, d, g
 }
@@ -618,28 +618,28 @@ func monStoreHeldFixture(t *testing.T) (*monStoreState, *monStoreVolume, *monSto
 func TestMonStoreCleanupKeepsTheRecordWhileAHoldIsNotReleased(t *testing.T) {
 	st, r, d, g := monStoreHeldFixture(t)
 	// The release still fails: the record, the hold and the volume stay.
-	if err := st.releaseStores(t.Context()); err == nil {
+	if err := st.ReleaseStores(t.Context()); err == nil {
 		t.Fatal("the cleanup succeeded while the hold could not be released")
 	}
-	if st.count() != 1 || r.hold == nil || len(g.held) == 0 || d.removals != 0 || r.phase == monStoreReleased {
-		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.phase)
+	if st.count() != 1 || r.hold == nil || len(g.held) == 0 || d.removals != 0 || r.Phase == Released {
+		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.Phase)
 	}
-	if err := st.retryStores(t.Context(), errors.New("first stage")); err == nil || st.count() != 1 {
+	if err := st.RetryStores(t.Context(), errors.New("first stage")); err == nil || st.count() != 1 {
 		t.Fatalf("the retry stage forgot the record: %v", err)
 	}
 	// The release works on retry: the hold goes first, then the volume.
 	g.holdErr, g.partialHold, g.releaseErr = nil, false, nil
-	if err := st.releaseStores(t.Context()); err != nil {
+	if err := st.ReleaseStores(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if st.count() != 0 || r.hold != nil || len(g.held) != 0 || d.removals != 1 || r.phase != monStoreReleased {
-		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.phase)
+	if st.count() != 0 || r.hold != nil || len(g.held) != 0 || d.removals != 1 || r.Phase != Released {
+		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.Phase)
 	}
 }
 
 func TestMonStoreDiscardKeepsTheRecordWhileAHoldIsNotReleased(t *testing.T) {
 	st, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	g := &monStoreGenerationsFake{docker: d, releaseErr: errors.New("removal timed out")}
@@ -652,76 +652,76 @@ func TestMonStoreDiscardKeepsTheRecordWhileAHoldIsNotReleased(t *testing.T) {
 	}
 	g.held = map[int]bool{3300: true}
 	r.hold = &monStoreHoldFake{g: g, ports: []int{3300}}
-	if err := st.discardFresh(t.Context(), "a"); err == nil || st.count() != 1 || r.hold == nil || d.removals != 0 {
+	if err := st.DiscardFresh(t.Context(), "a"); err == nil || st.count() != 1 || r.hold == nil || d.removals != 0 {
 		t.Fatalf("the discard forgot a retained hold: %v records %d", err, st.count())
 	}
 	g.releaseErr = nil
-	if err := st.discardFresh(t.Context(), "a"); err != nil || st.count() != 0 || len(g.held) != 0 || d.removals != 1 {
+	if err := st.DiscardFresh(t.Context(), "a"); err != nil || st.count() != 0 || len(g.held) != 0 || d.removals != 1 {
 		t.Fatalf("%v records %d held %v removals %d", err, st.count(), g.held, d.removals)
 	}
 }
 
 func TestMonStoreReplaceNeedsARecordedAddressBeforeTouchingTheOldGeneration(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
-	r.endpoint = nil
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || g.removeCalls != 0 || g.holdCalls != 0 {
+	r.Endpoint = nil
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || g.removeCalls != 0 || g.holdCalls != 0 {
 		t.Fatalf("%v removes %d", err, g.removeCalls)
 	}
 	// A first generation whose address cannot be observed is ready but cannot
 	// be replaced.
 	r, _, g = monStoreGenerationFixture(t)
 	g.observeErr = errors.New("inspect failed")
-	if _, err := r.startGeneration(t.Context(), g, "old"); err == nil || r.phase != monStoreBound || r.endpoint != nil {
-		t.Fatalf("%v phase %s endpoint %+v", err, r.phase, r.endpoint)
+	if _, err := r.StartGeneration(t.Context(), g, "old"); err == nil || r.Phase != Bound || r.Endpoint != nil {
+		t.Fatalf("%v phase %s endpoint %+v", err, r.Phase, r.Endpoint)
 	}
 	g.observeErr = nil
 	g.events = nil
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.events) != 0 {
 		t.Fatalf("%v %v", err, g.events)
 	}
 	// And a later generation is refused without an address before any hold.
-	if err := r.stopGeneration(t.Context(), g); err != nil {
+	if err := r.StopGeneration(t.Context(), g); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.startGeneration(t.Context(), g, "new"); err == nil || g.holdCalls != 0 {
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || g.holdCalls != 0 {
 		t.Fatalf("%v holds %d", err, g.holdCalls)
 	}
 }
 
 func TestMonStoreLiveAttachmentIsRefusedBeforeAnythingIsHeld(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
-	if _, err := r.startGeneration(t.Context(), g, "new"); err == nil || g.holdCalls != 0 {
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || g.holdCalls != 0 {
 		t.Fatalf("%v holds %d", err, g.holdCalls)
 	}
 }
 
 func TestMonStoreEndpointValidation(t *testing.T) {
-	good := []monStoreEndpoint{{ip: "192.0.2.10", ports: []int{3300, 6789}}, {ip: "2001:db8::1", ports: []int{3300}}, {ip: "172.20.0.5", network: "public"}}
+	good := []Endpoint{{IP: "192.0.2.10", Ports: []int{3300, 6789}}, {IP: "2001:db8::1", Ports: []int{3300}}, {IP: "172.20.0.5", Network: "public"}}
 	for _, e := range good {
 		if err := e.validate(); err != nil {
 			t.Errorf("%+v: %v", e, err)
 		}
 	}
-	bad := map[string]monStoreEndpoint{
+	bad := map[string]Endpoint{
 		"empty":       {},
-		"no ip":       {ports: []int{3300}},
-		"unspecified": {ip: "0.0.0.0", ports: []int{3300}},
-		"not an ip":   {ip: "mon-a", ports: []int{3300}},
-		"neither":     {ip: "192.0.2.10"},
-		"both":        {ip: "192.0.2.10", network: "public", ports: []int{3300}},
-		"port zero":   {ip: "192.0.2.10", ports: []int{0}},
-		"port big":    {ip: "192.0.2.10", ports: []int{65536}},
-		"repeated":    {ip: "192.0.2.10", ports: []int{3300, 3300}},
+		"no ip":       {Ports: []int{3300}},
+		"unspecified": {IP: "0.0.0.0", Ports: []int{3300}},
+		"not an ip":   {IP: "mon-a", Ports: []int{3300}},
+		"neither":     {IP: "192.0.2.10"},
+		"both":        {IP: "192.0.2.10", Network: "public", Ports: []int{3300}},
+		"port zero":   {IP: "192.0.2.10", Ports: []int{0}},
+		"port big":    {IP: "192.0.2.10", Ports: []int{65536}},
+		"repeated":    {IP: "192.0.2.10", Ports: []int{3300, 3300}},
 	}
 	for name, e := range bad {
 		if e.validate() == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
-	a := monStoreEndpoint{ip: "192.0.2.10", ports: []int{3300, 6789}}
+	a := Endpoint{IP: "192.0.2.10", Ports: []int{3300, 6789}}
 	b := a.clone()
-	b.ports[0] = 1
-	if a.ports[0] != 3300 || a.equal(b) || a.equal(monStoreEndpoint{ip: "192.0.2.10", ports: []int{6789, 3300}}) {
+	b.Ports[0] = 1
+	if a.Ports[0] != 3300 || a.Equal(b) || a.Equal(Endpoint{IP: "192.0.2.10", Ports: []int{6789, 3300}}) {
 		t.Fatal("clone or equal ignore the ports")
 	}
 }
@@ -729,34 +729,34 @@ func TestMonStoreEndpointValidation(t *testing.T) {
 func TestMonStoreHoldRefusesATypedNilAndAFailingHold(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	g.holdErr = errors.New("no allocator")
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
 		t.Fatalf("a failing hold: %v", err)
 	}
 	g.holdErr, g.nilHold = nil, true
-	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || r.hold != nil {
+	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || r.hold != nil {
 		t.Fatalf("a typed nil hold was accepted: %v", err)
 	}
 }
 
 // ---- guards ----
 
-var monStoreGenerationFile = "mon_store_generation.go"
+var monStoreGenerationFile = "generation.go"
 
 // monStoreGenerationFiles are the two files of the replacement path: the
 // generations and the address they keep.
-var monStoreGenerationFiles = []string{monStoreGenerationFile, "mon_store_address.go"}
+var monStoreGenerationFiles = []string{monStoreGenerationFile, "address.go"}
 
 // monStoreGenerationSymbols are the names the file adds. Production code
 // outside it mentions them only where monStoreGenerationCallers pins it.
-var monStoreGenerationSymbols = []string{"monStoreGenerations", "checkMonStoreGenerations", "startGeneration", "stopGeneration", "replaceGeneration",
+var monStoreGenerationSymbols = []string{"Generations", "checkMonStoreGenerations", "StartGeneration", "StopGeneration", "ReplaceGeneration",
 	"observeAddress", "holdAddress"}
 
 // monStoreGenerationCallers are the production uses of the path: the first
 // generation of a new store (startMonitorStore) and the replacement
 // (replaceMonitor).
 var monStoreGenerationCallers = map[string][]string{
-	"mon_store_container.go": {"startGeneration", "stopGeneration"},
-	"mon_store_replace.go":   {"replaceGeneration"},
+	"ceph/mon_store_container.go": {"StartGeneration", "StopGeneration"},
+	"ceph/mon_store_replace.go":   {"ReplaceGeneration"},
 }
 
 func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) {
@@ -776,6 +776,9 @@ func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) 
 
 func TestMonStoreGenerationsHaveOnlyThePinnedProductionCallers(t *testing.T) {
 	files := parseProductionFiles(t)
+	for name, parsed := range parseProductionFilesIn(t, "../..") {
+		files["ceph/"+name] = parsed
+	}
 	if files[monStoreGenerationFile] == nil {
 		t.Fatalf("%s not found: the guard is vacuous", monStoreGenerationFile)
 	}
@@ -831,14 +834,14 @@ func TestMonStoreAddressHoldIsReleasedByStoreCleanupBeforeTheVolume(t *testing.T
 				if sel.Sel.Name == "releaseAddressHold" {
 					callers = append(callers, file+":"+fn.Name.Name)
 					releasePos = call.Pos()
-				} else if file == "mon_store_volume.go" && fn.Name.Name == "release" && (sel.Sel.Name == "confirmGone" || sel.Sel.Name == "client") && otherPos == token.NoPos {
+				} else if file == "volume.go" && fn.Name.Name == "release" && (sel.Sel.Name == "confirmGone" || sel.Sel.Name == "client") && otherPos == token.NoPos {
 					otherPos = call.Pos()
 				}
 				return true
 			})
 		}
 	}
-	if !slices.Equal(callers, []string{"mon_store_volume.go:release"}) {
+	if !slices.Equal(callers, []string{"volume.go:release"}) {
 		t.Fatalf("callers of releaseAddressHold outside the path: %v", callers)
 	}
 	if !releasePos.IsValid() || !otherPos.IsValid() || releasePos > otherPos {
@@ -847,7 +850,7 @@ func TestMonStoreAddressHoldIsReleasedByStoreCleanupBeforeTheVolume(t *testing.T
 }
 
 func TestMonStoreGenerationsGuardDetectsACaller(t *testing.T) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", "package ceph\nfunc use(r *monStoreVolume) { _, _ = r.replaceGeneration(nil, nil, \"\") }\n", 0)
+	parsed, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", "package ceph\nfunc use(r *monstore.Volume) { _, _ = r.ReplaceGeneration(nil, nil, \"\") }\n", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,8 +866,8 @@ func TestMonStoreGenerationsGuardDetectsACaller(t *testing.T) {
 // waits and observes, in that order.
 func TestMonStoreGenerationsAddNoLockAndKeepTheirOrder(t *testing.T) {
 	files := parseProductionFiles(t)
-	portCalls := map[string]string{"Create": "startGeneration", "Start": "startGeneration", "WaitReady": "startGeneration",
-		"Remove": "stopGeneration", "Observe": "observeAddress", "Hold": "holdAddress"}
+	portCalls := map[string]string{"Create": "StartGeneration", "Start": "StartGeneration", "WaitReady": "StartGeneration",
+		"Remove": "StopGeneration", "Observe": "observeAddress", "Hold": "holdAddress"}
 	replace := map[string]token.Pos{}
 	start := map[string][]token.Pos{}
 	for _, file := range monStoreGenerationFiles {
@@ -897,19 +900,19 @@ func TestMonStoreGenerationsAddNoLockAndKeepTheirOrder(t *testing.T) {
 					t.Errorf("%s releases a hold outside releaseAddressHold", fn.Name.Name)
 				}
 				switch fn.Name.Name {
-				case "replaceGeneration":
+				case "ReplaceGeneration":
 					switch sel.Sel.Name {
-					case "inspect", "stopGeneration", "startGeneration":
+					case "inspect", "StopGeneration", "StartGeneration":
 						replace[sel.Sel.Name] = call.Pos()
 					}
-				case "startGeneration":
+				case "StartGeneration":
 					start[sel.Sel.Name] = append(start[sel.Sel.Name], call.Pos())
 				}
 				return true
 			})
 		}
 	}
-	if !(replace["inspect"].IsValid() && replace["inspect"] < replace["stopGeneration"] && replace["stopGeneration"] < replace["startGeneration"]) {
+	if !(replace["inspect"].IsValid() && replace["inspect"] < replace["StopGeneration"] && replace["StopGeneration"] < replace["StartGeneration"]) {
 		t.Fatalf("replaceGeneration must check, stop, then start: %v", replace)
 	}
 	first := func(name string) token.Pos {

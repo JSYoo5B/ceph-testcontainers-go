@@ -64,8 +64,8 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 		return nil, err
 	}
 	name := cur.DaemonName
-	store := c.monStores.store(name)
-	if store == nil || store.attachment == nil || cur.Container == nil || store.attachment.id != cur.GetContainerID() {
+	store := c.monStores.Store(name)
+	if store == nil || store.Attachment == nil || cur.Container == nil || store.Attachment.ID != cur.GetContainerID() {
 		return nil, invalid(fmt.Errorf("monitor %s: its store is not attached to this handle's container", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -85,8 +85,8 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	oldID := cur.GetContainerID()
-	id, err := store.replaceGeneration(ctx, gens, image)
-	if store.attachment != nil && store.attachment.id == oldID {
+	id, err := store.ReplaceGeneration(ctx, gens, image)
+	if store.Attachment != nil && store.Attachment.ID == oldID {
 		// Refused before the old container was touched: nothing changed.
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/containerd/errdefs"
@@ -71,10 +72,10 @@ type Container struct {
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
 	// monStores is the owned MON store volumes, by MON name; see
-	// monStoreState. It has no lock of its own: mu guards it. Nothing publishes
+	// monstore.State. It has no lock of its own: mu guards it. Nothing publishes
 	// a record yet.
 	//testdouble:nil-default-hook
-	monStores monStoreState
+	monStores monstore.State
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
 	runDir runDirState
@@ -428,7 +429,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		if c.settings.hostNetwork {
 			// As below: validate the environment before MGR/OSD creation.
-			return mon, verifyHostMonitor(ctx, c.settings.publicAddress, c.monStores.store("a").endpoint.ports[0])
+			return mon, verifyHostMonitor(ctx, c.settings.publicAddress, c.monStores.Store("a").Endpoint.Ports[0])
 		}
 		return mon, nil
 	}
@@ -1126,7 +1127,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	errs = append(errs, c.monitorTopology().terminateMembers(ctx, opts)...)
 	// The added and the primary MON containers are the users of the MON store
 	// volumes; release the stores whose attachment is gone.
-	monStoreErr := c.monStores.releaseStores(ctx)
+	monStoreErr := c.monStores.ReleaseStores(ctx)
 	if err := c.controlPlane.terminate(ctx, opts...); err != nil {
 		errs = append(errs, err)
 	}
@@ -1149,7 +1150,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// was lost, such as an OSD or an owned storage helper.
 	memoryErr = c.fleet.stores.retryMemory(ctx, memoryErr, c.fleet.osdHandles.count() == 0)
 	volumeErr = c.fleet.stores.retryVolume(ctx, volumeErr, c.fleet.osdHandles.count() == 0)
-	monStoreErr = c.monStores.retryStores(ctx, monStoreErr)
+	monStoreErr = c.monStores.RetryStores(ctx, monStoreErr)
 	errs = append(errs, memoryErr, volumeErr, monStoreErr,
 		c.fleet.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != ""))
 	if err := c.runDir.release(ctx); err != nil {

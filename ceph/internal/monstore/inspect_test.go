@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -197,10 +197,10 @@ func TestMonStoreFactsRefuseAnythingButTheBoundShape(t *testing.T) {
 // fixtureVerifier returns a detached record whose identity is the one that the
 // fixtures observe, and its fakes. Binding stores the keyring digest, shape and
 // fingerprint of monStoreFilesFixture.
-func monStoreVerifierFixture(t *testing.T) (*monStoreVolume, *monStoreDockerFake, *monStoreInspectorFake, *monStoreMonmapFake, *[]string) {
+func monStoreVerifierFixture(t *testing.T) (*Volume, *monStoreDockerFake, *monStoreInspectorFake, *monStoreMonmapFake, *[]string) {
 	t.Helper()
 	_, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.dispatch(t.Context()); err != nil {
@@ -236,7 +236,7 @@ func TestMonStoreVerifyStoppedAdmitsExactlyOneRequireDispatch(t *testing.T) {
 		t.Fatalf("calls %v, volumes %v, asked %v", *calls, ins.volumes, mm.asked)
 	}
 	launch, err := r.dispatch(t.Context())
-	if err != nil || launch.mode != monStoreRequire || d.creates != creates {
+	if err != nil || launch.Mode != Require || d.creates != creates {
 		t.Fatalf("dispatch %+v, %v, creates %d->%d", launch, err, creates, d.creates)
 	}
 }
@@ -261,7 +261,7 @@ func TestMonStoreVerifyStoppedNamesFieldsAndNeverValues(t *testing.T) {
 	for name, c := range mismatches {
 		r, d, ins, mm, _ := monStoreVerifierFixture(t)
 		c.edit(&ins.files, mm.member)
-		attachments, creates := r.attachment, d.creates
+		attachments, creates := r.Attachment, d.creates
 		err := r.verifyStopped(t.Context(), ins, mm)
 		if err == nil || !strings.Contains(err.Error(), c.field) || r.verified {
 			t.Errorf("%s: want a refusal naming %q, got %v (verified %v)", name, c.field, err, r.verified)
@@ -272,7 +272,7 @@ func TestMonStoreVerifyStoppedNamesFieldsAndNeverValues(t *testing.T) {
 				t.Errorf("%s: error prints a value: %v", name, err)
 			}
 		}
-		if _, err := r.dispatch(t.Context()); err == nil || r.attachment != attachments || d.creates != creates || r.phase != monStoreDetached {
+		if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != attachments || d.creates != creates || r.Phase != Detached {
 			t.Errorf("%s: a refused store was dispatched: %v", name, err)
 		}
 	}
@@ -330,7 +330,7 @@ func TestMonStoreVerifyStoppedPropagatesSourceErrorsAndWithdrawsAnEarlierVerific
 func TestMonStoreVerifyStoppedOnlyInspectsAStoppedRetainedStore(t *testing.T) {
 	// An attached generation: the inspector never reads a store a MON may write.
 	r, _, ins, mm, calls := monStoreVerifierFixture(t)
-	r.attachment = &monStoreAttachment{generation: 2, id: "ctr-2"}
+	r.Attachment = &Attachment{generation: 2, ID: "ctr-2"}
 	if err := r.verifyStopped(t.Context(), ins, mm); err == nil || len(*calls) != 0 {
 		t.Fatalf("an attached store was inspected: %v, calls %v", err, *calls)
 	}
@@ -397,9 +397,9 @@ var monStoreInspectSymbols = []string{
 // (monmap decoder, inspector container, shared JSON reader). See
 // mon_store_adapters_test.go for the guard of the adapters themselves.
 var monStoreInspectHomes = []string{
-	"mon_store_inspect.go", "mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_inspect_engine.go", "mon_store_json.go",
-	// mon_store_generation.go and mon_store_address.go only reuse isNilPort for its nil check.
-	"mon_store_generation.go", "mon_store_address.go",
+	"inspect.go", "monmap.go", "inspect_container.go", "inspect_engine.go", "json.go",
+	// generation.go and address.go only reuse isNilPort for its nil check.
+	"generation.go", "address.go",
 }
 
 // monStoreInspectProblems returns the references to the symbols from files
@@ -429,8 +429,8 @@ func monStoreInspectProblems(files map[string]*ast.File) (problems []string) {
 
 func TestMonStoreInspectionHasNoProductionCallerOrImplementation(t *testing.T) {
 	files := parseProductionFiles(t)
-	if _, ok := files["mon_store_inspect.go"]; !ok {
-		t.Fatal("mon_store_inspect.go not found: the guard is vacuous")
+	if _, ok := files["inspect.go"]; !ok {
+		t.Fatal("inspect.go not found: the guard is vacuous")
 	}
 	if problems := monStoreInspectProblems(files); len(problems) != 0 {
 		t.Fatalf("the MON store inspection is used in production: %v", problems)
@@ -462,7 +462,7 @@ func use(r *monStoreVolume) { _ = r.verifyStopped }
 func TestMonStoreInspectionTypesHaveNoLock(t *testing.T) {
 	seen := 0
 	for file, parsed := range parseProductionFiles(t) {
-		if file != "mon_store_inspect.go" {
+		if file != "inspect.go" {
 			continue
 		}
 		ast.Inspect(parsed, func(n ast.Node) bool {

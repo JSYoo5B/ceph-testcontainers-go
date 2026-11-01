@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // This file is the Docker translation of the monStoreInspectEngine port of
-// mon_store_inspect_container.go: one request becomes one create call, and the
+// inspect_container.go: one request becomes one create call, and the
 // start, wait, log and remove calls follow. It holds no lock and no state
 // between calls (so it adds no entry to the lock order of
 // docs/internals/mon-volume-storage.md): every call opens a client through the

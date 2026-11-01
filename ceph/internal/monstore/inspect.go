@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -257,7 +257,7 @@ func observeStopped(ctx context.Context, mon, volume string, inspector monStoreI
 // writes nothing: no volume is created, no container is dispatched and no
 // membership changes. It admits an inspection only while no generation is
 // attached, so the inspector never reads a store a MON may be writing.
-func (s *monStoreVolume) verifyStopped(ctx context.Context, inspector monStoreInspector, monmap monStoreMonmap) error {
+func (s *Volume) verifyStopped(ctx context.Context, inspector monStoreInspector, monmap monStoreMonmap) error {
 	s.verified = false
 	if err := s.requireRetained(); err != nil {
 		return err

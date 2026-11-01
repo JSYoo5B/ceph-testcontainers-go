@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -14,11 +14,11 @@ import (
 )
 
 // monStoreDockerFake is a small Docker model for the MON store records: the
-// volume calls of osdVolumeDockerFake, plus the set of existing containers and
+// volume calls of volumeDockerFake, plus the set of existing containers and
 // the containers that use the volume. Its answers are synthetic; it says nothing
 // about Docker's behavior.
 type monStoreDockerFake struct {
-	osdVolumeDockerFake
+	volumeDockerFake
 	existing         map[string]bool
 	users            []string
 	inspectContainer error
@@ -31,7 +31,7 @@ func (d *monStoreDockerFake) VolumeCreate(ctx context.Context, opts mobycl.Volum
 	if d.onCreate != nil {
 		d.onCreate()
 	}
-	return d.osdVolumeDockerFake.VolumeCreate(ctx, opts)
+	return d.volumeDockerFake.VolumeCreate(ctx, opts)
 }
 
 func (d *monStoreDockerFake) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
@@ -56,14 +56,14 @@ func (d *monStoreDockerFake) ContainerList(_ context.Context, _ mobycl.Container
 	return mobycl.ContainerListResult{Items: items}, nil
 }
 
-func newMonStoreFixture() (*monStoreState, *monStoreVolume, *monStoreDockerFake) {
+func newMonStoreFixture() (*State, *Volume, *monStoreDockerFake) {
 	return newMonStoreFixtureFor("a")
 }
 
-func newMonStoreFixtureFor(mon string) (*monStoreState, *monStoreVolume, *monStoreDockerFake) {
+func newMonStoreFixtureFor(mon string) (*State, *Volume, *monStoreDockerFake) {
 	d := &monStoreDockerFake{existing: map[string]bool{}}
-	s := &monStoreState{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
-	r, err := s.begin(mon)
+	s := &State{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
+	r, err := s.Begin(mon)
 	if err != nil {
 		panic(err)
 	}
@@ -85,10 +85,10 @@ func monStoreIdentityFixture() monStoreIdentity {
 
 // monStoreBoundFixture drives a record through create, the first dispatch, the
 // container record and bind. The first generation container stays "existing".
-func monStoreBoundFixture(t *testing.T) (*monStoreState, *monStoreVolume, *monStoreDockerFake) {
+func monStoreBoundFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake) {
 	t.Helper()
 	s, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.dispatch(t.Context()); err != nil {
@@ -106,20 +106,20 @@ func monStoreBoundFixture(t *testing.T) (*monStoreState, *monStoreVolume, *monSt
 
 func TestMonStorePhaseNamesAreDistinct(t *testing.T) {
 	seen := map[string]bool{}
-	for p := monStorePlanned; p <= monStoreReleased; p++ {
+	for p := Planned; p <= Released; p++ {
 		if p.String() == "unset" || seen[p.String()] {
 			t.Fatalf("phase %d is named %q", p, p)
 		}
 		seen[p.String()] = true
 	}
-	if monStorePhase(0).String() != "unset" {
+	if Phase(0).String() != "unset" {
 		t.Fatal("the zero phase must read as unset")
 	}
 }
 
 func TestMonStoreVolumeMetadataIsValidatedAgainstTheRecord(t *testing.T) {
 	_, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	good := d.stored
@@ -153,8 +153,8 @@ func TestMonStoreVolumeMetadataIsValidatedAgainstTheRecord(t *testing.T) {
 func TestMonStoreCreateIsPublishedBeforeTheCallAndIsOrdinaryLocal(t *testing.T) {
 	s, r, d := newMonStoreFixture()
 	published := false
-	d.onCreate = func() { published = s.store("a") == r && r.createRequested }
-	if err := r.create(t.Context()); err != nil {
+	d.onCreate = func() { published = s.Store("a") == r && r.createRequested }
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !published {
@@ -165,10 +165,10 @@ func TestMonStoreCreateIsPublishedBeforeTheCallAndIsOrdinaryLocal(t *testing.T) 
 		d.createOptions.Name != r.name || !strings.HasPrefix(r.name, "tc-ceph-mon-volume-") {
 		t.Fatalf("not an owned ordinary local volume: %+v", d.createOptions)
 	}
-	if r.phase != monStoreCreated || r.createdAt == "" || d.closes != 1 {
-		t.Fatalf("phase %s, created %q, closes %d", r.phase, r.createdAt, d.closes)
+	if r.Phase != Created || r.createdAt == "" || d.closes != 1 {
+		t.Fatalf("phase %s, created %q, closes %d", r.Phase, r.createdAt, d.closes)
 	}
-	if err := r.create(t.Context()); err == nil || d.creates != 1 {
+	if err := r.Create(t.Context()); err == nil || d.creates != 1 {
 		t.Fatalf("a created volume was created again: %v", err)
 	}
 }
@@ -177,31 +177,31 @@ func TestMonStoreUnknownCreateOutcomeIsNotRetriedAndIsSettledByRelease(t *testin
 	_, r, d := newMonStoreFixture()
 	lost := errors.New("synthetic lost create reply")
 	d.createErr = lost
-	if err := r.create(t.Context()); !errors.Is(err, lost) || r.phase != monStorePlanned || !r.createRequested {
-		t.Fatalf("lost reply: %v, phase %s", err, r.phase)
+	if err := r.Create(t.Context()); !errors.Is(err, lost) || r.Phase != Planned || !r.createRequested {
+		t.Fatalf("lost reply: %v, phase %s", err, r.Phase)
 	}
-	if err := r.create(t.Context()); err == nil || d.creates != 1 {
+	if err := r.Create(t.Context()); err == nil || d.creates != 1 {
 		t.Fatalf("an unknown create outcome was replayed: %v, creates %d", err, d.creates)
 	}
-	if _, err := r.dispatch(t.Context()); err == nil || r.attachment != nil {
+	if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil {
 		t.Fatalf("a planned store was mounted: %v", err)
 	}
 	// Docker did commit the volume: the release finds it, checks it and removes
 	// it without force.
-	if err := r.release(t.Context(), false); err != nil || r.phase != monStoreReleased || d.removals != 1 || d.removeOptions.Force {
-		t.Fatalf("release: %v, phase %s, removals %d, forced %v", err, r.phase, d.removals, d.removeOptions.Force)
+	if err := r.release(t.Context(), false); err != nil || r.Phase != Released || d.removals != 1 || d.removeOptions.Force {
+		t.Fatalf("release: %v, phase %s, removals %d, forced %v", err, r.Phase, d.removals, d.removeOptions.Force)
 	}
 }
 
 func TestMonStoreReleaseOfAnUnrequestedOrMissingVolumeSettles(t *testing.T) {
 	_, r, d := newMonStoreFixture()
-	if err := r.release(t.Context(), false); err != nil || r.phase != monStoreReleased || d.inspections != 0 || d.removals != 0 {
+	if err := r.release(t.Context(), false); err != nil || r.Phase != Released || d.inspections != 0 || d.removals != 0 {
 		t.Fatalf("a record that never requested a volume called Docker: %v", err)
 	}
 	_, r, d = newMonStoreFixture()
 	r.createRequested = true
 	d.inspectErr = errdefs.ErrNotFound
-	if err := r.release(t.Context(), false); err != nil || r.phase != monStoreReleased || d.removals != 0 {
+	if err := r.release(t.Context(), false); err != nil || r.Phase != Released || d.removals != 0 {
 		t.Fatalf("a confirmed missing volume did not settle: %v", err)
 	}
 }
@@ -211,15 +211,15 @@ func TestMonStoreFirstDispatchIsFreshAndFormats(t *testing.T) {
 	if _, err := r.dispatch(t.Context()); err == nil {
 		t.Fatal("a planned store was dispatched")
 	}
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	launch, err := r.dispatch(t.Context())
-	if err != nil || launch.mode != monStoreFormat || launch.generation != 1 || launch.volume != r.name || r.phase != monStoreFresh {
-		t.Fatalf("first dispatch: %+v, %v, phase %s", launch, err, r.phase)
+	if err != nil || launch.Mode != Format || launch.Generation != 1 || launch.Volume != r.name || r.Phase != Fresh {
+		t.Fatalf("first dispatch: %+v, %v, phase %s", launch, err, r.Phase)
 	}
-	if r.attachment == nil || !r.attachment.pending || r.attachment.generation != 1 {
-		t.Fatalf("the attachment was not published before the container: %+v", r.attachment)
+	if r.Attachment == nil || !r.Attachment.pending || r.Attachment.generation != 1 {
+		t.Fatalf("the attachment was not published before the container: %+v", r.Attachment)
 	}
 	// At most one attachment: neither the pending one nor a recorded one admits
 	// another dispatch.
@@ -237,24 +237,24 @@ func TestMonStoreFirstDispatchIsFreshAndFormats(t *testing.T) {
 
 func TestMonStoreUnknownContainerOutcomeStaysPendingUntilTheScan(t *testing.T) {
 	_, r, d := newMonStoreFixture()
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.dispatch(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.recordContainer(""); err == nil || r.attachment == nil || !r.attachment.pending {
+	if err := r.recordContainer(""); err == nil || r.Attachment == nil || !r.Attachment.pending {
 		t.Fatalf("an empty container ID settled the outcome: %v", err)
 	}
-	if err := r.bind(monStoreIdentityFixture()); err == nil || r.phase != monStoreFresh {
+	if err := r.bind(monStoreIdentityFixture()); err == nil || r.Phase != Fresh {
 		t.Fatalf("a store with an unknown attachment was bound: %v", err)
 	}
 	// Before the labeled-container scan nothing settles it, not even an empty list.
 	listed := d.listed
-	if err := r.confirmGone(t.Context(), false); err == nil || r.attachment == nil || d.listed != listed {
+	if err := r.confirmGone(t.Context(), false); err == nil || r.Attachment == nil || d.listed != listed {
 		t.Fatalf("the unknown outcome was settled before the scan: %v", err)
 	}
-	if err := r.discardFresh(t.Context()); err == nil || d.removals != 0 || r.phase != monStoreFresh {
+	if err := r.discardFresh(t.Context()); err == nil || d.removals != 0 || r.Phase != Fresh {
 		t.Fatalf("a fresh store with an unknown attachment was discarded: %v", err)
 	}
 	if err := r.release(t.Context(), false); err == nil || d.removals != 0 {
@@ -262,11 +262,11 @@ func TestMonStoreUnknownContainerOutcomeStaysPendingUntilTheScan(t *testing.T) {
 	}
 	// After the scan a user that still shows up keeps it pending; an empty list settles it.
 	d.users = []string{"survivor"}
-	if err := r.confirmGone(t.Context(), true); err == nil || r.attachment == nil {
+	if err := r.confirmGone(t.Context(), true); err == nil || r.Attachment == nil {
 		t.Fatalf("a volume user did not keep the attachment: %v", err)
 	}
 	d.users = nil
-	if err := r.release(t.Context(), true); err != nil || r.phase != monStoreReleased || d.removals != 1 {
+	if err := r.release(t.Context(), true); err != nil || r.Phase != Released || d.removals != 1 {
 		t.Fatalf("release after the scan: %v", err)
 	}
 }
@@ -283,7 +283,7 @@ func TestMonStoreConfirmGoneRequiresAbsenceByInspectAndByIndependentList(t *test
 			_, r, d := monStoreBoundFixture(t)
 			delete(d.existing, "ctr-1")
 			apply(d)
-			if err := r.confirmGone(t.Context(), false); err == nil || r.attachment == nil {
+			if err := r.confirmGone(t.Context(), false); err == nil || r.Attachment == nil {
 				t.Fatalf("the attachment was settled: %v", err)
 			}
 		})
@@ -292,7 +292,7 @@ func TestMonStoreConfirmGoneRequiresAbsenceByInspectAndByIndependentList(t *test
 	// attachment calls nothing.
 	_, r, d := monStoreBoundFixture(t)
 	delete(d.existing, "ctr-1")
-	if err := r.confirmGone(t.Context(), false); err != nil || r.attachment != nil {
+	if err := r.confirmGone(t.Context(), false); err != nil || r.Attachment != nil {
 		t.Fatalf("a gone container was not settled: %v", err)
 	}
 	listed := d.listed
@@ -324,7 +324,7 @@ func TestMonStoreBindRejectsIncompleteIdentityInputs(t *testing.T) {
 	for name, edit := range edits {
 		t.Run(name, func(t *testing.T) {
 			_, r, d := newMonStoreFixture()
-			if err := r.create(t.Context()); err != nil {
+			if err := r.Create(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := r.dispatch(t.Context()); err != nil {
@@ -336,22 +336,22 @@ func TestMonStoreBindRejectsIncompleteIdentityInputs(t *testing.T) {
 			}
 			identity := monStoreIdentityFixture()
 			edit(&identity)
-			if err := r.bind(identity); err == nil || r.phase != monStoreFresh || r.identity != nil {
+			if err := r.bind(identity); err == nil || r.Phase != Fresh || r.identity != nil {
 				t.Fatalf("an incomplete identity bound the store: %v", err)
 			}
 		})
 	}
 	// Control: the complete identity binds.
 	_, r, _ := monStoreBoundFixture(t)
-	if r.phase != monStoreBound || r.identity == nil {
-		t.Fatalf("the complete identity did not bind: %s", r.phase)
+	if r.Phase != Bound || r.identity == nil {
+		t.Fatalf("the complete identity did not bind: %s", r.Phase)
 	}
 }
 
 func TestMonStoreBindWorksOnACopyOfTheAddressVector(t *testing.T) {
 	s, r, d := newMonStoreFixture()
 	_ = s
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.dispatch(t.Context()); err != nil {
@@ -404,7 +404,7 @@ func TestMonStoreErrorsDoNotPrintDigestsOrFingerprints(t *testing.T) {
 
 func TestMonStoreDetachRequiresAGoneAttachmentAndTheBoundSecrets(t *testing.T) {
 	_, r, d := monStoreBoundFixture(t)
-	if err := r.detach(monStoreIdentityFixture()); err == nil || r.phase != monStoreBound {
+	if err := r.detach(monStoreIdentityFixture()); err == nil || r.Phase != Bound {
 		t.Fatalf("a store with a live attachment was detached: %v", err)
 	}
 	delete(d.existing, "ctr-1")
@@ -418,20 +418,20 @@ func TestMonStoreDetachRequiresAGoneAttachmentAndTheBoundSecrets(t *testing.T) {
 	for name, edit := range immutable {
 		observed := monStoreIdentityFixture()
 		edit(&observed)
-		if err := r.detach(observed); err == nil || !strings.Contains(err.Error(), name) || r.phase != monStoreBound {
+		if err := r.detach(observed); err == nil || !strings.Contains(err.Error(), name) || r.Phase != Bound {
 			t.Fatalf("a changed %s was accepted: %v", name, err)
 		}
 	}
 	incomplete := monStoreIdentityFixture()
 	incomplete.fingerprint = ""
-	if err := r.detach(incomplete); err == nil || r.phase != monStoreBound {
+	if err := r.detach(incomplete); err == nil || r.Phase != Bound {
 		t.Fatalf("an incomplete observation detached the store: %v", err)
 	}
 	// The fingerprint legitimately changed while the generation ran.
 	observed := monStoreIdentityFixture()
 	observed.fingerprint = digestC
-	if err := r.detach(observed); err != nil || r.phase != monStoreDetached || r.identity.fingerprint != digestC {
-		t.Fatalf("detach: %v, phase %s", err, r.phase)
+	if err := r.detach(observed); err != nil || r.Phase != Detached || r.identity.fingerprint != digestC {
+		t.Fatalf("detach: %v, phase %s", err, r.Phase)
 	}
 	if err := r.detach(observed); err == nil {
 		t.Fatal("a detached store was detached again")
@@ -449,7 +449,7 @@ func TestMonStoreReopenNeedsAMatchingVerifiedIdentityAndRequiresTheStore(t *test
 	}
 	creates := d.creates
 	// No verification: refused, and no volume is created in its place.
-	if _, err := r.dispatch(t.Context()); err == nil || r.attachment != nil || d.creates != creates {
+	if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil || d.creates != creates {
 		t.Fatalf("an unverified store was mounted: %v", err)
 	}
 	mismatches := map[string]func(i *monStoreIdentity){
@@ -471,7 +471,7 @@ func TestMonStoreReopenNeedsAMatchingVerifiedIdentityAndRequiresTheStore(t *test
 		if err := r.verify(observed); err == nil || r.verified {
 			t.Fatalf("a different %s verified: %v", name, err)
 		}
-		if _, err := r.dispatch(t.Context()); err == nil || r.attachment != nil || r.phase != monStoreDetached {
+		if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil || r.Phase != Detached {
 			t.Fatalf("a store with a different %s was mounted: %v", name, err)
 		}
 	}
@@ -493,8 +493,8 @@ func TestMonStoreReopenNeedsAMatchingVerifiedIdentityAndRequiresTheStore(t *test
 		t.Fatal(err)
 	}
 	launch, err := r.dispatch(t.Context())
-	if err != nil || launch.mode != monStoreRequire || launch.generation != 2 || launch.volume != r.name || r.phase != monStoreBound {
-		t.Fatalf("reopen dispatch: %+v, %v, phase %s", launch, err, r.phase)
+	if err != nil || launch.Mode != Require || launch.Generation != 2 || launch.Volume != r.name || r.Phase != Bound {
+		t.Fatalf("reopen dispatch: %+v, %v, phase %s", launch, err, r.Phase)
 	}
 	if d.creates != creates {
 		t.Fatal("reopen created a volume")
@@ -530,7 +530,7 @@ func TestMonStoreBoundStoreWithAMissingChangedOrForeignVolumeIsNeverRecreated(t 
 			}
 			apply(d)
 			creates, generation := d.creates, r.generation
-			if _, err := r.dispatch(t.Context()); err == nil || d.creates != creates || r.generation != generation || r.attachment != nil || r.phase != monStoreBound {
+			if _, err := r.dispatch(t.Context()); err == nil || d.creates != creates || r.generation != generation || r.Attachment != nil || r.Phase != Bound {
 				t.Fatalf("a bound store was dispatched or recreated: %v", err)
 			}
 			if name != "inspect fail" && name != "missing" {
@@ -547,7 +547,7 @@ func TestMonStoreOnlyAFreshStoreWithAGoneAttachmentIsDiscardedBeforeTermination(
 	if err := r.discardFresh(t.Context()); err == nil {
 		t.Fatal("a planned store was discarded as fresh")
 	}
-	if err := r.create(t.Context()); err != nil {
+	if err := r.Create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.dispatch(t.Context()); err != nil {
@@ -559,8 +559,8 @@ func TestMonStoreOnlyAFreshStoreWithAGoneAttachmentIsDiscardedBeforeTermination(
 		t.Fatalf("a fresh store with a live container was discarded: %v", err)
 	}
 	delete(d.existing, "ctr-1")
-	if err := r.discardFresh(t.Context()); err != nil || r.phase != monStoreReleased || d.removals != 1 || d.removeOptions.Force {
-		t.Fatalf("discard: %v, phase %s", err, r.phase)
+	if err := r.discardFresh(t.Context()); err != nil || r.Phase != Released || d.removals != 1 || d.removeOptions.Force {
+		t.Fatalf("discard: %v, phase %s", err, r.Phase)
 	}
 	// A bound store is not discarded by this path.
 	_, r, d = monStoreBoundFixture(t)
@@ -579,11 +579,11 @@ func TestMonStoreReleaseIsNeverForcedAndKeepsAnUnsettledRecord(t *testing.T) {
 	delete(d.existing, "ctr-1")
 	busy := errors.New("volume is in use")
 	d.removeErr = busy
-	if err := r.release(t.Context(), false); !errors.Is(err, busy) || r.phase != monStoreBound {
+	if err := r.release(t.Context(), false); !errors.Is(err, busy) || r.Phase != Bound {
 		t.Fatalf("a busy removal settled the record: %v", err)
 	}
 	d.removeErr = nil
-	if err := r.release(t.Context(), true); err != nil || r.phase != monStoreReleased || d.removeOptions.Force {
+	if err := r.release(t.Context(), true); err != nil || r.Phase != Released || d.removeOptions.Force {
 		t.Fatalf("retry: %v, forced %v", err, d.removeOptions.Force)
 	}
 	removals := d.removals

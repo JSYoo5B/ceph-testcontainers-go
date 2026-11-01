@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -41,28 +41,28 @@ import (
 // The file adds no lock and calls no method that takes one; the record is
 // guarded by Container.mu like the rest of monStoreVolume.
 
-// monStoreEndpoint is the endpoint of a MON as the monmap pins it. Exactly one
+// Endpoint is the endpoint of a MON as the monmap pins it. Exactly one
 // of network (bridge: a Docker network name) and ports (host network: the
 // listening ports, in the order the MON takes them) is set.
-type monStoreEndpoint struct {
-	ip      string
-	network string
-	ports   []int
+type Endpoint struct {
+	IP      string
+	Network string
+	Ports   []int
 }
 
-func (a monStoreEndpoint) validate() error {
-	ip, err := netip.ParseAddr(a.ip)
+func (a Endpoint) validate() error {
+	ip, err := netip.ParseAddr(a.IP)
 	if err != nil || ip.IsUnspecified() || ip.IsMulticast() {
-		return fmt.Errorf("MON address %q is not a usable IP address", a.ip)
+		return fmt.Errorf("MON address %q is not a usable IP address", a.IP)
 	}
 	switch {
-	case a.network != "" && len(a.ports) != 0:
+	case a.Network != "" && len(a.Ports) != 0:
 		return errors.New("MON address names both a bridge network and host ports")
-	case a.network == "" && len(a.ports) == 0:
+	case a.Network == "" && len(a.Ports) == 0:
 		return errors.New("MON address names neither a bridge network nor host ports")
 	}
 	seen := map[int]bool{}
-	for _, p := range a.ports {
+	for _, p := range a.Ports {
 		if p < 1 || p > 65535 || seen[p] {
 			return fmt.Errorf("MON address has an invalid or repeated port %d", p)
 		}
@@ -71,19 +71,19 @@ func (a monStoreEndpoint) validate() error {
 	return nil
 }
 
-func (a monStoreEndpoint) clone() monStoreEndpoint {
-	a.ports = slices.Clone(a.ports)
+func (a Endpoint) clone() Endpoint {
+	a.Ports = slices.Clone(a.Ports)
 	return a
 }
 
-func (a monStoreEndpoint) equal(b monStoreEndpoint) bool {
-	return a.ip == b.ip && a.network == b.network && slices.Equal(a.ports, b.ports)
+func (a Endpoint) Equal(b Endpoint) bool {
+	return a.IP == b.IP && a.Network == b.Network && slices.Equal(a.Ports, b.Ports)
 }
 
-// monStoreEndpointHold keeps an address from every other user until Release.
+// EndpointHold keeps an address from every other user until Release.
 // A failed Release stays retryable and the address must not be used until one
 // succeeds.
-type monStoreEndpointHold interface {
+type EndpointHold interface {
 	Release(ctx context.Context) error
 }
 
@@ -91,7 +91,7 @@ type monStoreEndpointHold interface {
 // a later generation bound the recorded one. A generation that bound another
 // address could not have joined the monmap, so the difference is an error and
 // the recorded address is not replaced.
-func (s *monStoreVolume) observeAddress(ctx context.Context, g monStoreGenerations, id string) error {
+func (s *Volume) observeAddress(ctx context.Context, g Generations, id string) error {
 	observed, err := g.Observe(ctx, id)
 	if err != nil {
 		return fmt.Errorf("observe the address of MON %s generation %d: %w", s.mon, s.generation, err)
@@ -99,12 +99,12 @@ func (s *monStoreVolume) observeAddress(ctx context.Context, g monStoreGeneratio
 	if err := observed.validate(); err != nil {
 		return fmt.Errorf("observe the address of MON %s generation %d: %w", s.mon, s.generation, err)
 	}
-	if s.endpoint == nil {
+	if s.Endpoint == nil {
 		cloned := observed.clone()
-		s.endpoint = &cloned
+		s.Endpoint = &cloned
 		return nil
 	}
-	if !s.endpoint.equal(observed) {
+	if !s.Endpoint.Equal(observed) {
 		return fmt.Errorf("MON %s generation %d bound another address than the one its monmap pins", s.mon, s.generation)
 	}
 	return nil
@@ -114,11 +114,11 @@ func (s *monStoreVolume) observeAddress(ctx context.Context, g monStoreGeneratio
 // release failed earlier is released first, so there is never more than one.
 // A hold that comes back with an error stays owned: it is released at once, and
 // kept for a retry if that release fails.
-func (s *monStoreVolume) holdAddress(ctx context.Context, g monStoreGenerations) error {
+func (s *Volume) holdAddress(ctx context.Context, g Generations) error {
 	if err := s.releaseAddressHold(ctx); err != nil {
 		return err
 	}
-	hold, err := g.Hold(ctx, s.endpoint.clone())
+	hold, err := g.Hold(ctx, s.Endpoint.clone())
 	// A hold returned together with an error may own reserved ports, so it is
 	// kept before the error is handled and released like any other.
 	if !isNilPort(hold) {
@@ -135,7 +135,7 @@ func (s *monStoreVolume) holdAddress(ctx context.Context, g monStoreGenerations)
 
 // releaseAddressHold releases the hold, if any. The hold is forgotten only by a
 // successful release, so a failure is retried by the next call and by Terminate.
-func (s *monStoreVolume) releaseAddressHold(ctx context.Context) error {
+func (s *Volume) releaseAddressHold(ctx context.Context) error {
 	if s.hold == nil {
 		return nil
 	}

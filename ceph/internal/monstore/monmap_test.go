@@ -1,4 +1,4 @@
-package ceph
+package monstore
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // Monitor::_quorum_status writes, which is a synthetic input.
 func monStoreMonDumpFixture(t *testing.T) []byte {
 	t.Helper()
-	data, err := os.ReadFile("testdata/daemon-addresses/20.2.4/mon-dump.json")
+	data, err := os.ReadFile("../../testdata/daemon-addresses/20.2.4/mon-dump.json")
 	if err != nil {
 		t.Fatal(err)
 	}
