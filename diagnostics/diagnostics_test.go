@@ -9,8 +9,6 @@ import (
 	"errors"
 	"io"
 	"net/netip"
-	"os/exec"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -615,16 +613,4 @@ func TestCollectDiagnosticsProbeDeadlineRetainsStoppedState(t *testing.T) {
 	default:
 		t.Fatal("probe deadline returned with a live stream reader")
 	}
-}
-
-func diagnosticsInstalledPython(t *testing.T) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX pipes and process groups are unavailable on Windows")
-	}
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("local Python supervisor regression requires installed python3; native image validation covers the runtime")
-	}
-	return python
 }

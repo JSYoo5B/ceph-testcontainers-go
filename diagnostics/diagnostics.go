@@ -195,7 +195,7 @@ type diagnosticsSnapshot struct {
 // enough to redact the error and report whether the cluster was closed.
 func takeSnapshot(ctx context.Context, cluster *ceph.Container, config Config) (diagnosticsSnapshot, error) {
 	if cluster == nil {
-		return diagnosticsSnapshot{secrets: slices.Clone(config.RedactValues)}, errors.New("Ceph cluster is nil")
+		return diagnosticsSnapshot{secrets: slices.Clone(config.RedactValues)}, errors.New("the Ceph cluster is nil")
 	}
 	inv, err := evidencehook.Inventory(ctx, cluster)
 	if err != nil {
@@ -548,7 +548,7 @@ var diagnosticCephQueries = []struct {
 // process behind.
 func diagnosticCephCommand(ctx context.Context, control testcontainers.Container, args []string, limit int) (string, bool, error) {
 	if control == nil {
-		return "", false, errors.New("Ceph control container was not created")
+		return "", false, errors.New("the Ceph control container was not created")
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -575,7 +575,7 @@ func diagnosticCephCommand(ctx context.Context, control testcontainers.Container
 		// The output is the artifact; the error repeats none of it.
 		failure := evidencehook.NativeFailure("ceph", report.ExitCode, nil, report.Stderr)
 		failure.Reason = ""
-		return string(output), truncated, fmt.Errorf("Ceph diagnostic command: %w", failure)
+		return string(output), truncated, fmt.Errorf("diagnostic Ceph command: %w", failure)
 	}
 	return string(output), truncated, nil
 }
