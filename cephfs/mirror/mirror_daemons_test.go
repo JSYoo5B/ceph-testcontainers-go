@@ -634,7 +634,9 @@ func TestCephFSMirrorRebalanceSkipsADirectoryThatLeavesThePolicyDuringInspection
 	}
 }
 
-func TestCephFSMirrorRebalanceRetriesARemoveThatNeverReachedTheMGR(t *testing.T) {
+func TestCephFSMirrorRebalanceNeverResendsAnUncertainRemove(t *testing.T) {
+	// The remove fails, and the policy still shows the path mapped. That does
+	// not prove the MGR dropped it, so no retry sends it again.
 	model := &mirrorPolicyModel{
 		states:    map[string]string{"/daemon-a": "mapped", "/foreign": "mapped"},
 		releasing: map[string]int{},
@@ -644,16 +646,24 @@ func TestCephFSMirrorRebalanceRetriesARemoveThatNeverReachedTheMGR(t *testing.T)
 	defer cancel()
 	pending := map[string]bool{}
 	if err := rebalanceCephFSMirrorDirectories(ctx, []string{"/daemon-a"}, model.list, model.state, model.mutate, pending, time.Millisecond); err == nil || !pending["/daemon-a"] {
-		t.Fatalf("unsent removal was not reported and retained: %v, pending %v", err, pending)
+		t.Fatalf("uncertain removal was not reported and retained: %v, pending %v", err, pending)
 	}
-	if model.states["/daemon-a"] != "mapped" {
-		t.Fatalf("model applied an unsent removal: %v", model.states)
+	for range 2 {
+		err := rebalanceCephFSMirrorDirectories(ctx, []string{"/daemon-a"}, model.list, model.state, model.mutate, pending, time.Millisecond)
+		if !errors.Is(err, errCephFSUncertainRemoval) || !pending["/daemon-a"] || model.deadlocked {
+			t.Fatalf("retry over a still-mapped path: %v, pending %v", err, pending)
+		}
 	}
-	// The retry sends the removal for real; nothing pretends it was applied.
+	if want := []string{"remove:/daemon-a"}; !reflect.DeepEqual(model.actions, want) {
+		t.Fatalf("an uncertain remove was sent again: %v", model.actions)
+	}
+	// Once the path has left the policy, the retry restores it without
+	// another remove.
+	delete(model.states, "/daemon-a")
 	if err := rebalanceCephFSMirrorDirectories(ctx, []string{"/daemon-a"}, model.list, model.state, model.mutate, pending, time.Millisecond); err != nil || model.deadlocked {
-		t.Fatalf("retry failed: %v, actions %v", err, model.actions)
+		t.Fatalf("retry after the path left the policy: %v, actions %v", err, model.actions)
 	}
-	if want := []string{"remove:/daemon-a", "remove:/daemon-a", "add:/daemon-a"}; !reflect.DeepEqual(model.actions, want) || len(pending) != 0 {
+	if want := []string{"remove:/daemon-a", "add:/daemon-a"}; !reflect.DeepEqual(model.actions, want) || len(pending) != 0 {
 		t.Fatalf("actions %v, pending %v", model.actions, pending)
 	}
 }

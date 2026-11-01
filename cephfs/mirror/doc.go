@@ -20,7 +20,12 @@
 //     with the error, whether or not the native request was sent: call the
 //     same Begin* again with the same path or peer UUID and a fresh context;
 //     the retry returns the same receipt, checks Ceph first
-//     and does not resend an applied request.
+//     and does not resend an applied request. A directory remove that was
+//     sent without an acknowledged reply is never sent again, by the receipt,
+//     RemoveDirectory or RebalanceDirectories: a policy that still shows the
+//     path mapped does not prove that the MGR dropped it. The retry then only
+//     reports the native state, and completes once the path has left the
+//     policy.
 //   - While a receipt is pending, the fixture refuses changes that would
 //     disturb it; Daemon.Remove and Terminate are always allowed.
 //   - Query errors from Status and the waits are retryable. A changed

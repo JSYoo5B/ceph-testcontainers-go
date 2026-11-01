@@ -991,7 +991,10 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 // The native remove is sent only once every directory that the native policy
 // tracks is mapped or stalled, which includes an earlier removed directory
 // having left the policy; a policy that stays busy for two minutes fails the
-// call before anything is sent. See RebalanceDirectories for why.
+// call before anything is sent. See RebalanceDirectories for why. A remove
+// that failed or lost its reply is never sent again: a later call returns a
+// retryable error naming the native state while the policy still tracks the
+// path, even mapped, and succeeds once the path has left it.
 //
 //purpose:condition,lifetime
 func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) error {
@@ -1024,12 +1027,29 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
-	if err := mirror.waitNativePolicyIdle(ctx); err != nil {
-		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
-	}
-	mirror.ops.supersedeDirectoryAddition(directory)
-	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
-		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
+	if mirror.pendingDirectoryRelease[directory] {
+		// An earlier remove of this path was sent without an acknowledged
+		// reply. It is not sent again; the call completes once the path has
+		// left the native policy.
+		tracked, err := mirror.nativePolicyDirectories(ctx)
+		if err != nil {
+			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
+		}
+		if slices.Contains(tracked, directory) {
+			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, uncertainRemoval(ctx, mirror, directory))
+		}
+	} else {
+		if err := mirror.waitNativePolicyIdle(ctx); err != nil {
+			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
+		}
+		mirror.ops.supersedeDirectoryAddition(directory)
+		if mirror.pendingDirectoryRelease == nil {
+			mirror.pendingDirectoryRelease = make(map[string]bool)
+		}
+		mirror.pendingDirectoryRelease[directory] = true
+		if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
+			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
+		}
 	}
 	mirror.Directories = slices.DeleteFunc(mirror.Directories, func(item string) bool { return item == directory })
 	delete(mirror.ownedDirectories, directory)
@@ -1049,7 +1069,9 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 // MGR's mirroring module.
 // Every current member must be running; remove stopped members first. Intended
 // membership is retained on partial CLI failure so a fresh-context retry can
-// recover. Caller-added policies and other filesystems are not modified.
+// recover, except that a path whose remove failed or lost its reply is never
+// removed again: the retry fails while the native policy still tracks it.
+// Caller-added policies and other filesystems are not modified.
 //
 // The deadlock: the MGR's mirroring module holds its policy lock while a
 // removal waits for a RADOS write, and the acknowledgement of an earlier
@@ -1183,16 +1205,15 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 		if !slices.Contains(current, directory) {
 			continue
 		}
-		previousAttempt := pending[directory]
+		if pending[directory] {
+			// An earlier remove was sent and failed or lost its reply. A policy
+			// that still tracks the path, even mapped, does not prove that the
+			// MGR dropped it: it can still wait behind the module's policy lock.
+			return fmt.Errorf("release owned CephFS mirror directory %q: %w: the native policy still tracks it", directory, errCephFSUncertainRemoval)
+		}
 		pending[directory] = true
 		if err := mutate(ctx, "remove", directory); err != nil {
-			// An earlier response may have been lost after native removal began.
-			// Tentacle's MGR rejects another remove while purging; only this
-			// tracked retry may proceed to the native release barrier. If the
-			// earlier command was never applied, the retry still executes remove.
-			if !previousAttempt || !strings.Contains(err.Error(), "is under removal") {
-				return fmt.Errorf("release owned CephFS mirror directory %q: %w", directory, err)
-			}
+			return fmt.Errorf("release owned CephFS mirror directory %q: %w", directory, err)
 		}
 		if err := waitCephFSMirrorDirectoryReleased(ctx, list, directory, interval); err != nil {
 			return err

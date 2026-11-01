@@ -259,20 +259,32 @@ func TestCephFSDirectoryRemovalProductionRetainsLostReplyAndNoAbsentResend(t *te
 				t.Fatalf("lost response discarded intent: %v %v", r, err)
 			}
 			s.removeError, s.applyRemoval = nil, true
-			again, err := m.BeginDirectoryRemoval(t.Context(), "/owned")
-			want := 1
 			if !applied {
-				want = 2
+				// The policy still shows the path mapped: the first remove
+				// may still wait in the MGR, so neither path sends another
+				// and both report the native state.
+				for _, retry := range []func() error{
+					func() error { _, err := m.BeginDirectoryRemoval(t.Context(), "/owned"); return err },
+					func() error { return m.RemoveDirectory(t.Context(), "/owned") },
+				} {
+					err := retry()
+					if !errors.Is(err, errCephFSUncertainRemoval) || errors.Is(err, errCephFSObservationGuard) || !strings.Contains(err.Error(), "mapped") || s.removals != 1 || !m.ownedDirectories["/owned"] {
+						t.Fatalf("uncertain remove resent or not reported: count=%d error=%v", s.removals, err)
+					}
+				}
+				// The MGR applies the first remove later.
+				s.directories = slices.DeleteFunc(s.directories, func(name string) bool { return name == "/owned" })
 			}
-			if err != nil || again != r || s.removals != want {
+			again, err := m.BeginDirectoryRemoval(t.Context(), "/owned")
+			if err != nil || again != r || s.removals != 1 {
 				t.Fatalf("retained path retry failed: same=%v count=%d error=%v", again == r, s.removals, err)
 			}
-			if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != want {
+			if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != 1 {
 				t.Fatalf("legacy same-path retry bypassed receipt: %v", err)
 			}
 			a.stats = `{}`
 			st, err := r.WaitReleased(t.Context())
-			if err != nil || !st.Released || s.removals != want {
+			if err != nil || !st.Released || s.removals != 1 {
 				t.Fatalf("lost response could not observe original release: %+v %v", st, err)
 			}
 		})
@@ -298,10 +310,9 @@ func TestCephFSDirectoryRemovalProductionPolicyRetryTransitions(t *testing.T) {
 				t.Fatalf("ambiguous transition resent/adopted: %v %v", again, err)
 			}
 			s.mappingOverride = ""
-			s.applyRemoval = true
 			again, err = m.BeginDirectoryRemoval(t.Context(), "/owned")
-			if err != nil || again != r || s.removals != 2 {
-				t.Fatalf("fresh mapped retry failed: %v", err)
+			if again != r || !errors.Is(err, errCephFSUncertainRemoval) || s.removals != 1 {
+				t.Fatalf("mapped policy after an uncertain remove resent it: %v", err)
 			}
 		})
 	}
@@ -882,5 +893,26 @@ func TestCephFSDirectoryRemovalBusyNativePolicySendsNothing(t *testing.T) {
 				t.Fatalf("busy policy: removals=%d error=%v", s.removals, err)
 			}
 		})
+	}
+}
+
+// RemoveDirectory without a receipt keeps the same rule: a remove that failed
+// is not sent again while the native policy still tracks the path, by itself
+// or by RebalanceDirectories.
+func TestCephFSDirectoryRemovalLegacyNeverResendsAnUncertainRemove(t *testing.T) {
+	m, s, _, _, _ := newDirectoryRemovalFixture()
+	m.daemons = nil
+	m.ops.directoryGenerations = nil
+	s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+	if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || s.removals != 1 || !m.pendingDirectoryRelease["/owned"] {
+		t.Fatalf("failed remove: count=%d error=%v", s.removals, err)
+	}
+	s.removeError = nil
+	if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errCephFSUncertainRemoval) || s.removals != 1 || !m.ownedDirectories["/owned"] {
+		t.Fatalf("uncertain remove resent: count=%d error=%v", s.removals, err)
+	}
+	s.directories = nil
+	if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != 1 || m.ownedDirectories["/owned"] || m.pendingDirectoryRelease["/owned"] {
+		t.Fatalf("path that left the policy: count=%d error=%v", s.removals, err)
 	}
 }
