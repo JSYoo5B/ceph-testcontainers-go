@@ -1,0 +1,93 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "diagnostics",
+  "count": 67,
+  "types": {
+    "diagnostics.Artifact": [
+      "Artifact.ContainerID field string `json:\"container_id,omitempty\"`",
+      "Artifact.Data field string `json:\"data,omitempty\"`",
+      "Artifact.Error field string `json:\"error,omitempty\"`",
+      "Artifact.Kind field string `json:\"kind\"`",
+      "Artifact.Name field string `json:\"name\"`",
+      "Artifact.Role field string `json:\"role,omitempty\"`",
+      "Artifact.Truncated field bool `json:\"truncated,omitempty\"`"
+    ],
+    "diagnostics.Config": [
+      "Config.AdditionalContainers field []Target",
+      "Config.Concurrency field int",
+      "Config.LogTail field int",
+      "Config.MaxContainers field int",
+      "Config.MaxOutputBytes field int",
+      "Config.OperationTimeout field time.Duration",
+      "Config.RedactValues field []string",
+      "Config.Timeout field time.Duration"
+    ],
+    "diagnostics.CrashMetadataConfig": [
+      "CrashMetadataConfig.AdditionalContainers field []Target",
+      "CrashMetadataConfig.MaxArchiveBytes field int64",
+      "CrashMetadataConfig.MaxEntries field int",
+      "CrashMetadataConfig.MaxRecordBytes field int",
+      "CrashMetadataConfig.MaxRecords field int",
+      "CrashMetadataConfig.OperationTimeout field time.Duration",
+      "CrashMetadataConfig.RedactValues field []string",
+      "CrashMetadataConfig.Timeout field time.Duration"
+    ],
+    "diagnostics.CrashMetadataContainer": [
+      "CrashMetadataContainer.ArchiveBytes field int64 `json:\"archive_bytes\"`",
+      "CrashMetadataContainer.ContainerID field string `json:\"container_id,omitempty\"`",
+      "CrashMetadataContainer.CrashDir field string `json:\"crash_dir\"`",
+      "CrashMetadataContainer.Error field string `json:\"error,omitempty\"`",
+      "CrashMetadataContainer.ExitCode field int `json:\"exit_code\"`",
+      "CrashMetadataContainer.FinishedAt field string `json:\"finished_at,omitempty\"`",
+      "CrashMetadataContainer.IgnoredEntries field int `json:\"ignored_entries\"`",
+      "CrashMetadataContainer.ImageID field string `json:\"image_id,omitempty\"`",
+      "CrashMetadataContainer.Name field string `json:\"name\"`",
+      "CrashMetadataContainer.OOMKilled field bool `json:\"oom_killed,omitempty\"`",
+      "CrashMetadataContainer.Omitted field []CrashOmission `json:\"omitted,omitempty\"`",
+      "CrashMetadataContainer.Outcome field CrashOutcome `json:\"outcome\"`",
+      "CrashMetadataContainer.Records field []CrashRecord `json:\"records\"`",
+      "CrashMetadataContainer.Role field string `json:\"role\"`",
+      "CrashMetadataContainer.StartedAt field string `json:\"started_at,omitempty\"`",
+      "CrashMetadataContainer.State field string `json:\"state,omitempty\"`"
+    ],
+    "diagnostics.CrashMetadataReport": [
+      "CrashMetadataReport.Closed field bool `json:\"closed\"`",
+      "CrashMetadataReport.Complete field bool `json:\"complete\"`",
+      "CrashMetadataReport.Containers field []CrashMetadataContainer `json:\"containers\"`",
+      "CrashMetadataReport.FinishedAt field time.Time `json:\"finished_at\"`",
+      "CrashMetadataReport.SchemaVersion field int `json:\"schema_version\"`",
+      "CrashMetadataReport.StartedAt field time.Time `json:\"started_at\"`"
+    ],
+    "diagnostics.CrashOmission": [
+      "CrashOmission.Path field string `json:\"path\"`",
+      "CrashOmission.Reason field string `json:\"reason\"`"
+    ],
+    "diagnostics.CrashRecord": [
+      "CrashRecord.CephVersion field string `json:\"ceph_version,omitempty\"`",
+      "CrashRecord.CrashID field string `json:\"crash_id\"`",
+      "CrashRecord.Done field bool `json:\"done\"`",
+      "CrashRecord.Entity field string `json:\"entity,omitempty\"`",
+      "CrashRecord.Fields field map[string]any `json:\"fields\"`",
+      "CrashRecord.OmittedFields field []string `json:\"omitted_fields,omitempty\"`",
+      "CrashRecord.Path field string `json:\"path\"`",
+      "CrashRecord.Posted field bool `json:\"posted,omitempty\"`",
+      "CrashRecord.Process field string `json:\"process,omitempty\"`",
+      "CrashRecord.Timestamp field string `json:\"timestamp,omitempty\"`"
+    ],
+    "diagnostics.Report": [
+      "Report.Artifacts field []Artifact `json:\"artifacts\"`",
+      "Report.Closed field bool `json:\"closed\"`",
+      "Report.Complete field bool `json:\"complete\"`",
+      "Report.FinishedAt field time.Time `json:\"finished_at\"`",
+      "Report.HostNetwork field bool `json:\"host_network\"`",
+      "Report.SchemaVersion field int `json:\"schema_version\"`",
+      "Report.StartedAt field time.Time `json:\"started_at\"`"
+    ],
+    "diagnostics.Target": [
+      "Target.Container field testcontainers.Container",
+      "Target.Name field string",
+      "Target.Role field string"
+    ]
+  }
+}

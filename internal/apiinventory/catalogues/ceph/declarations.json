@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 331,
+  "count": 263,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -52,18 +52,6 @@
       "current": "ceph.BlocklistEntry",
       "kind": "type",
       "proposed": "ceph.BlocklistEntry",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CaptureFileSource",
-      "kind": "type",
-      "proposed": "ceph.CaptureFileSource",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CaptureSettler",
-      "kind": "type",
-      "proposed": "ceph.CaptureSettler",
       "decision": "baseline"
     },
     {
@@ -419,22 +407,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.CollectCrashMetadata",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config CrashMetadataConfig) (*CrashMetadataReport, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CollectCrashMetadata",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CollectDiagnostics",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config DiagnosticsConfig) (*DiagnosticsReport, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CollectDiagnostics",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.ConnectionConfig",
       "kind": "method",
       "signature": "func(ctx context.Context) (ConnectionConfig, error)",
@@ -507,14 +479,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.RedactSecrets",
-      "kind": "method",
-      "signature": "func(ctx context.Context, data []byte, values ...string) ([]byte, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RedactSecrets",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.RefreshClientMonitorConfig",
       "kind": "method",
       "signature": "func(ctx context.Context, client testcontainers.Container) error",
@@ -563,14 +527,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.TerminateOnCleanup",
-      "kind": "method",
-      "signature": "func(t testing.TB, config FinalizationConfig) (*Finalization, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.TerminateOnCleanup",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.WaitForClean",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -611,93 +567,9 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.CrashArchiveIncomplete",
-      "kind": "const",
-      "proposed": "ceph.CrashArchiveIncomplete",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashContainerUnavailable",
-      "kind": "const",
-      "proposed": "ceph.CrashContainerUnavailable",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.CrashDir",
       "kind": "const",
       "proposed": "ceph.CrashDir",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashDirectoryAbsent",
-      "kind": "const",
-      "proposed": "ceph.CrashDirectoryAbsent",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashDirectoryEmpty",
-      "kind": "const",
-      "proposed": "ceph.CrashDirectoryEmpty",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashEntriesRejected",
-      "kind": "const",
-      "proposed": "ceph.CrashEntriesRejected",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashExpectation",
-      "kind": "type",
-      "proposed": "ceph.CrashExpectation",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashMetadataConfig",
-      "kind": "type",
-      "proposed": "ceph.CrashMetadataConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashMetadataContainer",
-      "kind": "type",
-      "proposed": "ceph.CrashMetadataContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashMetadataReport",
-      "kind": "type",
-      "proposed": "ceph.CrashMetadataReport",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashOmission",
-      "kind": "type",
-      "proposed": "ceph.CrashOmission",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashOutcome",
-      "kind": "type",
-      "proposed": "ceph.CrashOutcome",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashReadFailed",
-      "kind": "const",
-      "proposed": "ceph.CrashReadFailed",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashRecord",
-      "kind": "type",
-      "proposed": "ceph.CrashRecord",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.CrashRecordsFound",
-      "kind": "const",
-      "proposed": "ceph.CrashRecordsFound",
       "decision": "baseline"
     },
     {
@@ -724,96 +596,6 @@
       "signature": "func(image string) DaemonOptions",
       "receiver": "DaemonOptions",
       "proposed": "ceph.DaemonOptions.WithImage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelApplied",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelApplied",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelApplyAttempted",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelApplyAttempted",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelApplyUncertain",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelApplyUncertain",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelConflict",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelConflict",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelNotApplied",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelNotApplied",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelPriorRead",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelPriorRead",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelReceipt",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelReceipt",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelReceipter",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelReceipter",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelRestoreAttempted",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelRestoreAttempted",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelRestored",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelRestored",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelSetting",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelSetting",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelState",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelState",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelTargetChanged",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelTargetChanged",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelTransition",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelTransition",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelUnconfirmed",
-      "kind": "const",
-      "proposed": "ceph.DebugLevelUnconfirmed",
       "decision": "baseline"
     },
     {
@@ -877,30 +659,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.DiagnosticArtifact",
-      "kind": "type",
-      "proposed": "ceph.DiagnosticArtifact",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DiagnosticsConfig",
-      "kind": "type",
-      "proposed": "ceph.DiagnosticsConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DiagnosticsContainer",
-      "kind": "type",
-      "proposed": "ceph.DiagnosticsContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DiagnosticsReport",
-      "kind": "type",
-      "proposed": "ceph.DiagnosticsReport",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.EntityAddress",
       "kind": "type",
       "proposed": "ceph.EntityAddress",
@@ -961,76 +719,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ExpectationResult",
-      "kind": "type",
-      "proposed": "ceph.ExpectationResult",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.FactsOf",
       "kind": "function",
       "signature": "func(c *Container) (ClusterFacts, error)",
       "proposed": "ceph.FactsOf",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization",
-      "kind": "type",
-      "proposed": "ceph.Finalization",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.Capture",
-      "kind": "method",
-      "signature": "func(name string, session CaptureSettler)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.Capture",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.CaptureWithFile",
-      "kind": "method",
-      "signature": "func(name string, session CaptureFileSource, maxBytes int64)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.CaptureWithFile",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.Check",
-      "kind": "method",
-      "signature": "func(name string, check func(context.Context) error)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.Check",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.Cleanup",
-      "kind": "method",
-      "signature": "func(name string, cleanup func(context.Context) error)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.Cleanup",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.TrackDebugLevel",
-      "kind": "method",
-      "signature": "func(handle DebugLevelReceipter)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.TrackDebugLevel",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Finalization.Verify",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config VerificationConfig) (*Verification, error)",
-      "receiver": "*Finalization",
-      "proposed": "ceph.Finalization.Verify",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.FinalizationConfig",
-      "kind": "type",
-      "proposed": "ceph.FinalizationConfig",
       "decision": "baseline"
     },
     {
@@ -1109,48 +801,6 @@
       "current": "ceph.InconsistentShard",
       "kind": "type",
       "proposed": "ceph.InconsistentShard",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogAssertion",
-      "kind": "const",
-      "proposed": "ceph.LogAssertion",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogClusterError",
-      "kind": "const",
-      "proposed": "ceph.LogClusterError",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogClusterSecurity",
-      "kind": "const",
-      "proposed": "ceph.LogClusterSecurity",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogClusterWarning",
-      "kind": "const",
-      "proposed": "ceph.LogClusterWarning",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogEvent",
-      "kind": "type",
-      "proposed": "ceph.LogEvent",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogExpectation",
-      "kind": "type",
-      "proposed": "ceph.LogExpectation",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.LogFatalSignal",
-      "kind": "const",
-      "proposed": "ceph.LogFatalSignal",
       "decision": "baseline"
     },
     {
@@ -2145,86 +1795,6 @@
       "current": "ceph.Status",
       "kind": "type",
       "proposed": "ceph.Status",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Verification",
-      "kind": "type",
-      "proposed": "ceph.Verification",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Verification.Evaluate",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (*VerificationReport, error)",
-      "receiver": "*Verification",
-      "proposed": "ceph.Verification.Evaluate",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationCheck",
-      "kind": "type",
-      "proposed": "ceph.VerificationCheck",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationClean",
-      "kind": "const",
-      "proposed": "ceph.VerificationClean",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationConfig",
-      "kind": "type",
-      "proposed": "ceph.VerificationConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationFinding",
-      "kind": "type",
-      "proposed": "ceph.VerificationFinding",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationGap",
-      "kind": "type",
-      "proposed": "ceph.VerificationGap",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationIncomplete",
-      "kind": "const",
-      "proposed": "ceph.VerificationIncomplete",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationOutcome",
-      "kind": "type",
-      "proposed": "ceph.VerificationOutcome",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationReport",
-      "kind": "type",
-      "proposed": "ceph.VerificationReport",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationSource",
-      "kind": "type",
-      "proposed": "ceph.VerificationSource",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationUnexpected",
-      "kind": "const",
-      "proposed": "ceph.VerificationUnexpected",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.VerificationWindow",
-      "kind": "type",
-      "proposed": "ceph.VerificationWindow",
       "decision": "baseline"
     },
     {

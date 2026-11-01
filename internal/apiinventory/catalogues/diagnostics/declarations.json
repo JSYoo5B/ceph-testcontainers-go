@@ -1,0 +1,131 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "diagnostics",
+  "count": 20,
+  "entries": [
+    {
+      "current": "diagnostics.Artifact",
+      "kind": "type",
+      "proposed": "diagnostics.Artifact",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.Collect",
+      "kind": "function",
+      "signature": "func(ctx context.Context, cluster *ceph.Container, config Config) (*Report, error)",
+      "proposed": "diagnostics.Collect",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CollectCrashMetadata",
+      "kind": "function",
+      "signature": "func(ctx context.Context, cluster *ceph.Container, config CrashMetadataConfig) (*CrashMetadataReport, error)",
+      "proposed": "diagnostics.CollectCrashMetadata",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.Config",
+      "kind": "type",
+      "proposed": "diagnostics.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashArchiveIncomplete",
+      "kind": "const",
+      "proposed": "diagnostics.CrashArchiveIncomplete",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashContainerUnavailable",
+      "kind": "const",
+      "proposed": "diagnostics.CrashContainerUnavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashDirectoryAbsent",
+      "kind": "const",
+      "proposed": "diagnostics.CrashDirectoryAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashDirectoryEmpty",
+      "kind": "const",
+      "proposed": "diagnostics.CrashDirectoryEmpty",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashEntriesRejected",
+      "kind": "const",
+      "proposed": "diagnostics.CrashEntriesRejected",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashMetadataConfig",
+      "kind": "type",
+      "proposed": "diagnostics.CrashMetadataConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashMetadataContainer",
+      "kind": "type",
+      "proposed": "diagnostics.CrashMetadataContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashMetadataReport",
+      "kind": "type",
+      "proposed": "diagnostics.CrashMetadataReport",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashOmission",
+      "kind": "type",
+      "proposed": "diagnostics.CrashOmission",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashOutcome",
+      "kind": "type",
+      "proposed": "diagnostics.CrashOutcome",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashReadFailed",
+      "kind": "const",
+      "proposed": "diagnostics.CrashReadFailed",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashRecord",
+      "kind": "type",
+      "proposed": "diagnostics.CrashRecord",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.CrashRecordsFound",
+      "kind": "const",
+      "proposed": "diagnostics.CrashRecordsFound",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.Redact",
+      "kind": "function",
+      "signature": "func(ctx context.Context, cluster *ceph.Container, data []byte, values ...string) ([]byte, error)",
+      "proposed": "diagnostics.Redact",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.Report",
+      "kind": "type",
+      "proposed": "diagnostics.Report",
+      "decision": "baseline"
+    },
+    {
+      "current": "diagnostics.Target",
+      "kind": "type",
+      "proposed": "diagnostics.Target",
+      "decision": "baseline"
+    }
+  ]
+}
