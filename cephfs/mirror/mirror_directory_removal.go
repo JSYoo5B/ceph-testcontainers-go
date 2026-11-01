@@ -81,7 +81,8 @@ type DirectoryRemovalDaemonStatus struct {
 // stopping, restarting or removing the cohort can prevent a release proof.
 // External policy, filesystem and direct container writers must not race it.
 //
-// A remove that was sent and whose reply was lost is never sent again: a retry
+// A remove that was sent and whose reply was lost is never sent again, whether
+// this receipt, RemoveDirectory or RebalanceDirectories sent it: a retry
 // that finds the policy gone continues to the release proof, and one that
 // still finds the path tracked returns a retryable error naming its native
 // state, even when that state is mapped, because the first remove can still
@@ -335,7 +336,10 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS directory removal policy", nil)
 	}
-	if r.requestAttempted {
+	// RemoveDirectory and RebalanceDirectories record their uncertain removes
+	// in pendingDirectoryRelease, so a remove sent through either of them is
+	// not sent again through this receipt.
+	if r.requestAttempted || r.original.mirror.pendingDirectoryRelease[r.directory] {
 		return uncertainRemoval(ctx, r.original.mirror, r.directory)
 	}
 	mapping, err := r.original.mirror.readCephFSObservedMapping(ctx, r.directory)
@@ -379,6 +383,11 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 		return err
 	}
 	r.requestAttempted = true
+	m := r.original.mirror
+	if m.pendingDirectoryRelease == nil {
+		m.pendingDirectoryRelease = make(map[string]bool)
+	}
+	m.pendingDirectoryRelease[r.directory] = true
 	if _, err := r.original.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.original.sourceFilesystem, r.directory); err != nil {
 		return cephFSObserveQuery("remove original CephFS mirror directory", err)
 	}

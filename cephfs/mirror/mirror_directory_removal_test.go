@@ -916,3 +916,29 @@ func TestCephFSDirectoryRemovalLegacyNeverResendsAnUncertainRemove(t *testing.T)
 		t.Fatalf("path that left the policy: count=%d error=%v", s.removals, err)
 	}
 }
+
+// An uncertain remove sent by RemoveDirectory is not sent again through a
+// receipt that BeginDirectoryRemoval creates afterwards: the receipt reports
+// the native state until the path leaves the policy.
+func TestCephFSDirectoryRemovalReceiptNeverResendsALegacyUncertainRemove(t *testing.T) {
+	m, s, _, a, _ := newDirectoryRemovalFixture()
+	s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+	if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || s.removals != 1 || !m.pendingDirectoryRelease["/owned"] {
+		t.Fatalf("failed remove: count=%d error=%v", s.removals, err)
+	}
+	s.removeError, s.applyRemoval = nil, true
+	r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
+	if r == nil || !errors.Is(err, errCephFSUncertainRemoval) || !strings.Contains(err.Error(), "mapped") || s.removals != 1 || !m.ownedDirectories["/owned"] {
+		t.Fatalf("receipt resent the uncertain remove: count=%d error=%v", s.removals, err)
+	}
+	// The MGR applies the first remove later.
+	s.directories = slices.DeleteFunc(s.directories, func(name string) bool { return name == "/owned" })
+	again, err := m.BeginDirectoryRemoval(t.Context(), "/owned")
+	if err != nil || again != r || s.removals != 1 || m.ownedDirectories["/owned"] || m.pendingDirectoryRelease["/owned"] {
+		t.Fatalf("path that left the policy: same=%v count=%d error=%v", again == r, s.removals, err)
+	}
+	a.stats = `{}`
+	if st, err := r.WaitReleased(t.Context()); err != nil || !st.Released || s.removals != 1 {
+		t.Fatalf("release after the legacy remove: %+v %v", st, err)
+	}
+}
