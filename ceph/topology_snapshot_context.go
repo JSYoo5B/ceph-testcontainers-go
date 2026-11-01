@@ -67,8 +67,7 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 	return result, nil
 }
 
-// Monitors returns the owned MON membership sorted by daemon name,
-// like Monitors, waiting for the topology only while ctx remains active.
+// Monitors returns the owned MON membership sorted by daemon name, waiting for the topology only while ctx remains active.
 //
 // The returned slice is independent; descriptors and containers stay owned by
 // the cluster. Stop and Start on a handle inject failures and keep the
@@ -93,8 +92,7 @@ func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 	return c.monitorTopology().monitorsLocked(), nil
 }
 
-// OSDs returns the owned OSD descriptors sorted by ID, like OSDs,
-// waiting for the topology only while ctx remains active.
+// OSDs returns the owned OSD descriptors sorted by ID, waiting for the topology only while ctx remains active.
 //
 // The returned slice is independent; descriptors and containers stay owned by
 // the cluster. Stop and Start on a handle inject daemon failures and keep the
@@ -124,8 +122,10 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 // independent CLI container created by the first AddMonitor (also during Run),
 // so commands keep working while MON a is stopped or removed. It runs the
 // essential image, so it has the ceph CLI and bootstrap tools such as
-// ceph-authtool but not rados and rbd (use ClientContainer) or radosgw-admin
-// (use rgw.Gateway.Admin). Do not pause or stop it; fault.Pause refuses it.
+// ceph-authtool. With split role images it has neither rados and rbd (use
+// ClientContainer) nor radosgw-admin (use rgw.Gateway.Admin); an aggregate
+// image may have them, but do not rely on that. Do not pause or stop it;
+// fault.Pause refuses it.
 //
 //purpose:handoff,native
 func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -41,12 +42,20 @@ func (TLSConfig) String() string { return "RGW TLS certificate and private key" 
 // key.
 func (c TLSConfig) GoString() string { return c.String() }
 
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields.
+func (c TLSConfig) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
+
 // String names the gateway without its S3 credentials or TLS key.
 func (g Gateway) String() string { return "RGW gateway " + g.config.Name }
 
 // GoString formats the gateway like String, so %#v does not print its
 // credentials.
 func (g Gateway) GoString() string { return g.String() }
+
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields.
+func (g Gateway) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, g.String()) }
 
 func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {
 	if config == nil {

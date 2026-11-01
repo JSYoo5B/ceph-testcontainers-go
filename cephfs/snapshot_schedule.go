@@ -365,7 +365,7 @@ func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleSta
 }
 
 // Snapshots lists the snapshots in the directory's .snap that the module
-// took, named "scheduled-…", oldest first, through libcephfs in the control
+// took, named "scheduled-…", oldest first, through libcephfs in the client
 // container.
 //
 //purpose:observation

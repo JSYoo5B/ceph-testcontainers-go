@@ -81,7 +81,7 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer stop()
 			// Setup clients must run for the existing native policy cleanup.
-			for _, c := range []testcontainers.Container{m.sourceClient, m.destinationClient} {
+			for _, c := range []testcontainers.Container{m.pair.sourceClient, m.pair.destinationClient} {
 				if c != nil {
 					if state, err := c.State(cleanup); err == nil && state != nil && !state.Running {
 						_ = c.Start(cleanup)
@@ -118,8 +118,8 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		id        string
 	}
 	targets := []target{
-		{container: m.sourceClient, cluster: source, keyPath: "/etc/ceph/ceph.client.admin.keyring"},
-		{container: m.destinationClient, cluster: destination, keyPath: "/etc/ceph/ceph.client.admin.keyring"},
+		{container: m.pair.sourceClient, cluster: source, keyPath: "/etc/ceph/ceph.client.admin.keyring"},
+		{container: m.pair.destinationClient, cluster: destination, keyPath: "/etc/ceph/ceph.client.admin.keyring"},
 		{container: m.Container, cluster: destination, keyPath: "/etc/ceph/rbd-mirror.keyring"},
 	}
 	bootstrap := regexp.MustCompile(`(?m)^mon host = .*$`)
@@ -139,12 +139,12 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	identities := m.policyIdentities
+	identities := m.pair.policyIdentities
 	wrong := *identities
 	wrong.source.selected.MirrorUUID = uuid.NewString()
-	m.policyIdentities = &wrong
+	m.pair.policyIdentities = &wrong
 	err = m.RefreshMonitorConfig(ctx)
-	m.policyIdentities = identities
+	m.pair.policyIdentities = identities
 	if err == nil || !strings.Contains(err.Error(), "identity changed; refusing monitor refresh") {
 		t.Fatalf("native selected-policy guard was bypassed: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 			t.Fatal("refresh changed private state/credentials or failed to repair a stopped target", err)
 		}
 	}
-	for _, c := range []testcontainers.Container{m.sourceClient, m.destinationClient} {
+	for _, c := range []testcontainers.Container{m.pair.sourceClient, m.pair.destinationClient} {
 		if err := c.Start(ctx); err != nil {
 			t.Fatal(err)
 		}

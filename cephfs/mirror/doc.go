@@ -15,10 +15,11 @@
 // BeginPeerRemoval (then PeerRemoval.WaitDrained) return a receipt that keeps
 // the original state and proves what happened, even after a lost reply. The
 // receipts share these rules:
-//   - Begin* returns (nil, err) when it refused before changing Ceph, and
-//     (receipt, err) when the native request may or may not have been
-//     applied: call the same Begin* again with the same path or peer UUID and
-//     a fresh context; the retry returns the same receipt, checks Ceph first
+//   - Begin* returns (nil, err) when it refused during admission, before it
+//     recorded a receipt. Once a receipt is recorded, every error returns it
+//     with the error, whether or not the native request was sent: call the
+//     same Begin* again with the same path or peer UUID and a fresh context;
+//     the retry returns the same receipt, checks Ceph first
 //     and does not resend an applied request.
 //   - While a receipt is pending, the fixture refuses changes that would
 //     disturb it; Daemon.Remove and Terminate are always allowed.

@@ -82,8 +82,9 @@ type cephFSPinOverrideState struct {
 }
 
 // PinPolicy reads all three local fields on an owned subvolume's base
-// directory through libcephfs inside the control container. No host mount or
-// Go native dependency is required; the image must supply Python libcephfs.
+// directory through libcephfs inside the client container (ClientContainer). No
+// host mount or Go native dependency is required; the client image must supply
+// Python libcephfs.
 //
 //purpose:observation
 func (volume *Subvolume) PinPolicy(ctx context.Context) (*PinPolicy, error) {

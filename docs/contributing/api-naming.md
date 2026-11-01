@@ -18,7 +18,7 @@ constants and variables. It scans all non-test Go source files, including
 build-tag alternatives, and refuses conflicting duplicate declarations.
 The separate per-package `members.json` catalogues record the
 exported field/nested-record/embedding entries. They also scan
-declared interface methods; this source has no exported declared interfaces.
+declared interface methods.
 Promoted dependency methods are not duplicated. The catalogue does not rename
 Testcontainers or standard-library APIs. Implementing a rename still requires
 compilation of the resulting method sets and affected callers.
@@ -52,8 +52,9 @@ It refuses a stale catalogue, a pending `proposal` row, and a missing review
 note or reference page. The receipt names the review note
 (this page by default, `-review` selects another) and the usage page of the
 package (`<package>/README.md`).
-The other commands are `check` (what the tests verify) and `aggregate` (the
-per-package counts and totals, computed on demand and never committed).
+The other commands are `check` (what the tests verify), `resolve` (a
+catalogue merge, see [Testing](testing.md)) and `aggregate` (the per-package
+counts and totals, computed on demand and never committed).
 
 Normal `go test ./internal/apiinventory` verifies without modifying files. The
 proposal map is `catalogue.Proposals` in

@@ -22,7 +22,9 @@ the description a reviewer checks.
 the directives with Go syntax only, not with type information:
 
 - every exported top-level declaration of a package in the `test_only_packages`
-  list of `internal/tools/testsupportcheck/manifest.json` has one;
+  list of `internal/tools/testsupportcheck/manifest.json` has one, except the
+  `harness_packages` (`internal/integration/harness`), which it reads like
+  `_test.go` files and does not check;
 - every non-test declaration outside those packages whose doc or trailing
   comment says it exists for tests (for example "replaced in tests", "tests
   replace it" or "test-only") has one;

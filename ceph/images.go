@@ -84,8 +84,10 @@ func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 
 // WithCephFSImage selects the image of the CephFS role: every metadata server
 // of the cluster, those started by Run with cephfs.WithFilesystems as well as
-// those started later. Without it MDS daemons use the Run image. Images().CephFS
-// reports it, the usual image argument of cephfs/mirror.Run. With WithImageSet it replaces the set's CephFS role. Use matching
+// those started later. Without it MDS daemons use the CephFS role of the
+// cluster's images, which is the Run image unless WithImageSet selects another.
+// FactsOf(c).Images.CephFS reports it, the usual image argument of
+// cephfs/mirror.Run. With WithImageSet it replaces the set's CephFS role. Use matching
 // Ceph versions. A blank image is refused.
 //
 //purpose:construction
@@ -96,8 +98,9 @@ func (o ImageOptions) WithCephFSImage(image string) ImageOptions {
 
 // WithRGWImage selects the image of the RGW role: every gateway of the cluster,
 // those started by Run with rgw.WithGateways as well as those started later
-// with rgw.Start. Without it gateways use the Run image. Images().RGW reports
-// it, so the multisite setup clients use it too; multisite gateways take their
+// with rgw.Start. Without it gateways use the RGW role of the cluster's images,
+// which is the Run image unless WithImageSet selects another.
+// FactsOf(c).Images.RGW reports it, so the multisite setup clients use it too; multisite gateways take their
 // image as an argument of multisite.Run instead. With
 // WithImageSet it replaces the set's RGW role. Use matching Ceph versions. A
 // blank image is refused.

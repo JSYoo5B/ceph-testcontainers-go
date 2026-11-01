@@ -31,10 +31,10 @@ Only these choices follow from it:
 | Fact | Source | Consequence |
 | --- | --- | --- |
 | The first MON runs `mon.sh`; an added MON runs `mon-join.sh`. Both run mkfs only when `<data>/store.db` is absent, otherwise they `exec ceph-mon -f`. | `ceph/internal/scripts/mon.sh`, `mon-join.sh` | A fresh empty volume mounted where a retained store was required would silently format a new store and join as a new member. The retained launch needs a mode that fails closed when `store.db` is missing. |
-| Neither MON path mounts a data volume. The only mount is the run volume. | `runMonitor` in `ceph/ceph.go`, `AddMonitor` in `ceph/topology.go` | Without the volume the store lives in the container's writable layer, and a new container starts empty. |
+| Without `MonitorStorage.WithVolume`, neither MON path mounts a data volume; the only mount is the run volume. | `runMonitor` in `ceph/ceph.go`, `AddMonitor` in `ceph/topology.go` | Without the volume the store lives in the container's writable layer, and a new container starts empty. |
 | `ceph-mon --mkfs` refuses a data directory that holds anything except `kv_backend`; `ceph-mon` without mkfs exits when the directory is missing or empty. | `ceph_mon.cc` (`check_mon_data_empty`, `check_mon_data_exists`) | A half-formatted store is detectable by shape, and a failed first start cannot be retried on the same bytes without inspection. |
 | `Monitor::mkfs` writes the cluster UUID, the seed monmap and the mon. key into the store, and moves the mon. key into `<data>/keyring`. | `Monitor.cc` (`mkfs`, `write_fsid`, `extract_save_mon_key`) | The identity inside `store.db` (`cluster_uuid`, monmap) is not readable with plain file operations. Offline file checks can bind the `keyring` bytes and the store shape; fsid and rank binding come from the live monmap while the member is down. Whether an image tool can read `store.db` offline is not established. |
-| The first MON is the embedded `testcontainers.Container` of `*ceph.Container`. `Terminate` on it is cluster-wide, and `RemoveMonitor("a")` only sets `monitorTerminated`. | `ceph/ceph.go`, `ceph/handles.go` | The initial MON cannot be replaced by swapping a container into that field without a data race on a field users read without a lock. |
+| The first MON is the embedded `testcontainers.Container` of `*ceph.Container`. `Terminate` on it is cluster-wide, and `MonitorContainer.Remove` or `Replace` on MON a only marks it terminated (`monitorTerminated`). | `ceph/ceph.go`, `ceph/handles.go`, `ceph/monitor_topology.go` | The initial MON cannot be replaced by swapping a container into that field without a data race on a field users read without a lock. |
 | OSD storage is one cluster-owned volume with a persistent helper, per-ID directories, publish-before-create, owner labels, a creation timestamp check, non-forced release and a second release stage after the label scan. | `ceph/osd_volume_storage.go`, `ceph/osd_storage_state.go`, `ceph/osd_storage_release.go`, [OSD volume storage](osd-storage.md#volume-storage) | The ownership vocabulary is reused. The topology (one volume, one helper) is not: a MON store has one volume per MON and no helper. |
 
 ## Ownership model
@@ -402,7 +402,7 @@ On a bridge:
   for the recorded IPv4 address, and creates the container without starting
   it. It first runs a preparation hook; the replacement clears the admin
   socket the old daemon left in the shared run directory there.
-- `Observe` reads the container's IPv4 address on the cluster network.
+- `Observe` reads the container's IPv4 address on the cluster's public network.
 - `Hold` only checks that no container of the network has the address: every
   container of the cluster is created under `Container.mu`, and a taken
   address fails the creation.

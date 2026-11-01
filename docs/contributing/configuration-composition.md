@@ -4,8 +4,8 @@ These are the composition rules of the value configurations and of the entry
 points that take them: the `Run` groups (`ceph.ClusterConfig`, `ceph.ImageOptions`,
 `ceph.OSDStorage`, `ceph.NetworkConfig`) and the operation values
 (`ceph.OSDOptions`, `ceph.DaemonOptions`, `ceph.ClientOptions`,
-`ceph.ClientContainerOptions`). This page is also the review note of the
-`ceph`, `cephfs/mirror` and `rbd/mirror` API catalogue receipts.
+`ceph.ClientContainerOptions`). The `ceph` doc comments link to this page as the design note of these
+values.
 
 ## Shape
 

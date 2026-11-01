@@ -100,7 +100,8 @@ type Container struct {
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 }
 
-// OSDContainer is one storage daemon backed by a sparse BlueStore file.
+// OSDContainer is one storage daemon backed by a sparse BlueStore file by
+// default, or by process memory with OSDStorage.WithObjectStore(OSDMemStore).
 // The file is container-local unless OSDStorage.WithInMemory or
 // OSDStorage.WithVolume is selected.
 // Stop/Start can be used for failure injection; OSDContainer.Remove drains and purges it.
@@ -192,9 +193,9 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // bridge network (two with NetworkConfig.WithSeparateClusterNetwork) or checks
 // the engine in host mode, starts MON a and records its configuration, admin
 // keyring and Ceph version, adds the remaining MONs (and, with more than one,
-// the separate CLI control container), starts the MGRs (the first stays
-// active), registers and starts the OSDs and waits until they are up and in,
-// waits for an available active MGR (or, with
+// the separate CLI control container), starts the first MGR, registers and
+// starts the OSDs and waits until they are up and in, then starts the
+// remaining MGRs (the first stays active), waits for an available active MGR (or, with
 // ClusterConfig.WithNoInitialManagers, for quorum and the OSDs), and finally
 // creates the ClusterConfig.WithPools pools and the resources of the service
 // options. Run does not wait for clean placement groups; call WaitForClean
@@ -1069,13 +1070,14 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 
 // Terminate removes all owned daemons before removing the isolated network.
 // It also works on a partially initialized cluster returned by Run. The whole
-// cluster is discarded, so each container gets terminationStopTimeout instead
-// of Docker's 10 seconds to stop before it is killed; a StopTimeout option
+// cluster is discarded, so each container gets 2 seconds instead of Docker's
+// 10 seconds to stop before it is killed; a StopTimeout option
 // passed by the caller still takes precedence. From its start, also when it
 // then fails, Terminate refuses new native commands and cancels the running
 // ones, including the command of an rgw.Gateway.Admin call.
 //
-// It first restores network interruptions and resumes paused containers, then
+// It first restores network delays and interruptions and resumes paused
+// containers, then
 // releases host port reservations, stops services (RGW, MDS) before OSDs,
 // removes every owned daemon and helper container, the OSD storage volumes and
 // the shared admin-socket run volume, and finally the owned networks. Every

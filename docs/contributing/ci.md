@@ -17,6 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases), on `main` |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
+| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
 The runtime workflows call the reusable template `tagged-runtime.yml`
@@ -104,8 +105,9 @@ allowlist:
 - Markdown files directly inside `docs/contributing/`, `docs/guides/` and
   `docs/internals/`, except the files a check reads:
   `docs/contributing/api-naming.md` and
-  `docs/contributing/configuration-composition.md` (the review notes that the
-  API catalogue receipts name),
+  `docs/contributing/configuration-composition.md` (the review note that the
+  API catalogue receipts name, and the design note that `ceph` doc comments
+  link to),
   `docs/guides/messenger-client-fixtures.md` and
   `docs/guides/bug-compatibility.md`.
 
@@ -114,7 +116,7 @@ Every other path runs the full Code checks, including a package's
 under `docs/`, and a changed path whose old or new Git mode is not an ordinary
 file. `test_docs_only.py` fails when a Go source or `tag_scenarios.py` names a
 documentation path that is on the allowlist. Add a newly read file to
-`READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
+`READ_DOC_FILES` in `docs_only.py`.
 
 The detection fails open. Pushes to `main`, the weekly schedule, manual runs,
 pull requests from forks, and any failure to determine the change set (no
@@ -133,6 +135,7 @@ lists renames as a deletion and an addition.
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
 | Native regressions | none | Runs are independent. |
+| Block fault probe | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous probe. |
 
 Consequences:
 - Different PRs never cancel each other. In a stack, base each PR on the head
@@ -204,15 +207,16 @@ Nothing in the workflows names a test.
    profiles as the matrix; `plan --optional --batch <name>` selects one
    optional batch; `plan --representative` selects the campaign set.
 5. **Verification.** `plan --verify` compiles the `all`, category and
-   single-batch builds with `go test -list` and compares the test names with
-   the catalog. Code checks runs it; the runtime workflows do not.
+   single-batch builds, including every optional batch, with `go test -list`
+   and compares the test names with the catalog. Code checks runs it; the runtime workflows do not.
 
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as
 `short-default-a488da21`, used in artifact names, summaries and annotations.
 
 The planner, compiler and runner always use `CGO_ENABLED=0`, `GOWORK=off` and
 `GOFLAGS=-mod=readonly`, and pass only build tags and the batch timeout to
-`go test` (no `-run`, `-short` or name filters). To move a test between
+`go test`, with no `-short` or name filters; the only `-run` is the list of
+mode-declaring tests of a network-mode entry other than the default. To move a test between
 batches, change its build constraint.
 
 Checker batches (CephFS process quiescence and process recovery per receipt
@@ -387,10 +391,12 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
 | Record runner storage after the tests | n/a | Ceph batches only, also after a failure. Writes `runner-storage/storage-after.json`. |
-| Verify owned Docker resource cleanup | Docker resource cleanup | Runs after any failure once the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. Never deletes anything. |
-| Show actual failure phases | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
+| Verify owned Docker resource cleanup | Docker resource cleanup | Runs whenever the baseline succeeded, also after a failure. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. Never deletes anything. |
+| Show actual failure phases in PR check annotations and summary | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
 | Normalize the scenario history row | n/a | Writes `history-row.json` (see [Scenario history](#scenario-history)). Its failure never changes the job result. |
-| Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
+| Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>-<release>`. |
+| Record the failure archive upload | n/a | After a native failure, writes the number of local archive manifests and the upload's outcome and artifact to the summary. |
+| Read the scenario history summary | n/a | On failure, reads `summary.json` from the `scenario-history` branch for the next step; a missing branch leaves it out. |
 | Identify completed failing tests | n/a | On failure, annotates each failed test or subtest found in `native.log`. |
 
 The job sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1` and
@@ -412,8 +418,8 @@ Without `--binary`, `run` builds and runs with `go test`. To follow the CI
 path locally:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --directory artifacts/c/compile
-python3 .github/scripts/tag_scenarios.py run --category code --batch pure --directory artifacts/c/run --binary artifacts/c/compile
+python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --package ./internal/integration --directory artifacts/c/compile
+python3 .github/scripts/tag_scenarios.py run --category code --batch pure --package ./internal/integration --directory artifacts/c/run --binary artifacts/c/compile
 ```
 
 ### Image roles
@@ -423,7 +429,8 @@ Ceph batches declare their roles in `//ci:` metadata: `essential`, `client`,
 CephFS adds `cephfs`, RBD mirroring and cache add `rbd-aux`, and gateways add
 `rgw`. An undeclared Ceph profile gets all five; non-Ceph profiles get none.
 Only declared roles are prepared, and a missing role is never substituted:
-`integrationImages` fails when a used feature's role is missing. The optional
+`ceph.Run`, or the feature's own operation, refuses a missing role
+(`harness.IntegrationImages` itself only requires the essential image). The optional
 `role_routing` and `role_mirror_refresh` batches cover constrained routing
 and can be requested with `/ci run`.
 
@@ -479,14 +486,14 @@ of skipping (see [Writing the test body](testing.md#writing-the-test-body)).
 
 | Job | Limit |
 | --- | --- |
-| Code checks jobs | 15 to 25 minutes, fixed in `code.yml` |
+| Code checks jobs | 5 to 25 minutes, fixed in `code.yml` |
 | Plan job of each runtime workflow | 10 minutes |
 | Each batch job | `job-timeout` from the batch's `//ci:` line |
 | The `go test` process of a batch | `timeout` from the batch's `//ci:` line |
 
 The planner accepts a process timeout up to 6 hours and a job timeout of 1 to
 360 minutes, and requires the job timeout to exceed the process timeout;
-batches leave 10 to 15 minutes for setup and cleanup. Run
+batches leave 5 to 15 minutes for setup and cleanup. Run
 `tag_scenarios.py plan` to see every budget. Runners are GitHub-hosted
 `ubuntu-24.04` machines with 16 GB of memory. `CEPH_TEST_PARALLEL=2` lets two
 opted-in tests run at once in a batch; the rest run sequentially within the
@@ -719,15 +726,18 @@ has been run on Docker Desktop, whose kernel has NBD built in.
 4. **Download the artifacts.**
 
    ```sh
-   gh run download <run-id> -n tag-scenario-<profile-id> -D artifacts/ci-<run-id>
+   gh run download <run-id> -n tag-scenario-<profile-id>-<release> -D artifacts/ci-<run-id>
    ```
+
+`<id>` is the matrix entry's profile ID, `<release>` the Ceph release such as
+`20.2.4`, and a repeated campaign entry adds `-r<n>`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `runner-storage/` (see below); `phases.json`; `history-row.json` |
-| `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity and labelled resources before and after |
-| `runtime-cleanup-<id>-baseline` | Only when the baseline itself failed |
-| `scenario-images-<id>` | `summary.json` with resolved role image IDs, digests and platform |
+| `tag-scenario-<id>-<release>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `runner-storage/` (see below); `phases.json`; `history-row.json` |
+| `runtime-cleanup-<id>-<release>` | `before.json` and `after.json`: engine identity and labelled resources before and after |
+| `runtime-cleanup-<id>-<release>-baseline` | Only when the baseline itself failed |
+| `scenario-images-<id>-<release>` | `summary.json` with resolved role image IDs, digests and platform |
 | `plan-<category>-<release>` | `tag-plan.json` (selected profiles) and `tag-dispatch.json` (the expanded matrix with network scope, repetitions, run, attempt, release and category) |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage and the `code` batch results |
 
@@ -768,12 +778,13 @@ space.
 | --- | --- | --- |
 | Go module preparation | `modules/modules.log`, `modules/modules-report.json` | Proxy and origin both failed, or `go.sum` lacks an entry. |
 | Compilation | `compile/compile.log`, `compile/compile-report.json` | A test calls a helper that only another batch compiles; run `plan --verify` (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). |
-| Docker baseline | the step log, `runtime-cleanup-<id>-baseline` | Docker was not ready within 60 seconds. |
-| Published image preparation | `scenario-images-<id>` | A role image is missing from the registry or could not be pulled. |
+| Docker baseline | the step log, `runtime-cleanup-<id>-<release>-baseline` | Docker was not ready within 60 seconds. |
+| Published image preparation | `scenario-images-<id>-<release>` | A role image is missing from the registry or could not be pulled. |
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. A health wait that sees only `MON_DISK_LOW` points at runner storage: read `runner-storage/`. |
-| Docker resource cleanup | `runtime-cleanup-<id>/after.json` | A test left a container, network or volume behind, for example by not registering cleanup when `Run` returned an error. |
+| Docker resource cleanup | `runtime-cleanup-<id>-<release>/after.json` | A test left a container, network or volume behind, for example by not registering cleanup when `Run` returned an error. |
 
-Failed integration tests print the last 16 KB of every daemon's log into
+Failed integration tests print the last 16 KB (8 KB in the multicluster and
+host-network helpers) of every daemon's log into
 `native.log` before the cluster is removed; search for `container ... logs:`.
 
 ### Dispatch join

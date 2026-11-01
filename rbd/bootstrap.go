@@ -22,7 +22,7 @@ func newPoolsBootstrap(configs []ceph.PoolConfig) (*poolsBootstrap, error) {
 			return nil, fmt.Errorf("RBD pool %q cannot use application %q", config.Name, config.Application)
 		}
 		if config.ErasureCode != nil {
-			return nil, fmt.Errorf("RBD pool %q must be replicated; create EC data pools with WithPools", config.Name)
+			return nil, fmt.Errorf("RBD pool %q must be replicated; create EC data pools with ceph.ClusterConfig.WithPools", config.Name)
 		}
 		config = clonePool(config)
 		config.Application = "rbd"
@@ -52,8 +52,8 @@ func (b *poolsBootstrap) Start(ctx context.Context, c *ceph.Container) error {
 
 // WithPools creates replicated pools for RBD images during Run and
 // initializes their RBD metadata. Application defaults to rbd and must not be
-// another application; erasure-coded data pools are created with WithPools and
-// referenced as an image's data pool. Repeated options replace the list, and
+// another application; erasure-coded data pools are created with
+// ceph.ClusterConfig.WithPools and referenced as an image's data pool. Repeated options replace the list, and
 // passing the option replaces the default rbd pool of Run. The other
 // ceph.PoolConfig fields keep their ceph meaning: a zero PGNum selects 8 PGs
 // with the autoscaler off, zero Replicas and MinSize select the cluster

@@ -82,7 +82,9 @@ if err != nil {
   set up multisite); Squid replicates nothing for a user-mode pipe with an
   account root user, which `CreatePipe` refuses with `ceph.ErrUnsupported`.
 - Out of scope: automatic failover, request routing between zones, recovery
-  point guarantees, WAN latency and partial partitions between zones.
+  point guarantees and realistic WAN models. A zone link can still be delayed
+  or made lossy in one direction with `ApplyZoneLinkProfile`, or cut with
+  `InterruptZoneLink`.
 
 ## Reference
 

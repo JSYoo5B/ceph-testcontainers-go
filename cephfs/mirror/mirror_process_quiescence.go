@@ -44,7 +44,8 @@ type ProcessBindingStatus struct {
 // It does not query Docker or establish task cessation.
 //
 // State is disabled, bound, partial-startup, context-unavailable,
-// factory-error, empty-client, positive-binding-failed or closed.
+// factory-error, empty-client, positive-binding-failed or closed, and
+// unavailable for a nil Daemon.
 //
 //purpose:observation
 func (d *Daemon) ProcessObserverBindingStatus() ProcessBindingStatus {

@@ -189,9 +189,9 @@ type LogExpectation struct {
 	Daemon string
 	// Event is the kind of line.
 	Event LogEvent
-	// Pattern is a regular expression (RE2 syntax) that must match the
-	// whole redacted line without its Docker timestamp, including the log
-	// envelope. Event, not Pattern, selects the structural kind.
+	// Pattern is a regular expression (RE2 syntax), searched unanchored in
+	// the whole redacted line without its Docker timestamp, including the log
+	// envelope; anchor it with ^ and $ to require a full match. Event, not Pattern, selects the structural kind.
 	Pattern string
 }
 

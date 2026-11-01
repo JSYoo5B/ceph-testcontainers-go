@@ -245,7 +245,7 @@ func TestRGWPlacementUsesRuntimeIDsAndRetainsDefault(t *testing.T) {
 	if _, err := g.CreatePlacement(t.Context(), rgwPlacementTestConfig()); err == nil {
 		t.Fatal("existing placement was overwritten")
 	}
-	for _, format := range []string{"%v", "%+v", "%#v"} {
+	for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%t", "%10.3f"} {
 		if value := fmt.Sprintf(format, p); strings.Contains(value, "PRIVATE") {
 			t.Fatal("placement descriptor exposed native zone secrets")
 		}

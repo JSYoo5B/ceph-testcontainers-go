@@ -1,6 +1,6 @@
 // Package fault injects dedicated faults into an existing Ceph fixture.
-// Cluster-bound operations use ceph.Run's lifetime and are restored by its
-// Terminate, in this order: network shaping first, endpoint restoration
+// Cluster-bound operations that return a handle use ceph.Run's lifetime and are
+// restored by its Terminate, in this order: network shaping first, endpoint restoration
 // second, then paused containers are resumed. Standalone link operations
 // (InterruptLink, ApplyLinkProfile) are restored by their caller before it
 // removes their container or bridge. Keep a non-nil handle returned with an

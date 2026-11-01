@@ -4,5 +4,5 @@
 //
 // Run starts the fixture for two existing clusters. The pool and namespaces
 // are prepared with the rbd package. CephFS snapshot mirroring is a separate
-// fixture in the cephfs package; the two services share no public interface.
+// fixture in the cephfs/mirror package; the two services share no public interface.
 package mirror

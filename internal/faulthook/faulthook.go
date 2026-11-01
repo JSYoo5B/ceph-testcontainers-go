@@ -6,8 +6,9 @@
 // The registry is the only way to make a fault known to Terminate. Each kind
 // has a phase that package ceph fixes: network delays are undone first with
 // the cluster mutex released, interruptions second under it (a failure keeps
-// the network), pauses third under it, and blocklist and full ratios
-// overrides are only tracked for overlap and identity. Callers cannot add a
+// the network), pauses third under it, and the blocklist, full ratios,
+// configuration, OSD flag and MGR module overrides are only tracked for
+// overlap and identity. Callers cannot add a
 // phase, change the order or register another cleanup.
 //
 // Lock rules: Reserve, Settle, Release, Tracks, Closed, Owns, OwnedOSD,

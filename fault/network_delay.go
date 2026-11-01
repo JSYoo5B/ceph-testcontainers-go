@@ -155,7 +155,8 @@ type NetworkProfile struct {
 	Plane ceph.NetworkPlane
 	// Delay is added to every packet that leaves the target through that
 	// endpoint: at least 1ms and at most MaxNetworkDelay, in whole
-	// microseconds. With a Loss or a Rate it may be zero.
+	// microseconds. With a Loss, a Rate, a Duplicate or a Corrupt it may be
+	// zero.
 	Delay time.Duration
 	// Jitter varies each packet's delay uniformly within ±Jitter. It is at
 	// most Delay, in whole microseconds.
@@ -204,9 +205,9 @@ type NetworkProfile struct {
 	// for the rate, and for the Delay, share one queue of QueueLimit
 	// packets; one that arrives at a full queue is dropped and counted in
 	// NetworkProfileStatus.Drops. Zero sets no limit. With a Loss, netem
-	// drops first, then delays, then paces what is left. It shapes only what
-	// the target sends: to limit what the target receives from a peer, limit
-	// the peer's endpoint with the target's address. What an application
+	// drops first, then delays, then paces what is left. With Direction
+	// Outbound it shapes only what the target sends; Inbound and
+	// BothDirections apply the same Rate at each peer's endpoint. What an application
 	// achieves through it is less, and is for the caller to measure; the
 	// status's Rate and counters are configuration and counts, not a
 	// throughput. The preflight adds and removes a netem qdisc with a rate on

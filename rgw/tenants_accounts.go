@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"reflect"
 	"regexp"
@@ -82,6 +83,10 @@ func (a *Account) ID() string {
 
 func (a Account) String() string   { return "RGW account " + a.id }
 func (a Account) GoString() string { return a.String() }
+
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields.
+func (a Account) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, a.String()) }
 
 // AccountInfo contains account-wide limits and the individual bucket policy.
 // AccountQuota applies across all account users, buckets and roles, rather than

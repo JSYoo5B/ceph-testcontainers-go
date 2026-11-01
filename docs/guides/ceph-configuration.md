@@ -63,7 +63,7 @@ All names, including the pools a filesystem creates, are validated together.
 Filesystems and gateways need OSDs and a manager, so they are rejected with
 `ClusterConfig.WithNoInitialOSDs` or `ClusterConfig.WithNoInitialManagers`; RBD pools need OSDs but no
 manager. The cluster owns all service containers: `Terminate` removes them, and
-[ServiceContainers](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ServiceContainers) lists them.
+[ServiceContainers](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.ServiceContainers) lists them.
 
 Each service package also has its own `Run`, which takes every `ceph.Run` option
 and adds that service's default when its own option is absent: `rbd.Run` creates
@@ -122,7 +122,7 @@ daemons bind the concrete address of each family. The wildcard listener
 accepts connections to the advertised address, so clients are not affected,
 but a test that reads the MGR container's listening sockets sees `[::]`.
 
-`Run`, [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddManager) and [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) then read
+`Run`, [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddManager) and [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) then read
 [DaemonAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonAddresses) and check that every MON, the active MGR
 and every up OSD advertise exactly one concrete IPv4 and one concrete IPv6
 address for each protocol. An unspecified, IPv4-mapped or link-local address,
@@ -199,11 +199,11 @@ The RGW's own librados session follows the vectors like any other client.
 `TestDualStackReplacement` replaces one daemon of each kind with a new
 container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
 
-1. [AddMonitor](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddMonitor) `c`, then [MonitorContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#MonitorContainer.Remove) `b`;
-2. [AddOSD](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddOSD) (osd.2), then [OSDContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) `0`;
+1. [AddMonitor](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddMonitor) `c`, then [MonitorContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#MonitorContainer.Remove) `b`;
+2. [AddOSD](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddOSD) (osd.2), then [OSDContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) `0`;
 3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
    MDS started with `MDS.AddReplacement` (see [cephfs](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#MDS.AddReplacement));
-4. [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddManager) `b`, then [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) `a`.
+4. [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddManager) `b`, then [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) `a`.
 
 `[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
 false`, so clients reach each replacement over IPv6 and the daemon it
@@ -219,7 +219,7 @@ files of the earlier steps. After each step the test checks that:
   the MDS's GID and incarnation stay the same through the other steps;
 - no MON, MGR, OSD or MDS vector lists an entry, address and nonce, of a
   replaced daemon, no vector holds `[::]`, and
-  [MonitorBootstrapAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#MonitorBootstrapAddresses) lists mon.c and not
+  [MonitorBootstrapAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.MonitorBootstrapAddresses) lists mon.c and not
   mon.b;
 - the retained process completed every operation. Its two MON sessions, one
   of librados and one of libcephfs, are on the first, IPv6, entry of a
@@ -306,8 +306,8 @@ helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- IPv4 is the default. [NetworkConfig.WithAddressFamily](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithAddressFamily) selects IPv6
-  or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
+- IPv4 is the default. [NetworkConfig.WithAddressFamily](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithAddressFamily) selects IPv6,
+  IPv4-mapped IPv6 or dual-stack on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
 
@@ -358,8 +358,9 @@ a helper applies or restores it.
 ### Ceph releases
 
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
-- Squid 19.2.5 is supported and its role images run the short test category on
-  every change, with the longer categories weekly. The `ceph` package behaves the
+- Squid 19.2.5 is supported. Ceph periodic runs every runtime category on its
+  role images, and the release matrix runs them on pull requests and `main`
+  during a release phase; the per-change workflows use Tentacle only. The `ceph` package behaves the
   same on Squid; release-specific behaviour is in the [rbd](../../rbd/README.md),
   [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages.
 - Squid has no `messenger dump` admin command, so encryption of individual

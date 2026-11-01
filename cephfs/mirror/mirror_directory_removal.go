@@ -42,7 +42,8 @@ type DirectoryRemovalStatus struct {
 // removal. State is unobserved (not observed yet in this call), tracked (the
 // daemon still has a sync cycle registered for the path), released (no sync
 // cycle for the path in its original session), stopped or unavailable (not
-// running or not queryable; retryable), retired (removed from the fixture) or
+// running or not queryable; retryable, except a malformed native reply, which
+// is a guard error), retired (removed from the fixture) or
 // session-changed (the process, filesystem session or peer command is not
 // the original one; a guard error). Problem explains a state other than
 // released.

@@ -196,7 +196,7 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 }
 
 // CollectCrashMetadata reads the Ceph crash metadata files in CrashDir of the
-// cluster's MON, MGR, OSD, MDS and RGW containers, and of
+// cluster's MON, MGR, OSD, MDS and RGW containers and its client toolkit, and of
 // config.AdditionalContainers, through Docker's archive API. It works on
 // stopped containers and on a partially bootstrapped or terminated cluster,
 // and starts, stops or reconfigures nothing. It reads only regular files named

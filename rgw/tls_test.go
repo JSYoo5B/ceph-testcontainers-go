@@ -60,7 +60,7 @@ func TestRGWTLSValidationAndKeyIsolation(t *testing.T) {
 	if _, err := tls.X509KeyPair(config.TLS.CertificatePEM, config.TLS.PrivateKeyPEM); err != nil {
 		t.Fatal("caller mutation changed certificate", err)
 	}
-	for _, format := range []string{"%v", "%+v", "%#v"} {
+	for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%t", "%10.3f"} {
 		if strings.Contains(fmt.Sprintf(format, config), "PRIVATE KEY") || strings.Contains(fmt.Sprintf(format, config.TLS), "PRIVATE KEY") {
 			t.Fatal("descriptor formatting exposed private key")
 		}

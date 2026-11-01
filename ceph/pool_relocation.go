@@ -11,7 +11,9 @@ import (
 
 // PoolPlacement selects the CRUSH hierarchy of a replicated pool after creation.
 // Its fields have PoolConfig's meaning and defaults: empty FailureDomain uses
-// osd, empty CRUSHRoot uses default and empty DeviceClass leaves class unset.
+// osd, empty CRUSHRoot uses the cluster's default root (default unless
+// ClusterConfig.WithDefaultCRUSHRoot selects another) and empty DeviceClass
+// leaves class unset.
 type PoolPlacement struct {
 	FailureDomain string
 	CRUSHRoot     string
@@ -50,7 +52,12 @@ func validatePoolPGCount(pgNum int) error {
 	return nil
 }
 
-func normalizePoolPlacement(name string, placement PoolPlacement) (PoolConfig, error) {
+// normalizePoolPlacement applies PoolConfig's creation-time rules to the
+// placement fields, with root as the cluster's default CRUSH root.
+func normalizePoolPlacement(name string, placement PoolPlacement, root string) (PoolConfig, error) {
+	if placement.CRUSHRoot == "" {
+		placement.CRUSHRoot = root
+	}
 	// Existing native names, such as .mgr, are validated separately; only the
 	// placement fields use PoolConfig's creation-time rules here.
 	config := PoolConfig{Name: "placement", FailureDomain: placement.FailureDomain, CRUSHRoot: placement.CRUSHRoot, DeviceClass: placement.DeviceClass}

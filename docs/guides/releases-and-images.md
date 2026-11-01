@@ -244,12 +244,13 @@ baseline feature and no default uses it.
 | netem packet delay and loss | `ApplyNetworkProfile` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `fault.NetemHelperImage` | netem contract 1 with its selector profiles: `sh`, `sleep`, `tc` and `ip` with JSON output, netem, `prio` and u32, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc, and for peers the `prio` qdisc and the u32 classifier |
 
 `NET_ADMIN` is granted only to the opt-in helper, not to the Ceph daemons.
-This extension does not require Docker's privileged mode. It delays or drops
-the packets that a container sends, on the whole interface or only to selected
-peers, families and TCP ports. The module checks the kernel's `prio` qdisc and
-u32 classifier in its preflight helper before it selects peers. Packets that a
-container receives, reordering, rate limits and packet inspection are not
-provided.
+This extension does not require Docker's privileged mode. It delays, drops,
+rate-limits, reorders, duplicates or corrupts the packets that a container
+sends, on the whole interface or only to selected peers, families and TCP
+ports, and with `NetworkProfile.Direction` also what peers send to it (shaped
+at the peers' endpoints). The module checks the kernel's `prio` qdisc and u32
+classifier in its preflight helper before it selects peers. Packet inspection
+is the separate [`capture`](../../capture/README.md) package.
 
 ## One daemon from another image
 

@@ -62,8 +62,10 @@ if err != nil {
 - Everything in [`ceph`](../ceph/README.md) applies to the cluster. Snapshot
   mirroring between two clusters is in [`cephfs/mirror`](mirror/README.md).
 - Images by role: the `Run` image runs the MON, MGR and control CLI and needs
-  the MGR `volumes` and `mirroring` modules and the Python `cephfs` binding
-  (pin reads and clone identity checks run libcephfs there); MDSs use
+  the MGR `volumes` and `mirroring` modules; the client image (the `Run` image
+  only for an aggregate) needs the Python `cephfs` binding, because pin reads,
+  clone identity checks and scheduled snapshot listings run libcephfs in the
+  client container; MDSs use
   `ceph.ImageOptions.WithCephFSImage` or the `Run` image; mirror daemons take
   their own image. `ceph.DefaultImage` (Tentacle 20.2.4) contains every role.
   Keep every role on the same release. Squid 19.2.5 is supported with no

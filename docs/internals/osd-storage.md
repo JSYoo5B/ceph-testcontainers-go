@@ -212,7 +212,8 @@ container, and the owned volume is discarded as before.
    the regular, non-symlink files `ready`, `whoami`, `fsid`, `ceph_fsid`,
    `keyring` and `block`, and the block's inode and size. Require the
    captured ID, UUID and the served cluster FSID, and a key for `osd.<id>`.
-6. Publish the `DetachedOSD` and drop the descriptor from `c.osds`. The old
+6. Publish the `DetachedOSD` and drop the descriptor from the owned OSD
+   registry (`osdHandles`). The old
    `*OSDContainer` is not rebound and keeps naming the removed container.
 
 A failure after the fence keeps the OSD owned with its fence. A retry resumes
@@ -278,10 +279,14 @@ must leave nothing changed.
 
 This does not cover abrupt exit, host or daemon restart durability, image
 changes between detach and reopen, reopening in another cluster, the tmpfs and
-MemStore backends, a held network delay or interruption at detach, cancelled
-or partially failed native detach and reopen after admission, or several retained
-stores in one native run. Unit tests cover a
-cancelled reopen, partial detach and a failed reopen start with fakes only. A
+MemStore backends, a held network delay or interruption at detach, or several
+retained stores in one native run. Partially failed and cancelled operations
+have their own native qualifications: `TestOSDRetainedPartialDetach`
+(`osd_retained_partial_detach`), and the optional
+`TestRetainedOSDReopenCanceledAfterCreation` and
+`TestRetainedOSDUncertainReopenReply` (`retained_cancel_after_admission`,
+`retained_uncertain_reply`). Unit tests cover a cancelled reopen, partial
+detach and a failed reopen start with fakes. A
 lost creation reply is settled by the owner-label scan.
 
 ### Concurrent native admission and saved instances
