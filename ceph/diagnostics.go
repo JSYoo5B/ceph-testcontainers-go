@@ -217,22 +217,6 @@ func sameContainer(a, b testcontainers.Container) bool {
 	return va.Type() == vb.Type() && va.Kind() == reflect.Pointer && va.Pointer() == vb.Pointer()
 }
 
-func diagnosticLock(ctx context.Context, try func() bool) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if try() {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
-}
-
 func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsConfig) (diagnosticsSnapshot, error) {
 	snapshot := diagnosticsSnapshot{secrets: slices.Clone(config.RedactValues)}
 	if c == nil {

@@ -27,3 +27,8 @@ var Test any
 // RGW is set once, during the initialization of package rgw, to the handle
 // ownership checks that internal/rgwhook types for rgw/multisite.
 var RGW any
+
+// Evidence is set once, during the initialization of package ceph, to the
+// cluster inventory hooks that internal/evidencehook types for the
+// diagnostics and finalize packages.
+var Evidence any
