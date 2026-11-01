@@ -20,7 +20,7 @@ import (
 // The caller owns the writer and decides where to retain the backup.
 //
 // client is any container that has the rbd CLI and credentials for its own
-// cluster, such as ceph.Container.ControlContainer or a container attached
+// cluster, such as ceph.Container.ClientContainer or a container attached
 // with WithClient, and image is an image spec such as volumes/disk or
 // volumes/tenant-a/disk. The archive is written to a temporary file under
 // /tmp in the client container and removed afterwards. The backup functions

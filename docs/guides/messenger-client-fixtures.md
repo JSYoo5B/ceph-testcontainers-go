@@ -823,8 +823,9 @@ declarations to validated receipts, is documented in
   `ms_mon_cluster_mode` keep Ceph's defaults (both modes) except under
   `MessengerV2Secure`, which fixes them to secure. Under `MessengerV2Only`,
   `override.SetConfig` can change them.
-- **Ticket lifetimes.** Fixed at bootstrap; `override.SetConfig` cannot change
-  them.
+- **Ticket lifetimes.** `AuthConfig.MonTicketTTL` and `ServiceTicketTTL` write
+  them into `ceph.conf` at bootstrap, which takes precedence over a central
+  `override.SetConfig` entry; set them with `WithAuth`.
 - **Short MON tickets.** Under ten seconds, a MON client that renews late is
   refused with `EACCES` and does not authenticate again (see
   [WithAuth](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithAuth)); this is Ceph's MON client

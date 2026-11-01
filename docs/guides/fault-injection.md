@@ -625,7 +625,8 @@ Two other storage layers stop differently:
 - A separate BlueFS DB device (`bluestore_block_db_*` before the OSD is added)
   that fills up does not refuse writes. BlueFS moves metadata to the main
   device and raises `BLUEFS_SPILLOVER`.
-- The MON store lives in the container's writable layer, on the engine's
+- By default the MON store lives in the container's writable layer (with
+  `MonitorStorage.WithVolume`, in its own volume), on the engine's
   disk, which the fixture never fills. `mon_data_avail_warn` and
   `mon_data_avail_crit` are percentages of that filesystem's available
   space. Setting one above the current share (`override.SetConfig`, section

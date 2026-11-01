@@ -9,16 +9,19 @@ described in [Continuous integration](ci.md).
 | Layer | Location | Needs Docker | Selected by |
 | --- | --- | --- | --- |
 | Unit tests | Next to the code, no build tags | No | `go test ./...` |
-| Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw`, `fault` | No (Docker examples are only compiled) | `go test ./...` |
+| Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw`, `fault`; `*_example_test.go` in `override` | No (Docker examples are only compiled) | `go test ./...` |
 | Ceph integration tests | `internal/integration` and its `rbd`, `cephfs` and `rgw` test packages, plus `*_integration_test.go` in `ceph`, `rbd/mirror`, `internal/debugoverhead` and `internal/capturearchive` | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge` and `capture`, `*_integration_test.go` | Docker only | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
 
-Integration tests are excluded by build tags, not by `t.Skip`. The two
-exceptions are a local run with an undeclared `CEPH_TEST_NETWORK` mode
-(`harness.NetworkModes`) and `TestDesktopRBDOverNBD` on an engine without NBD;
-see [CI](ci.md). A plain
+Integration tests are excluded by build tags, not by `t.Skip`. The skips that
+exist only report a missing environment prerequisite of a local run, for
+example an undeclared `CEPH_TEST_NETWORK` mode (`harness.NetworkModes`), an
+engine without NBD (`TestDesktopRBDOverNBD`) or the cgroup controls, memory or
+filesystem headroom of a resource scenario, or a host without `python3` for a
+pure fixture that compiles a script. CI counts every skip as a
+failure; see [CI](ci.md). A plain
 `go test ./...` never starts a container, and a tagged run without Docker
 fails instead of passing. An `Example...` that starts a cluster has no
 `// Output:` comment, so it is compiled but not run.
@@ -86,8 +89,10 @@ make vulncheck    # govulncheck on every scanned platform and tag set
 `make tag-compile` compiles (`-run '^$'`, nothing executes) the module with
 `integration` alone, so shared helpers cannot require an unrelated capability
 tag, and then the `all` union and the opt-in unions listed in the Makefile.
-Files gated on `integration && ci_optional && ci_batch_<name>` (most optional
-batches) are not in these unions, and `make lint` does not see them either.
+Files gated on `integration && ... && ci_optional && ci_batch_<name>` (most
+optional batches, the role-image batches included) are not in these unions,
+because none of them sets `integration` together with a batch tag, and
+`make lint` does not see them either.
 `make tag-compile` cannot check every CI batch's helper dependencies; use
 [`plan --verify`](#verify-batch-profiles-before-pushing), which compiles every
 required and optional profile. See
@@ -114,16 +119,19 @@ python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 | `all` | The whole normal suite, regardless of capability or CI tags. |
 | `native_regression` | Strict tests for known upstream Ceph defects. Not part of `all`. |
 | `goceph` | The Linux go-ceph consumer test. Not part of `all`. |
-| `cephfs_fuse` | The `ceph-fuse` mount test. Not part of `all`. |
+| `cephfs_fuse` | The `ceph-fuse` mount and fcntl lock tests. Not part of `all`. |
 | `role_images` | Constrained role-image routing tests. Not part of `all`. |
 | `debug_overhead`, `debug_ms_window` | Debug-level overhead measurements in `internal/debugoverhead`. Not part of `all`. |
 | `capture_archive` | The native capture-archive test in `internal/capturearchive`. Not part of `all`. |
 | `ci`, `ci_<category>`, `ci_batch`, `ci_batch_<name>`, `ci_optional`, `ci_sdk` | Set only by the CI runner. Do not pass them by hand. |
 
-Every required test file's constraint begins with `all || (...)`, so `all`
-overrides capability and CI tags there: `-tags=all,ci,ci_short` filters
-nothing. Optional and opt-in files (`native_regression`, `cephfs_fuse`, most
-`ci_optional` batches) add their own tag and are not selected by `all`. To run one batch, use the
+Most constraints begin with `all || (...)`, so `all` overrides capability and
+CI tags there: `-tags=all,ci,ci_short` filters nothing. The exceptions are
+optional and opt-in files (`native_regression`, `cephfs_fuse`, most
+`ci_optional` batches), which add their own tag and are not selected by `all`,
+and recovery tests split into a parent file and per-batch copies (for example
+`rbd_receiver_readiness`): the parent drops out under any CI batch and the
+copies need their exact batch tags. To run one batch, use the
 [tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` tag is unrelated
 to the Ceph `all` role image.
 
@@ -221,8 +229,9 @@ python3 .github/scripts/tag_scenarios.py optional \
 Other optional batches include `native_shuffle` and `cephfs_fuse`. The native
 batches assert behaviour that the unpatched default image lacks, so they fail
 there; they exist to verify a patched image. `cephfs_fuse` needs `/dev/fuse`,
-`CAP_SYS_ADMIN` and `apparmor=unconfined`, which only rootful native Linux
-Docker Engine allows (see [Native regressions](ci.md#native-regressions)).
+`CAP_SYS_ADMIN` and `apparmor=unconfined`, which a rootful engine whose kernel
+has FUSE allows: a Linux Docker Engine, or Docker Desktop (see
+[Native regressions](ci.md#native-regressions)).
 
 ### Running tests in parallel
 
@@ -525,15 +534,16 @@ differs from the source. Code checks runs it for every pull request.
   [Native commands](../guides/native-commands.md).
 - Add a `TestHostNetwork...` variant when the feature touches addresses, ports
   or client connectivity.
-- Never call `t.Skip`; CI counts skips as failures (the only exceptions are the
-  two skips named under [How the suite is organised](#how-the-suite-is-organised)). When a release lacks a
+- Never call `t.Skip` to leave out a test; CI counts skips as failures. The
+  only skips report a missing local prerequisite (see
+  [How the suite is organised](#how-the-suite-is-organised)). When a release lacks a
   capability, assert the classified refusal from the shared table (see
   [Release differences](#release-differences)):
 
   ```golang
-  if !harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityMessengerDump) {
-  	harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityMessengerDump, detail)
-  	return
+  if !harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityRGWAccountUserModePipe) {
+      harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRGWAccountUserModePipe, detail)
+      return
   }
   ```
 

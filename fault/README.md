@@ -7,8 +7,10 @@ replica. Faults reproduce conditions for integration tests; they are not a
 chaos platform or a performance tool. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
-The package has no fixture lifetime of its own: cluster-bound faults use the
-cluster created by `ceph.Run` and are restored by its `Terminate`.
+The package has no fixture lifetime of its own: cluster-bound faults that return
+a handle use the cluster created by `ceph.Run` and are restored by its
+`Terminate`. `InjectObjectDataError` is one-shot: it returns no handle and
+`Terminate` does not undo it.
 
 ## Order of use
 
@@ -54,9 +56,10 @@ if err != nil {
 ## Concepts and limits
 
 - Ownership: cluster-bound handles are restored by `Terminate` (shaping first,
-  then endpoints, then paused containers). Standalone link faults and faults on
-  caller-owned containers are the caller's: restore them before removing the
-  container or bridge.
+  then endpoints, then paused containers), also when the target is a
+  caller-owned container; restore those before removing the container.
+  Standalone link faults are the caller's: restore them before removing the
+  bridge.
 - Whole endpoint versus selected paths: `InterruptNetwork` cuts a whole
   endpoint; to cut selected paths use `ApplyNetworkProfile` with
   `Peer`/`Peers` and a `Loss` of 100. `Direction` picks what the target sends

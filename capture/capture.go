@@ -60,8 +60,8 @@ var (
 	// ErrFailed reports a capture that did not start, end or deliver as the
 	// contract says: tcpdump exited before readiness or with a nonzero
 	// status, did not end within the stop grace, the target's network
-	// namespace changed, or the file could not be retrieved or is not a
-	// valid classic pcap. It belongs to ceph.ErrNativeFailure.
+	// namespace changed, or the helper's file could not be copied or is not
+	// a valid classic pcap. It belongs to ceph.ErrNativeFailure.
 	ErrFailed error = &categoryError{text: "the packet capture failed", kind: ceph.ErrNativeFailure}
 )
 
@@ -380,7 +380,8 @@ var pollInterval = 100 * time.Millisecond
 // container instance and sandbox at that point and never follows a restart.
 // After a failure Start removes the helper and the output file it created.
 // It returns a non-nil session with an error only when it could not remove
-// a probe or a helper that failed; Stop it to retry the removal.
+// a probe or a helper that failed; the empty output file then stays, and Stop
+// retries the removal.
 //
 //purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {

@@ -182,9 +182,9 @@ type DaemonStatus struct {
 // images locally.
 //
 // Peer is the native peer description, such as "uuid: <uuid> cluster: source
-// client: client.rbd-mirror-peer". On Ceph 19 Status decodes only the
-// pool-level fields, because the admin socket lists named namespaces by name
-// only.
+// client: client.rbd-mirror-peer". Status decodes only these pool-level
+// fields on every release; the admin socket of Ceph 19 lists named namespaces
+// by name only.
 type PoolReplayerStatus struct {
 	Pool             string   `json:"pool"`
 	Peer             string   `json:"peer"`
@@ -237,10 +237,10 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // img is the mirror daemon image and is required: it must meet the rbd-aux (or
 // all) role requirements, including rbd-mirror, the rbd and ceph CLIs and the
 // common utilities, and is refused when it is known to be another role of a
-// cluster (for example its essential image). The destination's Images().RBDAux
-// is the usual choice, because the daemons run for the destination. Setup
-// clients are not started from it: each cluster's Images().Client supplies
-// them. The Config comes from exactly one WithConfig among opts. Enable each intended source
+// cluster (for example its essential image). The destination's
+// ceph.FactsOf(destination).Images.RBDAux is the usual choice, because the
+// daemons run for the destination. Setup clients are not started from it: each
+// cluster's ceph.FactsOf(cluster).Images.Client supplies them. The Config comes from exactly one WithConfig among opts. Enable each intended source
 // image through EnableImage or the RBD CLI in image scope. Pool scope
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.
@@ -255,8 +255,8 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // Initial daemon names are a through z, then node-27 and onward. A process's
 // socket readiness does not guarantee pool discovery or leader convergence;
 // query the daemon Status for native election state.
-// Named namespace setup initializes a disabled default namespace as init-only,
-// preserving an existing active default policy. Existing target scope, remote
+// Named namespace setup initializes a disabled default namespace as init-only
+// (in image mode on Ceph 19, which has no init-only), preserving an existing active default policy. Existing target scope, remote
 // namespace mapping and configured site names must match; this method does not
 // silently reconfigure them. Site names are cluster-wide and must agree across
 // links. External pool/namespace/mirror edits must not race setup; native named
@@ -265,7 +265,8 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
 //
-// Run validates the configuration and context before touching either cluster,
+// Run checks the context and DaemonCount first, inspects both clusters, then
+// validates the remaining configuration before it changes either cluster,
 // checks that Pool is replicated on both and that the named namespaces exist,
 // records the native pool IDs, starts one setup CLI container per cluster
 // (each also attached to the other cluster's network), enables the selected

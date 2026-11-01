@@ -318,7 +318,7 @@ func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 // Clone submits an asynchronous copy to a fresh subvolume.
 // Duplicate targets are rejected; the source snapshot is retained. Immediately
 // after submission it captures the target UUID, inode and birth time from
-// version-checked native volumes metadata inside the control container. External
+// version-checked native volumes metadata inside the client container. External
 // edits must not race submission. A failed command or identity read returns a
 // non-nil descriptor for inspection, but cannot be adopted or mutated through
 // this API. Failed/canceled targets are retained until explicit

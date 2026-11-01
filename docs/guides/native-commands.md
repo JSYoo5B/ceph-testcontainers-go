@@ -58,8 +58,10 @@ err = json.Unmarshal(out, &pools)
 
 The client container has `rados`, `rbd` and the Python `rados`, `rbd` and
 `cephfs` bindings, with `/etc/ceph/ceph.conf` and the admin keyring. The
-control container is built from the essential image and has `ceph` and
-`ceph-authtool`, not `rados` or `rbd`. The examples below use this helper:
+control container (MON a until a second MON or a MON replacement starts a
+separate one) runs the essential image and has `ceph` and `ceph-authtool`;
+with split role images it has no `rados` or `rbd`, and with an aggregate image
+it may, but do not rely on that. The examples below use this helper:
 
 ```golang
 // exec runs argv in ctr and returns standard output; standard error is in the error.
@@ -436,7 +438,7 @@ _, err = exec(ctx, restricted, "rados", "--id", reader.User(), "-p", "volumes", 
 - Established sessions may keep their tickets after
   `ClientConfig.UpdateCaps` or `Delete`, so check permission changes with a
   fresh connection.
-- The essential image is not a client image; use `FactsOf(cluster).Images.Client`
+- With split role images the essential image is not a client image; use `FactsOf(cluster).Images.Client`
   or an image with your own client libraries. Neither option installs software.
 - You own these containers: terminate them before the cluster. After a MON
   replacement, `cluster.RefreshClientMonitorConfig(ctx, client)` updates their
@@ -646,8 +648,10 @@ _, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume
 
 - To see a failure's native text, run the same `radosgw-admin` command with
   `gateway.Exec`; the container has the cluster configuration and admin keyring
-  at the default paths. The control container runs the essential image, which
-  has no `radosgw-admin`.
+  at the default paths. Do not rely on RGW tools in the control container: it
+  runs the essential image, which has no `radosgw-admin` when the cluster uses
+  split role images (`ImageSet`). The default aggregate image happens to have
+  it, but that is not part of the fixture's contract.
 - Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
   endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
   (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the

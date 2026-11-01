@@ -80,7 +80,8 @@ type DiagnosticsReport struct {
 	Artifacts     []DiagnosticArtifact `json:"artifacts"`
 }
 
-// CollectDiagnostics collects all tracked MON/MGR/OSD/MDS/RGW/control handles,
+// CollectDiagnostics collects all tracked MON/MGR/OSD/MDS/RGW/control and client
+// toolkit handles,
 // container state, network addresses, bounded log tails and fixed Ceph queries.
 // It supports partial bootstrap and stopped/removed containers. Individual
 // failures return both a usable report and an aggregate error; truncation alone
@@ -89,7 +90,7 @@ type DiagnosticsReport struct {
 // keyring, auth database, mount source or arbitrary command is collected.
 //
 // It collects the state and selected metadata of every tracked MON, MGR, OSD,
-// MDS, RGW and control container, network metadata, log tails and fixed Ceph
+// MDS, RGW, control and client toolkit container, network metadata, log tails and fixed Ceph
 // queries (version, status, health, pgs, quorum, monmap, mgrmap, osdmap,
 // fsmap); it never collects files, environment variables, keyrings, the auth
 // database, mount sources or arbitrary commands. TerminateOnCleanup with

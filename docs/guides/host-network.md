@@ -201,7 +201,7 @@ may differ from the test process's namespace. A short-lived helper container
 from the essential image binds free ports and holds the sockets while the daemon
 container is created, then releases them just before the daemon starts. That
 handover cannot be atomic. If the daemon then fails with an actual
-`EADDRINUSE`, the module retries up to five times; a MON is recreated with a
+`EADDRINUSE`, the module makes up to five attempts in all; a MON is recreated with a
 new port, monmap and store. Other startup errors are returned, and partially
 created resources remain owned by the cluster for cleanup. RGW readiness first
 checks that the selected socket belongs to the RGW process and then probes

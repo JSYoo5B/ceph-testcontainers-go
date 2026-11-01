@@ -37,7 +37,8 @@ func (o OSDOptions) WithPlacement(config OSDConfig) OSDOptions {
 // essential image, with the same contract as DaemonOptions.WithImage: the image must
 // contain the daemon's binary and the tools of the fixture's startup scripts,
 // nothing here checks its release or compatibility with the running cluster,
-// DetachedOSD.Reopen starts the same OSD from the same image again, and the
+// DetachedOSD.Reopen without WithImage starts the same OSD from the same image
+// again (with WithImage, from that image), and the
 // OSD's handle reports it with Image. The reference must be non-empty and free
 // of whitespace and control characters; an empty image is an explicit invalid
 // selection, not an unspecified one. A later call on the same value replaces the

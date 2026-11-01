@@ -60,10 +60,10 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    pool reports, quorum, OSD states, MGR modules and services, watchers and
    blocklist entries. `Ceph` and `RunNativeCommand` run bounded native commands
    when no typed observation exists.
-5. **Finish.** `TerminateOnCleanup` registers finalization: checks, caller
-   cleanups, an optional failure archive (`CollectDiagnostics`,
-   `CollectCrashMetadata`) and `Finalization.Verify` for crash and cluster-log
-   expectations, then `Terminate`, which removes every owned container,
+5. **Finish.** `TerminateOnCleanup` registers finalization: checks (with
+   `Finalization.Verify` for crash and cluster-log expectations), an optional
+   failure archive (`CollectDiagnostics`, `CollectCrashMetadata`), caller
+   cleanups in reverse order, then `Terminate`, which removes every owned container,
    network and volume.
 
 ```golang
@@ -109,7 +109,8 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   selects essential, client, CephFS, RBD-aux and RGW images separately, and a
   missing optional role never falls back. See
   [Releases and images](../docs/guides/releases-and-images.md).
-- **Networks.** Bridge mode by default: only MON `a` publishes ports, so native
+- **Networks.** Bridge mode by default: only MON `a` (and RGW gateways)
+  publishes ports, so native
   RADOS, RBD and CephFS clients run in a `WithClient` container. Host mode lets
   a process on a Linux Docker host connect directly. IPv6, dual-stack and a
   separate cluster network are bridge-mode options.

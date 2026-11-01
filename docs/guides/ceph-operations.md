@@ -14,7 +14,7 @@ Three handle methods take an OSD out of service, with different outcomes:
 | Call | Container | Store and registration | Next step |
 | --- | --- | --- | --- |
 | `Stop` / `Start` on the `OSDContainer` | stopped, kept | kept; Ceph marks the OSD down, then out unless `noout` is held | `Start` the same container |
-| `OSDContainer.Detach` (only with `OSDStorage.WithVolume`) | removed | store kept in the owned volume, registration kept, OSD down but not out | `DetachedOSD.Reopen` starts a new container on the store and returns a new handle |
+| `OSDContainer.Detach` (only with `OSDStorage.WithVolume`) | removed | store kept in the owned volume, registration kept; Ceph marks the OSD down, then out unless `noout` is held | `DetachedOSD.Reopen` starts a new container on the store and returns a new handle |
 | `OSDContainer.Remove` | removed | drained, purged from Ceph, directory discarded | none; `AddOSD` creates a new OSD |
 
 All three fence or keep the OSD's identity: every step checks the registration
@@ -49,7 +49,8 @@ one of them in that window makes the new MON fail to start, and the store stays
 retained for another `Replace` on the returned handle.
 
 A `Replace` that fails after the old container is gone returns the new handle
-with the error. The MON is then down, its store is neither formatted nor
+with the error when the new container exists; a creation whose reply was lost
+returns no handle, and only `Terminate` settles it. The MON is then down, its store is neither formatted nor
 released, and `Replace` on that handle, for example with another image,
 continues the step. `MonitorContainer.Remove` releases the removed MON's
 volume, so a MON added again under that name starts on a new store.

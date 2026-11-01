@@ -55,7 +55,7 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 // metadata, default data and AdditionalDataPools that its configuration
 // created, together with their CRUSH rules and EC profiles. Pools attached
 // later with AddDataPool are detached but kept; remove them with
-// Pool.Remove. File data in the removed pools is destroyed. Stop
+// ceph.Pool.Remove (see ceph.Container.Pool). File data in the removed pools is destroyed. Stop
 // clients, CephFS mirrors and subvolume operations on the filesystem first;
 // their handles fail afterwards. A retry after an error continues with
 // whatever remains. If graceful shutdown cannot complete within the caller or

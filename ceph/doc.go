@@ -9,18 +9,26 @@
 // Client services live in their own packages, which add their options to the
 // same Run and declare their own service types:
 //
-//   - github.com/JSYoo5B/ceph-testcontainers-go/rbd: RBD pools, namespaces,
-//     mirroring and backup.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rbd: RBD pools, namespaces
+//     and backup.
 //   - github.com/JSYoo5B/ceph-testcontainers-go/cephfs: filesystems, MDS
-//     topology, subvolumes and mirroring.
+//     topology and subvolumes.
 //   - github.com/JSYoo5B/ceph-testcontainers-go/rgw: gateways, users,
 //     placement and storage classes.
-//   - github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite: RGW multisite
-//     realms, zones and sync policies across clusters.
 //
-// Each service package has its own Run that starts a cluster with that
-// service's defaults. Options from several service packages can be passed to
-// one ceph.Run to start a cluster that serves them together.
+// Each of these service packages has its own Run that starts a cluster with
+// that service's defaults. Options from several of them can be passed to one
+// ceph.Run to start a cluster that serves them together.
+//
+// Fixtures that span two existing clusters take those clusters in their own
+// configuration instead; their options are not ceph.Run options:
+//
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror: rbd-mirror
+//     replication.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror: CephFS
+//     snapshot mirroring.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite: RGW multisite
+//     realms, zones and sync policies.
 //
 // These rules hold across the methods of a Container and its handles:
 //
@@ -47,8 +55,8 @@
 //     do not change the same state with raw commands while a helper applies or
 //     restores it.
 //   - Temporary changes (package override, package fault and
-//     ClientConfig.Revoke) return restoration handles; keep a non-nil handle
-//     even with an error. Their shared contract is in
+//     ClientConfig.Revoke) return restoration handles, except the one-shot
+//     fault.InjectObjectDataError; keep a non-nil handle even with an error. Their shared contract is in
 //     docs/guides/contexts-and-cleanup.md.
 //
 // This is an experimental module for application integration tests.

@@ -27,9 +27,10 @@ ceph-testcontainers-images.
 3. Run the Docker-free checks in [Testing](testing.md): `make check` and
    `make lint`, plus the Python CI-tooling tests. Check local Markdown links
    and compile new examples. Compilation is not a native run.
-4. Reuse independently verified CI at the candidate's exact SHA. The
-   [required workflows](ci.md) cover code, Docker, short, topology,
-   recovery, multicluster and Squid tests. Record the workflow/run and
+4. Reuse independently verified CI at the candidate's exact SHA: Code checks
+   (the only required check) and the runtime workflows (Docker, short,
+   topology, recovery and multicluster, and Squid through Ceph periodic or the
+   release matrix; see [CI](ci.md)). Record the workflow/run and
    attempt identities, chosen image references and actual image IDs. A
    canceled, skipped or missing scenario is not a native pass. Record
    vulnerability-scan results from Code checks as well.
@@ -58,8 +59,8 @@ Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare the release notes, including
   compatibility, support and unresolved native limits.
-- When publishing, update the README's development-version notice so it does
-  not tell release users to install an older tag.
+- When publishing, check that the README does not tell release users to
+  install an older tag.
 - Identify the release by its tag and keep the final SHA's validation evidence
   in the release notes.
 - Point the tag and GitHub Release at the reviewed commit, then verify that

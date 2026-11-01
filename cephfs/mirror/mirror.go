@@ -112,7 +112,9 @@ type Mirror struct {
 	// that the fixture created on each side for the daemons and the peer.
 	SourceClientEntity, DestinationClientEntity string
 	// Directories lists the paths registered through this fixture:
-	// Config.Directories, then later additions, without removed paths.
+	// Config.Directories, then later additions, without removed paths. Run
+	// fills it from Config.Directories before it registers them, so the
+	// Mirror of a failed Run may list paths Ceph never registered.
 	// The directory methods update it, so read it while none of them runs.
 	// Paths registered directly with the Ceph CLI are not included.
 	Directories []string
@@ -170,8 +172,8 @@ type cephFSPeerIdentity struct {
 // local admin socket, and is refused when it is known to be another role of a
 // cluster. The source's Images().CephFS is the usual choice. The Config comes
 // from exactly one WithConfig among opts; the other customizers apply to the
-// daemons. The setup commands run in each cluster's client toolkit, not in
-// this image. MGRs must supply mirroring.
+// daemons. The setup commands run with the Ceph CLI in each cluster's control
+// container, not in this image. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
 // disposable clusters; it does not undo configuration or delete mirrored data.

@@ -36,7 +36,8 @@ type Config struct {
 	destinationZonegroup string
 }
 
-// Fixture owns two gateways and their CLI clients. Bridge mode adds a
+// Fixture owns one gateway and CLI client per zone: two from Run, and one more
+// for each WithTopology zone, AddZone or AddZonegroup. Bridge mode adds a
 // private HTTP network; host mode uses allocated gateway ports on the Docker
 // host. Source and Destination expose matching ordinary S3 test credentials.
 type Fixture struct {
@@ -128,7 +129,8 @@ func WithTopology(config TopologyConfig) Option {
 // Use fresh clusters from ceph.Run, without gateways or RGW configuration.
 // WithConfig creates one ordinary S3 test user on the master; both gateways
 // expose its keys in AccessKey and SecretKey, and their Region is the zonegroup
-// name. Setup is bounded by six minutes in addition to ctx. On Ceph 19, 19.2.6
+// name. The two-zone setup, and each further WithTopology zone, is bounded by
+// six minutes in addition to ctx. On Ceph 19, 19.2.6
 // cannot set up multisite: the master gateway rejects realm pull from a
 // secondary with HTTP 403 ("'x-amz-content-sha256' supplied, but not in
 // CanonicalHeaders"), and no setting disables the check; use 19.2.5.

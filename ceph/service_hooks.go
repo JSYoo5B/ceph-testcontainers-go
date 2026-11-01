@@ -28,6 +28,8 @@ func init() {
 func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
 	return authStore{c.conn()}.clientCommand(ctx, operation, args...)
 }
+
+// CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
 // CephBefore reports whether the recorded Ceph release is older than major.
@@ -38,7 +40,7 @@ func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
 	return classifyDispatched(ctx, err)
 }
 
-// CLI returns the container that runs Ceph CLI commands, or nil.
+// ClientCommand runs a command in the cluster's started client container.
 func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...string) ([]byte, error) {
 	target, err := c.featureClient().startedContainer(ctx)
 	if err != nil {

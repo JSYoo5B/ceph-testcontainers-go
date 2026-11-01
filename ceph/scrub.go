@@ -46,7 +46,7 @@ func validatePGID(pgid string) error {
 
 // PGID identifies one placement group as "<pool>.<hex>": the decimal native
 // pool ID, a dot and the lowercase hexadecimal PG number, for example "1.0" or
-// "3.1f". PoolPGs reports PGs with this type, so a reported PG passes straight
+// "3.1f". Pool.PGs reports PGs with this type, so a reported PG passes straight
 // to DeepScrubPG, RepairPG and PGInconsistencies. An untyped string constant
 // converts to PGID without validation, so these methods check the grammar
 // again and refuse an invalid value; ParsePGID checks it up front.
@@ -84,7 +84,8 @@ func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 }
 
 // RepairPG requests a native repair of one PG and waits until the PG reports a
-// newer deep-scrub stamp and is no longer inconsistent. Repair rewrites bad
+// newer deep-scrub stamp and has finished repairing; it returns an error if the
+// PG is still inconsistent then. Repair rewrites bad
 // replicas from an authoritative copy; it cannot recover an object without
 // one, and the wait then ends with the PG still inconsistent.
 //

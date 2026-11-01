@@ -57,7 +57,7 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 }
 
 // SetDebugLevel changes one runtime debug level of one running owned OSD
-// through its admin socket, as ceph.Container.AdminSocket reaches it, until
+// through its admin socket, as ceph.OSDContainer.AdminSocket reaches it, until
 // Restore. It reads the daemon's effective prior level, sets the requested
 // level and verifies the normalized effective readback, so "20" reads back as
 // "20/20". It changes the daemon's runtime value, never the central

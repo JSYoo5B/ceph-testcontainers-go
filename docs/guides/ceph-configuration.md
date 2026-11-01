@@ -358,8 +358,9 @@ a helper applies or restores it.
 ### Ceph releases
 
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
-- Squid 19.2.5 is supported and its role images run the short test category on
-  every change, with the longer categories weekly. The `ceph` package behaves the
+- Squid 19.2.5 is supported. Ceph periodic runs every runtime category on its
+  role images, and the release matrix runs them on pull requests and `main`
+  during a release phase; the per-change workflows use Tentacle only. The `ceph` package behaves the
   same on Squid; release-specific behaviour is in the [rbd](../../rbd/README.md),
   [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages.
 - Squid has no `messenger dump` admin command, so encryption of individual

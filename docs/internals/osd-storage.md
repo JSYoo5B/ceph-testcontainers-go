@@ -279,10 +279,14 @@ must leave nothing changed.
 
 This does not cover abrupt exit, host or daemon restart durability, image
 changes between detach and reopen, reopening in another cluster, the tmpfs and
-MemStore backends, a held network delay or interruption at detach, cancelled
-or partially failed native detach and reopen after admission, or several retained
-stores in one native run. Unit tests cover a
-cancelled reopen, partial detach and a failed reopen start with fakes only. A
+MemStore backends, a held network delay or interruption at detach, or several
+retained stores in one native run. Partially failed and cancelled operations
+have their own native qualifications: `TestOSDRetainedPartialDetach`
+(`osd_retained_partial_detach`), and the optional
+`TestRetainedOSDReopenCanceledAfterCreation` and
+`TestRetainedOSDUncertainReopenReply` (`retained_cancel_after_admission`,
+`retained_uncertain_reply`). Unit tests cover a cancelled reopen, partial
+detach and a failed reopen start with fakes. A
 lost creation reply is settled by the owner-label scan.
 
 ### Concurrent native admission and saved instances

@@ -289,8 +289,10 @@ func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error
 
 // HealthDetails reads the original cluster's health through one captured
 // control CLI handle, checking the bootstrap FSID before and after the query.
-// It works before storage or MGR readiness, performs no writes or retries and
-// returns a zero snapshot on every failure, including post-query cancellation.
+// It works before storage or MGR readiness, performs no writes and no command
+// retries (a MON connection that times out before the command is sent is
+// reconnected for up to a minute, as in Container.Ceph) and returns a zero
+// snapshot on every failure, including post-query cancellation.
 // Native command output is omitted from errors because it may contain secrets.
 // External native/configuration writers must not race this observation: the
 // three reads are not an atomic transaction. Poll with a caller deadline when
@@ -380,7 +382,9 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 // FullRatios reads native thresholds through one captured control CLI handle,
 // checking the original bootstrap FSID before and after the map query. Native
 // zero, equal and misordered thresholds remain observable. It makes no writes,
-// retries or background workers and returns a zero snapshot on any failure.
+// command retries or background workers (a MON connection that times out
+// before a command is sent is reconnected, as in Container.Ceph) and returns a
+// zero snapshot on any failure.
 // These separate reads are not atomic; external configuration writers must not
 // race the observation. Poll HealthDetails for eventual OSD fullness reports.
 //

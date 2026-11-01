@@ -77,8 +77,9 @@ already did.
 Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
-Examples are `override.SetConfig`, `override.SetOSDFlag`, `override.SetMGRModule`,
-`override.AddBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
+Examples are `override.SetOSDFlag`, `override.SetMGRModule`,
+`override.AddBlocklist` and their `Restore` methods, `ConfigHandle.Restore`,
+`Pool.SetQuota`,
 `Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
 for example removing temporary keyring files. So a deadline bounds how long
@@ -186,13 +187,15 @@ database entries, OSD map flags and ratios, blocklist entries, CephFS and RGW
 metadata) disappears with the containers. `Terminate` does not restore
 override handles one by one; it discards the whole cluster.
 
-`Terminate` works in a fixed order: it removes network delays, restores network
-interruptions, resumes paused containers, cancels and stops native commands,
-releases host-port reservations, stops gateways and MDS daemons while the OSDs
-are still running, then removes OSDs, the in-memory OSD volume, MGRs, MONs, the
-control container, then any container left with the cluster's label
-`org.testcontainers.ceph.cluster` (one that Docker created although the create
-reply was lost), the shared run volume, and finally the networks. Each
+`Terminate` works in a fixed order: it cancels the running native commands,
+then removes network delays, restores network interruptions, resumes paused
+containers and stops the cancelled commands, releases host-port reservations,
+stops gateways and MDS daemons while the OSDs are still running, then removes
+OSDs, the OSD memory or volume storage, MGRs, MONs, the MON store volumes, the
+control container, the client toolkit container, then any container left with
+the cluster's label `org.testcontainers.ceph.cluster` (one that Docker created
+although the create reply was lost), the shared run volume, and finally the
+networks. Each
 container gets a 2-second stop timeout unless you pass
 `testcontainers.StopTimeout`. A container or network that fails to go away
 stays tracked and is reported in the joined error; calling `Terminate` again
@@ -208,7 +211,7 @@ terminated". `ceph.FactsOf` and the descriptor getters still answer.
 | --- | --- |
 | Containers attached with `WithClient` or `ClientConfig.WithIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
 | `rbdmirror.Mirror`, `cephfsmirror.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
-| Handles from the package function `fault.InterruptNetwork` | `Restore` them; no fixture tracks them. |
+| Handles from the package function `fault.InterruptLink` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |
 | Diagnostics reports | They may contain log lines with secrets; review before sharing. |
 | Override handles | Optional when the cluster is discarded afterwards; see [Override handles](#override-handles). |

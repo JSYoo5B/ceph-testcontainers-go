@@ -10,7 +10,8 @@ import (
 )
 
 // DaemonOptions is the configuration of one daemon that AddMonitor or AddManager
-// creates (AddOSD takes OSDOptions). It is a plain value with chainable,
+// creates, or that MonitorContainer.Replace starts again (AddOSD takes
+// OSDOptions). It is a plain value with chainable,
 // value-returning methods. It applies to that daemon only and never changes the
 // cluster's settings or any other daemon. The zero value changes nothing.
 //
@@ -37,8 +38,9 @@ type DaemonOptions struct {
 // The image reference must be non-empty and free of whitespace and control
 // characters. A refusal matches ErrInvalidRequest and happens before the
 // topology lock and before any daemon identity, key or container is created;
-// nothing checks that the image exists. MON and MGR containers are never
-// recreated, so their image does not change for their lifetime.
+// nothing checks that the image exists. MGR containers are never recreated, so
+// their image does not change for their lifetime; a MON keeps its image unless
+// MonitorContainer.Replace starts it from another one.
 // ClusterFacts.Images and ClusterFacts.CephVersion, and the images recorded in
 // a finalization manifest or verification report, keep describing the cluster
 // and its first MON; the diagnostics archive records each container's image
