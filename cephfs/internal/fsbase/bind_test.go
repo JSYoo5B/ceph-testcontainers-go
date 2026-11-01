@@ -2,10 +2,7 @@ package fsbase
 
 import "testing"
 
-type bindOwner struct {
-	Handle
-	local int
-}
+type bindOwner struct{ Handle }
 
 // TestOfDetachesAValueCopyOfTheBoundOwner pins that only the bound descriptor
 // resolves to its Core: a value copy, which shares the Handle but not the
