@@ -49,7 +49,7 @@ prepared, and do not cancel existing main CI as part of documentation work.
 
 ## Publication handoff
 
-All four packages belong to one root Go module. Publish one repository tag,
+All public packages belong to one root Go module. Publish one repository tag,
 such as `v0.3.0`, not per-package `ceph/v0.3.0`, `rbd/v0.3.0`
 or other nested tags. There is currently no workflow that publishes a
 release automatically.

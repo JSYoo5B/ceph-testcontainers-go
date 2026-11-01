@@ -22,8 +22,9 @@ Ryuk) still needs the Docker engine. The Go module has no go-ceph, librados or
 cgo dependency and builds with `CGO_ENABLED=0`.
 
 Requirements: Go 1.26 or later, a Docker engine that runs Linux containers, and
-access to pull the Ceph and Ryuk images. The module is experimental; there are
-no release tags yet.
+access to pull the Ceph and Ryuk images. Releases follow semantic versioning;
+before v1.0.0 a minor release may change the API (see the
+[published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases)).
 
 ```sh
 go get github.com/JSYoo5B/ceph-testcontainers-go/ceph

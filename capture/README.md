@@ -31,7 +31,7 @@ session, err := capture.Start(ctx, monitor, capture.Request{
 	Network:     networkName,
 	Interface:   "eth0",
 	Filter:      "tcp port 3300",
-	SnapLen:     262144,
+	SnapLen:     65535,
 	MaxPackets:  10000,
 	Output:      filepath.Join(t.TempDir(), "mon.pcap"),
 })

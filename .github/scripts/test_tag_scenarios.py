@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import tag_scenarios as engine
 
@@ -533,6 +533,22 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(compiled.call_count, 3)
         with patch.object(engine, "compile_inventory", return_value=["TestDifferent"]), self.assertRaisesRegex(ValueError, "all-tag"):
             engine.verify([file], plan)
+
+    def test_verification_also_compiles_every_optional_profile(self):
+        file = fixture()
+        plan = engine.discover([file])
+        optional_file = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
+        optional_file["constraint"] = combine("and", optional_file["constraint"], tag("native_regression"))
+        optional_file["tags"].append("native_regression")
+        optional = engine.discover_optional([optional_file])
+        with patch.object(engine, "compile_inventory", return_value=["TestNewFeature"]) as compiled:
+            report = engine.verify([file, optional_file], plan, optional=optional)
+        self.assertTrue(report["passed"])
+        self.assertEqual(compiled.call_count, 4)
+        self.assertIn(call(optional["include"][0]["package"], optional["include"][0]["tags"], engine.ROOT), compiled.call_args_list)
+        with patch.object(engine, "compile_inventory", side_effect=[["TestNewFeature"]] * 3 + [ValueError("tag profile did not compile")]), \
+                self.assertRaisesRegex(ValueError, "did not compile"):
+            engine.verify([file, optional_file], plan, optional=optional)
 
     def test_changed_scope_keeps_only_batches_whose_own_test_files_changed(self):
         catalog = [fixture(path="internal/integration/one_test.go", category="topology", batch="one", tests=("TestOne",)),

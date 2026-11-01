@@ -10,7 +10,7 @@ and many operations change several of them in sequence. This guide explains:
   own;
 - why many calls return a non-nil handle together with an error, and what to
   do with it;
-- how `Temporary*` overrides are restored;
+- how override handles are restored;
 - how to recover from a partial failure.
 
 ## How a context bounds a call
@@ -178,13 +178,13 @@ resources from calls that failed halfway:
 | The public bridge and the separate cluster bridge | `Run`, `NetworkConfig.WithSeparateClusterNetwork` |
 | Network delays and their netem helper containers | `ApplyNetworkProfile` (removed first, also on your client containers) |
 | Container pauses | `fault.Pause` (resumed before the teardown) |
-| Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |
+| Network interruptions | `fault.InterruptNetwork` (restored before the teardown, also on your client containers) |
 | Native commands that are still running or not confirmed as stopped | `RunNativeCommand` (canceled and stopped, also in your client containers) |
 
 Everything stored inside Ceph (pools, Cephx identities, configuration
 database entries, OSD map flags and ratios, blocklist entries, CephFS and RGW
 metadata) disappears with the containers. `Terminate` does not restore
-`Temporary*` overrides one by one; it discards the whole cluster.
+override handles one by one; it discards the whole cluster.
 
 `Terminate` works in a fixed order: it removes network delays, restores network
 interruptions, resumes paused containers, cancels and stops native commands,
@@ -208,10 +208,10 @@ terminated". `ceph.FactsOf` and the descriptor getters still answer.
 | --- | --- |
 | Containers attached with `WithClient` or `ClientConfig.WithIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
 | `rbdmirror.Mirror`, `cephfsmirror.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
-| Handles from the package function `ceph.InterruptNetwork` | `Restore` them; no fixture tracks them. |
+| Handles from the package function `fault.InterruptNetwork` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |
 | Diagnostics reports | They may contain log lines with secrets; review before sharing. |
-| `Temporary*` handles | Optional when the cluster is discarded afterwards; see [Temporary overrides](#temporary-overrides). |
+| Override handles | Optional when the cluster is discarded afterwards; see [Override handles](#override-handles). |
 
 ### Registering cleanup
 
@@ -348,11 +348,11 @@ result:
 | `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
 | `rbdmirror.Run`, `cephfsmirror.Run`, `multisite.Run` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `Daemon.Remove` or the fixture's `Terminate` |
-| `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
+| `multisite.Fixture.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
 
-## Temporary overrides
+## Override handles
 
-`Temporary*` methods change fixture state and return a handle that can put it
+The override calls below change fixture state and return a handle that can put it
 back. Some wrap several native settings:
 
 | Method | Changes |
@@ -418,7 +418,7 @@ Handle-specific details:
 - `override.FullRatiosHandle.Restore` accepts only the last tuple it applied, or
   either side of one uncertain command. The native CLI changes one ratio per
   command, so apply and restore are not atomic.
-- `OverrideSessionTimeouts.Restore` refuses a filesystem that was recreated
+- `SessionTimeoutsOverrideHandle.Restore` refuses a filesystem that was recreated
   under the same name.
 
 `fault.PauseLease.Resume` and `NetworkInterruption.Restore` follow the same
@@ -445,7 +445,7 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 | `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount` | Inspect `Pool.Status`; commands may have partly succeeded. |
 | `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientConfig.Capabilities` or auth state before relying on a change. |
 | `RotateKey` | Keep the failure and inspect the daemon/auth state; the operation fences submitted MON commands and reconciles its keyring files. Do not replace keys with a raw command while it runs. |
-| `cephfs.Remove` | Retry; it continues with whatever remains. |
+| `Filesystem.Remove` | Retry; it continues with whatever remains. |
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |
 | `RefreshMonitorConfig`, `RefreshClientMonitorConfig`, mirror `RefreshMonitorConfig` | Successful copies are kept; retry with a fresh context and up-to-date files are skipped. |
 | `multisite.Fixture.RemoveZone` | Retry with the same name. |
@@ -508,7 +508,7 @@ func TestSomething(t *testing.T) {
 - Give every test its own pool and remove it with `Pool.Remove`, which also
   removes the CRUSH rule and erasure-code profile, so long runs do not reach
   PG limits.
-- Restore every `Temporary*` override, delete Cephx clients with
+- Restore every override handle, delete Cephx clients with
   `ClientConfig.Delete`, and resume or restore every fault before the test ends.
 - Tests that use overlapping overrides (the same configuration key, flag or
   module) cannot run in parallel: the second override is refused.
@@ -518,8 +518,9 @@ func TestSomething(t *testing.T) {
 ## Related APIs
 
 - [`ceph`](../../ceph/README.md): `Run`, `Terminate`, `WithStartupTimeout`,
-  `Temporary*`, `RunNativeCommand`, `CollectDiagnostics`, context-aware
-  getters.
+  `RunNativeCommand`, `CollectDiagnostics`, context-aware getters.
+- [`override`](../../override/README.md): the override calls and their
+  restoration handles.
 - [`rbd`](../../rbd/README.md), [`cephfs`](../../cephfs/README.md), [`rgw`](../../rgw/README.md): service
   and multicluster fixtures and their `Terminate`.
 - [Fault injection](fault-injection.md): pauses, interruptions and overrides

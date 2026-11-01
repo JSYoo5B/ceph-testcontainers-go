@@ -56,7 +56,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldID := original.GetContainerID()
-	volume := c.stores.volume.name
+	volume := c.fleet.stores.volume.name
 	pool, err := c.CreatePool(ctx, PoolConfig{Name: "uncertain-reopen", Application: "rados", Replicas: 1, MinSize: 1, PGNum: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -74,24 +74,24 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
-	detached, err := c.DetachOSD(ctx, original.ID)
+	detached, err := original.Detach(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := docker.Client.ContainerInspect(ctx, oldID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("old container remains", err)
 	}
-	if !c.nativeCmds.fenced[oldID] {
+	if !c.native.calls.fenced[oldID] {
 		t.Fatal("detached instance lost its fence")
 	}
 	before := retainedUncertainClock(t, ctx, docker.Client)
 	injected := errors.New("injected client-side completed-runner reply loss")
 	fault := &retainedReplyFault{next: runContainer, lost: injected}
-	previous := c.stores.runner
-	c.stores.runner = fault.run
-	t.Cleanup(func() { c.stores.runner = previous })
-	candidate, reopenErr := c.ReopenOSD(ctx, detached)
-	if !errors.Is(reopenErr, injected) || candidate == nil || candidate.Container != nil || c.osdHandles.get(original.ID) != candidate || !detached.reopened || c.osdHandles.detachedOf(original.ID) != nil {
+	previous := c.fleet.stores.runner
+	c.fleet.stores.runner = fault.run
+	t.Cleanup(func() { c.fleet.stores.runner = previous })
+	candidate, reopenErr := detached.Reopen(ctx)
+	if !errors.Is(reopenErr, injected) || candidate == nil || candidate.Container != nil || c.fleet.osdHandles.get(original.ID) != candidate || !detached.reopened || c.fleet.osdHandles.detachedOf(original.ID) != nil {
 		t.Fatalf("uncertain result lost consumed ownership: candidate=%v err=%v", candidate != nil, reopenErr)
 	}
 	if fault.calls != 1 || fault.observed == nil {
@@ -102,8 +102,10 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal("runtime reused the removed instance")
 	}
 	raw, err := docker.Client.ContainerInspect(ctx, hiddenID, mobycl.ContainerInspectOptions{})
-	if err != nil || raw.Container.State == nil || !raw.Container.State.Running || raw.Container.Config == nil || raw.Container.Config.Labels[clusterOwnerLabel] != c.startup.ownerID() || raw.Container.Image != image {
-		t.Fatal("withheld native instance identity/ownership differs", err)
+	// Container.Image is the image ID; Config.Image is the reference the
+	// runner was given.
+	if err != nil || raw.Container.State == nil || !raw.Container.State.Running || raw.Container.Config == nil || raw.Container.Config.Labels[clusterOwnerLabel] != c.startup.ownerID() || raw.Container.Config.Image != image {
+		t.Fatalf("withheld native instance identity/ownership differs: %v %+v %+v", err, raw.Container.State, raw.Container.Config)
 	}
 	mounted := false
 	for _, m := range raw.Container.Mounts {
@@ -119,17 +121,17 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal("native creation inventory differs", created)
 	}
 	for range 2 {
-		if again, err := c.ReopenOSD(ctx, detached); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") {
+		if again, err := detached.Reopen(ctx); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") {
 			t.Fatal("consumed detached handle admitted retry", err)
 		}
-		if again, err := c.DetachOSD(ctx, original.ID); err == nil || again != nil || !strings.Contains(err.Error(), "no container") {
+		if again, err := candidate.Detach(ctx); err == nil || again != nil || !strings.Contains(err.Error(), "no container") {
 			t.Fatal("nil-container candidate admitted detach", err)
 		}
 	}
 	if fault.calls != 1 {
 		t.Fatal("uncertain creation was replayed")
 	}
-	if err := c.RemoveOSD(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "last OSD") {
+	if err := candidate.Remove(ctx); err == nil || !strings.Contains(err.Error(), "last OSD") {
 		t.Fatal("last uncertain OSD was purged", err)
 	}
 	// Observe native registration and data through healthy control/client paths.

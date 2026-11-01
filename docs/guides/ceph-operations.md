@@ -70,7 +70,7 @@ Gives an identity created by this cluster a fresh key and keeps its name and
 its exact capabilities. The change is one `ceph auth import` of the identity's
 own keyring with the new key, so the identity never disappears from the MONs.
 The new key has the type of the old one; `ceph.ClientOptions.WithKeyType` selects
-another (see [CreateClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CreateClient)). The identity needs at least one
+another (see [CreateClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.CreateClient)). The identity needs at least one
 capability, because Ceph refuses to import an entry without any; an identity
 without capabilities is refused before any change.
 
@@ -163,7 +163,7 @@ While the identity is revoked:
   [ClientConfig.Capabilities](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Capabilities),
   [ClientConfig.UpdateCaps](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.UpdateCaps), [ClientConfig.ReplaceKey](#clientconfigreplacekey)
   and another `ClientConfig.Revoke` refuse the descriptor.
-- [CreateClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CreateClient) refuses the name.
+- [CreateClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.CreateClient) refuses the name.
 - [ClientConfig.Delete](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Delete) makes the removal permanent, after which
   `Restore` fails.
 
@@ -307,6 +307,7 @@ test never share one:
 | `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
 | `verification-<n>-<name>.json` | The `ceph.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
 | `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Finalization.Capture) that returned one, numbered by registration order. |
+| `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
 
 The manifest's execution identity has the Go version and platform, the VCS
@@ -385,7 +386,7 @@ Limits:
 Opt-in post-test verification of a dedicated cluster: the log lines and the
 new crashes of its daemons between the activation and the end of the test,
 each against its own expected events. `Verify` activates it on a
-`Finalization` from [TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#TerminateOnCleanup) and adds a check
+`Finalization` from [TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.TerminateOnCleanup) and adds a check
 named `verification <name>`, so it runs before the failure archive and the
 cleanups. A verification that is not clean fails the test, and with
 `Archive` its report is archived with the diagnostics before anything is

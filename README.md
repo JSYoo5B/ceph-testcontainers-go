@@ -44,11 +44,17 @@ Documentation for a published release is available at its Git tag.
 - [`capture`](capture/README.md): opt-in packet capture on one container
   endpoint.
 
-Every fixture package is a Testcontainers for Go module: `Run(ctx, image,
-opts...)` returns a `Container` that embeds `testcontainers.Container`. The
-service packages build on `ceph`: their `Container` embeds `*ceph.Container`,
-and their options can be passed to `ceph.Run` together. `capture` starts no
-fixture of its own; it observes a container that already exists.
+Every fixture package is a Testcontainers for Go module with one
+`Run(ctx, image, opts...)`. In `ceph` and the service packages it returns a
+`Container` that embeds `testcontainers.Container`; the service packages build
+on `ceph`: their `Container` embeds `*ceph.Container`, and their options can be
+passed to `ceph.Run` together. The two-cluster fixtures start their daemons as
+Testcontainers containers on two existing clusters: `rbd/mirror` and
+`cephfs/mirror` return a `*Mirror` that embeds the first mirror daemon's
+`testcontainers.Container`, and `rgw/multisite` returns a `*Fixture` whose
+`Source` and `Destination` gateways are containers, while the `Fixture` itself
+embeds none. `fault`, `override` and `capture` start no fixture of their own;
+they act on or observe containers that already exist.
 
 ## Requirements
 
@@ -60,8 +66,8 @@ fixture of its own; it observes a container that already exists.
   [the host network guide](docs/guides/host-network.md).
 - Access to pull the Ceph image and the Ryuk image.
 
-The default image is the published, pruned official Tentacle 20.2.4 aggregate
-aggregate, pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
+The default image is the published, pruned official Tentacle 20.2.4 aggregate,
+pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
 Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
 Runtime CI uses these dependency roles directly. Squid 19.2.x also works, with

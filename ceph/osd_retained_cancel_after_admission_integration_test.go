@@ -56,7 +56,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldID := original.GetContainerID()
-	volume := c.stores.volume.name
+	volume := c.fleet.stores.volume.name
 	pool, err := c.CreatePool(ctx, PoolConfig{Name: "cancel-after-admission", Application: "rados", Replicas: 1, MinSize: 1, PGNum: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
-	detached, err := c.DetachOSD(ctx, original.ID)
+	detached, err := original.Detach(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +85,14 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	reopenCtx, cancelReopen := context.WithCancel(ctx)
 	defer cancelReopen()
 	fault := &retainedCancelFault{next: runContainer, cancel: cancelReopen}
-	previous := c.stores.runner
-	c.stores.runner = fault.run
-	t.Cleanup(func() { c.stores.runner = previous })
-	candidate, reopenErr := c.ReopenOSD(reopenCtx, detached)
+	previous := c.fleet.stores.runner
+	c.fleet.stores.runner = fault.run
+	t.Cleanup(func() { c.fleet.stores.runner = previous })
+	candidate, reopenErr := detached.Reopen(reopenCtx)
 	if reopenErr == nil || reopenCtx.Err() == nil || ctx.Err() != nil {
 		t.Fatalf("reopen did not observe the post-creation cancellation: err=%v caller=%v test=%v", reopenErr, reopenCtx.Err(), ctx.Err())
 	}
-	if candidate == nil || candidate.Container == nil || c.osdHandles.get(original.ID) != candidate || !detached.reopened || c.osdHandles.detachedOf(original.ID) != nil {
+	if candidate == nil || candidate.Container == nil || c.fleet.osdHandles.get(original.ID) != candidate || !detached.reopened || c.fleet.osdHandles.detachedOf(original.ID) != nil {
 		t.Fatalf("canceled reopen lost consumed ownership: candidate=%v err=%v", candidate != nil, reopenErr)
 	}
 	if fault.calls != 1 || fault.canceled != 1 || fault.observed == nil || fault.observed != candidate.Container {
@@ -106,7 +106,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if len(created) != 1 || created[0] != firstID {
 		t.Fatal("native creation inventory differs", created)
 	}
-	if again, err := c.ReopenOSD(ctx, detached); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") {
+	if again, err := detached.Reopen(ctx); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") {
 		t.Fatal("consumed detached handle admitted retry", err)
 	}
 	if fault.calls != 1 {
@@ -126,15 +126,15 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if err := (osdMap{c.conn()}).waitUp(ctx, []int{original.ID}); err != nil {
 		t.Fatal("canceled candidate never reached up/in", err)
 	}
-	second, err := c.DetachOSD(ctx, original.ID)
+	second, err := candidate.Detach(ctx)
 	if err != nil {
 		t.Fatal("detach of the canceled candidate", err)
 	}
 	if _, err := docker.Client.ContainerInspect(ctx, firstID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("canceled candidate container remains after detach", err)
 	}
-	c.stores.runner = previous
-	replacement, err := c.ReopenOSD(ctx, second)
+	c.fleet.stores.runner = previous
+	replacement, err := second.Reopen(ctx)
 	if err != nil || replacement == nil || replacement.Container == nil {
 		t.Fatal("reopen after the canceled candidate", err)
 	}

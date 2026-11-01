@@ -212,7 +212,8 @@ container, and the owned volume is discarded as before.
    the regular, non-symlink files `ready`, `whoami`, `fsid`, `ceph_fsid`,
    `keyring` and `block`, and the block's inode and size. Require the
    captured ID, UUID and the served cluster FSID, and a key for `osd.<id>`.
-6. Publish the `DetachedOSD` and drop the descriptor from `c.osds`. The old
+6. Publish the `DetachedOSD` and drop the descriptor from the owned OSD
+   registry (`osdHandles`). The old
    `*OSDContainer` is not rebound and keeps naming the removed container.
 
 A failure after the fence keeps the OSD owned with its fence. A retry resumes

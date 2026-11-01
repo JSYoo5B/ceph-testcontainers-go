@@ -1137,7 +1137,11 @@ def compile_inventory(package, tags, root=ROOT):
     return sorted(tests)
 
 
-def verify(catalog, plan, root=ROOT):
+def verify(catalog, plan, root=ROOT, optional=None):
+    """Compile every required profile, and every optional one when optional
+    is given, and require each compiled test inventory to match its AST
+    source. An optional batch compiles only with its own batch tag, so no
+    other check builds it."""
     observations = []
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
@@ -1158,7 +1162,7 @@ def verify(catalog, plan, root=ROOT):
             if actual != expected:
                 raise ValueError("category compiled inventory differs from its AST source: " + category)
             observations.append({"package": package, "tags": tags, "tests": actual})
-    for profile in plan["include"]:
+    for profile in plan["include"] + (optional["include"] if optional else []):
         actual = compile_inventory(profile["package"], profile["tags"], root)
         expected = selected_tests(catalog, profile["package"], profile["tags"])
         if actual != expected:
@@ -1765,9 +1769,9 @@ def main(argv=None):
                     if args.verify:
                         # The source filter affects workflow execution only;
                         # verification always proves the whole required suite.
-                        report["compiled_coverage"] = verify(catalog, plan)
+                        report["compiled_coverage"] = verify(catalog, plan, optional=discover_optional(catalog, bugs))
             else:
-                report = verify(catalog, plan)
+                report = verify(catalog, plan, optional=discover_optional(catalog, bugs))
             if args.output is not None:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

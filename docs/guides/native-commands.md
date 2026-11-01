@@ -110,7 +110,7 @@ These commands do not give usable JSON:
 | Command | Output | Typed alternative |
 | --- | --- | --- |
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `Observer.ObjectWatchers` |
-| `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.Fixture.BucketSyncStatus`, `WaitBucketSyncReady` |
+| `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.SyncGroup.BucketSyncStatus`, `WaitBucketSyncReady` |
 | `radosgw-admin sync status` | The comparison with remote logs appears only in the text output | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
 | `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Mirror.PolicyStatus` |
 
@@ -646,8 +646,8 @@ _, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume
 
 - To see a failure's native text, run the same `radosgw-admin` command with
   `gateway.Exec`; the container has the cluster configuration and admin keyring
-  at the default paths. The control container also has `radosgw-admin`, which
-  works for the default zone of a standalone cluster without a running gateway.
+  at the default paths. The control container runs the essential image, which
+  has no `radosgw-admin`.
 - Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
   endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
   (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the
@@ -702,7 +702,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `OSDContainer.SetIn`, `OSDContainer.Remove`, which check the OSD's UUID | `OSDContainer.SetIn`, `OSDContainer.Remove` |
 | `auth` changes to identities created by `CreateClient`, or to daemon identities | `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, daemon restarts | `ClientConfig.UpdateCaps`, `ClientConfig.Delete` |
 | `mon add`/`mon remove`, editing `/etc/ceph/ceph.conf` in any container | MON membership and the `mon_host` bookkeeping | `AddMonitor`, `MonitorContainer.Remove`, `RefreshMonitorConfig` |
-| `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `cephfs.Remove` | `ScaleMDS`, `cephfs.Remove` |
+| `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `Filesystem.Remove` | `ScaleMDS`, `Filesystem.Remove` |
 | `fs set session_timeout`/`session_autoclose` | `OverrideSessionTimeouts` | `OverrideSessionTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | Subvolume helpers, which check native identity | The typed subvolume helpers |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `Gateway.ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
@@ -714,8 +714,9 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 Resources you create natively (pools, images, users, buckets, CRUSH rules)
 are not owned by the fixture: typed removal helpers refuse them, and they
 disappear with the cluster. For changes you want undone within a test, prefer
-the `Temporary*` helpers, which record the original state and refuse to
-overwrite outside edits.
+the [`override`](../../override/README.md) helpers (`override.SetConfig`,
+`override.SetOSDFlag` and the others), which record the original state and
+refuse to overwrite outside edits.
 
 ## Related APIs
 

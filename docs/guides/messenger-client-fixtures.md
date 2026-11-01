@@ -47,7 +47,8 @@ readiness, not a client's protocol implementation.
 | | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host` |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |
 
-`crc` and `secure` abbreviate `ceph.MessengerCRC` and `ceph.MessengerSecure`.
+`crc` and `secure` abbreviate `[]ceph.MessengerConnectionMode{ceph.MessengerCRC}`
+and `[]ceph.MessengerConnectionMode{ceph.MessengerSecure}`.
 
 While any pool has `hashpspool`, the MON refuses a client without the
 `OSDHASHPSPOOL` feature (`0x40000000`) at its MON session. `NoHashPSPool`
@@ -80,7 +81,7 @@ MON and a standby MGR, poll `QuorumStatus` until it lists all three MONs and
 | Stop MON a for good | `Stop` on its handle. The fixture's CLI runs in a separate control container and keeps working. | `TestMessengerClientProfileSecure` |
 | Start MGRs later | `AddManager` | `TestMessengerClientProfileDelayedManagers` |
 | Add a MON that never answers, then remove it | `cluster.Ceph(ctx, "mon", "add", name, addr)` with an address nothing listens on, later `mon remove`. Each monmap change starts an election that waits for the missing member, so MON commands and new client sessions stall for about 10 s. Wait until `quorum_status` reports the new monmap and the same election epoch twice, and give new native clients longer timeouts. While the member is in the monmap, `RefreshClientMonitorConfig` would write its address into `mon_host`. | `TestMessengerClientProfileUnreachableMonitor` |
-| Make the MGRs accept only secure, then restart them | `override.SetMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: secure})`, then `Stop` and `Start` each MGR. The mode survives the restart; `Restore` returns them to CRC. | `TestMessengerClientProfileModeRejection/managers` |
+| Make the MGRs accept only secure, then restart them | `override.SetMessengerPolicy(ctx, cluster, ceph.MessengerPolicy{Managers: secure})`, then `Stop` and `Start` each MGR. The mode survives the restart; `Restore` returns them to CRC. | `TestMessengerClientProfileModeRejection/managers` |
 | Revoke a client key and restore it | `ClientConfig.Revoke` and `ClientConfig.ReplaceKey` | `TestClientRevocation`, `TestClientKeyReplacement` |
 | Run native oracles | `python3-rados`, the `ceph` CLI, `crushtool` and `ceph-dencoder` in a `WithClient` container, or `RunNativeCommand` | `TestNativeCommands`, `TestRADOSMutationOutcomes`, `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement` |
 
@@ -385,7 +386,7 @@ no test inspects the messages on these paths.
 | OSD primary to replica, cluster network | With one OSD's cluster endpoint cut, the primary reports a write `waiting for sub ops` for 10 s while MON commands answer and both OSDs stay up; after restore another client reads the same bytes and version. Logs `HELD_REPLICATION_RECEIPT`. | Native state | `TestSeparateClusterNetworksAndInterruptions`, `TestSeparateIPv6ClusterNetworksAndInterruptions` |
 | OSD primary to replica, one direction | `ApplyNetworkProfile` on the primary's cluster endpoint with `Peer` the replica and `Loss: 100`. The write waits past `osd_heartbeat_grace`; each OSD is `reported failed by` the other, but one reporter is below `mon_osd_min_down_reporters` 2, so both stay up. After `Restore` the write completes and both copies read back. Logs `OSD_PEER_PATH_RECEIPT`. | Native state | `TestOSDReplicationPeerPathCut` |
 | MON to MON | Cutting two of five MONs leaves a quorum of three; restoring them brings back five. | Native state (quorum membership) | `TestFiveMonitorQuorumAndNetworkRecovery` |
-| Map propagation to MONs and OSDs | Each daemon's admin socket reports the new OSDMap epoch after `CreatePool`, and the new MonMap epoch and members after `AddMonitor("d")` and `MonitorContainer.Remove("d")`. Logs `MAP_PROPAGATION_RECEIPT`; times order reads and are not latencies. | Native state | `TestMapPropagationReceipt` |
+| Map propagation to MONs and OSDs | Each daemon's admin socket reports the new OSDMap epoch after `CreatePool`, and the new MonMap epoch and members after `AddMonitor("d")` and `Remove` on MON d's `MonitorContainer`. Logs `MAP_PROPAGATION_RECEIPT`; times order reads and are not latencies. | Native state | `TestMapPropagationReceipt` |
 | OSD to OSD when a replica missed writes | With `norecover` or `nobackfill`, `pg query` tells log recovery (replica in the acting set, `last_backfill` `MAX`) from backfill (replica only in the up set, `last_backfill` `MIN`); `num_objects_recovered` grows by the objects written meanwhile. Also on a K=2, M=1 EC pool, where an empty acting slot is `2147483647`. Logs `OSD_RECOVERY_RECEIPT`. | Native state | `TestOSDRecoveryAndBackfillReceipts/replicated` and `/erasure` |
 | OSD to OSD after a placement change | With flags held, PGs map to another OSD in `recovery_wait` or `backfill_wait`; after release they are clean there. Client reads recover on demand, so log recovery and backfill are not told apart. | Native state | `TestPoolPGRelocation` |
 | MDS to MDS subtree export | An export pin moves authority, as `get subtrees` reports, and the `exported`/`imported` counters grow. | Native state for pinned directories; outcome for subvolume pins | `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration`, `TestCephFSPins` |
@@ -526,7 +527,7 @@ a reconnected session carries show what was acknowledged.
 | no `allow *` on OSDs or MDSs | librados returns `-13`; the CLI exits 13 with `problem getting command descriptions` |
 | OSD id or pool missing from the client's OSDMap | `-2` (ENOENT) before sending |
 | OSD marked down | `-6` (ENXIO) before sending |
-| paused OSD kept up (`override.SetOSDFlag(ceph.OSDFlagNoDown)`, `fault.Pause`) | sent, unanswered, ended by the client's timeout with `-110`; whether it ran is unknown |
+| paused OSD kept up (`override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)`, `fault.Pause`) | sent, unanswered, ended by the client's timeout with `-110`; whether it ran is unknown |
 | unknown command prefix | `-22` (EINVAL), `unknown command prefix` |
 
 librados reports the signed result and the CLI exits with its absolute value.

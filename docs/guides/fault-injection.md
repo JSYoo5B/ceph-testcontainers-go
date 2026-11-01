@@ -33,10 +33,10 @@ terminates the cluster afterwards. Handles returned together with an error
 follow [Contexts, ownership and cleanup](contexts-and-cleanup.md). The snippets
 use `cleanupCtx` for a context that outlives the test's own context.
 
-Not supported at all: faults on the receiving side (apply the fault to the
-peer's endpoint with the receiver's address instead), firewall rules, TCP
-resets, socket destruction, packet capture, and any packet fault on host
-networks. Without the netem helper, the alternatives are `InterruptNetwork`,
+Not supported at all: firewall rules, TCP resets, socket destruction, and any
+packet fault on host networks. The receiving side is shaped with
+`NetworkProfile.Direction` (`fault.Inbound`), and packets are recorded with
+[`capture`](../../capture/README.md). Without the netem helper, the alternatives are `InterruptNetwork`,
 a separate cluster network (`NetworkConfig.WithSeparateClusterNetwork` with
 `ceph.ClusterNetworkPlane`) and the [messenger options](#dropping-or-delaying-messages).
 
@@ -79,8 +79,8 @@ if err != nil {
 
 The control container and an already paused container are refused, and a
 second pause of the same container returns the existing handle with an error.
-`Resume` is idempotent and retryable. `Terminate` resumes owned pauses first;
-resume a caller-owned client container yourself before terminating it.
+`Resume` is idempotent and retryable. `Terminate` resumes owned pauses after
+it restores network faults and before it removes containers; resume a caller-owned client container yourself before terminating it.
 
 What Ceph does with the frozen container:
 
@@ -327,7 +327,7 @@ fault.NetworkProfile{
 A limit on the path between a replicating daemon and the other cluster slows
 replication without stopping it. Apply the lease on the source cluster to a
 source OSD, with `Peer` set to the mirror daemon's address on the source
-network (from the daemon's `Inspect` and `ceph.FactsOf(source).NetworkName`).
+network (from the daemon's `Inspect` and the `NetworkName` field of `ceph.FactsOf(source)`).
 
 Read progress from the mirror status, not from daemon readiness: during a
 snapshot sync, the `rbdmirror.Mirror.ImageStatus` description carries

@@ -17,6 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases), on `main` |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
+| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
 The runtime workflows call the reusable template `tagged-runtime.yml`
@@ -104,8 +105,9 @@ allowlist:
 - Markdown files directly inside `docs/contributing/`, `docs/guides/` and
   `docs/internals/`, except the files a check reads:
   `docs/contributing/api-naming.md` and
-  `docs/contributing/configuration-composition.md` (the review notes that the
-  API catalogue receipts name),
+  `docs/contributing/configuration-composition.md` (the review note that the
+  API catalogue receipts name, and the design note that `ceph` doc comments
+  link to),
   `docs/guides/messenger-client-fixtures.md` and
   `docs/guides/bug-compatibility.md`.
 
@@ -114,7 +116,7 @@ Every other path runs the full Code checks, including a package's
 under `docs/`, and a changed path whose old or new Git mode is not an ordinary
 file. `test_docs_only.py` fails when a Go source or `tag_scenarios.py` names a
 documentation path that is on the allowlist. Add a newly read file to
-`READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
+`READ_DOC_FILES` in `docs_only.py`.
 
 The detection fails open. Pushes to `main`, the weekly schedule, manual runs,
 pull requests from forks, and any failure to determine the change set (no
@@ -133,6 +135,7 @@ lists renames as a deletion and an addition.
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
 | Native regressions | none | Runs are independent. |
+| Block fault probe | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous probe. |
 
 Consequences:
 - Different PRs never cancel each other. In a stack, base each PR on the head
@@ -204,8 +207,8 @@ Nothing in the workflows names a test.
    profiles as the matrix; `plan --optional --batch <name>` selects one
    optional batch; `plan --representative` selects the campaign set.
 5. **Verification.** `plan --verify` compiles the `all`, category and
-   single-batch builds with `go test -list` and compares the test names with
-   the catalog. Code checks runs it; the runtime workflows do not.
+   single-batch builds, including every optional batch, with `go test -list`
+   and compares the test names with the catalog. Code checks runs it; the runtime workflows do not.
 
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as
 `short-default-a488da21`, used in artifact names, summaries and annotations.
@@ -388,9 +391,11 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
 | Record runner storage after the tests | n/a | Ceph batches only, also after a failure. Writes `runner-storage/storage-after.json`. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs after any failure once the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. Never deletes anything. |
-| Show actual failure phases | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
+| Show actual failure phases in PR check annotations and summary | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
 | Normalize the scenario history row | n/a | Writes `history-row.json` (see [Scenario history](#scenario-history)). Its failure never changes the job result. |
 | Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
+| Record the failure archive upload | n/a | After a native failure, writes the number of local archive manifests and the upload's outcome and artifact to the summary. |
+| Read the scenario history summary | n/a | On failure, reads `summary.json` from the `scenario-history` branch for the next step; a missing branch leaves it out. |
 | Identify completed failing tests | n/a | On failure, annotates each failed test or subtest found in `native.log`. |
 
 The job sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1` and
@@ -412,8 +417,8 @@ Without `--binary`, `run` builds and runs with `go test`. To follow the CI
 path locally:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --directory artifacts/c/compile
-python3 .github/scripts/tag_scenarios.py run --category code --batch pure --directory artifacts/c/run --binary artifacts/c/compile
+python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --package ./internal/integration --directory artifacts/c/compile
+python3 .github/scripts/tag_scenarios.py run --category code --batch pure --package ./internal/integration --directory artifacts/c/run --binary artifacts/c/compile
 ```
 
 ### Image roles
@@ -423,7 +428,7 @@ Ceph batches declare their roles in `//ci:` metadata: `essential`, `client`,
 CephFS adds `cephfs`, RBD mirroring and cache add `rbd-aux`, and gateways add
 `rgw`. An undeclared Ceph profile gets all five; non-Ceph profiles get none.
 Only declared roles are prepared, and a missing role is never substituted:
-`integrationImages` fails when a used feature's role is missing. The optional
+`harness.IntegrationImages` fails when a used feature's role is missing. The optional
 `role_routing` and `role_mirror_refresh` batches cover constrained routing
 and can be requested with `/ci run`.
 
@@ -758,7 +763,8 @@ space.
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. A health wait that sees only `MON_DISK_LOW` points at runner storage: read `runner-storage/`. |
 | Docker resource cleanup | `runtime-cleanup-<id>/after.json` | A test left a container, network or volume behind, for example by not registering cleanup when `Run` returned an error. |
 
-Failed integration tests print the last 16 KB of every daemon's log into
+Failed integration tests print the last 16 KB (8 KB in the multicluster
+helpers) of every daemon's log into
 `native.log` before the cluster is removed; search for `container ... logs:`.
 
 ### Dispatch join

@@ -24,8 +24,9 @@ READ_DOC_FILES = frozenset((
     "docs/guides/messenger-client-fixtures.md",
     # tag_scenarios tests compare its registered tags with the tag registry.
     "docs/guides/bug-compatibility.md",
-    # The API catalogue receipts name these notes as their review;
-    # internal/apiinventory checks that they exist.
+    # The API catalogue receipts name api-naming.md as their review, and
+    # internal/apiinventory checks that it exists; the ceph doc comments
+    # link to configuration-composition.md.
     "docs/contributing/api-naming.md",
     "docs/contributing/configuration-composition.md",
 ))

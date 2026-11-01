@@ -212,9 +212,9 @@ The helper containers are released by the cluster, also in `Terminate`.
 ### Connecting from the test process
 
 `ConnectionConfig(ctx)` returns a `ceph.ConnectionConfig` with independent copies of the
-bootstrap `ceph.conf` (`Conf`) and the admin keyring (`Keyring`). In host mode the MON addresses in it are final.
-`ConnectionConfig(ctx)` does the same while bounding the wait for
-concurrent topology changes. The copy is a snapshot: after `AddMonitor` or
+bootstrap `ceph.conf` (`Conf`) and the admin keyring (`Keyring`), waiting for a
+concurrent topology change only while `ctx` is active. In host mode the MON
+addresses in it are final. The copy is a snapshot: after `AddMonitor` or
 `MonitorContainer.Remove`, call it again.
 
 For a restricted identity, use `client.ConnectionConfig()` on a

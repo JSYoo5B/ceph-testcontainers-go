@@ -205,7 +205,7 @@ with its own earlier snapshot. Review applies these decisions:
   `//go:build` or `// +build` header of any maintained Go file and names each
   path. `testdata`, `vendor` and dot or underscore directories are outside its
   scope, and tag words in comments or string literals are not constraints. It
-  runs in every planner command.
+  runs in every planner command except `modules`.
 - Selection refuses unregistered, retired, repeated and conflicting tags.
 
 ## Implementation and review checklist
