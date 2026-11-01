@@ -25,6 +25,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -258,7 +259,7 @@ func (f *fuseMount) exited(ctx context.Context) string {
 	if len(stderr) > 2048 {
 		stderr = stderr[len(stderr)-2048:]
 	}
-	if redacted, err := f.cluster.RedactSecrets(ctx, stderr); err == nil {
+	if redacted, err := diagnostics.Redact(ctx, f.cluster, stderr); err == nil {
 		stderr = redacted
 	}
 	return fmt.Sprintf("exit=%d timed_out=%t err=%v stderr=%s", f.result.ExitCode, f.result.TimedOut, f.err, strings.TrimSpace(string(stderr)))

@@ -30,6 +30,19 @@
 //   - github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite: RGW multisite
 //     realms, zones and sync policies.
 //
+// Optional features that act on a running cluster have their own packages,
+// so a cluster that uses none of them imports none:
+//
+//   - github.com/JSYoo5B/ceph-testcontainers-go/override: reversible
+//     overrides of cluster policy.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/fault: fault injection.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/capture: packet capture.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics: read-only
+//     diagnostics reports, crash metadata and redaction.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize: the ordered
+//     end of a test's cluster with post-test checks, verification, a failure
+//     archive and termination.
+//
 // These rules hold across the methods of a Container and its handles:
 //
 //   - Methods are bounded by the caller's context and most also by

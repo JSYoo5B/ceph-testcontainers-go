@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -44,7 +45,7 @@ func TestPartialClusterDiagnostics(t *testing.T) {
 	}
 	containers := diagnosticsOwnedContainers(t, cluster)
 	before := diagnosticsCaptureState(t, ctx, cluster, containers, false)
-	report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{Timeout: 30 * time.Second, OperationTimeout: 2 * time.Second})
+	report, err := diagnostics.Collect(ctx, cluster, diagnostics.Config{Timeout: 30 * time.Second, OperationTimeout: 2 * time.Second})
 	if report == nil || err == nil || report.Complete {
 		t.Fatal("partial bootstrap diagnostics did not retain a report and CLI errors")
 	}

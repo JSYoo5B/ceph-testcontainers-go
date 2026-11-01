@@ -19,7 +19,7 @@ import (
 // SetDebugLevel returns a non-nil handle for every outcome. A handle of a call
 // that was refused or never applied owns nothing: its Restore returns nil,
 // takes no lock and never reports a restoration, and its Receipt has the state
-// ceph.DebugLevelNotApplied with the refusal as Reason. A handle returned
+// DebugLevelNotApplied with the refusal as Reason. A handle returned
 // together with an error for an uncertain outcome is real, may own a changed
 // level and must be restored as well; its receipt never reports not-applied.
 // The zero value is unavailable: its Restore returns an error and its Receipt
@@ -44,15 +44,15 @@ func (h DebugLevelHandle) GoString() string { return h.String() }
 // zero value) returns a receipt without a state.
 //
 //purpose:observation
-func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
+func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 	if h == nil || h.state == nil {
-		return ceph.DebugLevelReceipt{Transitions: []ceph.DebugLevelTransition{}}
+		return DebugLevelReceipt{Transitions: []DebugLevelTransition{}}
 	}
 	s := h.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	receipt := s.receipt
-	receipt.Transitions = append([]ceph.DebugLevelTransition{}, s.receipt.Transitions...)
+	receipt.Transitions = append([]DebugLevelTransition{}, s.receipt.Transitions...)
 	return receipt
 }
 
@@ -75,8 +75,8 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 // cluster's startup timeout, as does every call.
 //
 // Restore with a context of its own, not the workload's, so that an ended
-// workload still restores. With TerminateOnCleanup, register the removal of
-// clients first and then Finalization.Cleanup with Restore: the cleanups run
+// workload still restores. With finalize.TerminateOnCleanup, register the
+// removal of clients first and then Finalization.Cleanup with Restore: the cleanups run
 // in reverse order after the failure archive, so a known failure is archived
 // while the level is still raised, the restoration runs before the clients
 // are removed, and a failed restoration triggers an after-cleanup archive and
@@ -129,7 +129,7 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 //     joined errors.
 //
 //purpose:condition,evidence
-func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error) {
+func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {
 	const op = "override.SetDebugLevel"
 	if c == nil {
 		return debugNotApplied(setting, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
@@ -180,7 +180,7 @@ func sameDebugLevel(a, b string) bool {
 	return a == b
 }
 
-func normalizeDebugLevelSetting(setting ceph.DebugLevelSetting) (ceph.DebugLevelSetting, string, error) {
+func normalizeDebugLevelSetting(setting DebugLevelSetting) (DebugLevelSetting, string, error) {
 	if setting.Name != "debug_ms" && setting.Name != "debug_osd" {
 		return setting, "", overridehook.Invalid(fmt.Errorf("debug level option %q is not supported; select debug_ms or debug_osd", setting.Name))
 	}
@@ -195,7 +195,7 @@ type debugLevelState struct {
 	registry overridehook.DebugWindows
 	key      string
 	target   overridehook.DebugTarget
-	setting  ceph.DebugLevelSetting
+	setting  DebugLevelSetting
 	// owned is the normalized requested level, the only value the window
 	// restores from.
 	owned    string
@@ -212,7 +212,7 @@ type debugLevelState struct {
 	refused error
 
 	mu      sync.Mutex
-	receipt ceph.DebugLevelReceipt
+	receipt DebugLevelReceipt
 	// terminal is the error that a terminal state other than restored
 	// returns again.
 	terminal error
@@ -220,9 +220,9 @@ type debugLevelState struct {
 
 // debugNotApplied returns the handle of a call that was refused before a window
 // was opened. Nothing was applied, so no registry slot is held.
-func debugNotApplied(setting ceph.DebugLevelSetting, cause error) (*DebugLevelHandle, error) {
+func debugNotApplied(setting DebugLevelSetting, cause error) (*DebugLevelHandle, error) {
 	s := &debugLevelState{setting: setting, now: time.Now,
-		receipt: ceph.DebugLevelReceipt{Daemon: setting.Daemon, Name: setting.Name, Requested: setting.Level, Transitions: []ceph.DebugLevelTransition{}}}
+		receipt: DebugLevelReceipt{Daemon: setting.Daemon, Name: setting.Name, Requested: setting.Level, Transitions: []DebugLevelTransition{}}}
 	return s.refuse(cause)
 }
 
@@ -234,32 +234,32 @@ func (s *debugLevelState) refuse(cause error) (*DebugLevelHandle, error) {
 	s.mu.Lock()
 	s.receipt.Reason = cause.Error()
 	s.mu.Unlock()
-	s.record(ceph.DebugLevelNotApplied, "", cause)
+	s.record(DebugLevelNotApplied, "", cause)
 	if s.registry != nil {
 		s.registry.Release(s.key, s)
 	}
 	return &DebugLevelHandle{state: s}, cause
 }
 
-func (s *debugLevelState) record(state ceph.DebugLevelState, readback string, err error) {
+func (s *debugLevelState) record(state DebugLevelState, readback string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.receipt.State = state
-	transition := ceph.DebugLevelTransition{State: state, At: s.now(), Readback: readback}
+	transition := DebugLevelTransition{State: state, At: s.now(), Readback: readback}
 	if err != nil {
 		transition.Error = err.Error()
 	}
 	s.receipt.Transitions = append(s.receipt.Transitions, transition)
 }
 
-func (s *debugLevelState) current() ceph.DebugLevelState {
+func (s *debugLevelState) current() DebugLevelState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.receipt.State
 }
 
 // finish records a terminal state and releases the admission.
-func (s *debugLevelState) finish(state ceph.DebugLevelState, readback string, err error) error {
+func (s *debugLevelState) finish(state DebugLevelState, readback string, err error) error {
 	s.record(state, readback, err)
 	s.mu.Lock()
 	s.terminal = err
@@ -296,9 +296,9 @@ func (s *debugLevelState) confirmTarget(ctx context.Context) error {
 	changed, err := s.sameGeneration(ctx)
 	switch {
 	case changed:
-		return s.finish(ceph.DebugLevelTargetChanged, "", err)
+		return s.finish(DebugLevelTargetChanged, "", err)
 	case err != nil:
-		s.record(ceph.DebugLevelUnconfirmed, "", err)
+		s.record(DebugLevelUnconfirmed, "", err)
 	}
 	return err
 }
@@ -310,10 +310,10 @@ type setRefusal interface {
 	Changed() bool
 }
 
-func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, target overridehook.DebugTarget, setting ceph.DebugLevelSetting, owned string, bound time.Duration, now func() time.Time) (*DebugLevelHandle, error) {
+func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, target overridehook.DebugTarget, setting DebugLevelSetting, owned string, bound time.Duration, now func() time.Time) (*DebugLevelHandle, error) {
 	s := &debugLevelState{registry: registry, key: setting.Daemon + "/" + setting.Name, target: target, setting: setting,
 		owned: owned, bound: bound, now: now, lock: make(chan struct{}, 1),
-		receipt: ceph.DebugLevelReceipt{Daemon: setting.Daemon, Name: setting.Name, Requested: setting.Level, Transitions: []ceph.DebugLevelTransition{}}}
+		receipt: DebugLevelReceipt{Daemon: setting.Daemon, Name: setting.Name, Requested: setting.Level, Transitions: []DebugLevelTransition{}}}
 	if err := registry.Reserve(s.key, s); err != nil {
 		return s.refuse(err)
 	}
@@ -338,10 +338,10 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	s.mu.Lock()
 	s.receipt.Prior = prior
 	s.mu.Unlock()
-	s.record(ceph.DebugLevelPriorRead, prior, nil)
+	s.record(DebugLevelPriorRead, prior, nil)
 	handle := &DebugLevelHandle{state: s}
 
-	s.record(ceph.DebugLevelApplyAttempted, "", nil)
+	s.record(DebugLevelApplyAttempted, "", nil)
 	settle, setErr := target.Set(ctx, s.identity, setting.Name, setting.Level)
 	if setErr != nil {
 		setErr = fmt.Errorf("set %s of %s: %w", setting.Name, setting.Daemon, setErr)
@@ -372,19 +372,19 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	case settleErr != nil:
 		// The window keeps the set, which Restore settles first.
 		err = errors.Join(setErr, settleErr, readErr, genErr)
-		s.record(ceph.DebugLevelApplyUncertain, value, err)
+		s.record(DebugLevelApplyUncertain, value, err)
 		return handle, err
 	case changed:
-		return handle, s.finish(ceph.DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
+		return handle, s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
 	case setErr == nil && readErr == nil && genErr == nil && sameDebugLevel(value, owned):
-		s.record(ceph.DebugLevelApplied, value, nil)
+		s.record(DebugLevelApplied, value, nil)
 		return handle, nil
 	}
 	err = errors.Join(setErr, readErr, genErr)
 	if readErr == nil && !sameDebugLevel(value, owned) {
 		err = errors.Join(err, fmt.Errorf("%s of %s reads back %q, not the requested %q", setting.Name, setting.Daemon, value, setting.Level))
 	}
-	s.record(ceph.DebugLevelApplyUncertain, value, err)
+	s.record(DebugLevelApplyUncertain, value, err)
 	return handle, err
 }
 
@@ -419,9 +419,9 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	}
 	defer func() { <-s.lock }()
 	switch s.current() {
-	case ceph.DebugLevelRestored:
+	case DebugLevelRestored:
 		return nil
-	case ceph.DebugLevelConflict, ceph.DebugLevelTargetChanged:
+	case DebugLevelConflict, DebugLevelTargetChanged:
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		return s.terminal
@@ -429,10 +429,10 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, s.bound)
 	defer cancel()
 	name, daemon := s.setting.Name, s.setting.Daemon
-	s.record(ceph.DebugLevelRestoreAttempted, "", nil)
+	s.record(DebugLevelRestoreAttempted, "", nil)
 	// A set that may still run could change the level after any check.
 	if err := s.settle(ctx); err != nil {
-		s.record(ceph.DebugLevelUnconfirmed, "", err)
+		s.record(DebugLevelUnconfirmed, "", err)
 		return err
 	}
 	if err := s.confirmTarget(ctx); err != nil {
@@ -441,7 +441,7 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	current, err := s.target.Get(ctx, name)
 	if err != nil {
 		err = fmt.Errorf("read the current %s of %s: %w", name, daemon, err)
-		s.record(ceph.DebugLevelUnconfirmed, "", err)
+		s.record(DebugLevelUnconfirmed, "", err)
 		return err
 	}
 	// A replacement during the read would make current another generation's.
@@ -451,10 +451,10 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	prior := s.receipt.Prior
 	if sameDebugLevel(current, prior) {
 		s.setRestored(current)
-		return s.finish(ceph.DebugLevelRestored, current, nil)
+		return s.finish(DebugLevelRestored, current, nil)
 	}
 	if !sameDebugLevel(current, s.owned) {
-		return s.finish(ceph.DebugLevelConflict, current, fmt.Errorf("%s of %s changed outside this window to %q; it was not restored", name, daemon, current))
+		return s.finish(DebugLevelConflict, current, fmt.Errorf("%s of %s changed outside this window to %q; it was not restored", name, daemon, current))
 	}
 	settle, setErr := s.target.Set(ctx, s.identity, name, prior)
 	if setErr != nil {
@@ -462,9 +462,9 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	}
 	if refusal := setRefusal(nil); errors.As(setErr, &refusal) {
 		if refusal.Changed() {
-			return s.finish(ceph.DebugLevelTargetChanged, "", setErr)
+			return s.finish(DebugLevelTargetChanged, "", setErr)
 		}
-		s.record(ceph.DebugLevelUnconfirmed, "", setErr)
+		s.record(DebugLevelUnconfirmed, "", setErr)
 		return setErr
 	}
 	s.pending = settle
@@ -481,27 +481,27 @@ func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	case settleErr != nil:
 		// No terminal state releases the window while its set may run.
 		err := errors.Join(setErr, settleErr, readErr, genErr)
-		s.record(ceph.DebugLevelUnconfirmed, value, err)
+		s.record(DebugLevelUnconfirmed, value, err)
 		return err
 	case changed:
-		return s.finish(ceph.DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
+		return s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
 	case readErr != nil || genErr != nil:
 		err := errors.Join(setErr, readErr, genErr)
-		s.record(ceph.DebugLevelUnconfirmed, value, err)
+		s.record(DebugLevelUnconfirmed, value, err)
 		return err
 	case sameDebugLevel(value, prior):
 		// The readback proves restoration even after a lost reply, whose
 		// error the transition keeps.
 		s.setRestored(value)
-		s.record(ceph.DebugLevelRestored, value, setErr)
+		s.record(DebugLevelRestored, value, setErr)
 		s.registry.Release(s.key, s)
 		return nil
 	case sameDebugLevel(value, s.owned):
 		err := errors.Join(setErr, fmt.Errorf("%s of %s still reads back the window's %q", name, daemon, value))
-		s.record(ceph.DebugLevelUnconfirmed, value, err)
+		s.record(DebugLevelUnconfirmed, value, err)
 		return err
 	}
-	return s.finish(ceph.DebugLevelConflict, value, errors.Join(setErr, fmt.Errorf("%s of %s reads back %q, neither the prior nor the window's value; it was not restored", name, daemon, value)))
+	return s.finish(DebugLevelConflict, value, errors.Join(setErr, fmt.Errorf("%s of %s reads back %q, neither the prior nor the window's value; it was not restored", name, daemon, value)))
 }
 
 func (s *debugLevelState) setRestored(value string) {

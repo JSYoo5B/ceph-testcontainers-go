@@ -57,7 +57,7 @@ if err != nil {
   and a full-ratio change takes effect only when the OSDs report it.
 - Debug levels are a narrow diagnostic window for one OSD and option around one
   operation, not a logging default; restore them with a context of their own
-  and register them with `Finalization.TrackDebugLevel`.
+  and register them with `finalize.Finalization.TrackDebugLevel`.
 
 ## Reference
 
@@ -67,4 +67,4 @@ uncertain outcome, is in go doc:
 or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/override`. Scenarios
 that combine overrides with faults are in
 [Fault injection](../docs/guides/fault-injection.md); failure archives in
-[Contexts and cleanup](../docs/guides/contexts-and-cleanup.md).
+[finalize](../ceph/finalize/README.md).

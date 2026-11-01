@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"reflect"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
@@ -24,21 +24,9 @@ type cephFSMDSIdentity struct {
 	container                            testcontainers.Container
 	name, cid, fsid                      string
 	confirmed, removalAttempted, removed bool
-	scope                                *cephFSMDSRemovalScope
+	scope                                *mdsmap.Scope
 	replacement                          *cephFSMDSReplacement
 	createdByReplacement                 *cephFSMDSReplacement
-}
-
-type cephFSMDSRemovalScope struct {
-	dataPools                   []int64
-	poolNames                   []string
-	active, standby             int
-	joinable, replay, protected bool
-}
-
-type stoppedMDSRow struct {
-	coldMDSRow
-	Laggy json.RawMessage `json:"laggy_since"`
 }
 
 func cephFSMDSFullCID(cid string) bool {
@@ -122,7 +110,7 @@ func (f mdsFleet) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 // completed-replacement authority before any Docker or native read, then the
 // control, the native cluster, the container and the scope, which must equal
 // the scope admitted by an earlier attempt.
-func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*cephFSMDSRemovalScope, error) {
+func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*mdsmap.Scope, error) {
 	i := daemon.identity
 	if err := f.checkStoppedMDSOwner(daemon, i); err != nil {
 		return nil, err
@@ -154,7 +142,7 @@ func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*cep
 // reattestStoppedMDS reattests the original native cluster, scope, owner and
 // container state immediately before a Docker attempt, and reports whether
 // the container is already missing. Owner held.
-func (f mdsFleet) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *cephFSMDSRemovalScope) (bool, error) {
+func (f mdsFleet) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *mdsmap.Scope) (bool, error) {
 	i := daemon.identity
 	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return false, err
@@ -177,7 +165,7 @@ func (f mdsFleet) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *ce
 // fresh native authority: the native cluster, an unchanged scope and the
 // owner. Context or error loss leaves the retained pending owner for retry.
 // Owner held.
-func (f mdsFleet) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, scope *cephFSMDSRemovalScope) error {
+func (f mdsFleet) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, scope *mdsmap.Scope) error {
 	i := daemon.identity
 	missing, err := inspectStoppedMDS(ctx, i, true)
 	if err != nil || !missing {
@@ -271,7 +259,7 @@ func inspectStoppedMDS(ctx context.Context, i *cephFSMDSIdentity, requireMissing
 
 // Strict global absence and logical owned-survivor membership come from one
 // FSMap. This never attributes a native GID to a Docker process or adopts one.
-func (f mdsFleet) readStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity) (*cephFSMDSRemovalScope, error) {
+func (f mdsFleet) readStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity) (*mdsmap.Scope, error) {
 	state, err := f.id.readNativePools(ctx)
 	if err != nil {
 		return nil, clusterutil.OperationError(ctx, "read original stopped MDS filesystem pools", err)
@@ -283,7 +271,7 @@ func (f mdsFleet) readStoppedMDSScope(ctx context.Context, target *cephFSMDSIden
 	return f.decodeStoppedMDSScope(ctx, target, state, data)
 }
 
-func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *cephFSNativePools, data []byte) (*cephFSMDSRemovalScope, error) {
+func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *cephFSNativePools, data []byte) (*mdsmap.Scope, error) {
 	state, err := decodeStoppedMDSMap(data, stoppedMDSMapExpectation{
 		targetName:    target.name,
 		filesystem:    f.id.name,
@@ -303,8 +291,8 @@ func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSId
 // confirmed, normally running member of the decoded registered set. It is the
 // only part of the scope read that inspects Docker, and it runs after the
 // decoded map was accepted. Owner held.
-func (f mdsFleet) verifyStoppedMDSSurvivors(ctx context.Context, target *cephFSMDSIdentity, state *stoppedMDSMapState) (*cephFSMDSRemovalScope, error) {
-	scope, registered := state.scope, state.registered
+func (f mdsFleet) verifyStoppedMDSSurvivors(ctx context.Context, target *cephFSMDSIdentity, state *mdsmap.StoppedState) (*mdsmap.Scope, error) {
+	scope, registered := state.Scope, state.Registered
 	remaining := 0
 	seenNames, seenCIDs := map[string]bool{}, map[string]bool{}
 	for _, daemon := range f.mds.roster.members() {

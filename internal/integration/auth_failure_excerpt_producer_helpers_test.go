@@ -21,13 +21,13 @@ const authCauseUnavailable = "unavailable"
 // since the test's own context may have ended with the failure.
 const authExcerptRedactionBudget = 30 * time.Second
 
-// authRedactionSource is what the excerpt redactor needs; *ceph.Container
+// authRedactionSource is what the excerpt redactor needs; harness.WithSockets
 // provides it.
 type authRedactionSource interface {
 	RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error)
 }
 
-// newAuthExcerptRedactor adapts the context-bounded RedactSecrets to the
+// newAuthExcerptRedactor adapts the context-bounded diagnostics.Redact to the
 // redaction step of buildAuthFailureExcerpt. A nil source, including a typed
 // nil pointer, yields a nil redactor, which withholds the text. A redaction
 // that fails, or that finishes after its budget, withholds the text too: its

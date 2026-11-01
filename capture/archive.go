@@ -5,25 +5,22 @@ import (
 	"errors"
 	"io"
 	"os"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
-
-var _ ceph.CaptureFileSource = (*Session)(nil)
 
 // CaptureFile opens the settled session's original, caller-owned output for
 // read-only archive copying. The size and SHA256 identify all retrieved bytes,
 // not merely the structural validator's prefix. It does not stop the session
 // or transfer ownership of its file. Close the returned reader.
 //
-// Finalization.CaptureWithFile is the explicit consent to archive these raw,
-// unsanitized packets; ordinary Finalization.Capture never opens this source.
+// finalize.Finalization.CaptureWithFile is the explicit consent to archive
+// these raw, unsanitized packets; ordinary Finalization.Capture never opens
+// this source.
 // The archive copies only for a failure: it verifies EOF, the exact size and
 // the full SHA256 before it publishes the copy as
 // capture-<registration>-<name>.pcap, refuses a symlink or other non-regular
 // source, and fails verification when the file changed after retrieval.
 // Keep the file and its directory until the finalization returns: a
-// t.TempDir registered after TerminateOnCleanup is removed first, so create
+// t.TempDir registered after finalize.TerminateOnCleanup is removed first, so create
 // it before registering the finalization or use t.ArtifactDir.
 //
 //purpose:evidence

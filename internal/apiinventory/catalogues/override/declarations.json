@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 27,
+  "count": 41,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -64,6 +64,30 @@
       "decision": "baseline"
     },
     {
+      "current": "override.DebugLevelApplied",
+      "kind": "const",
+      "proposed": "override.DebugLevelApplied",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelApplyAttempted",
+      "kind": "const",
+      "proposed": "override.DebugLevelApplyAttempted",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelApplyUncertain",
+      "kind": "const",
+      "proposed": "override.DebugLevelApplyUncertain",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelConflict",
+      "kind": "const",
+      "proposed": "override.DebugLevelConflict",
+      "decision": "baseline"
+    },
+    {
       "current": "override.DebugLevelHandle",
       "kind": "type",
       "proposed": "override.DebugLevelHandle",
@@ -80,7 +104,7 @@
     {
       "current": "override.DebugLevelHandle.Receipt",
       "kind": "method",
-      "signature": "func() ceph.DebugLevelReceipt",
+      "signature": "func() DebugLevelReceipt",
       "receiver": "*DebugLevelHandle",
       "proposed": "override.DebugLevelHandle.Receipt",
       "decision": "baseline"
@@ -99,6 +123,66 @@
       "signature": "func() string",
       "receiver": "DebugLevelHandle",
       "proposed": "override.DebugLevelHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelNotApplied",
+      "kind": "const",
+      "proposed": "override.DebugLevelNotApplied",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelPriorRead",
+      "kind": "const",
+      "proposed": "override.DebugLevelPriorRead",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelReceipt",
+      "kind": "type",
+      "proposed": "override.DebugLevelReceipt",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelRestoreAttempted",
+      "kind": "const",
+      "proposed": "override.DebugLevelRestoreAttempted",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelRestored",
+      "kind": "const",
+      "proposed": "override.DebugLevelRestored",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelSetting",
+      "kind": "type",
+      "proposed": "override.DebugLevelSetting",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelState",
+      "kind": "type",
+      "proposed": "override.DebugLevelState",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelTargetChanged",
+      "kind": "const",
+      "proposed": "override.DebugLevelTargetChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelTransition",
+      "kind": "type",
+      "proposed": "override.DebugLevelTransition",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelUnconfirmed",
+      "kind": "const",
+      "proposed": "override.DebugLevelUnconfirmed",
       "decision": "baseline"
     },
     {
@@ -167,7 +251,7 @@
     {
       "current": "override.SetDebugLevel",
       "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error)",
+      "signature": "func(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error)",
       "proposed": "override.SetDebugLevel",
       "decision": "baseline"
     },

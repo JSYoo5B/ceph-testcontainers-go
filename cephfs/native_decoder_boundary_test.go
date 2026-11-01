@@ -2,70 +2,10 @@ package cephfs
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 )
-
-// assertPureDecoderFile guards the contract of a decoder file: it declares only
-// the pinned functions and types, imports no package that can reach a lock, a
-// command or Docker, and names none of the owner state. So the decoder cannot
-// start reading the roster, the cluster or a container without a test failing.
-func assertPureDecoderFile(t *testing.T, name string, wantFuncs, wantTypes, wantImports []string) {
-	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var funcs, types, imports []string
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv != nil {
-				t.Errorf("%s: method %s: a decoder file declares functions only", name, d.Name.Name)
-			}
-			funcs = append(funcs, d.Name.Name)
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					types = append(types, s.Name.Name)
-				case *ast.ImportSpec:
-					imports = append(imports, strings.Trim(s.Path.Value, `"`))
-				}
-			}
-		}
-	}
-	slices.Sort(types)
-	slices.Sort(imports)
-	if !slices.Equal(funcs, wantFuncs) || !slices.Equal(types, wantTypes) {
-		t.Errorf("%s declarations changed: funcs %v types %v", name, funcs, types)
-	}
-	if !slices.Equal(imports, wantImports) {
-		t.Errorf("%s imports %v, pinned %v", name, imports, wantImports)
-	}
-	forbidden := []string{"Filesystem", "fs", "context", "ctx", "servicehook", "clusterutil", "testcontainers", "ceph", "sync", "roster", "members", "Inspect", "Lock", "Unlock", "LockMutex", "Container", "cluster", "setupMu", "Ceph", "readNativePools"}
-	ast.Inspect(file, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && slices.Contains(forbidden, id.Name) {
-			t.Errorf("%s names %q, which is owner state, a lock, a command or Docker", name, id.Name)
-		}
-		return true
-	})
-}
-
-func TestColdAndReplacementDecodersArePureFunctionsOfTheirArguments(t *testing.T) {
-	naming := "github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
-	assertPureDecoderFile(t, "cold_mds_decode.go",
-		[]string{"decodeColdMDSMap"}, []string{"coldMDSMapExpectation"},
-		[]string{"errors", naming, "slices"})
-	assertPureDecoderFile(t, "mds_replacement_decode.go",
-		[]string{"decodeMDSReplacementMap", "admitReplacementMDSRow", "checkReplacementMDSMembership", "replacementMDSScope", "replacementMDSRankReady", "checkReplacementMDSStandbys"},
-		[]string{"replacementMDSFields", "replacementMDSFilesystem", "replacementMDSMap", "replacementMDSMapExpectation", "replacementMDSMapState", "replacementMDSSeen"},
-		[]string{"errors", naming, "slices", "strconv"})
-}
 
 // TestColdAndReplacementReadsHaveOneDecode pins the caller tables of the two
 // boundaries and the order in the replacement reader: both native queries come

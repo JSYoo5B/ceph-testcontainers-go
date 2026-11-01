@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -49,7 +50,7 @@ type monitorGenerations struct {
 	// host-network container. Tests replace it.
 	//
 	//testdouble:wired-operation
-	listening func(ctx context.Context, ctr testcontainers.Container) ([]monitorListener, error)
+	listening func(ctx context.Context, ctr testcontainers.Container) ([]monstore.Listener, error)
 	// beforeCreate runs right before each container creation, after the
 	// previous generation is confirmed gone: the replacement clears the
 	// admin socket the old daemon left in the shared run directory there.
@@ -100,28 +101,28 @@ func (g *monitorGenerations) network() string { return g.c.nets.public.Name }
 // chosen by the kernel, keeps them while the container is created and releases
 // them before it returns, right before the caller starts it, as the first MON
 // without a volume does (runMonitor). The caller holds c.mu.
-func (g *monitorGenerations) Create(ctx context.Context, launch monStoreLaunch, image string) (id string, err error) {
+func (g *monitorGenerations) Create(ctx context.Context, launch monstore.Launch, image string) (id string, err error) {
 	if g.beforeCreate != nil {
 		if err := g.beforeCreate(ctx); err != nil {
-			return "", fmt.Errorf("prepare MON %s generation %d: %w", g.name, launch.generation, err)
+			return "", fmt.Errorf("prepare MON %s generation %d: %w", g.name, launch.Generation, err)
 		}
 	}
 	var ports []int
 	if g.host {
-		if launch.endpoint != nil {
-			if err := g.hostEndpoint(*launch.endpoint); err != nil {
+		if launch.Endpoint != nil {
+			if err := g.hostEndpoint(*launch.Endpoint); err != nil {
 				return "", err
 			}
-			ports = slices.Clone(launch.endpoint.ports)
+			ports = slices.Clone(launch.Endpoint.Ports)
 		} else {
 			lease, reserveErr := g.reserve(ctx, g.c.settings.monitorPortCount(), nil)
 			// The allocator may exist also with an error; Terminate must find it.
 			g.track(lease)
 			if reserveErr != nil {
-				return "", fmt.Errorf("reserve the ports of MON %s generation %d: %w", g.name, launch.generation, reserveErr)
+				return "", fmt.Errorf("reserve the ports of MON %s generation %d: %w", g.name, launch.Generation, reserveErr)
 			}
 			if lease == nil {
-				return "", fmt.Errorf("reserve the ports of MON %s generation %d: no lease", g.name, launch.generation)
+				return "", fmt.Errorf("reserve the ports of MON %s generation %d: no lease", g.name, launch.Generation)
 			}
 			ports = slices.Clone(lease.Ports)
 			defer func() {
@@ -133,16 +134,16 @@ func (g *monitorGenerations) Create(ctx context.Context, launch monStoreLaunch, 
 	}
 	opts := append([]testcontainers.ContainerCustomizer(nil), g.recipe(ports)...)
 	opts = append(opts, testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
-		h.Mounts = append(h.Mounts, mount.Mount{Type: mount.TypeVolume, Source: launch.volume, Target: "/var/lib/ceph/mon/ceph-" + g.name,
+		h.Mounts = append(h.Mounts, mount.Mount{Type: mount.TypeVolume, Source: launch.Volume, Target: "/var/lib/ceph/mon/ceph-" + g.name,
 			VolumeOptions: &mount.VolumeOptions{NoCopy: true}})
 	}))
-	if launch.mode == monStoreRequire {
+	if launch.Mode == monstore.Require {
 		opts = append(opts, testcontainers.WithEnv(map[string]string{"CEPH_MON_STORE_MODE": "require"}))
 	}
-	if launch.endpoint != nil && !g.host {
-		ip, err := netip.ParseAddr(launch.endpoint.ip)
-		if err != nil || !ip.Is4() || launch.endpoint.network != g.network() {
-			return "", fmt.Errorf("MON %s address %s on %q is not an IPv4 address on the cluster network", g.name, launch.endpoint.ip, launch.endpoint.network)
+	if launch.Endpoint != nil && !g.host {
+		ip, err := netip.ParseAddr(launch.Endpoint.IP)
+		if err != nil || !ip.Is4() || launch.Endpoint.Network != g.network() {
+			return "", fmt.Errorf("MON %s address %s on %q is not an IPv4 address on the cluster network", g.name, launch.Endpoint.IP, launch.Endpoint.Network)
 		}
 		network := g.network()
 		opts = append(opts, testcontainers.WithEndpointSettingsModifier(func(settings map[string]*dockernetwork.EndpointSettings) {
@@ -171,9 +172,9 @@ func (g *monitorGenerations) Create(ctx context.Context, launch monStoreLaunch, 
 
 // hostEndpoint checks that a recorded endpoint is one this cluster's host
 // network can give a MON: its public address and the MON's number of ports.
-func (g *monitorGenerations) hostEndpoint(endpoint monStoreEndpoint) error {
-	if endpoint.network != "" || endpoint.ip != g.c.staticFacts().PublicAddress || len(endpoint.ports) != g.c.settings.monitorPortCount() {
-		return fmt.Errorf("MON %s address %s ports %v is not an endpoint of the host network on %s", g.name, endpoint.ip, endpoint.ports, g.c.staticFacts().PublicAddress)
+func (g *monitorGenerations) hostEndpoint(endpoint monstore.Endpoint) error {
+	if endpoint.Network != "" || endpoint.IP != g.c.staticFacts().PublicAddress || len(endpoint.Ports) != g.c.settings.monitorPortCount() {
+		return fmt.Errorf("MON %s address %s ports %v is not an endpoint of the host network on %s", g.name, endpoint.IP, endpoint.Ports, g.c.staticFacts().PublicAddress)
 	}
 	return nil
 }
@@ -209,27 +210,27 @@ func (g *monitorGenerations) WaitReady(ctx context.Context, id string) error {
 // Observe reads the IPv4 address the running container has on the cluster
 // network, or on the host network the address and ports its ceph-mon process
 // listens on, which must be exactly the ports the container was created for.
-func (g *monitorGenerations) Observe(ctx context.Context, id string) (monStoreEndpoint, error) {
+func (g *monitorGenerations) Observe(ctx context.Context, id string) (monstore.Endpoint, error) {
 	if g.host {
 		return g.observeHost(ctx, id)
 	}
 	docker, err := g.docker(ctx)
 	if err != nil {
-		return monStoreEndpoint{}, err
+		return monstore.Endpoint{}, err
 	}
 	defer func() { _ = docker.Close() }()
 	inspect, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
 	if err != nil {
-		return monStoreEndpoint{}, err
+		return monstore.Endpoint{}, err
 	}
 	if inspect.Container.NetworkSettings == nil || inspect.Container.NetworkSettings.Networks[g.network()] == nil {
-		return monStoreEndpoint{}, fmt.Errorf("MON %s container is not attached to %s", g.name, g.network())
+		return monstore.Endpoint{}, fmt.Errorf("MON %s container is not attached to %s", g.name, g.network())
 	}
 	ip := inspect.Container.NetworkSettings.Networks[g.network()].IPAddress
 	if !ip.Is4() {
-		return monStoreEndpoint{}, fmt.Errorf("MON %s container has no IPv4 address on %s", g.name, g.network())
+		return monstore.Endpoint{}, fmt.Errorf("MON %s container has no IPv4 address on %s", g.name, g.network())
 	}
-	return monStoreEndpoint{ip: ip.String(), network: g.network()}, nil
+	return monstore.Endpoint{IP: ip.String(), Network: g.network()}, nil
 }
 
 // Hold checks that no container of the cluster network has the address. On a
@@ -238,12 +239,12 @@ func (g *monitorGenerations) Observe(ctx context.Context, id string) (monStoreEn
 // all a hold needs to do. On the host network it takes the exact ports: an
 // allocator container listens on them until the hold is released, and a port
 // that any process already listens on fails the hold. The caller holds c.mu.
-func (g *monitorGenerations) Hold(ctx context.Context, address monStoreEndpoint) (monStoreEndpointHold, error) {
+func (g *monitorGenerations) Hold(ctx context.Context, address monstore.Endpoint) (monstore.EndpointHold, error) {
 	if g.host {
 		if err := g.hostEndpoint(address); err != nil {
 			return nil, err
 		}
-		lease, err := g.reserve(ctx, len(address.ports), address.ports)
+		lease, err := g.reserve(ctx, len(address.Ports), address.Ports)
 		g.track(lease)
 		if lease == nil {
 			return nil, err
@@ -255,13 +256,13 @@ func (g *monitorGenerations) Hold(ctx context.Context, address monStoreEndpoint)
 		return nil, err
 	}
 	defer func() { _ = docker.Close() }()
-	network, err := docker.NetworkInspect(ctx, address.network, mobycl.NetworkInspectOptions{})
+	network, err := docker.NetworkInspect(ctx, address.Network, mobycl.NetworkInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
 	for id, endpoint := range network.Network.Containers {
-		if endpoint.IPv4Address.Addr().String() == address.ip {
-			return nil, fmt.Errorf("MON %s address %s is taken by container %s", g.name, address.ip, id)
+		if endpoint.IPv4Address.Addr().String() == address.IP {
+			return nil, fmt.Errorf("MON %s address %s is taken by container %s", g.name, address.IP, id)
 		}
 	}
 	return monitorAddressCheck{}, nil
@@ -296,28 +297,28 @@ func (g *monitorGenerations) Remove(ctx context.Context, id string) error {
 // volume retries (hostPortAttempts). The caller holds c.mu.
 func (c *Container) startMonitorStore(ctx context.Context, name, image string, gens *monitorGenerations) (testcontainers.Container, error) {
 	for attempt := 1; ; attempt++ {
-		store, err := c.monStores.begin(name)
+		store, err := c.monStores.Begin(name)
 		if err != nil {
 			return nil, err
 		}
-		if err := store.create(ctx); err != nil {
+		if err := store.Create(ctx); err != nil {
 			return nil, err
 		}
-		id, err := store.startGeneration(ctx, gens, image)
+		id, err := store.StartGeneration(ctx, gens, image)
 		ctr := gens.created[id]
 		if err == nil {
 			return ctr, nil
 		}
 		if ctr == nil && id == "" {
-			return nil, errors.Join(err, c.monStores.discardFresh(ctx, name))
+			return nil, errors.Join(err, c.monStores.DiscardFresh(ctx, name))
 		}
-		if !gens.host || attempt == hostPortAttempts || ctx.Err() != nil || store.phase != monStoreFresh || !c.lostMonitorPorts(ctx, ctr) {
+		if !gens.host || attempt == hostPortAttempts || ctx.Err() != nil || store.Phase != monstore.Fresh || !c.lostMonitorPorts(ctx, ctr) {
 			return ctr, err
 		}
-		if stopErr := store.stopGeneration(ctx, gens); stopErr != nil {
+		if stopErr := store.StopGeneration(ctx, gens); stopErr != nil {
 			return ctr, errors.Join(err, stopErr)
 		}
-		if discardErr := c.monStores.discardFresh(ctx, name); discardErr != nil {
+		if discardErr := c.monStores.DiscardFresh(ctx, name); discardErr != nil {
 			// The container is gone; the record keeps the volume for Terminate.
 			return nil, errors.Join(err, discardErr)
 		}

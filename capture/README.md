@@ -21,9 +21,9 @@ fits.
 4. **Stop and check** with `Session.Stop`, which returns a `capture.Report`
    (how the capture ended, whether the target changed, the file's structural
    verdict). Call `Stop` also after a failed workload; it is retryable.
-   Alternatively register the session with `Finalization.Capture` (metadata
-   only) or `Finalization.CaptureWithFile` (raw file into a failure archive),
-   which settles it at the end of the test.
+   Alternatively register the session with `finalize.Finalization.Capture`
+   (metadata only) or `finalize.Finalization.CaptureWithFile` (raw file into a
+   failure archive), which settles it at the end of the test.
 
 ```golang
 session, err := capture.Start(ctx, monitor, capture.Request{
@@ -76,4 +76,4 @@ The full contract of every type and function is in go doc:
 [pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/capture)
 or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/capture`. Error
 categories are described in [Errors](../docs/guides/errors.md); failure
-archives in [Contexts and cleanup](../docs/guides/contexts-and-cleanup.md).
+archives in [finalize](../ceph/finalize/README.md).

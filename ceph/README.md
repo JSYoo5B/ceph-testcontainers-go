@@ -60,11 +60,13 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    pool reports, quorum, OSD states, MGR modules and services, watchers and
    blocklist entries. `Ceph` and `RunNativeCommand` run bounded native commands
    when no typed observation exists.
-5. **Finish.** `TerminateOnCleanup` registers finalization: checks (with
-   `Finalization.Verify` for crash and cluster-log expectations), an optional
-   failure archive (`CollectDiagnostics`, `CollectCrashMetadata`), caller
-   cleanups in reverse order, then `Terminate`, which removes every owned container,
-   network and volume.
+5. **Finish.** `testcontainers.CleanupContainer` runs `Terminate`, which
+   removes every owned container, network and volume. The
+   [finalize](finalize/README.md) package replaces it when the test needs
+   post-test checks (with crash and cluster-log verification), a failure
+   archive and caller cleanups in reverse order before `Terminate`; the
+   [diagnostics](diagnostics/README.md) package collects the same reports
+   standalone.
 
 ```golang
 func TestRADOSRoundTrip(t *testing.T) {

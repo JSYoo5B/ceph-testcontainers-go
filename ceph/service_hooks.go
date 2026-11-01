@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
@@ -83,7 +84,7 @@ func (serviceHooks) DeleteService(c *Container, name string) { c.members.roster.
 
 // DiagnosticHandle returns ctr, or nil when it is a typed nil.
 func (serviceHooks) DiagnosticHandle(ctr testcontainers.Container) testcontainers.Container {
-	return diagnosticContainerHandle(ctr)
+	return evidence.Handle(ctr)
 }
 
 // Extension returns the per-cluster state a service package keeps under

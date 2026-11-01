@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 )
 
 // This file holds the receipt and the strict judge of the native
@@ -113,14 +114,14 @@ type jsonFileReceipt struct {
 	Evaluated jsonFileGeneration `json:"evaluated"`
 	// ClockBefore was read before the evaluation started and ClockAfter
 	// after it returned, on the engine's clock like the window.
-	ClockBefore time.Time                `json:"clock_before"`
-	ClockAfter  time.Time                `json:"clock_after"`
-	Raw         map[string]jsonFileRaw   `json:"raw"`
-	RawBytes    int64                    `json:"raw_bytes"`
-	RawLines    int                      `json:"raw_lines"`
-	Tail        jsonFileTail             `json:"tail"`
-	Elapsed     jsonFileElapsed          `json:"elapsed"`
-	Report      *ceph.VerificationReport `json:"-"`
+	ClockBefore time.Time                    `json:"clock_before"`
+	ClockAfter  time.Time                    `json:"clock_after"`
+	Raw         map[string]jsonFileRaw       `json:"raw"`
+	RawBytes    int64                        `json:"raw_bytes"`
+	RawLines    int                          `json:"raw_lines"`
+	Tail        jsonFileTail                 `json:"tail"`
+	Elapsed     jsonFileElapsed              `json:"elapsed"`
+	Report      *finalize.VerificationReport `json:"-"`
 }
 
 // The expectations of the scenario, one per structural WRN role and one that
@@ -135,8 +136,8 @@ const (
 // "observed" when it read the log, "rejected" when it refused the source for
 // its log driver or rotation, "gapped" for any other log gap, and "absent"
 // when the report has no such source.
-func jsonFileDisposition(report *ceph.VerificationReport, source string) string {
-	if report == nil || !slices.ContainsFunc(report.Sources, func(s ceph.VerificationSource) bool { return s.Source == source }) {
+func jsonFileDisposition(report *finalize.VerificationReport, source string) string {
+	if report == nil || !slices.ContainsFunc(report.Sources, func(s finalize.VerificationSource) bool { return s.Source == source }) {
 		return "absent"
 	}
 	disposition := "observed"
@@ -159,9 +160,9 @@ func jsonFileIDPattern(id string) *regexp.Regexp {
 
 // jsonFileReceived lists the findings of the report's log check that carry
 // the event ID.
-func jsonFileReceived(report *ceph.VerificationReport, id string) []ceph.VerificationFinding {
+func jsonFileReceived(report *finalize.VerificationReport, id string) []finalize.VerificationFinding {
 	pattern := jsonFileIDPattern(id)
-	var found []ceph.VerificationFinding
+	var found []finalize.VerificationFinding
 	for _, finding := range report.Logs.Findings {
 		if pattern.MatchString(finding.Text) {
 			found = append(found, finding)
@@ -212,8 +213,8 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 	if b.LogDriver != "json-file" || e.LogDriver != "json-file" || b.MaxSize != "" || e.MaxSize != "" {
 		bad("the engine reports driver %q (max-size %q) then %q (%q); only json-file without rotation is covered", b.LogDriver, b.MaxSize, e.LogDriver, e.MaxSize)
 	}
-	var source *ceph.VerificationSource
-	if i := slices.IndexFunc(report.Sources, func(s ceph.VerificationSource) bool { return s.Source == r.Source }); i < 0 {
+	var source *finalize.VerificationSource
+	if i := slices.IndexFunc(report.Sources, func(s finalize.VerificationSource) bool { return s.Source == r.Source }); i < 0 {
 		bad("no %s source", r.Source)
 	} else {
 		source = &report.Sources[i]
@@ -239,7 +240,7 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 
 	// The check's own accounting (limits ledger).
 	switch report.Logs.Outcome {
-	case ceph.VerificationClean, ceph.VerificationUnexpected, ceph.VerificationIncomplete:
+	case finalize.VerificationClean, finalize.VerificationUnexpected, finalize.VerificationIncomplete:
 	default:
 		bad("the log outcome %q is missing or unknown", report.Logs.Outcome)
 	}
@@ -298,8 +299,8 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 		bad("%s", order)
 	}
 
-	expectation := func(name string) *ceph.ExpectationResult {
-		i := slices.IndexFunc(report.Logs.Expectations, func(x ceph.ExpectationResult) bool { return x.Name == name })
+	expectation := func(name string) *finalize.ExpectationResult {
+		i := slices.IndexFunc(report.Logs.Expectations, func(x finalize.ExpectationResult) bool { return x.Name == name })
 		if i < 0 {
 			bad("no expectation %s", name)
 			return nil
@@ -349,7 +350,7 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 				bad("%s was received %d times but the engine log holds %d WRN lines for it in the window", ev.ID, len(received), raw.Priorities["WRN"])
 			}
 			for _, finding := range received {
-				if finding.Source != r.Source || finding.ContainerID != b.ContainerID || finding.Event != string(ceph.LogClusterWarning) ||
+				if finding.Source != r.Source || finding.ContainerID != b.ContainerID || finding.Event != string(finalize.LogClusterWarning) ||
 					finding.Expectation != wanted[ev.Role] || finding.Truncated || finding.Time == "" {
 					bad("finding of %s: %+v", ev.ID, finding)
 				}
@@ -513,7 +514,7 @@ func jsonFileRawLines(lines []string, ids []string) (map[string]jsonFileRaw, int
 }
 
 // jsonFileTailFrom summarizes one diagnostic log artifact for the event IDs.
-func jsonFileTailFrom(artifact ceph.DiagnosticArtifact, requested int, ids []string) jsonFileTail {
+func jsonFileTailFrom(artifact diagnostics.Artifact, requested int, ids []string) jsonFileTail {
 	tail := jsonFileTail{Requested: requested, Error: artifact.Error, Truncated: artifact.Truncated, Holds: map[string]bool{}}
 	for _, line := range strings.Split(artifact.Data, "\n") {
 		if strings.TrimSpace(line) != "" {

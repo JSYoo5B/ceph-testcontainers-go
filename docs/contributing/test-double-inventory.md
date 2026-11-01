@@ -69,11 +69,11 @@ its `mock` and `assert` packages are not used.
 
 | Family | What it substitutes | Typical shape |
 | --- | --- | --- |
-| Docker client and container fakes (`ceph`, `fault`, `cephfs/mirror`, `rbd`) | `testcontainers.Container`, the Docker engine client, volume and network operations | A struct that embeds the interface, implements the few methods the code under test calls and records or fails them. |
+| Docker client and container fakes (`ceph`, `diagnostics`, `finalize`, `fault`, `cephfs/mirror`, `rbd`) | `testcontainers.Container`, the Docker engine client, volume and network operations | A struct that embeds the interface, implements the few methods the code under test calls and records or fails them. |
 | CLI and `rados` fakes (`ceph`, `internal/integration`) | The control container's `Exec`, `rados` runs, supervised commands | A command table, or a small model of the state the command reads. |
 | Cluster models in fixtures (`internal/integration`) | A cluster for the Docker-free control tests of native scenarios (ledgers, oracles, classifiers) | A `*Fake` type that feeds synthetic Ceph output to the logic under test. |
 | Network and process models (`fault`, `internal/supervised`, `internal/dockerbridge`) | Namespaces, qdiscs, links, a supervised process, the bridge allocator | A model whose state changes are visible in the test. |
-| Recorders (`ceph`, `internal/integration`) | A reporter, a finalization step list, shared operations | Appends what it is told and exposes it for an assertion. |
+| Recorders (`ceph`, `finalize`, `internal/integration`) | A reporter, a finalization step list, shared operations | Appends what it is told and exposes it for an assertion. |
 
 Passing a unit test with one of these doubles is control evidence for the logic
 under test. It is not evidence that Ceph or Docker behaves the same way.

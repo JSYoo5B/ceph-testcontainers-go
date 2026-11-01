@@ -384,7 +384,7 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // what it already did, such as a MON command it had sent, and nothing is
 // retried. Errors name the command by Label; a failure of Docker or of
 // target's implementation appears only by its kind, and errors.Unwrap returns
-// the original error, whose text may quote anything. RedactSecrets redacts
+// the original error, whose text may quote anything. diagnostics.Redact redacts
 // output that a test logs.
 //
 // With Input, the supervisor runs in an exec of the Docker engine with its
@@ -575,21 +575,6 @@ func classifyNativeBackend(err error, dispatched bool) error {
 		return err
 	}
 	return classify(ErrEnvironmentUnavailable, err)
-}
-
-// RedactSecrets returns a copy of data in which the secrets that the cluster
-// knows, and values, are replaced by [REDACTED], as in CollectDiagnostics:
-// keyring keys, service credentials, and the private keys, secret assignments
-// and bearer tokens that it recognizes. It is meant for output that a test
-// logs or reports; an oracle compares the raw bytes. Redaction is best effort.
-//
-//purpose:evidence
-func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
-	snapshot, err := c.diagnosticsSnapshot(ctx, DiagnosticsConfig{RedactValues: values})
-	if err != nil {
-		return nil, err
-	}
-	return []byte(diagnosticsRedactor(snapshot.secrets)(string(data))), nil
 }
 
 // nativeCommands owns the native-command state and the blocking half of its

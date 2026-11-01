@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -35,10 +36,10 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	recorder := &finalizationRecorder{TB: t}
-	var finalization *ceph.Finalization
+	var finalization *finalize.Finalization
 	if cluster != nil {
 		var registerErr error
-		finalization, registerErr = cluster.TerminateOnCleanup(recorder, ceph.FinalizationConfig{Archive: true, ArchiveDirectory: t.TempDir(), Scenario: "post-test-log-envelope"})
+		finalization, registerErr = finalize.TerminateOnCleanup(recorder, cluster, finalize.Config{Archive: true, ArchiveDirectory: t.TempDir(), Scenario: "post-test-log-envelope"})
 		if registerErr != nil {
 			_ = cluster.Terminate(context.WithoutCancel(ctx))
 			t.Fatal(registerErr)
@@ -93,7 +94,7 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	if err := judgeEnvelopeEvidence(report, token, probe, quoted); err != nil {
 		t.Fatal(err)
 	}
-	mon := report.Sources[slices.IndexFunc(report.Sources, func(source ceph.VerificationSource) bool { return source.Source == envelopeSource })]
+	mon := report.Sources[slices.IndexFunc(report.Sources, func(source finalize.VerificationSource) bool { return source.Source == envelopeSource })]
 	t.Logf("LOG_ENVELOPE_RECEIPT source %s generation %s started %s image %s driver %s: %d log bytes read in window %s to %s; raw MON lines with the probe by priority %v, with the quoted token by priority %v (%d unenveloped command echoes, %d with a literal marker); %s matched %d, %s matched %d; %d log gaps",
 		mon.Source, mon.ContainerID, mon.StartedAt, mon.ImageID, mon.LogDriver, mon.LogBytes,
 		report.Window.StartedAt.Format(time.RFC3339Nano), report.Window.EndedAt.Format(time.RFC3339Nano),

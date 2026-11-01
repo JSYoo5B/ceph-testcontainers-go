@@ -384,7 +384,7 @@ See [Releases and images](releases-and-images.md) for details.
 - A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
-  `t.Cleanup` for `Restore`, `Pool.Remove` and `CollectDiagnostics`.
+  `t.Cleanup` for `Restore`, `Pool.Remove` and `diagnostics.Collect`.
 - Terminate client containers before the cluster: register their cleanup after
   the cluster's.
 - Keys copied by `WithClient` and `ConnectionConfig` are the cluster's admin

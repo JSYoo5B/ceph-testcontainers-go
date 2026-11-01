@@ -1,0 +1,122 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "ceph/finalize",
+  "count": 86,
+  "types": {
+    "ceph/finalize.CaptureFileSource": [
+      "CaptureFileSource embed CaptureSettler",
+      "CaptureFileSource.CaptureFile method func(ctx context.Context) (io.ReadCloser, int64, string, error)"
+    ],
+    "ceph/finalize.CaptureSettler": [
+      "CaptureSettler.Settle method func(ctx context.Context) (report any, err error)",
+      "CaptureSettler.SettlementAllowance method func() time.Duration"
+    ],
+    "ceph/finalize.Config": [
+      "Config.Archive field bool",
+      "Config.ArchiveDirectory field string",
+      "Config.ArchiveTimeout field time.Duration",
+      "Config.CheckTimeout field time.Duration",
+      "Config.CleanupTimeout field time.Duration",
+      "Config.CrashMetadata field diagnostics.CrashMetadataConfig",
+      "Config.Diagnostics field diagnostics.Config",
+      "Config.Scenario field string"
+    ],
+    "ceph/finalize.CrashExpectation": [
+      "CrashExpectation.Daemon field string",
+      "CrashExpectation.MaxCount field int",
+      "CrashExpectation.MinCount field int",
+      "CrashExpectation.Name field string",
+      "CrashExpectation.Process field string",
+      "CrashExpectation.Required field bool",
+      "CrashExpectation.Signature field string"
+    ],
+    "ceph/finalize.DebugLevelReceipter": [
+      "DebugLevelReceipter.Receipt method func() override.DebugLevelReceipt"
+    ],
+    "ceph/finalize.ExpectationResult": [
+      "ExpectationResult.Matched field int `json:\"matched\"`",
+      "ExpectationResult.MaxCount field int `json:\"max_count\"`",
+      "ExpectationResult.MinCount field int `json:\"min_count\"`",
+      "ExpectationResult.Name field string `json:\"name\"`",
+      "ExpectationResult.Required field bool `json:\"required\"`",
+      "ExpectationResult.Satisfied field bool `json:\"satisfied\"`"
+    ],
+    "ceph/finalize.LogExpectation": [
+      "LogExpectation.Daemon field string",
+      "LogExpectation.Event field LogEvent",
+      "LogExpectation.MaxCount field int",
+      "LogExpectation.MinCount field int",
+      "LogExpectation.Name field string",
+      "LogExpectation.Pattern field string",
+      "LogExpectation.Required field bool"
+    ],
+    "ceph/finalize.VerificationCheck": [
+      "VerificationCheck.Expectations field []ExpectationResult `json:\"expectations\"`",
+      "VerificationCheck.Findings field []VerificationFinding `json:\"findings\"`",
+      "VerificationCheck.Gaps field []VerificationGap `json:\"gaps\"`",
+      "VerificationCheck.OmittedFindings field int `json:\"omitted_findings\"`",
+      "VerificationCheck.Outcome field VerificationOutcome `json:\"outcome\"`",
+      "VerificationCheck.Permitted field int `json:\"permitted\"`",
+      "VerificationCheck.Unexpected field int `json:\"unexpected\"`"
+    ],
+    "ceph/finalize.VerificationConfig": [
+      "VerificationConfig.AdditionalContainers field []diagnostics.Target",
+      "VerificationConfig.Crashes field []CrashExpectation",
+      "VerificationConfig.Logs field []LogExpectation",
+      "VerificationConfig.MaxFindings field int",
+      "VerificationConfig.MaxLogBytes field int64",
+      "VerificationConfig.Name field string",
+      "VerificationConfig.OperationTimeout field time.Duration",
+      "VerificationConfig.RedactValues field []string",
+      "VerificationConfig.Timeout field time.Duration"
+    ],
+    "ceph/finalize.VerificationFinding": [
+      "VerificationFinding.ContainerID field string `json:\"container_id,omitempty\"`",
+      "VerificationFinding.CrashID field string `json:\"crash_id,omitempty\"`",
+      "VerificationFinding.Event field string `json:\"event\"`",
+      "VerificationFinding.Expectation field string `json:\"expectation,omitempty\"`",
+      "VerificationFinding.Source field string `json:\"source\"`",
+      "VerificationFinding.Text field string `json:\"text\"`",
+      "VerificationFinding.Time field string `json:\"time,omitempty\"`",
+      "VerificationFinding.Truncated field bool `json:\"truncated,omitempty\"`"
+    ],
+    "ceph/finalize.VerificationGap": [
+      "VerificationGap.Reason field string `json:\"reason\"`",
+      "VerificationGap.Source field string `json:\"source,omitempty\"`"
+    ],
+    "ceph/finalize.VerificationReport": [
+      "VerificationReport.Cluster field string `json:\"cluster\"`",
+      "VerificationReport.CrashExpectations field []CrashExpectation `json:\"crash_expectations\"`",
+      "VerificationReport.Crashes field VerificationCheck `json:\"crashes\"`",
+      "VerificationReport.Images field ceph.ImageSet `json:\"images\"`",
+      "VerificationReport.LogExpectations field []LogExpectation `json:\"log_expectations\"`",
+      "VerificationReport.Logs field VerificationCheck `json:\"logs\"`",
+      "VerificationReport.Name field string `json:\"name\"`",
+      "VerificationReport.Notes field []string `json:\"notes\"`",
+      "VerificationReport.Outcome field VerificationOutcome `json:\"outcome\"`",
+      "VerificationReport.SchemaVersion field int `json:\"schema_version\"`",
+      "VerificationReport.Sources field []VerificationSource `json:\"sources\"`",
+      "VerificationReport.Window field VerificationWindow `json:\"window\"`"
+    ],
+    "ceph/finalize.VerificationSource": [
+      "VerificationSource.BaselineCrashes field []string `json:\"baseline_crashes\"`",
+      "VerificationSource.ContainerID field string `json:\"container_id,omitempty\"`",
+      "VerificationSource.ImageID field string `json:\"image_id,omitempty\"`",
+      "VerificationSource.LogBytes field int64 `json:\"log_bytes\"`",
+      "VerificationSource.LogDriver field string `json:\"log_driver,omitempty\"`",
+      "VerificationSource.Name field string `json:\"name\"`",
+      "VerificationSource.RestartCount field int `json:\"restart_count\"`",
+      "VerificationSource.Role field string `json:\"role\"`",
+      "VerificationSource.Source field string `json:\"source\"`",
+      "VerificationSource.StartedAt field string `json:\"started_at,omitempty\"`",
+      "VerificationSource.State field string `json:\"state,omitempty\"`"
+    ],
+    "ceph/finalize.VerificationWindow": [
+      "VerificationWindow.EndedAt field time.Time `json:\"ended_at\"`",
+      "VerificationWindow.EvaluatedAt field time.Time `json:\"evaluated_at\"`",
+      "VerificationWindow.Phase field string `json:\"phase\"`",
+      "VerificationWindow.StartedAt field time.Time `json:\"started_at\"`"
+    ]
+  }
+}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 )
 
 // The helpers find the handle of a daemon or pool that the cluster owns now.
@@ -185,6 +186,18 @@ func (s socketCluster) RemoveMonitor(ctx context.Context, name string) error {
 		return err
 	}
 	return mon.Remove(ctx)
+}
+
+// RedactSecrets masks the cluster's secrets and values in data with
+// diagnostics.Redact.
+func (s socketCluster) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
+	return diagnostics.Redact(ctx, s.Container, data, values...)
+}
+
+// CollectDiagnostics collects the cluster's diagnostics with
+// diagnostics.Collect.
+func (s socketCluster) CollectDiagnostics(ctx context.Context, config diagnostics.Config) (*diagnostics.Report, error) {
+	return diagnostics.Collect(ctx, s.Container, config)
 }
 
 // ManagerStatus reads the manager map through the cluster's Observer.

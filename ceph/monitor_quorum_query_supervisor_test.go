@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,7 +66,7 @@ func monitorQuorumAssertDescendantStopped(t *testing.T, heartbeatPath string) {
 }
 
 func TestMonitorQuorumPythonKeepsNativeStdoutSeparate(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	heartbeatPath := filepath.Join(t.TempDir(), "stdout-descendant")
 	const child = `import fcntl,os,subprocess,sys,time
 subprocess.Popen([sys.executable,'-c',sys.argv[3],sys.argv[2]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -84,7 +85,7 @@ os.write(2,b'native warning on separate stderr\n')
 }
 
 func TestMonitorQuorumPythonDrainsBeyondSeparateOutputCaps(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	heartbeatPath := filepath.Join(t.TempDir(), "capped-output-descendant")
 	const child = `import fcntl,os,select,subprocess,sys,time
 subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -147,7 +148,7 @@ func (o monitorQuorumHangObservation) String() string {
 // Python source of the descendant; a variant may leave the owned group.
 func runMonitorQuorumHang(t *testing.T, startupDelay time.Duration, descendant string) monitorQuorumHangObservation {
 	t.Helper()
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	obs := monitorQuorumHangObservation{
 		StartupDelay:  startupDelay,
 		PIDPath:       filepath.Join(t.TempDir(), "child-pid"),
@@ -274,7 +275,7 @@ with open(sys.argv[1],'ab',buffering=0) as f:
 `
 
 func TestMonitorQuorumPythonFullJSONThenHangKillsAndReapsOwnedGroup(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	obs := runMonitorQuorumHang(t, 0, monitorQuorumOwnedDescendant)
 	t.Logf("phases: %s", obs)
 	// Each contract is checked independently so one failure does not hide the
@@ -294,7 +295,7 @@ func TestMonitorQuorumPythonFullJSONThenHangKillsAndReapsOwnedGroup(t *testing.T
 // former strict condition (elapsed below the caller deadline) is violated by
 // construction, while the semantic contract and the explicit bound still hold.
 func TestMonitorQuorumHangControlStartupDelayBreaksOnlyWallClockMargin(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	obs := runMonitorQuorumHang(t, 300*time.Millisecond, monitorQuorumOwnedDescendant)
 	t.Logf("phases: %s", obs)
 	if obs.Returned < monitorQuorumHangCaller {
@@ -308,7 +309,7 @@ func TestMonitorQuorumHangControlStartupDelayBreaksOnlyWallClockMargin(t *testin
 
 // Negative controls: the verifiers must fail on outcomes they exist to catch.
 func TestMonitorQuorumHangVerifiersRejectBrokenOutcomes(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	good := runMonitorQuorumHang(t, 0, monitorQuorumOwnedDescendant)
 
 	falseSuccess := good
@@ -373,7 +374,7 @@ func TestMonitorQuorumHangVerifiersRejectBrokenOutcomes(t *testing.T) {
 }
 
 func TestMonitorQuorumPythonSignalsOwnedGroupBeforeReapingSuccessfulChild(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
+	python := installedPython(t)
 	heartbeatPath := filepath.Join(t.TempDir(), "successful-child-descendant")
 	// Instrument the actual supervisor's syscalls. The observed child must still
 	// be waitable without reaping when its group is signaled, including exit 0.
@@ -427,4 +428,18 @@ func supervisorTestEnvironment(opts []tcexec.ProcessOption, dir string) []string
 		}
 	}
 	return env
+}
+
+// installedPython returns the host's python3 for the supervisor regressions,
+// or skips the test.
+func installedPython(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX pipes and process groups are unavailable on Windows")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("local Python supervisor regression requires installed python3; native image validation covers the runtime")
+	}
+	return python
 }

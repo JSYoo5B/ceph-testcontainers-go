@@ -3,6 +3,8 @@ package cephfs
 import (
 	"slices"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 )
 
 var (
@@ -23,12 +25,12 @@ var (
 
 func TestMDSRowStateAllowlistIsExactlyTheTwelveNames(t *testing.T) {
 	for _, state := range acceptedMDSRowStates {
-		if !cephFSMDSRowStateAccepted(state) {
+		if !mdsmap.StateAccepted(state) {
 			t.Fatalf("accepted state %q was dropped", state)
 		}
 	}
 	for _, state := range refusedMDSRowStates {
-		if cephFSMDSRowStateAccepted(state) {
+		if mdsmap.StateAccepted(state) {
 			t.Fatalf("state %q is accepted; supporting it needs evidence and a separate decision", state)
 		}
 	}
@@ -47,7 +49,7 @@ func TestMDSRowStateAllowlistReachesEveryStrictDecoder(t *testing.T) {
 	t.Run("stopped", func(t *testing.T) {
 		const want = "stopped MDS global daemon identity is present or malformed"
 		for _, state := range append(slices.Clone(assignedMDSRowStates), refusedMDSRowStates...) {
-			refused := !cephFSMDSRowStateAccepted(state)
+			refused := !mdsmap.StateAccepted(state)
 			_, err := stoppedMDSDecode(t, func(n *stoppedMDSControl, _ map[string]any, _ *stoppedMDSDaemon) {
 				n.native["filesystems"] = append(n.native["filesystems"].([]any), foreign(state))
 			})
@@ -60,7 +62,7 @@ func TestMDSRowStateAllowlistReachesEveryStrictDecoder(t *testing.T) {
 		const want = "foreign MDS map is incomplete or conflicts with initial identity"
 		fs, n := coldMDSTestConstruct(t, false)
 		for _, state := range append(slices.Clone(assignedMDSRowStates), refusedMDSRowStates...) {
-			refused := !cephFSMDSRowStateAccepted(state)
+			refused := !mdsmap.StateAccepted(state)
 			native := map[string]any{"standbys": []any{}, "filesystems": append(slices.Clone(n.native["filesystems"].([]any)), foreign(state))}
 			err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.id.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools})
 			if refused && (err == nil || err.Error() != want) || !refused && err != nil {
@@ -71,7 +73,7 @@ func TestMDSRowStateAllowlistReachesEveryStrictDecoder(t *testing.T) {
 	t.Run("replacement", func(t *testing.T) {
 		const want = "MDS replacement global daemon map is contradictory"
 		for _, state := range append(slices.Clone(assignedMDSRowStates), refusedMDSRowStates...) {
-			refused := !cephFSMDSRowStateAccepted(state)
+			refused := !mdsmap.StateAccepted(state)
 			r := newReplacementMDSFixture(t)
 			r.n.native["filesystems"] = append(r.n.native["filesystems"].([]any), foreign(state))
 			_, err := r.add(t.Context())

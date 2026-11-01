@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -340,7 +341,7 @@ func testAuthFailureCauses(t *testing.T) {
 		stderr := strings.TrimSpace(string(result.Stderr))
 		attempt := authCauseAttempt{Name: c.name, Entity: c.entity, ExitCode: result.ExitCode, Error: stderr[strings.LastIndex(stderr, "\n")+1:],
 			Record: captureAuthCause(t, ctx, t.Name()+"/"+c.name, marks, c.entity, string(result.Stderr))}
-		redacted, err := cluster.RedactSecrets(ctx, []byte(attempt.Error))
+		redacted, err := diagnostics.Redact(ctx, cluster, []byte(attempt.Error))
 		if err != nil {
 			t.Fatal(err)
 		}

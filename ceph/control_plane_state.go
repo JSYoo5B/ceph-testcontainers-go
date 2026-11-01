@@ -15,7 +15,7 @@ import (
 // The lock is a leaf
 // below Container.mu: ensureControlPlane and
 // terminate take it while the topology lock is held, and the readers
-// take it either after releasing the topology lock (diagnosticsSnapshot,
+// take it either after releasing the topology lock (evidenceInventory,
 // admitNativeTarget) or may be called with it held
 // (cephConn.cliContainer and cephConn.controlContainer). No method of the type takes another lock or calls
 // into Container, so a reader or writer that holds this lock never waits for

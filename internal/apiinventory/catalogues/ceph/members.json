@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 427,
+  "count": 257,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -16,14 +16,6 @@
       "BlocklistEntry.Address field string",
       "BlocklistEntry.Range field bool",
       "BlocklistEntry.Until field time.Time"
-    ],
-    "ceph.CaptureFileSource": [
-      "CaptureFileSource embed CaptureSettler",
-      "CaptureFileSource.CaptureFile method func(ctx context.Context) (io.ReadCloser, int64, string, error)"
-    ],
-    "ceph.CaptureSettler": [
-      "CaptureSettler.Settle method func(ctx context.Context) (report any, err error)",
-      "CaptureSettler.SettlementAllowance method func() time.Duration"
     ],
     "ceph.ClientCaps": [
       "ClientCaps.MDS field string",
@@ -67,67 +59,6 @@
     "ceph.Container": [
       "Container embed testcontainers.Container"
     ],
-    "ceph.CrashExpectation": [
-      "CrashExpectation.Daemon field string",
-      "CrashExpectation.MaxCount field int",
-      "CrashExpectation.MinCount field int",
-      "CrashExpectation.Name field string",
-      "CrashExpectation.Process field string",
-      "CrashExpectation.Required field bool",
-      "CrashExpectation.Signature field string"
-    ],
-    "ceph.CrashMetadataConfig": [
-      "CrashMetadataConfig.AdditionalContainers field []DiagnosticsContainer",
-      "CrashMetadataConfig.MaxArchiveBytes field int64",
-      "CrashMetadataConfig.MaxEntries field int",
-      "CrashMetadataConfig.MaxRecordBytes field int",
-      "CrashMetadataConfig.MaxRecords field int",
-      "CrashMetadataConfig.OperationTimeout field time.Duration",
-      "CrashMetadataConfig.RedactValues field []string",
-      "CrashMetadataConfig.Timeout field time.Duration"
-    ],
-    "ceph.CrashMetadataContainer": [
-      "CrashMetadataContainer.ArchiveBytes field int64 `json:\"archive_bytes\"`",
-      "CrashMetadataContainer.ContainerID field string `json:\"container_id,omitempty\"`",
-      "CrashMetadataContainer.CrashDir field string `json:\"crash_dir\"`",
-      "CrashMetadataContainer.Error field string `json:\"error,omitempty\"`",
-      "CrashMetadataContainer.ExitCode field int `json:\"exit_code\"`",
-      "CrashMetadataContainer.FinishedAt field string `json:\"finished_at,omitempty\"`",
-      "CrashMetadataContainer.IgnoredEntries field int `json:\"ignored_entries\"`",
-      "CrashMetadataContainer.ImageID field string `json:\"image_id,omitempty\"`",
-      "CrashMetadataContainer.Name field string `json:\"name\"`",
-      "CrashMetadataContainer.OOMKilled field bool `json:\"oom_killed,omitempty\"`",
-      "CrashMetadataContainer.Omitted field []CrashOmission `json:\"omitted,omitempty\"`",
-      "CrashMetadataContainer.Outcome field CrashOutcome `json:\"outcome\"`",
-      "CrashMetadataContainer.Records field []CrashRecord `json:\"records\"`",
-      "CrashMetadataContainer.Role field string `json:\"role\"`",
-      "CrashMetadataContainer.StartedAt field string `json:\"started_at,omitempty\"`",
-      "CrashMetadataContainer.State field string `json:\"state,omitempty\"`"
-    ],
-    "ceph.CrashMetadataReport": [
-      "CrashMetadataReport.Closed field bool `json:\"closed\"`",
-      "CrashMetadataReport.Complete field bool `json:\"complete\"`",
-      "CrashMetadataReport.Containers field []CrashMetadataContainer `json:\"containers\"`",
-      "CrashMetadataReport.FinishedAt field time.Time `json:\"finished_at\"`",
-      "CrashMetadataReport.SchemaVersion field int `json:\"schema_version\"`",
-      "CrashMetadataReport.StartedAt field time.Time `json:\"started_at\"`"
-    ],
-    "ceph.CrashOmission": [
-      "CrashOmission.Path field string `json:\"path\"`",
-      "CrashOmission.Reason field string `json:\"reason\"`"
-    ],
-    "ceph.CrashRecord": [
-      "CrashRecord.CephVersion field string `json:\"ceph_version,omitempty\"`",
-      "CrashRecord.CrashID field string `json:\"crash_id\"`",
-      "CrashRecord.Done field bool `json:\"done\"`",
-      "CrashRecord.Entity field string `json:\"entity,omitempty\"`",
-      "CrashRecord.Fields field map[string]any `json:\"fields\"`",
-      "CrashRecord.OmittedFields field []string `json:\"omitted_fields,omitempty\"`",
-      "CrashRecord.Path field string `json:\"path\"`",
-      "CrashRecord.Posted field bool `json:\"posted,omitempty\"`",
-      "CrashRecord.Process field string `json:\"process,omitempty\"`",
-      "CrashRecord.Timestamp field string `json:\"timestamp,omitempty\"`"
-    ],
     "ceph.DaemonAddress": [
       "DaemonAddress.Addrs field []EntityAddress",
       "DaemonAddress.Name field string"
@@ -142,65 +73,6 @@
       "DaemonAddresses.OSDs field []OSDAddress",
       "DaemonAddresses.StandbyManagers field []string"
     ],
-    "ceph.DebugLevelReceipt": [
-      "DebugLevelReceipt.Applied field string `json:\"applied,omitempty\"`",
-      "DebugLevelReceipt.Daemon field string `json:\"daemon\"`",
-      "DebugLevelReceipt.Generation field string `json:\"generation\"`",
-      "DebugLevelReceipt.Name field string `json:\"name\"`",
-      "DebugLevelReceipt.Prior field string `json:\"prior\"`",
-      "DebugLevelReceipt.Reason field string `json:\"reason,omitempty\"`",
-      "DebugLevelReceipt.Requested field string `json:\"requested\"`",
-      "DebugLevelReceipt.Restored field string `json:\"restored,omitempty\"`",
-      "DebugLevelReceipt.State field DebugLevelState `json:\"state\"`",
-      "DebugLevelReceipt.Transitions field []DebugLevelTransition `json:\"transitions\"`"
-    ],
-    "ceph.DebugLevelReceipter": [
-      "DebugLevelReceipter.Receipt method func() DebugLevelReceipt"
-    ],
-    "ceph.DebugLevelSetting": [
-      "DebugLevelSetting.Daemon field string",
-      "DebugLevelSetting.Level field string",
-      "DebugLevelSetting.Name field string"
-    ],
-    "ceph.DebugLevelTransition": [
-      "DebugLevelTransition.At field time.Time `json:\"at\"`",
-      "DebugLevelTransition.Error field string `json:\"error,omitempty\"`",
-      "DebugLevelTransition.Readback field string `json:\"readback,omitempty\"`",
-      "DebugLevelTransition.State field DebugLevelState `json:\"state\"`"
-    ],
-    "ceph.DiagnosticArtifact": [
-      "DiagnosticArtifact.ContainerID field string `json:\"container_id,omitempty\"`",
-      "DiagnosticArtifact.Data field string `json:\"data,omitempty\"`",
-      "DiagnosticArtifact.Error field string `json:\"error,omitempty\"`",
-      "DiagnosticArtifact.Kind field string `json:\"kind\"`",
-      "DiagnosticArtifact.Name field string `json:\"name\"`",
-      "DiagnosticArtifact.Role field string `json:\"role,omitempty\"`",
-      "DiagnosticArtifact.Truncated field bool `json:\"truncated,omitempty\"`"
-    ],
-    "ceph.DiagnosticsConfig": [
-      "DiagnosticsConfig.AdditionalContainers field []DiagnosticsContainer",
-      "DiagnosticsConfig.Concurrency field int",
-      "DiagnosticsConfig.LogTail field int",
-      "DiagnosticsConfig.MaxContainers field int",
-      "DiagnosticsConfig.MaxOutputBytes field int",
-      "DiagnosticsConfig.OperationTimeout field time.Duration",
-      "DiagnosticsConfig.RedactValues field []string",
-      "DiagnosticsConfig.Timeout field time.Duration"
-    ],
-    "ceph.DiagnosticsContainer": [
-      "DiagnosticsContainer.Container field testcontainers.Container",
-      "DiagnosticsContainer.Name field string",
-      "DiagnosticsContainer.Role field string"
-    ],
-    "ceph.DiagnosticsReport": [
-      "DiagnosticsReport.Artifacts field []DiagnosticArtifact `json:\"artifacts\"`",
-      "DiagnosticsReport.Closed field bool `json:\"closed\"`",
-      "DiagnosticsReport.Complete field bool `json:\"complete\"`",
-      "DiagnosticsReport.FinishedAt field time.Time `json:\"finished_at\"`",
-      "DiagnosticsReport.HostNetwork field bool `json:\"host_network\"`",
-      "DiagnosticsReport.SchemaVersion field int `json:\"schema_version\"`",
-      "DiagnosticsReport.StartedAt field time.Time `json:\"started_at\"`"
-    ],
     "ceph.EntityAddress": [
       "EntityAddress.Addr field string",
       "EntityAddress.Nonce field uint32",
@@ -210,24 +82,6 @@
       "ErasureCodeConfig.AllowOverwrites field bool",
       "ErasureCodeConfig.K field int",
       "ErasureCodeConfig.M field int"
-    ],
-    "ceph.ExpectationResult": [
-      "ExpectationResult.Matched field int `json:\"matched\"`",
-      "ExpectationResult.MaxCount field int `json:\"max_count\"`",
-      "ExpectationResult.MinCount field int `json:\"min_count\"`",
-      "ExpectationResult.Name field string `json:\"name\"`",
-      "ExpectationResult.Required field bool `json:\"required\"`",
-      "ExpectationResult.Satisfied field bool `json:\"satisfied\"`"
-    ],
-    "ceph.FinalizationConfig": [
-      "FinalizationConfig.Archive field bool",
-      "FinalizationConfig.ArchiveDirectory field string",
-      "FinalizationConfig.ArchiveTimeout field time.Duration",
-      "FinalizationConfig.CheckTimeout field time.Duration",
-      "FinalizationConfig.CleanupTimeout field time.Duration",
-      "FinalizationConfig.CrashMetadata field CrashMetadataConfig",
-      "FinalizationConfig.Diagnostics field DiagnosticsConfig",
-      "FinalizationConfig.Scenario field string"
     ],
     "ceph.FullRatioSnapshot": [
       "FullRatioSnapshot.Epoch field uint32",
@@ -279,15 +133,6 @@
       "InconsistentShard.OSD field int",
       "InconsistentShard.Primary field bool",
       "InconsistentShard.Shard field int"
-    ],
-    "ceph.LogExpectation": [
-      "LogExpectation.Daemon field string",
-      "LogExpectation.Event field LogEvent",
-      "LogExpectation.MaxCount field int",
-      "LogExpectation.MinCount field int",
-      "LogExpectation.Name field string",
-      "LogExpectation.Pattern field string",
-      "LogExpectation.Required field bool"
     ],
     "ceph.MGRModuleState": [
       "MGRModuleState.AlwaysOn field bool",
@@ -511,73 +356,6 @@
       "Status.PGMap.PGsByState field []struct {\n\tStateName string `json:\"state_name\"`\n\tCount     int    `json:\"count\"`\n} `json:\"pgs_by_state\"`",
       "Status.PGMap.PGsByState[].Count field int `json:\"count\"`",
       "Status.PGMap.PGsByState[].StateName field string `json:\"state_name\"`"
-    ],
-    "ceph.VerificationCheck": [
-      "VerificationCheck.Expectations field []ExpectationResult `json:\"expectations\"`",
-      "VerificationCheck.Findings field []VerificationFinding `json:\"findings\"`",
-      "VerificationCheck.Gaps field []VerificationGap `json:\"gaps\"`",
-      "VerificationCheck.OmittedFindings field int `json:\"omitted_findings\"`",
-      "VerificationCheck.Outcome field VerificationOutcome `json:\"outcome\"`",
-      "VerificationCheck.Permitted field int `json:\"permitted\"`",
-      "VerificationCheck.Unexpected field int `json:\"unexpected\"`"
-    ],
-    "ceph.VerificationConfig": [
-      "VerificationConfig.AdditionalContainers field []DiagnosticsContainer",
-      "VerificationConfig.Crashes field []CrashExpectation",
-      "VerificationConfig.Logs field []LogExpectation",
-      "VerificationConfig.MaxFindings field int",
-      "VerificationConfig.MaxLogBytes field int64",
-      "VerificationConfig.Name field string",
-      "VerificationConfig.OperationTimeout field time.Duration",
-      "VerificationConfig.RedactValues field []string",
-      "VerificationConfig.Timeout field time.Duration"
-    ],
-    "ceph.VerificationFinding": [
-      "VerificationFinding.ContainerID field string `json:\"container_id,omitempty\"`",
-      "VerificationFinding.CrashID field string `json:\"crash_id,omitempty\"`",
-      "VerificationFinding.Event field string `json:\"event\"`",
-      "VerificationFinding.Expectation field string `json:\"expectation,omitempty\"`",
-      "VerificationFinding.Source field string `json:\"source\"`",
-      "VerificationFinding.Text field string `json:\"text\"`",
-      "VerificationFinding.Time field string `json:\"time,omitempty\"`",
-      "VerificationFinding.Truncated field bool `json:\"truncated,omitempty\"`"
-    ],
-    "ceph.VerificationGap": [
-      "VerificationGap.Reason field string `json:\"reason\"`",
-      "VerificationGap.Source field string `json:\"source,omitempty\"`"
-    ],
-    "ceph.VerificationReport": [
-      "VerificationReport.Cluster field string `json:\"cluster\"`",
-      "VerificationReport.CrashExpectations field []CrashExpectation `json:\"crash_expectations\"`",
-      "VerificationReport.Crashes field VerificationCheck `json:\"crashes\"`",
-      "VerificationReport.Images field ImageSet `json:\"images\"`",
-      "VerificationReport.LogExpectations field []LogExpectation `json:\"log_expectations\"`",
-      "VerificationReport.Logs field VerificationCheck `json:\"logs\"`",
-      "VerificationReport.Name field string `json:\"name\"`",
-      "VerificationReport.Notes field []string `json:\"notes\"`",
-      "VerificationReport.Outcome field VerificationOutcome `json:\"outcome\"`",
-      "VerificationReport.SchemaVersion field int `json:\"schema_version\"`",
-      "VerificationReport.Sources field []VerificationSource `json:\"sources\"`",
-      "VerificationReport.Window field VerificationWindow `json:\"window\"`"
-    ],
-    "ceph.VerificationSource": [
-      "VerificationSource.BaselineCrashes field []string `json:\"baseline_crashes\"`",
-      "VerificationSource.ContainerID field string `json:\"container_id,omitempty\"`",
-      "VerificationSource.ImageID field string `json:\"image_id,omitempty\"`",
-      "VerificationSource.LogBytes field int64 `json:\"log_bytes\"`",
-      "VerificationSource.LogDriver field string `json:\"log_driver,omitempty\"`",
-      "VerificationSource.Name field string `json:\"name\"`",
-      "VerificationSource.RestartCount field int `json:\"restart_count\"`",
-      "VerificationSource.Role field string `json:\"role\"`",
-      "VerificationSource.Source field string `json:\"source\"`",
-      "VerificationSource.StartedAt field string `json:\"started_at,omitempty\"`",
-      "VerificationSource.State field string `json:\"state,omitempty\"`"
-    ],
-    "ceph.VerificationWindow": [
-      "VerificationWindow.EndedAt field time.Time `json:\"ended_at\"`",
-      "VerificationWindow.EvaluatedAt field time.Time `json:\"evaluated_at\"`",
-      "VerificationWindow.Phase field string `json:\"phase\"`",
-      "VerificationWindow.StartedAt field time.Time `json:\"started_at\"`"
     ]
   }
 }

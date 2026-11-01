@@ -14,6 +14,11 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// OwnerLabel is the label whose value is the owner ID of the cluster that
+// created a container. Terminate removes the containers that carry it, also
+// those whose creation reply was lost.
+const OwnerLabel = "org.testcontainers.ceph.cluster"
+
 // LockMutex acquires mutex unless ctx ends first. The caller owns Unlock after
 // success. No goroutine remains waiting after cancellation.
 func LockMutex(ctx context.Context, mutex *sync.Mutex) error {

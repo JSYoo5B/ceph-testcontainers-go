@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -152,7 +153,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			// started after it, so they have no warm window; their logs
 			// are in the bundle. A failure later in the test logs a bundle
 			// from the cleanup, while the warm daemons' windows are open.
-			stopped := []ceph.DiagnosticsContainer{
+			stopped := []diagnostics.Target{
 				{Role: "client", Name: "source-client", Container: sourceClient},
 				{Role: "client", Name: "destination-client", Container: destinationClient},
 				{Role: "rbd-mirror", Name: "rbd-mirror", Container: rbdMirror.Container},

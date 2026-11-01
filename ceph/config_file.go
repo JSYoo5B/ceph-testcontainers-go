@@ -10,7 +10,13 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
+
+// CrashDir is the crash directory of every daemon of the cluster. The
+// bootstrap ceph.conf sets it, and WithConfigFile refuses to change it.
+const CrashDir = evidence.CrashDir
 
 // userConfigMaxBytes bounds each WithConfigFile input. The merged bootstrap
 // file must stay well below monitorConfigMaxBytes for later MON refreshes.
@@ -234,7 +240,7 @@ var reservedConfigKeys = map[string]string{
 	"osd_data":                    "is managed by the fixture",
 	"mgr_data":                    "is managed by the fixture",
 	"mds_data":                    "is managed by the fixture",
-	"crash_dir":                   "is managed by the fixture; CollectCrashMetadata reads /var/lib/ceph/crash",
+	"crash_dir":                   "is managed by the fixture; diagnostics.CollectCrashMetadata reads /var/lib/ceph/crash",
 	"log_file":                    "is managed by the fixture; daemon logs go to container output",
 	"log_to_file":                 "is managed by the fixture; daemon logs go to container output",
 	"log_to_stderr":               "is managed by the fixture; daemon logs go to container output",

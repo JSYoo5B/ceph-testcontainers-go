@@ -2,19 +2,19 @@ package cephfs
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 )
 
 type stoppedMDSEdit func(n *stoppedMDSControl, m map[string]any, survivor *stoppedMDSDaemon)
 
 // stoppedMDSDecode runs the real stopped-MDS decoder over the fixture map after
 // edit changed it, with the fixture's survivor daemon and pool identity.
-func stoppedMDSDecode(t *testing.T, edit stoppedMDSEdit) (*cephFSMDSRemovalScope, error) {
+func stoppedMDSDecode(t *testing.T, edit stoppedMDSEdit) (*mdsmap.Scope, error) {
 	t.Helper()
 	fs, native, target, _, survivor := stoppedMDSFixture(t)
 	// The pool identity comes from the same dump, so it is read from the
@@ -39,7 +39,7 @@ func stoppedMDSInfoRow(m map[string]any, key string) map[string]any {
 
 func TestStoppedMDSDecodeAcceptsTheSettledBaseline(t *testing.T) {
 	scope, err := stoppedMDSDecode(t, nil)
-	if err != nil || scope == nil || scope.active != 1 || scope.standby != 1 || !scope.joinable || scope.replay || !scope.protected || !slices.Equal(scope.dataPools, []int64{1}) || !slices.Equal(scope.poolNames, []string{"target-data"}) {
+	if err != nil || scope == nil || scope.Active != 1 || scope.Standby != 1 || !scope.Joinable || scope.Replay || !scope.Protected || !slices.Equal(scope.DataPools, []int64{1}) || !slices.Equal(scope.PoolNames, []string{"target-data"}) {
 		t.Fatalf("baseline decode changed: %+v %v", scope, err)
 	}
 }
@@ -198,55 +198,6 @@ func calleeName(call *ast.CallExpr) string {
 	return ""
 }
 
-// TestStoppedMDSDecoderIsAPureFunctionOfItsArguments guards the contract of
-// stopped_mds_decode.go: the file declares only the decoder, its phase
-// functions and their value types, imports no package that can reach a lock, a command or Docker, and
-// names none of the owner state. So the decoder cannot start reading the
-// roster, the cluster or a container without this test failing.
-func TestStoppedMDSDecoderIsAPureFunctionOfItsArguments(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "stopped_mds_decode.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var funcs, types, imports []string
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv != nil {
-				t.Errorf("method %s: the decoder file declares functions only", d.Name.Name)
-			}
-			funcs = append(funcs, d.Name.Name)
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					types = append(types, s.Name.Name)
-				case *ast.ImportSpec:
-					imports = append(imports, strings.Trim(s.Path.Value, `"`))
-				}
-			}
-		}
-	}
-	slices.Sort(types)
-	slices.Sort(imports)
-	wantFuncs := []string{"decodeStoppedMDSMap", "admitStoppedMDSRow", "checkStoppedMDSMembership", "stoppedMDSScope", "collectStoppedMDSSurvivors", "collectStoppedMDSStandbys"}
-	wantTypes := []string{"stoppedMDSFields", "stoppedMDSFilesystem", "stoppedMDSMap", "stoppedMDSMapExpectation", "stoppedMDSMapState", "stoppedMDSSeen"}
-	if !slices.Equal(funcs, wantFuncs) || !slices.Equal(types, wantTypes) {
-		t.Errorf("decoder file declarations changed: funcs %v types %v", funcs, types)
-	}
-	wantImports := []string{"errors", "github.com/JSYoo5B/ceph-testcontainers-go/internal/naming", "slices", "strconv", "strings"}
-	if !slices.Equal(imports, wantImports) {
-		t.Errorf("decoder file imports %v, pinned %v", imports, wantImports)
-	}
-	forbidden := []string{"Filesystem", "fs", "context", "ctx", "servicehook", "clusterutil", "testcontainers", "ceph", "sync", "roster", "members", "Inspect", "Lock", "Unlock", "LockMutex", "Container", "cluster", "setupMu"}
-	ast.Inspect(file, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && slices.Contains(forbidden, id.Name) {
-			t.Errorf("decoder file names %q, which is owner state, a lock, a command or Docker", id.Name)
-		}
-		return true
-	})
-}
-
 // TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification pins the
 // caller table of the split: the decoder and the survivor verification are
 // called only by decodeStoppedMDSScope, decoding comes first and the verified
@@ -317,38 +268,16 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 	}
 }
 
-// TestMDSRowStateListHasOneCopy guards the shared allowlist: the state names
-// are written only in mds_native_state.go, and each strict decoder reaches them
-// through the one function, once.
-func TestMDSRowStateListHasOneCopy(t *testing.T) {
-	callers := map[string][]string{}
+// TestMDSRowStateListIsNotCopied guards the shared allowlist from this side:
+// no production file of the package writes the daemon state names, which
+// mdsmap.StateAccepted holds once.
+func TestMDSRowStateListIsNotCopied(t *testing.T) {
 	for file, parsed := range parseCephFSProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && strings.Contains(lit.Value, `"up:creating"`) {
+				t.Errorf("%s writes a second copy of the daemon state list", file)
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch node := n.(type) {
-				case *ast.CallExpr:
-					if calleeName(node) == "cephFSMDSRowStateAccepted" {
-						callers[fn.Name.Name] = append(callers[fn.Name.Name], file)
-					}
-				case *ast.BasicLit:
-					if file != "mds_native_state.go" && strings.Contains(node.Value, `"up:creating"`) {
-						t.Errorf("%s: %s writes a second copy of the daemon state list", file, fn.Name.Name)
-					}
-				}
-				return true
-			})
-		}
-	}
-	want := map[string][]string{
-		"decodeColdMDSMap":       {"cold_mds_decode.go"},
-		"admitStoppedMDSRow":     {"stopped_mds_decode.go"},
-		"admitReplacementMDSRow": {"mds_replacement_decode.go"},
-	}
-	if !reflect.DeepEqual(callers, want) {
-		t.Errorf("state-list callers changed: %v, pinned %v", callers, want)
+			return true
+		})
 	}
 }

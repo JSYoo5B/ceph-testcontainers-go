@@ -258,7 +258,7 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"newOSDLaunchRecipe":               {"free", []string{"launchStrings"}},
 	"refreshMonitorConfigAfterRemoval": {"free", []string{"publishConfig", "template"}},
 	"configureDefaultCRUSHRoot":        {"free", []string{"applyDefaultCRUSHRule"}},
-	"diagnosticsSnapshot":              {"free", []string{"diagnosticKeyring"}},
+	"evidenceInventory":                {"free", []string{"diagnosticKeyring"}},
 	"fullRatiosSession":                {"free", []string{"identity"}},
 	"HealthDetails":                    {"free", []string{"identity"}},
 	"PGs":                              {"free", []string{"identity"}},

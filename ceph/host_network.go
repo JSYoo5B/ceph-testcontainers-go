@@ -127,7 +127,7 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 
 // reserveExactHostPorts takes exactly ports on address, in that order, and
 // fails when any of them is in use. It is the hold on the ports a replaced MON
-// listened on (mon_store_address.go).
+// listened on (ceph/internal/monstore/address.go).
 func reserveExactHostPorts(ctx context.Context, image, address string, ports []int, timeout time.Duration, opts ...testcontainers.ContainerCustomizer) (*hostPortLease, error) {
 	seen := map[int]bool{}
 	for _, port := range ports {

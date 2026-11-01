@@ -435,7 +435,7 @@ func parseMonSessions(data []byte) (map[string][]monSession, error) {
 	return managers, nil
 }
 
-// authSources is what a collection reads; *ceph.Container provides it. Each
+// authSources is what a collection reads; harness.WithSockets provides it. Each
 // method waits at most until its context ends.
 type authSources interface {
 	AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)

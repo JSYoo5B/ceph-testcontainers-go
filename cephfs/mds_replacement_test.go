@@ -6,13 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -357,7 +358,7 @@ func TestMDSReplacementPreservesSiblingAndCurrentAttachments(t *testing.T) {
 	r.n.native["standbys"] = []any{coldMDSTestRow("sibling-standby", "up:standby", 45, -1, 8)}
 	before := coldMDSTestJSON(sibling)
 	got, err := r.add(t.Context())
-	if err != nil || got == nil || before != coldMDSTestJSON(sibling) || !slices.Equal(r.old.identity.replacement.scope.dataPools, []int64{1, 2}) {
+	if err != nil || got == nil || before != coldMDSTestJSON(sibling) || !slices.Equal(r.old.identity.replacement.scope.DataPools, []int64{1, 2}) {
 		t.Fatal("independent sibling or current attachment was destroyed or adopted", err)
 	}
 }

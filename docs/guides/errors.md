@@ -128,7 +128,7 @@ if !errors.Is(err, fs.ErrNotExist) {
 with a timestamp, joined with `; `: the tools often print the cause on one
 line and a generic summary on the last, as in `start snapshot 'baseline' does
 not exist in the image, aborting; rbd: import-diff failed: (22) Invalid
-argument`. Keys and the secrets that `RedactSecrets` recognizes are replaced,
+argument`. Keys and the secrets that `diagnostics.Redact` recognizes are replaced,
 and control characters are removed.
 It can name resources of the request, such as a pool. Some operations hide
 native output entirely, such as Cephx identity changes, configuration

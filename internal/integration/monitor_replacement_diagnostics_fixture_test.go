@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -17,6 +16,9 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -288,7 +290,7 @@ func (f *fakeMonCluster) monStatus(id string) ([]byte, error) {
 	return json.Marshal(value)
 }
 
-func (f *fakeMonCluster) CollectDiagnostics(ctx context.Context, _ ceph.DiagnosticsConfig) (*ceph.DiagnosticsReport, error) {
+func (f *fakeMonCluster) CollectDiagnostics(ctx context.Context, _ diagnostics.Config) (*diagnostics.Report, error) {
 	// The real collection snapshots the inventory under the topology mutex.
 	err := f.lock(ctx)
 	if err == nil {
@@ -300,7 +302,7 @@ func (f *fakeMonCluster) CollectDiagnostics(ctx context.Context, _ ceph.Diagnost
 	if err != nil {
 		return nil, err
 	}
-	return &ceph.DiagnosticsReport{SchemaVersion: 1, Complete: true, Artifacts: []ceph.DiagnosticArtifact{{Kind: "logs", Name: "mon.e", Data: "mon.e@-1(probing)"}}}, nil
+	return &diagnostics.Report{SchemaVersion: 1, Complete: true, Artifacts: []diagnostics.Artifact{{Kind: "logs", Name: "mon.e", Data: "mon.e@-1(probing)"}}}, nil
 }
 
 func (f *fakeMonCluster) monitors() []*ceph.MonitorContainer {
@@ -485,7 +487,7 @@ func TestMonReplacementJoinTimeoutLogsBundleBeforeFailing(t *testing.T) {
 	// restarts during the replacement.
 	f.paused["mon.c"] = true
 	f.restartOnAdd = "mgr.x"
-	r := fakeMDS(f, newMonReplacementRecorder("destination", f, fakeMonReplacementBounds, ceph.DiagnosticsContainer{Role: "mirror", Name: "rbd-mirror"}))
+	r := fakeMDS(f, newMonReplacementRecorder("destination", f, fakeMonReplacementBounds, diagnostics.Target{Role: "mirror", Name: "rbd-mirror"}))
 	reporter := &fakeReporter{}
 	started := time.Now()
 	runMonReplacement(reporter, t.Context(), r, fakeMonReplacementPairs)

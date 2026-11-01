@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -26,13 +28,13 @@ func TestFailureArchiveProof(t *testing.T) {
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
 			cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
-			var finalization *ceph.Finalization
+			var finalization *finalize.Finalization
 			if cluster != nil {
 				var registerErr error
-				finalization, registerErr = cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{
+				finalization, registerErr = finalize.TerminateOnCleanup(t, cluster, finalize.Config{
 					Archive: true, Scenario: "failure-archive-proof/" + mode,
 					ArchiveTimeout: 2 * time.Minute,
-					Diagnostics:    ceph.DiagnosticsConfig{MaxOutputBytes: 128 << 10, LogTail: 100},
+					Diagnostics:    diagnostics.Config{MaxOutputBytes: 128 << 10, LogTail: 100},
 				})
 				if registerErr != nil {
 					_ = cluster.Terminate(context.WithoutCancel(ctx))
@@ -63,16 +65,16 @@ func TestFailureArchiveProof(t *testing.T) {
 			if err := json.Unmarshal(out, &nativeOSDs); err != nil || len(nativeOSDs) != 1 || nativeOSDs[0] != 0 {
 				t.Fatalf("native one-OSD control: %q %v", out, err)
 			}
-			window, applyErr := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
+			window, applyErr := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
 			finalization.TrackDebugLevel(window)
 			finalization.Cleanup("restore controlled debug window", window.Restore)
 			if applyErr != nil {
 				t.Fatal(applyErr)
 			}
 			if mode == "verification" {
-				if _, err := finalization.Verify(ctx, ceph.VerificationConfig{
+				if _, err := finalization.Verify(ctx, finalize.VerificationConfig{
 					Name:    "absent-crash-control",
-					Crashes: []ceph.CrashExpectation{{Name: "required-but-absent", Required: true, Daemon: "osd.0", Process: "ceph-osd"}},
+					Crashes: []finalize.CrashExpectation{{Name: "required-but-absent", Required: true, Daemon: "osd.0", Process: "ceph-osd"}},
 				}); err != nil {
 					t.Fatal(err)
 				}

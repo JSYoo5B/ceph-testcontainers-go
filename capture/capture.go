@@ -880,12 +880,10 @@ func classifyStartError(ctx context.Context, label string, err error) error {
 	return classifyDocker(ctx, fmt.Errorf("%s: %w", label, err))
 }
 
-var _ ceph.CaptureSettler = (*Session)(nil)
-
 // SettlementAllowance is the longest Settle runs: the stop grace plus the
 // package's own two-minute Docker allowance (130 seconds with the default
 // stop grace), whatever context Settle is given. It is what
-// ceph.Finalization.Capture admits for this session. Callers that do not use
+// finalize.Finalization.Capture admits for this session. Callers that do not use
 // a finalization call Stop instead of Settle.
 //
 //purpose:evidence
@@ -893,8 +891,8 @@ func (s *Session) SettlementAllowance() time.Duration {
 	return s.stopGrace() + finishTimeout
 }
 
-// Settle is Stop for a ceph.Finalization, which registers the session with
-// Finalization.Capture. It returns the Report as an any value and, so that an
+// Settle is Stop for a finalize.Finalization, which registers the session
+// with Finalization.Capture. It returns the Report as an any value and, so that an
 // archived report names no host path, with Output reduced to its base name.
 // It shares Stop's behavior: the context's cancellation does not shorten it,
 // it waits for a Stop that is already running, and a Stop that already

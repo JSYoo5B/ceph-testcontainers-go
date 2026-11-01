@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -31,7 +32,7 @@ type monitorTopology struct {
 	bootstrap *bootstrapRecord
 	// monStores is the cluster's MON store records; a permanent removal
 	// retires the removed MON's record (retireMonitor).
-	monStores *monStoreState
+	monStores *monstore.State
 	osds      osdFleet
 	settings  options
 	// owner is the cluster that the handles the topology creates belong to;

@@ -198,14 +198,6 @@ func (f mdsFleet) checkColdMDSAuth(ctx context.Context) error {
 	return ctx.Err()
 }
 
-type coldMDSRow struct {
-	Name  *string `json:"name"`
-	GID   *uint64 `json:"gid"`
-	Rank  *int    `json:"rank"`
-	State *string `json:"state"`
-	Join  *int64  `json:"join_fscid"`
-}
-
 // New cold absence guards reject duplicate fields, aliases of known fields and
 // trailing documents. Never return raw decode errors: native auth input can
 // contain credentials.

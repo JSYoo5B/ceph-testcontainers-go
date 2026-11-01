@@ -196,7 +196,7 @@ var controlPlaneCallers = map[string]stateCaller{
 	"cliContainer":               {"free", []string{"current"}},
 	"controlContainer":           {"free", []string{"currentContext"}},
 	"admitNativeTarget":          {"free", []string{"owns"}},
-	"diagnosticsSnapshot":        {"free", []string{"diagnosticHandle"}},
+	"evidenceInventory":          {"free", []string{"diagnosticHandle"}},
 	"UnitState":                  {"identity", []string{"mutex"}},
 }
 

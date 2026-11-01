@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -29,10 +30,10 @@ func TestClusterLifecycle(t *testing.T) {
 	cluster, err := ceph.Run(ctx, image, opts...)
 	// One finalization archives a failure before the client and the
 	// cluster are removed; go test -artifacts keeps the archive.
-	var finalization *ceph.Finalization
+	var finalization *finalize.Finalization
 	if cluster != nil {
 		var registerErr error
-		finalization, registerErr = cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true, Scenario: "cluster-lifecycle"})
+		finalization, registerErr = finalize.TerminateOnCleanup(t, cluster, finalize.Config{Archive: true, Scenario: "cluster-lifecycle"})
 		if registerErr != nil {
 			t.Fatal(registerErr)
 		}

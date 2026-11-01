@@ -9,6 +9,13 @@ The identity observation and its adapters are still uncalled.
 
 Pinned source: Ceph 7f793731f1b39eb4f465e960113d2363c311b964 (Tentacle 20.2.4).
 
+The store records, their state machine, the identity observation and the
+inspector live in the internal package `ceph/internal/monstore`, which imports
+no part of package ceph. Package ceph keeps the container side of a generation
+(`monitorGenerations` in `ceph/mon_store_container.go` and
+`ceph/mon_store_host.go`) and the replacement (`ceph/mon_store_replace.go`), and
+holds one `monstore.State` per cluster.
+
 ## The model, and what it forces
 
 The model is the whole requirement. Every MON has its own volume (never a
@@ -95,9 +102,9 @@ Rules:
 ## Lock position and release order
 
 Every operation runs under the topology lock `Container.mu` with a bounded
-context, as the OSD operations do. `monStoreState` has no mutex and sits at the
-position of `osdStorageState` (`TestNativeStateAddsNoMutex` scans it); Docker
-calls are made with `Container.mu` held, as `registerOSD` does for the OSD
+context, as the OSD operations do. `monstore.State` has no mutex and sits at the
+position of `osdStorageState` (`TestPackageAddsNoMutex` checks that the
+package imports no `sync`); Docker calls are made with `Container.mu` held, as `registerOSD` does for the OSD
 volume. `Terminate` releases the stores in a first stage after the added and
 primary MON containers are terminated (they are the volume users), then retries
 after the labelled-container scan together with the OSD retry stages. Release
@@ -142,8 +149,8 @@ selector for every generation after the first (`monitorGenerations.Create`).
 
 ## Identity observation
 
-Implemented in `ceph/mon_store_inspect.go`, tested Docker-free in
-`ceph/mon_store_inspect_test.go`. Nothing calls it in production and no native
+Implemented in `ceph/internal/monstore/inspect.go`, tested Docker-free in
+`ceph/internal/monstore/inspect_test.go`. Nothing calls it in production and no native
 run exists.
 
 - Ports: `monStoreInspector` (a short-lived read-only inspector) reports the entries of the data directory (kind, mode, inode,
@@ -168,7 +175,7 @@ run exists.
   `kv_backend` or `keyring` because `ceph-mon` recreates them. A binding
   refuses both, since `MonitorDBStore::open` writes `kv_backend` whenever a store
   is opened and the keyring digest is one of the bound fields.
-- `monStoreVolume.verifyStopped` runs the preflight: the record must hold a
+- `monstore.Volume.verifyStopped` runs the preflight: the record must hold a
   retained identity with no attachment (so the inspector never reads a store a
   MON may be writing), the volume metadata must pass `validate`, then the
   observation is compared through `verify`. A mismatch error names the fields
@@ -183,8 +190,8 @@ run exists.
   `ceph-mon`, in particular a different release, accepts the store.
 ## Identity adapters
 
-Implemented in `ceph/mon_store_monmap.go`, `ceph/mon_store_inspect_container.go`
-and `ceph/mon_store_json.go`, tested Docker-free. They are the concrete
+Implemented in `ceph/internal/monstore/monmap.go`, `ceph/internal/monstore/inspect_container.go`
+and `ceph/internal/monstore/json.go`, tested Docker-free. They are the concrete
 adapters behind the two ports above. Nothing calls them in production and no
 native run exists.
 
@@ -258,20 +265,20 @@ native run exists.
   truncated stream, a non-zero exit or anything on stderr is refused. A
   creation that returned an error leaves no ID to remove; the labelled
   container is left to the `Terminate` scan.
-- Guards. `ceph/mon_store_adapters_test.go` pins that no production file
+- Guards. `ceph/internal/monstore/adapters_test.go` pins that no production file
   outside the adapter files mentions the adapter symbols, that the symbol table
   matches the declarations, that the adapters import no `sync`, moby client or
   testcontainers package, and that the guard detects a synthetic caller. The
-  port guard of `mon_store_inspect_test.go` exempts the adapter files.
+  port guard of `inspect_test.go` exempts the adapter files.
 - Known gap of the script. A regular file swapped for a symlink between the
   `lstat` and the `open` is refused by `O_NOFOLLOW` and the inode comparison,
   but no Docker-free test can force that race, so the mutation that removes
   `O_NOFOLLOW` survives the tests. The mount is read-only and the inspector
   runs only against a stopped store, which is the real protection.
 
-Engine translation. `ceph/mon_store_inspect_engine.go` implements the engine
+Engine translation. `ceph/internal/monstore/inspect_engine.go` implements the engine
 as `monStoreMobyEngine`, tested Docker-free in
-`ceph/mon_store_inspect_engine_test.go` with a small fake of the Docker client.
+`ceph/internal/monstore/inspect_engine_test.go` with a small fake of the Docker client.
 Nothing constructs it: it has no default client, so the first caller supplies
 the constructor, and the production-caller guards cover its symbols. It holds no
 lock and no state.
@@ -307,20 +314,20 @@ replacement from starting while an inspection runs, under `Container.mu`.
 
 ## Replacement path
 
-Implemented in `ceph/mon_store_generation.go`, tested Docker-free in
-`ceph/mon_store_generation_test.go` against a small fake of the container side
-(`monStoreGenerations`). `startMonitorStore` calls `startGeneration` for the
-first generation of a store, and `replaceMonitor` calls `replaceGeneration`.
+Implemented in `ceph/internal/monstore/generation.go`, tested Docker-free in
+`ceph/internal/monstore/generation_test.go` against a small fake of the container side
+(`monstore.Generations`). `startMonitorStore` calls `StartGeneration` for the
+first generation of a store, and `replaceMonitor` calls `ReplaceGeneration`.
 
-- `startGeneration`: the first generation formats a new store, a later one
+- `StartGeneration`: the first generation formats a new store, a later one
   requires it. The pending attachment is published before the container is
   created, and an ID returned with an error is recorded. An unknown outcome is
   never replayed. A first generation that reaches its ready check marks the
   store ready (`ready`), without an identity.
-- `stopGeneration`: removes the container and clears the attachment only after
+- `StopGeneration`: removes the container and clears the attachment only after
   `confirmGone`. An attachment with an unknown creation outcome is left to
   `Terminate`.
-- `replaceGeneration`: checks the next generation first (a ready generation
+- `ReplaceGeneration`: checks the next generation first (a ready generation
   exists, the volume is still the one this record created, an identity-bound
   store is verified), then stops the old container, then starts the next one
   from the new image on the same volume. A failure of the new container leaves
@@ -333,22 +340,22 @@ first generation of a store, and `replaceMonitor` calls `replaceGeneration`.
 
 ## Address handoff
 
-Implemented in `ceph/mon_store_address.go` and `startGeneration`, called
+Implemented in `ceph/internal/monstore/address.go` and `StartGeneration`, called
 through the generation path and tested Docker-free against the fake of the container side. The monmap pins the
 address a MON joined with, so the replacement container binds exactly that
 address, and nothing may take it between the removal of the old container and
 the start of the new one.
 
-- The record keeps the endpoint its first generation bound (`monStoreEndpoint`:
+- The record keeps the endpoint its first generation bound (`monstore.Endpoint`:
   the IP, and either the bridge network name or the host ports), read from the
   running container after the ready check (`Observe`). If that observation
-  fails the store is ready but cannot be replaced, and `replaceGeneration`
+  fails the store is ready but cannot be replaced, and `ReplaceGeneration`
   refuses before it touches the old container.
 - A later generation is created, not started, for a copy of that endpoint. After
   its ready check the bound endpoint is observed and must equal the recorded one.
 - In host mode no reservation can last for the MON's lifetime: the running MON
   owns its ports, and the old container has to be gone before anything can bind
-  them. So the cluster takes an exact hold after `stopGeneration` confirmed the
+  them. So the cluster takes an exact hold after `StopGeneration` confirmed the
   old container gone, keeps it while the new container is created, and releases
   it immediately before `Start`. The window between the release and the start is
   the one the first MON has in `runMonitor`. It fails closed: a taken port makes
@@ -361,21 +368,21 @@ the start of the new one.
 - The record owns every hold the container side returns, also one that comes
   with an error (a partial allocator). It is released at once, and kept on the
   record if that release fails. A typed nil hold is refused.
-- A retained hold is released by the next `startGeneration` before a new one is
+- A retained hold is released by the next `StartGeneration` before a new one is
   taken, so there is at most one. It is also released first by
-  `monStoreVolume.release`, which `releaseStores`, `retryStores` and
+  `monstore.Volume.release`, which `ReleaseStores`, `RetryStores` and
   `discardFresh` call before the attachment or the volume are looked at. A
   failed release makes the release fail, so the record, the volume and the hold
   stay owned and the next stage retries.
-- Container side (`monStoreGenerations`): `Create` makes the container without
+- Container side (`monstore.Generations`): `Create` makes the container without
   starting it, `Start`, `Observe` and `Hold` complete the port.
 - Guards: the generation and address symbols are used in production only by
-  the pinned callers (`startGeneration`, and `stopGeneration` for a first
+  the pinned callers (`StartGeneration`, and `StopGeneration` for a first
   generation that lost its host ports, from `ceph/mon_store_container.go`;
-  `replaceGeneration` from `ceph/mon_store_replace.go`) and
-  `releaseAddressHold` from `monStoreVolume.release`, the files import no `sync`,
+  `ReplaceGeneration` from `ceph/mon_store_replace.go`) and
+  `releaseAddressHold` from `monstore.Volume.release`, the files import no `sync`,
   the container side is called only from its pinned methods, a hold is released
-  only by `releaseAddressHold`, `startGeneration` holds, dispatches, creates,
+  only by `releaseAddressHold`, `StartGeneration` holds, dispatches, creates,
   releases, starts, waits and observes in that order, and `release` frees the
   hold before it looks at the attachment or the volume.
 - Host mode reserves the exact ports with the allocator container of the
@@ -386,11 +393,11 @@ the start of the new one.
 
 | Caller | Primitive | Container side |
 | --- | --- | --- |
-| `Run` (`runMonitor`, MON a) | `begin`, `create`, `startGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
-| `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `begin`, `create`, `startGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
-| `MonitorContainer.Replace` (`replaceMonitor`) | `replaceGeneration`: checks, `stopGeneration`, `startGeneration` (require) | `mon-join.sh` recipe with fresh join material, for MON a too |
+| `Run` (`runMonitor`, MON a) | `begin`, `create`, `StartGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
+| `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `begin`, `create`, `StartGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
+| `MonitorContainer.Replace` (`replaceMonitor`) | `ReplaceGeneration`: checks, `StopGeneration`, `StartGeneration` (require) | `mon-join.sh` recipe with fresh join material, for MON a too |
 | `MonitorContainer.Remove` (`retireMonitor`) | `retire`: release once nothing mounts the volume, then forget the record | none |
-| `Terminate` | `releaseStores`, `retryStores` | none |
+| `Terminate` | `ReleaseStores`, `RetryStores` | none |
 
 `monitorGenerations` (`ceph/mon_store_container.go`, with the host half in
 `ceph/mon_store_host.go`) is the container side for the two cases `Run` admits
@@ -432,7 +439,7 @@ On the host network the endpoint is the public address and the MON's ports:
 `replaceMonitor` refuses, before it touches the MON, a replacement that would
 leave fewer than a majority of the monmap in quorum, a store that is not
 attached to the handle's container, and a store without a recorded address
-(the last inside `replaceGeneration`). A later generation of MON a also uses
+(the last inside `ReplaceGeneration`). A later generation of MON a also uses
 the join recipe, with the live mon. key and monmap, so it needs no bootstrap
 environment. Once the old container is gone, MON a is marked terminated and the
 new generation is kept in the roster under the name `a`, so listing, handle

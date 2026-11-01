@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // Error categories. A classified error matches one of them with errors.Is,
@@ -132,7 +134,7 @@ type NativeFailure struct {
 	// Reason is the tool's own explanation: the lines of its error output
 	// without Ceph's log lines, joined with "; ", at most
 	// MaxNativeFailureReason bytes, with keys and the secrets that
-	// RedactSecrets recognizes replaced. It can name resources of the
+	// diagnostics.Redact recognizes replaced. It can name resources of the
 	// request, such as a pool.
 	Reason string
 }
@@ -389,8 +391,8 @@ func nativeReasonLines(output string) []string {
 func nativeReason(lines []string) string {
 	redacted := make([]string, len(lines))
 	for i, line := range lines {
-		line = diagnosticsRedactor(nil)(line)
-		line = diagnosticKeyringPattern.ReplaceAllString(line, "key = [REDACTED]")
+		line = evidence.Redactor(nil)(line)
+		line = evidence.KeyringPattern.ReplaceAllString(line, "key = [REDACTED]")
 		for _, pattern := range nativeKeyPatterns {
 			line = pattern.ReplaceAllString(line, "[REDACTED]")
 		}

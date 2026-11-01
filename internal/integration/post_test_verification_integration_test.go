@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
@@ -37,11 +38,11 @@ func TestPostTestVerification(t *testing.T) {
 	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1)))...)
 	recorder := &finalizationRecorder{TB: t}
-	var finalization *ceph.Finalization
+	var finalization *finalize.Finalization
 	archives := t.TempDir()
 	if cluster != nil {
 		var registerErr error
-		finalization, registerErr = cluster.TerminateOnCleanup(recorder, ceph.FinalizationConfig{Archive: true, ArchiveDirectory: archives, Scenario: "post-test-verification"})
+		finalization, registerErr = finalize.TerminateOnCleanup(recorder, cluster, finalize.Config{Archive: true, ArchiveDirectory: archives, Scenario: "post-test-verification"})
 		if registerErr != nil {
 			_ = cluster.Terminate(context.WithoutCancel(ctx))
 			t.Fatal(registerErr)
@@ -56,13 +57,13 @@ func TestPostTestVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	policy, err := finalization.Verify(ctx, ceph.VerificationConfig{
+	policy, err := finalization.Verify(ctx, finalize.VerificationConfig{
 		Name:        "crash-policy",
 		MaxFindings: 4096,
-		Logs: []ceph.LogExpectation{
-			{Name: "osd0-signal", Required: true, Daemon: "osd.0", Event: ceph.LogFatalSignal, Pattern: `Caught signal \(Segmentation fault\)`},
+		Logs: []finalize.LogExpectation{
+			{Name: "osd0-signal", Required: true, Daemon: "osd.0", Event: finalize.LogFatalSignal, Pattern: `Caught signal \(Segmentation fault\)`},
 		},
-		Crashes: []ceph.CrashExpectation{
+		Crashes: []finalize.CrashExpectation{
 			{Name: "osd0-crash", Required: true, MaxCount: 1, Daemon: "osd.0", Process: "ceph-osd"},
 			{Name: "osd1-crash", Required: true, Daemon: "osd.1", Process: "ceph-osd"},
 		},
@@ -86,7 +87,7 @@ func TestPostTestVerification(t *testing.T) {
 		}
 	}
 	// osd1-crash is required but never happens.
-	if result := expectation(t, report.Crashes, "osd1-crash"); result.Satisfied || report.Crashes.Outcome != ceph.VerificationUnexpected {
+	if result := expectation(t, report.Crashes, "osd1-crash"); result.Satisfied || report.Crashes.Outcome != finalize.VerificationUnexpected {
 		t.Fatalf("an absent required crash passed: %+v", report.Crashes)
 	}
 
@@ -99,7 +100,7 @@ func TestPostTestVerification(t *testing.T) {
 	}
 	logVerification(t, "after the crashes", report)
 	osd0 := expectation(t, report.Crashes, "osd0-crash")
-	if report.Outcome != ceph.VerificationUnexpected || report.Crashes.Permitted != 1 || report.Crashes.Unexpected != 1 || !osd0.Satisfied || osd0.Matched != 1 {
+	if report.Outcome != finalize.VerificationUnexpected || report.Crashes.Permitted != 1 || report.Crashes.Unexpected != 1 || !osd0.Satisfied || osd0.Matched != 1 {
 		t.Fatalf("crash check after the crashes: %+v", report.Crashes)
 	}
 	for _, finding := range report.Crashes.Findings {
@@ -118,14 +119,14 @@ func TestPostTestVerification(t *testing.T) {
 		logGaps[gap.Source] = true
 	}
 	if logGaps["osd.0"] || logGaps["mgr.a"] {
-		if report.Logs.Outcome == ceph.VerificationClean {
+		if report.Logs.Outcome == finalize.VerificationClean {
 			t.Fatalf("log gaps passed: %+v", report.Logs.Gaps)
 		}
 		t.Logf("the log sources are not covered here: %+v", report.Logs.Gaps)
 	} else {
 		signal := expectation(t, report.Logs, "osd0-signal")
-		if !signal.Satisfied || report.Logs.Outcome != ceph.VerificationUnexpected || !slices.ContainsFunc(report.Logs.Findings, func(finding ceph.VerificationFinding) bool {
-			return finding.Source == "mgr.a" && finding.Event == string(ceph.LogFatalSignal) && finding.Expectation == ""
+		if !signal.Satisfied || report.Logs.Outcome != finalize.VerificationUnexpected || !slices.ContainsFunc(report.Logs.Findings, func(finding finalize.VerificationFinding) bool {
+			return finding.Source == "mgr.a" && finding.Event == string(finalize.LogFatalSignal) && finding.Expectation == ""
 		}) {
 			t.Fatalf("log check after the crashes: %+v", report.Logs)
 		}
@@ -133,7 +134,7 @@ func TestPostTestVerification(t *testing.T) {
 
 	// A later activation records both crashes in its baseline: they are not
 	// new to it.
-	later, err := finalization.Verify(ctx, ceph.VerificationConfig{Name: "after-crashes"})
+	later, err := finalization.Verify(ctx, finalize.VerificationConfig{Name: "after-crashes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestPostTestVerification(t *testing.T) {
 	for _, source := range report.Sources {
 		baseline[source.Source] = len(source.BaselineCrashes)
 	}
-	if report.Crashes.Outcome != ceph.VerificationClean || report.Crashes.Unexpected != 0 || baseline["mgr.a"] != 1 || baseline["osd.0"] != 1 || baseline["osd.1"] != 0 {
+	if report.Crashes.Outcome != finalize.VerificationClean || report.Crashes.Unexpected != 0 || baseline["mgr.a"] != 1 || baseline["osd.0"] != 1 || baseline["osd.1"] != 0 {
 		t.Fatalf("crash check of the later activation: %+v; baseline %v", report.Crashes, baseline)
 	}
 
@@ -165,8 +166,8 @@ func TestPostTestVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	logVerification(t, "after the removal", report)
-	for _, check := range []ceph.VerificationCheck{report.Logs, report.Crashes} {
-		if check.Outcome == ceph.VerificationClean || !slices.ContainsFunc(check.Gaps, func(gap ceph.VerificationGap) bool {
+	for _, check := range []finalize.VerificationCheck{report.Logs, report.Crashes} {
+		if check.Outcome == finalize.VerificationClean || !slices.ContainsFunc(check.Gaps, func(gap finalize.VerificationGap) bool {
 			return gap.Source == "osd.1" && strings.Contains(gap.Reason, "removed")
 		}) {
 			t.Fatalf("a removed container passed: %+v", check)
@@ -224,14 +225,14 @@ func TestPostTestVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var archived ceph.VerificationReport
-	if err := json.Unmarshal(data, &archived); err != nil || archived.Outcome != ceph.VerificationUnexpected || archived.Crashes.Unexpected != 1 {
+	var archived finalize.VerificationReport
+	if err := json.Unmarshal(data, &archived); err != nil || archived.Outcome != finalize.VerificationUnexpected || archived.Crashes.Unexpected != 1 {
 		t.Fatalf("archived report %v: %s", err, data)
 	}
 	t.Logf("finalization: %d failures recorded, archive files %v, termination recorded without error", len(failures), files)
 }
 
-func expectation(t *testing.T, check ceph.VerificationCheck, name string) ceph.ExpectationResult {
+func expectation(t *testing.T, check finalize.VerificationCheck, name string) finalize.ExpectationResult {
 	t.Helper()
 	for _, result := range check.Expectations {
 		if result.Name == name {
@@ -239,11 +240,11 @@ func expectation(t *testing.T, check ceph.VerificationCheck, name string) ceph.E
 		}
 	}
 	t.Fatalf("no expectation %s in %+v", name, check.Expectations)
-	return ceph.ExpectationResult{}
+	return finalize.ExpectationResult{}
 }
 
 // logVerification records the evidence of one evaluation.
-func logVerification(t *testing.T, label string, report *ceph.VerificationReport) {
+func logVerification(t *testing.T, label string, report *finalize.VerificationReport) {
 	t.Helper()
 	var sources []string
 	for _, source := range report.Sources {
@@ -252,7 +253,7 @@ func logVerification(t *testing.T, label string, report *ceph.VerificationReport
 	t.Logf("%s: %s, window %s to %s; sources %s", label, report.Outcome, report.Window.StartedAt.Format(time.RFC3339Nano), report.Window.EndedAt.Format(time.RFC3339Nano), strings.Join(sources, " "))
 	for _, check := range []struct {
 		name  string
-		check ceph.VerificationCheck
+		check finalize.VerificationCheck
 	}{{"logs", report.Logs}, {"crashes", report.Crashes}} {
 		t.Logf("%s %s: %d unexpected, %d permitted, %d gaps, expectations %+v", check.name, check.check.Outcome, check.check.Unexpected, check.check.Permitted, len(check.check.Gaps), check.check.Expectations)
 		for i, finding := range check.check.Findings {

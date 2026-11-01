@@ -3,13 +3,14 @@ package override
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
@@ -189,22 +190,22 @@ func slotHeld(registry overridehook.DebugWindows) bool {
 }
 
 func openDebugLevelFake(ctx context.Context, registry overridehook.DebugWindows, fake *debugLevelFake, level string) (*DebugLevelHandle, error) {
-	setting, owned, err := normalizeDebugLevelSetting(ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: level})
+	setting, owned, err := normalizeDebugLevelSetting(DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: level})
 	if err != nil {
 		return nil, err
 	}
 	return openDebugLevel(ctx, registry, fake, setting, owned, time.Second, func() time.Time { return time.Unix(0, 0).UTC() })
 }
 
-func debugLevelStates(h *DebugLevelHandle) []ceph.DebugLevelState {
-	var states []ceph.DebugLevelState
+func debugLevelStates(h *DebugLevelHandle) []DebugLevelState {
+	var states []DebugLevelState
 	for _, transition := range h.Receipt().Transitions {
 		states = append(states, transition.State)
 	}
 	return states
 }
 
-func wantDebugLevelStates(t *testing.T, h *DebugLevelHandle, want ...ceph.DebugLevelState) {
+func wantDebugLevelStates(t *testing.T, h *DebugLevelHandle, want ...DebugLevelState) {
 	t.Helper()
 	if got := debugLevelStates(h); !slices.Equal(got, want) {
 		t.Fatalf("transitions %v, want %v", got, want)
@@ -229,7 +230,7 @@ func TestDebugLevelNormalization(t *testing.T) {
 		t.Fatal("readback comparison")
 	}
 	for _, name := range []string{"debug_mon", "debug-osd", "DEBUG_OSD", ""} {
-		if _, _, err := normalizeDebugLevelSetting(ceph.DebugLevelSetting{Daemon: "osd.0", Name: name, Level: "1"}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if _, _, err := normalizeDebugLevelSetting(DebugLevelSetting{Daemon: "osd.0", Name: name, Level: "1"}); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("option %q: %v", name, err)
 		}
 	}
@@ -246,11 +247,11 @@ func TestDebugLevelAppliesNormalizedLevelAndRestoresPrior(t *testing.T) {
 	if receipt.Prior != "1/5" || receipt.Requested != "20" || receipt.Applied != "20/20" || receipt.Generation != "osd0@start-1" || fake.current() != "20/20" {
 		t.Fatalf("receipt %+v value %q", receipt, fake.current())
 	}
-	wantDebugLevelStates(t, h, ceph.DebugLevelPriorRead, ceph.DebugLevelApplyAttempted, ceph.DebugLevelApplied)
+	wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplied)
 	if err := h.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	wantDebugLevelStates(t, h, ceph.DebugLevelPriorRead, ceph.DebugLevelApplyAttempted, ceph.DebugLevelApplied, ceph.DebugLevelRestoreAttempted, ceph.DebugLevelRestored)
+	wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplied, DebugLevelRestoreAttempted, DebugLevelRestored)
 	if fake.current() != "1/5" || h.Receipt().Restored != "1/5" || !slices.Equal(fake.setCalls(), []string{"debug_osd=20", "debug_osd=1/5"}) {
 		t.Fatalf("value %q sets %v", fake.current(), fake.setCalls())
 	}
@@ -289,7 +290,7 @@ func TestDebugLevelApplyFailuresKeepRestorationState(t *testing.T) {
 			if h == nil || err == nil {
 				t.Fatalf("handle %v err %v", h, err)
 			}
-			wantDebugLevelStates(t, h, ceph.DebugLevelPriorRead, ceph.DebugLevelApplyAttempted, ceph.DebugLevelApplyUncertain)
+			wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplyUncertain)
 			if h.Receipt().Applied != test.readback {
 				t.Fatalf("applied readback %q, want %q", h.Receipt().Applied, test.readback)
 			}
@@ -300,7 +301,7 @@ func TestDebugLevelApplyFailuresKeepRestorationState(t *testing.T) {
 			if err := h.Restore(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if fake.current() != "1/5" || len(fake.setCalls()) != 1+test.restoreSets || h.Receipt().State != ceph.DebugLevelRestored {
+			if fake.current() != "1/5" || len(fake.setCalls()) != 1+test.restoreSets || h.Receipt().State != DebugLevelRestored {
 				t.Fatalf("value %q sets %v state %s", fake.current(), fake.setCalls(), h.Receipt().State)
 			}
 			if _, err := openDebugLevelFake(t.Context(), registry, newDebugLevelFake("1/5"), "5"); err != nil {
@@ -337,8 +338,8 @@ func wantNotApplied(t *testing.T, h *DebugLevelHandle, err error, fake *debugLev
 	}
 	receipt := h.Receipt()
 	last := receipt.Transitions[len(receipt.Transitions)-1]
-	if receipt.State != ceph.DebugLevelNotApplied || receipt.Reason != err.Error() || receipt.Applied != "" || receipt.Restored != "" ||
-		last.State != ceph.DebugLevelNotApplied || last.Error != err.Error() {
+	if receipt.State != DebugLevelNotApplied || receipt.Reason != err.Error() || receipt.Applied != "" || receipt.Restored != "" ||
+		last.State != DebugLevelNotApplied || last.Error != err.Error() {
 		t.Fatalf("receipt %+v for %v", receipt, err)
 	}
 	if fake != nil && len(fake.setCalls()) != 0 {
@@ -407,7 +408,7 @@ func TestDebugLevelRejectsDuplicateWindow(t *testing.T) {
 		t.Fatalf("restore of the refused window: %v, first window's slot held: %v", err, slotHeld(registry))
 	}
 	// Another option of the same daemon is a separate window.
-	setting := ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1"}
+	setting := DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1"}
 	if ms, err := openDebugLevel(t.Context(), registry, newDebugLevelFake("0/5"), setting, "1/1", time.Second, time.Now); err != nil || ms == nil {
 		t.Fatalf("debug_ms window: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestDebugLevelRestorePreservesOutsideEdits(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outside") || fake.current() != "5/5" || len(fake.setCalls()) != 1 {
 		t.Fatalf("restore over an outside edit: %v value %q sets %v", err, fake.current(), fake.setCalls())
 	}
-	wantDebugLevelStates(t, h, ceph.DebugLevelPriorRead, ceph.DebugLevelApplyAttempted, ceph.DebugLevelApplied, ceph.DebugLevelRestoreAttempted, ceph.DebugLevelConflict)
+	wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplied, DebugLevelRestoreAttempted, DebugLevelConflict)
 	// Conflict is terminal: the same error, no further reads or sets.
 	gets := fake.gets
 	if again := h.Restore(t.Context()); again == nil || again.Error() != err.Error() || fake.gets != gets {
@@ -454,7 +455,7 @@ func TestDebugLevelRestoreAcceptsAlreadyRestoredLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake.edit(func(f *debugLevelFake) { f.value = "1/5" })
-	if err := h.Restore(t.Context()); err != nil || len(fake.setCalls()) != 1 || h.Receipt().State != ceph.DebugLevelRestored {
+	if err := h.Restore(t.Context()); err != nil || len(fake.setCalls()) != 1 || h.Receipt().State != DebugLevelRestored {
 		t.Fatalf("already restored: %v sets %v", err, fake.setCalls())
 	}
 }
@@ -477,7 +478,7 @@ func TestDebugLevelRestoreRefusesChangedGenerations(t *testing.T) {
 			fake.edit(edit)
 			gets := fake.gets
 			err = h.Restore(t.Context())
-			if err == nil || len(fake.setCalls()) != 1 || fake.gets != gets || h.Receipt().State != ceph.DebugLevelTargetChanged {
+			if err == nil || len(fake.setCalls()) != 1 || fake.gets != gets || h.Receipt().State != DebugLevelTargetChanged {
 				t.Fatalf("restore: %v sets %v gets %d->%d state %s", err, fake.setCalls(), gets, fake.gets, h.Receipt().State)
 			}
 			if slotHeld(registry) {
@@ -492,7 +493,7 @@ func TestDebugLevelApplyDuringGenerationChange(t *testing.T) {
 	fake := newDebugLevelFake("1/5")
 	fake.afterSet = func(f *debugLevelFake) { f.edit(func(f *debugLevelFake) { f.gen.identity = "osd0@start-2" }) }
 	h, err := openDebugLevelFake(t.Context(), registry, fake, "20")
-	if h == nil || err == nil || h.Receipt().State != ceph.DebugLevelTargetChanged {
+	if h == nil || err == nil || h.Receipt().State != DebugLevelTargetChanged {
 		t.Fatalf("handle %v err %v", h, err)
 	}
 	fake.afterSet = nil
@@ -517,7 +518,7 @@ func TestDebugLevelRestoreRetriesUnconfirmedTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			fake.edit(test.edit)
-			if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelUnconfirmed || len(fake.setCalls()) != 1 || fake.current() != "20/20" {
+			if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || len(fake.setCalls()) != 1 || fake.current() != "20/20" {
 				t.Fatalf("restore: %v state %s sets %v", err, h.Receipt().State, fake.setCalls())
 			}
 			if !slotHeld(registry) {
@@ -541,7 +542,7 @@ func TestDebugLevelRestoreReplies(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake.edit(func(f *debugLevelFake) { f.setFaults = []debugLevelSetFault{{applies: true, err: lost}} })
-		if err := h.Restore(t.Context()); err != nil || h.Receipt().State != ceph.DebugLevelRestored {
+		if err := h.Restore(t.Context()); err != nil || h.Receipt().State != DebugLevelRestored {
 			t.Fatalf("restore: %v", err)
 		}
 		last := h.Receipt().Transitions[len(h.Receipt().Transitions)-1]
@@ -561,7 +562,7 @@ func TestDebugLevelRestoreReplies(t *testing.T) {
 			f.getErrs = []error{nil, errors.New("socket gone")}
 		})
 		err = h.Restore(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "reply lost") || !strings.Contains(err.Error(), "socket gone") || h.Receipt().State != ceph.DebugLevelUnconfirmed {
+		if err == nil || !strings.Contains(err.Error(), "reply lost") || !strings.Contains(err.Error(), "socket gone") || h.Receipt().State != DebugLevelUnconfirmed {
 			t.Fatalf("restore: %v", err)
 		}
 		// The retry reconciles: the prior level is in place, so nothing is set.
@@ -577,7 +578,7 @@ func TestDebugLevelRestoreReplies(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake.edit(func(f *debugLevelFake) { f.setFaults = []debugLevelSetFault{{applies: false, err: lost}} })
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelUnconfirmed || fake.current() != "20/20" {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || fake.current() != "20/20" {
 			t.Fatalf("restore: %v", err)
 		}
 		if err := h.Restore(t.Context()); err != nil || fake.current() != "1/5" {
@@ -592,7 +593,7 @@ func TestDebugLevelRestoreReplies(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake.afterSet = func(f *debugLevelFake) { f.edit(func(f *debugLevelFake) { f.value = "7/7" }) }
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelConflict || fake.current() != "7/7" {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelConflict || fake.current() != "7/7" {
 			t.Fatalf("restore: %v", err)
 		}
 	})
@@ -609,11 +610,11 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 		if h == nil || err == nil || !strings.Contains(err.Error(), "may still run") {
 			t.Fatalf("handle %v err %v", h, err)
 		}
-		wantDebugLevelStates(t, h, ceph.DebugLevelPriorRead, ceph.DebugLevelApplyAttempted, ceph.DebugLevelApplyUncertain)
+		wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplyUncertain)
 		// The prior level still reads back, but the set may still apply:
 		// Restore neither reports restoration nor releases the admission.
 		err = h.Restore(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "may still run") || h.Receipt().State != ceph.DebugLevelUnconfirmed || len(fake.setCalls()) != 1 {
+		if err == nil || !strings.Contains(err.Error(), "may still run") || h.Receipt().State != DebugLevelUnconfirmed || len(fake.setCalls()) != 1 {
 			t.Fatalf("restore: %v state %s sets %v", err, h.Receipt().State, fake.setCalls())
 		}
 		if !slotHeld(registry) {
@@ -622,7 +623,7 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 		// The delayed set applies; once it is confirmed ended, Restore
 		// reconciles the level it left.
 		fake.complete()
-		if err := h.Restore(t.Context()); err != nil || fake.current() != "1/5" || h.Receipt().State != ceph.DebugLevelRestored {
+		if err := h.Restore(t.Context()); err != nil || fake.current() != "1/5" || h.Receipt().State != DebugLevelRestored {
 			t.Fatalf("retry: %v value %q state %s", err, fake.current(), h.Receipt().State)
 		}
 		if slotHeld(registry) {
@@ -634,7 +635,7 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 		fake := newDebugLevelFake("1/5")
 		fake.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
 		h, err := openDebugLevelFake(t.Context(), registry, fake, "20")
-		if h == nil || err == nil || h.Receipt().State != ceph.DebugLevelApplyUncertain || h.Receipt().Applied != "1/5" {
+		if h == nil || err == nil || h.Receipt().State != DebugLevelApplyUncertain || h.Receipt().Applied != "1/5" {
 			t.Fatalf("handle %v err %v", h, err)
 		}
 		if err := h.Restore(t.Context()); err != nil || len(fake.setCalls()) != 1 {
@@ -656,7 +657,7 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 			f.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
 			f.settleErrs = []error{stillRunning}
 		})
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelUnconfirmed || !slotHeld(registry) {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || !slotHeld(registry) {
 			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
 		}
 		fake.complete()
@@ -677,11 +678,11 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 			f.afterSet = func(f *debugLevelFake) { f.edit(func(f *debugLevelFake) { f.gen.identity = "osd0@start-2" }) }
 		})
 		// The restore set may still reach the new generation.
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelUnconfirmed || !slotHeld(registry) {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || !slotHeld(registry) {
 			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
 		}
 		fake.edit(func(f *debugLevelFake) { f.afterSet = nil })
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelTargetChanged || len(fake.setCalls()) != 2 {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || len(fake.setCalls()) != 2 {
 			t.Fatalf("retry: %v state %s sets %v", err, h.Receipt().State, fake.setCalls())
 		}
 	})
@@ -694,10 +695,10 @@ func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
 		fake.edit(func(f *debugLevelFake) { f.gen.identity = "osd0@start-2" })
 		// The running set could reach the new generation: the window is not
 		// released as target-changed until the set is confirmed ended.
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelUnconfirmed || !slotHeld(registry) {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || !slotHeld(registry) {
 			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
 		}
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelTargetChanged || slotHeld(registry) {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || slotHeld(registry) {
 			t.Fatalf("retry: %v state %s", err, h.Receipt().State)
 		}
 	})
@@ -719,7 +720,7 @@ func TestDebugLevelRevalidatesAfterReads(t *testing.T) {
 			t.Fatal(err)
 		}
 		replace(fake)
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelTargetChanged || fake.current() != "9/9" || len(fake.setCalls()) != 1 {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || fake.current() != "9/9" || len(fake.setCalls()) != 1 {
 			t.Fatalf("restore: %v state %s value %q sets %v", err, h.Receipt().State, fake.current(), fake.setCalls())
 		}
 	})
@@ -732,7 +733,7 @@ func TestDebugLevelRevalidatesAfterReads(t *testing.T) {
 		}
 		fake.edit(func(f *debugLevelFake) { f.value = "1/5" })
 		replace(fake)
-		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != ceph.DebugLevelTargetChanged || h.Receipt().Restored != "" {
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || h.Receipt().Restored != "" {
 			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
 		}
 	})

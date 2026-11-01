@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
@@ -49,7 +50,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		}
 		t.Fatalf("a three second bootstrap returned %v, %v", partial, err)
 	}
-	partialReport, partialErr := partial.CollectCrashMetadata(ctx, ceph.CrashMetadataConfig{})
+	partialReport, partialErr := diagnostics.CollectCrashMetadata(ctx, partial, diagnostics.CrashMetadataConfig{})
 	if terminateErr := partial.Terminate(context.WithoutCancel(ctx)); terminateErr != nil {
 		t.Fatal(terminateErr)
 	}
@@ -57,7 +58,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("partial cluster: %v; %+v", partialErr, partialReport)
 	}
 	for _, result := range partialReport.Containers {
-		if result.Outcome != ceph.CrashDirectoryEmpty && result.Outcome != ceph.CrashContainerUnavailable {
+		if result.Outcome != diagnostics.CrashDirectoryEmpty && result.Outcome != diagnostics.CrashContainerUnavailable {
 			t.Fatalf("partial cluster %s %s: %+v", result.Role, result.Name, result)
 		}
 	}
@@ -89,17 +90,17 @@ if os.path.exists(p):
     shutil.rmtree(p)
 os.makedirs(p)
 `)
-	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
+	config := diagnostics.CrashMetadataConfig{AdditionalContainers: []diagnostics.Target{{Role: "client", Name: "helper", Container: helper}}}
 	osds := clusteraccess.OSDs(t, cluster)
 
 	// Before any crash, every crash directory is empty.
 	before := dockerObjects(t, ctx, docker)
-	report, err := cluster.CollectCrashMetadata(ctx, config)
+	report, err := diagnostics.CollectCrashMetadata(ctx, cluster, config)
 	if err != nil || !report.Complete {
 		t.Fatalf("collection before any crash: %v; %+v", err, report)
 	}
 	for _, result := range report.Containers {
-		if result.Outcome != ceph.CrashDirectoryEmpty || result.State != "running" {
+		if result.Outcome != diagnostics.CrashDirectoryEmpty || result.State != "running" {
 			t.Fatalf("%s %s before any crash: %+v", result.Role, result.Name, result)
 		}
 	}
@@ -110,10 +111,10 @@ os.makedirs(p)
 	// described like the cluster's own control container. Only the empty
 	// directory created above is removed, then recreated for crash collection.
 	harness.ExecCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
-	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
-	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
-		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
-			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryAbsent
+	described := diagnostics.CrashMetadataConfig{AdditionalContainers: []diagnostics.Target{{Role: "control", Name: "cli", Container: helper}}}
+	if report, err := diagnostics.CollectCrashMetadata(ctx, cluster, described); err != nil || !report.Complete ||
+		!slices.ContainsFunc(report.Containers, func(result diagnostics.CrashMetadataContainer) bool {
+			return result.ContainerID == helper.GetContainerID() && result.Outcome == diagnostics.CrashDirectoryAbsent
 		}) {
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
@@ -126,17 +127,17 @@ os.makedirs(p)
 	if err := osds[1].Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
 	}
-	report, err = cluster.CollectCrashMetadata(ctx, config)
+	report, err = diagnostics.CollectCrashMetadata(ctx, cluster, config)
 	if err != nil || !report.Complete {
 		t.Fatalf("collection after the crashes: %v; %+v", err, report)
 	}
-	results := map[string]ceph.CrashMetadataContainer{}
+	results := map[string]diagnostics.CrashMetadataContainer{}
 	for _, result := range report.Containers {
 		results[result.Role+"."+result.Name] = result
 	}
 	for name, ctr := range map[string]testcontainers.Container{"mgr.a": clusteraccess.InitialManager(t, cluster), "osd.0": osds[0].Container} {
 		result := results[name]
-		if result.Outcome != ceph.CrashRecordsFound || len(result.Records) != 1 || result.State != "exited" {
+		if result.Outcome != diagnostics.CrashRecordsFound || len(result.Records) != 1 || result.State != "exited" {
 			t.Fatalf("%s after its crash: %+v", name, result)
 		}
 		record := result.Records[0]
@@ -156,7 +157,7 @@ os.makedirs(p)
 		t.Logf("%s: crash %s at %s, Ceph %s, exit code %d, image %s; ignored entries %d", name, record.CrashID, record.Timestamp, record.CephVersion, result.ExitCode, result.ImageID, result.IgnoredEntries)
 	}
 	for name, state := range map[string]string{"osd.1": "exited", "mon.a": "running", "client.helper": "running"} {
-		if result := results[name]; result.Outcome != ceph.CrashDirectoryEmpty || result.State != state {
+		if result := results[name]; result.Outcome != diagnostics.CrashDirectoryEmpty || result.State != state {
 			t.Fatalf("%s: %+v", name, result)
 		}
 	}
@@ -179,18 +180,18 @@ os.makedirs(p)
 		t.Fatal(err)
 	}
 	removed := dockerObjects(t, ctx, docker)
-	report, err = cluster.CollectCrashMetadata(ctx, config)
+	report, err = diagnostics.CollectCrashMetadata(ctx, cluster, config)
 	if err != nil || report.Complete {
 		t.Fatalf("collection after the removals: %v; complete %t", err, report.Complete)
 	}
 	for _, result := range report.Containers {
 		switch result.Role + "." + result.Name {
 		case "client.helper", "osd.1":
-			if result.Outcome != ceph.CrashContainerUnavailable {
+			if result.Outcome != diagnostics.CrashContainerUnavailable {
 				t.Fatalf("removed %s: %+v", result.Name, result)
 			}
 		case "mgr.a", "osd.0":
-			if result.Outcome != ceph.CrashRecordsFound {
+			if result.Outcome != diagnostics.CrashRecordsFound {
 				t.Fatalf("%s lost its records: %+v", result.Name, result)
 			}
 		}
@@ -200,12 +201,12 @@ os.makedirs(p)
 	// with a fresh context, as after a canceled test context.
 	canceled, cancelNow := context.WithCancel(ctx)
 	cancelNow()
-	if report, err := cluster.CollectCrashMetadata(canceled, config); err == nil || report == nil || report.Complete {
+	if report, err := diagnostics.CollectCrashMetadata(canceled, cluster, config); err == nil || report == nil || report.Complete {
 		t.Fatalf("canceled collection: %v; %+v", err, report)
 	}
 	fresh, cancelFresh := context.WithTimeout(context.Background(), time.Minute)
 	defer cancelFresh()
-	if report, err := cluster.CollectCrashMetadata(fresh, config); err != nil || len(report.Containers) == 0 {
+	if report, err := diagnostics.CollectCrashMetadata(fresh, cluster, config); err != nil || len(report.Containers) == 0 {
 		t.Fatalf("fresh collection: %v", err)
 	}
 	if after := dockerObjects(t, ctx, docker); after.containers != removed.containers || after.volumes != removed.volumes {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 )
 
 type replacementDecodeEdit func(n *replacementMDSControl, m map[string]any)
@@ -11,7 +13,7 @@ type replacementDecodeEdit func(n *replacementMDSControl, m map[string]any)
 // replacementDecode runs readMDSReplacementScope over the replacement fixture
 // after edit changed the native map. withWorker selects the state in which the
 // reserved replacement daemon already exists (cephFSMDSReplacement.daemon set).
-func replacementDecode(t *testing.T, withWorker bool, edit replacementDecodeEdit) (*cephFSMDSRemovalScope, bool, error) {
+func replacementDecode(t *testing.T, withWorker bool, edit replacementDecodeEdit) (*mdsmap.Scope, bool, error) {
 	t.Helper()
 	r := newReplacementMDSFixture(t)
 	if edit != nil {
@@ -295,7 +297,7 @@ func TestMDSReplacementDecodeAcceptsTheExactStates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scope, ready, err := replacementDecode(t, tc.worker, tc.edit)
-			if err != nil || ready != tc.ready || scope == nil || scope.active != 1 || scope.standby != 0 || !scope.joinable || scope.replay || !scope.protected || !slices.Equal(scope.dataPools, []int64{1}) || !slices.Equal(scope.poolNames, []string{"target-data"}) {
+			if err != nil || ready != tc.ready || scope == nil || scope.Active != 1 || scope.Standby != 0 || !scope.Joinable || scope.Replay || !scope.Protected || !slices.Equal(scope.DataPools, []int64{1}) || !slices.Equal(scope.PoolNames, []string{"target-data"}) {
 				t.Fatalf("accepted state changed: %+v ready=%v %v", scope, ready, err)
 			}
 		})
@@ -369,7 +371,7 @@ func TestMDSReplacementDecoderRefusesInvalidPoolIdentity(t *testing.T) {
 	}
 	// The document attaches pool 1; the identity must agree for the policy
 	// guard to pass before the pool guards run.
-	if state, err := decodeMDSReplacementMap(data, want([]int64{1})); err != nil || state == nil || state.ready {
+	if state, err := decodeMDSReplacementMap(data, want([]int64{1})); err != nil || state == nil || state.Ready {
 		t.Fatalf("baseline decode changed: %+v %v", state, err)
 	}
 	for _, tc := range []struct {
