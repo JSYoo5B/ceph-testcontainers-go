@@ -3,11 +3,8 @@ package cephfs
 import (
 	"context"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -106,17 +103,15 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 }
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
-// and the division of work. Only admitOperation takes setupMu through LockMutex and the
-// topology mutex inside the begin*Operation family, and it takes them in the
-// package order (setupMu first). admitOperation is called only by the three flows, each
-// flow passes its own check function and none takes either lock itself. admitOperation
-// holds no predicate: it does not read the registry, the native identity or an
-// exported field.
+// and the division of work. The core's Admit (fsbase) owns the admission
+// lifetime: it is called only by the three flows, each flow passes its own
+// Check function, and none takes or releases setupMu or the topology mutex
+// itself. fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that
+// Admit takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 	begins := []string{"beginSubvolumeOperation", "beginDataPoolOperation", "beginSessionOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
-	var admitOperation *ast.FuncDecl
 	files := parseCephFSProductionFiles(t)
 	for _, parsed := range files {
 		for _, decl := range parsed.Decls {
@@ -124,19 +119,18 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			if fn.Name.Name == "admitOperation" && rosterReceiverName(fn) == "Filesystem" {
-				admitOperation = fn
+			if fn.Name.Name == "admitOperation" || fn.Name.Name == "Admit" {
+				t.Errorf("package cephfs declares %s: the admission lifetime belongs to fsbase", fn.Name.Name)
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				name := admissionCallee(call)
-				if name == "admitOperation" {
+				if name := admissionCallee(call); name == "Admit" {
 					callers[name] = append(callers[name], fn.Name.Name)
 				}
-				if slices.Contains(begins, fn.Name.Name) || fn.Name.Name == "admitOperation" {
+				if slices.Contains(begins, fn.Name.Name) {
 					switch {
 					case isSetupMuAcquire(call):
 						lockCalls[fn.Name.Name] = append(lockCalls[fn.Name.Name], "setupMu")
@@ -148,25 +142,13 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			})
 		}
 	}
-	slices.Sort(callers["admitOperation"])
-	if !reflect.DeepEqual(callers, map[string][]string{"admitOperation": {"beginDataPoolOperation", "beginSessionOperation", "beginSubvolumeOperation"}}) {
-		t.Errorf("admitOperation caller table changed: %v", callers)
+	slices.Sort(callers["Admit"])
+	if !reflect.DeepEqual(callers, map[string][]string{"Admit": {"beginDataPoolOperation", "beginSessionOperation", "beginSubvolumeOperation"}}) {
+		t.Errorf("Admit caller table changed: %v", callers)
 	}
-	if !reflect.DeepEqual(lockCalls, map[string][]string{"admitOperation": {"setupMu", "topology"}}) {
-		t.Errorf("lock acquisitions of the admission family changed (setupMu must come first, only in admitOperation): %v", lockCalls)
+	if len(lockCalls) != 0 {
+		t.Errorf("an admission flow takes a lock itself; only Admit may: %v", lockCalls)
 	}
-	if admitOperation == nil {
-		t.Fatal("admitOperation is missing")
-	}
-	ast.Inspect(admitOperation.Body, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains([]string{"byName", "nativeIdentity", "FilesystemName", "MetadataPool", "DataPool", "config", "roster"}, sel.Sel.Name) {
-			t.Errorf("admitOperation reads %s: ownership predicates stay in each operation", sel.Sel.Name)
-		}
-		if id, ok := n.(*ast.Ident); ok && id.Name == "Closed" {
-			t.Error("admitOperation tests Closed: that belongs to each operation's predicate")
-		}
-		return true
-	})
 	for _, parsed := range files {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -176,29 +158,20 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			checks := 0
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if kv, ok := n.(*ast.KeyValueExpr); ok {
-					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "check" {
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Check" {
 						if _, lit := kv.Value.(*ast.FuncLit); lit {
 							checks++
 						}
 					}
 				}
 				if call, ok := n.(*ast.CallExpr); ok && admissionCallee(call) == "Unlock" {
-					t.Errorf("%s unlocks directly; release belongs to admitOperation", fn.Name.Name)
+					t.Errorf("%s unlocks directly; release belongs to Admit", fn.Name.Name)
 				}
 				return true
 			})
 			if checks != 1 {
 				t.Errorf("%s must pass exactly one own check function, has %d", fn.Name.Name, checks)
 			}
-		}
-	}
-	src, err := parser.ParseFile(token.NewFileSet(), "admission.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, imp := range src.Imports {
-		if strings.Contains(imp.Path.Value, "sync") {
-			t.Error("admission adds a mutex type")
 		}
 	}
 }

@@ -142,10 +142,10 @@ func (fs *Filesystem) validateSubvolumeConfig(name, group, dataPool string, size
 // filesystem; using fs volume create would invoke an orchestrator and create
 // resources outside this fixture's ownership.
 func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Context, int64, func(), error) {
-	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
-		recheckCanceled: true,
-		refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
-		check: func(ctx context.Context) (bool, error) {
+	ctx, done, err := fs.base().Admit(ctx, fsbase.AdmissionSpec{
+		RecheckCanceled: true,
+		Refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
+		Check: func(ctx context.Context) (bool, error) {
 			c := fs.base().Cluster()
 			if !fs.base().Registered() || !fs.base().DescriptorIntact() || fs.base().Native() == nil {
 				return false, nil

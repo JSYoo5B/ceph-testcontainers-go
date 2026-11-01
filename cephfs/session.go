@@ -253,9 +253,9 @@ func validateCephFSSessionTimeouts(requested SessionTimeouts) error {
 // this handle is still the cluster's active owned filesystem.
 func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Context, int64, func(), error) {
 	var fsID int64
-	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
-		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
-		check: func(context.Context) (bool, error) {
+	ctx, done, err := fs.base().Admit(ctx, fsbase.AdmissionSpec{
+		Refusal: "CephFS filesystem must be an active filesystem created by this cluster",
+		Check: func(context.Context) (bool, error) {
 			if !fs.base().Registered() || !fs.base().DescriptorIntact() || fs.base().Native() == nil {
 				return false, nil
 			}

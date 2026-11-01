@@ -40,10 +40,10 @@ type dataPoolIdentity struct {
 }
 
 func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Context, func(), error) {
-	return fs.admitOperation(ctx, admissionSpec{
-		recheckCanceled: true,
-		refusal:         "filesystem must have a confirmed creation identity in this active cluster",
-		check: func(ctx context.Context) (bool, error) {
+	return fs.base().Admit(ctx, fsbase.AdmissionSpec{
+		RecheckCanceled: true,
+		Refusal:         "filesystem must have a confirmed creation identity in this active cluster",
+		Check: func(ctx context.Context) (bool, error) {
 			c := fs.base().Cluster()
 			if !fs.base().Registered() || fs.base().Native() == nil {
 				return false, nil

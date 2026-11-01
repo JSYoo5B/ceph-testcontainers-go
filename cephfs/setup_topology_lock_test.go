@@ -136,7 +136,8 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 // returned function (deferred, once) and never unlocks setupMu directly, the
 // helper takes setupMu and then the topology mutex and nothing else, reads no
 // ownership state and imports no sync, and the only functions that take both
-// locks themselves are the helper and admitOperation.
+// locks themselves are the helper and fsbase's Admit, which is not in this
+// package.
 func TestSetupThenTopologyPrefixHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 	pinned := []string{"addMDSReplacement", "removeFilesystem", "removeStoppedMDS", "scale"}
 	var callers []string
@@ -163,7 +164,7 @@ func TestSetupThenTopologyPrefixHasOneOwnerAndKeepsPredicatesLocal(t *testing.T)
 							direct++
 						}
 					}
-					if fn.Name.Name == "admitOperation" || fn.Name.Name == "lockSetupThenTopology" {
+					if fn.Name.Name == "lockSetupThenTopology" {
 						break
 					}
 					switch {

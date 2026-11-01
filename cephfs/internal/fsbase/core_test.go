@@ -92,7 +92,8 @@ func TestOfReturnsTheEmbeddedCoreAndRegisteredFollowsLiveness(t *testing.T) {
 // reaches the state cephfs injected: the liveness predicate is called only by
 // Registered, after the Closed test; the descriptor address is read only by
 // DescriptorIntact; the native identity is assigned only by
-// CaptureNativePools and the test mutator.
+// CaptureNativePools and the test mutator; the setup gate is used only by
+// Admit (see TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder).
 func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 	sites := map[string][]string{}
 	var registered *ast.FuncDecl
@@ -112,8 +113,8 @@ func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 						sites["live"] = append(sites["live"], fn.Name.Name)
 					}
 				case *ast.SelectorExpr:
-					if node.Sel.Name == "descriptorName" {
-						sites["descriptorName"] = append(sites["descriptorName"], fn.Name.Name)
+					if node.Sel.Name == "descriptorName" || node.Sel.Name == "setupMu" {
+						sites[node.Sel.Name] = append(sites[node.Sel.Name], fn.Name.Name)
 					}
 				case *ast.AssignStmt:
 					for _, lhs := range node.Lhs {
@@ -128,11 +129,13 @@ func TestCoreReadsInjectedRegistryStateOnlyAtItsOwnSites(t *testing.T) {
 	}
 	for key := range sites {
 		slices.Sort(sites[key])
+		sites[key] = slices.Compact(sites[key])
 	}
 	want := map[string][]string{
 		"live":           {"Registered"},
 		"descriptorName": {"DescriptorIntact"},
 		"native":         {"CaptureNativePools", "ReplaceNative"},
+		"setupMu":        {"Admit"},
 	}
 	for key, list := range want {
 		if !slices.Equal(sites[key], list) {
