@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 )
 
 // fakeSettler is a capture whose settlement records when it ran.

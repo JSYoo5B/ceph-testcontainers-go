@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/containerd/errdefs"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
@@ -161,6 +161,19 @@ func collectCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfi
 		t.Fatal(err)
 	}
 	return collectCrashMetadata(ctx, config, snapshot, docker, &CrashMetadataReport{SchemaVersion: 1, Containers: []CrashMetadataContainer{}})
+}
+
+// collectRawCrashes is collectCrashes with the collector's own records, which
+// keep the unredacted crash identity.
+func collectRawCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfig, docker *fakeCrashDocker, snapshot diagnosticsSnapshot) (*evidence.CrashReport, error) {
+	t.Helper()
+	config, err := normalizeCrashMetadataConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := &evidence.CrashReport{SchemaVersion: 1, Containers: []evidence.CrashContainer{}}
+	return evidence.CollectCrashes(ctx, evidence.MemberConfig(evidence.CrashConfig[Target](config)), evidence.Members(snapshot.containers),
+		snapshot.controlPlane, snapshot.omitted, snapshot.secrets, docker, report)
 }
 
 // Only regular meta files of crash report directories are read; their known

@@ -19,7 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"

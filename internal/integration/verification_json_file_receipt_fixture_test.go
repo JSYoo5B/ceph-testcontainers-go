@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 )
 
 // These fixtures are synthetic: they build the receipt of the native

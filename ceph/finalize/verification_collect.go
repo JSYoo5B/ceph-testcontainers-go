@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/diagnosticshook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidencehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
 	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -194,7 +193,7 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 		for _, record := range result.Records {
 			// The raw identity, so that report redaction cannot merge
 			// distinct crashes.
-			target.crashes[diagnosticshook.CrashIdentity(record)] = true
+			target.crashes[record.Identity] = true
 		}
 	}
 	if err != nil && len(crashes.Containers) != len(b.targets) {
@@ -212,24 +211,26 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 // result per target in order. The collector redacts with secrets, the
 // configured values together with the cluster's own: it takes them from the
 // snapshot, not from its RedactValues.
-func readVerificationCrashes(ctx context.Context, config VerificationConfig, targets []verificationTarget, secrets []string, docker verificationDocker) (*diagnostics.CrashMetadataReport, error) {
-	containers := make([]diagnostics.Target, len(targets))
+func readVerificationCrashes(ctx context.Context, config VerificationConfig, targets []verificationTarget, secrets []string, docker verificationDocker) (*evidence.CrashReport, error) {
+	crashConfig, _ := evidence.NormalizeCrashConfig(evidence.CrashConfig[evidence.Member]{OperationTimeout: config.OperationTimeout})
+	members := make([]evidence.Member, len(targets))
 	for i, target := range targets {
-		containers[i] = target.Target
+		members[i] = evidence.Member(target.Target)
 	}
-	return diagnosticshook.ReadCrashes(ctx, config.OperationTimeout, containers, slices.Clone(secrets), docker)
+	report := &evidence.CrashReport{SchemaVersion: 1, StartedAt: time.Now().UTC(), Containers: []evidence.CrashContainer{}}
+	return evidence.CollectCrashes(ctx, crashConfig, members, nil, 0, slices.Clone(secrets), docker, report)
 }
 
 // crashResultGap says why a container's crash directory does not establish
 // which crashes it holds, or returns "".
-func crashResultGap(result diagnostics.CrashMetadataContainer) string {
+func crashResultGap(result evidence.CrashContainer) string {
 	switch result.Outcome {
-	case diagnostics.CrashRecordsFound, diagnostics.CrashDirectoryEmpty:
+	case evidence.CrashRecordsFound, evidence.CrashDirectoryEmpty:
 		if len(result.Omitted) > 0 {
 			return fmt.Sprintf("crash directory: %d metadata files were not accepted (first: %s, %s)", len(result.Omitted), result.Omitted[0].Path, result.Omitted[0].Reason)
 		}
 		return ""
-	case diagnostics.CrashDirectoryAbsent:
+	case evidence.CrashDirectoryAbsent:
 		return "the container has no crash directory, so no crash can be recorded there"
 	}
 	reason := "crash directory " + string(result.Outcome)
@@ -398,19 +399,19 @@ func (w verificationWindow) observeCrashes(ctx context.Context, current []*verif
 // metadata: it counts once, and is complete when any sighting has its done
 // marker. Crashes are compared by their raw identity; the reported ID is the
 // redacted one.
-func (w verificationWindow) recordNewCrashes(target verificationTarget, records []diagnostics.CrashRecord) {
+func (w verificationWindow) recordNewCrashes(target verificationTarget, records []evidence.CrashRecord) {
 	var order []string
 	done, reported := map[string]bool{}, map[string]string{}
 	for _, record := range records {
-		if target.crashes[diagnosticshook.CrashIdentity(record)] {
+		if target.crashes[record.Identity] {
 			continue
 		}
-		if _, ok := done[diagnosticshook.CrashIdentity(record)]; !ok {
-			order = append(order, diagnosticshook.CrashIdentity(record))
-			reported[diagnosticshook.CrashIdentity(record)] = record.CrashID
+		if _, ok := done[record.Identity]; !ok {
+			order = append(order, record.Identity)
+			reported[record.Identity] = record.CrashID
 			w.o.crashes = append(w.o.crashes, crashEvent(target, record))
 		}
-		done[diagnosticshook.CrashIdentity(record)] = done[diagnosticshook.CrashIdentity(record)] || record.Done
+		done[record.Identity] = done[record.Identity] || record.Done
 	}
 	for _, id := range order {
 		if !done[id] {
@@ -421,7 +422,7 @@ func (w verificationWindow) recordNewCrashes(target verificationTarget, records 
 
 // crashEvent describes a new crash record. The collector already redacted
 // its fields.
-func crashEvent(target verificationTarget, record diagnostics.CrashRecord) verificationEvent {
+func crashEvent(target verificationTarget, record evidence.CrashRecord) verificationEvent {
 	e := verificationEvent{source: target.source, containerID: target.id, event: "crash", time: record.Timestamp, crashID: record.CrashID, process: record.Process}
 	for _, field := range []string{"stack_sig", "assert_condition", "assert_func", "assert_msg", "backtrace"} {
 		switch value := record.Fields[field].(type) {

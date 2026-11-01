@@ -10,11 +10,13 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // CrashDir is the crash directory of every daemon of the cluster. The
 // bootstrap ceph.conf sets it, and WithConfigFile refuses to change it.
-const CrashDir = "/var/lib/ceph/crash"
+const CrashDir = evidence.CrashDir
 
 // userConfigMaxBytes bounds each WithConfigFile input. The merged bootstrap
 // file must stay well below monitorConfigMaxBytes for later MON refreshes.

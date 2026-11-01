@@ -3,7 +3,7 @@ package finalize
 import (
 	"encoding/binary"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/testcontainers/testcontainers-go"
 )
 

@@ -1,13 +1,13 @@
 # Finalization
 
-Import `github.com/JSYoo5B/ceph-testcontainers-go/finalize` alongside `ceph` to
+Import `github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize` alongside `ceph` to
 end a test's dedicated cluster on one ordered cleanup path: post-test checks,
 verification of the daemons' log lines and new crashes against expected
 events, a failure archive of diagnostics and crash metadata when the test has
 failed, caller cleanups, then `Terminate`. Nothing in this package is needed to
 run a cluster: a cluster terminated with `testcontainers.CleanupContainer`
 needs nothing from finalize. See
-[API purpose and purpose tags](../docs/guides/api-purpose.md) for where this
+[API purpose and purpose tags](../../docs/guides/api-purpose.md) for where this
 fits.
 
 ## Order of use
@@ -73,10 +73,10 @@ finalization.Check("pool still clean", func(ctx context.Context) error {
 ## Reference
 
 The full contract of every type and function is in go doc:
-[pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize)
-or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/finalize`. The
+[pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize)
+or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize`. The
 archive layout, the manifest and the verification model are in
-[Ceph operations](../docs/guides/ceph-operations.md#failure-archive-and-post-test-verification);
+[Ceph operations](../../docs/guides/ceph-operations.md#failure-archive-and-post-test-verification);
 contexts in cleanup code in
-[Contexts and cleanup](../docs/guides/contexts-and-cleanup.md); standalone
+[Contexts and cleanup](../../docs/guides/contexts-and-cleanup.md); standalone
 collection in [diagnostics](../diagnostics/README.md).

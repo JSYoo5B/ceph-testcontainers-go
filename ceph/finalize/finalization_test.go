@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidencehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
 )
 
 // finalizationTB records what a finalization reports to its test. Only the

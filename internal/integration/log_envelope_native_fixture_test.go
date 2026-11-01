@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 )
 
 const envelopeFixtureToken = "envelopequote0123abcd"

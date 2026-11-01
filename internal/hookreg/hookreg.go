@@ -1,9 +1,12 @@
 // Package hookreg holds the hooks that package ceph registers for the rbd,
-// cephfs and rgw packages, for the fault operations, for the override
-// operations, and the hooks that package rgw registers for rgw/multisite. It imports nothing, so ceph can register its hooks without
-// importing internal/servicehook, internal/faulthook or
-// internal/overridehook, which import ceph and give the hooks their typed
-// form.
+// cephfs and rgw packages, for the fault and override operations and for the
+// diagnostics and finalize packages, and the hooks that package rgw
+// registers for rgw/multisite. It imports nothing, so ceph can register its
+// hooks without importing internal/servicehook, internal/faulthook,
+// internal/overridehook or ceph/internal/evidencehook, which import ceph and
+// give the hooks their typed form. Each slot is written by one init function
+// of the providing package and read only through a package that imports the
+// provider, so the registration completes before any reader can run.
 package hookreg
 
 // Value is set once, during the initialization of package ceph.
@@ -29,11 +32,6 @@ var Test any
 var RGW any
 
 // Evidence is set once, during the initialization of package ceph, to the
-// cluster inventory hooks that internal/evidencehook types for the
+// cluster inventory hooks that ceph/internal/evidencehook types for the
 // diagnostics and finalize packages.
 var Evidence any
-
-// Diagnostics is set once, during the initialization of package diagnostics,
-// to the collector hooks that internal/diagnosticshook types for package
-// finalize.
-var Diagnostics any

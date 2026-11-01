@@ -1,12 +1,12 @@
 # Diagnostics
 
-Import `github.com/JSYoo5B/ceph-testcontainers-go/diagnostics` alongside `ceph`
+Import `github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics` alongside `ceph`
 to collect read-only evidence from a cluster for a failed test to save or
 report: a diagnostics report of its containers, networks, log tails and fixed
 Ceph queries, the crash metadata that its daemons wrote, and the redaction of
 the secrets that the cluster knows. Collection never starts, stops,
 reconfigures or adopts a container. A cluster needs nothing from this package
-to run. See [API purpose and purpose tags](../docs/guides/api-purpose.md) for
+to run. See [API purpose and purpose tags](../../docs/guides/api-purpose.md) for
 where this fits.
 
 ## Order of use
@@ -71,11 +71,11 @@ use the [finalize](../finalize/README.md) package instead.
 ## Reference
 
 The full contract of every type and function is in go doc:
-[pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/diagnostics)
-or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/diagnostics`.
+[pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics)
+or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics`.
 Collection from cleanup is in
-[Contexts and cleanup](../docs/guides/contexts-and-cleanup.md#collect-diagnostics-before-cleanup),
+[Contexts and cleanup](../../docs/guides/contexts-and-cleanup.md#collect-diagnostics-before-cleanup),
 the collected queries in
-[Running native commands](../docs/guides/native-commands.md#diagnostics), and
+[Running native commands](../../docs/guides/native-commands.md#diagnostics), and
 the failure archive layout in
-[Ceph operations](../docs/guides/ceph-operations.md#the-failure-archive).
+[Ceph operations](../../docs/guides/ceph-operations.md#the-failure-archive).

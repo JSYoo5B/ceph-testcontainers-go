@@ -5,14 +5,14 @@ import (
 	"errors"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 // evidenceHooks gives the diagnostics and finalize packages the inventory of
 // a cluster, which is not public API. Its methods are exported only so that
-// internal/evidencehook can call them through an interface; the type itself
+// ceph/internal/evidencehook can call them through an interface; the type itself
 // is unexported and never appears in the public packages.
 type evidenceHooks struct{}
 

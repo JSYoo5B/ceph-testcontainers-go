@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 )
 
 // The names of the two log expectations of the envelope scenario. The probe

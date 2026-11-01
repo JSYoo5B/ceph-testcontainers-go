@@ -1,18 +1,18 @@
 {
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
-  "package": "finalize",
+  "package": "ceph/finalize",
   "count": 86,
   "types": {
-    "finalize.CaptureFileSource": [
+    "ceph/finalize.CaptureFileSource": [
       "CaptureFileSource embed CaptureSettler",
       "CaptureFileSource.CaptureFile method func(ctx context.Context) (io.ReadCloser, int64, string, error)"
     ],
-    "finalize.CaptureSettler": [
+    "ceph/finalize.CaptureSettler": [
       "CaptureSettler.Settle method func(ctx context.Context) (report any, err error)",
       "CaptureSettler.SettlementAllowance method func() time.Duration"
     ],
-    "finalize.Config": [
+    "ceph/finalize.Config": [
       "Config.Archive field bool",
       "Config.ArchiveDirectory field string",
       "Config.ArchiveTimeout field time.Duration",
@@ -22,7 +22,7 @@
       "Config.Diagnostics field diagnostics.Config",
       "Config.Scenario field string"
     ],
-    "finalize.CrashExpectation": [
+    "ceph/finalize.CrashExpectation": [
       "CrashExpectation.Daemon field string",
       "CrashExpectation.MaxCount field int",
       "CrashExpectation.MinCount field int",
@@ -31,10 +31,10 @@
       "CrashExpectation.Required field bool",
       "CrashExpectation.Signature field string"
     ],
-    "finalize.DebugLevelReceipter": [
+    "ceph/finalize.DebugLevelReceipter": [
       "DebugLevelReceipter.Receipt method func() override.DebugLevelReceipt"
     ],
-    "finalize.ExpectationResult": [
+    "ceph/finalize.ExpectationResult": [
       "ExpectationResult.Matched field int `json:\"matched\"`",
       "ExpectationResult.MaxCount field int `json:\"max_count\"`",
       "ExpectationResult.MinCount field int `json:\"min_count\"`",
@@ -42,7 +42,7 @@
       "ExpectationResult.Required field bool `json:\"required\"`",
       "ExpectationResult.Satisfied field bool `json:\"satisfied\"`"
     ],
-    "finalize.LogExpectation": [
+    "ceph/finalize.LogExpectation": [
       "LogExpectation.Daemon field string",
       "LogExpectation.Event field LogEvent",
       "LogExpectation.MaxCount field int",
@@ -51,7 +51,7 @@
       "LogExpectation.Pattern field string",
       "LogExpectation.Required field bool"
     ],
-    "finalize.VerificationCheck": [
+    "ceph/finalize.VerificationCheck": [
       "VerificationCheck.Expectations field []ExpectationResult `json:\"expectations\"`",
       "VerificationCheck.Findings field []VerificationFinding `json:\"findings\"`",
       "VerificationCheck.Gaps field []VerificationGap `json:\"gaps\"`",
@@ -60,7 +60,7 @@
       "VerificationCheck.Permitted field int `json:\"permitted\"`",
       "VerificationCheck.Unexpected field int `json:\"unexpected\"`"
     ],
-    "finalize.VerificationConfig": [
+    "ceph/finalize.VerificationConfig": [
       "VerificationConfig.AdditionalContainers field []diagnostics.Target",
       "VerificationConfig.Crashes field []CrashExpectation",
       "VerificationConfig.Logs field []LogExpectation",
@@ -71,7 +71,7 @@
       "VerificationConfig.RedactValues field []string",
       "VerificationConfig.Timeout field time.Duration"
     ],
-    "finalize.VerificationFinding": [
+    "ceph/finalize.VerificationFinding": [
       "VerificationFinding.ContainerID field string `json:\"container_id,omitempty\"`",
       "VerificationFinding.CrashID field string `json:\"crash_id,omitempty\"`",
       "VerificationFinding.Event field string `json:\"event\"`",
@@ -81,11 +81,11 @@
       "VerificationFinding.Time field string `json:\"time,omitempty\"`",
       "VerificationFinding.Truncated field bool `json:\"truncated,omitempty\"`"
     ],
-    "finalize.VerificationGap": [
+    "ceph/finalize.VerificationGap": [
       "VerificationGap.Reason field string `json:\"reason\"`",
       "VerificationGap.Source field string `json:\"source,omitempty\"`"
     ],
-    "finalize.VerificationReport": [
+    "ceph/finalize.VerificationReport": [
       "VerificationReport.Cluster field string `json:\"cluster\"`",
       "VerificationReport.CrashExpectations field []CrashExpectation `json:\"crash_expectations\"`",
       "VerificationReport.Crashes field VerificationCheck `json:\"crashes\"`",
@@ -99,7 +99,7 @@
       "VerificationReport.Sources field []VerificationSource `json:\"sources\"`",
       "VerificationReport.Window field VerificationWindow `json:\"window\"`"
     ],
-    "finalize.VerificationSource": [
+    "ceph/finalize.VerificationSource": [
       "VerificationSource.BaselineCrashes field []string `json:\"baseline_crashes\"`",
       "VerificationSource.ContainerID field string `json:\"container_id,omitempty\"`",
       "VerificationSource.ImageID field string `json:\"image_id,omitempty\"`",
@@ -112,7 +112,7 @@
       "VerificationSource.StartedAt field string `json:\"started_at,omitempty\"`",
       "VerificationSource.State field string `json:\"state,omitempty\"`"
     ],
-    "finalize.VerificationWindow": [
+    "ceph/finalize.VerificationWindow": [
       "VerificationWindow.EndedAt field time.Time `json:\"ended_at\"`",
       "VerificationWindow.EvaluatedAt field time.Time `json:\"evaluated_at\"`",
       "VerificationWindow.Phase field string `json:\"phase\"`",

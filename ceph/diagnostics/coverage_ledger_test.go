@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
 )
@@ -61,21 +62,21 @@ type coverageLedger struct {
 	WindowCoverage string `json:"window_coverage"`
 }
 
-func buildCrashLedger(report *CrashMetadataReport) coverageLedger {
+func buildCrashLedger(report *evidence.CrashReport) coverageLedger {
 	ledger := coverageLedger{ReadComplete: report.Complete, Events: []coverageEvent{}, Gaps: []string{}}
 	index := map[string]int{}
 	for _, container := range report.Containers {
 		switch container.Outcome {
-		case CrashRecordsFound, CrashDirectoryEmpty, CrashDirectoryAbsent:
+		case evidence.CrashRecordsFound, evidence.CrashDirectoryEmpty, evidence.CrashDirectoryAbsent:
 		default:
 			ledger.Gaps = append(ledger.Gaps, fmt.Sprintf("%s/%s:%s", container.Role, container.Name, container.Outcome))
 		}
 		for _, record := range container.Records {
-			at, ok := index[record.identity]
+			at, ok := index[record.Identity]
 			if !ok {
 				at = len(ledger.Events)
-				index[record.identity] = at
-				ledger.Events = append(ledger.Events, coverageEvent{ID: record.identity, Sightings: []coverageSighting{}})
+				index[record.Identity] = at
+				ledger.Events = append(ledger.Events, coverageEvent{ID: record.Identity, Sightings: []coverageSighting{}})
 			}
 			event := &ledger.Events[at]
 			event.Sightings = append(event.Sightings, coverageSighting{Generation: container.ContainerID, Path: record.Path, Posted: record.Posted, Done: record.Done})
@@ -103,7 +104,7 @@ func coverageMeta(id string) string {
 
 func coverageCrashLedger(t *testing.T, containers map[string]*fakeCrashContainer, targets ...Target) coverageLedger {
 	t.Helper()
-	report, _ := collectCrashes(t, t.Context(), CrashMetadataConfig{}, &fakeCrashDocker{containers: containers}, crashSnapshot(targets...))
+	report, _ := collectRawCrashes(t, t.Context(), CrashMetadataConfig{}, &fakeCrashDocker{containers: containers}, crashSnapshot(targets...))
 	if report == nil {
 		t.Fatal("no report")
 	}

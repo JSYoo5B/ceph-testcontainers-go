@@ -1,10 +1,10 @@
 {
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
-  "package": "diagnostics",
+  "package": "ceph/diagnostics",
   "count": 67,
   "types": {
-    "diagnostics.Artifact": [
+    "ceph/diagnostics.Artifact": [
       "Artifact.ContainerID field string `json:\"container_id,omitempty\"`",
       "Artifact.Data field string `json:\"data,omitempty\"`",
       "Artifact.Error field string `json:\"error,omitempty\"`",
@@ -13,7 +13,7 @@
       "Artifact.Role field string `json:\"role,omitempty\"`",
       "Artifact.Truncated field bool `json:\"truncated,omitempty\"`"
     ],
-    "diagnostics.Config": [
+    "ceph/diagnostics.Config": [
       "Config.AdditionalContainers field []Target",
       "Config.Concurrency field int",
       "Config.LogTail field int",
@@ -23,7 +23,7 @@
       "Config.RedactValues field []string",
       "Config.Timeout field time.Duration"
     ],
-    "diagnostics.CrashMetadataConfig": [
+    "ceph/diagnostics.CrashMetadataConfig": [
       "CrashMetadataConfig.AdditionalContainers field []Target",
       "CrashMetadataConfig.MaxArchiveBytes field int64",
       "CrashMetadataConfig.MaxEntries field int",
@@ -33,7 +33,7 @@
       "CrashMetadataConfig.RedactValues field []string",
       "CrashMetadataConfig.Timeout field time.Duration"
     ],
-    "diagnostics.CrashMetadataContainer": [
+    "ceph/diagnostics.CrashMetadataContainer": [
       "CrashMetadataContainer.ArchiveBytes field int64 `json:\"archive_bytes\"`",
       "CrashMetadataContainer.ContainerID field string `json:\"container_id,omitempty\"`",
       "CrashMetadataContainer.CrashDir field string `json:\"crash_dir\"`",
@@ -51,7 +51,7 @@
       "CrashMetadataContainer.StartedAt field string `json:\"started_at,omitempty\"`",
       "CrashMetadataContainer.State field string `json:\"state,omitempty\"`"
     ],
-    "diagnostics.CrashMetadataReport": [
+    "ceph/diagnostics.CrashMetadataReport": [
       "CrashMetadataReport.Closed field bool `json:\"closed\"`",
       "CrashMetadataReport.Complete field bool `json:\"complete\"`",
       "CrashMetadataReport.Containers field []CrashMetadataContainer `json:\"containers\"`",
@@ -59,11 +59,11 @@
       "CrashMetadataReport.SchemaVersion field int `json:\"schema_version\"`",
       "CrashMetadataReport.StartedAt field time.Time `json:\"started_at\"`"
     ],
-    "diagnostics.CrashOmission": [
+    "ceph/diagnostics.CrashOmission": [
       "CrashOmission.Path field string `json:\"path\"`",
       "CrashOmission.Reason field string `json:\"reason\"`"
     ],
-    "diagnostics.CrashRecord": [
+    "ceph/diagnostics.CrashRecord": [
       "CrashRecord.CephVersion field string `json:\"ceph_version,omitempty\"`",
       "CrashRecord.CrashID field string `json:\"crash_id\"`",
       "CrashRecord.Done field bool `json:\"done\"`",
@@ -75,7 +75,7 @@
       "CrashRecord.Process field string `json:\"process,omitempty\"`",
       "CrashRecord.Timestamp field string `json:\"timestamp,omitempty\"`"
     ],
-    "diagnostics.Report": [
+    "ceph/diagnostics.Report": [
       "Report.Artifacts field []Artifact `json:\"artifacts\"`",
       "Report.Closed field bool `json:\"closed\"`",
       "Report.Complete field bool `json:\"complete\"`",
@@ -84,7 +84,7 @@
       "Report.SchemaVersion field int `json:\"schema_version\"`",
       "Report.StartedAt field time.Time `json:\"started_at\"`"
     ],
-    "diagnostics.Target": [
+    "ceph/diagnostics.Target": [
       "Target.Container field testcontainers.Container",
       "Target.Name field string",
       "Target.Role field string"

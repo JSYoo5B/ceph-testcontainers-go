@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/finalize"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 )
 
 // This file holds the receipt and the strict judge of the native

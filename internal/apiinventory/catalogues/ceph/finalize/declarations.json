@@ -1,226 +1,226 @@
 {
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
-  "package": "finalize",
+  "package": "ceph/finalize",
   "count": 34,
   "entries": [
     {
-      "current": "finalize.CaptureFileSource",
+      "current": "ceph/finalize.CaptureFileSource",
       "kind": "type",
-      "proposed": "finalize.CaptureFileSource",
+      "proposed": "ceph/finalize.CaptureFileSource",
       "decision": "baseline"
     },
     {
-      "current": "finalize.CaptureSettler",
+      "current": "ceph/finalize.CaptureSettler",
       "kind": "type",
-      "proposed": "finalize.CaptureSettler",
+      "proposed": "ceph/finalize.CaptureSettler",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Config",
+      "current": "ceph/finalize.Config",
       "kind": "type",
-      "proposed": "finalize.Config",
+      "proposed": "ceph/finalize.Config",
       "decision": "baseline"
     },
     {
-      "current": "finalize.CrashExpectation",
+      "current": "ceph/finalize.CrashExpectation",
       "kind": "type",
-      "proposed": "finalize.CrashExpectation",
+      "proposed": "ceph/finalize.CrashExpectation",
       "decision": "baseline"
     },
     {
-      "current": "finalize.DebugLevelReceipter",
+      "current": "ceph/finalize.DebugLevelReceipter",
       "kind": "type",
-      "proposed": "finalize.DebugLevelReceipter",
+      "proposed": "ceph/finalize.DebugLevelReceipter",
       "decision": "baseline"
     },
     {
-      "current": "finalize.ExpectationResult",
+      "current": "ceph/finalize.ExpectationResult",
       "kind": "type",
-      "proposed": "finalize.ExpectationResult",
+      "proposed": "ceph/finalize.ExpectationResult",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization",
+      "current": "ceph/finalize.Finalization",
       "kind": "type",
-      "proposed": "finalize.Finalization",
+      "proposed": "ceph/finalize.Finalization",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.Capture",
+      "current": "ceph/finalize.Finalization.Capture",
       "kind": "method",
       "signature": "func(name string, session CaptureSettler)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.Capture",
+      "proposed": "ceph/finalize.Finalization.Capture",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.CaptureWithFile",
+      "current": "ceph/finalize.Finalization.CaptureWithFile",
       "kind": "method",
       "signature": "func(name string, session CaptureFileSource, maxBytes int64)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.CaptureWithFile",
+      "proposed": "ceph/finalize.Finalization.CaptureWithFile",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.Check",
+      "current": "ceph/finalize.Finalization.Check",
       "kind": "method",
       "signature": "func(name string, check func(context.Context) error)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.Check",
+      "proposed": "ceph/finalize.Finalization.Check",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.Cleanup",
+      "current": "ceph/finalize.Finalization.Cleanup",
       "kind": "method",
       "signature": "func(name string, cleanup func(context.Context) error)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.Cleanup",
+      "proposed": "ceph/finalize.Finalization.Cleanup",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.TrackDebugLevel",
+      "current": "ceph/finalize.Finalization.TrackDebugLevel",
       "kind": "method",
       "signature": "func(handle DebugLevelReceipter)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.TrackDebugLevel",
+      "proposed": "ceph/finalize.Finalization.TrackDebugLevel",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Finalization.Verify",
+      "current": "ceph/finalize.Finalization.Verify",
       "kind": "method",
       "signature": "func(ctx context.Context, config VerificationConfig) (*Verification, error)",
       "receiver": "*Finalization",
-      "proposed": "finalize.Finalization.Verify",
+      "proposed": "ceph/finalize.Finalization.Verify",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogAssertion",
+      "current": "ceph/finalize.LogAssertion",
       "kind": "const",
-      "proposed": "finalize.LogAssertion",
+      "proposed": "ceph/finalize.LogAssertion",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogClusterError",
+      "current": "ceph/finalize.LogClusterError",
       "kind": "const",
-      "proposed": "finalize.LogClusterError",
+      "proposed": "ceph/finalize.LogClusterError",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogClusterSecurity",
+      "current": "ceph/finalize.LogClusterSecurity",
       "kind": "const",
-      "proposed": "finalize.LogClusterSecurity",
+      "proposed": "ceph/finalize.LogClusterSecurity",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogClusterWarning",
+      "current": "ceph/finalize.LogClusterWarning",
       "kind": "const",
-      "proposed": "finalize.LogClusterWarning",
+      "proposed": "ceph/finalize.LogClusterWarning",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogEvent",
+      "current": "ceph/finalize.LogEvent",
       "kind": "type",
-      "proposed": "finalize.LogEvent",
+      "proposed": "ceph/finalize.LogEvent",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogExpectation",
+      "current": "ceph/finalize.LogExpectation",
       "kind": "type",
-      "proposed": "finalize.LogExpectation",
+      "proposed": "ceph/finalize.LogExpectation",
       "decision": "baseline"
     },
     {
-      "current": "finalize.LogFatalSignal",
+      "current": "ceph/finalize.LogFatalSignal",
       "kind": "const",
-      "proposed": "finalize.LogFatalSignal",
+      "proposed": "ceph/finalize.LogFatalSignal",
       "decision": "baseline"
     },
     {
-      "current": "finalize.TerminateOnCleanup",
+      "current": "ceph/finalize.TerminateOnCleanup",
       "kind": "function",
       "signature": "func(t testing.TB, cluster *ceph.Container, config Config) (*Finalization, error)",
-      "proposed": "finalize.TerminateOnCleanup",
+      "proposed": "ceph/finalize.TerminateOnCleanup",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Verification",
+      "current": "ceph/finalize.Verification",
       "kind": "type",
-      "proposed": "finalize.Verification",
+      "proposed": "ceph/finalize.Verification",
       "decision": "baseline"
     },
     {
-      "current": "finalize.Verification.Evaluate",
+      "current": "ceph/finalize.Verification.Evaluate",
       "kind": "method",
       "signature": "func(ctx context.Context) (*VerificationReport, error)",
       "receiver": "*Verification",
-      "proposed": "finalize.Verification.Evaluate",
+      "proposed": "ceph/finalize.Verification.Evaluate",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationCheck",
+      "current": "ceph/finalize.VerificationCheck",
       "kind": "type",
-      "proposed": "finalize.VerificationCheck",
+      "proposed": "ceph/finalize.VerificationCheck",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationClean",
+      "current": "ceph/finalize.VerificationClean",
       "kind": "const",
-      "proposed": "finalize.VerificationClean",
+      "proposed": "ceph/finalize.VerificationClean",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationConfig",
+      "current": "ceph/finalize.VerificationConfig",
       "kind": "type",
-      "proposed": "finalize.VerificationConfig",
+      "proposed": "ceph/finalize.VerificationConfig",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationFinding",
+      "current": "ceph/finalize.VerificationFinding",
       "kind": "type",
-      "proposed": "finalize.VerificationFinding",
+      "proposed": "ceph/finalize.VerificationFinding",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationGap",
+      "current": "ceph/finalize.VerificationGap",
       "kind": "type",
-      "proposed": "finalize.VerificationGap",
+      "proposed": "ceph/finalize.VerificationGap",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationIncomplete",
+      "current": "ceph/finalize.VerificationIncomplete",
       "kind": "const",
-      "proposed": "finalize.VerificationIncomplete",
+      "proposed": "ceph/finalize.VerificationIncomplete",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationOutcome",
+      "current": "ceph/finalize.VerificationOutcome",
       "kind": "type",
-      "proposed": "finalize.VerificationOutcome",
+      "proposed": "ceph/finalize.VerificationOutcome",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationReport",
+      "current": "ceph/finalize.VerificationReport",
       "kind": "type",
-      "proposed": "finalize.VerificationReport",
+      "proposed": "ceph/finalize.VerificationReport",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationSource",
+      "current": "ceph/finalize.VerificationSource",
       "kind": "type",
-      "proposed": "finalize.VerificationSource",
+      "proposed": "ceph/finalize.VerificationSource",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationUnexpected",
+      "current": "ceph/finalize.VerificationUnexpected",
       "kind": "const",
-      "proposed": "finalize.VerificationUnexpected",
+      "proposed": "ceph/finalize.VerificationUnexpected",
       "decision": "baseline"
     },
     {
-      "current": "finalize.VerificationWindow",
+      "current": "ceph/finalize.VerificationWindow",
       "kind": "type",
-      "proposed": "finalize.VerificationWindow",
+      "proposed": "ceph/finalize.VerificationWindow",
       "decision": "baseline"
     }
   ]

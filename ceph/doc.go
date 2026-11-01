@@ -37,11 +37,11 @@
 //     overrides of cluster policy.
 //   - github.com/JSYoo5B/ceph-testcontainers-go/fault: fault injection.
 //   - github.com/JSYoo5B/ceph-testcontainers-go/capture: packet capture.
-//   - github.com/JSYoo5B/ceph-testcontainers-go/diagnostics: read-only
+//   - github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics: read-only
 //     diagnostics reports, crash metadata and redaction.
-//   - github.com/JSYoo5B/ceph-testcontainers-go/finalize: the ordered end of a
-//     test's cluster with post-test checks, verification, a failure archive
-//     and termination.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize: the ordered
+//     end of a test's cluster with post-test checks, verification, a failure
+//     archive and termination.
 //
 // These rules hold across the methods of a Container and its handles:
 //

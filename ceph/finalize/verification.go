@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidencehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
 )
 
 // VerificationConfig selects what Finalization.Verify checks after the test:

@@ -1,130 +1,130 @@
 {
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
-  "package": "diagnostics",
+  "package": "ceph/diagnostics",
   "count": 20,
   "entries": [
     {
-      "current": "diagnostics.Artifact",
+      "current": "ceph/diagnostics.Artifact",
       "kind": "type",
-      "proposed": "diagnostics.Artifact",
+      "proposed": "ceph/diagnostics.Artifact",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.Collect",
+      "current": "ceph/diagnostics.Collect",
       "kind": "function",
       "signature": "func(ctx context.Context, cluster *ceph.Container, config Config) (*Report, error)",
-      "proposed": "diagnostics.Collect",
+      "proposed": "ceph/diagnostics.Collect",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CollectCrashMetadata",
+      "current": "ceph/diagnostics.CollectCrashMetadata",
       "kind": "function",
       "signature": "func(ctx context.Context, cluster *ceph.Container, config CrashMetadataConfig) (*CrashMetadataReport, error)",
-      "proposed": "diagnostics.CollectCrashMetadata",
+      "proposed": "ceph/diagnostics.CollectCrashMetadata",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.Config",
+      "current": "ceph/diagnostics.Config",
       "kind": "type",
-      "proposed": "diagnostics.Config",
+      "proposed": "ceph/diagnostics.Config",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashArchiveIncomplete",
+      "current": "ceph/diagnostics.CrashArchiveIncomplete",
       "kind": "const",
-      "proposed": "diagnostics.CrashArchiveIncomplete",
+      "proposed": "ceph/diagnostics.CrashArchiveIncomplete",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashContainerUnavailable",
+      "current": "ceph/diagnostics.CrashContainerUnavailable",
       "kind": "const",
-      "proposed": "diagnostics.CrashContainerUnavailable",
+      "proposed": "ceph/diagnostics.CrashContainerUnavailable",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashDirectoryAbsent",
+      "current": "ceph/diagnostics.CrashDirectoryAbsent",
       "kind": "const",
-      "proposed": "diagnostics.CrashDirectoryAbsent",
+      "proposed": "ceph/diagnostics.CrashDirectoryAbsent",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashDirectoryEmpty",
+      "current": "ceph/diagnostics.CrashDirectoryEmpty",
       "kind": "const",
-      "proposed": "diagnostics.CrashDirectoryEmpty",
+      "proposed": "ceph/diagnostics.CrashDirectoryEmpty",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashEntriesRejected",
+      "current": "ceph/diagnostics.CrashEntriesRejected",
       "kind": "const",
-      "proposed": "diagnostics.CrashEntriesRejected",
+      "proposed": "ceph/diagnostics.CrashEntriesRejected",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashMetadataConfig",
+      "current": "ceph/diagnostics.CrashMetadataConfig",
       "kind": "type",
-      "proposed": "diagnostics.CrashMetadataConfig",
+      "proposed": "ceph/diagnostics.CrashMetadataConfig",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashMetadataContainer",
+      "current": "ceph/diagnostics.CrashMetadataContainer",
       "kind": "type",
-      "proposed": "diagnostics.CrashMetadataContainer",
+      "proposed": "ceph/diagnostics.CrashMetadataContainer",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashMetadataReport",
+      "current": "ceph/diagnostics.CrashMetadataReport",
       "kind": "type",
-      "proposed": "diagnostics.CrashMetadataReport",
+      "proposed": "ceph/diagnostics.CrashMetadataReport",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashOmission",
+      "current": "ceph/diagnostics.CrashOmission",
       "kind": "type",
-      "proposed": "diagnostics.CrashOmission",
+      "proposed": "ceph/diagnostics.CrashOmission",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashOutcome",
+      "current": "ceph/diagnostics.CrashOutcome",
       "kind": "type",
-      "proposed": "diagnostics.CrashOutcome",
+      "proposed": "ceph/diagnostics.CrashOutcome",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashReadFailed",
+      "current": "ceph/diagnostics.CrashReadFailed",
       "kind": "const",
-      "proposed": "diagnostics.CrashReadFailed",
+      "proposed": "ceph/diagnostics.CrashReadFailed",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashRecord",
+      "current": "ceph/diagnostics.CrashRecord",
       "kind": "type",
-      "proposed": "diagnostics.CrashRecord",
+      "proposed": "ceph/diagnostics.CrashRecord",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.CrashRecordsFound",
+      "current": "ceph/diagnostics.CrashRecordsFound",
       "kind": "const",
-      "proposed": "diagnostics.CrashRecordsFound",
+      "proposed": "ceph/diagnostics.CrashRecordsFound",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.Redact",
+      "current": "ceph/diagnostics.Redact",
       "kind": "function",
       "signature": "func(ctx context.Context, cluster *ceph.Container, data []byte, values ...string) ([]byte, error)",
-      "proposed": "diagnostics.Redact",
+      "proposed": "ceph/diagnostics.Redact",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.Report",
+      "current": "ceph/diagnostics.Report",
       "kind": "type",
-      "proposed": "diagnostics.Report",
+      "proposed": "ceph/diagnostics.Report",
       "decision": "baseline"
     },
     {
-      "current": "diagnostics.Target",
+      "current": "ceph/diagnostics.Target",
       "kind": "type",
-      "proposed": "diagnostics.Target",
+      "proposed": "ceph/diagnostics.Target",
       "decision": "baseline"
     }
   ]

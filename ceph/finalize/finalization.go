@@ -20,10 +20,9 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/diagnosticshook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidencehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
 )
 
 // Config selects what the cleanup that TerminateOnCleanup registers does
@@ -185,11 +184,11 @@ func newFinalization(t testing.TB, config Config) (*Finalization, error) {
 	if strings.ContainsRune(config.ArchiveDirectory, 0) {
 		return nil, invalid(errors.New("finalization archive directory contains a NUL byte"))
 	}
-	if err := diagnosticshook.ValidateConfig(config.Diagnostics); err != nil {
-		return nil, err
+	if _, err := evidence.NormalizeDiagnosticsConfig(evidence.DiagnosticsConfig[diagnostics.Target](config.Diagnostics)); err != nil {
+		return nil, invalid(err)
 	}
-	if err := diagnosticshook.ValidateCrashMetadataConfig(config.CrashMetadata); err != nil {
-		return nil, err
+	if _, err := evidence.NormalizeCrashConfig(evidence.CrashConfig[diagnostics.Target](config.CrashMetadata)); err != nil {
+		return nil, invalid(err)
 	}
 	f := &Finalization{t: t, config: config, now: func() time.Time { return time.Now().UTC() }, newID: newExecutionID}
 	f.writeFile = func(path string, data []byte) error { return os.WriteFile(path, data, 0o644) }

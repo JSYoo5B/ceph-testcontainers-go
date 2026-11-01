@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	dockercontainer "github.com/moby/moby/api/types/container"
 )
 
@@ -35,7 +36,7 @@ import (
 // the collector's report.
 type crashRead struct {
 	Start, End time.Time
-	Report     *CrashMetadataReport
+	Report     *evidence.CrashReport
 }
 
 type crashCompletionKind string
@@ -88,16 +89,16 @@ func crashSightings(r crashRead, id string) (found []crashSighting, rejected []s
 	for _, container := range r.Report.Containers {
 		fullRead := false
 		switch container.Outcome {
-		case CrashRecordsFound, CrashDirectoryEmpty, CrashDirectoryAbsent:
+		case evidence.CrashRecordsFound, evidence.CrashDirectoryEmpty, evidence.CrashDirectoryAbsent:
 			fullRead = true
 		default:
 			unread = append(unread, fmt.Sprintf("%s/%s:%s", container.Role, container.Name, container.Outcome))
 		}
 		for _, record := range container.Records {
-			if record.identity != id {
-				if !seen[record.identity] {
-					seen[record.identity] = true
-					others = append(others, record.identity)
+			if record.Identity != id {
+				if !seen[record.Identity] {
+					seen[record.Identity] = true
+					others = append(others, record.Identity)
 				}
 				continue
 			}
@@ -243,7 +244,7 @@ func crashJudgeAt(seconds int) time.Time {
 // caller bounds as a live read would: the report times lie inside the bounds.
 func crashJudgeRead(t *testing.T, start int, containers map[string]*fakeCrashContainer, targets ...Target) crashRead {
 	t.Helper()
-	report, _ := collectCrashes(t, t.Context(), CrashMetadataConfig{}, &fakeCrashDocker{containers: containers}, crashSnapshot(targets...))
+	report, _ := collectRawCrashes(t, t.Context(), CrashMetadataConfig{}, &fakeCrashDocker{containers: containers}, crashSnapshot(targets...))
 	if report == nil {
 		t.Fatal("no report")
 	}
@@ -468,7 +469,7 @@ func TestCrashCompletionJudgeIncompleteReadOfExpectedCrash(t *testing.T) {
 	early := crashJudgeOne(t, 0, crashJudgeExited, "meta")
 	// One meta entry is a 512-byte header and one padded 512-byte block.
 	beforeDone := cutRead(10, 1024, "meta", "done")
-	if c := beforeDone.Report.Containers[0]; c.Outcome != CrashArchiveIncomplete || len(c.Records) != 1 || c.Records[0].Done {
+	if c := beforeDone.Report.Containers[0]; c.Outcome != evidence.CrashArchiveIncomplete || len(c.Records) != 1 || c.Records[0].Done {
 		t.Fatalf("fixture is not a cut after the meta: %+v", c)
 	}
 	if got := judgeCrashCompletion(crashJudgeID, early, beforeDone); got.Kind != crashInconclusive {
@@ -480,7 +481,7 @@ func TestCrashCompletionJudgeIncompleteReadOfExpectedCrash(t *testing.T) {
 	}
 	// Cutting after done keeps the positive marker.
 	afterDone := cutRead(10, 1536, "meta", "done")
-	if c := afterDone.Report.Containers[0]; c.Outcome != CrashArchiveIncomplete || !c.Records[0].Done {
+	if c := afterDone.Report.Containers[0]; c.Outcome != evidence.CrashArchiveIncomplete || !c.Records[0].Done {
 		t.Fatalf("fixture is not a cut after done: %+v", c)
 	}
 	if got := judgeCrashCompletion(crashJudgeID, early, afterDone); got.Kind != crashCompleted {

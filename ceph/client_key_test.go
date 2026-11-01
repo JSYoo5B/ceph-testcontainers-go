@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/testcontainers/testcontainers-go"
 )
 

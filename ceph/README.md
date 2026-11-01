@@ -62,10 +62,10 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    when no typed observation exists.
 5. **Finish.** `testcontainers.CleanupContainer` runs `Terminate`, which
    removes every owned container, network and volume. The
-   [finalize](../finalize/README.md) package replaces it when the test needs
+   [finalize](finalize/README.md) package replaces it when the test needs
    post-test checks (with crash and cluster-log verification), a failure
    archive and caller cleanups in reverse order before `Terminate`; the
-   [diagnostics](../diagnostics/README.md) package collects the same reports
+   [diagnostics](diagnostics/README.md) package collects the same reports
    standalone.
 
 ```golang
