@@ -32,3 +32,8 @@ var RGW any
 // cluster inventory hooks that internal/evidencehook types for the
 // diagnostics and finalize packages.
 var Evidence any
+
+// Diagnostics is set once, during the initialization of package diagnostics,
+// to the collector hooks that internal/diagnosticshook types for package
+// finalize.
+var Diagnostics any

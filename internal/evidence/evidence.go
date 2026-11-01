@@ -7,6 +7,7 @@
 package evidence
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -14,8 +15,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
+
+// CrashDocker is the part of the Docker client that reads crash directories.
+type CrashDocker interface {
+	ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error)
+	CopyFromContainer(context.Context, string, mobycl.CopyFromContainerOptions) (mobycl.CopyFromContainerResult, error)
+}
 
 // Member is one container of a collection: a container that a cluster
 // tracks, or one that a caller added. Role and Name describe it; Container is
