@@ -493,6 +493,18 @@ The OSD sleeps for the duration at several points of each operation, so a
 slow OSD map handling: keep the duration short and restore it before reading
 results.
 
+An OSD map epoch published while the delay is held costs more than its own
+sleeps. An operation stamped with the new epoch that reaches a PG still on the
+old one waits for the map and goes through the queue again, about 4 seconds
+more with a 2-second duration, which can exceed a client timeout sized for
+the delay. Even an idle cluster publishes one such epoch: an OSD sends its
+first beacon only once the host has been up for `osd_beacon_report_interval`
+(300 seconds by default), and the MON records the beacon in a new epoch. On a
+freshly booted CI host that point can fall inside the test. Call
+`AdminSocket(ctx, "send_beacon")` on the `OSDContainer`, wait until
+`osd_xinfo` in `ceph osd dump` has a `last_purged_snaps_scrub` time and
+`ceph pg <pgid> query` reports that epoch, then set the delay.
+
 The outcome depends on the client's connection when the OSD reaches the write:
 
 - A client that timed out but stays connected: the OSD runs the write and its
