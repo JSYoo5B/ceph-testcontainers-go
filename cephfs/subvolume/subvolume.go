@@ -11,7 +11,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -135,13 +134,6 @@ func validateName(name string, optional bool) error {
 	return servicehook.Invalid(errors.New("subvolume and group names must start with a letter or digit and use at most 128 letters, digits, dots, underscores or dashes"))
 }
 
-func validateExistingPool(name string) error {
-	if !naming.ExistingPool.MatchString(name) {
-		return servicehook.Invalid(errors.New("invalid native pool name"))
-	}
-	return nil
-}
-
 func validateConfig(fs *fsbase.Core, name, group, dataPool string, size int64) error {
 	if err := validateName(name, false); err != nil {
 		return err
@@ -158,7 +150,7 @@ func validateConfig(fs *fsbase.Core, name, group, dataPool string, size int64) e
 	if dataPool == "" {
 		return nil
 	}
-	if err := validateExistingPool(dataPool); err != nil {
+	if err := fsbase.ValidateExistingPool(dataPool); err != nil {
 		return err
 	}
 	// Native membership is checked after acquiring the setup gate. Initial

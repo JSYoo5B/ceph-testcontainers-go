@@ -25,9 +25,12 @@ import (
 // per-package invalid function, measured by AST at the commit before the
 // replacement. The replacement keeps every call site.
 //
-// Counts cover the retained standalone service callers.
+// Counts cover the retained standalone service callers. The 65 call sites of
+// the former cephfs package are now split across cephfs and the packages it
+// was decomposed into.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 65, "rgw": 60,
+	"rbd": 28, "cephfs": 37, "rgw": 60,
+	"cephfs/subvolume": 26, "cephfs/quiesce": 1, "cephfs/internal/fsbase": 1,
 	"rbd/mirror": 28, "cephfs/mirror": 15,
 }
 

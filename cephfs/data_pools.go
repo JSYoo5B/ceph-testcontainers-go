@@ -115,7 +115,7 @@ func cephFSPoolHandle(fs *Filesystem, identity *fsbase.PoolAttachment) *DataPool
 //
 //purpose:construction
 func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, error) {
-	if err := validateExistingPool(name); err != nil {
+	if err := fsbase.ValidateExistingPool(name); err != nil {
 		return nil, err
 	}
 	ctx, done, err := fs.beginDataPoolOperation(ctx)

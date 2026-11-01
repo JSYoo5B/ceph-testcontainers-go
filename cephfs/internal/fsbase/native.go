@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -208,4 +209,14 @@ func (c *Core) CheckSubvolumeCreationPool(ctx context.Context, name, group strin
 		name = info.DataPool
 	}
 	return c.CheckSubvolumeDataPool(ctx, name)
+}
+
+// ValidateExistingPool refuses a name that cannot be an existing native pool,
+// before any command runs. Data-pool attachment and the subvolume layout
+// selections share it; membership is checked later against the native pools.
+func ValidateExistingPool(name string) error {
+	if !naming.ExistingPool.MatchString(name) {
+		return servicehook.Invalid(errors.New("invalid native pool name"))
+	}
+	return nil
 }

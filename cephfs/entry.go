@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -168,11 +167,4 @@ func clonePoolConfig(config ceph.PoolConfig) ceph.PoolConfig {
 		config.ErasureCode = &ec
 	}
 	return config
-}
-
-func validateExistingPool(name string) error {
-	if !naming.ExistingPool.MatchString(name) {
-		return servicehook.Invalid(errors.New("invalid native pool name"))
-	}
-	return nil
 }
