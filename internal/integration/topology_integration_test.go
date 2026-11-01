@@ -7,6 +7,8 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +30,8 @@ func TestMonitorManagerTopology(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
-			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
+				ceph.WithConfigFile(topologyMDSDebugConfig(t)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
@@ -119,12 +122,15 @@ func TestMonitorManagerTopology(t *testing.T) {
 			harness.TopologyFreshConnection(t, ctx, client, false)
 			session.Check(t, ctx, client, "quorum-recovered")
 			harness.TopologyQuorumStall(t, ctx, cluster, clusteraccess.Monitors(t, cluster))
-			if _, err := cluster.AddMonitor(ctx, "replacement"); err != nil {
-				t.Fatal(err)
-			}
-			if err := harness.MonitorHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
-				t.Fatal(err)
-			}
+			// The replacement is recorded phase by phase. A later failure,
+			// such as the new MDS below never registering, logs an "after
+			// replacement" bundle from the cleanup: the MON session lists
+			// (mds.* included), the warm MGR and OSD debug_monc windows, the
+			// FSMap and every owned container's state and log tail, the new
+			// MDS's MonClient and beacon lines among them.
+			recorder := newMonReplacementRecorder("topology", harness.WithSockets(t, cluster), monReplacementDefaultBounds)
+			t.Cleanup(func() { finishMonReplacement(t, recorder) })
+			runMonReplacement(t, ctx, recorder, [][2]string{{"a", "replacement"}})
 			if len(clusteraccess.Monitors(t, cluster)) != 3 {
 				t.Fatal("replacement did not preserve three owned monitors")
 			}
@@ -175,6 +181,19 @@ func TestMonitorManagerTopology(t *testing.T) {
 			t.Log("MGR failover: active identity changed, native volumes commands created and listed durable subvolume groups")
 		})
 	}
+}
+
+// topologyMDSDebugConfig raises only the MDS's MonClient and MDS logging, to
+// levels without per-tick lines: hunting, the MON it found, authentication
+// and the beacons it sends reach the container output from its first start,
+// before it could read the central configuration.
+func topologyMDSDebugConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ceph.conf")
+	if err := os.WriteFile(path, []byte("[mds]\ndebug_monc = 5/10\ndebug_mds = 5/10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // Each daemon's own admin socket shows which OSDMap and MonMap epoch it holds
