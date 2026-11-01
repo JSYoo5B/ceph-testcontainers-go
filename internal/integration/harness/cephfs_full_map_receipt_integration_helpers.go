@@ -74,6 +74,9 @@ type RetainedClientReceipt struct {
 	// MapEvidence has one entry for each map wait that failed, in the order
 	// of the waits, so the full-map and the drained-map incidents stay apart.
 	MapEvidence []retainedMapEvidence `json:"map_evidence,omitempty"`
+	// ServingMaps has one entry for each wait, before a poke, for the PG
+	// that serves the poke to apply the target map.
+	ServingMaps []servingMapWait `json:"serving_maps,omitempty"`
 
 	mapBaselines map[string]mapEvidenceBaseline
 }
@@ -150,6 +153,82 @@ func (r *RetainedClientReceipt) WaitMap(ctx context.Context, phase string, targe
 			phase, target, r.Client, last.ID, last.OSDEpoch, last.Barrier, last.Blocklisted, wait.Probes, pokeCompleted, err)
 	}
 	return nil
+}
+
+// ServingMapView is one reading of the PG that serves a poke: the epoch of
+// the map the PG has applied ("pg query" prints it as "epoch") and the
+// newest map its primary OSD has received ("status" newest_map). The OSD
+// stores a received map before it applies it, so NewestMap can be ahead of
+// PGEpoch. Either stays nil when its read failed.
+type ServingMapView struct {
+	PGEpoch   *uint32 `json:"pg_epoch,omitempty"`
+	NewestMap *uint64 `json:"primary_newest_map,omitempty"`
+}
+
+// servingMapWait is the record of one wait for the serving PG.
+type servingMapWait struct {
+	Phase       string         `json:"phase"`
+	Object      string         `json:"object"`
+	PGID        string         `json:"pgid"`
+	Primary     int            `json:"primary"`
+	TargetEpoch uint32         `json:"target_epoch"`
+	Probes      int            `json:"probes"`
+	ElapsedMs   int64          `json:"elapsed_ms"`
+	Last        ServingMapView `json:"last"`
+	LastError   string         `json:"last_error,omitempty"`
+	// Outcome is empty while the wait runs, then "applied" or "timeout".
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// WaitServingMap observes, with the bounds of observe, until the PG that
+// serves object has applied target or a newer map. The OSD answers a client
+// operation with the maps between the operation's epoch and the map of the
+// PG that runs it, so a poke sent before the PG applied target can leave the
+// client below it; the primary's received newest map is recorded and never
+// accepted in place of the PG's. A failed read is recorded and retried.
+func (r *RetainedClientReceipt) WaitServingMap(ctx context.Context, phase, object, pgid string, primary int, target uint32, bound, probeBound, interval time.Duration, read func(context.Context) (ServingMapView, error)) error {
+	r.ServingMaps = append(r.ServingMaps, servingMapWait{Phase: phase, Object: object, PGID: pgid, Primary: primary, TargetEpoch: target})
+	wait := &r.ServingMaps[len(r.ServingMaps)-1]
+	seen, err := Observe(ctx, bound, probeBound, interval, func(probeCtx context.Context) (ServingMapView, bool, error) {
+		view, err := read(probeCtx)
+		wait.Probes++
+		wait.Last = view
+		wait.LastError = ""
+		if err != nil {
+			wait.LastError = err.Error()
+		}
+		return view, view.PGEpoch != nil && *view.PGEpoch >= target, nil
+	})
+	wait.ElapsedMs = seen.Elapsed.Milliseconds()
+	if err != nil {
+		wait.Outcome = "timeout"
+		pg, newest := "unread", "unread"
+		if wait.Last.PGEpoch != nil {
+			pg = fmt.Sprintf("e%d", *wait.Last.PGEpoch)
+		}
+		if wait.Last.NewestMap != nil {
+			newest = fmt.Sprintf("e%d", *wait.Last.NewestMap)
+		}
+		return fmt.Errorf("serving map %s: pg %s of %s on osd.%d at %s (primary newest %s), want e%d, %d probes, last error %q: %w",
+			phase, pgid, object, primary, pg, newest, target, wait.Probes, wait.LastError, err)
+	}
+	wait.Outcome = "applied"
+	return nil
+}
+
+// ParsePGMapEpoch reads the epoch of the map a PG has applied from the
+// output of "pg <pgid> query".
+func ParsePGMapEpoch(out []byte) (uint32, error) {
+	var query struct {
+		Epoch *uint32 `json:"epoch"`
+	}
+	if err := json.Unmarshal(out, &query); err != nil {
+		return 0, fmt.Errorf("pg query: %w", err)
+	}
+	if query.Epoch == nil || *query.Epoch == 0 {
+		return 0, errors.New("pg query has no epoch")
+	}
+	return *query.Epoch, nil
 }
 
 func sameRetainedStatus(a, b retainedMapSample) bool {
