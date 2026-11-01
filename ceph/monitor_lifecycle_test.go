@@ -50,6 +50,58 @@ func TestMonitorRemovalRetriesDockerCleanupAfterMembershipDisappears(t *testing.
 	}
 }
 
+// Committing a removal renumbers the survivors' ranks, and each drops every
+// client session. A warm daemon that then authenticated again with the still
+// running removed MON kept it as its session after the MON was gone, so the
+// MON's process must already be dead when mon remove is sent.
+func TestMonitorRemovalKillsTheMonitorBeforeTheMembershipRemoval(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c", "d"}, quorum: []string{"a", "b", "c", "d"}}
+	cluster := monitorLifecycleFixture(control)
+	daemon := &monitorLifecycleDaemon{}
+	cluster.members.roster.addMonitor("b", &MonitorContainer{Container: daemon, DaemonName: "b"})
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	kill := slices.Index(control.calls, "kill removed-monitor")
+	removal := slices.IndexFunc(control.calls, func(call string) bool { return strings.HasSuffix(call, " mon remove b") })
+	if kill < 0 || removal < 0 || kill > removal {
+		t.Fatalf("the removed MON still ran when mon remove was sent: %v", control.calls)
+	}
+	if daemon.kills != 1 || daemon.terminations != 1 || control.removals != 1 || cluster.members.roster.monitor("b") != nil {
+		t.Fatal("removal did not kill, remove and terminate the MON exactly once")
+	}
+}
+
+// A refused or failed kill sends no mon remove: the MON stays a running,
+// owned member, and a retry starts over.
+func TestMonitorRemovalWithoutAConfirmedKillDoesNotChangeMembership(t *testing.T) {
+	for _, scenario := range []string{"quorum refusal", "kill failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
+			cluster := monitorLifecycleFixture(control)
+			daemon := &monitorLifecycleDaemon{}
+			if scenario == "quorum refusal" {
+				control.quorum = []string{"a", "b"}
+			} else {
+				daemon.killErr = errors.New("temporary Docker kill failure")
+			}
+			owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
+			cluster.members.roster.addMonitor("b", owned)
+			before := bytes.Clone(cluster.bootstrap.config)
+			err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context())
+			if err == nil || control.removals != 0 || daemon.terminations != 0 || control.copies != 0 || cluster.members.roster.monitor("b") != owned || !bytes.Equal(before, cluster.bootstrap.config) {
+				t.Fatalf("removal without a confirmed kill changed membership or ownership: %v", err)
+			}
+			if scenario == "quorum refusal" && daemon.kills != 0 {
+				t.Fatal("a refused removal killed the MON")
+			}
+			if scenario == "kill failure" && (daemon.kills != 1 || !errors.Is(err, daemon.killErr)) {
+				t.Fatalf("kill failure was not reported: %v", err)
+			}
+		})
+	}
+}
+
 func TestMonitorRemovalProtectsQuorumForActualMembers(t *testing.T) {
 	for _, scenario := range []string{"last member", "remaining minority"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -299,7 +351,19 @@ func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 func monitorLifecycleFixture(control *monitorLifecycleControl) *Container {
 	control.config = []byte("[global]\nmon host = old\n")
 	return &Container{Container: control,
-		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config)}}
+		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config)},
+		// The kill is recorded in the CLI call order, so a test sees whether
+		// it came before the membership removal.
+		monitorKiller: func(_ context.Context, ctr testcontainers.Container) error {
+			control.mu.Lock()
+			defer control.mu.Unlock()
+			control.calls = append(control.calls, "kill "+ctr.GetContainerID())
+			if daemon, ok := ctr.(*monitorLifecycleDaemon); ok {
+				daemon.kills++
+				return daemon.killErr
+			}
+			return nil
+		}}
 }
 
 type monitorLifecycleDaemon struct {
@@ -307,6 +371,8 @@ type monitorLifecycleDaemon struct {
 	terminateErr error
 	terminations int
 	starts       int
+	killErr      error
+	kills        int
 }
 
 func (daemon *monitorLifecycleDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
@@ -332,8 +398,8 @@ type monitorLifecycleControl struct {
 	quorumReads            int
 	quorumHook             func(context.Context, int) error
 	removalErr             error
-	// removalReplyLost commits a removal but never answers it, like a leader
-	// that removed itself before replying.
+	// removalReplyLost commits a removal but never answers it, like a
+	// survivor that dropped the CLI's session when its rank changed.
 	removalReplyLost bool
 }
 

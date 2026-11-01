@@ -26,6 +26,21 @@ launch recipe recorded, or from the image of `OSDOptions.WithImage`; it refuses
 `WithPlacement`. See [OSD storage](../internals/osd-storage.md) for the store
 checks.
 
+## Removing a MON
+
+`MonitorContainer.Remove` kills the MON's process with SIGKILL before it sends
+`mon remove` to the surviving MONs, in the order of Ceph's manual removal
+procedure. When the removal commits, the survivors renumber their ranks and
+drop every client session, and warm daemons and clients hunt again from a
+monmap that still lists the leaving MON. If that MON still ran, it could
+authenticate such a client and exit before the session is ready. The client
+would keep the gone MON as its session: its messenger retries that address
+without resetting the session, and its keepalive timeout needs the session's
+features, so it never fires. A MGR caught this way stops beaconing and the
+cluster reports `MGR_DOWN`; an MDS goes laggy. A graceful stop does not close
+the window, because a MON that handles SIGTERM drops its sessions while it
+still answers authentication.
+
 ## Replacing a MON on its store
 
 With `WithMonitorStorage(MonitorStorage{}.WithVolume())` every MON, the first

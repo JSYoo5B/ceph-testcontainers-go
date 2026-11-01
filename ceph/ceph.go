@@ -99,6 +99,9 @@ type Container struct {
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
 	//testdouble:nil-default-hook
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
+	// monitorKiller replaces killMonitorProcess for a removed MON in tests.
+	//testdouble:nil-default-hook
+	monitorKiller func(context.Context, testcontainers.Container) error
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file by

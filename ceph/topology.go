@@ -316,10 +316,10 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	return c.monitorTopology().retireMonitor(ctx, handle)
 }
 
-// retireMonitor removes the MON of handle from the native membership while a
-// majority quorum survives, terminates its container, refreshes the monitor
-// configuration of the survivors and drops it from the membership. The caller
-// holds c.mu and has admitted the call.
+// retireMonitor kills the MON of handle while a majority quorum survives
+// without it, removes it from the native membership, terminates its container,
+// refreshes the monitor configuration of the survivors and drops it from the
+// membership. The caller holds c.mu and has admitted the call.
 func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorContainer) error {
 	name := handle.DaemonName
 	mon, err := t.currentMonitor(handle)
@@ -357,8 +357,24 @@ func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorConta
 		if remaining <= len(status.MonMap.Mons)/2 || len(status.MonMap.Mons) <= 1 {
 			return errors.New("removing this monitor would lose quorum; add a replacement first")
 		}
-		// A CLI session on the monitor being removed can lose the reply and
-		// wait until its deadline, so send the command only to survivors.
+	}
+	// Stop the MON before it leaves the membership, as Ceph's manual removal
+	// procedure does. Committing the removal renumbers the survivors' ranks,
+	// and each of them then drops every client session. A warm client hunts
+	// again from a monmap that still lists the removed MON. If that MON still
+	// runs, it can authenticate the client and go away before the session is
+	// ready: the client keeps it as its session, its messenger retries the
+	// gone address forever, and the keepalive timeout, which needs the
+	// session's features, never fires. A killed MON authenticates nobody, so
+	// the client settles on a survivor. The surviving majority was checked
+	// above and elects without it.
+	if mon.Container != nil {
+		if err := t.killMonitor(ctx, mon.Container); err != nil {
+			return fmt.Errorf("stop monitor %s before its removal: %w", name, err)
+		}
+	}
+	if member {
+		// The removed MON no longer runs; the CLI hunts only the survivors.
 		survivors := status
 		survivors.MonMap.Mons = slices.DeleteFunc(slices.Clone(status.MonMap.Mons), func(current struct {
 			Name        string `json:"name"`
@@ -1035,11 +1051,11 @@ type ManagerStatus struct {
 // monitorRemovalObserveInterval spaces membership reads while a removal runs.
 const monitorRemovalObserveInterval = 500 * time.Millisecond
 
-// removeMonitorMember sends one removal of name to the monitors in hosts. When
-// the removed monitor leads the quorum, it can commit its own removal and drop
-// the reply forwarded to the CLI, which then waits for its deadline. While the
-// command runs, fresh membership reads that no longer list name count as the
-// commit and end the wait. The command is never resent.
+// removeMonitorMember sends one removal of name to the monitors in hosts. The
+// commit renumbers the survivors' ranks, and each drops its sessions, the
+// CLI's included, so the reply can be lost and the CLI then waits for its
+// deadline. While the command runs, fresh membership reads that no longer list
+// name count as the commit and end the wait. The command is never resent.
 func (dm daemonMaps) removeMonitorMember(ctx context.Context, hosts, name string) error {
 	command, cancel := context.WithCancel(ctx)
 	defer cancel()
