@@ -151,7 +151,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 	if err != nil || key != "PRIVATE-ACCESS" || secret != "PRIVATE-SECRET" {
 		t.Fatal("partial successful creation lost generated credentials")
 	}
-	for _, format := range []string{"%v", "%+v", "%#v"} {
+	for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%t", "%10.3f"} {
 		if value := fmt.Sprintf(format, user); strings.Contains(value, "PRIVATE") {
 			t.Fatalf("formatted handle leaked secret: %s", value)
 		}

@@ -211,3 +211,16 @@ func TestPoolPlacementRefusesUnsafeRequestsBeforeMutation(t *testing.T) {
 		t.Fatal("replacement pool received the placement rule")
 	}
 }
+
+func TestPoolPlacementDefaultsToTheClusterCRUSHRoot(t *testing.T) {
+	for root, want := range map[string]string{"": "default", "rack-root": "rack-root"} {
+		config, err := normalizePoolPlacement("fixture", PoolPlacement{}, clusterCRUSHRoot(options{defaultCRUSHRoot: root}))
+		if err != nil || config.CRUSHRoot != want {
+			t.Fatalf("cluster root %q: placement root %q, want %q: %v", root, config.CRUSHRoot, want, err)
+		}
+	}
+	config, err := normalizePoolPlacement("fixture", PoolPlacement{CRUSHRoot: "other"}, "rack-root")
+	if err != nil || config.CRUSHRoot != "other" {
+		t.Fatalf("an explicit root was replaced: %q %v", config.CRUSHRoot, err)
+	}
+}

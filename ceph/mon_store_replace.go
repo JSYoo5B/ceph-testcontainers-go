@@ -66,7 +66,7 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	name := cur.DaemonName
 	store := c.monStores.store(name)
 	if store == nil || store.attachment == nil || cur.Container == nil || store.attachment.id != cur.GetContainerID() {
-		return nil, fmt.Errorf("monitor %s: its store is not attached to this handle's container", name)
+		return nil, invalid(fmt.Errorf("monitor %s: its store is not attached to this handle's container", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

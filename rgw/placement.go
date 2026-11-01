@@ -79,6 +79,10 @@ func (p Placement) String() string { return "RGW placement " + p.Name }
 // GoString formats the placement target like String.
 func (p Placement) GoString() string { return p.String() }
 
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields.
+func (p Placement) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, p.String()) }
+
 // PlacementState is a native policy snapshot. DefaultPlacement is the
 // zonegroup default, which these helpers never modify. Creation and activation
 // do not assign any user's default placement or storage class.

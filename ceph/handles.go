@@ -148,7 +148,9 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 		return err
 	}
 	id := o.ID
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return err
@@ -192,8 +194,9 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 
 // Detach stops and removes this owned OSD's container but keeps its store in
 // the owned volume and its MON registration, so that DetachedOSD.Reopen can
-// start a new container on them. It needs OSDStorage.WithVolume. The OSD is
-// down, not out or purged, while it is detached; hold noout to keep it in.
+// start a new container on them. It needs OSDStorage.WithVolume. Detach marks
+// the OSD neither out nor purged, but Ceph marks a down OSD out after
+// mon_osd_down_out_interval; hold noout to keep it in.
 //
 // Detach admits the native identity, refuses an OSD that a held network or
 // pause fault targets, fences the instance against new native commands and

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 58,
+  "count": 63,
   "entries": [
     {
       "current": "rgw.Account",
@@ -16,6 +16,14 @@
       "signature": "func(ctx context.Context, config UserConfig) (*User, error)",
       "receiver": "*Account",
       "proposed": "rgw.Account.CreateRootUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Account",
+      "proposed": "rgw.Account.Format",
       "decision": "baseline"
     },
     {
@@ -159,6 +167,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.Gateway.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Gateway",
+      "proposed": "rgw.Gateway.Format",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.Gateway.GoString",
       "kind": "method",
       "signature": "func() string",
@@ -217,6 +233,14 @@
       "current": "rgw.Placement",
       "kind": "type",
       "proposed": "rgw.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Placement",
+      "proposed": "rgw.Placement.Format",
       "decision": "baseline"
     },
     {
@@ -288,6 +312,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.TLSConfig.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "TLSConfig",
+      "proposed": "rgw.TLSConfig.Format",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.TLSConfig.GoString",
       "kind": "method",
       "signature": "func() string",
@@ -315,6 +347,14 @@
       "signature": "func() (accessKey, secretKey string, err error)",
       "receiver": "*User",
       "proposed": "rgw.User.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "User",
+      "proposed": "rgw.User.Format",
       "decision": "baseline"
     },
     {

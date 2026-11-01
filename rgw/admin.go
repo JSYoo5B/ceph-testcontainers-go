@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strconv"
@@ -41,7 +42,7 @@ type UserConfig struct {
 // explicitly by Credentials; formatting this handle never includes secrets.
 // Users remain in Ceph when a gateway is removed, until explicitly removed or
 // the disposable cluster is terminated. Its operations run through the first
-// registered gateway, by name, in the scope of the gateway that created it, so
+// running registered gateway, by name, in the scope of the gateway that created it, so
 // they keep working after that gateway is removed if another one serves it.
 type User struct {
 	owner     *ceph.Container
@@ -105,6 +106,10 @@ func (u User) String() string { return "RGW user " + u.id }
 
 // GoString formats the user like String, so %#v does not print its keys.
 func (u User) GoString() string { return u.String() }
+
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields.
+func (u User) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, u.String()) }
 
 // Quota uses bytes, matching modern radosgw-admin output. For each limit,
 // -1 disables that limit; zero is an actual zero limit. Enabled controls whether

@@ -40,9 +40,9 @@ func TestPackagePagesExist(t *testing.T) {
 }
 
 // interfaceMethods are the methods whose contract is the standard interface
-// they implement (fmt.Stringer, fmt.GoStringer, error, errors.Unwrap and
-// errors.Is/As), so they need no doc comment of their own.
-var interfaceMethods = map[string]bool{"String": true, "GoString": true, "Error": true, "Unwrap": true, "Is": true, "As": true}
+// they implement (fmt.Stringer, fmt.GoStringer, fmt.Formatter, error,
+// errors.Unwrap and errors.Is/As), so they need no doc comment of their own.
+var interfaceMethods = map[string]bool{"String": true, "GoString": true, "Format": true, "Error": true, "Unwrap": true, "Is": true, "As": true}
 
 // Every exported function, type and method of an exported type has a doc
 // comment. A constant or variable is documented by its own comment, its

@@ -148,7 +148,9 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 // bootstrap FSID and the exact native pool ID/name before and after the
 // observation. A pool without a statistics row is unavailable, not empty.
 // All failures, including cancellation after a query, return a zero snapshot.
-// This method makes no writes, retries or background workers. External pool or
+// This method makes no writes, command retries or background workers (a MON
+// connection that times out before a command is sent is reconnected, as in
+// Container.Ceph). External pool or
 // control configuration writers must not race it; the native reads are not an
 // atomic transaction. Poll with a caller deadline for eventual assertions.
 //
@@ -165,7 +167,7 @@ func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 	// the original bootstrap FSID and exact native pool ID/name before and after
 	// the observation. A pool without a statistics row is unavailable, not empty.
 	// All failures, including cancellation after a query, return a zero snapshot.
-	// This method makes no writes, retries or background workers. External pool or
+	// This method makes no writes, command retries or background workers. External pool or
 	// control configuration writers must not race it; the native reads are not an
 	// atomic transaction. Poll with a caller deadline for eventual assertions.
 	name, handle := p.Name, p
@@ -267,7 +269,8 @@ func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 // PGs observes the PGs that Ceph reports for this pool; PoolPGSnapshot
 // describes the evidence. All failures, including post-query cancellation,
 // return a zero snapshot and static errors that omit native output. There
-// are no writes, retries or workers. External native/configuration writers
+// are no writes, command retries or workers (a MON connection that times out
+// before a command is sent is reconnected, as in Container.Ceph). External native/configuration writers
 // must not race these separate reads. Compare original fixture identities
 // and data when asserting movement; these reported PGs are not current
 // mappings or read-after-write evidence.
@@ -288,7 +291,7 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	// no clean, health, owned-OSD membership or expected PG-count predicate applies.
 	//
 	// All failures, including post-query cancellation, return a zero snapshot and
-	// static errors that omit native output. There are no writes, retries or
+	// static errors that omit native output. There are no writes, command retries or
 	// workers. External native/configuration writers must not race these separate
 	// reads. Compare original fixture identities and data when asserting movement;
 	// these reported PGs are not current mappings or read-after-write evidence.
@@ -548,7 +551,7 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
-	desired, err := normalizePoolPlacement(name, placement)
+	desired, err := normalizePoolPlacement(name, placement, clusterCRUSHRoot(c.settings))
 	if err != nil {
 		return err
 	}

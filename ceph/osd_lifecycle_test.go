@@ -468,3 +468,18 @@ func newOSDLifecycleFixture() (*Container, *osdLifecycleControl, *osdLifecycleDa
 	}
 	return cluster, control, daemon
 }
+
+// SetIn waits for a concurrent topology change only while its context lasts.
+func TestOSDSetInQueuedBehindTopologyHonoursTheContext(t *testing.T) {
+	cluster, control, _ := newOSDLifecycleFixture()
+	osd := cluster.fleet.osdHandles.get(3)
+	osd.owner = cluster
+	cluster.mu.Lock()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	err := osd.SetIn(ctx, false)
+	cluster.mu.Unlock()
+	if !errors.Is(err, context.DeadlineExceeded) || len(control.actions) != 0 {
+		t.Fatalf("SetIn behind a held topology lock: %v, actions %v", err, control.actions)
+	}
+}
