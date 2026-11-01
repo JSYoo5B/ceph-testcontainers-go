@@ -269,6 +269,17 @@ jobs:
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
           digests: ${{ inputs.role_digests }}
+      # Every batch, Docker-only ones included: Ryuk and each image that the
+      # compiled tests name besides their roles, found in the source and
+      # pulled before the tests with bounded retries of registry transport
+      # failures (issue 381), so that no test pulls one itself.
+      - name: Prepare Ryuk and the test images
+        id: test_images
+        env:
+          SCENARIO_RELEASE: ${{ inputs.release }}
+          SCENARIO_TESTS: ${{ matrix.tests }}
+          SCENARIO_ROLES: ${{ matrix.image_roles }}
+        run: python3 .github/scripts/in_test_images.py --compile artifacts/scenario/compile --tests "$SCENARIO_TESTS" --release "$SCENARIO_RELEASE" --roles "$SCENARIO_ROLES" --directory artifacts/scenario/test-images
       - name: Record runner storage with the images
         if: matrix.requires_ceph
         continue-on-error: true
@@ -322,6 +333,7 @@ jobs:
           SCENARIO_COMPILE_OUTCOME: ${{ steps.compile.outcome }}
           SCENARIO_DOCKER_OUTCOME: ${{ steps.docker_baseline.outcome }}
           SCENARIO_IMAGES_OUTCOME: ${{ steps.role_images.outcome }}
+          SCENARIO_TEST_IMAGES_OUTCOME: ${{ steps.test_images.outcome }}
           SCENARIO_NATIVE_OUTCOME: ${{ steps.native.outcome }}
           SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: python3 .github/scripts/report_workflow_phases.py

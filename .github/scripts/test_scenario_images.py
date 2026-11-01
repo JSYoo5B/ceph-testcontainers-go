@@ -410,7 +410,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
              "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
-             "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS", "--reaper",
+             "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
             ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES", ">>", "$GITHUB_ENV"],
@@ -461,7 +461,7 @@ class ScenarioImageTests(unittest.TestCase):
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
                 "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
-                "--roles", roles, "--digests", digests, "--reaper",
+                "--roles", roles, "--digests", digests,
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
             ])

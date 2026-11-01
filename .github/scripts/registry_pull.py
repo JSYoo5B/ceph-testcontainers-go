@@ -16,6 +16,7 @@ or user information, so a token request's account or scope never reaches a
 receipt.
 """
 
+import json
 import re
 import time
 from urllib.parse import urlsplit
@@ -134,3 +135,68 @@ def pull(attempt, sleep=None, delays=DELAYS):
 
 def describe(failure):
     return "registry transport %s at %s %s" % (failure["reason"], failure["phase"], failure["endpoint"])
+
+
+IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
+REPO_DIGEST = re.compile(r"[^\s]+@sha256:[a-f0-9]{64}\Z")
+ABSENT = re.compile(r"\bNo such (?:image|object):", re.IGNORECASE)
+
+
+class PreparationError(RuntimeError):
+    """An image that could not be prepared; failure names the registry
+    transport failure when that was the cause."""
+
+    def __init__(self, message, failure=None):
+        super().__init__(message)
+        self.failure = failure
+
+
+def resolve(name, reference, platform, inspect, attempt, pulls, sleep=None):
+    """Inspect reference, pull it only when Docker reports it absent, and
+    return its local identity.
+
+    inspect(reference) returns a CompletedProcess of docker image inspect;
+    attempt(number) runs one docker pull and returns (exit code, output).
+    The pull attempts are recorded in pulls[name]."""
+    # Ordinary inspection keeps this compatible with engines predating the
+    # inspect --platform API (1.49).
+    result = inspect(reference)
+    if result.returncode:
+        # Permission/daemon/API errors are not evidence of an absent image
+        # and must not cause an unrelated registry pull.
+        if not ABSENT.search(result.stderr or ""):
+            raise PreparationError(name + " image inspection failed; image absence was not confirmed")
+        passed, attempts = pull(attempt, sleep=sleep)
+        pulls[name] = attempts
+        if not passed:
+            last = attempts[-1]
+            message = name + " image pull failed (exit " + str(last["exit_code"]) + ")"
+            failure = None
+            if last.get("transport"):
+                # The registry was not reached; nothing about the image is
+                # established.
+                failure = {"image": name, "reference": reference, "attempts": len(attempts)} | last["transport"]
+                message += " after " + str(len(attempts)) + " attempts: " + describe(last["transport"])
+            raise PreparationError(message, failure)
+        result = inspect(reference)
+        if result.returncode:
+            raise PreparationError(name + " image is unavailable after pull")
+    try:
+        inspected = json.loads(result.stdout)
+    except ValueError:
+        inspected = None
+    if not isinstance(inspected, list) or len(inspected) != 1 or not isinstance(inspected[0], dict):
+        raise PreparationError(name + " image inspection has an invalid shape")
+    image = inspected[0]
+    image_id = image.get("Id")
+    if not isinstance(image_id, str) or IMAGE_ID.fullmatch(image_id) is None:
+        raise PreparationError(name + " image has no immutable local image ID")
+    if image.get("Os") != "linux" or image.get("Architecture") != platform.split("/")[1]:
+        raise PreparationError(name + " image platform differs from the native Docker engine")
+    repo_digests = image.get("RepoDigests")
+    if repo_digests is None:
+        repo_digests = []
+    if (not isinstance(repo_digests, list)
+            or any(not isinstance(value, str) or REPO_DIGEST.fullmatch(value) is None for value in repo_digests)):
+        raise PreparationError(name + " image has invalid registry digest metadata")
+    return {"reference": reference, "image_id": image_id, "repo_digests": repo_digests, "platform": platform}

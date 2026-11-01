@@ -107,12 +107,20 @@ class Job:
                               "image_id": "sha256:" + str(index) * 64, "repo_digests": [],
                               "platform": "linux/amd64"} for index, role in enumerate(("essential", "client"))}})
 
+    def test_images(self, passed=True):
+        report = {"passed": passed, "images": [], "skipped": []}
+        if not passed:
+            report |= {"classification": "registry-transport", "error": "reaper image pull failed (exit 1) after 3 "
+                       "attempts: registry transport tls-handshake-timeout at token https://auth.docker.io/token"}
+        write(self.scenario / "test-images/summary.json", report)
+
     def passing(self):
         self.phases()
         self.modules()
         self.compile()
         self.docker()
         self.roles()
+        self.test_images()
         self.native()
         return self
 
@@ -397,14 +405,15 @@ class NormalizeTest(unittest.TestCase):
 
     def test_compile_failure_skips_later_phases(self):
         job = self.job
-        job.phases(compile="failure", docker="skipped", images="skipped", native="skipped", cleanup="skipped")
+        job.phases(compile="failure", docker="skipped", images="skipped", test_images="skipped", native="skipped",
+                   cleanup="skipped")
         job.modules()
         job.compile(passed=False)
         row = job.row()
         self.assertEqual(row["outcome"]["status"], "failed")
         self.assertEqual(row["first_failure"]["phase"], "compile")
         self.assertEqual(row["first_failure"]["classification"], "compile-failure")
-        self.assertEqual(row["outcome"]["skipped_phases"], ["docker", "images", "native", "cleanup"])
+        self.assertEqual(row["outcome"]["skipped_phases"], ["docker", "images", "test_images", "native", "cleanup"])
         self.assertEqual(phase(row, "native")["evidence"], "missing")
         self.assertEqual(row["tests"], "missing")
         self.assertEqual(row["build"]["build_key"], "missing")
@@ -765,6 +774,17 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual((config["attempts"], config["failed"]), (1, 0))
         self.assertEqual(config["excluded"], {"image_failure": 1})
         self.assertEqual(history.attempt_kind(self.attempt("failed", "3")), "assertion_failure")
+
+    def test_test_image_preparation_failure_is_an_image_failure_with_its_classification(self):
+        job = Job(self.root / "test-images").passing()
+        job.phases(test_images="failure", native="skipped", cleanup="success")
+        job.test_images(passed=False)
+        (job.scenario / "native/report.json").unlink()
+        row = job.row()
+        self.assertEqual(row["first_failure"]["phase"], "test_images")
+        self.assertEqual(row["first_failure"]["classification"], "registry-transport")
+        self.assertIn("tls-handshake-timeout", row["first_failure"]["error"])
+        self.assertEqual(history.attempt_kind(row), "image_failure")
 
     def test_another_tree_or_image_is_another_configuration(self):
         base = self.attempt()

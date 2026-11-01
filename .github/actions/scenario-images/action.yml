@@ -1,5 +1,5 @@
 name: Prepare published Ceph role images
-description: Resolve existing native role images and the Ryuk image for a scenario without building them
+description: Resolve existing native role images for a scenario without building them
 inputs:
   artifact_name:
     description: Unique image identity artifact name for this scenario job
@@ -26,7 +26,7 @@ runs:
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
           --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
-          --roles "$SCENARIO_ROLES" --digests "$SCENARIO_DIGESTS" --reaper \
+          --roles "$SCENARIO_ROLES" --digests "$SCENARIO_DIGESTS" \
           --platform linux/amd64 --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images
         printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES" >> "$GITHUB_ENV"

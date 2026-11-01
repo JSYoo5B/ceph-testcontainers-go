@@ -11,6 +11,12 @@
 // By default the checkout under -root is the head, and the diff is taken
 // from the merge base of -base and HEAD to the working tree. With -head,
 // -root holds that commit's tree, exported from the repository -repo.
+//
+// With -images TAGS -tests A,B it instead reports the images that the
+// declarations reachable from those tests name: each complete image
+// reference among their string constants (also constants of other packages),
+// each image reference prefix that a test completes at run time, and a use of
+// the pinned role image file. CI prepares those images before the tests run.
 package main
 
 import (
@@ -452,7 +458,7 @@ func graphSelection(opts options, pkgDir, mergeBase string, analysed []fileDiff,
 		if b, ok := graphs[key]; ok {
 			return b, nil
 		}
-		g, err := load(opts.root, opts.pattern, opts.with, tags, opts.goos, opts.goarch)
+		g, err := load(opts.root, opts.pattern, opts.with, tags, opts.goos, opts.goarch, loadOptions{})
 		if err != nil {
 			return nil, []string{"type-based analysis failed: " + err.Error()}
 		}
@@ -542,9 +548,30 @@ func main() {
 	flag.StringVar(&opts.goos, "goos", "linux", "GOOS of the batch builds")
 	flag.StringVar(&opts.goarch, "goarch", "amd64", "GOARCH of the batch builds")
 	flag.StringVar(&batches, "batches", "", `JSON file of [{"id": ..., "tags": "a,b"}]`)
+	var images, tests string
+	flag.StringVar(&images, "images", "", "report the images that the comma-separated -tests name under these build tags, instead of a selection")
+	flag.StringVar(&tests, "tests", "", "comma-separated top-level tests of -images")
 	flag.Parse()
 	if with != "" {
 		opts.with = strings.Split(with, ",")
+	}
+	if images != "" {
+		if tests == "" || opts.base != "" || batches != "" || flag.NArg() != 0 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		out, err := testImages(opts, images, strings.Split(tests, ","))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(out); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	if opts.base == "" || batches == "" || flag.NArg() != 0 {
 		flag.Usage()
