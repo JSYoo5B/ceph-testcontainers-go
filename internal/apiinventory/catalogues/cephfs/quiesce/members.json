@@ -1,0 +1,20 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/quiesce",
+  "count": 8,
+  "types": {
+    "cephfs/quiesce.Config": [
+      "Config.Expiration field time.Duration",
+      "Config.Timeout field time.Duration"
+    ],
+    "cephfs/quiesce.State": [
+      "State.Expiration field float64",
+      "State.ID field string",
+      "State.Members field []string",
+      "State.State field string",
+      "State.Timeout field float64",
+      "State.Version field uint64"
+    ]
+  }
+}

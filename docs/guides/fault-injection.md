@@ -25,7 +25,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosHandle.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
-| The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
+| The MDS evicts a silent CephFS client quickly | `session.OverrideTimeouts` (`cephfs/session`) with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `TimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `override.AddBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
 Each condition ends with the cluster, so the undo step is optional when the test
@@ -546,7 +546,7 @@ if err != nil {
 
 `address` is `IP:port/nonce` with a non-zero nonce, from the client itself
 (librados `get_addrs`), `ObjectWatchers`, `rbd.ImageClients` or
-`cephfs.Filesystem.Sessions`. Bare IPs, ranges and existing entries are
+`session.List` (`cephfs/session`). Bare IPs, ranges and existing entries are
 refused. `Restore` removes only its own entry; whether the old session then
 recovers is up to the client library, so most tests reconnect.
 
@@ -695,12 +695,12 @@ an abrupt loss, `Stop` the OSD instead.
 The MDS evicts a silent client after `session_timeout` (60 s) or
 `session_autoclose` (300 s). These are MDS map settings, so `override.SetConfig`
 cannot change them;
-[`OverrideSessionTimeouts`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#Filesystem.OverrideSessionTimeouts)
+[`session.OverrideTimeouts`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session#OverrideTimeouts)
 shortens them for one filesystem, to no less than 30 s.
 
 ```golang
 fs := cephfs.Filesystems(cluster)[0]
-change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{
+change, err := session.OverrideTimeouts(ctx, fs, session.Limits{
 	Timeout:   30 * time.Second,
 	Autoclose: time.Minute,
 })
@@ -717,7 +717,7 @@ if pause != nil {
 if err != nil {
 	t.Fatal(err)
 }
-// Poll fs.Sessions until the session is gone and BlocklistEntries until its
+// Poll session.List until the session is gone and BlocklistEntries until its
 // Address appears.
 ```
 
@@ -729,7 +729,7 @@ if err != nil {
   does not remove it; it expires after `mds_blocklist_interval` (1 hour).
 - After `Resume`, the old session fails with ESHUTDOWN (errno 108). A new mount
   gets a new nonce and works.
-- `Sessions` lists the client once per rank and includes the fixture's own
+- `session.List` lists the client once per rank and includes the fixture's own
   short-lived probes. Match your client by `ID`, since on host networking every
   container shares the hostname.
 
@@ -779,7 +779,7 @@ if err != nil {
 | `OSDStates`, `OSDFlags` | Up/in state and weight of owned OSDs, global flags |
 | `Pool.PGs` | PG states, up/acting sets and primaries |
 | `QuorumStatus`, `ManagerStatus` | MON quorum and the active MGR |
-| `cephfs.Filesystem.MDSStatus`, `Sessions` | Rank ownership, standbys and client sessions |
+| `cephfs.Filesystem.MDSStatus`, `session.List` | Rank ownership, standbys and client sessions |
 | `BlocklistEntries`, `ObjectWatchers`, `rbd.ImageClients` | Fencing, watches and locks |
 
 Health and placement reports lag behind the event that caused them, so poll

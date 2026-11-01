@@ -3,16 +3,20 @@ package cephfs
 import (
 	"go/ast"
 	"go/types"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 )
 
 // mdsFleetBindings are the fields of mdsFleet and filesystemDescriptor with the
 // Filesystem field each one must be bound to, by address, in Filesystem.fleet.
+// core is bound to the Filesystem's own foundation core, fsbase.Of(fs).
 var mdsFleetBindings = map[string]string{
-	"id": "id", "mds": "mds", "first": "Container",
+	"core": "", "config": "config", "mds": "mds", "first": "Container",
 	"name": "FilesystemName", "metadataPool": "MetadataPool", "dataPool": "DataPool",
 }
 
@@ -86,8 +90,12 @@ func TestMDSFleetIsBuiltOnlyByFilesystemFleet(t *testing.T) {
 						problems = append(problems, "Filesystem.fleet binds unknown field "+key)
 						return true
 					}
-					if got := types.ExprString(kv.Value); got != "&"+recv+"."+want {
-						problems = append(problems, "Filesystem.fleet binds "+key+" to "+got+", want &"+recv+"."+want)
+					wantExpr := "&" + recv + "." + want
+					if key == "core" {
+						wantExpr = "fsbase.Of(" + recv + ")"
+					}
+					if got := types.ExprString(kv.Value); got != wantExpr {
+						problems = append(problems, "Filesystem.fleet binds "+key+" to "+got+", want "+wantExpr)
 					}
 					bound[key]++
 					return true
@@ -170,14 +178,40 @@ func TestMDSStateIsReachedOnlyThroughTheFleet(t *testing.T) {
 // the fleet uses agrees with the Filesystem it acts for: a replacement entry of
 // the same name, or a closed cluster, refuses the fleet as well.
 func TestFleetRegisteredFollowsTheFilesystem(t *testing.T) {
-	fs, _ := subvolumeFixture()
+	fs, _ := filesystemFixture()
 	fleet := fs.fleet()
-	if !fleet.id.registered() {
+	if !fleet.core.Registered() {
 		t.Fatal("the fleet of a live filesystem is not registered")
 	}
-	replacement := &Filesystem{id: filesystemIdentity{cluster: fs.id.cluster, name: fs.id.name}}
-	filesystems(fs.id.cluster).byName[fs.id.name] = replacement
-	if fleet.id.registered() || !replacement.fleet().id.registered() {
+	replacement := newFilesystem(fs.base().Cluster(), Config{Name: fs.base().Name()}, nil)
+	filesystems(fs.base().Cluster()).byName[fs.base().Name()] = replacement
+	if fleet.core.Registered() || !replacement.fleet().core.Registered() {
 		t.Fatal("a replaced registry entry still admits the original fleet")
+	}
+}
+
+// The rank reader that newFilesystem injects into the core reports MDSStatus's
+// active ranks with their native state and whether a daemon of the roster
+// holds them, which the export pin admission of cephfs/subvolume checks.
+func TestCoreActiveRanksReportRosterOwnershipAndNativeState(t *testing.T) {
+	fs, native := filesystemFixture()
+	dump := `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":2,"metadata_pool":1,"data_pools":[2,3],"info":{"a":{"name":"a","rank":0,"gid":101,"state":"up:active"},"b":{"name":"b","rank":1,"gid":102,"state":"up:active"}}}}],"standbys":[]}`
+	native.Output["fs dump --format json"] = dump
+	fs.mds.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}}
+	ranks, err := fs.base().ActiveRanks(t.Context())
+	want := &fsbase.ActiveRanks{FilesystemID: 41, MaxMDS: 2, Active: []fsbase.ActiveRank{{Rank: 0, State: "up:active", Owned: true}, {Rank: 1, State: "up:active"}}}
+	if err != nil || !reflect.DeepEqual(ranks, want) {
+		t.Fatalf("a daemon outside the roster: active ranks = %+v, %v; want %+v", ranks, err, want)
+	}
+	// A recovering daemon does not hold an active rank.
+	native.Output["fs dump --format json"] = strings.Replace(dump, `"rank":1,"gid":102,"state":"up:active"`, `"rank":1,"gid":102,"state":"up:replay"`, 1)
+	fs.mds.roster.daemons = append(fs.mds.roster.daemons, &MDS{ID: "b", FilesystemName: "fixture"})
+	ranks, err = fs.base().ActiveRanks(t.Context())
+	if err != nil || slices.ContainsFunc(ranks.Active, func(r fsbase.ActiveRank) bool { return r.Rank == 1 && r.State == "up:active" }) {
+		t.Fatalf("a recovering rank was reported active: %+v, %v", ranks, err)
+	}
+	native.Fail = "fs dump --format json"
+	if _, err := fs.base().ActiveRanks(t.Context()); err == nil {
+		t.Fatal("a failed FSMap read was not reported")
 	}
 }

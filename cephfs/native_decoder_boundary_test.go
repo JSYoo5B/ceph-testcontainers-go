@@ -52,13 +52,13 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 	ast.Inspect(reader.Body, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
 			switch name := calleeName(call); name {
-			case "readNativePools", "Ceph", "decodeMDSReplacementMap":
+			case "ReadNativePools", "Ceph", "decodeMDSReplacementMap":
 				order = append(order, name)
 			}
 		}
 		return true
 	})
-	if !slices.Equal(order, []string{"readNativePools", "Ceph", "decodeMDSReplacementMap"}) {
+	if !slices.Equal(order, []string{"ReadNativePools", "Ceph", "decodeMDSReplacementMap"}) {
 		t.Errorf("reader order changed: %v", order)
 	}
 	last, ok := reader.Body.List[len(reader.Body.List)-1].(*ast.ReturnStmt)

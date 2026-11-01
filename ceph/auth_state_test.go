@@ -425,13 +425,18 @@ func TestAuthRecordsAreOnlyUsedWithTheClusterMutexHeld(t *testing.T) {
 
 // TestAuthHookCallersInCephFSHoldTheClusterMutex pins the callers of the two
 // hooks that reach the records from another package. A function of the cephfs
-// package that calls them, or authorizationClientCaps which does, takes the
-// cluster mutex first, unless it is authorizationClientCaps itself, whose
-// contract is "must be called with cluster.mu held".
+// or cephfs/subvolume package that calls them, or authorizationClientCaps
+// which does, takes the cluster mutex first, unless it is
+// authorizationClientCaps itself, whose contract is "must be called with
+// cluster.mu held". The subvolume grants are the callers.
 func TestAuthHookCallersInCephFSHoldTheClusterMutex(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "cephfs", "*.go"))
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, dir := range []string{"cephfs", filepath.Join("cephfs", "subvolume")} {
+		found, err := filepath.Glob(filepath.Join("..", dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, found...)
 	}
 	var problems []string
 	hookCalls, holders := 0, 0
@@ -463,6 +468,12 @@ func TestAuthHookCallersInCephFSHoldTheClusterMutex(t *testing.T) {
 							lockAt = call.Pos()
 						}
 					case "SettleClient", "SetClientRevoked", "authorizationClientCaps":
+						calls = append(calls, call.Pos())
+					}
+				case *ast.Ident:
+					// authorizationClientCaps is a plain function of the
+					// subvolume package.
+					if f.Name == "authorizationClientCaps" {
 						calls = append(calls, call.Pos())
 					}
 				}

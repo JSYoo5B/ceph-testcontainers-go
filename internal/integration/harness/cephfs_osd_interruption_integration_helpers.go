@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -378,7 +378,7 @@ func RunCephFSOSDInterruption(t *testing.T) {
 		t.Fatalf("a held call returned while the OSD was frozen: %s", state.raw)
 	}
 	for _, session := range []struct {
-		before cephfs.Session
+		before cephfssession.Session
 		client uint64
 	}{{writerSession, opened.Client}, {waiterSession, waiting.Client}} {
 		if during := CephFSRetainedSession(t, ctx, m.FS, session.client, 0); during.Address != session.before.Address {
@@ -463,7 +463,7 @@ func RunCephFSOSDInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, session := range []cephfs.Session{writerSession, waiterSession} {
+	for _, session := range []cephfssession.Session{writerSession, waiterSession} {
 		if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
 			t.Fatalf("client.%d %s was blocklisted: %+v", session.ID, session.Address, entries)
 		}

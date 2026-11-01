@@ -84,9 +84,13 @@ discussed.
    handle. Keep a domain word where the package covers multiple fault or
    service kinds; do not remove every repeated word mechanically.
 2. A reversible change of cluster-wide policy is an `override.SetX` function
-   (or a service package's `OverrideX` method) that saves the prior state and
-   returns a handle with an explicit `Restore`. It implies no expiry,
-   context-cancellation rollback or scope-exit cleanup.
+   that saves the prior state and returns a handle with an explicit
+   `Restore`. A reversible change of one service resource's policy is an
+   `OverrideX` method of that resource's handle
+   (`subvolume.Subvolume.OverridePin`), or, for a setting of a parent that a
+   feature package owns, an `OverrideX` function of that package taking the
+   parent handle (`session.OverrideTimeouts(ctx, fs, limits)`). Either form
+   implies no expiry, context-cancellation rollback or scope-exit cleanup.
    `override.SetFullRatios` is the established example.
 3. Use `AddX`, `StartX` or `ApplyX` when the operation owns a new resource or
    disruption rather than adopting arbitrary existing state. The returned
@@ -118,7 +122,14 @@ discussed.
 10. An operation that acts on one resource handle is a method of that handle,
     named without the resource word: `volume.Resize(ctx, n)`,
     `snapshot.Clone(ctx, cfg)`, `grant.Deauthorize(ctx)`, not
-    `fs.ResizeSubvolume(ctx, volume, n)`. The handle carries the identity its
-    parent recorded, so a handle cannot be passed to a foreign parent. Creation,
-    listing and name-based queries stay on the parent (`fs.CreateSubvolume`,
-    `fs.SubvolumeInfo`).
+    `subvolume.Resize(ctx, fs, volume, n)`. The handle carries the identity its
+    parent recorded, so a handle cannot be passed to a foreign parent.
+    Creation, listing and name-based queries of a feature that has its own
+    package are functions of that package that take the existing parent:
+    `subvolume.Create(ctx, fs, cfg)`, `subvolume.Info(ctx, fs, name, group)`.
+    They act on an existing fixture and start no container, so they are not
+    entry points; the package's `Run` conventions are unchanged. Inside the
+    feature package the names drop the package word (`subvolume.Create`, not
+    `subvolume.CreateSubvolume`). A query whose name would collide with its
+    returned type keeps the noun of the native observation, and the type takes
+    another noun (`subvolume.Info` returns `*subvolume.Metadata`).

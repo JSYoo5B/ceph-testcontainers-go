@@ -1,6 +1,7 @@
 package cephfs
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 )
 
@@ -18,7 +19,7 @@ type coldMDSMapExpectation struct {
 	// reservedName is the name the first MDS would take, which must be absent.
 	reservedName string
 	// native is the identity captured at creation; the decoders require it.
-	native *cephFSNativeIdentity
+	native *fsbase.NativeIdentity
 	// dataPools are the data pool IDs attached when the filesystem was created.
 	dataPools []int64
 }
@@ -33,9 +34,9 @@ type stoppedMDSMapExpectation struct {
 	// filesystem is the configured name of the owned filesystem.
 	filesystem string
 	// native is the identity captured at creation; the decoders require it.
-	native *cephFSNativeIdentity
+	native *fsbase.NativeIdentity
 	// pools is the native pool identity read for this decode.
-	pools *cephFSNativePools
+	pools *fsbase.NativePools
 	// activeMDS, standbyMDS and standbyReplay are the configured policy.
 	activeMDS, standbyMDS int
 	standbyReplay         bool
@@ -55,9 +56,9 @@ type replacementMDSMapExpectation struct {
 	// workerExists reports whether the replacement daemon was already created.
 	workerExists bool
 	// native is the identity captured at creation; the decoders require it.
-	native *cephFSNativeIdentity
+	native *fsbase.NativeIdentity
 	// pools is the native pool identity read for this decode.
-	pools *cephFSNativePools
+	pools *fsbase.NativePools
 }
 
 // decodeColdMDSMap checks that the owned filesystem is still cold; see
@@ -83,21 +84,21 @@ func decodeMDSReplacementMap(data []byte, want replacementMDSMapExpectation) (*m
 }
 
 // mdsMapNative is the plain form of a captured identity; nil stays nil.
-func mdsMapNative(native *cephFSNativeIdentity) *mdsmap.Native {
+func mdsMapNative(native *fsbase.NativeIdentity) *mdsmap.Native {
 	if native == nil {
 		return nil
 	}
-	return &mdsmap.Native{ID: native.id, MetadataPool: native.metadataPool}
+	return &mdsmap.Native{ID: native.ID, MetadataPool: native.MetadataPool}
 }
 
 // mdsMapPools is the plain form of a pool identity read; nil stays nil.
-func mdsMapPools(pools *cephFSNativePools) *mdsmap.Pools {
+func mdsMapPools(pools *fsbase.NativePools) *mdsmap.Pools {
 	if pools == nil {
 		return nil
 	}
-	names := make(map[int64]string, len(pools.pools))
-	for _, pool := range pools.pools {
+	names := make(map[int64]string, len(pools.Pools))
+	for _, pool := range pools.Pools {
 		names[pool.ID] = pool.Name
 	}
-	return &mdsmap.Pools{DataPools: pools.dataPools, Names: names}
+	return &mdsmap.Pools{DataPools: pools.DataPools, Names: names}
 }

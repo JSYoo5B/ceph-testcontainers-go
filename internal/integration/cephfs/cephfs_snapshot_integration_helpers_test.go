@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -37,15 +38,15 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "restores"})
+	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "restores"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
+	source, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceInfo, err := fs.SubvolumeInfo(ctx, source.Name, source.GroupName)
+	sourceInfo, err := subvolume.Info(ctx, fs, source.Name, source.GroupName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshotInfo, err := fs.SubvolumeSnapshotInfo(ctx, source.Name, source.GroupName, snapshot.Name)
+	snapshotInfo, err := subvolume.SnapshotInfo(ctx, fs, source.Name, source.GroupName, snapshot.Name)
 	if err != nil || snapshotInfo.HasPendingClones || snapshotInfo.Path != snapshot.Path || snapshotInfo.DataPool != fs.DataPool {
 		t.Fatalf("unexpected initial snapshot: %+v error=%v", snapshotInfo, err)
 	}
@@ -87,7 +88,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	noWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	delay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "30")
 	span := timeline.Begin(delayed, harness.CloneTimelineSubmit, "snapshot_clone_delay=30 snapshot_clone_no_wait=false")
-	clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "restored", GroupName: group.Name})
+	clone, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: "restored", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +98,8 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	if err != nil || status.State != "pending" || status.SourceSnapshot != snapshot.Name || status.SourceSubvolume != source.Name {
 		t.Fatalf("native clone did not stay pending during delay: %+v error=%v", status, err)
 	}
-	snapshotInfo, err = fs.SubvolumeSnapshotInfo(ctx, source.Name, source.GroupName, snapshot.Name)
-	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, cephfs.SnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
+	snapshotInfo, err = subvolume.SnapshotInfo(ctx, fs, source.Name, source.GroupName, snapshot.Name)
+	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, subvolume.SnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
 		latest, statusErr := clone.Status(ctx)
 		t.Logf("latest clone status after missing source protection: %+v error=%v", latest, statusErr)
 		t.Fatalf("source snapshot did not track pending clone: %+v error=%v", snapshotInfo, err)
@@ -115,7 +116,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 		t.Fatal("delayed clone was adopted or wait ignored caller deadline")
 	}
 	waitCancel()
-	if duplicate, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: clone.Name, GroupName: clone.GroupName}); err == nil || duplicate != nil {
+	if duplicate, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: clone.Name, GroupName: clone.GroupName}); err == nil || duplicate != nil {
 		t.Fatal("duplicate target accepted")
 	}
 	span.Ok()
@@ -134,7 +135,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	}
 	span.Ok()
 	span = timeline.Begin(delayed, harness.CloneTimelineDataCheck, "")
-	restoredInfo, err := fs.SubvolumeInfo(ctx, restored.Name, restored.GroupName)
+	restoredInfo, err := subvolume.Info(ctx, fs, restored.Name, restored.GroupName)
 	if err != nil || restoredInfo.Type != "clone" || restoredInfo.State != "complete" || restoredInfo.QuotaBytes != 8<<20 || restoredInfo.DataPool != sourceInfo.DataPool || restoredInfo.PoolNamespace != sourceInfo.PoolNamespace || restoredInfo.Path == source.Path {
 		t.Fatalf("clone did not inherit snapshot quota/layout: %+v error=%v", restoredInfo, err)
 	}
@@ -145,7 +146,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	// A pool override selects a different filesystem data pool and native Ceph
 	// intentionally clears the inherited pool namespace for the new copy.
 	span = timeline.Begin(otherPool, harness.CloneTimelineSubmit, "settings restored")
-	other, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "other-pool", DataPool: extraPool})
+	other, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: "other-pool", DataPool: extraPool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,12 +158,12 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	}
 	span.Ok()
 	span = timeline.Begin(otherPool, harness.CloneTimelineDataCheck, "")
-	otherInfo, err := fs.SubvolumeInfo(ctx, otherVolume.Name, otherVolume.GroupName)
+	otherInfo, err := subvolume.Info(ctx, fs, otherVolume.Name, otherVolume.GroupName)
 	if err != nil || otherInfo.QuotaBytes != 8<<20 || otherInfo.DataPool != extraPool || otherInfo.PoolNamespace != "" {
 		t.Fatalf("pool override did not apply native quota/namespace semantics: %+v error=%v", otherInfo, err)
 	}
 	cephFSSnapshotIO(t, ctx, client, filesystem, otherVolume.Path, source.Path, "verify-clone", extraPool, "", 8<<20)
-	snapshotInfo, err = fs.SubvolumeSnapshotInfo(ctx, source.Name, source.GroupName, snapshot.Name)
+	snapshotInfo, err = subvolume.SnapshotInfo(ctx, fs, source.Name, source.GroupName, snapshot.Name)
 	if err != nil || snapshotInfo.HasPendingClones {
 		t.Fatalf("completed clones still protect source: %+v error=%v", snapshotInfo, err)
 	}
@@ -179,7 +180,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	cephFSSnapshotIO(t, ctx, client, filesystem, otherVolume.Path, source.Path, "verify-clone", extraPool, "", 8<<20)
 	span.Ok()
 	span = timeline.Begin(delayed, harness.CloneTimelineCleanup, "")
-	for _, volume := range []*cephfs.Subvolume{restored, otherVolume, source} {
+	for _, volume := range []*subvolume.Subvolume{restored, otherVolume, source} {
 		if err := volume.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}

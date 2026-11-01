@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 )
 
 func shutdownMap(id int64, maxMDS int, up string) string {
@@ -145,7 +146,7 @@ func TestRemoveReadFailurePreservesOwnershipBeforeAndAfterDown(t *testing.T) {
 
 func TestRemoveRefusesReplacedFilesystemBeforeShutdown(t *testing.T) {
 	cluster, f := cephFSRemovalCluster(t, true)
-	filesystems(cluster).byName["app"].id.native = &cephFSNativeIdentity{id: 99}
+	filesystems(cluster).byName["app"].base().ReplaceNative(&fsbase.NativeIdentity{ID: 99})
 	app := ownedFilesystem(t, cluster, "app")
 	if err := app.Remove(t.Context()); err == nil {
 		t.Fatal("replaced filesystem was admitted")

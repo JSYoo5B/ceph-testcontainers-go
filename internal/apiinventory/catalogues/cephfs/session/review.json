@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "cephfs/session",
+  "declarations_sha256": "6811f3551b9229ffd1ddf5e4af91430b265005fa3e57280579942fdbdbe37323",
+  "members_sha256": "24c298909bf17f8e8dfab3fff47c0f45e736e8faf489152a6e14aa2d17f9f225",
+  "declarations": 7,
+  "members": 11,
+  "review": "api-naming.md",
+  "page": "cephfs/session/README.md"
+}

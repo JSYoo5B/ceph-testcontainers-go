@@ -359,14 +359,14 @@ func TestMDSReplacementDecodeNativeReadFailuresKeepTheirContext(t *testing.T) {
 // identity is read from the same document: it calls the decoder directly.
 func TestMDSReplacementDecoderRefusesInvalidPoolIdentity(t *testing.T) {
 	r := newReplacementMDSFixture(t)
-	pools, err := r.fs.id.readNativePools(t.Context())
+	pools, err := r.fs.base().ReadNativePools(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := []byte(coldMDSTestJSON(r.n.native))
 	want := func(dataPools []int64) replacementMDSMapExpectation {
 		clone := *pools
-		clone.dataPools = dataPools
+		clone.DataPools = dataPools
 		return replacementMDSMapExpectation{oldName: "target-0", filesystem: "target", reservedName: "target-1", native: r.old.identity.native, pools: &clone}
 	}
 	// The document attaches pool 1; the identity must agree for the policy

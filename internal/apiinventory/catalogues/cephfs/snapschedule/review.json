@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "cephfs/snapschedule",
+  "declarations_sha256": "6fb9251aa3e55f2777b0699877ad1a3f4a606bd264374ca04adcbcdba4fd9264",
+  "members_sha256": "f3460a4b318dbbf7a74fffeaf459172e9c841d7b7f4995a443e33e014eb6452c",
+  "declarations": 7,
+  "members": 19,
+  "review": "api-naming.md",
+  "page": "cephfs/snapschedule/README.md"
+}

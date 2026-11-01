@@ -13,6 +13,8 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -29,18 +31,18 @@ func testCephFSSubvolumeClientAuthorization(t *testing.T, host bool) {
 	}
 	cluster, admin := harness.NewServiceCluster(t, options...)
 	fs := cephfs.Filesystems(cluster)[0]
-	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "tenants"})
+	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "tenants"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	volumes := make([]*cephfs.Subvolume, 0, 2)
-	infos := make([]*cephfs.SubvolumeInfo, 0, 2)
+	volumes := make([]*subvolume.Subvolume, 0, 2)
+	infos := make([]*subvolume.Metadata, 0, 2)
 	for _, name := range []string{"source", "neighbor"} {
-		volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: name, GroupName: group.Name, SizeBytes: 8 << 20, NamespaceIsolated: true})
+		volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: name, GroupName: group.Name, SizeBytes: 8 << 20, NamespaceIsolated: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := fs.SubvolumeInfo(ctx, volume.Name, volume.GroupName)
+		info, err := subvolume.Info(ctx, fs, volume.Name, volume.GroupName)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,19 +64,19 @@ finally:
 	if sourceInfo.PoolNamespace == "" || sourceInfo.PoolNamespace == neighborInfo.PoolNamespace {
 		t.Fatal("test did not create independent native namespaces")
 	}
-	writer, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-writer", Access: "rw"})
+	writer, err := source.Authorize(ctx, subvolume.AuthorizationConfig{ClientID: "subvolume-writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-reader", Access: "r"})
+	reader, err := source.Authorize(ctx, subvolume.AuthorizationConfig{ClientID: "subvolume-reader", Access: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if duplicate, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: writer.AuthID, Access: "r"}); err == nil || duplicate != nil {
+	if duplicate, err := source.Authorize(ctx, subvolume.AuthorizationConfig{ClientID: writer.AuthID, Access: "r"}); err == nil || duplicate != nil {
 		t.Fatal("existing principal was adopted or modified")
 	}
-	listing, err := fs.SubvolumeAuthorizedClients(ctx, source.Name, source.GroupName)
-	if err != nil || !slices.Equal(listing, []cephfs.SubvolumeAuthorizedClient{
+	listing, err := subvolume.AuthorizedClients(ctx, fs, source.Name, source.GroupName)
+	if err != nil || !slices.Equal(listing, []subvolume.AuthorizedClient{
 		{AuthID: reader.AuthID, Access: "r"}, {AuthID: writer.AuthID, Access: "rw"},
 	}) {
 		t.Fatalf("native authorization list=%+v error=%v", listing, err)
@@ -101,7 +103,7 @@ finally:
 		output []byte
 		err    error
 	}
-	probe := func(client testcontainers.Container, identity *ceph.ClientConfig, own, other *cephfs.Subvolume, ownInfo, otherInfo *cephfs.SubvolumeInfo, phase string) {
+	probe := func(client testcontainers.Container, identity *ceph.ClientConfig, own, other *subvolume.Subvolume, ownInfo, otherInfo *subvolume.Metadata, phase string) {
 		t.Helper()
 		var adminResult chan sessionResult
 		if phase == "revoked" {
@@ -112,8 +114,8 @@ finally:
 			if err != nil || strings.Contains(caps.MDS, "path="+own.Path) || strings.Contains(caps.OSD, "namespace="+ownInfo.PoolNamespace) {
 				t.Fatalf("revoked principal still has original native clauses: %+v error=%v", caps, err)
 			}
-			listing, err := fs.SubvolumeAuthorizedClients(ctx, own.Name, own.GroupName)
-			if err != nil || slices.ContainsFunc(listing, func(entry cephfs.SubvolumeAuthorizedClient) bool { return entry.AuthID == identity.User() }) {
+			listing, err := subvolume.AuthorizedClients(ctx, fs, own.Name, own.GroupName)
+			if err != nil || slices.ContainsFunc(listing, func(entry subvolume.AuthorizedClient) bool { return entry.AuthID == identity.User() }) {
 				t.Fatalf("revoked principal still has native volumes authorization: %+v error=%v", listing, err)
 			}
 			adminResult = make(chan sessionResult, 1)
@@ -148,7 +150,7 @@ finally:
 	// Keep crashed-mount cleanup as an ordinary owned grant operation. The
 	// client dies while mounted, then its exact grant is revoked and its
 	// sessions are evicted before logical subvolume removal below.
-	crashed, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-crashed", Access: "rw"})
+	crashed, err := source.Authorize(ctx, subvolume.AuthorizationConfig{ClientID: "subvolume-crashed", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +164,8 @@ finally:
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := fs.Sessions(ctx)
-	if err != nil || !slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+	sessions, err := cephfssession.List(ctx, fs)
+	if err != nil || !slices.ContainsFunc(sessions, func(session cephfssession.Session) bool {
 		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
 	}) {
 		t.Fatalf("owned client did not retain its exact mounted session: %+v error=%v", sessions, err)
@@ -177,8 +179,8 @@ finally:
 	if err := crashed.EvictClients(ctx); err != nil {
 		t.Fatal(err)
 	}
-	sessions, err = fs.Sessions(ctx)
-	if err != nil || slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+	sessions, err = cephfssession.List(ctx, fs)
+	if err != nil || slices.ContainsFunc(sessions, func(session cephfssession.Session) bool {
 		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
 	}) {
 		t.Fatalf("crashed owned client's mounted session remains after explicit eviction: %+v error=%v", sessions, err)
@@ -193,8 +195,8 @@ finally:
 	// the source namespace must instead return native PermissionError while the
 	// same principal/key still reads the neighbor. Deauthorize must preserve
 	// these unrelated rights exactly for both the original RO and RW grants.
-	originalKeyrings := make(map[*cephfs.SubvolumeAuthorization][]byte)
-	for _, grant := range []*cephfs.SubvolumeAuthorization{writer, reader} {
+	originalKeyrings := make(map[*subvolume.Authorization][]byte)
+	for _, grant := range []*subvolume.Authorization{writer, reader} {
 		caps, err := grant.Client.Capabilities(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -214,7 +216,7 @@ finally:
 	}
 	probe(writerClient, writer.Client, neighbor, source, neighborInfo, sourceInfo, "r-both")
 	probe(readerClient, reader.Client, neighbor, source, neighborInfo, sourceInfo, "r-both")
-	assertPreserved := func(grant *cephfs.SubvolumeAuthorization) {
+	assertPreserved := func(grant *subvolume.Authorization) {
 		t.Helper()
 		currentCaps, err := grant.Client.Capabilities(ctx)
 		if err != nil || currentCaps.MDS != "allow r path="+neighbor.Path || currentCaps.OSD != "allow r pool="+neighborInfo.DataPool+" namespace="+neighborInfo.PoolNamespace || currentCaps.MGR != "allow r" {
@@ -269,11 +271,11 @@ finally:
 	assertPreserved(reader)
 	probe(readerClient, reader.Client, source, neighbor, sourceInfo, neighborInfo, "revoked")
 	probe(readerClient, reader.Client, neighbor, source, neighborInfo, sourceInfo, "r")
-	listing, err = fs.SubvolumeAuthorizedClients(ctx, source.Name, source.GroupName)
+	listing, err = subvolume.AuthorizedClients(ctx, fs, source.Name, source.GroupName)
 	if err != nil || len(listing) != 0 {
 		t.Fatalf("native deauthorization metadata remains: %+v error=%v", listing, err)
 	}
-	for _, grant := range []*cephfs.SubvolumeAuthorization{writer, reader} {
+	for _, grant := range []*subvolume.Authorization{writer, reader} {
 		if err := grant.Client.Delete(ctx); err != nil {
 			t.Fatal(err)
 		}

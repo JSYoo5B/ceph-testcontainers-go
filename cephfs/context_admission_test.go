@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -24,22 +25,6 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 	operations := map[string]func(context.Context, *Filesystem, *DataPool) error{
 		"ScaleMDS": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
 			return fs.ScaleMDS(ctx, 1, 1)
-		},
-		"SubvolumeGroups": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
-			_, err := fs.SubvolumeGroups(ctx)
-			return err
-		},
-		"Subvolumes": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
-			_, err := fs.Subvolumes(ctx, "group")
-			return err
-		},
-		"CreateSubvolumeGroup": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
-			_, err := fs.CreateSubvolumeGroup(ctx, SubvolumeGroupConfig{Name: "new-group"})
-			return err
-		},
-		"CreateSubvolume": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
-			_, err := fs.CreateSubvolume(ctx, SubvolumeConfig{Name: "new-volume"})
-			return err
 		},
 		"DataPools": func(ctx context.Context, fs *Filesystem, _ *DataPool) error {
 			_, err := fs.DataPools(ctx)
@@ -57,11 +42,11 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 		for _, gate := range []string{"setup", "owner", "control"} {
 			t.Run(name+"/"+gate, func(t *testing.T) {
 				fs, control, daemon, attachment := cephFSContextAdmissionFixture()
-				cluster := fs.id.cluster
-				originalIdentity := fs.id.native
-				originalConfig := fs.id.config
+				cluster := fs.base().Cluster()
+				originalIdentity := fs.base().Native()
+				originalConfig := fs.config
 				originalMDSS := slices.Clone(fs.mds.roster.daemons)
-				attempt := attachment.identity
+				attempt := attachment.identity.record
 				assertCephFSContextAdmissionGate(t, cluster, gate, func(ctx context.Context) error {
 					return operation(ctx, fs, attachment)
 				})
@@ -71,16 +56,16 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 				if servicehook.Closed(cluster) || len(filesystems(cluster).byName) != 1 || filesystems(cluster).byName["fixture"] != fs ||
 					len(servicehook.Services(cluster)) != 1 || servicehook.Service(cluster, "mds.a") != daemon ||
 					fs.Container != daemon || !slices.Equal(fs.mds.roster.daemons, originalMDSS) ||
-					!reflect.DeepEqual(fs.id.config, originalConfig) || fs.id.native != originalIdentity ||
-					len(originalIdentity.attachments) != 1 || originalIdentity.attachments["additional"] != attempt ||
-					!attempt.confirmed || attempt.used || attempt.removed || attempt.removalAttempted {
+					!reflect.DeepEqual(fs.config, originalConfig) || fs.base().Native() != originalIdentity ||
+					len(originalIdentity.Attachments) != 1 || originalIdentity.Attachments["additional"] != attempt ||
+					!attempt.Confirmed || attempt.Used || attempt.Removed || attempt.RemovalAttempted {
 					t.Fatal("queued admission changed filesystem, configuration, daemon or pool ownership")
 				}
 				assertCephFSContextAdmissionReleased(t, cluster)
 				// Query the same fixture after the canceled waiter has returned.
 				// This path contains only fake CLI calls and cannot start Docker.
-				if names, err := fs.SubvolumeGroups(t.Context()); err != nil || len(names) != 0 {
-					t.Fatalf("fresh context could not reuse the same filesystem: names=%v error=%v", names, err)
+				if states, err := fs.DataPools(t.Context()); err != nil || len(states) == 0 {
+					t.Fatalf("fresh context could not reuse the same filesystem: pools=%v error=%v", states, err)
 				}
 			})
 		}
@@ -116,7 +101,7 @@ func TestCephFSContextSetupAdmissionDeadline(t *testing.T) {
 }
 
 func TestCephFSContextCanceledFreeAdmissionHasNoEffects(t *testing.T) {
-	for _, operation := range []string{"setup", "scale", "subvolume", "data-pools", "snapshot"} {
+	for _, operation := range []string{"setup", "scale", "data-pools", "snapshot"} {
 		t.Run(operation, func(t *testing.T) {
 			fs, control, daemon, _ := cephFSContextAdmissionFixture()
 			ctx, cancel := context.WithCancel(t.Context())
@@ -124,67 +109,23 @@ func TestCephFSContextCanceledFreeAdmissionHasNoEffects(t *testing.T) {
 			var err error
 			switch operation {
 			case "setup":
-				_, err = startFilesystem(ctx, fs.id.cluster, Config{Name: "new-filesystem"})
+				_, err = startFilesystem(ctx, fs.base().Cluster(), Config{Name: "new-filesystem"})
 			case "scale":
 				err = fs.ScaleMDS(ctx, 1, 1)
-			case "subvolume":
-				_, err = fs.SubvolumeGroups(ctx)
 			case "data-pools":
 				_, err = fs.DataPools(ctx)
 			case "snapshot":
 				_, err = fs.fleet().mdsSnapshot(ctx)
 			}
 			if !errors.Is(err, context.Canceled) || len(control.Calls) != 0 || daemon.states != 0 ||
-				len(filesystems(fs.id.cluster).byName) != 1 || fs.id.config.ActiveMDS != 1 || fs.id.config.StandbyMDS != 0 {
+				len(filesystems(fs.base().Cluster()).byName) != 1 || fs.config.ActiveMDS != 1 || fs.config.StandbyMDS != 0 {
 				t.Fatalf("canceled free admission acquired resources or lost cancellation: %v", err)
 			}
-			assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+			assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 			if _, err := fs.DataPools(t.Context()); err != nil {
 				t.Fatalf("canceled free admission blocked the next query: %v", err)
 			}
 		})
-	}
-}
-
-func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
-	for _, operation := range []string{"read", "temporary", "restore"} {
-		for _, gate := range []string{"setup", "owner", "control"} {
-			t.Run(operation+"/"+gate, func(t *testing.T) {
-				fs, control, volume, _ := cephFSPinFixture()
-				change := &PinOverrideHandle{
-					filesystem: fs, target: cephFSPinTarget{identity: volume.identity},
-					setting: PinSetting{Type: PinExport, Value: 1},
-					state: &cephFSPinOverrideState{
-						path: "/volumes/group/volume", inode: 103, previous: 0, applied: 1,
-					},
-				}
-				key := change.state.path + "\x00" + string(change.setting.Type)
-				fs.pins = pinOverrides{byField: map[string]*PinOverrideHandle{key: change}}
-				control.policies[change.state.path].ExportRank = 1
-				assertCephFSContextAdmissionGate(t, fs.id.cluster, gate, func(ctx context.Context) error {
-					switch operation {
-					case "read":
-						_, err := volume.PinPolicy(ctx)
-						return err
-					case "temporary":
-						_, err := volume.OverridePin(ctx, PinSetting{Type: PinDistributed, Value: 1})
-						return err
-					default:
-						return change.Restore(ctx)
-					}
-				})
-				if len(control.calls) != 0 || len(control.native.Calls) != 0 || len(control.mutations) != 0 ||
-					change.state.restored || len(fs.pins.byField) != 1 || fs.pins.byField[key] != change ||
-					control.policies[change.state.path].ExportRank != 1 ||
-					control.policies[change.state.path].Distributed {
-					t.Fatal("queued pin operation queried native state, changed policy or lost the recovery handle")
-				}
-				assertCephFSContextAdmissionReleased(t, fs.id.cluster)
-				if policy, err := volume.PinPolicy(t.Context()); err != nil || policy.ExportRank != 1 {
-					t.Fatalf("fresh pin read could not reuse the original directory: policy=%+v error=%v", policy, err)
-				}
-			})
-		}
 	}
 }
 
@@ -193,7 +134,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 	first := &MDS{ID: "z", FilesystemName: "fixture"}
 	second := &MDS{ID: "a", FilesystemName: "fixture"}
 	fs.mds.roster.daemons = []*MDS{first, second}
-	assertContextLockQueued(t, testhelper.TestState(fs.id.cluster).Mutex, func(ctx context.Context) error {
+	assertContextLockQueued(t, testhelper.TestState(fs.base().Cluster()).Mutex, func(ctx context.Context) error {
 		_, err := fs.fleet().mdsSnapshot(ctx)
 		return err
 	})
@@ -201,7 +142,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 		t.Fatal("queued snapshot queried native state or altered the owned creation order")
 	}
 	for _, closed := range []bool{false, true} {
-		testhelper.TestSetClosed(fs.id.cluster, closed)
+		testhelper.TestSetClosed(fs.base().Cluster(), closed)
 		snapshot, err := fs.fleet().mdsSnapshot(t.Context())
 		if err != nil || len(snapshot) != 2 || snapshot[0] != first || snapshot[1] != second {
 			t.Fatalf("snapshot lost pointers, creation order or terminated-fixture inspection: %+v %v", snapshot, err)
@@ -215,7 +156,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 
 func TestCephFSContextMDSStatusSnapshotsBeforeNativeQuery(t *testing.T) {
 	fs, control, _, _ := cephFSContextAdmissionFixture()
-	assertContextLockQueued(t, testhelper.TestState(fs.id.cluster).Mutex, func(ctx context.Context) error {
+	assertContextLockQueued(t, testhelper.TestState(fs.base().Cluster()).Mutex, func(ctx context.Context) error {
 		_, err := fs.MDSStatus(ctx)
 		return err
 	})
@@ -260,20 +201,20 @@ func TestCephFSContextSetupRegistrationAdmissionCancellation(t *testing.T) {
 
 func TestCephFSContextScaleDesiredConfigAdmissionCancellation(t *testing.T) {
 	fs, control, daemon, _ := cephFSContextAdmissionFixture()
-	originalConfig := fs.id.config
-	originalIdentity := fs.id.native
-	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.id.cluster).Mutex, func(hook func()) {
+	originalConfig := fs.config
+	originalIdentity := fs.base().Native()
+	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.base().Cluster()).Mutex, func(hook func()) {
 		daemon.afterState = hook
 	}, func(ctx context.Context) error {
 		return fs.ScaleMDS(ctx, 1, 1)
 	})
-	if daemon.states != 1 || !reflect.DeepEqual(fs.id.config, originalConfig) ||
-		fs.id.native != originalIdentity || len(fs.mds.roster.daemons) != 1 ||
-		servicehook.Service(fs.id.cluster, "mds.a") != daemon || len(filesystems(fs.id.cluster).byName) != 1 {
+	if daemon.states != 1 || !reflect.DeepEqual(fs.config, originalConfig) ||
+		fs.base().Native() != originalIdentity || len(fs.mds.roster.daemons) != 1 ||
+		servicehook.Service(fs.base().Cluster(), "mds.a") != daemon || len(filesystems(fs.base().Cluster()).byName) != 1 {
 		t.Fatal("expired scale intent admission changed configuration or native ownership")
 	}
 	assertCephFSContextOnlyReadQueries(t, control.Calls)
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 	// Equal counts exercise a complete fresh scale without launching a daemon.
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil {
 		t.Fatalf("fresh scale could not reuse the original daemon: %v", err)
@@ -284,16 +225,16 @@ func TestCephFSContextScaleStateRetainsCausalError(t *testing.T) {
 	fs, control, daemon, _ := cephFSContextAdmissionFixture()
 	cause := errors.New("daemon state inspection failed")
 	daemon.stateErr = errors.Join(context.DeadlineExceeded, cause)
-	originalConfig := fs.id.config
+	originalConfig := fs.config
 	if err := fs.ScaleMDS(t.Context(), 1, 1); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) {
 		t.Fatalf("scale masked its causal daemon State failure: %v", err)
 	}
-	if daemon.states != 1 || !reflect.DeepEqual(fs.id.config, originalConfig) ||
-		len(fs.mds.roster.daemons) != 1 || servicehook.Service(fs.id.cluster, "mds.a") != daemon {
+	if daemon.states != 1 || !reflect.DeepEqual(fs.config, originalConfig) ||
+		len(fs.mds.roster.daemons) != 1 || servicehook.Service(fs.base().Cluster(), "mds.a") != daemon {
 		t.Fatal("failed daemon inspection published desired counts or changed ownership")
 	}
 	assertCephFSContextOnlyReadQueries(t, control.Calls)
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 	daemon.stateErr = nil
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil {
 		t.Fatalf("fresh scale could not recover after the State failure: %v", err)
@@ -303,34 +244,34 @@ func TestCephFSContextScaleStateRetainsCausalError(t *testing.T) {
 func TestCephFSContextWaitReadyConfigAdmissionCancellation(t *testing.T) {
 	fs, native, _, _ := cephFSContextAdmissionFixture()
 	control := &cephFSContextBoundaryControl{native: native, query: "fs dump --format json"}
-	fs.id.cluster.Container = control
-	originalConfig := fs.id.config
-	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.id.cluster).Mutex, func(hook func()) {
+	fs.base().Cluster().Container = control
+	originalConfig := fs.config
+	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.base().Cluster()).Mutex, func(hook func()) {
 		control.afterQuery = hook
 	}, fs.WaitReady)
-	if !reflect.DeepEqual(fs.id.config, originalConfig) || len(native.Calls) != 1 {
+	if !reflect.DeepEqual(fs.config, originalConfig) || len(native.Calls) != 1 {
 		t.Fatal("expired readiness snapshot changed desired topology or started another native query")
 	}
 	assertCephFSContextOnlyReadQueries(t, native.Calls)
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 	if err := fs.WaitReady(t.Context()); err != nil {
 		t.Fatalf("fresh readiness could not observe the original active rank: %v", err)
 	}
 }
 
 func cephFSContextAdmissionFixture() (*Filesystem, *poolFixtureContainer, *cephFSContextAdmissionDaemon, *DataPool) {
-	fs, control := subvolumeFixture()
+	fs, control := filesystemFixture()
 	control.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":1,"metadata_pool":1,"data_pools":[2,3],"info":{"a":{"name":"a","rank":0,"gid":101,"state":"up:active","join_fscid":41}}}}],"standbys":[]}`
 	control.Output["fs subvolumegroup ls fixture --format json"] = "[]"
 	control.Output["fs subvolume ls fixture --format json"] = "[]"
-	fs.id.config.ActiveMDS, fs.id.config.StandbyMDS = 1, 0
+	fs.config.ActiveMDS, fs.config.StandbyMDS = 1, 0
 	daemon := &cephFSContextAdmissionDaemon{id: "fixture-mds-a"}
 	fs.Container = daemon
 	fs.mds.roster.daemons = []*MDS{{Container: daemon, ID: "a", FilesystemName: "fixture"}}
-	setServices(fs.id.cluster, map[string]testcontainers.Container{"mds.a": daemon})
-	identity := &cephFSDataPoolIdentity{filesystem: fs, name: "additional", id: 3, confirmed: true}
-	fs.id.native.attachments["additional"] = identity
-	return fs, control, daemon, cephFSPoolHandle(identity)
+	setServices(fs.base().Cluster(), map[string]testcontainers.Container{"mds.a": daemon})
+	identity := &fsbase.PoolAttachment{Name: "additional", ID: 3, Confirmed: true}
+	fs.base().Native().Attachments["additional"] = identity
+	return fs, control, daemon, cephFSPoolHandle(fs, identity)
 }
 
 type cephFSContextAdmissionDaemon struct {
@@ -371,30 +312,12 @@ func (control *cephFSContextBoundaryControl) Exec(ctx context.Context, args []st
 
 func assertCephFSContextAdmissionGate(t *testing.T, cluster *ceph.Container, gate string, operation func(context.Context) error) {
 	t.Helper()
-	switch gate {
-	case "setup":
-		assertContextLockQueued(t, &filesystems(cluster).setupMu, operation)
-	case "owner":
-		assertContextLockQueued(t, testhelper.TestState(cluster).Mutex, operation)
-	case "control":
-		assertSnapshotReadLockQueued(t, testhelper.TestState(cluster).ControlMutex, operation)
-	default:
-		t.Fatalf("unknown admission gate %q", gate)
-	}
+	fstest.AssertAdmissionGate(t, cluster, &filesystems(cluster).setupMu, gate, operation)
 }
 
 func assertCephFSContextAdmissionReleased(t *testing.T, cluster *ceph.Container) {
 	t.Helper()
-	for name, mutex := range map[string]*sync.Mutex{"setup": &filesystems(cluster).setupMu, "owner": testhelper.TestState(cluster).Mutex} {
-		if !mutex.TryLock() {
-			t.Fatalf("canceled admission retained the %s gate", name)
-		}
-		mutex.Unlock()
-	}
-	if !testhelper.TestState(cluster).ControlMutex.TryLock() {
-		t.Fatal("canceled admission retained the control cache gate")
-	}
-	testhelper.TestState(cluster).ControlMutex.Unlock()
+	fstest.AssertAdmissionReleased(t, cluster, &filesystems(cluster).setupMu)
 }
 
 func assertCephFSContextOnlyReadQueries(t *testing.T, calls [][]string) {
@@ -407,92 +330,7 @@ func assertCephFSContextOnlyReadQueries(t *testing.T, calls [][]string) {
 	}
 }
 
-// The native callback acquires the owner after the earlier entry/preflight gate
-// has completed. Cancel only after observing that gate, and retain the gate
-// until the operation returns its caller cancellation.
-// On failure release it and join the worker, following the existing gate tests.
 func assertCephFSContextLateOwnerGate(t *testing.T, mutex *sync.Mutex, install func(func()), operation func(context.Context) error) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	entered := make(chan struct{})
-	hookFailure := make(chan error, 1)
-	var once sync.Once
-	var publicationMu sync.Mutex
-	held, disabled := false, false
-	install(func() {
-		once.Do(func() {
-			publicationMu.Lock()
-			defer publicationMu.Unlock()
-			if disabled {
-				return
-			}
-			// A recursive owner acquisition must fail without blocking the
-			// fake native callback or allowing later resource creation.
-			if !mutex.TryLock() {
-				hookFailure <- errors.New("native boundary unexpectedly retained the owner mutex")
-				cancel()
-				return
-			}
-			held = true
-			close(entered)
-		})
-	})
-	result, exited := make(chan error, 1), make(chan struct{})
-	go func() {
-		defer close(exited)
-		result <- operation(ctx)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		publicationMu.Lock()
-		disabled = true
-		if held {
-			mutex.Unlock()
-			held = false
-		}
-		publicationMu.Unlock()
-		select {
-		case <-exited:
-		case <-time.After(time.Second):
-			t.Error("native boundary worker did not exit after fixture release")
-		}
-	})
-	var outcome error
-	completed := false
-	select {
-	case <-entered:
-	case outcome = <-result:
-		// Entry and result can both be pending when this goroutine resumes.
-		select {
-		case <-entered:
-			completed = true
-		default:
-			t.Fatalf("operation returned before its native admission boundary: %v", outcome)
-		}
-	case err := <-hookFailure:
-		t.Fatal(err)
-	case <-time.After(time.Second):
-		t.Fatal("operation did not reach its native admission boundary")
-	}
-	cancel()
-	if !completed {
-		select {
-		case outcome = <-result:
-		case <-time.After(500 * time.Millisecond):
-			t.Fatal("late admission remained blocked after caller cancellation")
-		}
-	}
-	if !errors.Is(outcome, context.Canceled) {
-		t.Fatalf("late owner admission lost caller cancellation: %v", outcome)
-	}
-	if mutex.TryLock() {
-		mutex.Unlock()
-		t.Fatal("late admission stole or unlocked the busy owner gate")
-	}
-	publicationMu.Lock()
-	disabled = true
-	mutex.Unlock()
-	held = false
-	publicationMu.Unlock()
+	fstest.AssertLateOwnerGate(t, mutex, install, operation)
 }

@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -138,10 +139,10 @@ func TestMonitorManagerTopology(t *testing.T) {
 			// The MGR learns a new filesystem from its own FSMap subscription,
 			// which can trail the MON's commit; after the MON replacement it
 			// did, and a raw volumes command right after Start returned
-			// ENOENT. CreateSubvolumeGroup first waits until the active MGR
+			// ENOENT. subvolume.CreateGroup first waits until the active MGR
 			// lists the filesystem, so each create runs against a MGR that
 			// knows it, before and after the failover.
-			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "before-failover"}); err != nil {
+			if _, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "before-failover"}); err != nil {
 				t.Fatal(err)
 			}
 			mgrStatus, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
@@ -160,7 +161,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName != previous
 			})
-			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "after-failover"}); err != nil {
+			if _, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "after-failover"}); err != nil {
 				t.Fatal(err)
 			}
 			data, err := cluster.Ceph(ctx, "fs", "subvolumegroup", "ls", fs.FilesystemName, "--format", "json")

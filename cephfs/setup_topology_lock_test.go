@@ -21,7 +21,7 @@ import (
 // real function over the replacement fixture.
 func setupTopologyOps(r *replacementMDSFixture) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
-		"remove-filesystem": func(ctx context.Context) error { return removeFilesystem(ctx, r.fs.id.cluster, r.fs) },
+		"remove-filesystem": func(ctx context.Context) error { return removeFilesystem(ctx, r.fs.base().Cluster(), r.fs) },
 		"scale-mds":         func(ctx context.Context) error { return r.fs.ScaleMDS(ctx, 1, 0) },
 		"remove-stopped":    func(ctx context.Context) error { return r.fs.fleet().removeStoppedMDS(ctx, r.old) },
 		"replace-mds": func(ctx context.Context) error {
@@ -34,7 +34,7 @@ func setupTopologyOps(r *replacementMDSFixture) map[string]func(context.Context)
 }
 
 func setupGateFree(r *replacementMDSFixture) bool {
-	mu := &filesystems(r.fs.id.cluster).setupMu
+	mu := &filesystems(r.fs.base().Cluster()).setupMu
 	if !mu.TryLock() {
 		return false
 	}
@@ -46,10 +46,10 @@ func topologyFree(t *testing.T, r *replacementMDSFixture) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if err := servicehook.LockTopology(ctx, r.fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, r.fs.base().Cluster()); err != nil {
 		return false
 	}
-	servicehook.Unlock(r.fs.id.cluster)
+	servicehook.Unlock(r.fs.base().Cluster())
 	return true
 }
 
@@ -65,7 +65,7 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 	for _, name := range names {
 		t.Run(name+"/setup-gate-held", func(t *testing.T) {
 			r := newReplacementMDSFixture(t)
-			mu := &filesystems(r.fs.id.cluster).setupMu
+			mu := &filesystems(r.fs.base().Cluster()).setupMu
 			mu.Lock()
 			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
@@ -83,13 +83,13 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 		})
 		t.Run(name+"/topology-held", func(t *testing.T) {
 			r := newReplacementMDSFixture(t)
-			if err := servicehook.LockTopology(t.Context(), r.fs.id.cluster); err != nil {
+			if err := servicehook.LockTopology(t.Context(), r.fs.base().Cluster()); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
 			err := setupTopologyOps(r)[name](ctx)
-			servicehook.Unlock(r.fs.id.cluster)
+			servicehook.Unlock(r.fs.base().Cluster())
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("held topology mutex: want the deadline error, got %v", err)
 			}
@@ -114,9 +114,9 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 	}
 	t.Run("refusals-release-both-locks", func(t *testing.T) {
 		r := newReplacementMDSFixture(t)
-		stale := &Filesystem{FilesystemName: "target", id: filesystemIdentity{cluster: r.fs.id.cluster, name: "target", config: r.fs.id.config}}
+		stale := newFilesystem(r.fs.base().Cluster(), r.fs.config, nil)
 		refused := map[string]error{
-			"remove-filesystem": removeFilesystem(t.Context(), r.fs.id.cluster, stale),
+			"remove-filesystem": removeFilesystem(t.Context(), r.fs.base().Cluster(), stale),
 			"scale-mds":         stale.ScaleMDS(t.Context(), 1, 0),
 		}
 		for name, err := range refused {
@@ -136,7 +136,8 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 // returned function (deferred, once) and never unlocks setupMu directly, the
 // helper takes setupMu and then the topology mutex and nothing else, reads no
 // ownership state and imports no sync, and the only functions that take both
-// locks themselves are the helper and admitOperation.
+// locks themselves are the helper and fsbase's Admit, which is not in this
+// package.
 func TestSetupThenTopologyPrefixHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 	pinned := []string{"addMDSReplacement", "removeFilesystem", "removeStoppedMDS", "scale"}
 	var callers []string
@@ -163,7 +164,7 @@ func TestSetupThenTopologyPrefixHasOneOwnerAndKeepsPredicatesLocal(t *testing.T)
 							direct++
 						}
 					}
-					if fn.Name.Name == "admitOperation" || fn.Name.Name == "lockSetupThenTopology" {
+					if fn.Name.Name == "lockSetupThenTopology" {
 						break
 					}
 					switch {

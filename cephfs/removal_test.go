@@ -37,7 +37,7 @@ func cephFSRemovalClusterWithControl(t *testing.T, present bool, wrap func(*ceph
 	if err != nil {
 		t.Fatal(err)
 	}
-	filesystems(cluster).byName = map[string]*Filesystem{"app": {FilesystemName: "app", MetadataPool: "app-metadata", DataPool: "app-data", id: filesystemIdentity{name: "app", cluster: cluster, config: config}}}
+	filesystems(cluster).byName = map[string]*Filesystem{"app": newFilesystem(cluster, config, nil)}
 	return cluster, f
 }
 
@@ -105,7 +105,7 @@ func TestRemoveRefusesAStaleDescriptorWithoutReachingASuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A later filesystem of the same name is another filesystem.
-	successor := &Filesystem{FilesystemName: "app", id: filesystemIdentity{name: "app", cluster: cluster, config: old.id.config}}
+	successor := newFilesystem(cluster, old.config, nil)
 	filesystems(cluster).byName["app"] = successor
 	f.Filesystems = []clustertest.FakeFilesystem{{Name: "app", Metadata: "app-metadata", Data: []string{"app-data"}}}
 	before := len(f.Filesystems)

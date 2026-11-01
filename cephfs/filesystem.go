@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -90,15 +91,15 @@ type Filesystem struct {
 	MetadataPool        string
 	DataPool            string
 	AdditionalDataPools []string
-	// id is the filesystem's identity, shared with its MDS fleet.
-	id filesystemIdentity
+	// fsHandle binds the filesystem to its foundation core: the cluster, the
+	// authoritative name and the native pool identity; see fsbase.Core.
+	fsHandle
+	// config is the validated setup configuration; only its MDS counts change
+	// afterwards, written by the fleet's scale with setupMu and the cluster
+	// mutex held.
+	config Config
 	// mds is the MDS state the fleet owns; see mdsState.
-	mds             mdsState
-	pins            pinOverrides
-	sessionTimeouts *cephFSSessionTimeoutsState
-	// schedules holds the directories with a snapshot schedule lease that is
-	// not restored yet.
-	schedules scheduleLeases
+	mds mdsState
 }
 
 // MDSStatus records a metadata daemon's current native FSMap identity. GID
@@ -159,13 +160,10 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	if err != nil {
 		return nil, err
 	}
-	fs := &Filesystem{FilesystemName: config.Name, MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name, id: filesystemIdentity{name: config.Name, cluster: c, config: config}, mds: mdsState{roster: newMDSRoster(opts)}}
-	for _, pool := range config.AdditionalDataPools {
-		fs.AdditionalDataPools = append(fs.AdditionalDataPools, pool.Name)
-	}
+	fs := newFilesystem(c, config, opts)
 	var coldFSID string
 	if config.NoInitialMDS {
-		coldFSID, err = fs.id.volumes().readColdFSID(ctx, nil)
+		coldFSID, err = readColdFSID(ctx, fs.base().Volumes(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -201,8 +199,8 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 
 // readExistingFilesystems reads the FSMap before setup and refuses a
 // filesystem of the same name.
-func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string) (cephFSMap, error) {
-	var existing cephFSMap
+func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string) (fsbase.FSMap, error) {
+	var existing fsbase.FSMap
 	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return existing, fmt.Errorf("check existing cephfs filesystems: %w", err)
@@ -222,14 +220,14 @@ func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string
 // filesystem, applies its policy and records its native pool identity before
 // any MDS starts. Setup held. config is the validated setup configuration and
 // existing is the FSMap read before registration.
-func (fs *Filesystem) createNative(ctx context.Context, config Config, existing cephFSMap) error {
+func (fs *Filesystem) createNative(ctx context.Context, config Config, existing fsbase.FSMap) error {
 	for _, pool := range cephFSConfiguredPools(config) {
-		if _, err := fs.id.cluster.CreatePool(ctx, pool); err != nil {
+		if _, err := fs.base().Cluster().CreatePool(ctx, pool); err != nil {
 			return fmt.Errorf("create cephfs pool: %w", err)
 		}
 	}
 	if len(existing.Filesystems) > 0 && !existing.FeatureFlags.EnableMultiple {
-		if _, err := fs.id.cluster.Ceph(ctx, "fs", "flag", "set", "enable_multiple", "true"); err != nil {
+		if _, err := fs.base().Cluster().Ceph(ctx, "fs", "flag", "set", "enable_multiple", "true"); err != nil {
 			return fmt.Errorf("enable multiple cephfs filesystems: %w", err)
 		}
 	}
@@ -244,24 +242,24 @@ func (fs *Filesystem) createNative(ctx context.Context, config Config, existing 
 	}
 	create := []string{"fs", "new", config.Name, fs.MetadataPool, fs.DataPool}
 	counts := [][2]string{{"max_mds", strconv.Itoa(config.ActiveMDS)}, {"standby_count_wanted", strconv.Itoa(config.StandbyMDS)}}
-	if servicehook.CephBefore(fs.id.cluster, 20) {
+	if servicehook.CephBefore(fs.base().Cluster(), 20) {
 		settings = append(counts, settings...)
 	} else {
 		create = append(create, "set", counts[0][0], counts[0][1], counts[1][0], counts[1][1])
 	}
-	if _, err := fs.id.cluster.Ceph(ctx, create...); err != nil {
+	if _, err := fs.base().Cluster().Ceph(ctx, create...); err != nil {
 		return fmt.Errorf("create cephfs: %w", err)
 	}
 	for _, setting := range settings {
-		if _, err := fs.id.cluster.Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
+		if _, err := fs.base().Cluster().Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
 			return fmt.Errorf("set cephfs %s: %w", setting[0], err)
 		}
 	}
-	if err := fs.captureNativePoolIdentity(ctx); err != nil {
+	if err := fs.base().CaptureNativePools(ctx); err != nil {
 		return fmt.Errorf("capture created cephfs identity: %w", err)
 	}
 	for _, pool := range fs.AdditionalDataPools {
-		if _, err := fs.id.cluster.Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
+		if _, err := fs.base().Cluster().Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
 			return fmt.Errorf("add cephfs data pool %q: %w", pool, err)
 		}
 	}
@@ -270,9 +268,9 @@ func (fs *Filesystem) createNative(ctx context.Context, config Config, existing 
 
 // daemons is MDSs.
 func (f mdsFleet) daemons() []*MDS {
-	if f.id.cluster != nil {
-		servicehook.Lock(f.id.cluster)
-		defer servicehook.Unlock(f.id.cluster)
+	if f.core.Cluster() != nil {
+		servicehook.Lock(f.core.Cluster())
+		defer servicehook.Unlock(f.core.Cluster())
 	}
 	return f.mds.roster.snapshot()
 }
@@ -340,22 +338,22 @@ func (fs *Filesystem) WaitReady(ctx context.Context) error {
 // mdsSnapshot bounds topology admission for context-taking operations. It keeps
 // descriptor identity and creation order, including retained cleanup handles.
 func (f mdsFleet) mdsSnapshot(ctx context.Context) ([]*MDS, error) {
-	if f.id.cluster == nil {
+	if f.core.Cluster() == nil {
 		return nil, errors.New("cephfs cluster is unavailable")
 	}
-	if err := servicehook.LockTopology(ctx, f.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, f.core.Cluster()); err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(f.id.cluster)
+	defer servicehook.Unlock(f.core.Cluster())
 	return f.mds.roster.snapshot(), nil
 }
 
 // scale is ScaleMDS for validated counts.
 func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr error) {
-	if f.id.cluster == nil {
+	if f.core.Cluster() == nil {
 		return errors.New("cephfs cluster is unavailable")
 	}
-	c := f.id.cluster
+	c := f.core.Cluster()
 	release, err := lockSetupThenTopology(ctx, c)
 	if err != nil {
 		return err
@@ -369,7 +367,7 @@ func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr err
 		servicehook.Unlock(c)
 		return err
 	}
-	desired := f.id.config
+	desired := *f.config
 	desired.ActiveMDS, desired.StandbyMDS = active, standby
 	servicehook.Unlock(c)
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
@@ -385,13 +383,13 @@ func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr err
 		servicehook.Unlock(c)
 		return err
 	}
-	f.id.config = desired
+	*f.config = desired
 	servicehook.Unlock(c)
 	// A replay follower can replace only the rank it follows. Recycle followers
 	// into ordinary standbys while growing ranks, then restore the preference.
 	replayPaused := false
 	if desired.StandbyReplay && active > status.MaxMDS {
-		if _, err := c.Ceph(ctx, "fs", "set", f.id.name, "allow_standby_replay", "false"); err != nil {
+		if _, err := c.Ceph(ctx, "fs", "set", f.core.Name(), "allow_standby_replay", "false"); err != nil {
 			return fmt.Errorf("prepare replay followers for rank growth: %w", err)
 		}
 		replayPaused = true
@@ -414,7 +412,7 @@ func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr err
 		return err
 	}
 	if replayPaused {
-		if _, err := c.Ceph(ctx, "fs", "set", f.id.name, "allow_standby_replay", "true"); err != nil {
+		if _, err := c.Ceph(ctx, "fs", "set", f.core.Name(), "allow_standby_replay", "true"); err != nil {
 			return fmt.Errorf("restore cephfs standby replay: %w", err)
 		}
 		replayPaused = false
@@ -426,7 +424,7 @@ func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr err
 // registered filesystem of a running cluster, or whose MDS replacement cohort
 // is incomplete. Owner held: the caller holds the cluster mutex.
 func (f mdsFleet) checkScaleOwner() error {
-	if !f.id.registered() || *f.first == nil || f.id.native == nil {
+	if !f.core.Registered() || *f.first == nil || f.core.Native() == nil {
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
 	return f.completedMDSReplacementCohort()
@@ -437,7 +435,7 @@ func (f mdsFleet) checkScaleOwner() error {
 func (f mdsFleet) restoreStandbyReplay(ctx context.Context) error {
 	restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer restoreCancel()
-	if _, err := f.id.cluster.Ceph(restoreCtx, "fs", "set", f.id.name, "allow_standby_replay", "true"); err != nil {
+	if _, err := f.core.Cluster().Ceph(restoreCtx, "fs", "set", f.core.Name(), "allow_standby_replay", "true"); err != nil {
 		return fmt.Errorf("restore cephfs standby replay: %w", err)
 	}
 	return nil
@@ -448,7 +446,7 @@ func (f mdsFleet) restoreStandbyReplay(ctx context.Context) error {
 // standby and every owned container is running. It returns the status the
 // scale starts from.
 func (f mdsFleet) checkScalable(ctx context.Context) (*FilesystemStatus, error) {
-	if _, err := f.id.readNativePools(ctx); err != nil {
+	if _, err := f.core.ReadNativePools(ctx); err != nil {
 		return nil, err
 	}
 	status, err := f.status(ctx)
@@ -518,11 +516,11 @@ func (f mdsFleet) growMDSs(ctx context.Context, want int) error {
 // candidate is selected for retirement.
 func (f mdsFleet) setMDSCounts(ctx context.Context, maxMDS, active, standby int) error {
 	if maxMDS != active {
-		if _, err := f.id.cluster.Ceph(ctx, "fs", "set", f.id.name, "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
+		if _, err := f.core.Cluster().Ceph(ctx, "fs", "set", f.core.Name(), "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("scale cephfs active ranks: %w", err)
 		}
 	}
-	if _, err := f.id.cluster.Ceph(ctx, "fs", "set", f.id.name, "standby_count_wanted", strconv.Itoa(standby)); err != nil {
+	if _, err := f.core.Cluster().Ceph(ctx, "fs", "set", f.core.Name(), "standby_count_wanted", strconv.Itoa(standby)); err != nil {
 		return fmt.Errorf("scale cephfs standby count: %w", err)
 	}
 	if err := clusterutil.Poll(ctx, func() (bool, error) {
@@ -573,7 +571,7 @@ func (f mdsFleet) startMDS(ctx context.Context) error {
 
 // startService starts an MDS container that the cluster owns.
 func (f mdsFleet) startService(ctx context.Context, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
-	return servicehook.StartService(ctx, f.id.cluster, name, image, opts...)
+	return servicehook.StartService(ctx, f.core.Cluster(), name, image, opts...)
 }
 
 // The private service seam preserves real daemon/partial publication while
@@ -603,7 +601,7 @@ type mdsStartAdmission struct {
 // The service start between the last two is unlocked. The caller holds setupMu
 // for all of it (R1, cephfs/entry.go:100-102).
 func (f mdsFleet) startMDSWithAdmission(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error), admit func(context.Context, string) (testcontainers.Container, error), published func(*MDS)) (*MDS, error) {
-	c := f.id.cluster
+	c := f.core.Cluster()
 	a, err := f.admitMDSStart(ctx, admit)
 	if err != nil {
 		return nil, err
@@ -614,7 +612,7 @@ func (f mdsFleet) startMDSWithAdmission(ctx context.Context, start func(context.
 		return nil, err
 	}
 	moduleOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": f.id.name}),
+		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": f.core.Name()}),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mds.sh"), testcontainers.WithCmd(),
 		testcontainers.WithFiles(servicehook.ScriptFile("mds"), clusterutil.TextFile("/etc/ceph/mds.keyring", keyring, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(servicehook.StartupTimeout(c))),
@@ -641,20 +639,20 @@ func (f mdsFleet) startMDSWithAdmission(ctx context.Context, start func(context.
 // reserves the name index. The mutex is released on every return, before any
 // auth command. Every refusal text and the order of the checks are unchanged.
 func (f mdsFleet) admitMDSStart(ctx context.Context, admit func(context.Context, string) (testcontainers.Container, error)) (*mdsStartAdmission, error) {
-	c := f.id.cluster
+	c := f.core.Cluster()
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return nil, err
 	}
-	if !f.id.registered() {
+	if !f.core.Registered() {
 		servicehook.Unlock(c)
 		return nil, servicehook.Invalid(errors.New("cephfs cluster is terminated or filesystem ownership changed"))
 	}
-	id := f.mds.roster.nextID(f.id.name)
+	id := f.mds.roster.nextID(f.core.Name())
 	opts := f.mds.roster.customizers()
 	cold := f.mds.coldMDS != nil && !f.mds.coldMDS.attempted
 	var control testcontainers.Container
 	if cold {
-		if f.id.native != f.mds.coldMDS.identity || *f.first != nil || f.mds.roster.count() != 0 || f.mds.roster.issued() != 0 {
+		if f.core.Native() != f.mds.coldMDS.identity || *f.first != nil || f.mds.roster.count() != 0 || f.mds.roster.issued() != 0 {
 			servicehook.Unlock(c)
 			return nil, errors.New("original cold MDS ownership changed before startup")
 		}
@@ -707,7 +705,7 @@ func (f mdsFleet) createMDSCredentials(ctx context.Context, a *mdsStartAdmission
 		}
 		return keyring, nil
 	}
-	keyring, err := f.id.cluster.Ceph(ctx, args...)
+	keyring, err := f.core.Cluster().Ceph(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("create mds.%s credentials: %w", a.id, err)
 	}
@@ -724,12 +722,12 @@ func (f mdsFleet) publishStartedMDS(ctx context.Context, id string, ctr testcont
 	if ctr == nil {
 		return nil
 	}
-	c := f.id.cluster
+	c := f.core.Cluster()
 	servicehook.Lock(c)
-	daemon := &MDS{Container: ctr, ID: id, FilesystemName: f.id.name}
+	daemon := &MDS{Container: ctr, ID: id, FilesystemName: f.core.Name()}
 	// A failed or canceled identity capture never loses the cleanup handle or
 	// changes the original starter's error.
-	daemon.identity = &cephFSMDSIdentity{fleet: f, native: f.id.native, descriptor: daemon, container: ctr, name: id, cid: ctr.GetContainerID()}
+	daemon.identity = &cephFSMDSIdentity{fleet: f, native: f.core.Native(), descriptor: daemon, container: ctr, name: id, cid: ctr.GetContainerID()}
 	if startErr == nil && daemon.identity.native != nil && cephFSMDSFullCID(daemon.identity.cid) {
 		fsid, confirmed, err := servicehook.ClusterIdentity(ctx, c)
 		if err == nil && confirmed && ctx.Err() == nil {
@@ -748,7 +746,7 @@ func (f mdsFleet) publishStartedMDS(ctx context.Context, id string, ctr testcont
 }
 
 func (f mdsFleet) retireMDS(ctx context.Context, candidate MDSStatus) error {
-	c := f.id.cluster
+	c := f.core.Cluster()
 	var daemon *MDS
 	daemons, err := f.mdsSnapshot(ctx)
 	if err != nil {
@@ -832,7 +830,7 @@ func cephFSMDSRetirementCandidate(status *FilesystemStatus, daemons []*MDS, acti
 }
 
 func cephFSMDSAbsent(data []byte, name string, gid uint64) (bool, error) {
-	var fsmap cephFSMap
+	var fsmap fsbase.FSMap
 	if err := json.Unmarshal(data, &fsmap); err != nil || fsmap.Filesystems == nil {
 		return false, errors.New("decode FSMap while retiring MDS")
 	}
@@ -853,39 +851,39 @@ func cephFSMDSAbsent(data []byte, name string, gid uint64) (bool, error) {
 
 // status is MDSStatus.
 func (f mdsFleet) status(ctx context.Context) (*FilesystemStatus, error) {
-	if f.id.cluster == nil {
+	if f.core.Cluster() == nil {
 		return nil, errors.New("cephfs cluster is unavailable")
 	}
 	daemons, err := f.mdsSnapshot(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot owned CephFS MDSs: %w", err)
 	}
-	data, err := f.id.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := f.core.Cluster().Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
 	}
-	return parseCephFSMDSStatus(data, f.id.name, daemons)
+	return parseCephFSMDSStatus(data, f.core.Name(), daemons)
 }
 
 // waitReady is WaitReady.
 func (f mdsFleet) waitReady(ctx context.Context) error {
-	if f.id.cluster == nil {
+	if f.core.Cluster() == nil {
 		return errors.New("cephfs cluster is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(f.id.cluster))
+	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(f.core.Cluster()))
 	defer cancel()
 	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		status, err := f.status(ctx)
 		if err != nil {
 			return false, err
 		}
-		if err := servicehook.LockTopology(ctx, f.id.cluster); err != nil {
+		if err := servicehook.LockTopology(ctx, f.core.Cluster()); err != nil {
 			return false, err
 		}
-		config := f.id.config
-		servicehook.Unlock(f.id.cluster)
+		config := *f.config
+		servicehook.Unlock(f.core.Cluster())
 		if !cephFSMDSReady(status, config) {
-			return false, fmt.Errorf("cephfs %q is not ready: active=%v standby=%v replay=%v max_mds=%d", f.id.name, status.Active, status.Standby, status.StandbyReplay, status.MaxMDS)
+			return false, fmt.Errorf("cephfs %q is not ready: active=%v standby=%v replay=%v max_mds=%d", f.core.Name(), status.Active, status.Standby, status.StandbyReplay, status.MaxMDS)
 		}
 		return true, nil
 	}); err != nil {
@@ -917,30 +915,13 @@ func cephFSMDSReady(status *FilesystemStatus, config Config) bool {
 	return len(status.StandbyReplay) == wantedReplay
 }
 
-type cephFSMap struct {
-	FeatureFlags struct {
-		EnableMultiple bool `json:"enable_multiple"`
-	} `json:"feature_flags"`
-	Standbys    []cephFSMDSInfo `json:"standbys"`
-	Filesystems []struct {
-		ID     int64 `json:"id"`
-		MDSMap struct {
-			Name         string                   `json:"fs_name"`
-			MaxMDS       int                      `json:"max_mds"`
-			Info         map[string]cephFSMDSInfo `json:"info"`
-			MetadataPool int64                    `json:"metadata_pool"`
-			DataPools    []int64                  `json:"data_pools"`
-		} `json:"mdsmap"`
-	} `json:"filesystems"`
-}
-
-type cephFSMDSInfo struct {
-	MDSStatus
-	JoinFSCID int64 `json:"join_fscid"`
+// mdsStatus is the public status of one decoded FSMap daemon entry.
+func mdsStatus(info fsbase.MDSInfo) MDSStatus {
+	return MDSStatus{Name: info.Name, Rank: info.Rank, GID: info.GID, State: info.State, Owned: info.Owned}
 }
 
 func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*FilesystemStatus, error) {
-	var fsmap cephFSMap
+	var fsmap fsbase.FSMap
 	if err := json.Unmarshal(data, &fsmap); err != nil {
 		return nil, fmt.Errorf("decode cephfs FSMap: %w", err)
 	}
@@ -959,17 +940,17 @@ func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*Filesystem
 			info.Owned = owned[info.Name]
 			switch info.State {
 			case "up:active":
-				status.Active = append(status.Active, info.MDSStatus)
+				status.Active = append(status.Active, mdsStatus(info))
 			case "up:standby-replay":
 				if info.Owned && info.JoinFSCID == filesystem.ID {
-					status.StandbyReplay = append(status.StandbyReplay, info.MDSStatus)
+					status.StandbyReplay = append(status.StandbyReplay, mdsStatus(info))
 				}
 			}
 		}
 		for _, info := range fsmap.Standbys {
 			if owned[info.Name] && info.State == "up:standby" && info.JoinFSCID == filesystem.ID {
 				info.Owned = true
-				status.Standby = append(status.Standby, info.MDSStatus)
+				status.Standby = append(status.Standby, mdsStatus(info))
 			}
 		}
 		less := func(a, b MDSStatus) int {
@@ -1079,15 +1060,4 @@ func cephFSMDSID(name string, index int) string {
 		return "a"
 	}
 	return name + "-" + strconv.Itoa(index)
-}
-
-// volumeCommands runs this filesystem's native commands: volume, subvolume,
-// snapshot, pin, session and schedule reads and writes, each addressed to the
-// filesystem's authoritative name. It holds only the owning cluster and that
-// name, both fixed when the handle is published, so it needs no lock of its
-// own; admission, ownership checks and the cluster lock stay with the
-// Filesystem operation that calls it.
-type volumeCommands struct {
-	cluster *ceph.Container
-	name    string
 }

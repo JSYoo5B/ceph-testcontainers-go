@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -103,15 +104,15 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if err := fs.WaitReady(ctx); err != nil {
 				t.Fatal(err)
 			}
-			defaults := cephfs.SessionTimeouts{Timeout: time.Minute, Autoclose: 5 * time.Minute}
-			if current, err := fs.SessionTimeouts(ctx); err != nil || current != defaults {
+			defaults := cephfssession.Limits{Timeout: time.Minute, Autoclose: 5 * time.Minute}
+			if current, err := cephfssession.Timeouts(ctx, fs); err != nil || current != defaults {
 				t.Fatalf("default session timeouts = %+v, %v", current, err)
 			}
-			if change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 29 * time.Second, Autoclose: time.Minute}); change != nil || err == nil {
+			if change, err := cephfssession.OverrideTimeouts(ctx, fs, cephfssession.Limits{Timeout: 29 * time.Second, Autoclose: time.Minute}); change != nil || err == nil {
 				t.Fatal("timeout below the native minimum was accepted")
 			}
-			short := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: time.Minute}
-			change, err := fs.OverrideSessionTimeouts(ctx, short)
+			short := cephfssession.Limits{Timeout: 30 * time.Second, Autoclose: time.Minute}
+			change, err := cephfssession.OverrideTimeouts(ctx, fs, short)
 			if change != nil {
 				t.Cleanup(func() {
 					cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -124,10 +125,10 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if err != nil {
 				t.Fatal("shorten session timeouts:", err)
 			}
-			if current, err := fs.SessionTimeouts(ctx); err != nil || current != short {
+			if current, err := cephfssession.Timeouts(ctx, fs); err != nil || current != short {
 				t.Fatalf("shortened session timeouts = %+v, %v", current, err)
 			}
-			if again, err := fs.OverrideSessionTimeouts(ctx, defaults); again != nil || err == nil {
+			if again, err := cephfssession.OverrideTimeouts(ctx, fs, defaults); again != nil || err == nil {
 				t.Fatal("overlapping session timeouts override was admitted")
 			}
 			// An outside edit is refused instead of overwritten, and Restore
@@ -136,7 +137,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if err := change.Restore(ctx); err == nil || !strings.Contains(err.Error(), "outside this override") {
 				t.Fatalf("restore over an outside edit: %v", err)
 			}
-			if current, err := fs.SessionTimeouts(ctx); err != nil || current.Autoclose != 90*time.Second {
+			if current, err := cephfssession.Timeouts(ctx, fs); err != nil || current.Autoclose != 90*time.Second {
 				t.Fatalf("refused restore changed the outside edit: %+v, %v", current, err)
 			}
 			harness.MustCeph(t, ctx, cluster, "fs", "set", fs.FilesystemName, "session_autoclose", "60")
@@ -165,7 +166,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if err := change.Restore(ctx); err != nil {
 				t.Fatal("restore session timeouts:", err)
 			}
-			if current, err := fs.SessionTimeouts(ctx); err != nil || current != defaults {
+			if current, err := cephfssession.Timeouts(ctx, fs); err != nil || current != defaults {
 				t.Fatalf("restored session timeouts = %+v, %v", current, err)
 			}
 		})
@@ -295,9 +296,9 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	return states, evicted
 }
 
-func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, id string) *cephfs.Session {
+func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, id string) *cephfssession.Session {
 	t.Helper()
-	sessions, err := fs.Sessions(ctx)
+	sessions, err := cephfssession.List(ctx, fs)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -135,13 +135,13 @@ an error, or the old one. When settling itself fails, the outcome stays open:
 [ClientConfig.UpdateCaps](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.UpdateCaps) and [ClientConfig.Delete](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Delete) are
 fenced the same way, so none of these operations races a command of another
 one that may still apply. The CephFS subvolume grants of the
-[cephfs](../../cephfs/README.md) package settle these commands before they change a
-client. Their own commands go through the MGR, though, which this settling
+[cephfs/subvolume](../../cephfs/subvolume/README.md) package settle these
+commands before they change a client. Their own commands go through the MGR, though, which this settling
 cannot fence, and the module cannot tell when a failed one has ended: the
 volumes module may still create or change the identity later. Do not replace
 or revoke a client after a failed `Subvolume.Authorize` or
-`SubvolumeAuthorization.Deauthorize` for it. A `SubvolumeAuthorizedClients` listing shows
-only the state at that moment.
+`Authorization.Deauthorize` for it. A `subvolume.AuthorizedClients` listing
+shows only the state at that moment.
 
 ### ClientConfig.Revoke
 

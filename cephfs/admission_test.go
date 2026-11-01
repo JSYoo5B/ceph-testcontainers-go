@@ -3,11 +3,8 @@ package cephfs
 import (
 	"context"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -16,10 +13,11 @@ import (
 // an owned filesystem41 and a sibling99; no native cluster) and records the
 // decided identity (F1): the private name captured at creation is the only
 // source of which filesystem an operation targets. Editing the exported
-// FilesystemName no longer redirects MDSStatus to the sibling. The explicit
-// descriptor-integrity refusal of the session admission is retained, and the
+// FilesystemName no longer redirects MDSStatus to the sibling, and the
 // data-pool admission still admits without a native command. It does not show
-// that a whole data-pool operation succeeds.
+// that a whole data-pool operation succeeds. The descriptor-integrity refusal
+// of the session admission is pinned by cephfs/session's
+// TestBeginRefusesAnEditedDescriptor.
 func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	fs, control, _, _ := cephFSContextAdmissionFixture()
 	control.Output["fs dump --format json"] = `{"filesystems":[` +
@@ -36,15 +34,9 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	if err != nil || status.FilesystemID != 41 || len(status.Active) != 1 || status.Active[0].Name != "a" || !status.Active[0].Owned {
 		t.Fatalf("MDSStatus follows the edited exported FilesystemName instead of the creation identity: %+v %v", status, err)
 	}
-	if fs.id.config.Name != "fixture" || fs.id.name != "fixture" || fs.id.native.id != 41 {
+	if fs.config.Name != "fixture" || fs.base().Name() != "fixture" || fs.base().Native().ID != 41 {
 		t.Fatal("the stored config, name or native identity changed with the descriptor")
 	}
-
-	if _, _, done, err := fs.beginSessionOperation(t.Context()); err == nil {
-		done()
-		t.Fatal("session admission accepted an edited descriptor")
-	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
 
 	before := len(control.Calls)
 	_, done, err := fs.beginDataPoolOperation(t.Context())
@@ -55,36 +47,20 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	if len(control.Calls) != before {
 		t.Fatalf("data-pool admission issued native commands: %v", control.Calls[before:])
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
-
-	fs.FilesystemName = "fixture"
-	_, id, done, err := fs.beginSessionOperation(t.Context())
-	if err != nil || id != 41 {
-		t.Fatalf("restored descriptor was refused or lost the FSMap id: %d %v", id, err)
-	}
-	done()
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // The shared lifetime keeps the two differences that are not predicates: the
 // cancellation recheck after the setup gate, and the refusal text.
 func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 	fs, _, _, _ := cephFSContextAdmissionFixture()
-	fs.id.native = nil
-	_, _, _, err := fs.beginSubvolumeOperation(t.Context())
-	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
-		t.Fatalf("subvolume refusal changed: %v", err)
-	}
-	_, _, _, err = fs.beginSessionOperation(t.Context())
-	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
-		t.Fatalf("session refusal changed: %v", err)
-	}
+	fs.base().ReplaceNative(nil)
 	ctx, done, err := fs.beginDataPoolOperation(t.Context())
 	if err == nil || err.Error() != "filesystem must have a confirmed creation identity in this active cluster" || ctx == nil || done == nil {
 		t.Fatalf("data-pool refusal changed: %v", err)
 	}
 	done() // a no-op on refusal
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 	var nilFS *Filesystem
 	if _, done, err := nilFS.beginDataPoolOperation(t.Context()); err == nil || err.Error() != "CephFS filesystem is unavailable" {
 		t.Fatalf("nil handle refusal changed: %v", err)
@@ -94,29 +70,30 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for name, begin := range map[string]func() error{
-		"subvolume": func() error { _, _, _, err := fs.beginSubvolumeOperation(canceled); return err },
 		"data pool": func() error { _, _, err := fs.beginDataPoolOperation(canceled); return err },
-		"session":   func() error { _, _, _, err := fs.beginSessionOperation(canceled); return err },
 	} {
 		if err := begin(); err != context.Canceled {
 			t.Fatalf("%s admission did not return the cancellation: %v", name, err)
 		}
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
-// and the division of work. Only admitOperation takes setupMu through LockMutex and the
-// topology mutex inside the begin*Operation family, and it takes them in the
-// package order (setupMu first). admitOperation is called only by the three flows, each
-// flow passes its own check function and none takes either lock itself. admitOperation
-// holds no predicate: it does not read the registry, the native identity or an
-// exported field.
+// and the division of work. The core's Admit (fsbase) owns the admission
+// lifetime: in package cephfs it is called only by the data-pool flow, which
+// passes its own Check function and takes or releases neither setupMu nor the
+// topology mutex itself. volbase's
+// TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal pins the same for
+// the subvolume flow, volbase.Begin, which the feature packages share, and
+// cephfs/session's TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal
+// for the session flow.
+// fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that Admit
+// takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	begins := []string{"beginSubvolumeOperation", "beginDataPoolOperation", "beginSessionOperation"}
+	begins := []string{"beginDataPoolOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
-	var admitOperation *ast.FuncDecl
 	files := parseCephFSProductionFiles(t)
 	for _, parsed := range files {
 		for _, decl := range parsed.Decls {
@@ -124,19 +101,18 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			if fn.Name.Name == "admitOperation" && rosterReceiverName(fn) == "Filesystem" {
-				admitOperation = fn
+			if fn.Name.Name == "admitOperation" || fn.Name.Name == "Admit" {
+				t.Errorf("package cephfs declares %s: the admission lifetime belongs to fsbase", fn.Name.Name)
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				name := admissionCallee(call)
-				if name == "admitOperation" {
+				if name := admissionCallee(call); name == "Admit" {
 					callers[name] = append(callers[name], fn.Name.Name)
 				}
-				if slices.Contains(begins, fn.Name.Name) || fn.Name.Name == "admitOperation" {
+				if slices.Contains(begins, fn.Name.Name) {
 					switch {
 					case isSetupMuAcquire(call):
 						lockCalls[fn.Name.Name] = append(lockCalls[fn.Name.Name], "setupMu")
@@ -148,25 +124,13 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			})
 		}
 	}
-	slices.Sort(callers["admitOperation"])
-	if !reflect.DeepEqual(callers, map[string][]string{"admitOperation": {"beginDataPoolOperation", "beginSessionOperation", "beginSubvolumeOperation"}}) {
-		t.Errorf("admitOperation caller table changed: %v", callers)
+	slices.Sort(callers["Admit"])
+	if !reflect.DeepEqual(callers, map[string][]string{"Admit": {"beginDataPoolOperation"}}) {
+		t.Errorf("Admit caller table changed: %v", callers)
 	}
-	if !reflect.DeepEqual(lockCalls, map[string][]string{"admitOperation": {"setupMu", "topology"}}) {
-		t.Errorf("lock acquisitions of the admission family changed (setupMu must come first, only in admitOperation): %v", lockCalls)
+	if len(lockCalls) != 0 {
+		t.Errorf("an admission flow takes a lock itself; only Admit may: %v", lockCalls)
 	}
-	if admitOperation == nil {
-		t.Fatal("admitOperation is missing")
-	}
-	ast.Inspect(admitOperation.Body, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains([]string{"byName", "nativeIdentity", "FilesystemName", "MetadataPool", "DataPool", "config", "roster"}, sel.Sel.Name) {
-			t.Errorf("admitOperation reads %s: ownership predicates stay in each operation", sel.Sel.Name)
-		}
-		if id, ok := n.(*ast.Ident); ok && id.Name == "Closed" {
-			t.Error("admitOperation tests Closed: that belongs to each operation's predicate")
-		}
-		return true
-	})
 	for _, parsed := range files {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -176,29 +140,20 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 			checks := 0
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if kv, ok := n.(*ast.KeyValueExpr); ok {
-					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "check" {
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Check" {
 						if _, lit := kv.Value.(*ast.FuncLit); lit {
 							checks++
 						}
 					}
 				}
 				if call, ok := n.(*ast.CallExpr); ok && admissionCallee(call) == "Unlock" {
-					t.Errorf("%s unlocks directly; release belongs to admitOperation", fn.Name.Name)
+					t.Errorf("%s unlocks directly; release belongs to Admit", fn.Name.Name)
 				}
 				return true
 			})
 			if checks != 1 {
 				t.Errorf("%s must pass exactly one own check function, has %d", fn.Name.Name, checks)
 			}
-		}
-	}
-	src, err := parser.ParseFile(token.NewFileSet(), "admission.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, imp := range src.Imports {
-		if strings.Contains(imp.Path.Value, "sync") {
-			t.Error("admission adds a mutex type")
 		}
 	}
 }

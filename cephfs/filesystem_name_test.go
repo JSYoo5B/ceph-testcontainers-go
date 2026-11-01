@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -51,32 +52,33 @@ func TestScaleMDSOwnershipUsesCreationIdentityNotEditedDescriptor(t *testing.T) 
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil && err.Error() == ownership {
 		t.Fatalf("ScaleMDS ownership followed the edited FilesystemName: %v", err)
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // F5: ScaleMDS replaces the whole config struct under the cluster mutex while
-// the snapshot-schedule methods run without either lock. They read the
-// immutable name, so overlapping them is race free. Run it with -race: before
-// the name was separated, the unlocked read of config.Name was a data race.
+// the feature packages (cephfs/snapschedule, which takes no lock) read the
+// filesystem through its core: the immutable name and the command transport.
+// Overlapping them is race free. Run it with -race: before the name was
+// separated, the unlocked read of config.Name was a data race.
 func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
-	fs := snapScheduleFilesystem(newFakeSnapSchedule())
+	fs, _ := filesystemFixture()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for i := range 200 {
-			servicehook.Lock(fs.id.cluster)
-			desired := fs.id.config
+			servicehook.Lock(fs.base().Cluster())
+			desired := fs.config
 			desired.ActiveMDS = i%2 + 1
-			fs.id.config = desired
-			servicehook.Unlock(fs.id.cluster)
+			fs.config = desired
+			servicehook.Unlock(fs.base().Cluster())
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			if _, err := fs.id.volumes().snapshotScheduleStatuses(t.Context(), "/"); err != nil {
-				t.Errorf("status read failed: %v", err)
+			if v := fsbase.Of(fs).Volumes(); v.Name() != "fixture" || v.Cluster() == nil {
+				t.Errorf("the command transport changed: %q", v.Name())
 				return
 			}
 		}
@@ -86,12 +88,16 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 
 // The identity is read from the identity's name everywhere. The only reads of
 // the exported copy are the descriptor-integrity refusals listed here, through
-// a Filesystem receiver or through the MDS fleet's descriptor, which
-// Filesystem.fleet binds to the exported field exactly once; no code reads the
-// name through config (an unlocked read of config is the F5 question). The list
-// is exact so a new reader is reviewed.
+// the core's DescriptorIntact (whose address newFilesystem binds once) or
+// through the MDS fleet's descriptor, which Filesystem.fleet binds to the
+// exported field exactly once; no code reads the name through config (an
+// unlocked read of config is the F5 question). The list is exact so a new
+// reader is reviewed. fsbase's own guard pins that DescriptorIntact is its only
+// read of the bound address; the volbase and cephfs/session guards pin that
+// volbase.Begin and session's begin are the only callers of DescriptorIntact
+// in the feature packages.
 func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
-	allowedExported := []string{"beginSubvolumeOperation", "beginSessionOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
+	allowedExported := []string{"checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -135,6 +141,9 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "descriptor" && sel.Sel.Name == "name" {
 					exportedReads = append(exportedReads, fn.Name.Name)
 				}
+				if sel.Sel.Name == "DescriptorIntact" {
+					exportedReads = append(exportedReads, fn.Name.Name)
+				}
 				return true
 			})
 		}
@@ -149,7 +158,8 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 			t.Errorf("%s no longer reads the exported copy; shrink the allow-list", name)
 		}
 	}
-	if !slices.Equal(bindings, []string{"fleet"}) {
-		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet", bindings)
+	slices.Sort(bindings)
+	if !slices.Equal(bindings, []string{"fleet", "newFilesystem"}) {
+		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet and newFilesystem", bindings)
 	}
 }

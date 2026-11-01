@@ -1,0 +1,57 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs/quiesce",
+  "count": 7,
+  "entries": [
+    {
+      "current": "cephfs/quiesce.Config",
+      "kind": "type",
+      "proposed": "cephfs/quiesce.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Set",
+      "kind": "type",
+      "proposed": "cephfs/quiesce.Set",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Set.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Set",
+      "proposed": "cephfs/quiesce.Set.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Set.Release",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Set",
+      "proposed": "cephfs/quiesce.Set.Release",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Set.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*State, error)",
+      "receiver": "*Set",
+      "proposed": "cephfs/quiesce.Set.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Start",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem, volumes []*subvolume.Subvolume, config Config) (*Set, error)",
+      "proposed": "cephfs/quiesce.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.State",
+      "kind": "type",
+      "proposed": "cephfs/quiesce.State",
+      "decision": "baseline"
+    }
+  ]
+}

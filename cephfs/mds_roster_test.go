@@ -100,13 +100,13 @@ func TestMDSRosterReadersUnderTheClusterLockAreRaceFree(t *testing.T) {
 		defer wg.Done()
 		for range 200 {
 			d := &MDS{ID: "x"}
-			servicehook.Lock(fs.id.cluster)
+			servicehook.Lock(fs.base().Cluster())
 			fs.mds.roster.publish(d)
 			fs.mds.roster.reserveIndex()
-			servicehook.Unlock(fs.id.cluster)
-			servicehook.Lock(fs.id.cluster)
+			servicehook.Unlock(fs.base().Cluster())
+			servicehook.Lock(fs.base().Cluster())
 			fs.mds.roster.remove(d)
-			servicehook.Unlock(fs.id.cluster)
+			servicehook.Unlock(fs.base().Cluster())
 		}
 	}()
 	wg.Wait()
@@ -507,10 +507,11 @@ func TestMDSRosterReadersHoldTheirLock(t *testing.T) {
 }
 
 // TestMDSRosterAddsNoMutex pins the number of mutexes of package cephfs. The
-// roster split moved fields, not locks: setupMu, the schedule lease set mutex and
-// the schedule lease mutex are the only three, and mdsRoster declares none.
+// roster split moved fields, not locks: setupMu is the only one, and mdsRoster
+// declares none. The two snapshot schedule mutexes moved with their package;
+// cephfs/snapschedule's TestLeaseLocksAreTheTwoLeafMutexes pins them.
 func TestMDSRosterAddsNoMutex(t *testing.T) {
-	const want = 3 // filesystemRegistry.setupMu, scheduleLeases.mu, SnapshotScheduleLease.mu
+	const want = 1 // filesystemRegistry.setupMu
 	got, inRoster := 0, 0
 	for _, parsed := range parseCephFSProductionFiles(t) {
 		for _, decl := range parsed.Decls {

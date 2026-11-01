@@ -15,7 +15,7 @@ import (
 // AddDataPool are detached by the native removal but kept. A retry after an
 // error continues with whatever remains.
 func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem) error {
-	name := handle.id.name
+	name := handle.base().Name()
 	release, err := lockSetupThenTopology(ctx, c)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 	if err := fs.fleet().removeAll(ctx); err != nil {
 		return err
 	}
-	for _, pool := range cephFSConfiguredPools(fs.id.config) {
+	for _, pool := range cephFSConfiguredPools(fs.config) {
 		if err := servicehook.RemovePool(ctx, c, pool.Name, true); err != nil && !servicehook.PoolMissing(err) {
 			return fmt.Errorf("remove pool %q of removed cephfs %q: %w", pool.Name, name, err)
 		}

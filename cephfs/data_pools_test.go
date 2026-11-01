@@ -39,9 +39,9 @@ func dataPoolsFixture(t *testing.T) (*Filesystem, *cephFSDataPoolsFixture) {
 	ctr := &cephFSDataPoolsFixture{fsID: 41, metadataID: 1, defaultID: 2, targetID: 3, poolType: 1,
 		apps: map[string]map[string]string{"cephfs": {}}, output: make(map[string]string)}
 	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second})
-	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", id: filesystemIdentity{name: "fixture", cluster: c, config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}}}
+	fs := newFilesystem(c, Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}, nil)
 	filesystems(c).byName["fixture"] = fs
-	if err := fs.captureNativePoolIdentity(t.Context()); err != nil {
+	if err := fs.base().CaptureNativePools(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	ctr.calls = nil
@@ -138,11 +138,8 @@ func TestCephFSDataPoolAttachmentIdentityAndLiveSelection(t *testing.T) {
 	if _, err := fs.AddDataPool(t.Context(), "extra"); err == nil {
 		t.Fatal("confirmed repeated attachment accepted")
 	}
-	if err := fs.validateSubvolumeConfig("volume", "", "extra", 0); err != nil {
-		t.Fatal("dynamic pool rejected by old static whitelist", err)
-	}
 	ctr.attached = false
-	if err := fs.checkSubvolumeDataPool(t.Context(), "extra"); err == nil {
+	if err := fs.base().CheckSubvolumeDataPool(t.Context(), "extra"); err == nil {
 		t.Fatal("externally detached pool accepted for volume creation")
 	}
 }
@@ -164,14 +161,14 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 	base, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ctx := &cephFSDataPoolWaitingContext{Context: base, firstCheck: make(chan struct{})}
-	filesystems(fs.id.cluster).setupMu.Lock()
+	filesystems(fs.base().Cluster()).setupMu.Lock()
 	locked := true
 	result := make(chan error, 1)
 	exited := make(chan struct{})
 	t.Cleanup(func() {
 		cancel()
 		if locked {
-			filesystems(fs.id.cluster).setupMu.Unlock()
+			filesystems(fs.base().Cluster()).setupMu.Unlock()
 			locked = false
 		}
 		select {
@@ -199,7 +196,7 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		}
 	case <-time.After(500 * time.Millisecond):
 		// Release and join a regression before failing this assertion.
-		filesystems(fs.id.cluster).setupMu.Unlock()
+		filesystems(fs.base().Cluster()).setupMu.Unlock()
 		locked = false
 		select {
 		case _ = <-result:
@@ -207,11 +204,11 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		}
 		t.Fatal("canceled waiter did not return while setup remained busy")
 	}
-	if filesystems(fs.id.cluster).setupMu.TryLock() {
-		filesystems(fs.id.cluster).setupMu.Unlock()
+	if filesystems(fs.base().Cluster()).setupMu.TryLock() {
+		filesystems(fs.base().Cluster()).setupMu.Unlock()
 		t.Fatal("canceled waiter stole or unlocked the held setup gate")
 	}
-	filesystems(fs.id.cluster).setupMu.Unlock()
+	filesystems(fs.base().Cluster()).setupMu.Unlock()
 	locked = false
 	if len(ctr.calls) != 0 {
 		t.Fatal("canceled setup waiter sent native commands", ctr.calls)
@@ -249,7 +246,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("overwrite-enabled EC refused", err)
 	}
 	fs, c = dataPoolsFixture(t)
-	testhelper.TestSetClosed(fs.id.cluster, true)
+	testhelper.TestSetClosed(fs.base().Cluster(), true)
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("terminated cluster queried")
 	}
@@ -263,7 +260,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("nil filesystem accepted")
 	}
 	fs, c = dataPoolsFixture(t)
-	fs.id.native = nil // Start failed before confirming its created FSMap.
+	fs.base().ReplaceNative(nil) // Start failed before confirming its created FSMap.
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("partial filesystem adopted a native identity on first use")
 	}
@@ -274,7 +271,7 @@ func TestCephFSDataPoolLostReplyRecoveryAndReplacedID(t *testing.T) {
 		fs, c := dataPoolsFixture(t)
 		c.failAdd, c.failReadback = !readback, readback
 		attempt, err := fs.AddDataPool(t.Context(), "extra")
-		if err == nil || attempt == nil || !c.attached || attempt.identity.confirmed {
+		if err == nil || attempt == nil || !c.attached || attempt.identity.record.Confirmed {
 			t.Fatalf("partial attach=%+v err=%v", attempt, err)
 		}
 		c.failAdd, c.failReadback = false, false
@@ -340,7 +337,7 @@ func TestCephFSUnusedDataPoolRemovalRefusesReferencesAndExternalEdits(t *testing
 		edit func(*Filesystem, *cephFSDataPoolsFixture, *DataPool)
 	}{
 		{"managed use", func(fs *Filesystem, _ *cephFSDataPoolsFixture, p *DataPool) {
-			if err := fs.checkSubvolumeDataPool(t.Context(), p.Name); err != nil {
+			if err := fs.base().CheckSubvolumeDataPool(t.Context(), p.Name); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -398,10 +395,10 @@ func TestCephFSDataPoolInheritedGroupSelectionIsStickyBeforeCreate(t *testing.T)
 	}
 	c.output["fs subvolumegroup info fixture group --format json"] = `{"data_pool":"extra","created_at":"now","bytes_quota":"infinite","bytes_used":0}`
 	c.output["fs subvolumegroup getpath fixture group"] = "/volumes/group"
-	if err := fs.checkSubvolumeCreationPool(t.Context(), "", "group"); err != nil {
+	if err := fs.base().CheckSubvolumeCreationPool(t.Context(), "", "group"); err != nil {
 		t.Fatal(err)
 	}
-	if !attachment.identity.used {
+	if !attachment.identity.record.Used {
 		t.Fatal("implicit pool selection was not retained before native create")
 	}
 	// External removal of the group and eventual object purge cannot turn a

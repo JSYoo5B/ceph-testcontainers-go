@@ -1,7 +1,10 @@
 // Package cephfs prepares CephFS server fixtures in disposable Ceph clusters:
-// filesystems and their MDS topology, subvolume groups, subvolumes, snapshots,
-// clones, pins, quiesce sets and client authorization. Snapshot mirroring
-// between two clusters is in the cephfs/mirror package.
+// filesystems, their MDS topology and data pools. Subvolume groups,
+// subvolumes, snapshots, clones, subvolume principals and pins are in the
+// cephfs/subvolume package, quiesce sets in cephfs/quiesce, client sessions
+// and their limits in cephfs/session, snapshot schedules in
+// cephfs/snapschedule, and snapshot mirroring between two clusters in
+// cephfs/mirror.
 //
 // Run starts a cluster with at least one filesystem. Start adds a filesystem
 // to a cluster created by ceph.Run or another service package's Run, and

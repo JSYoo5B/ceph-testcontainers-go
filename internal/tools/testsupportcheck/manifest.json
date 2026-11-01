@@ -1,5 +1,6 @@
 {
   "test_only_packages": [
+    "cephfs/internal/fstest",
     "internal/clusteraccess",
     "internal/clustertest",
     "internal/integration/harness",

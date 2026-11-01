@@ -273,7 +273,7 @@ tool sends the legacy `CEPH_OSD_OP_PGLS`.
 
 These tests keep a native libcephfs client mounted in a client container under
 `RunNativeCommand`, with a descriptor opened before the event, and publish its
-client ID, PID and inode in run-scoped receipts. `Sessions` reports the
+client ID, PID and inode in run-scoped receipts. `session.List` reports the
 session; `ceph tell mds.<name> session ls` adds counters such as `num_leases`
 and `num_completed_requests`. Every test runs with `MessengerV2Secure`.
 
