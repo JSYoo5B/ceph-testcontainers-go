@@ -661,6 +661,21 @@ and the workflow never builds one:
 gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/ceph-rgw:patched
 ```
 
+`mon_log_ack` (`TestMONLogAckThroughPeon`) requires every OSD's cluster log
+entries to be acknowledged in a three-MON cluster, through the leader and
+through a peon. It arranges sessions on both before measuring, restarting a
+MON if needed. The window is rejected if the leader, the election epoch or any
+OSD's session (MON and `global_id`) changed, or if an OSD's MonClient log
+shows a reset, reopen or hunt in it, even one that returns to the same MON. A
+peon-connected OSD passes only if its peon forwarded its MLog and routed the
+covering MLogAck back under that tid. On 20.2.4 the peon discards the MLogAck the leader routes back
+("don't have routed request"), so the peon-connected OSDs are never
+acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
+
+```sh
+CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 go test -tags all,native_regression -run '^TestMONLogAckThroughPeon$' -v ./internal/integration
+```
+
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
 `apparmor=unconfined`. It needs a rootful engine whose kernel has FUSE: a
