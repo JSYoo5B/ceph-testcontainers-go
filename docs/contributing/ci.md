@@ -932,7 +932,8 @@ writes a `before-deadline` archive before Go's timeout panic, which runs no
 cleanup; its manifest is never final. Nothing is archived when the runner is
 lost, the job is cancelled or the process is killed: the test binary exits
 on the cancellation's SIGINT without cleanups, and Ryuk removes the
-containers about ten seconds later, before a later step could read them.
+containers about ten seconds later, so a later step would race it and is not
+a supported collector.
 
 `archive_audit.py` audits a downloaded archive directory without changing
 any verdict:
