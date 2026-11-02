@@ -832,8 +832,11 @@ a transient peak or reclaim historical preparation time.
 
 For a controlled hosted comparison, dispatch `Ceph periodic` with `mode=storage`
 and the same commit `ref`, release and `storage_policy=auto`, `always` or
-`pressure`. Each dispatch runs only the qualified watcher profile and retains
-its ordinary assertions and cleanup checks; repeat dispatches for each policy.
+`pressure`. The `storage_profiles` input selects comma-separated source-owned profile IDs,
+defaulting to the watcher profile. Up to five selected jobs run concurrently,
+retaining ordinary assertions and cleanup checks; repeat dispatches for each
+policy on the same source and selection. Pressure refuses an unqualified
+profile before allocating a file.
 `always` is the reclamation control. `pressure` creates one exclusive owned file
 on the Docker filesystem to cross the admission boundary, retaining the MON
 floor, runtime reserve and 2GiB extra; it refuses allocations outside 1–40GiB
