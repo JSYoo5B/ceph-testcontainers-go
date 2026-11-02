@@ -109,7 +109,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: osdOOMPool, PGNum: 1, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := cluster.Pool(ctx, osdOOMPool)
@@ -565,7 +565,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 			break
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Logf("cluster did not return to clean: %v", err)
 	} else {
 		run.Recovery.Clean = true

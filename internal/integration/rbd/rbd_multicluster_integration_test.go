@@ -94,7 +94,7 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	harness.RBDMultiClusterWriteRange(t, ctx, destinationClient, restored, imageSize, 0, writable[:256<<10])
 	harness.VerifyRBDBytes(t, ctx, destinationClient, restored, writable)
 	harness.VerifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
-	if err := destination.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(destination).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("RBD intercluster backup: full format-2=%d bytes sha256=%x; incremental=%d bytes sha256=%x; snapshots, metadata, chain rejection and source-independent writable restore verified", len(full), sha256.Sum256(full), len(delta), sha256.Sum256(delta))

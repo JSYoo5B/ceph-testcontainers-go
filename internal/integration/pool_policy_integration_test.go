@@ -37,7 +37,7 @@ func TestPoolPolicies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			probe := func(phase string) {
@@ -80,7 +80,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 				if err := harness.PoolHandle(t, ctx, cluster, "tc-policy").SetReplication(ctx, size.size, size.min); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 				state, err := harness.PoolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
@@ -151,7 +151,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if weight := nativeWeight(); weight != originalWeight {
 				t.Fatalf("native CRUSH restoration differs: %s before=%d after=%d", osdName, originalWeight, weight)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if err := harness.PoolHandle(t, ctx, cluster, "tc-policy").SetQuota(ctx, ceph.PoolQuota{MaxBytes: 1, MaxObjects: 1}); err != nil {

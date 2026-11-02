@@ -46,7 +46,7 @@ func TestScrubInconsistency(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: poolName, Application: "rados", PGNum: 1, Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			probe := func(t *testing.T, phase string) {

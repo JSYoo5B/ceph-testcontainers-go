@@ -46,7 +46,7 @@ func (s *radosPoolSuite) TestClientFixtures() {
 	if !found {
 		t.Fatal("public PoolStatus identity differs from native OSDMap")
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	outer := `import subprocess,sys; subprocess.run(["python3","-c",sys.argv[1]],check=True,timeout=100)`

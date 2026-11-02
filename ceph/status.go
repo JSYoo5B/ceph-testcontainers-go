@@ -30,21 +30,8 @@ type Status struct {
 	} `json:"pgmap"`
 }
 
-// WaitForClean waits until a manager is available, the native OSD count
-// equals the owned OSD count with every OSD up and in, at least one PG exists
-// and every PG is exactly active+clean. HEALTH_WARN alone does not block it.
-// PG states with extra flags, such as active+clean+scrubbing, do not count. It
-// never succeeds while an owned OSD is intentionally stopped or out; use
-// WaitForPGClean then. The cluster's startup timeout also bounds the wait.
-//
-// Call it after creating pools and after topology changes, before client I/O.
-// OSDs registered outside the fixture make the count differ, a pool whose
-// replica count exceeds the OSD count never becomes clean, and after
-// Pool.SetPGCount or Pool.SetPlacement it can pass before the new PG set is
-// reported (see Pool.WaitForPGCount and Pool.PGs).
-//
-//purpose:observation
-func (c *Container) WaitForClean(ctx context.Context) error {
+// waitForClean implements the observer wait and is available to cluster startup.
+func (c *Container) waitForClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	if err := c.lockTopology(ctx); err != nil {

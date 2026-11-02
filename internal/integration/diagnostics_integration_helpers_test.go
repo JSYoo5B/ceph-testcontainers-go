@@ -41,7 +41,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 		opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	}
 	cluster, client := harness.NewServiceCluster(t, opts...)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	diagnosticsDataProbe(t, ctx, client, "seed")
@@ -175,7 +175,7 @@ func diagnosticsOwnedContainers(t testing.TB, cluster *ceph.Container) []testcon
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		appendContainer(osd.Container)
 	}
-	for _, service := range cluster.ServiceContainers() {
+	for _, service := range clusteraccess.ServiceContainers(t, cluster) {
 		appendContainer(service)
 	}
 	appendContainer(clusteraccess.ControlContainer(t, cluster))

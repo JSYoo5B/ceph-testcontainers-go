@@ -93,7 +93,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	t.Logf("NO_INITIAL_MGR_ZERO fsid=%s owned_managers=0 native_managers=0 osds=%d mon_cid=%s", fsid, wantOSDs, cluster.GetContainerID())
 	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
-	err = cluster.WaitForClean(short)
+	err = harness.ObserveCluster(cluster).WaitForClean(short)
 	stop()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("cold constructor implied manager-backed clean statistics", err)
@@ -174,7 +174,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		}
 		originalPoolID = p.ID
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	healthCtx, healthCancel := context.WithTimeout(ctx, 90*time.Second)

@@ -46,7 +46,7 @@ func mgrModuleNotApplied(name string, cause error) (*MGRModuleHandle, error) {
 // filesystems/mirror policies exist. An enabled always-on module accepts only a
 // no-op true lease; a force-disabled always-on module cannot be temporarily
 // enabled because restoring it would require force-disable. This function
-// verifies membership, not command readiness: use ceph.Container.WaitMGRModuleReady
+// verifies membership, not command readiness: use ceph.Observer.WaitMGRModuleReady
 // or a native command probe before relying on the module. External edits must
 // not race apply/restore; Ceph has no module membership CAS or per-module
 // generation.

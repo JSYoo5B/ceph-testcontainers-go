@@ -28,7 +28,7 @@ func RunRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
 	CephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")
 	ExecCommand(t, ctx, client, "rbd", "pool", "init", pool)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	nativeStatus, err := ObserveCluster(cluster).Status(ctx)

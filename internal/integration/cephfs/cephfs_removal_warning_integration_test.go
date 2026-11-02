@@ -68,7 +68,7 @@ func testCephFSRemovalWarning(t *testing.T, condition string) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	seed := []byte("independent-warning-a-bytes\x00\xff")

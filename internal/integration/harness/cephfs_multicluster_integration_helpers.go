@@ -34,7 +34,7 @@ func RunMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcont
 		t.Fatal(err)
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

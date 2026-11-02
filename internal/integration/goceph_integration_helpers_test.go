@@ -97,7 +97,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 			t.Fatal(err)
 		}
 		filesystems[i] = filesystem.FilesystemName
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 		client, err := testcontainers.Run(ctx, clientImage, cluster.WithClient(),

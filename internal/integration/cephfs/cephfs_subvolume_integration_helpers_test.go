@@ -32,7 +32,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	}
 	cluster, client := harness.NewServiceCluster(t, options...)
 	fs := cephfs.Filesystems(cluster)[0]
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "tenant", SizeBytes: 32 << 20, DataPool: extraPool})
@@ -211,7 +211,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if status, err := fs.MDSStatus(ctx); err != nil || len(status.Active) != 1 {
 		t.Fatalf("subvolume removal damaged filesystem: %+v error=%v", status, err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("native CephFS volumes: existing filesystem/MDS/pools, group/default-group isolation, selected additional pool and RADOS namespace, duplicate refusal, actual subvolume/group EDQUOT write denial with preexisting bytes and independent neighbor retained, quota extension recovered the same payload in a fresh session, unlimited/no-shrink, safe removal and copied-handle replacement protection passed")

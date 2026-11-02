@@ -41,7 +41,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, caller := harness.NewServiceCluster(t, opts...)
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 1 || len(clusteraccess.OSDs(t, cluster)) != 2 || len(clusteraccess.Gateways(t, cluster)) != 1 || len(cephfs.Filesystems(cluster)) != 1 {

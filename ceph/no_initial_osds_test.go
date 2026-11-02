@@ -127,7 +127,7 @@ func TestNoInitialOSDsDoesNotImplyPGCleanOrPoolProvisioning(t *testing.T) {
 			t.Fatalf("zero-storage native status fixture invalid: %v", err)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-		err := cluster.WaitForClean(ctx)
+		err := observeWaitCluster(cluster).WaitForClean(ctx)
 		cancel()
 		if !errors.Is(err, context.DeadlineExceeded) || control.statusCalls == 0 {
 			t.Fatalf("zero/inactive PGs became clean: pgs=%d calls=%d err=%v", pgs, control.statusCalls, err)

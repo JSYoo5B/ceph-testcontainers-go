@@ -57,7 +57,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: poolName, Application: "rados", Replicas: 1, MinSize: 1, DeviceClass: "fast"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			original, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
@@ -129,7 +129,7 @@ func TestPoolPGRelocation(t *testing.T) {
 				if err := harness.PoolHandle(t, ctx, cluster, poolName).WaitForPGCount(ctx, count); err != nil {
 					t.Fatal("wait for PG count", err)
 				}
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 				waitPGs(t, phase, count, osd, true)
@@ -176,7 +176,7 @@ func TestPoolPGRelocation(t *testing.T) {
 						t.Fatal("release recovery", err)
 					}
 				}
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 				waitPGs(t, "relocated", 16, slow.ID, true)

@@ -154,7 +154,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-paths", PGNum: 1, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recoveryRun(t, ctx, cluster, client, "write", "seed:20")

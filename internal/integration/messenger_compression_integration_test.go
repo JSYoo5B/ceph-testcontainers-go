@@ -74,7 +74,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	osds := clusteraccess.OSDs(t, cluster)
@@ -130,7 +130,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 			for _, setting := range phase.settings {
 				waitOSDOption(t, ctx, cluster, "osd.1", setting.Name, setting.Value)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}

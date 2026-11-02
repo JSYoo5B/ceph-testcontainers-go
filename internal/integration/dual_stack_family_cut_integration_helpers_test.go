@@ -366,7 +366,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	objects := objectsPerPrimary(t, ctx, cluster, pool, 2)
@@ -578,7 +578,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	if familyOf(firstV2(restarted.Public)) != "ipv6" {
 		t.Fatalf("restarted osd.1 lists %s first", firstV2(restarted.Public))
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	restartRead := expect(v6, map[string]any{"id": "osd-restart", "op": "read", "name": objects[1], "wait": 60}, true)

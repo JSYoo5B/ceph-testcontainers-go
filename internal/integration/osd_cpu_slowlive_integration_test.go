@@ -94,7 +94,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: osdCPUPool, PGNum: 1, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := cluster.Pool(ctx, osdCPUPool)
@@ -412,7 +412,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	}
 	afterRestore := secondFaultAcks(t, ctx, cluster, client, ledger, restoredMark, 3, "after the baseline was restored")
 	run.LedgerAcksAfterRestore = true
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Logf("cluster did not return to clean: %v", err)
 	} else {
 		run.ClusterClean = true

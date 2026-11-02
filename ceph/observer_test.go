@@ -154,3 +154,10 @@ func TestObserverKeepsTheCallerContext(t *testing.T) {
 		t.Fatal("a canceled context was ignored")
 	}
 }
+
+// observeWaitCluster exercises the public acquisition path; nil input keeps
+// the nil observer whose methods refuse the request.
+func observeWaitCluster(c *Container) *Observer {
+	observer, _ := Observe(c)
+	return observer
+}

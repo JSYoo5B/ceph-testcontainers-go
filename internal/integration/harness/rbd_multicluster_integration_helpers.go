@@ -85,7 +85,7 @@ func RunMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Conta
 	copy(writable[:256<<10], RBDMultiClusterPayload(256<<10, 109))
 	RBDMultiClusterWriteRange(t, ctx, destinationClient, image, imageSize, 0, writable[:256<<10])
 	VerifyRBDBytes(t, ctx, destinationClient, image, writable)
-	if err := destination.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(destination).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("RBD native snapshot mirroring: clean demote/promote, source MON/OSD outage, and independent destination read/write verified")
@@ -108,7 +108,7 @@ func RBDMultiClusterPool(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
 	CephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")
 	ExecCommand(t, ctx, client, "rbd", "pool", "init", pool)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

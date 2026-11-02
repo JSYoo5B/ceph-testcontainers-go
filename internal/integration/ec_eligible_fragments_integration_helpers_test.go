@@ -284,7 +284,7 @@ func testECEligibleFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ecPoolFacts(t, ctx, cluster, pool)
@@ -394,7 +394,7 @@ func testECEligibleFragments(t *testing.T) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	restored := ecWaitPG(t, ctx, cluster, name, "clean on three OSDs again", func(pg ceph.PGState) bool {

@@ -38,7 +38,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 	if pool.Replicas != 3 || pool.MinSize != 2 {
 		t.Fatalf("cluster pool defaults were not applied: %+v", pool)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Inspect Ceph's CRUSH hierarchy independently of the Go descriptors. Logical
@@ -116,7 +116,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 	if err := failed.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "verify")
