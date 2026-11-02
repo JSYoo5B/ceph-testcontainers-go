@@ -97,6 +97,46 @@ if err != nil {
   Shorten what a test waits for with `session.OverrideTimeouts` and client
   options.
 
+## Directory-pin timing
+
+For a fixture that prepares several directory-pin handoffs on two or more
+active MDS ranks, opt in with
+`fs.OverrideTiming(ctx, cephfs.TimingProfile{DirectoryPins: true})`. The ordinary
+fixture keeps Ceph's default timing. The profile is qualified for MDS releases
+19.2.5 and 20.2.4 with an effective five-second `mds_tick_interval`; it checks
+each target's native version and value before changing anything. It applies a
+one-second interval to the current healthy owned active MDSs and verifies their
+effective readback. Other filesystems and future scaled or replaced daemons are
+outside its scope.
+
+The returned values are existing `override.ConfigHandle`s. Schedule restoration
+of **all** returned handles, in reverse order, even when application returns an
+error. A partial application or uncertain write still needs restoration. The
+zero profile changes nothing. Application serializes with filesystem topology
+operations; external configuration writes and daemon restarts must not race it.
+
+An already queued tick keeps its previous deadline. The first handoff can
+therefore still wait five seconds, and application/readback costs can outweigh
+the saving for a single pin. The tick also drives other MDS upkeep: this profile
+is for directory-pin fixture setup, not session expiry, reconnection, failure
+detection or fault-overlap timing. Restore before testing those behaviors and
+wait for each daemon's effective configuration to return to its previous value.
+Restoration preserves the original database entry or its absence; it does not
+rewrite higher-precedence local or runtime settings.
+
+See the compiled `ExampleFilesystem_OverrideTiming`. The opt-in native
+`TestCephFSPinTimingQualification` compares alternating baseline/profile runs
+with the same image, topology, polling and file data. Each handoff verifies actual
+MDS subtree authority, fresh libcephfs I/O and pin restoration; it reports both
+handoff time and scenario time including timing application and restoration.
+Run it with `-tags=all,native_regression` on a Linux Docker host.
+
+The consuming path is [MDS tick scheduling](https://github.com/ceph/ceph/blob/v20.2.4/src/mds/MDSDaemon.cc)
+through [MDBalancer pin processing](https://github.com/ceph/ceph/blob/v20.2.4/src/mds/MDBalancer.cc),
+which runs before the separate balancer interval check. Changing
+`mds_bal_interval` does not select this wait. Numeric options can be updated at
+runtime under [Ceph's option rules](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options.h).
+
 ## Reference
 
 - API: [pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs)

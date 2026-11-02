@@ -97,7 +97,10 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 // volbase.Begin and session's begin are the only callers of DescriptorIntact
 // in the feature packages.
 func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
-	allowedExported := []string{"checkStoppedMDSOwner", "scaleColdMDS"}
+	// OverrideTiming reads the descriptor only through DescriptorIntact to refuse
+	// an edited handle before any configuration write. Native targets still use
+	// immutable owned daemon identities.
+	allowedExported := []string{"OverrideTiming", "checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {

@@ -144,7 +144,8 @@ var mdsRosterWriters = map[string][]string{
 // callers and do not take it themselves. Every reference to one of them from
 // outside this set must follow a setupMu acquisition in the same function.
 var mdsRosterSetupHeld = map[string]bool{
-	"startMDS": true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
+	"timingSnapshot": true,
+	"startMDS":       true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
 	"captureColdMDS": true, "scaleColdMDS": true, "verifyColdMDS": true, "checkColdMDSAuth": true,
 	"growMDSs": true, "retireSurplusMDSs": true, "removeAll": true,
 }
@@ -155,6 +156,7 @@ var mdsRosterSetupHeld = map[string]bool{
 // by ceph.Container with its mutex held (the topology caller), through an
 // interface the AST guard cannot follow.
 var mdsRosterOwnerHeld = map[string]bool{
+	"timingSnapshot":                true,
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
 	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
@@ -482,10 +484,13 @@ func TestMDSRosterReadersHoldTheirLock(t *testing.T) {
 					}
 				case *ast.SelectorExpr:
 					ref := node.Sel.Name
-					if mdsRosterOwnerHeld[ref] && ref != "ConfigTargets" && !mdsRosterOwnerHeld[name] && (clusterAt == token.NoPos || clusterAt > node.Pos()) {
+					// Only this exact reference inside Admit's Check callback
+					// inherits both locks. OverrideTiming's outer body does not.
+					admissionHeld := timingAdmissionCheckReference(fn, node)
+					if mdsRosterOwnerHeld[ref] && ref != "ConfigTargets" && !mdsRosterOwnerHeld[name] && !admissionHeld && (clusterAt == token.NoPos || clusterAt > node.Pos()) {
 						problems = append(problems, file+": "+name+" references the owner-held "+ref+" before it holds the cluster mutex")
 					}
-					if mdsRosterSetupHeld[ref] && !mdsRosterSetupHeld[name] && (setupAt == token.NoPos || setupAt > node.Pos()) {
+					if mdsRosterSetupHeld[ref] && !mdsRosterSetupHeld[name] && !admissionHeld && (setupAt == token.NoPos || setupAt > node.Pos()) {
 						problems = append(problems, file+": "+name+" references "+ref+" before it holds setupMu")
 					}
 				}
@@ -503,6 +508,83 @@ func TestMDSRosterReadersHoldTheirLock(t *testing.T) {
 		if !mdsRosterSetupHeld[name] {
 			t.Fatalf("%s is a setupMu-only reader but not pinned as setup held", name)
 		}
+	}
+}
+
+// timingAdmissionCheckReference recognizes only timingSnapshot invoked inside
+// the local Check function passed directly to Core.Admit. Moving it outside
+// the callback, passing the callback elsewhere or adding another owner-held
+// call does not acquire an exemption from the roster lock audit.
+func timingAdmissionCheckReference(fn *ast.FuncDecl, reference *ast.SelectorExpr) bool {
+	if fn.Name.Name != "OverrideTiming" || rosterReceiverName(fn) != "Filesystem" || reference.Sel.Name != "timingSnapshot" {
+		return false
+	}
+	protected := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || types.ExprString(call.Fun) != "core.Admit" || len(call.Args) != 2 {
+			return true
+		}
+		spec, ok := call.Args[1].(*ast.CompositeLit)
+		if !ok || types.ExprString(spec.Type) != "fsbase.AdmissionSpec" {
+			return true
+		}
+		for _, element := range spec.Elts {
+			entry, ok := element.(*ast.KeyValueExpr)
+			if !ok || types.ExprString(entry.Key) != "Check" {
+				continue
+			}
+			check, ok := entry.Value.(*ast.FuncLit)
+			if !ok {
+				continue
+			}
+			ast.Inspect(check.Body, func(n ast.Node) bool {
+				switch n.(type) {
+				case *ast.FuncLit, *ast.GoStmt:
+					return false
+				}
+				if n == reference {
+					protected = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	return protected
+}
+
+func TestTimingAdmissionLockAuditRefusesReferencesOutsideSynchronousCheck(t *testing.T) {
+	for _, test := range []struct {
+		name, before, check string
+		protected           bool
+	}{
+		{name: "admission-check", check: "fs.fleet().timingSnapshot()", protected: true},
+		{name: "outer-body", before: "fs.fleet().timingSnapshot()", check: ""},
+		{name: "nested-callback", check: "callback := func() { fs.fleet().timingSnapshot() }; _ = callback"},
+		{name: "goroutine", check: "go fs.fleet().timingSnapshot()"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := "package cephfs; func (fs *Filesystem) OverrideTiming() { " + test.before + "; core.Admit(ctx, fsbase.AdmissionSpec{Check: func() { " + test.check + " }}) }"
+			parsed, err := parser.ParseFile(token.NewFileSet(), "audit.go", source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fn := parsed.Decls[0].(*ast.FuncDecl)
+			found := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if reference, ok := n.(*ast.SelectorExpr); ok && reference.Sel.Name == "timingSnapshot" {
+					found = true
+					if got := timingAdmissionCheckReference(fn, reference); got != test.protected {
+						t.Fatalf("lock audit considers protected=%v, want %v", got, test.protected)
+					}
+				}
+				return true
+			})
+			if !found {
+				t.Fatal("audit fixture has no timingSnapshot reference")
+			}
+		})
 	}
 }
 

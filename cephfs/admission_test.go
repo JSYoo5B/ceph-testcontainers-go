@@ -81,8 +81,8 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
 // and the division of work. The core's Admit (fsbase) owns the admission
-// lifetime: in package cephfs it is called only by the data-pool flow, which
-// passes its own Check function and takes or releases neither setupMu nor the
+// lifetime: in package cephfs it is called only by the data-pool and timing
+// flows, which pass their own Check functions and take or release neither setupMu nor the
 // topology mutex itself. volbase's
 // TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal pins the same for
 // the subvolume flow, volbase.Begin, which the feature packages share, and
@@ -91,7 +91,7 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 // fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that Admit
 // takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	begins := []string{"beginDataPoolOperation"}
+	begins := []string{"OverrideTiming", "beginDataPoolOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
 	files := parseCephFSProductionFiles(t)
@@ -125,7 +125,7 @@ func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
 		}
 	}
 	slices.Sort(callers["Admit"])
-	if !reflect.DeepEqual(callers, map[string][]string{"Admit": {"beginDataPoolOperation"}}) {
+	if !reflect.DeepEqual(callers, map[string][]string{"Admit": begins}) {
 		t.Errorf("Admit caller table changed: %v", callers)
 	}
 	if len(lockCalls) != 0 {
