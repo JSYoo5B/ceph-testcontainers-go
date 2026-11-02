@@ -24,6 +24,16 @@ on:
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   workflow_dispatch:
+    inputs:
+      storage_policy:
+        description: auto uses qualified headroom; always is the full-workflow reclamation control
+        type: choice
+        options: [auto, always]
+        default: auto
+      ref:
+        description: Exact commit for a controlled full-workflow comparison; empty uses the dispatched branch
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -49,3 +59,5 @@ jobs:
         ${{ github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&
         github.event.pull_request.base.sha || '' }}
+      storage_policy: ${{ github.event_name == 'workflow_dispatch' && inputs.storage_policy || 'auto' }}
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}

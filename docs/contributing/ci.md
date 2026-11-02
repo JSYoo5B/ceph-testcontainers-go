@@ -784,18 +784,31 @@ controlled pressure file; it does not locate the MON store.
 runtime allowance. Failure of
 either guard stops the job before native assertions.
 
-The small qualification in `.github/runner-storage.json` currently covers the
-Tentacle AMD64 `rados_fixtures_watchers` profile: two 1GiB sparse OSDs, a tiny
-watched object and the essential/client/Ryuk images. It reserves 8GiB for image
-preparation and 4GiB for runtime allocation, additional to the MON share and
-100,000 free inodes. These are conservative admission allowances, not measured
-peak claims. Image measurements and equivalent native comparisons belong in
-the implementation pull request. The qualification is tied to the workload declaration/dependency
-fingerprint, tags, selected tests and checked-in image pins;
-a change to those inputs expires it and restores conservative cleanup. The
-watcher explicitly fixes its OSD count, logical size and calibration policy,
-so unrelated library edits continue to exercise that bounded workload. Other profiles and
-releases retain cleanup, rather than inheriting this workload's allowance.
+The qualifications in `.github/runner-storage.json` cover these Tentacle AMD64
+profiles. Each has an 8GiB image-preparation allowance and 100,000 free inodes,
+additional to the per-filesystem MON share and its runtime allowance.
+
+| Profile | Maximum simultaneously live logical OSD backing | Runtime allowance |
+| --- | --- | --- |
+| `rados_fixtures_watchers` | Two 1GiB OSDs | 4GiB |
+| `cephfs_fixtures_data` | Two parallel fixtures with up to three 1GiB OSDs each | 8GiB |
+| `cephfs_fixtures_admin` | One sequential fixture with up to two 1GiB OSDs | 8GiB |
+| `rbd_fixtures_mirror` | Two clusters with two 1GiB OSDs each | 8GiB |
+
+The data profile retains the three OSDs required by its erasure-coded pool
+assertions; its host-network topology still adds and removes an OSD. All
+qualified startup paths explicitly retain 1GiB stores and skip calibration.
+Logical capacity is a conservative source bound, not reserved physical space
+or a measured runtime peak. Control stores, client data and logs are additional;
+the qualification evidence records sampled filesystem consumption separately.
+
+The catalog selects exactly one entry for the compiled profile. Its workload
+sources, listed startup/data helpers, dependency manifests, tags, selected tests
+and image pins must match. Changes to a relevant helper expire that workload's
+qualification. Unrelated profiles cannot inherit its allowance, and an ambiguous
+or missing entry retains conservative cleanup. Other profiles and releases
+remain unqualified. Image and native comparison evidence belongs in the
+implementation pull request.
 
 Only verified local classic-overlay2 or socket-linked containerd-overlayfs
 layouts may skip. Existing local volume mounts and nested mounts are inspected.
@@ -824,6 +837,12 @@ or any non-hosted/unqualified layout. The file stays through native assertions
 and an always-run step removes it only when its device/inode receipt matches.
 The pressure file is also excluded from artifact uploads.
 This qualification never fills a shared host or intentionally approaches ENOSPC.
+For an end-to-end comparison, dispatch `Ceph short` at one fixed commit with
+`storage_policy=auto` or `always` and the same `ref`. It executes the complete
+short selection with the usual network modes and concurrency, including
+unqualified workloads. Use its measured start/end times and final job to assess
+workflow completion, rather than summing avoided preparation seconds. The
+manual control cannot change the policy or checkout of push/PR events.
 Normal schedules, workload coverage and runner concurrency limits are unchanged.
 
 ### Typical causes by phase
