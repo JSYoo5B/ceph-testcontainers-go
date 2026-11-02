@@ -280,11 +280,13 @@ class QualificationTests(unittest.TestCase):
             build = {"passed": True, "profile": {"id": "short-watch", "package": "./internal/integration", "image_roles": "essential,client", "sources": ["fixture.go"]},
                      "binary": {"tests": ["TestWatcher"], "sources": sources,
                                 "build_key": {"goos": "linux", "goarch": "amd64", "tags": "ci,watch"}}}
-            budget = dict(BUDGET, schema=1, profile="short-watch", package="./internal/integration", tests=["TestWatcher"],
+            budget = dict(BUDGET, profile="short-watch", package="./internal/integration", tests=["TestWatcher"],
                           roles="essential,client", releases=["20.2.4"], platform="linux/amd64", tags="ci,watch",
                           sources_sha256=hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                           role_pins_sha256=hashlib.sha256(pins_file.read_bytes()).hexdigest())
-            (root / ".github/runner-storage.json").write_text(json.dumps(budget))
+            catalog_file = root / ".github/runner-storage.json"
+            catalog = {"schema": 2, "profiles": [budget]}
+            catalog_file.write_text(json.dumps(catalog))
             compile_file = root / "compile/compile-report.json"
             def check(value, **kwargs):
                 compile_file.write_text(json.dumps(value))
@@ -304,6 +306,38 @@ class QualificationTests(unittest.TestCase):
                 changed = copy.deepcopy(build)
                 changed["binary"]["build_key"][key] = value
                 self.assertIsNone(check(changed))
+            # A second profile gets its own allowance; it cannot inherit
+            # the first workload's budget or qualify an ambiguous catalog.
+            other = copy.deepcopy(budget)
+            other.update(profile="short-other", runtime_bytes=8 * GIB)
+            catalog["profiles"].append(other)
+            catalog_file.write_text(json.dumps(catalog))
+            changed = copy.deepcopy(build)
+            changed["profile"]["id"] = "short-other"
+            qualified = check(changed)
+            self.assertEqual(qualified["runtime_bytes"], 8 * GIB)
+            self.assertFalse(storage.headroom(snapshot(37 * GIB), qualified, False)["passed"])
+            self.assertTrue(storage.headroom(snapshot(38 * GIB), qualified, False)["passed"])
+            self.assertFalse(storage.headroom(snapshot(45 * GIB), qualified, True)["passed"])
+            self.assertTrue(storage.headroom(snapshot(46 * GIB), qualified, True)["passed"])
+            changed["profile"]["id"] = "unknown-profile"
+            self.assertIsNone(check(changed))
+            catalog["profiles"].append(copy.deepcopy(budget))
+            catalog_file.write_text(json.dumps(catalog))
+            self.assertIsNone(check(build))
+            catalog["profiles"].pop()
+            # A helper edit expires only the workload that pins it.
+            other["helper_sources"] = ["workload-helper.go"]
+            changed = copy.deepcopy(build)
+            changed["profile"]["id"] = "short-other"
+            changed["binary"]["sources"]["workload-helper.go"] = "helper-v1"
+            projected = {**sources, "workload-helper.go": "helper-v1"}
+            other["sources_sha256"] = hashlib.sha256(json.dumps(projected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            catalog_file.write_text(json.dumps(catalog))
+            self.assertIsNotNone(check(changed))
+            changed["binary"]["sources"]["workload-helper.go"] = "helper-v2"
+            self.assertIsNone(check(changed))
+            self.assertIsNotNone(check(build))
             pins_file.write_text(json.dumps(pins) + "\n")
             self.assertIsNone(check(build))
 
