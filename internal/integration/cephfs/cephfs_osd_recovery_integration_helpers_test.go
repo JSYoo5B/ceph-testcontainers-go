@@ -311,7 +311,7 @@ func testCephFSOSDRecovery(t *testing.T) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal("restore noout:", err)
 	}
-	if err := m.Cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(m.Cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	final, err := lookRecoveryPG(ctx, m.Cluster, m.FS.DataPool, placed.PGID, victim.ID)

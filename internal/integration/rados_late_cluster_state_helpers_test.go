@@ -401,7 +401,7 @@ func parseRadosLateOSDDump(raw []byte, pool string, state *radosLateClusterState
 }
 
 // parseRadosLateStatus reads "status": the OSD counts and every PG state are
-// required. PGsActiveClean follows Container.WaitForClean: every PG exactly
+// required. PGsActiveClean follows Observer.WaitForClean: every PG exactly
 // active+clean and the counts add up to the PG total.
 func parseRadosLateStatus(raw []byte, state *radosLateClusterState) error {
 	top, err := radosLateDecode(raw)

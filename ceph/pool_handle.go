@@ -402,7 +402,7 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 // warn. It records both native pg_num and pgp_num targets; the active manager
 // then splits or merges PGs in steps, and merges wait for clean PGs. Success
 // means the targets were accepted, not that PGs have changed. Use
-// WaitForPGCount for the count and Container.WaitForClean for the resulting
+// WaitForPGCount for the count and Observer.WaitForClean for the resulting
 // movement. Without an active manager the targets remain pending. The native
 // pool ID is checked before each mutation; on partial failure inspect Status.
 // Native per-OSD PG limits can still reject the request.
@@ -450,7 +450,7 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 
 // WaitForPGCount waits until the native pool reports pgNum as its current,
 // pending and target PG and PGP counts and the manager reports exactly pgNum
-// PGs for it. Until then Container.WaitForClean can pass on the previous PG
+// PGs for it. Until then Observer.WaitForClean can pass on the previous PG
 // set. It fails if the name is bound to another pool than this handle
 // identifies. The count does not imply clean PGs, completed backfill or data
 // visibility; call WaitForClean afterwards or use PGs. Cluster startup

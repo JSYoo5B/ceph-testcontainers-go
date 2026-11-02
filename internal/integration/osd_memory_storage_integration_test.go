@@ -119,7 +119,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("replicated memory pool setup failed", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	poolState, err := pool.Status(ctx)
@@ -172,7 +172,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("original memory OSD recovery failed", err)
 	}
 	if !maps.Equal(osdMemoryIdentities(t, ctx, cluster), identities) {
@@ -192,7 +192,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if err != nil || added == nil {
 		t.Fatal("third memory OSD setup failed", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("third OSD recovery failed", err)
 	}
 	osdMemoryPlacement(t, ctx, cluster, fsid, poolState.ID, pool.Name, added.ID, -1)
@@ -209,7 +209,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 		t.Fatal("drained original container remains", err)
 	}
 	osdMemoryExec(t, ctx, added, "test", "!", "-e", "/var/lib/ceph/osd/ceph-"+strconv.Itoa(original.ID))
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("post-drain recovery failed", err)
 	}
 	osdMemoryPlacement(t, ctx, cluster, fsid, poolState.ID, pool.Name, added.ID, original.ID)
@@ -227,7 +227,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	}
 	osdMemoryDirectory(t, ctx, replacement, fsid, current[replacement.ID])
 	osdMemoryBacking(t, ctx, docker.Client, cluster, clusteraccess.OSDs(t, cluster), image)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("replacement recovery failed", err)
 	}
 	osdMemoryData(t, ctx, cluster, fsid, poolState.ID, pool.Name, "fresh-replacement")

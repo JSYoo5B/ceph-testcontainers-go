@@ -91,7 +91,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
@@ -102,7 +102,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	owned = append(owned, added.GetContainerID())
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := original.Remove(ctx); err != nil {
@@ -122,7 +122,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal("fresh OSD reused purged identity")
 	}
 	osdVolumeBacking(t, ctx, docker.Client, cluster)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "fresh-after-purge")
@@ -199,7 +199,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if !maps.Equal(current, osdMemoryIdentities(t, ctx, cluster)) {

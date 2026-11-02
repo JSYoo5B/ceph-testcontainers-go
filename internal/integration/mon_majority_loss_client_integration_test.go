@@ -71,7 +71,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: monLossClientPool, PGNum: 1, Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	rec := newMonReplacementRecorder("majority-loss-client", harness.WithSockets(t, cluster), monReplacementBounds{

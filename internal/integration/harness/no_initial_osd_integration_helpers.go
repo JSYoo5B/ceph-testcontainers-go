@@ -298,7 +298,7 @@ func RunNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("canceled first Add registered storage")
 	}
 	short, stop := context.WithTimeout(ctx, 150*time.Millisecond)
-	err = cluster.WaitForClean(short)
+	err = ObserveCluster(cluster).WaitForClean(short)
 	stop()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("zero-storage constructor implied PG clean", err)
@@ -356,7 +356,7 @@ func RunNoInitialOSDStorage(t *testing.T, host bool) {
 	if err != nil || pool == nil || pool.Replicas != 2 || pool.MinSize != 1 {
 		t.Fatal("later pool lost original defaults", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// HEALTH_OK additionally closes the always-on module/dependency contract;

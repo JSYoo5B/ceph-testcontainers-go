@@ -375,7 +375,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := c.WaitForQuorum(ctx); err != nil {
+		if err := c.waitForQuorum(ctx); err != nil {
 			return fmt.Errorf("wait for ceph quorum without initial managers: %w", err)
 		}
 		// MON OSDMap state is available before the first MGR. Its captured UUIDs
@@ -1027,16 +1027,6 @@ func (f osdFleet) waitOSDRemoval(ctx context.Context, id int, drain bool) error 
 		case <-ticker.C:
 		}
 	}
-}
-
-// ServiceContainers returns owned optional services (such as RGW or MDS),
-// sorted by service name. The cluster owns their cleanup.
-//
-//purpose:observation
-func (c *Container) ServiceContainers() []testcontainers.Container {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.members.roster.sortedServices()
 }
 
 // startService registers partial failures too, so callers can always terminate

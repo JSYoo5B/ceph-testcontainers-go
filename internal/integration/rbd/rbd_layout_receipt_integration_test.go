@@ -186,7 +186,7 @@ func TestRBDLayoutReceipt(t *testing.T) {
 	if _, err := rbd.CreateNamespace(ctx, cluster, pool, namespace); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	const MiB = 1 << 20

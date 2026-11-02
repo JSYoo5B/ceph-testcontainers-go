@@ -77,7 +77,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 		t.Fatal("ordinary sibling setup failed", err)
 	}
 	members, siblingMembers := target.MDSs(), sibling.MDSs()
-	if len(members) != 1 || len(siblingMembers) != 1 || members[0].ID != "last-target-0" || siblingMembers[0].ID != "last-sibling-0" || target.Container != members[0].Container || sibling.Container != siblingMembers[0].Container || customizers.Load() != 1 || len(cluster.ServiceContainers()) != 2 {
+	if len(members) != 1 || len(siblingMembers) != 1 || members[0].ID != "last-target-0" || siblingMembers[0].ID != "last-sibling-0" || target.Container != members[0].Container || sibling.Container != siblingMembers[0].Container || customizers.Load() != 1 || len(clusteraccess.ServiceContainers(t, cluster)) != 2 {
 		t.Fatal("original sole target/sibling ownership unavailable")
 	}
 	old := members[0]
@@ -119,7 +119,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	originalAuth := []string{"mds.last-sibling-0", "mds.last-target-0"}
 	coldMDSAuth(t, ctx, cluster, originalAuth)
 	coldMDSResources(t, ctx, oracle, cluster, client, "last-initial")
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "last-initial", target.FilesystemName, true)
@@ -150,7 +150,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	}
 	stoppedMDSExited(t, ctx, oracle, old, oldTask)
 	afterRefusal := lastMDSMap(t, ctx, cluster, "registered-after", target.FilesystemName, old.ID, sibling.FilesystemName, siblingMembers[0].ID, false)
-	if afterRefusal.target.active != before.target.active || len(target.MDSs()) != 1 || target.MDSs()[0] != old || target.Container != old.Container || len(cluster.ServiceContainers()) != 2 || customizers.Load() != 1 {
+	if afterRefusal.target.active != before.target.active || len(target.MDSs()) != 1 || target.MDSs()[0] != old || target.Container != old.Container || len(clusteraccess.ServiceContainers(t, cluster)) != 2 || customizers.Load() != 1 {
 		t.Fatal("refused preflight mutated original registration/cohort")
 	}
 	recheck(afterRefusal)
@@ -182,7 +182,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 		t.Fatal("sole stopped MDS replacement failed", err)
 	}
 	members = target.MDSs()
-	if len(members) != 2 || members[0] != old || old.Container != oldHandle || old.GetContainerID() != oldCID || members[1] != replacement || replacement.ID != "last-target-1" || replacement.FilesystemName != target.FilesystemName || replacement.GetContainerID() == oldCID || customizers.Load() != 2 || target.Container != old.Container || len(cluster.ServiceContainers()) != 3 {
+	if len(members) != 2 || members[0] != old || old.Container != oldHandle || old.GetContainerID() != oldCID || members[1] != replacement || replacement.ID != "last-target-1" || replacement.FilesystemName != target.FilesystemName || replacement.GetContainerID() == oldCID || customizers.Load() != 2 || target.Container != old.Container || len(clusteraccess.ServiceContainers(t, cluster)) != 3 {
 		t.Fatal("new replacement lost exact publication or retained original")
 	}
 	newTask := coldMDSProcess(t, ctx, oracle, replacement)
@@ -216,7 +216,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)
 	members = target.MDSs()
-	if len(members) != 1 || members[0] != replacement || target.Container != replacement.Container || len(cluster.ServiceContainers()) != 2 {
+	if len(members) != 1 || members[0] != replacement || target.Container != replacement.Container || len(clusteraccess.ServiceContainers(t, cluster)) != 2 {
 		t.Fatal("Q retirement did not remove only original CID/registry")
 	}
 	retried, err = (&copy).AddReplacement(ctx)
@@ -238,12 +238,12 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, target, retiredNonce, "verify", "last-extra")
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "verify", sibling.DataPool)
 	final := lastMDSMap(t, ctx, cluster, "final", target.FilesystemName, replacement.ID, sibling.FilesystemName, siblingMembers[0].ID, false)
-	if final.target.active != current.target.active || coldMDSProcess(t, ctx, oracle, replacement) != newTask || len(target.MDSs()) != 1 || target.MDSs()[0] != replacement || target.Container != replacement.Container || customizers.Load() != 2 || len(cluster.ServiceContainers()) != 2 {
+	if final.target.active != current.target.active || coldMDSProcess(t, ctx, oracle, replacement) != newTask || len(target.MDSs()) != 1 || target.MDSs()[0] != replacement || target.Container != replacement.Container || customizers.Load() != 2 || len(clusteraccess.ServiceContainers(t, cluster)) != 2 {
 		t.Fatal("final replacement task/ownership changed after copied retries")
 	}
 	checkPublic(final)
 	recheck(final)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "last-final", target.FilesystemName, true)

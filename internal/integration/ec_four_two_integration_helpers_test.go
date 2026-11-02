@@ -127,7 +127,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	if err != nil {
 		t.Fatalf("4+2 topology/pool admission failed: %v", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	size := ecFourTwoFacts(t, ctx, cluster, pool)
@@ -292,7 +292,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := pool.PGs(ctx)

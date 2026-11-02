@@ -42,7 +42,11 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-if err := cluster.WaitForClean(ctx); err != nil {
+observer, err := ceph.Observe(cluster.Container)
+if err != nil {
+	t.Fatal(err)
+}
+if err := observer.WaitForClean(ctx); err != nil {
 	t.Fatal(err)
 }
 app, err := testcontainers.Run(ctx, appImage, cluster.WithClient())

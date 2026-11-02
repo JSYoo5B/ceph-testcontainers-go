@@ -39,7 +39,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-config", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	const option = "osd_scrub_min_interval"

@@ -37,9 +37,11 @@ if err != nil { // a partially started cluster is still finalized
 if ferr != nil {
 	t.Fatal(ferr)
 }
-finalization.Check("pool still clean", func(ctx context.Context) error {
-	return cluster.WaitForClean(ctx)
-})
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+finalization.Check("pool still clean", observer.WaitForClean)
 ```
 
 ## Concepts and limits

@@ -104,7 +104,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
-	if err := cluster.WaitForQuorum(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var receipt mapPropagationReceipt

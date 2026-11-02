@@ -359,7 +359,7 @@ func testOSDPeeringMessages(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: peeringPool, PGNum: 1, Replicas: 2, MinSize: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	put, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{

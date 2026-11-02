@@ -170,7 +170,7 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 	}
 	cluster, _ := harness.NewServiceClusterRun(t, harness.RGWRun, image, append(roles, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)),
 		ceph.WithConfigFile(config))...)
-	services := cluster.ServiceContainers()
+	services := clusteraccess.ServiceContainers(t, cluster)
 	if len(services) != 1 {
 		t.Fatalf("%d gateway containers, want 1", len(services))
 	}

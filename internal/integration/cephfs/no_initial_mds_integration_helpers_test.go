@@ -82,7 +82,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	siblingProcess := coldMDSProcess(t, ctx, oracle, siblingMembers[0])
 	siblingNonce, targetNonce := uuid.NewString(), uuid.NewString()
 	coldMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "seed", sibling.DataPool)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "before-cold-target", "cold-target", true)
@@ -93,7 +93,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 		t.Fatal("cold target construction failed", err)
 	}
 	beforeTarget := coldMDSMap(t, ctx, cluster, target.FilesystemName, "")
-	if target.Container != nil || len(target.MDSs()) != 0 || customizers.Load() != 0 || len(cluster.ServiceContainers()) != 1 {
+	if target.Container != nil || len(target.MDSs()) != 0 || customizers.Load() != 0 || len(clusteraccess.ServiceContainers(t, cluster)) != 1 {
 		t.Fatal("cold target launched or customized an MDS")
 	}
 	identities := map[string]int64{}
@@ -136,7 +136,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	}
 	coldMDSAuth(t, ctx, cluster, []string{"mds.warm-sibling-0"})
 	coldMDSResources(t, ctx, oracle, cluster, client, "cold-target")
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "cold-target", "cold-target", false)
@@ -181,19 +181,19 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	coldMDSBytes(t, ctx, client, q.MonMap.FSID, target, targetNonce, "verify", "cold-target-extra")
 	coldMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "verify", sibling.DataPool)
 	recheck(false)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForQuorum(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForPGClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitMGRModuleReady(ctx, "volumes"); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitMGRModuleReady(ctx, "volumes"); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("GO_WAIT_READINESS fsid=%s quorum=true pg_clean=true rbd_support=true volumes=true", q.MonMap.FSID)
@@ -270,7 +270,13 @@ func coldMDSFailureLogs(t *testing.T, cluster *ceph.Container) {
 		for _, osd := range clusteraccess.OSDs(t, cluster) {
 			containers = append(containers, osd.Container)
 		}
-		containers = append(containers, cluster.ServiceContainers()...)
+		serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
+		services, inventoryErr := harness.ObserveCluster(cluster).ServiceContainers(serviceCtx)
+		cancelServices()
+		if inventoryErr != nil {
+			t.Logf("service inventory unavailable: %v", inventoryErr)
+		}
+		containers = append(containers, services...)
 		seen := map[string]bool{}
 		for _, ctr := range containers {
 			if ctr == nil || seen[ctr.GetContainerID()] {

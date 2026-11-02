@@ -178,7 +178,7 @@ func RunOSDReplicationPeerPathCut(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "peer-control", PGNum: 1, Replicas: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var receipt osdPeerPathReceipt
@@ -404,7 +404,7 @@ func RunOSDReplicationPeerPathCut(t *testing.T) {
 	var restored HeldReplicationReceipt
 	FinishHeldReplicationWrite(t, ctx, cluster, &restored, write)
 	receipt.Writer, receipt.Reader = restored.Writer, restored.Reader
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -448,7 +448,7 @@ func RunOSDReplicationPeerPathCut(t *testing.T) {
 	if err := containers[primary].Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(receipt)

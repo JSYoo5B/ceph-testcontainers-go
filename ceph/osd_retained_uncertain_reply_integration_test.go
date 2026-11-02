@@ -61,7 +61,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.WaitForClean(ctx); err != nil {
+	if err := observeWaitCluster(c).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	client, err := c.featureClient().startedContainer(ctx)
@@ -148,7 +148,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if err != nil || fsid != detached.ClusterFSID() {
 		t.Fatal("native cluster FSID changed", err)
 	}
-	if err := c.WaitForClean(ctx); err != nil {
+	if err := observeWaitCluster(c).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	retainedUncertainBytes(t, ctx, client, pool.Name, "readback")

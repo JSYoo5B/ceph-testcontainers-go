@@ -55,7 +55,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

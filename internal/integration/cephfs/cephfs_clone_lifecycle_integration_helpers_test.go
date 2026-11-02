@@ -34,7 +34,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	}
 	cluster, client := harness.NewServiceCluster(t, options...)
 	fs := cephfs.Filesystems(cluster)[0]
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "restores"})
@@ -258,7 +258,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	span.Ok()
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("native canceled/failed clone source protection release, explicit partial cleanup, same-name replacement preservation, frozen snapshot bytes and independent clone I/O passed")

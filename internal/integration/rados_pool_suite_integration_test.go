@@ -44,7 +44,7 @@ func (s *radosPoolSuite) SetupSuite() {
 	s.gate.check = func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		return s.cluster.WaitForClean(ctx)
+		return harness.ObserveCluster(s.cluster).WaitForClean(ctx)
 	}
 }
 

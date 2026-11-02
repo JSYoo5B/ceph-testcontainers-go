@@ -31,7 +31,7 @@ func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 	if alphaBefore.FilesystemID == betaBefore.FilesystemID || alpha.MetadataPool == beta.MetadataPool || alpha.DataPool == beta.DataPool {
 		t.Fatal("named filesystems share an identity or backing pool")
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Mount each named filesystem using a new userspace session. The same path
@@ -83,7 +83,7 @@ func TestCephFSStandbyReplayFailover(t *testing.T) {
 	if len(before.Active) != 1 || len(before.StandbyReplay) != 1 || before.StandbyReplay[0].Rank != 0 {
 		t.Fatalf("journal-following standby not present: %+v", before)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSTopologyIO(t, ctx, client, fs.FilesystemName, "hot-data", "seed", 0, "")

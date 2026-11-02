@@ -47,7 +47,7 @@ func TestRBDClientFeatures(t *testing.T) {
 			if _, err := rbd.CreateNamespace(ctx, cluster, pool, "foreign"); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			status, err := harness.ObserveCluster(cluster).Status(ctx)

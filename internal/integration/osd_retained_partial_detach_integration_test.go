@@ -72,7 +72,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
@@ -211,7 +211,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "partial-detach-reopened")

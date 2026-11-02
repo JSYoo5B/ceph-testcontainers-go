@@ -50,7 +50,7 @@ func TestClusterLifecycle(t *testing.T) {
 	harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-poc", "8")
 	harness.CephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-poc", "pg_autoscale_mode", "off")
 	harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-poc", "rados")
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.LogStatus(t, ctx, cluster, "initial")
@@ -92,7 +92,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := original.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("osd.%d stop/start: read succeeded with one replica unavailable", original.ID)
@@ -101,7 +101,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.LogStatus(t, ctx, cluster, fmt.Sprintf("added osd.%d", added.ID))
@@ -112,7 +112,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.VerifyObjects(t, ctx, client, payload)
@@ -126,13 +126,13 @@ func TestClusterLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := readded.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.VerifyObjects(t, ctx, client, payload)

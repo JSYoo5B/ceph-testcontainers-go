@@ -32,7 +32,7 @@ func TestOSDPolicies(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-osd-policy", Application: "rados", Replicas: 2, MinSize: 1, PGNum: 16}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			probe := func(phase string) {
@@ -54,7 +54,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := original.SetIn(ctx, false); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForPGClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
 				t.Fatal("recover PGs while owned OSD remains out", err)
 			}
 			state := waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && !state.In })
@@ -65,7 +65,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := original.SetIn(ctx, true); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && state.In })
@@ -137,7 +137,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if state.UUID != initial.UUID || state.Weight != 0 || original.GetContainerID() != containerID {
 				t.Fatalf("native auto-out changed identity/container: %+v", state)
 			}
-			if err := cluster.WaitForPGClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
 				t.Fatal("recover after native auto-out", err)
 			}
 			probe("down-autoout")
@@ -147,7 +147,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := original.SetIn(ctx, true); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && state.In })

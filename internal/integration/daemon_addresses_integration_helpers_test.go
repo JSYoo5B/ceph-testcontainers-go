@@ -22,7 +22,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	defer cancel()
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(2).WithManagerCount(2).WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)
 	cluster, client := harness.NewServiceCluster(t, opts...)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addresses, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)

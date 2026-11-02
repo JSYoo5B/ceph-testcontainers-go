@@ -215,7 +215,7 @@ func TestNoInitialManagersPreservesOrdinaryAvailabilityAndCleanBarriers(t *testi
 			t.Fatalf("ordinary MGR readiness changed: available=%v err=%v calls=%v", available, err, control.calls)
 		}
 	}
-	for _, wait := range []func(*Container, context.Context) error{(*Container).WaitForClean, (*Container).WaitForPGClean} {
+	for _, wait := range []func(*Observer, context.Context) error{(*Observer).WaitForClean, (*Observer).WaitForPGClean} {
 		cluster, control := noInitialManagerFixture()
 		cluster.settings.noInitialManagers = true
 		cluster.fleet.osdHandles.register(0, &OSDContainer{ID: 0, nativeUUID: control.osdUUID})
@@ -227,7 +227,7 @@ func TestNoInitialManagersPreservesOrdinaryAvailabilityAndCleanBarriers(t *testi
 				ctx.Expire()
 			}
 		}
-		err := wait(cluster, ctx)
+		err := wait(observeWaitCluster(cluster), ctx)
 		if !errors.Is(err, context.DeadlineExceeded) || !slices.Contains(control.calls, "status --format json") {
 			t.Fatalf("absent MGR became PG-clean despite synthetic clean statistics: %v", err)
 		}
