@@ -19,7 +19,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rbd
    `ceph` cluster (MON, MGR, two OSDs by default) with an initialized pool
    named `rbd`; `rbd.WithPools` selects other pools. On a cluster started by
    `ceph.Run` or another service package, prepare a pool with `rbd.InitPool`.
-   Call `WaitForClean` before the first client I/O.
+   Call `ceph.Observe(cluster.Container)` and its `WaitForClean` before the
+   first client I/O.
 2. **Prepare the resources** the scenario needs: `rbd.CreateNamespace` for
    tenant isolation, `ceph.Container.CreateClient` for least-privilege
    identities (`profile rbd`, `profile rbd-read-only`),

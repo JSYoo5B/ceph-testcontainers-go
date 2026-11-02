@@ -821,8 +821,8 @@ func monitorConfigComment(line string) (int, error) {
 // any identity is created.
 //
 // It never forces the active role away from a running manager, and success
-// does not mean every MGR module is ready; use WaitMGRModuleReady or
-// WaitForClean. On an AddressDualStack cluster it then checks the active MGR's
+// does not mean every MGR module is ready; use Observer.WaitMGRModuleReady or
+// Observer.WaitForClean. On an AddressDualStack cluster it then checks the active MGR's
 // advertised addresses.
 //
 //purpose:construction,condition
