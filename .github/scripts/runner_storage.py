@@ -144,18 +144,24 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
     it does not grant an unmeasured workload the old storage allowance.
     """
     try:
-        budget = json.loads((root / ".github/runner-storage.json").read_text())
+        catalog = json.loads((root / ".github/runner-storage.json").read_text())
         compiled = json.loads((Path(compile_directory) / "compile-report.json").read_text())
         profile, binary = compiled["profile"], compiled["binary"]
         key = binary["build_key"]
+        if catalog.get("schema") != 2 or not isinstance(catalog.get("profiles"), list):
+            return None
+        matches = [entry for entry in catalog["profiles"] if entry.get("profile") == profile["id"]]
+        if len(matches) != 1:
+            return None
+        budget = matches[0]
         selected = sorted(tests.split(",") if tests else binary["tests"])
-        # The profile owns the workload; unrelated library changes still
-        # exercise its explicit two-store bound without expiring qualification.
-        paths = sorted(set(profile["sources"] + ["go.mod", "go.sum"]))
+        # Startup/data helpers are part of the workload's storage bound too.
+        # Keep their declarations pinned without expiring on unrelated code.
+        paths = sorted(set(profile["sources"] + budget.get("helper_sources", []) + ["go.mod", "go.sum"]))
         sources = {path: binary["sources"][path] for path in paths}
         source_hash = hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         pins_file = root / ".github/ceph-role-images.json"
-        if (compiled.get("passed") is not True or budget.get("schema") != 1
+        if (compiled.get("passed") is not True
                 or profile["id"] != budget["profile"] or profile["package"] != budget["package"]
                 or key["tags"] != budget["tags"]
                 or selected != budget["tests"] or not set(selected) <= set(binary["tests"])

@@ -1,19 +1,120 @@
 {
-  "schema": 1,
-  "profile": "short-rados_fixtures_watchers-52f45dc3",
-  "package": "./internal/integration",
-  "tests": [
-    "TestPausedObjectWatcher"
-  ],
-  "sources_sha256": "4c36cee9dc87c7383e3ec0e1a25a4badb2f70896edbf88ccb2c248e216987778",
-  "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
-  "roles": "essential,client",
-  "platform": "linux/amd64",
-  "releases": [
-    "20.2.4"
-  ],
-  "image_prepare_bytes": 8589934592,
-  "runtime_bytes": 4294967296,
-  "minimum_free_inodes": 100000,
-  "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
+  "schema": 2,
+  "profiles": [
+    {
+      "profile": "short-rados_fixtures_watchers-52f45dc3",
+      "package": "./internal/integration",
+      "tests": [
+        "TestPausedObjectWatcher"
+      ],
+      "sources_sha256": "4c36cee9dc87c7383e3ec0e1a25a4badb2f70896edbf88ccb2c248e216987778",
+      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+      "roles": "essential,client",
+      "platform": "linux/amd64",
+      "releases": [
+        "20.2.4"
+      ],
+      "image_prepare_bytes": 8589934592,
+      "runtime_bytes": 4294967296,
+      "minimum_free_inodes": 100000,
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
+    },
+    {
+      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+      "platform": "linux/amd64",
+      "releases": [
+        "20.2.4"
+      ],
+      "image_prepare_bytes": 8589934592,
+      "minimum_free_inodes": 100000,
+      "profile": "short-cephfs_fixtures_admin-e2d1d199",
+      "package": "./internal/integration/cephfs",
+      "tests": [
+        "TestCephFSFlockAcrossMDSFailover",
+        "TestCephFSJournaledRenameAcrossMDSCrash",
+        "TestCephFSOSDInterruption",
+        "TestCephFSOSDRecovery",
+        "TestCephFSQuiesceCheckpoints",
+        "TestCephFSRetainedSnapshotAndMetadataRecipe",
+        "TestCephFSSubvolumeClientAuthorization"
+      ],
+      "sources_sha256": "e7f2acbb94010f676521f94f9be12aa239592580e85bc07c57587800253ad646",
+      "roles": "essential,client,cephfs",
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_cephfs_fixtures_admin",
+      "runtime_bytes": 8589934592,
+      "helper_sources": [
+        "ceph/ceph.go",
+        "internal/integration/cephfs/cephfs_authorization_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_mds_failover_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_osd_recovery_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_quiesce_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_retained_snapshot_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_snapshot_integration_helpers_test.go",
+        "internal/integration/harness/cephfs_osd_interruption_integration_helpers.go",
+        "internal/integration/harness/cephfs_retained_client_integration_helpers.go",
+        "internal/integration/harness/parallel_integration_helpers.go",
+        "internal/integration/harness/services_integration.go"
+      ]
+    },
+    {
+      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+      "platform": "linux/amd64",
+      "releases": [
+        "20.2.4"
+      ],
+      "image_prepare_bytes": 8589934592,
+      "minimum_free_inodes": 100000,
+      "profile": "short-cephfs_fixtures_data-2ef1f0ac",
+      "package": "./internal/integration/cephfs",
+      "tests": [
+        "TestCephFSAdditionalErasureCodedDataPool",
+        "TestCephFSCloneCancellationAndPartialCleanup",
+        "TestCephFSDynamicDataPools",
+        "TestCephFSSnapshotSchedule",
+        "TestHostNetworkCephFSFilesystem"
+      ],
+      "sources_sha256": "51561c9f131405c02555dc17c6d52a0614daf15c7906d05e9b695fdde91ca24c",
+      "roles": "essential,client,cephfs",
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_cephfs_fixtures_data",
+      "runtime_bytes": 8589934592,
+      "helper_sources": [
+        "ceph/ceph.go",
+        "internal/integration/cephfs/cephfs_clone_lifecycle_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_data_pools_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_snapshot_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_topology_integration_helpers_test.go",
+        "internal/integration/harness/cephfs_retained_client_integration_helpers.go",
+        "internal/integration/harness/parallel_integration_helpers.go",
+        "internal/integration/harness/services_integration.go"
+      ]
+    },
+    {
+      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+      "platform": "linux/amd64",
+      "releases": [
+        "20.2.4"
+      ],
+      "image_prepare_bytes": 8589934592,
+      "minimum_free_inodes": 100000,
+      "profile": "short-rbd_fixtures_mirror-1da472ec",
+      "package": "./internal/integration/rbd",
+      "tests": [
+        "TestMultiClusterRBDFailback",
+        "TestMultiClusterRBDSplitBrainResync",
+        "TestRBDAutomaticSnapshotSchedule"
+      ],
+      "sources_sha256": "362c8dc1a079426407fbb171c48eaf823e744b87c5b87fc0f249b8445f13955d",
+      "roles": "essential,client,rbd-aux",
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rbd_fixtures_mirror",
+      "runtime_bytes": 8589934592,
+      "helper_sources": [
+        "internal/integration/harness/multicluster_integration.go",
+        "internal/integration/harness/parallel_integration_helpers.go",
+        "internal/integration/harness/rbd_integration_helpers.go",
+        "internal/integration/harness/rbd_multicluster_integration_helpers.go",
+        "internal/integration/harness/rbd_multicluster_scenarios_integration_helpers.go",
+        "internal/integration/harness/services_integration.go"
+      ]
+    }
+  ]
 }
