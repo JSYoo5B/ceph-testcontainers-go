@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 57,
+  "count": 58,
   "entries": [
     {
       "current": "rgw/multisite.BucketSyncPolicyStatus",
@@ -361,6 +361,12 @@
       "current": "rgw/multisite.SyncStatus",
       "kind": "type",
       "proposed": "rgw/multisite.SyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.TimingProfile",
+      "kind": "type",
+      "proposed": "rgw/multisite.TimingProfile",
       "decision": "baseline"
     },
     {
