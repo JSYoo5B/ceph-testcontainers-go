@@ -59,6 +59,29 @@ if err != nil {
 // into a new bucket, and poll west for the objects.
 ```
 
+## Incremental sync timing
+
+On qualified Ceph 20.2.4 gateways, opt in before the realm starts:
+
+```golang
+multisite.WithConfig(multisite.Config{
+    Source: source, Destination: destination,
+    Timing: multisite.TimingProfile{IncrementalSync: true},
+})
+```
+
+The same `Timing` field is available in `TopologyConfig`. It applies one-second
+metadata/data sync polling arguments to the owned gateways, including later
+zones. Default fixtures keep native timing. The command-line values take
+precedence over central and local configuration; the gateway lifetime owns the
+condition, so termination ends it without a persistent configuration override.
+A partial fixture returned with an error still needs termination.
+
+This targets already-caught-up incremental polling. Keep metadata readiness and
+client byte checks; bootstrap, new-bucket initial sync, lease ownership, failure
+backoff and fault windows are separate conditions. See
+[Fixture daemon timing](../../docs/guides/daemon-timing.md).
+
 ## Concepts and limits
 
 - Both zones accept writes and deletes replicate too, so a replica is not a

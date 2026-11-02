@@ -58,6 +58,31 @@ if _, err := link.WaitReceiverReady(ctx); err != nil {
 }
 ```
 
+## Journal polling timing
+
+On qualified Ceph 20.2.4 journal receivers, opt in at construction:
+
+```golang
+rbdmirror.WithConfig(rbdmirror.Config{
+    Source: source, Destination: destination, Pool: "volumes",
+    Mode: rbdmirror.ModeJournal,
+    Timing: rbdmirror.TimingProfile{JournalPolling: true},
+})
+```
+
+This sets a one-second journal polling argument on the mirror's owned daemons
+before replay instances start. Default fixtures keep native timing. Snapshot
+mode is outside the profile. A journal player captures its wait interval; a
+central configuration change cannot be assumed to retime an existing player.
+The condition ends when the owned daemon terminates and does not persist in the
+cluster configuration database. A partial mirror returned with an error still
+needs termination.
+
+Initial enrollment, periodic discovery, heartbeat/failure detection and replay
+delay remain distinct. Readiness alone does not establish replication of an
+acknowledged write: compare actual destination data. See
+[Fixture daemon timing](../../docs/guides/daemon-timing.md).
+
 ## Concepts and limits
 
 - The mirror owns its setup clients and daemons, not the clusters. `Terminate`
