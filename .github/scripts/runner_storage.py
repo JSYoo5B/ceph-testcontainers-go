@@ -22,8 +22,8 @@ import runner_storage_layout
 
 
 # Directories of the GitHub-hosted Ubuntu image that no job here uses: the
-# Android SDK, .NET, the Haskell toolchains, CodeQL bundles and Boost. Go and
-# Python come from setup-go and the system interpreter.
+# Android SDK, .NET, Haskell, CodeQL and Boost. Go and Python come from
+# setup-go and the system interpreter. Keep the ordinary cleanup unchanged.
 PREINSTALLED = (
     "/usr/local/lib/android",
     "/usr/share/dotnet",
@@ -32,11 +32,22 @@ PREINSTALLED = (
     "/opt/hostedtoolcache/CodeQL",
     "/usr/local/share/boost",
 )
+# Only after ordinary cleanup still fails admission: additional SDKs not used
+# by integration jobs. Never expand this to the runner, tool-cache parents,
+# system Python or Docker/containerd data.
+SUPPLEMENTAL = (
+    "/usr/share/swift",
+    "/usr/local/share/powershell",
+    "/opt/microsoft/powershell",
+    "/usr/local/share/vcpkg",
+)
 # Ceph's defaults, in percent of the available share.
 MON_DATA_AVAIL_WARN = 30
 MON_DATA_AVAIL_CRIT = 5
 PHASE = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 COMMAND_SECONDS = 120
+PRESSURE_POLICIES = ("pressure", "pressure-supplemental")
+POLICIES = ("auto", "always", *PRESSURE_POLICIES)
 
 
 def timestamp():
@@ -115,13 +126,14 @@ def record(directory, phase, run=run_command, statvfs=os.statvfs):
     return report
 
 
-def free(directory, environ=os.environ, run=run_command, statvfs=os.statvfs, exists=os.path.exists, monotonic=time.monotonic):
+def free(directory, environ=os.environ, run=run_command, statvfs=os.statvfs, exists=os.path.exists, monotonic=time.monotonic, supplemental=False):
     if environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise RuntimeError("free runs only on a GitHub-hosted runner, whose machine is discarded after the job")
-    report = {"schema": 1, "phase": "free", "started_at": timestamp()}
+    phase = "free-supplemental" if supplemental else "free"
+    report = {"schema": 1, "phase": phase, "started_at": timestamp()}
     root = docker_root(run)
     report["before"] = filesystem(root, statvfs)
-    present = [path for path in PREINSTALLED if exists(path)]
+    present = [path for path in (SUPPLEMENTAL if supplemental else PREINSTALLED) if exists(path)]
     started = monotonic()
     if present:
         run(["sudo", "rm", "-rf", "--one-file-system", *present], timeout=600)
@@ -129,7 +141,7 @@ def free(directory, environ=os.environ, run=run_command, statvfs=os.statvfs, exi
     report["seconds"] = round(monotonic() - started, 3)
     report["filesystem"] = filesystem(root, statvfs)
     report["docker"] = docker_usage(run)
-    write(directory, "storage-free.json", report)
+    write(directory, "storage-%s.json" % phase, report)
     return report
 
 
@@ -247,18 +259,20 @@ def headroom(snapshot, budget, before_images):
             "qualification": "measured-cohort" if budget else "conservative-minimum-only"}
 
 
-def pressure_size(observed, budget):
+def pressure_size(observed, budget, supplemental=False):
     """Qualification only: cross the policy boundary while retaining Ceph's floor.
 
-    At most 40 GiB on a disposable hosted runner; never approach ENOSPC.
+    At most 40 GiB (64 GiB after precleaning) on a disposable hosted runner;
+    never approach ENOSPC.
     The file remains present during native assertions and is removed by the
     job's always-run owned cleanup step.
     """
     rows = headroom(observed, budget, True)["requirements"]
     target = next(row for row, fs in zip(rows, observed["filesystems"]) if fs["docker_root"])
-    amount = target["available_bytes"] - target["required_bytes"] + GIB
-    if not GIB <= amount <= 40 * GIB:
-        raise RuntimeError("qualification pressure would exceed its 1..40 GiB bound")
+    gap, maximum = (4 * GIB, 64 * GIB) if supplemental else (GIB, 40 * GIB)
+    amount = target["available_bytes"] - target["required_bytes"] + gap
+    if not GIB <= amount <= maximum:
+        raise RuntimeError("qualification pressure would exceed its 1..%d GiB bound" % (maximum // GIB))
     fs = next(fs for fs in observed["filesystems"] if fs["docker_root"])
     floor = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100 + budget["runtime_bytes"] + 2 * GIB
     if target["available_bytes"] - amount < floor:
@@ -266,37 +280,50 @@ def pressure_size(observed, budget):
     return amount
 
 
-def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, reclaim=None):
+def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, reclaim=None, reclaim_supplemental=None):
     """Skip only a qualified sufficient-space workload; retain the fixed cleanup otherwise."""
-    if policy not in ("auto", "always", "pressure"):
-        raise ValueError("storage policy must be auto, always or pressure")
+    if policy not in POLICIES:
+        raise ValueError("unknown storage policy: %s" % policy)
     snapshot = snapshot or (lambda: storage_snapshot(run))
     reclaim = reclaim or (lambda: free(directory, run=run))
+    reclaim_supplemental = reclaim_supplemental or (lambda: free(directory, run=run, supplemental=True))
     report = {"schema": 2, "phase": "prepare", "started_at": timestamp(), "passed": False,
               "policy": policy, "qualified": budget is not None}
     try:
         report["before"] = snapshot()
-        if policy == "pressure":
+        preclean = None
+        if policy in PRESSURE_POLICIES:
             if (os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted" or budget is None
                     or not report["before"]["layout"]["verified"]):
                 raise RuntimeError("qualification pressure needs a verified qualified GitHub-hosted runner")
+            if policy == "pressure-supplemental":
+                # Consume the ordinary reclaimable SDKs first so injected
+                # pressure cannot be repaired by that same baseline again.
+                preclean = reclaim()
+                report["standard_cleanup_before_pressure"] = True
+                report["before"] = snapshot()
+                if not report["before"]["layout"]["verified"]:
+                    raise RuntimeError("storage layout changed during qualification setup")
             directory = Path(directory)
             directory.mkdir(parents=True, exist_ok=True)
             target = next(fs for fs in report["before"]["filesystems"] if fs["docker_root"])
             if directory.stat().st_dev != target["device"]:
                 raise RuntimeError("qualification pressure directory is not on the Docker filesystem")
-            amount = pressure_size(report["before"], budget)
-            pressure = directory / "qualification-pressure.bin"
-            with pressure.open("xb") as output:
-                identity = os.fstat(output.fileno())
-                write(directory, "storage-pressure.json", {"schema": 1, "device": identity.st_dev,
-                                                           "inode": identity.st_ino, "bytes": amount})
-                os.posix_fallocate(output.fileno(), 0, amount)
+            already_short = not headroom(report["before"], budget, True)["passed"]
+            amount = (0 if preclean is not None and already_short else
+                      pressure_size(report["before"], budget, policy == "pressure-supplemental"))
+            if amount:
+                pressure = directory / "qualification-pressure.bin"
+                with pressure.open("xb") as output:
+                    identity = os.fstat(output.fileno())
+                    write(directory, "storage-pressure.json", {"schema": 1, "device": identity.st_dev,
+                                                               "inode": identity.st_ino, "bytes": amount})
+                    os.posix_fallocate(output.fileno(), 0, amount)
             report["pressure_bytes"] = amount
             report["unpressured"] = report["before"]
             report["before"] = snapshot()
         report["before_headroom"] = headroom(report["before"], budget, True)
-        if policy == "pressure" and report["before_headroom"]["passed"]:
+        if policy in PRESSURE_POLICIES and report["before_headroom"]["passed"]:
             raise RuntimeError("qualification pressure did not cross the headroom boundary")
         reason = ("comparison-always" if policy == "always" else "unknown-workload" if budget is None
                   else "unknown-storage-layout" if not report["before"]["layout"]["verified"]
@@ -305,11 +332,23 @@ def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, re
         report["reason"] = reason
         report["reclamation_seconds"] = 0
         if report["decision"] == "reclaim":
-            freed = reclaim()
+            freed = preclean if preclean is not None else reclaim()
             report["reclamation_seconds"] = freed["seconds"]
             report["removed"] = freed["removed"]
         report["after"] = snapshot()
         report["headroom"] = headroom(report["after"], budget, True)
+        if not report["headroom"]["passed"] and report["decision"] == "reclaim":
+            # A sufficient standard cleanup never pays for extra SDK removal.
+            # Retain this boundary so the supplemental action and its actual
+            # contribution remain observable rather than assumed from sizes.
+            report["after_standard"] = report["after"]
+            report["standard_headroom"] = report["headroom"]
+            extra = reclaim_supplemental()
+            report["supplemental_removed"] = extra["removed"]
+            report["reclamation_seconds"] += extra["seconds"]
+            report["removed"] = report.get("removed", []) + extra["removed"]
+            report["after"] = snapshot()
+            report["headroom"] = headroom(report["after"], budget, True)
         if not report["headroom"]["passed"]:
             raise RuntimeError("insufficient Docker filesystem headroom after preparation; see storage-prepare.json")
         report["passed"] = True
@@ -357,7 +396,7 @@ def main(argv=None):
             child.add_argument("--digests", default="")
             child.add_argument("--tests", default="")
             if action == "prepare":
-                child.add_argument("--policy", choices=("auto", "always", "pressure"), default="auto")
+                child.add_argument("--policy", choices=POLICIES, default="auto")
     args = parser.parse_args(argv)
     try:
         if args.action == "release-pressure":

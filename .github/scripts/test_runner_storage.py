@@ -85,6 +85,10 @@ class FreeTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     storage.free(directory, environ, docker, lambda path: statvfs(GIB, GIB), lambda path: True)
                 self.assertFalse([c for c in docker.calls if c[0] == "sudo"])
+                with self.assertRaises(RuntimeError):
+                    storage.free(directory, environ, docker, lambda path: statvfs(GIB, GIB),
+                                 lambda path: True, supplemental=True)
+                self.assertFalse([c for c in docker.calls if c[0] == "sudo"])
 
     def test_removes_only_the_listed_directories_that_exist(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -99,6 +103,25 @@ class FreeTests(unittest.TestCase):
             self.assertEqual((report["before"]["available_percent"], report["filesystem"]["available_percent"]), (12, 55))
             self.assertTrue((Path(directory) / "storage-free.json").exists())
 
+    def test_unused_sdks_are_reclaimed_without_removing_required_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = Docker()
+            unused = {"/usr/share/swift", "/usr/local/share/powershell",
+                      "/opt/microsoft/powershell", "/usr/local/share/vcpkg"}
+            # Both used and unused tools exist. Only the fixed unused SDK roots
+            # may reach rm; no wildcard or tool-cache parent may be removed.
+            used = {"/opt/hostedtoolcache/Go", "/usr/bin/python3", "/usr/local/bin",
+                    "/var/lib/docker", "/var/lib/containerd", "/opt/runner"}
+            report = storage.free(directory, {"RUNNER_ENVIRONMENT": "github-hosted"}, docker,
+                                  lambda path: statvfs(72 * GIB, 40 * GIB),
+                                  (unused | used).__contains__, supplemental=True)
+            self.assertEqual(set(report["removed"]), unused)
+            self.assertTrue((Path(directory) / "storage-free-supplemental.json").exists())
+            self.assertFalse((Path(directory) / "storage-free.json").exists())
+            self.assertEqual([c for c in docker.calls if c[0] == "sudo"],
+                             [["sudo", "rm", "-rf", "--one-file-system",
+                               *[p for p in storage.SUPPLEMENTAL if p in unused]]])
+
     def test_nothing_present_removes_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             docker = Docker()
@@ -107,7 +130,7 @@ class FreeTests(unittest.TestCase):
             self.assertFalse([c for c in docker.calls if c[0] == "sudo"])
 
     def test_every_listed_directory_is_absolute_and_outside_docker(self):
-        for path in storage.PREINSTALLED:
+        for path in storage.PREINSTALLED + storage.SUPPLEMENTAL:
             self.assertTrue(path.startswith("/") and ".." not in path, path)
             self.assertFalse(path.startswith("/var/lib/docker"), path)
 
@@ -132,7 +155,8 @@ class PreparationTests(unittest.TestCase):
     def test_sufficient_space_skips_without_calling_reclamation(self):
         with tempfile.TemporaryDirectory() as directory:
             report = storage.prepare(directory, BUDGET, snapshot=lambda: snapshot(60 * GIB),
-                                     reclaim=lambda: self.fail("must not reclaim"))
+                                     reclaim=lambda: self.fail("must not reclaim"),
+                                     reclaim_supplemental=lambda: self.fail("must not reclaim extra SDKs"))
             self.assertTrue(report["passed"])
             self.assertEqual((report["decision"], report["reclamation_seconds"]), ("skip", 0))
             self.assertEqual(report["headroom"]["requirements"][0]["required_bytes"], 42 * GIB)
@@ -147,15 +171,63 @@ class PreparationTests(unittest.TestCase):
                 def reclaim():
                     calls.append(True)
                     return {"seconds": 73, "removed": ["/usr/share/dotnet"]}
-                report = storage.prepare(directory, budget, snapshot=lambda: next(states), reclaim=reclaim)
+                report = storage.prepare(directory, budget, snapshot=lambda: next(states), reclaim=reclaim,
+                                         reclaim_supplemental=lambda: self.fail("standard cleanup already suffices"))
                 self.assertTrue(report["passed"])
                 self.assertEqual((report["decision"], report["reason"]), ("reclaim", reason))
                 self.assertEqual((calls, report["reclamation_seconds"]), ([True], 73))
 
+    def test_headroom_lost_after_a_skip_fails_without_supplemental_deletion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = iter([snapshot(60 * GIB), snapshot(40 * GIB)])
+            report = storage.prepare(directory, BUDGET, snapshot=lambda: next(states),
+                                     reclaim=lambda: self.fail("qualified initial space skips standard cleanup"),
+                                     reclaim_supplemental=lambda: self.fail("no standard cleanup was attempted"))
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["decision"], "skip")
+
+    def test_smaller_hosted_filesystem_retains_the_qualified_budget(self):
+        # Observed smaller hosted root filesystem and post-original-cleanup
+        # boundary. Additional free space is a synthetic observation, not an
+        # assertion about the installed size of any particular SDK.
+        total, original_free = 76887154688, 36299243520
+        budget = dict(BUDGET, runtime_bytes=8 * GIB)
+        original = snapshot(original_free, total=total)
+        required = storage.headroom(original, budget, True)["requirements"][0]["required_bytes"]
+        self.assertEqual(required, 40246015591)
+        self.assertFalse(storage.headroom(original, budget, True)["passed"])
+        for available, passed in ((required - 1, False), (required, True),
+                                  (original_free + 6 * GIB, True)):
+            with self.subTest(available=available), tempfile.TemporaryDirectory() as directory:
+                states = iter([snapshot(12944617472, total=total), original, snapshot(available, total=total)])
+                report = storage.prepare(directory, budget, snapshot=lambda: next(states),
+                                         reclaim=lambda: {"seconds": 80, "removed": ["/usr/share/dotnet"]},
+                                         reclaim_supplemental=lambda: {"seconds": 10, "removed": ["/usr/share/swift"]})
+                self.assertEqual(report["passed"], passed)
+                self.assertEqual(report["decision"], "reclaim")
+                self.assertEqual(report["supplemental_removed"], ["/usr/share/swift"])
+                self.assertEqual(report["reclamation_seconds"], 90)
+                self.assertEqual(report["after_standard"]["filesystems"][0]["available_bytes"], original_free)
+                self.assertEqual(report["headroom"]["requirements"][0]["required_bytes"], required)
+        # Sufficient bytes do not excuse inode pressure or a second filesystem.
+        enough = snapshot(required, total=total)
+        enough["filesystems"][0]["free_inodes"] = 99999
+        self.assertFalse(storage.headroom(enough, budget, True)["passed"])
+        separate = snapshot(required, total=total, other=original_free)
+        self.assertFalse(storage.headroom(separate, budget, True)["passed"])
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(storage.ready(directory, budget,
+                                           snapshot=lambda: snapshot(required - 8 * GIB - 1, total=total))["passed"])
+            # After actual image preparation only the image allowance drops.
+            with tempfile.TemporaryDirectory() as ready_directory:
+                self.assertTrue(storage.ready(ready_directory, budget,
+                                              snapshot=lambda: snapshot(required - 8 * GIB, total=total))["passed"])
+
     def test_failed_post_cleanup_guard_preserves_failure_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             report = storage.prepare(directory, BUDGET, snapshot=lambda: snapshot(41 * GIB),
-                                     reclaim=lambda: {"seconds": 1, "removed": []})
+                                     reclaim=lambda: {"seconds": 1, "removed": []},
+                                     reclaim_supplemental=lambda: {"seconds": 1, "removed": []})
             self.assertFalse(report["passed"])
             self.assertIn("insufficient", report["error"])
             self.assertFalse(json.loads((Path(directory) / "storage-prepare.json").read_text())["passed"])
@@ -181,6 +253,24 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual(ready["headroom"]["image_prepare_bytes"], 0)
             with tempfile.TemporaryDirectory() as failed:
                 self.assertFalse(storage.ready(failed, BUDGET, snapshot=lambda: snapshot(33 * GIB))["passed"])
+
+    def test_supplemental_pressure_is_bounded_and_reserved_above_the_mon_floor(self):
+        budget = dict(BUDGET, runtime_bytes=8 * GIB)
+        observed = snapshot(100 * GIB, total=144 * GIB)
+        amount = storage.pressure_size(observed, budget, supplemental=True)
+        requirement = storage.headroom(observed, budget, True)["requirements"][0]["required_bytes"]
+        self.assertEqual(observed["filesystems"][0]["available_bytes"] - amount, requirement - 4 * GIB)
+        self.assertLessEqual(amount, 64 * GIB)
+        for available in (45 * GIB, 140 * GIB):
+            with self.assertRaises(RuntimeError):
+                storage.pressure_size(snapshot(available, total=144 * GIB), budget, supplemental=True)
+        # An invalid/unqualified host must fail before invoking even the setup
+        # cleanup, independently of any synthetic filesystem observation.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"RUNNER_ENVIRONMENT": "self-hosted"}):
+            report = storage.prepare(directory, budget, "pressure-supplemental", snapshot=lambda: observed,
+                                     reclaim=lambda: self.fail("must not preclean a shared host"))
+            self.assertFalse(report["passed"])
 
     def test_pressure_is_bounded_above_ceph_floor_and_cleanup_requires_ownership(self):
         self.assertEqual(storage.pressure_size(snapshot(60 * GIB), BUDGET), 19 * GIB)
