@@ -22,7 +22,7 @@ func newOSDBootstrapFixture(t *testing.T) *osdBootstrapFixture {
 	t.Helper()
 	root := t.TempDir()
 	f := &osdBootstrapFixture{root: root, store: filepath.Join(root, "var/lib/ceph/osd/ceph-7"), script: filepath.Join(root, "osd.sh"), calls: filepath.Join(root, "calls")}
-	f.env = map[string]string{"CEPH_OSD_ID": "7", "CEPH_OSD_UUID": bootstrapOSDUUID, "CEPH_OSD_HOST": "synthetic-osd-host", "TC_FSID": bootstrapClusterFSID, "TC_CALLS": f.calls, "TC_STORE": f.store, "TC_FAIL_MKFS": "0", "TC_FAIL_CONFIG": "0"}
+	f.env = map[string]string{"CEPH_OSD_ID": "7", "CEPH_OSD_UUID": bootstrapOSDUUID, "CEPH_OSD_HOST": "synthetic-osd-host", "TC_FSID": bootstrapClusterFSID, "TC_CALLS": f.calls, "TC_STORE": f.store, "TC_FAIL_MKFS": "0", "TC_FAIL_CONFIG": "0", "TC_FAIL_BENCHMARK": "0"}
 	for _, dir := range []string{f.store, filepath.Join(root, "bin"), filepath.Join(root, "etc/ceph")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -43,6 +43,18 @@ func newOSDBootstrapFixture(t *testing.T) *osdBootstrapFixture {
 	stub := `#!/bin/sh
 printf '%s\n' "$*" >> "$TC_CALLS"
 case "$*" in
+ *--show-config-value\ osd_mclock_skip_benchmark*)
+    [ "$TC_FAIL_BENCHMARK" = 0 ] || exit 24
+    if [ -n "${TC_BENCHMARK_VALUE:-}" ]; then
+        printf '%s\n' "$TC_BENCHMARK_VALUE"
+    else
+        case "$*" in
+            *--osd-mclock-skip-benchmark=true*) printf 'true\n' ;;
+            *--osd-mclock-skip-benchmark=false*) printf 'false\n' ;;
+            *) exit 26 ;;
+        esac
+    fi
+    ;;
  *--show-config-value*)
     [ "$TC_FAIL_CONFIG" = 0 ] || exit 25
     printf '%s\n' "$TC_FSID"
