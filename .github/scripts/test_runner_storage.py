@@ -116,8 +116,8 @@ class FreeTests(unittest.TestCase):
 # A decision fixture supplies explicit filesystem observations; it never
 # invokes Docker, removes runner directories or allocates pressure space.
 def snapshot(available, total=100 * GIB, verified=True, other=None):
-    def fs(device, avail, mon=True):
-        return {"device": device, "paths": ["/docker" if mon else "/images"], "mon_store": mon,
+    def fs(device, avail, metadata=True):
+        return {"device": device, "paths": ["/docker" if metadata else "/images"], "docker_root": metadata,
                 "available_bytes": avail, "total_bytes": total, "free_inodes": 1000000}
     rows = [fs(1, available)]
     if other is not None:
@@ -205,6 +205,47 @@ class PreparationTests(unittest.TestCase):
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_socket_linked_containerd_split_device_requires_mon_floor_in_both_phases(self):
+        from types import SimpleNamespace
+        from test_runner_storage_layout import DOCKER, MOUNTS, ReadOnlyHost
+
+        # Literal discovery/stat answers reproduce separate metadata and
+        # writable-snapshot devices without allocating space or running Docker.
+        host = ReadOnlyHost(processes="containerd --root /snapshots --address /run/containerd.sock",
+                            paths=["/snapshots"], files={"/proc/self/mountinfo": MOUNTS +
+                                "2 1 8:2 / /snapshots rw - ext4 /dev/snapshot rw\n"})
+        info = {"DockerRootDir": DOCKER, "OSType": "linux", "Architecture": "x86_64",
+                "Driver": "overlayfs", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]],
+                "Containerd": {"Address": "/run/containerd.sock"}}
+        def run(command):
+            if command[:2] == ["docker", "info"]:
+                return json.dumps(info)
+            if command == ["docker", "context", "inspect"]:
+                return json.dumps([{"Endpoints": {"docker": {"Host": "unix:///var/run/docker.sock"}}}])
+            return host.run(command)
+        def observe():
+            return storage.storage_snapshot(
+                run, lambda path: statvfs(100 * GIB, (available if path == "/snapshots" else 80) * GIB,
+                                         files=1000000, ffree=900000),
+                lambda path: SimpleNamespace(st_dev=2 if path == "/snapshots" else 1), {},
+                lambda data, runner: host.discover(**data))
+
+        for available in (20, 33, 34, 41, 42):
+            with self.subTest(snapshot_available_gib=available), tempfile.TemporaryDirectory() as directory:
+                observed = observe()
+                self.assertTrue(observed["layout"]["verified"], observed["layout"])
+                self.assertEqual(len(observed["filesystems"]), 2)
+                calls = []
+                prepared = storage.prepare(Path(directory) / "prepare", BUDGET, snapshot=observe,
+                                           reclaim=lambda: calls.append("fixed cleanup") or {"seconds": 1, "removed": []})
+                self.assertEqual(prepared["decision"], "skip" if available >= 42 else "reclaim")
+                self.assertEqual(prepared["passed"], available >= 42)
+                self.assertEqual(calls, [] if available >= 42 else ["fixed cleanup"])
+                self.assertEqual([r["required_bytes"] for r in prepared["headroom"]["requirements"]], [42 * GIB] * 2)
+                ready = storage.ready(Path(directory) / "ready", BUDGET, snapshot=observe)
+                self.assertEqual(ready["passed"], available >= 34)
+                self.assertEqual([r["required_bytes"] for r in ready["headroom"]["requirements"]], [34 * GIB] * 2)
+
     def test_devices_are_deduplicated_and_remote_context_cannot_authorize_skip(self):
         from types import SimpleNamespace
         def run(command):
@@ -220,8 +261,8 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(observed["layout"]["verified"], verified)
             self.assertEqual(len(observed["filesystems"]), 2)
             self.assertEqual(observed["filesystems"][0]["paths"], ["/docker", "/volumes"])
-            self.assertTrue(observed["filesystems"][0]["mon_store"])
-            self.assertFalse(observed["filesystems"][1]["mon_store"])
+            self.assertTrue(observed["filesystems"][0]["docker_root"])
+            self.assertFalse(observed["filesystems"][1]["docker_root"])
 
 
 class QualificationTests(unittest.TestCase):

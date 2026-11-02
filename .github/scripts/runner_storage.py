@@ -192,14 +192,14 @@ def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=
         layout["verified"] = False
         layout["reasons"].append("docker-platform-not-qualified")
     filesystems = {}
-    mon_device = stat(info["DockerRootDir"]).st_dev
+    docker_device = stat(info["DockerRootDir"]).st_dev
     for path in layout["roots"]:
         device = stat(path).st_dev
         if device in filesystems:
             filesystems[device]["paths"].append(path)
             continue
         fs = filesystem(path, statvfs)
-        fs.update(device=device, paths=[path], mon_store=device == mon_device)
+        fs.update(device=device, paths=[path], docker_root=device == docker_device)
         filesystems[device] = fs
     if not filesystems:
         raise ValueError("no Docker storage filesystem could be inspected")
@@ -211,16 +211,18 @@ def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=
 def headroom(snapshot, budget, before_images):
     """Independent requirements per filesystem; never add unrelated free space.
 
-    Reserve 30% of the MON filesystem after the image and workload allowance.
-    Unknown work retains cleanup and a post-cleanup minimum guard, not a claim
-    that an unqualified workload's peak has been measured.
+    Reserve 30% on every candidate store filesystem after the image and
+    workload allowance. Writable snapshots can hold the MON store on a
+    different device from Docker's metadata root, so no candidate loses the
+    floor based on a guessed MON location. Unknown work retains cleanup and a
+    post-cleanup minimum guard, not a claim that its peak has been measured.
     """
     runtime = budget["runtime_bytes"] if budget else 2 * GIB
     images = budget["image_prepare_bytes"] if budget and before_images else 0
     inodes = budget["minimum_free_inodes"] if budget else 100000
     requirements = []
     for fs in snapshot["filesystems"]:
-        mon = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100 if fs["mon_store"] else 0
+        mon = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100
         required = mon + runtime + images
         requirements.append({"device": fs["device"], "paths": fs["paths"], "available_bytes": fs["available_bytes"],
                              "required_bytes": required, "minimum_free_inodes": inodes,
@@ -239,13 +241,13 @@ def pressure_size(observed, budget):
     job's always-run owned cleanup step.
     """
     rows = headroom(observed, budget, True)["requirements"]
-    mon = next(row for row, fs in zip(rows, observed["filesystems"]) if fs["mon_store"])
-    amount = mon["available_bytes"] - mon["required_bytes"] + GIB
+    target = next(row for row, fs in zip(rows, observed["filesystems"]) if fs["docker_root"])
+    amount = target["available_bytes"] - target["required_bytes"] + GIB
     if not GIB <= amount <= 40 * GIB:
         raise RuntimeError("qualification pressure would exceed its 1..40 GiB bound")
-    fs = next(fs for fs in observed["filesystems"] if fs["mon_store"])
+    fs = next(fs for fs in observed["filesystems"] if fs["docker_root"])
     floor = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100 + budget["runtime_bytes"] + 2 * GIB
-    if mon["available_bytes"] - amount < floor:
+    if target["available_bytes"] - amount < floor:
         raise RuntimeError("qualification pressure would compromise the Ceph floor")
     return amount
 
@@ -266,8 +268,8 @@ def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, re
                 raise RuntimeError("qualification pressure needs a verified qualified GitHub-hosted runner")
             directory = Path(directory)
             directory.mkdir(parents=True, exist_ok=True)
-            mon = next(fs for fs in report["before"]["filesystems"] if fs["mon_store"])
-            if directory.stat().st_dev != mon["device"]:
+            target = next(fs for fs in report["before"]["filesystems"] if fs["docker_root"])
+            if directory.stat().st_dev != target["device"]:
                 raise RuntimeError("qualification pressure directory is not on the Docker filesystem")
             amount = pressure_size(report["before"], budget)
             pressure = directory / "qualification-pressure.bin"
