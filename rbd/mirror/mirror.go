@@ -63,6 +63,8 @@ func WithConfig(config Config) Option { return Option{config: config} }
 // cancelled context they are refused before any cluster inspection, container
 // start or customizer call.
 type Config struct {
+	// Timing selects qualified startup-only daemon timing for this fixture.
+	Timing          TimingProfile
 	Source          *ceph.Container
 	Destination     *ceph.Container
 	Pool            string
@@ -245,6 +247,12 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.
 //
+// Timing.JournalPolling applies only to owned daemon startup. The actual
+// daemon release and effective option are checked after startup; a failure
+// returns the partial fixture for cleanup. NoInitialDaemons defers these
+// checks until AddDaemon. The startup flag takes precedence over local and
+// central settings and lasts until that daemon is terminated.
+//
 // The caller must Terminate a non-nil result even when setup returns an error.
 // Terminate removes runtime containers but leaves mirroring mode, peer and auth
 // configuration in the disposable clusters; it never destroys pools or data.
@@ -421,8 +429,8 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 			Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/rbd-mirror.keyring", FileMode: 0o600,
 		}),
 		testcontainers.WithEntrypoint("rbd-mirror"),
-		testcontainers.WithCmd("-f", "--name", clientName, "--keyring", "/etc/ceph/rbd-mirror.keyring",
-			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false"),
+		testcontainers.WithCmd(m.pair.config.Timing.command("-f", "--name", clientName, "--keyring", "/etc/ceph/rbd-mirror.keyring",
+			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false")...),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/tmp/rbd-mirror.asok"}).WithStartupTimeout(time.Minute)),
 	}
 	if !sourceFacts.UsesHostNetwork {
@@ -439,6 +447,12 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	}
 	if err != nil {
 		return daemon, fmt.Errorf("run destination RBD mirror daemon: %w", err)
+	}
+	if err := m.pair.config.Timing.verify(ctx, ctr); err != nil {
+		if daemon != nil {
+			daemon.receiverStartupConfirmed = false
+		}
+		return daemon, fmt.Errorf("verify RBD mirror timing: %w", err)
 	}
 	return daemon, nil
 }
@@ -915,6 +929,9 @@ func normalizeRBDMirrorConfig(config Config) (Config, error) {
 		return config, err
 	}
 	config.Mode = mode
+	if err := config.Timing.validate(mode); err != nil {
+		return config, err
+	}
 	if config.SourceSite == "" {
 		config.SourceSite = "source"
 	}
