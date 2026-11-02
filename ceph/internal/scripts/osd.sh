@@ -6,6 +6,17 @@ fail() {
     exit 1
 }
 
+# This owned startup policy is validated before any store preparation. Empty
+# preserves native configuration precedence; explicit choices become a daemon
+# command-line setting, which wins over local files and the MON database.
+benchmark_arg=
+case "${CEPH_OSD_STARTUP_BENCHMARK:-}" in
+    '') ;;
+    native) benchmark_arg=--osd-mclock-skip-benchmark=false ;;
+    skip) benchmark_arg=--osd-mclock-skip-benchmark=true ;;
+    *) fail 'invalid startup benchmark policy' ;;
+esac
+
 # Validate launch identity before constructing a path or writing a keyring.
 case "${CEPH_OSD_ID:-}" in
     ''|*[!0-9]*) fail 'invalid numeric OSD ID' ;;
@@ -21,6 +32,18 @@ valid_uuid() (
         [ "${#3}" -eq 4 ] && [ "${#4}" -eq 4 ] && [ "${#5}" -eq 12 ]
 )
 valid_uuid "${CEPH_OSD_UUID:-}" || fail 'invalid OSD UUID'
+
+# This is local startup-input admission, not a live-daemon consumption receipt.
+# Unknown options can otherwise be ignored; require this binary to understand
+# the exact option and command-line value before preparing any OSD store.
+if [ -n "$benchmark_arg" ]; then
+    benchmark_value=$(ceph-osd -i "$CEPH_OSD_ID" "$benchmark_arg" \
+        --show-config-value osd_mclock_skip_benchmark) || fail 'cannot read startup benchmark option'
+    case "$CEPH_OSD_STARTUP_BENCHMARK:$benchmark_value" in
+        native:false|skip:true) ;;
+        *) fail 'startup benchmark option did not accept the selected policy' ;;
+    esac
+fi
 
 # An optional launch-time block device. The launcher passes the device number
 # and size its caller verified on the host; compare them with what this
@@ -101,4 +124,8 @@ location="root=${CEPH_OSD_ROOT:-default} host=${CEPH_OSD_HOST}"
 if [ -n "${CEPH_OSD_RACK:-}" ]; then
     location="${location} rack=${CEPH_OSD_RACK}"
 fi
-exec ceph-osd -f -i "$CEPH_OSD_ID" --crush-location "$location"
+set -- ceph-osd -f -i "$CEPH_OSD_ID" --crush-location "$location"
+if [ -n "$benchmark_arg" ]; then
+    set -- "$@" "$benchmark_arg"
+fi
+exec "$@"
