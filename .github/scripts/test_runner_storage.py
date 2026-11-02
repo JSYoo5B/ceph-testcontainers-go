@@ -99,6 +99,23 @@ class FreeTests(unittest.TestCase):
             self.assertEqual((report["before"]["available_percent"], report["filesystem"]["available_percent"]), (12, 55))
             self.assertTrue((Path(directory) / "storage-free.json").exists())
 
+    def test_unused_sdks_are_reclaimed_without_removing_required_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = Docker()
+            unused = {"/usr/share/swift", "/usr/local/share/powershell",
+                      "/opt/microsoft/powershell", "/usr/local/share/vcpkg"}
+            # Both used and unused tools exist. Only the fixed unused SDK roots
+            # may reach rm; no wildcard or tool-cache parent may be removed.
+            used = {"/opt/hostedtoolcache/Go", "/usr/bin/python3", "/usr/local/bin",
+                    "/var/lib/docker", "/var/lib/containerd", "/opt/runner"}
+            report = storage.free(directory, {"RUNNER_ENVIRONMENT": "github-hosted"}, docker,
+                                  lambda path: statvfs(72 * GIB, 40 * GIB),
+                                  (unused | used).__contains__)
+            self.assertEqual(set(report["removed"]), unused)
+            self.assertEqual([c for c in docker.calls if c[0] == "sudo"],
+                             [["sudo", "rm", "-rf", "--one-file-system",
+                               *[p for p in storage.PREINSTALLED if p in unused]]])
+
     def test_nothing_present_removes_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             docker = Docker()
@@ -151,6 +168,39 @@ class PreparationTests(unittest.TestCase):
                 self.assertTrue(report["passed"])
                 self.assertEqual((report["decision"], report["reason"]), ("reclaim", reason))
                 self.assertEqual((calls, report["reclamation_seconds"]), ([True], 73))
+
+    def test_smaller_hosted_filesystem_retains_the_qualified_budget(self):
+        # Observed smaller hosted root filesystem and post-original-cleanup
+        # boundary. Additional free space is a synthetic observation, not an
+        # assertion about the installed size of any particular SDK.
+        total, original_free = 76887154688, 36299243520
+        budget = dict(BUDGET, runtime_bytes=8 * GIB)
+        original = snapshot(original_free, total=total)
+        required = storage.headroom(original, budget, True)["requirements"][0]["required_bytes"]
+        self.assertEqual(required, 40246015591)
+        self.assertFalse(storage.headroom(original, budget, True)["passed"])
+        for available, passed in ((required - 1, False), (required, True),
+                                  (original_free + 6 * GIB, True)):
+            with self.subTest(available=available), tempfile.TemporaryDirectory() as directory:
+                states = iter([snapshot(12944617472, total=total), snapshot(available, total=total)])
+                report = storage.prepare(directory, budget, snapshot=lambda: next(states),
+                                         reclaim=lambda: {"seconds": 90, "removed": ["/usr/share/swift"]})
+                self.assertEqual(report["passed"], passed)
+                self.assertEqual(report["decision"], "reclaim")
+                self.assertEqual(report["headroom"]["requirements"][0]["required_bytes"], required)
+        # Sufficient bytes do not excuse inode pressure or a second filesystem.
+        enough = snapshot(required, total=total)
+        enough["filesystems"][0]["free_inodes"] = 99999
+        self.assertFalse(storage.headroom(enough, budget, True)["passed"])
+        separate = snapshot(required, total=total, other=original_free)
+        self.assertFalse(storage.headroom(separate, budget, True)["passed"])
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(storage.ready(directory, budget,
+                                           snapshot=lambda: snapshot(required - 8 * GIB - 1, total=total))["passed"])
+            # After actual image preparation only the image allowance drops.
+            with tempfile.TemporaryDirectory() as ready_directory:
+                self.assertTrue(storage.ready(ready_directory, budget,
+                                              snapshot=lambda: snapshot(required - 8 * GIB, total=total))["passed"])
 
     def test_failed_post_cleanup_guard_preserves_failure_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
