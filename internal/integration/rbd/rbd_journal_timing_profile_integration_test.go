@@ -48,9 +48,13 @@ func TestRBDJournalTimingProfile(t *testing.T) {
 			}
 		})
 	}
-	if version := harness.StaticFacts(source).CephVersion; version != "20.2.4" {
-		if link == nil || len(link.Daemons()) == 0 || err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), version) {
-			t.Fatalf("unqualified release did not return a qualification refusal with owned partial fixture: ceph=%s fixture=%v err=%v", version, link != nil, err)
+	// The qualification judges the rbd-aux binary, not the cluster release.
+	if link == nil || len(link.Daemons()) == 0 {
+		t.Fatalf("journal timing fixture retained no owned daemon: fixture=%v err=%v", link != nil, err)
+	}
+	if version := harness.NativeBinaryRelease(t, ctx, link.Daemons()[0].Container, "rbd-mirror"); version != "20.2.4" {
+		if err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), "(observed "+version+")") {
+			t.Fatalf("unqualified release did not return a qualification refusal with owned partial fixture: rbd-mirror=%s err=%v", version, err)
 		}
 		if err := link.Terminate(ctx); err != nil {
 			t.Fatal("cleanup partial unqualified timing fixture", err)
