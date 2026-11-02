@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/mirror",
-  "count": 43,
+  "count": 44,
   "entries": [
     {
       "current": "rbd/mirror.Config",
@@ -301,6 +301,12 @@
       "current": "rbd/mirror.ScopePool",
       "kind": "const",
       "proposed": "rbd/mirror.ScopePool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.TimingProfile",
+      "kind": "type",
+      "proposed": "rbd/mirror.TimingProfile",
       "decision": "baseline"
     },
     {
