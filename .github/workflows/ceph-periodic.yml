@@ -35,6 +35,10 @@ on:
         type: choice
         options: [auto, always, pressure]
         default: auto
+      storage_profiles:
+        description: Comma-separated source-owned profile IDs for explicit storage qualification only
+        type: string
+        default: short-rados_fixtures_watchers-52f45dc3
       repetitions:
         description: Attempts of each representative batch (representative only, 1 to 10)
         type: number
@@ -197,9 +201,9 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: selected
-      profiles: short-rados_fixtures_watchers-52f45dc3
+      profiles: ${{ inputs.storage_profiles }}
       check_name: Runner storage qualification
-      max_parallel: 1
+      max_parallel: 5
       networks: default
       release: ${{ inputs.release }}
       ref: ${{ inputs.ref || github.sha }}
