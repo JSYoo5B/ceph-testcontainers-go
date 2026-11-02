@@ -22,6 +22,7 @@ const (
 	faultConfigOverride
 	faultOSDFlag
 	faultMGRModule
+	faultBlockIO
 )
 
 // faultPhase is when, and under which lock mode, terminate undoes a kind.
@@ -37,13 +38,16 @@ const (
 	// faultEndpoint entries are undone second, under c.mu. A failure
 	// keeps the entry's network, which the undo still needs.
 	faultEndpoint
-	// faultFreeze entries are undone third, under c.mu, before native
+	// faultFreeze entries are undone last, under c.mu, before native
 	// commands are stopped: a frozen process cannot handle a stop signal.
 	faultFreeze
+	// faultStorage restores owned block tables without the topology mutex,
+	// before a daemon is stopped or its device claim can be released.
+	faultStorage
 )
 
 // faultPhases is terminate's order.
-var faultPhases = []faultPhase{faultShaping, faultEndpoint, faultFreeze}
+var faultPhases = []faultPhase{faultShaping, faultStorage, faultEndpoint, faultFreeze}
 
 type faultKindSpec struct {
 	phase faultPhase
@@ -58,6 +62,9 @@ type faultKindSpec struct {
 // the others plain errors. Interruption and pause return the incomplete
 // handle with the error, so a caller can still restore it.
 var faultKinds = map[faultKind]faultKindSpec{
+	faultBlockIO: {phase: faultStorage, undone: "restore block I/O fault", refuse: func(bool) error {
+		return invalidRequest("this block backend already belongs to the cluster")
+	}},
 	faultNetworkDelay: {phase: faultShaping, undone: "restore network delay", refuse: func(reserved bool) error {
 		if reserved {
 			return invalidRequest("another network delay of this endpoint is being applied")
@@ -263,7 +270,7 @@ func (r *faultRegistry) undo(ctx context.Context, mu sync.Locker) ([]error, map[
 	for _, phase := range faultPhases {
 		for _, entry := range r.held(phase) {
 			var err error
-			if phase == faultShaping {
+			if phase == faultShaping || phase == faultStorage {
 				mu.Unlock()
 				err = entry.undo(ctx)
 				mu.Lock()

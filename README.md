@@ -53,6 +53,8 @@ Documentation for a published release is available at its Git tag.
     period transfer, sync status and sync policy.
 - [`fault`](fault/README.md): container pause, network delay, loss, rate,
   packet faults and endpoint interruption on existing fixtures.
+  [`fault/blockio`](fault/blockio/README.md) prepares an owned disposable OSD
+  main device for bounded delay and EIO faults.
 - [`override`](override/README.md): reversible cluster-wide changes with
   restoration handles (blocklist, full ratios, MGR modules, OSD flags, debug
   levels, central configuration, messenger policy).

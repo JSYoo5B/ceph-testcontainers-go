@@ -32,6 +32,9 @@ import (
 type Kind string
 
 const (
+	// BlockIO restores an owned main-device table before daemon shutdown,
+	// without the topology mutex. Its helper has a separate backend lifetime.
+	BlockIO Kind = "BlockIO"
 	// NetworkDelay holds a netem lease per network and container until its
 	// Restore releases it; Terminate restores it first, unlocked.
 	NetworkDelay Kind = "NetworkDelay"

@@ -413,7 +413,9 @@ in the engine host's kernel until someone removes them by name (`tcblk-*`,
 ### Supervised table control
 
 Every table change of the windows above goes through the supervised control
-(`internal/integration/block_device_control_helpers_test.go`). A table change
+(`internal/blockio`), shared by the public `fault/blockio` backend and the
+integration probes. See the [public backend contract](../../fault/blockio/README.md)
+for ownership, image requirements and cleanup order. A table change
 is three kernel steps: load the new table into the inactive slot, suspend the
 node, and resume it, which swaps the table in. The control keeps a record of
 the node it owns:

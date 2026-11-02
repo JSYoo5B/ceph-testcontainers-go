@@ -1,0 +1,144 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "fault/blockio",
+  "count": 20,
+  "entries": [
+    {
+      "current": "fault/blockio.Config",
+      "kind": "type",
+      "proposed": "fault/blockio.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container",
+      "kind": "type",
+      "proposed": "fault/blockio.Container",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.Apply",
+      "kind": "method",
+      "signature": "func(ctx context.Context, profile Profile) error",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.Apply",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.AttachOSD",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cluster *ceph.Container) (*ceph.OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.AttachOSD",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.GetContainerID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.GetContainerID",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Container.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Container",
+      "proposed": "fault/blockio.Container.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.DefaultSize",
+      "kind": "const",
+      "proposed": "fault/blockio.DefaultSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Identity",
+      "kind": "type",
+      "proposed": "fault/blockio.Identity",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.MaxDelay",
+      "kind": "const",
+      "proposed": "fault/blockio.MaxDelay",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.MaxSize",
+      "kind": "const",
+      "proposed": "fault/blockio.MaxSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.MinSize",
+      "kind": "const",
+      "proposed": "fault/blockio.MinSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Option",
+      "kind": "type",
+      "proposed": "fault/blockio.Option",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "fault/blockio.Option.Customize",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Profile",
+      "kind": "type",
+      "proposed": "fault/blockio.Profile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "fault/blockio.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Status",
+      "kind": "type",
+      "proposed": "fault/blockio.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.Tables",
+      "kind": "type",
+      "proposed": "fault/blockio.Tables",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.WithConfig",
+      "kind": "function",
+      "signature": "func(config Config) Option",
+      "proposed": "fault/blockio.WithConfig",
+      "decision": "baseline"
+    }
+  ]
+}
