@@ -819,7 +819,9 @@ evidence belongs in the implementation pull request.
 Only verified local classic-overlay2 or socket-linked containerd-overlayfs
 layouts may skip. Existing local volume mounts and nested mounts are inspected.
 Containerd must have one running process whose CLI/configuration root and socket
-match Docker's reported socket; imported/proxy configuration and snapshotter
+match Docker's reported socket. The built-in defaults are not inferred, so a
+package-default containerd whose `root` and `grpc.address` are left unset always
+retains cleanup; imported/proxy configuration and snapshotter
 root overrides keep conservative preparation. Unlinked roots are recorded as
 candidates and cannot authorize skipping. Remote endpoints,
 unknown roots, volume plugins/options and missing evidence keep conservative
