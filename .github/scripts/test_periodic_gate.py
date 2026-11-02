@@ -42,6 +42,12 @@ class GateTests(unittest.TestCase):
         """jobs maps a run id to its jobs; any other run had only its gate."""
         return gate.decide(event, release_phase, HEAD, NOW, runs, lambda r: jobs.get(r["id"], GATE_ONLY))
 
+    def test_storage_qualification_does_not_count_as_full_matrix_coverage(self):
+        qualified = [job("Storage qualification / Plan", "success"),
+                     job("Storage qualification / rados_fixtures_watchers", "success")]
+        self.assertFalse(gate.executed(run(3, HEAD, 1), qualified))
+        self.assertTrue(self.decide([run(3, HEAD, 1)], {3: qualified})[0])
+
     def test_a_new_commit_on_main_runs_once(self):
         self.assertTrue(self.decide([run(3, HEAD, 3), run(2, OLD, 6)], {2: EXECUTED})[0])
         # Once a run executed it, later firings on the same commit skip,

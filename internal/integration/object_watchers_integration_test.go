@@ -62,7 +62,9 @@ func TestPausedObjectWatcher(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
-			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
+			// Bound the qualified workload independently of cluster defaults.
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
+				ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
