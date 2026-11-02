@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -20,7 +21,9 @@ import (
 func TestMultiClusterRBDSplitBrainResync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t)
+	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t,
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 	const pool = "tc-rbd-split-brain"
 	const image = pool + "/disposable"
 	const size = 8 << 20
