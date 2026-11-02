@@ -101,7 +101,8 @@ def validate_analysis(analysis, package, tests):
         raise ValueError("the image analysis does not describe this package and these tests")
     for use in analysis["images"]:
         if not isinstance(use, dict) or use.get("kind") not in ("image", "prefix", "role-pins") \
-                or not isinstance(use.get("tests"), list):
+                or not isinstance(use.get("tests"), list) \
+                or ("role_fallback" in use and not isinstance(use["role_fallback"], bool)):
             raise ValueError("the image analysis has an invalid entry")
     return analysis["images"]
 
@@ -136,9 +137,10 @@ def plan_images(uses, release, roles, roles_prepared):
         reference = use.get("reference", "")
         if use["kind"] == "image":
             repository, _, digest = reference.partition("@")
-            if roles_prepared and repository.split(":")[0] == matrix.REGISTRY and digest in published:
-                # With prepared role images a test refuses this fallback
-                # (harness.IntegrationImage); the role preparation owns them.
+            if (roles_prepared and use.get("role_fallback") is True
+                    and repository.split(":")[0] == matrix.REGISTRY and digest in published):
+                # Only source-proven harness fallbacks are replaced by prepared
+                # roles. A test can explicitly require the same published image.
                 skipped.append({"reference": reference, "position": use.get("position"),
                                 "reason": "published role image; the job's role images replace it"})
                 continue

@@ -78,9 +78,12 @@ class PreparationTests(unittest.TestCase):
             report["binary"] = {"tests": tests}
         (self.compile / "compile-report.json").write_text(json.dumps(report))
 
-    def use(self, kind, reference="", tests=("TestAuthCiphers",), position="harness/x.go:1"):
-        self.engine.analysis.append({"kind": kind, "reference": reference, "declaration": "func X",
-                                     "position": position, "tests": list(tests)})
+    def use(self, kind, reference="", tests=("TestAuthCiphers",), position="harness/x.go:1", role_fallback=None):
+        use = {"kind": kind, "reference": reference, "declaration": "func X",
+               "position": position, "tests": list(tests)}
+        if role_fallback is not None:
+            use["role_fallback"] = role_fallback
+        self.engine.analysis.append(use)
 
     def run_preparation(self, tests="", release="20.2.4", roles="essential,client", layout="roles"):
         arguments = argparse.Namespace(compile=self.compile, tests=tests, release=release, roles=roles,
@@ -97,7 +100,7 @@ class PreparationTests(unittest.TestCase):
 
     def test_reaper_and_named_images_are_prepared_and_the_role_fallback_is_skipped(self):
         self.use("image", OLD)
-        self.use("image", matrix.DEFAULT_IMAGE, position="harness/services_integration.go:35")
+        self.use("image", matrix.DEFAULT_IMAGE, position="harness/services_integration.go:35", role_fallback=True)
         self.engine.missing |= {REAPER, OLD}
         code, summary = self.run_preparation()
         self.assertEqual(code, 0, summary)
@@ -113,10 +116,33 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(analysis[analysis.index("-with") + 1], ",".join(tag_scenarios.INTEGRATION_HARNESS))
         self.assertTrue((self.output / "pull-reaper.log").exists())
 
+    def test_explicit_published_image_is_prepared_even_with_roles(self):
+        for name, fallback in (("missing", None), ("explicit", False)):
+            with self.subTest(flag=name):
+                self.engine.analysis = []
+                self.use("image", matrix.DEFAULT_IMAGE, role_fallback=fallback)
+                self.output = self.root / ("published-" + name)
+                code, summary = self.run_preparation()
+                self.assertEqual(code, 0, summary)
+                self.assertEqual(self.references(summary), [matrix.DEFAULT_IMAGE])
+                self.assertEqual(summary["skipped"], [])
+
+    def test_role_fallback_provenance_flag_requires_a_boolean(self):
+        for index, value in enumerate(("true", 1, None)):
+            with self.subTest(value=value):
+                self.engine.analysis = []
+                self.use("image", matrix.DEFAULT_IMAGE)
+                self.engine.analysis[0]["role_fallback"] = value
+                self.output = self.root / ("invalid-fallback-" + str(index))
+                code, summary = self.run_preparation()
+                self.assertEqual(code, 1)
+                self.assertIn("invalid entry", summary["error"])
+                self.assertNotIn("reaper", summary)
+
     def test_docker_only_job_prepares_ryuk_and_the_role_fallback(self):
         self.compile_report("./internal/dockerbridge", ["TestNetwork"])
         self.use("image", "busybox:1.37.0", tests=("TestNetwork",))
-        self.use("image", matrix.DEFAULT_IMAGE, tests=("TestNetwork",))
+        self.use("image", matrix.DEFAULT_IMAGE, tests=("TestNetwork",), role_fallback=True)
         self.engine.missing.add(REAPER)
         code, summary = self.run_preparation(roles="", layout=None)
         self.assertEqual(code, 0, summary)
