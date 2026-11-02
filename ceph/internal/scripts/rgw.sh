@@ -27,6 +27,13 @@ if [ -n "${CEPH_RGW_REALM:-}" ]; then
         --rgw-sync-lease-period 30 \
         --osd-pool-default-pg-num 1 --osd-pool-default-pgp-num 0
 fi
+# The multisite fixture owns this startup condition. It changes future idle
+# poll scheduling, not sync lease ownership, notifications or storage I/O.
+case "${CEPH_RGW_INCREMENTAL_SYNC_TIMING:-}" in
+    "") ;;
+    1) set -- "$@" --rgw-meta-sync-poll-interval 1 --rgw-data-sync-poll-interval 1 ;;
+    *) echo "invalid RGW incremental sync timing profile" >&2; exit 1 ;;
+esac
 if [ -n "${CEPH_RGW_ZONEGROUP:-}" ]; then
     set -- "$@" --rgw-zonegroup "$CEPH_RGW_ZONEGROUP"
 fi
