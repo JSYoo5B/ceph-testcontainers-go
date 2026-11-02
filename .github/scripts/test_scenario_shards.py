@@ -414,6 +414,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotRegex(optional, r"(?m)^  (?:push|pull_request|workflow_call):")
         self.assertNotIn("concurrency:", optional)
 
+    def test_short_storage_control_only_changes_explicit_dispatches(self):
+        caller = self.jobs["ceph-short.yml"]["scenarios"]
+        for event in ("pull_request", "push", "workflow_dispatch"):
+            context = {"github": {"event_name": event}, "inputs": {"storage_policy": "always", "ref": "a" * 40}}
+            self.assertEqual(interpolate(scalar(caller, "storage_policy"), context), "always" if event == "workflow_dispatch" else "auto")
+            self.assertEqual(interpolate(scalar(caller, "ref"), context), "a" * 40 if event == "workflow_dispatch" else "")
+        self.assertNotIn("max_parallel", caller)
+        self.assertEqual(scalar(caller, "category"), "short")
+
     def test_storage_pressure_is_explicit_owned_and_never_uploaded(self):
         runtime = dict(blocks(self.workflows["tagged-runtime.yml"].split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["runtime"]
         release = next(step for step in steps(runtime) if "Release the qualification pressure file" in step)
