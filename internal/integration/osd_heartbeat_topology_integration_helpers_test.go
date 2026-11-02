@@ -77,7 +77,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-topology", PGNum: 8, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.TopologyRados(t, ctx, client, "seed")
@@ -212,7 +212,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if receipt.After.UUID != receipt.Before.UUID || receipt.After.UpFrom <= receipt.DownEpoch {
 		t.Fatalf("osd.%d came back as %+v, down at e%d, before %+v", target.ID, receipt.After, receipt.DownEpoch, receipt.Before)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.TopologyRados(t, ctx, client, "osd-restarted")

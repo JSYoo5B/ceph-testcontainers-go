@@ -104,7 +104,7 @@ func startUpgradeCluster(t *testing.T, ctx context.Context, host bool) *upgradeR
 		t.Fatal(err)
 	}
 	u.client = harness.ToolkitContainer(t, cluster)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	u.step(t, ctx, "source", upgradeLayout([2]int{3, 0}, [2]int{1, 0}, [2]int{3, 0}))
@@ -308,7 +308,7 @@ func interruptedUpgrade(t *testing.T, host bool) {
 	u.step(t, ctx, "osd-0-tentacle", upgradeLayout([2]int{0, 3}, [2]int{0, 1}, [2]int{2, 1}))
 
 	// The OSD phase stops half-done: osd.1's next container cannot run an OSD.
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("before osd.1:", err)
 	}
 	detached, err := osds[1].Detach(ctx)
@@ -360,7 +360,7 @@ func (u *upgradeRun) upgradeManager(t *testing.T, ctx context.Context, to string
 // store from image, which must report release.
 func (u *upgradeRun) reopenOSD(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, image, release string) *ceph.OSDContainer {
 	t.Helper()
-	if err := u.cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(u.cluster).WaitForClean(ctx); err != nil {
 		t.Fatalf("before osd.%d: %v", osd.ID, err)
 	}
 	return u.reopenOn(t, ctx, osd, image, release)
@@ -395,7 +395,7 @@ func (u *upgradeRun) finishUpgrade(t *testing.T, ctx context.Context, identity s
 	if _, err := u.cluster.Ceph(ctx, "osd", "unset", "noout"); err != nil {
 		t.Fatal(err)
 	}
-	if err := u.cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(u.cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	dump, err := u.cluster.Ceph(ctx, "osd", "dump", "--format", "json")

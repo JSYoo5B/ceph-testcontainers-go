@@ -60,13 +60,13 @@ func newWaitContextFixture(t *testing.T, name string) waitContextFixture {
 		f.cluster.Container = f.control
 		f.finalQuery = "status --format json"
 		if name == "Clean" {
-			f.wait = f.cluster.WaitForClean
+			f.wait = observeWaitCluster(f.cluster).WaitForClean
 		}
 		if name == "PGClean" {
-			f.wait = f.cluster.WaitForPGClean
+			f.wait = observeWaitCluster(f.cluster).WaitForPGClean
 		}
 		if name == "Quorum" {
-			f.wait = f.cluster.WaitForQuorum
+			f.wait = observeWaitCluster(f.cluster).WaitForQuorum
 			f.finalQuery = "quorum_status --format json"
 		}
 	case "Module":
@@ -74,7 +74,9 @@ func newWaitContextFixture(t *testing.T, name string) waitContextFixture {
 		f.cluster = mgrModuleCluster(base)
 		f.control = &waitContextControl{Container: base}
 		f.cluster.Container = f.control
-		f.wait = func(ctx context.Context) error { return f.cluster.WaitMGRModuleReady(ctx, "rbd_support") }
+		f.wait = func(ctx context.Context) error {
+			return observeWaitCluster(f.cluster).WaitMGRModuleReady(ctx, "rbd_support")
+		}
 		f.finalQuery = "rbd mirror snapshot schedule list --format json"
 	default:
 		t.Fatalf("unknown wait fixture %q", name)

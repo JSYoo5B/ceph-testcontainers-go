@@ -113,11 +113,8 @@ func (dm daemonMaps) quorum(ctx context.Context) (QuorumStatus, error) {
 	return queryMonitorQuorum(ctx, control)
 }
 
-// WaitForQuorum waits for a majority of the current monmap, including fixtures
-// with a stopped monitor. It does not require HEALTH_OK or every MON to run.
-//
-//purpose:observation
-func (c *Container) WaitForQuorum(ctx context.Context) error {
+// waitForQuorum implements the observer wait and is available to cluster startup.
+func (c *Container) waitForQuorum(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	return clusterutil.Poll(ctx, func() (bool, error) {

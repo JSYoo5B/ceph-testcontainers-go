@@ -63,7 +63,7 @@ All names, including the pools a filesystem creates, are validated together.
 Filesystems and gateways need OSDs and a manager, so they are rejected with
 `ClusterConfig.WithNoInitialOSDs` or `ClusterConfig.WithNoInitialManagers`; RBD pools need OSDs but no
 manager. The cluster owns all service containers: `Terminate` removes them, and
-[ServiceContainers](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.ServiceContainers) lists them.
+[Observer.ServiceContainers](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.ServiceContainers) lists them.
 
 Each service package also has its own `Run`, which takes every `ceph.Run` option
 and adds that service's default when its own option is absent: `rbd.Run` creates

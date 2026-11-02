@@ -27,7 +27,7 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	written := selfManagedSnapshotPhase(t, ctx, cluster, client, pool, namespace, "write", nil)
@@ -40,7 +40,7 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 	if err := osd.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	selfManagedSnapshotPhase(t, ctx, cluster, client, pool, namespace, "verify", written)

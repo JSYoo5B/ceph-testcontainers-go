@@ -57,24 +57,24 @@ func TestMGRModulesRefuseMalformedAndInconsistentNativeState(t *testing.T) {
 func TestWaitMGRModuleReadyProbesCommandsAndStopsOnClosedOrCanceled(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	c := mgrModuleCluster(ctr)
-	if err := c.WaitMGRModuleReady(t.Context(), "rbd_support"); err != nil || ctr.probes != 2 {
+	if err := observeWaitCluster(c).WaitMGRModuleReady(t.Context(), "rbd_support"); err != nil || ctr.probes != 2 {
 		t.Fatal("readiness skipped actual commands", err)
 	}
-	if err := c.WaitMGRModuleReady(t.Context(), "volumes"); err != nil || ctr.probes != 3 {
+	if err := observeWaitCluster(c).WaitMGRModuleReady(t.Context(), "volumes"); err != nil || ctr.probes != 3 {
 		t.Fatal("volumes readiness skipped command", err)
 	}
-	if err := c.WaitMGRModuleReady(t.Context(), "mirroring"); err == nil {
+	if err := observeWaitCluster(c).WaitMGRModuleReady(t.Context(), "mirroring"); err == nil {
 		t.Fatal("unprobed module claimed ready")
 	}
 	c.closed = true
 	before := len(ctr.calls)
-	if err := c.WaitMGRModuleReady(t.Context(), "rbd_support"); err == nil || len(ctr.calls) != before {
+	if err := observeWaitCluster(c).WaitMGRModuleReady(t.Context(), "rbd_support"); err == nil || len(ctr.calls) != before {
 		t.Fatal("terminated cluster was polled")
 	}
 	c.closed = false
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := c.WaitMGRModuleReady(ctx, "rbd_support"); !errors.Is(err, context.Canceled) {
+	if err := observeWaitCluster(c).WaitMGRModuleReady(ctx, "rbd_support"); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled readiness succeeded", err)
 	}
 }

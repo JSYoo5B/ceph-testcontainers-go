@@ -174,7 +174,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, pool); err != nil {
 		fail("%v", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		fail("%v", err)
 	}
 	recoveryRun(t, ctx, cluster, client, "write", "seed:20")

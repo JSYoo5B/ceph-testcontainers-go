@@ -47,7 +47,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-messenger", Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			initial, err := harness.PoolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
@@ -70,7 +70,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if _, err := cluster.AddOSD(ctx); err != nil {
 				t.Fatal("secure OSD growth", err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			checkSecureMessengerTopology(t, ctx, cluster)
@@ -117,7 +117,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if err != nil {
 				t.Fatal("secure RGW bootstrap", err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, harness.MessengerDumpArg(t, ctx, cluster))

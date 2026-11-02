@@ -144,7 +144,13 @@ func HostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		if t.Failed() {
-			ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.InitialManager(t, cluster)}, cluster.ServiceContainers()...)
+			serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
+			services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
+			cancelServices()
+			if inventoryErr != nil {
+				t.Logf("service inventory unavailable: %v", inventoryErr)
+			}
+			ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.InitialManager(t, cluster)}, services...)
 			ctrs = append(ctrs, OSDContainers(t, cluster)...)
 			for _, ctr := range ctrs {
 				if ctr == nil {
@@ -287,7 +293,7 @@ func HostNetworkAdvanceTopology(t *testing.T, ctx context.Context, cluster *ceph
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	HostNetworkAssertDistinctAddresses(t, ctx, clusters)
@@ -295,7 +301,7 @@ func HostNetworkAdvanceTopology(t *testing.T, ctx context.Context, cluster *ceph
 	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	HostNetworkAssertDistinctAddresses(t, ctx, clusters)

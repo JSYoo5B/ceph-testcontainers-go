@@ -87,7 +87,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			harness.ExecOutput(t, ctx, first, "rbd", "create", pool+"/"+imageName, "--size", "16M")

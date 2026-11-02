@@ -511,51 +511,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.ServiceContainers",
-      "kind": "method",
-      "signature": "func() []testcontainers.Container",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ServiceContainers",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Terminate",
       "kind": "method",
       "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.Terminate",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WaitForClean",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WaitForClean",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WaitForPGClean",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WaitForPGClean",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WaitForQuorum",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WaitForQuorum",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WaitMGRModuleReady",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WaitMGRModuleReady",
       "decision": "baseline"
     },
     {
@@ -1574,11 +1534,51 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.ServiceContainers",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]testcontainers.Container, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ServiceContainers",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.Status",
       "kind": "method",
       "signature": "func(ctx context.Context) (Status, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WaitForClean",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WaitForClean",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WaitForPGClean",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WaitForPGClean",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WaitForQuorum",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WaitForQuorum",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WaitMGRModuleReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) error",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WaitMGRModuleReady",
       "decision": "baseline"
     },
     {

@@ -40,7 +40,7 @@ func RunCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

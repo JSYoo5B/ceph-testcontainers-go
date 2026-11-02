@@ -56,7 +56,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    material for a process that connects itself (host mode, see
    [Host networking](../docs/guides/host-network.md)). `FactsOf` reports the
    images, network and Ceph version.
-4. **Observe and verify.** `Observe` returns an `Observer` for health, PG and
+4. **Observe and verify.** `Observe` returns a resource-free `Observer` for readiness waits, tracked
+   optional-service inventory, health, PG and
    pool reports, quorum, OSD states, MGR modules and services, watchers and
    blocklist entries. `Ceph` and `RunNativeCommand` run bounded native commands
    when no typed observation exists.
@@ -78,7 +79,11 @@ func TestRADOSRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil { // Run does not wait for clean PGs
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.WaitForClean(ctx); err != nil { // Run does not wait for clean PGs
 		t.Fatal(err)
 	}
 	// The client image must contain the tools the test uses. WithClient joins
@@ -145,3 +150,19 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   [Messenger client fixtures](../docs/guides/messenger-client-fixtures.md),
   [native commands](../docs/guides/native-commands.md),
   [releases and images](../docs/guides/releases-and-images.md).
+
+`observer.ServiceContainers(ctx)` copies the tracked optional-service handles
+in service-name order, with context-bounded lock acquisition. It is an
+ownership inventory rather than a liveness query: partially started and
+terminated clusters can still expose retained handles. Successful removal
+forgets its handle; an empty inventory describes only the tracked roster. The
+returned slice is independent, and cluster teardown still owns the handles.
+
+Use `observer.WaitForClean(ctx)` for an available MGR, the owned OSD count
+with every OSD up/in, and existing PGs exactly active+clean. Use
+`observer.WaitForPGClean(ctx)` when intentionally down/out OSDs must remain
+so. `observer.WaitForQuorum(ctx)` requires a majority of the current monmap,
+and `observer.WaitMGRModuleReady(ctx, name)` checks the supported module's
+metadata and read-only command probes. These waits retain the cluster's
+startup timeout and release observation locks between polls. An observer can
+be acquired for a partial cluster without reading or changing its state.

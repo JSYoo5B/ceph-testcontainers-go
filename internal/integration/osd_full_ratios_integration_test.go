@@ -38,7 +38,7 @@ func TestOSDFullRatios(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-full-ratios", Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			pool, err := harness.PoolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)

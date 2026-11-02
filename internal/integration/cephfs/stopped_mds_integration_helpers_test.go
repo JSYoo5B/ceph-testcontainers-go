@@ -134,7 +134,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	originalAuth := []string{"mds.replacement-sibling-0", "mds.replacement-target-0", "mds.replacement-target-1"}
 	coldMDSAuth(t, ctx, cluster, originalAuth)
 	coldMDSResources(t, ctx, oracle, cluster, client, "replacement-initial")
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "replacement-initial", target.FilesystemName, true)
@@ -165,7 +165,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	}
 	stoppedMDSExited(t, ctx, oracle, failed, oldTask)
 	afterRefusal := stoppedMDSMap(t, ctx, cluster, target.FilesystemName, old.Name, takeover.Name, sibling.FilesystemName, siblingMembers[0].ID)
-	if afterRefusal.target.active != before.target.active || afterRefusal.standby != before.standby || len(target.MDSs()) != 2 || len(cluster.ServiceContainers()) != 3 || target.Container != failed.Container {
+	if afterRefusal.target.active != before.target.active || afterRefusal.standby != before.standby || len(target.MDSs()) != 2 || len(clusteraccess.ServiceContainers(t, cluster)) != 3 || target.Container != failed.Container {
 		t.Fatal("refused preflight mutated original registry/native registration")
 	}
 	recheck(afterRefusal)
@@ -191,7 +191,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)
 	members := target.MDSs()
-	if len(members) != 1 || members[0] != survivor || target.Container != survivor.Container || len(cluster.ServiceContainers()) != 2 {
+	if len(members) != 1 || members[0] != survivor || target.Container != survivor.Container || len(clusteraccess.ServiceContainers(t, cluster)) != 2 {
 		t.Fatal("retirement did not remove only original canonical member/service")
 	}
 	recheck(stoppedMDSMap(t, ctx, cluster, target.FilesystemName, takeover.Name, "", sibling.FilesystemName, siblingMembers[0].ID))
@@ -216,7 +216,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	members = target.MDSs()
-	if len(members) != 2 || members[0] != survivor || members[1].ID != "replacement-target-2" || members[1].GetContainerID() == oldCID || members[1].GetContainerID() == survivorCID || len(cluster.ServiceContainers()) != 3 || target.Container != survivor.Container {
+	if len(members) != 2 || members[0] != survivor || members[1].ID != "replacement-target-2" || members[1].GetContainerID() == oldCID || members[1].GetContainerID() == survivorCID || len(clusteraccess.ServiceContainers(t, cluster)) != 3 || target.Container != survivor.Container {
 		t.Fatal("replacement adopted old name/CID or changed original survivor")
 	}
 	replacement := members[1]
@@ -246,7 +246,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal("replacement native identity/task changed during final data checks")
 	}
 	recheck(final)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	coldMDSHealth(t, ctx, cluster, "replacement-final", target.FilesystemName, true)

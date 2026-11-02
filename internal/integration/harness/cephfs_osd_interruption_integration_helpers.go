@@ -421,7 +421,7 @@ func RunCephFSOSDInterruption(t *testing.T) {
 	if err := hold.Restore(ctx); err != nil {
 		t.Fatal("restore nodown:", err)
 	}
-	if err := m.Cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(m.Cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 

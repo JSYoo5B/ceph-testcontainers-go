@@ -37,7 +37,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	if fs.FilesystemName != "small" || len(fs.MDSs()) != 1 {
 		t.Fatal("Run did not expose the initialized filesystem")
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),

@@ -116,3 +116,26 @@ func ExampleWithClusterConfig() {
 		panic(err)
 	}
 }
+
+func ExampleObserver() {
+	ctx := context.Background()
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "app"})),
+	)
+	defer func() { _ = testcontainers.TerminateContainer(cluster) }()
+	if err != nil {
+		panic(err)
+	}
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		panic(err)
+	}
+	if err := observer.WaitForClean(ctx); err != nil {
+		panic(err)
+	}
+	services, err := observer.ServiceContainers(ctx)
+	if err != nil {
+		panic(err)
+	}
+	_ = services // Tracked optional-service handles; no liveness claim.
+}

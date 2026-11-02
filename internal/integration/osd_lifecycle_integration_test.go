@@ -59,7 +59,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 2, MinSize: 1, PGNum: 8}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			for i := range 8 {
@@ -118,7 +118,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if fault.mutations.Load() != actions || originalCalls.stops.Load() != stops || originalCalls.terminations.Load() != terminations+1 {
 				t.Fatal("pending Add or purge retry issued another native mutation/Stop or did not exclusively finish owned Docker cleanup")
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			verify()
@@ -126,7 +126,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
@@ -143,7 +143,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			foreignTarget := clusteraccess.OSDs(t, cluster)[1]
 			harness.CephCommand(t, ctx, cluster, "osd", "crush", "reweight", fmt.Sprintf("osd.%d", foreignTarget.ID), "0")
 			harness.CephCommand(t, ctx, cluster, "osd", "out", strconv.Itoa(foreignTarget.ID))
-			if err := cluster.WaitForPGClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			safetyCtx, safetyCancel := context.WithTimeout(ctx, 30*time.Second)

@@ -52,7 +52,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 		harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-host-isolation", "8")
 		harness.CephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-host-isolation", "pg_autoscale_mode", "off")
 		harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-host-isolation", "rados")
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 		client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),

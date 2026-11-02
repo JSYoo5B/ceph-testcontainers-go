@@ -130,13 +130,8 @@ func (r *osdRegistry) ownedState(dump osdPolicySnapshot, id int) (OSDState, erro
 	return resolveOwnedOSDState(dump, id, registrationOf(r.get(id)))
 }
 
-// WaitForPGClean waits for every existing PG to be exactly active+clean. Unlike
-// WaitForClean it allows intentionally out/down OSDs, and does not assert any
-// OSD topology. At least one PG and an available manager are required. This is
-// a recovery barrier, not a promise of cluster health or daemon availability.
-//
-//purpose:observation
-func (c *Container) WaitForPGClean(ctx context.Context) error {
+// waitForPGClean implements the observer wait and is available to cluster startup.
+func (c *Container) waitForPGClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)

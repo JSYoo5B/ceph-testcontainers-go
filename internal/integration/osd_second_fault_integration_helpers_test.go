@@ -434,7 +434,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	if erasure {
 		ecAdmissionPool(t, ctx, cluster, pool)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recoveryRun(t, ctx, cluster, client, "write", "seed:20")

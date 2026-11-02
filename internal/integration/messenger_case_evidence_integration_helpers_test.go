@@ -77,7 +77,7 @@ func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.
 	if len(match) != 2 {
 		t.Fatalf("unrecognized native Ceph version: %q", version)
 	}
-	containers := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+	containers := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, clusteraccess.ServiceContainers(t, cluster)...)
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		containers = append(containers, osd.Container)
 	}

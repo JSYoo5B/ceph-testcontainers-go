@@ -548,7 +548,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: backoffPool, PGNum: 1, Replicas: 3, MinSize: 3, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	receipt := osdBackoffReceipt{Platform: runtime.GOOS + "/" + runtime.GOARCH}
@@ -819,7 +819,7 @@ func testOSDObjectBackoffReceipt(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: objectBackoffPool, PGNum: 1, Replicas: 2, MinSize: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	receipt := osdObjectBackoffReceipt{Platform: runtime.GOOS + "/" + runtime.GOARCH}

@@ -120,7 +120,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if err != nil || pool == nil {
 		t.Fatal("replicated small-device pool setup failed", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	poolState, err := pool.Status(ctx)
@@ -159,7 +159,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("small-device restart did not recover", err)
 	}
 	if !maps.Equal(identities, osdMemoryIdentities(t, ctx, cluster)) {
@@ -184,7 +184,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 			t.Fatal("third OSD replaced the shared RAM storage")
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("small-device backfill did not recover", err)
 	}
 	osdMemoryPlacement(t, ctx, cluster, fsid, poolState.ID, pool.Name, added.ID, -1)
@@ -196,7 +196,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if _, err := docker.Client.ContainerInspect(ctx, original.GetContainerID(), mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("original small-device container remains", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("small-device post-drain recovery failed", err)
 	}
 	osdMemoryPlacement(t, ctx, cluster, fsid, poolState.ID, pool.Name, added.ID, original.ID)

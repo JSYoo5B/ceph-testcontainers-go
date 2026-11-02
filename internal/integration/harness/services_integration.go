@@ -101,7 +101,13 @@ func NewServiceClusterRun(t *testing.T, run ClusterRun, image string, opts ...te
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			if t.Failed() {
-				ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+				serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
+				services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
+				cancelServices()
+				if inventoryErr != nil {
+					t.Logf("service inventory unavailable: %v", inventoryErr)
+				}
+				ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, services...)
 				for _, monitor := range clusteraccess.Monitors(t, cluster) {
 					if monitor != nil && monitor.Container != nil {
 						ctrs = append(ctrs, monitor.Container)
@@ -168,14 +174,14 @@ func AdvanceServiceTopology(t *testing.T, ctx context.Context, cluster *ceph.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	LogStatus(t, ctx, cluster, "service data after OSD addition")
 	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	LogStatus(t, ctx, cluster, "service data after original OSD removal")

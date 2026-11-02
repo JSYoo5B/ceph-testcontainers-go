@@ -75,7 +75,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 				t.Fatal(err)
 			}
 		}
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

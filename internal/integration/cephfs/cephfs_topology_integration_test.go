@@ -30,7 +30,7 @@ func TestCephFSAdditionalErasureCodedDataPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSTopologyIO(t, ctx, client, fs.FilesystemName, "ec-data", "seed", 0, ecPool)

@@ -87,13 +87,13 @@ func TestWaitForPGCleanAllowsOutOSDsButRequiresAllPGsClean(t *testing.T) {
 	ctr := &osdPolicyFixture{}
 	c := osdPolicyCluster(ctr)
 	ctr.status = `{"mgrmap":{"available":true},"osdmap":{"num_osds":4,"num_up_osds":4,"num_in_osds":3},"pgmap":{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":8}]}}`
-	if err := c.WaitForPGClean(t.Context()); err != nil {
+	if err := observeWaitCluster(c).WaitForPGClean(t.Context()); err != nil {
 		t.Fatal("out OSD prevented a PG recovery barrier", err)
 	}
 	for _, state := range []string{`{"num_pgs":0}`, `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":7}]}`, `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean+remapped","count":8}]}`} {
 		ctr.status = `{"mgrmap":{"available":true},"pgmap":` + state + `}`
 		ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
-		if err := c.WaitForPGClean(ctx); err == nil {
+		if err := observeWaitCluster(c).WaitForPGClean(ctx); err == nil {
 			t.Fatal("incomplete/remapped PGs accepted as clean")
 		}
 		cancel()
@@ -104,12 +104,12 @@ func TestWaitForPGCleanRejectsClosedOrUnavailableControlImmediately(t *testing.T
 	ctr := &osdPolicyFixture{status: `{"mgrmap":{"available":true},"pgmap":{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":8}]}}`}
 	c := osdPolicyCluster(ctr)
 	c.closed = true
-	if err := c.WaitForPGClean(t.Context()); err == nil || len(ctr.calls) != 0 {
+	if err := observeWaitCluster(c).WaitForPGClean(t.Context()); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("closed cluster accepted or queried readiness")
 	}
 	c.closed = false
 	c.Container = nil
-	if err := c.WaitForPGClean(t.Context()); err == nil || len(ctr.calls) != 0 {
+	if err := observeWaitCluster(c).WaitForPGClean(t.Context()); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("missing control container waited for readiness")
 	}
 }
