@@ -28,6 +28,9 @@ container of MON `a`; replacing its image, network, entrypoint, command or
 internal paths breaks the bootstrap. The rules are in
 [configuration composition](../contributing/configuration-composition.md).
 
+For scenario-qualified opt-in daemon waits, see
+[Fixture daemon timing](daemon-timing.md).
+
 ## Service packages
 
 The `rbd`, `cephfs` and `rgw` packages add service resources to the same cluster.
