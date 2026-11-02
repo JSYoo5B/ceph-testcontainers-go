@@ -28,7 +28,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
-			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
@@ -37,7 +37,6 @@ func TestPausedOSDFaults(t *testing.T) {
 			// Two OSDs leave one peer to report the other down, and a short
 			// complaint time makes the slow-op report observable within a phase.
 			for _, setting := range []ceph.ConfigSetting{
-				{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"},
 				{Section: "mon", Name: "mon_osd_min_down_reporters", Value: "1"},
 				{Section: "osd", Name: "osd_op_complaint_time", Value: "2"},
 			} {

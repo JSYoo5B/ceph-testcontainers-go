@@ -22,14 +22,11 @@ func TestOSDFullRatios(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
-			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
-			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-				t.Fatal("prepare small OSDs without startup benchmark", err)
-			}
 			for range 2 {
 				if _, err := cluster.AddOSD(ctx); err != nil {
 					t.Fatal("add small OSD", err)

@@ -18,7 +18,6 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/moby/moby/api/types/mount"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -258,7 +257,7 @@ func TestScratchTmpfsAttachedOSD(t *testing.T) {
 	t.Cleanup(func() { _ = docker.Close() })
 	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
-		ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(attachedCeiling).WithBlockSize(attachedBlockSize)))
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithInMemory(attachedCeiling).WithBlockSize(attachedBlockSize)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
@@ -270,9 +269,6 @@ func TestScratchTmpfsAttachedOSD(t *testing.T) {
 		})
 	}
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 		t.Fatal(err)
 	}
 	osd, err := cluster.AddOSD(ctx)
