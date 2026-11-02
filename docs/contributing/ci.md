@@ -824,9 +824,13 @@ unknown roots, volume plugins/options and missing evidence keep conservative
 cleanup. The post-cleanup guard for an unqualified workload is explicitly a
 minimum safety check, not a claim to know its peak.
 
-`storage-free.json` records the fixed allowlist removal when needed. The list
-includes unused Android, .NET, Haskell, CodeQL, Boost, Swift, PowerShell and
-vcpkg installations. Go, the system Python interpreter, runner files and
+`storage-free.json` records the ordinary fixed allowlist removal when needed:
+Android, .NET, Haskell, CodeQL and Boost. Only if its post-cleanup headroom
+still fails does a second fixed list remove unused Swift, PowerShell and vcpkg
+installations. `storage-free-supplemental.json` records that additional action;
+`storage-prepare.json` retains the standard-cleanup observation and both action
+durations. Qualified sufficient headroom skips all removal; sufficient standard cleanup
+skips supplemental removal. Go, the system Python interpreter, runner files and
 Docker/containerd data are retained. A smaller hosted filesystem uses the same
 MON reserve and workload allowances: it must recover enough actual space from
 these directories or fail admission. Neither the runner label nor successful
@@ -838,8 +842,8 @@ separate image and run allocation from runner baseline; they do not establish
 a transient peak or reclaim historical preparation time.
 
 For a controlled hosted comparison, dispatch `Ceph periodic` with `mode=storage`
-and the same commit `ref`, release and `storage_policy=auto`, `always` or
-`pressure`. The `storage_profiles` input selects comma-separated source-owned profile IDs,
+and the same commit `ref`, release and `storage_policy=auto`, `always`,
+`pressure` or `pressure-supplemental`. The `storage_profiles` input selects comma-separated source-owned profile IDs,
 defaulting to the watcher profile. Up to five selected jobs run concurrently,
 retaining ordinary assertions and cleanup checks; repeat dispatches for each
 policy on the same source and selection. Pressure refuses an unqualified
@@ -850,6 +854,14 @@ floor, runtime reserve and 2GiB extra; it refuses allocations outside 1–40GiB
 or any non-hosted/unqualified layout. The file stays through native assertions
 and an always-run step removes it only when its device/inode receipt matches.
 The pressure file is also excluded from artifact uploads.
+`pressure-supplemental` first performs standard cleanup, then holds a pressure
+file up to 64GiB to leave a 4GiB admission shortfall while retaining the same
+MON floor, runtime reserve and 2GiB extra. Standard cleanup cannot recover the
+same SDKs twice, so the extra list must supply the missing headroom. If standard
+cleanup already leaves a shortfall, no pressure file is allocated. Its ordinary,
+supplemental and pressure receipts remain separate. This mode is an explicit
+hosted qualification control; normal auto jobs never allocate pressure files or
+preclean before their admission decision.
 This qualification never fills a shared host or intentionally approaches ENOSPC.
 For an end-to-end comparison, dispatch `Ceph short` at one fixed commit with
 `storage_policy=auto` or `always` and the same `ref`. It executes the complete
