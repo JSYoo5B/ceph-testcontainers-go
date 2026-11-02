@@ -785,9 +785,11 @@ watched object and the essential/client/Ryuk images. It reserves 8GiB for image
 preparation and 4GiB for runtime allocation, additional to the MON share and
 100,000 free inodes. These are conservative admission allowances, not measured
 peak claims. Image measurements and equivalent native comparisons belong in
-the implementation pull request. The qualification is tied to the compiled
-source/dependency fingerprint, tags, selected tests and checked-in image pins;
-a change expires it and restores conservative cleanup. Other profiles and
+the implementation pull request. The qualification is tied to the workload declaration/dependency
+fingerprint, tags, selected tests and checked-in image pins;
+a change to those inputs expires it and restores conservative cleanup. The
+watcher explicitly fixes its OSD count, logical size and calibration policy,
+so unrelated library edits continue to exercise that bounded workload. Other profiles and
 releases retain cleanup, rather than inheriting this workload's allowance.
 
 Only verified local classic-overlay2 or socket-linked containerd-overlayfs
