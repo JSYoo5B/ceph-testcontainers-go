@@ -6,6 +6,7 @@ package rbd_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +87,8 @@ func TestRBDJournalTimingProfile(t *testing.T) {
 	}
 	rbdFanoutRead(t, ctx, destinationClient, destinationStatus.FSID, pool, name, payload)
 	out, err := destination.Ceph(ctx, "config", "get", "client", "rbd_mirror_journal_poll_age")
-	if err != nil || strings.TrimSpace(string(out)) != "9" {
+	value, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || parseErr != nil || value != 9 {
 		t.Fatalf("profile changed preexisting central entry: value=%s err=%v", out, err)
 	}
 	t.Log("RBD_JOURNAL_PUBLIC_PROFILE terminated owned replay; central entry unchanged; destination bytes preserved")
