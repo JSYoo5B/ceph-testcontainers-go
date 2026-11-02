@@ -116,15 +116,16 @@ func TestCephFSCloneTimingQualification(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
+					// No worker can enter the clone's sleep before it is requested, so
+					// the time from here to the clone's end is never shorter than the
+					// sleep the worker actually took. Observing the worker's log line
+					// would be later than its entry by an unbounded latency.
+					requested := time.Now()
 					clone, err := snapshot.Clone(ctx, subvolume.CloneConfig{Name: name, GroupName: group.Name})
 					if err != nil {
 						t.Fatal(err)
 					}
 					cloneTimingWorkerLog(t, ctx, managers[0], "starting clone: ("+fs.FilesystemName+", "+group.Name+", "+name+")")
-					// The worker entered its sleep no later than this observation,
-					// so the time from here to the clone's end is a lower bound of
-					// the sleep it actually took.
-					entered := time.Now()
 					state, err := clone.Status(ctx)
 					if err != nil || state.State != "pending" {
 						t.Fatalf("worker escaped required pending window: %+v %v", state, err)
@@ -156,7 +157,9 @@ func TestCephFSCloneTimingQualification(t *testing.T) {
 					// The worker has entered with the configured delay. Restoring the central
 					// option now must not retroactively shorten its captured sleep. A
 					// cancel ends the sleep, so only the collision can show it: its
-					// clone cannot fail before the captured delay has elapsed.
+					// clone cannot fail before the captured delay has elapsed. The
+					// restore runs seconds after the request, well inside the delay,
+					// so a sleep it shortened would end the clone early.
 					for i := len(handles) - 1; i >= 0; i-- {
 						if err := handles[i].Restore(ctx); err != nil {
 							t.Fatal(err)
@@ -165,9 +168,9 @@ func TestCephFSCloneTimingQualification(t *testing.T) {
 					if target, err := clone.Wait(ctx); err == nil || target != nil {
 						t.Fatal("non-complete clone was adopted")
 					}
-					slept := time.Since(entered)
+					slept := time.Since(requested)
 					if failure && slept < time.Duration(seconds)*time.Second {
-						t.Fatalf("collision clone ended %s after the worker entered, before its captured %ds delay", slept, seconds)
+						t.Fatalf("collision clone ended %s after it was requested, before its captured %ds delay", slept, seconds)
 					}
 					state, err = clone.Status(ctx)
 					if failure {
@@ -200,7 +203,7 @@ func TestCephFSCloneTimingQualification(t *testing.T) {
 					if err != nil || slices.Contains(names, name) {
 						t.Fatalf("clone target retained after cleanup: %v %v", names, err)
 					}
-					t.Logf("CLONE_TIMING_PHASE name=%s delay=%d elapsed=%s captured_delay_verified=%t worker_elapsed=%s", name, seconds, time.Since(phase), failure, slept)
+					t.Logf("CLONE_TIMING_PHASE name=%s delay=%d elapsed=%s captured_delay_verified=%t requested_elapsed=%s", name, seconds, time.Since(phase), failure, slept)
 				}()
 				phases += time.Since(phase)
 			}
