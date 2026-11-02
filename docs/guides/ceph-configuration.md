@@ -383,7 +383,10 @@ See [Releases and images](releases-and-images.md) for details.
   size already follows `min(2, OSD count)`; `CreatePool` refuses an explicit
   `Replicas: 2` there, and a size-2 pool created through the CLI never becomes
   clean.
-- Small `OSDStorage.WithBlockSize` values with initial OSDs make `Run` time out (see
+- Small `OSDStorage.WithBlockSize` values with initial OSDs can make `Run` time
+  out while native mClock startup calibration runs, because the benchmark
+  writes to the small file. Select `WithStartupBenchmark(OSDBenchmarkSkip)` for
+  such functional fixtures (see
   [OSDStorage.WithBlockSize](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDStorage.WithBlockSize)).
 - A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.

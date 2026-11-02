@@ -125,7 +125,7 @@ Restoration preserves the original database entry or its absence; it does not
 rewrite higher-precedence local or runtime settings.
 
 See the compiled `ExampleFilesystem_OverrideTiming`. The opt-in native
-`TestCephFSPinTimingQualification` compares alternating baseline/profile runs
+`TestCephFSPinTimingQualification` compares baseline/profile runs in a balanced ABBA order
 with the same image, topology, polling and file data. Each handoff verifies actual
 MDS subtree authority, fresh libcephfs I/O and pin restoration; it reports both
 handoff time and scenario time including timing application and restoration.
