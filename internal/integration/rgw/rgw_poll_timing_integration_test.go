@@ -152,7 +152,7 @@ func pollTimingAggregatePair(t *testing.T, ctx context.Context, options ...testc
 	t.Helper()
 	clusters := make([]*ceph.Container, 2)
 	for index := range clusters {
-		opts := append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: pollTimingAggregateImage}))}, options...)
+		opts := append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: pollTimingAggregateImage})), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip))}, options...)
 		cluster, err := ceph.Run(ctx, pollTimingAggregateImage, opts...)
 		if cluster != nil {
 			t.Cleanup(func() {

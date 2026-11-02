@@ -28,6 +28,41 @@ import (
 // Initial and later starts, same-container restart, and retained-store reopen
 // must see the chosen policy even when local and central values disagree.
 func TestOSDBenchmarkStartupPolicy(t *testing.T) {
+	t.Run("functional-default", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancel()
+		image, opts := harness.IntegrationImages(t)
+		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
+		cluster, err := ceph.Run(ctx, image, opts...)
+		if cluster != nil {
+			testcontainers.CleanupContainer(t, cluster)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		osds := clusteraccess.OSDs(t, cluster)
+		if len(osds) != 1 {
+			t.Fatalf("initial OSDs=%d", len(osds))
+		}
+		policyOSDSettings(t, ctx, osds[0], true, false, "functional-initial")
+		added, err := cluster.AddOSD(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		policyOSDSettings(t, ctx, added, true, false, "functional-added")
+		grace := 3 * time.Second
+		if err := osds[0].Stop(ctx, &grace); err != nil {
+			t.Fatal(err)
+		}
+		policyOSDWaitDown(t, ctx, cluster, osds[0].ID)
+		if err := osds[0].Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
+			t.Fatal(err)
+		}
+		policyOSDSettings(t, ctx, osds[0], true, false, "functional-restarted")
+	})
 	for _, policy := range []ceph.OSDBenchmarkPolicy{ceph.OSDBenchmarkSkip, ceph.OSDBenchmarkNative} {
 		t.Run(string(policy), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
@@ -159,7 +194,7 @@ func TestOSDBenchmarkStartupPolicy(t *testing.T) {
 	t.Run("unspecified-respects-central", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		image, opts := harness.IntegrationImages(t)
+		image, opts := harness.NativeIntegrationImages(t)
 		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 		cluster, err := ceph.Run(ctx, image, opts...)
 		if cluster != nil {

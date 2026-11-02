@@ -87,6 +87,19 @@ arbitrary non-default value is not a substitute for a skip policy. Reducing
 precheck rather than make it proportionately shorter. Switching to `wpq`
 changes scheduler semantics and is not this policy.
 
+## Internal functional tests
+
+The internal integration harness sets `osd_mclock_skip_benchmark = true` in its
+bootstrap configuration before the initial OSDs start. The same configuration
+reaches later OSDs and retained starts. Functional tests avoid calibration I/O
+without changing the library default. Explicit storage policy takes precedence;
+a later configuration file can replace the harness default key by key.
+
+Calibration controls explicitly select Native or provide their comparison
+configuration. Tests of unselected-policy precedence use image selection without
+the harness default, so native calibration and central configuration remain
+covered independently.
+
 ## Native verification
 
 The opt-in benchmark qualifier compares native/skip on fresh disk-backed and
