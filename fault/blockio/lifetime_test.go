@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	control "github.com/JSYoo5B/ceph-testcontainers-go/internal/blockio"
 	"github.com/testcontainers/testcontainers-go"
@@ -45,13 +46,19 @@ type lifetimeReceipts struct {
 	detachAttempts                                       []string
 	loseDetach, foreignDetach                            bool
 	removeCalls, detachCalls, unlinkCalls, actualUnlinks int
+	// neverStart, neverDetach and neverRemove make that dispatch fail as
+	// pre-empted by the exec cushion: it claims no started marker and its
+	// completion never appears. loseStart runs the build without a reply.
+	neverStart, loseStart, neverDetach, neverRemove bool
+	building, buildStarted                          bool
+	unranDetach                                     map[string]bool
 }
 
 func newLifetimeFixture(t *testing.T) (*Container, *lifetimeReceipts) {
 	t.Helper()
 	b, core := newControlFixture(t)
 	k := &cleanupKeeper{}
-	m := &lifetimeReceipts{b: b, core: core, keeper: k, detached: true, inflight: []int64{0, 0}}
+	m := &lifetimeReceipts{b: b, core: core, keeper: k, detached: true, inflight: []int64{0, 0}, unranDetach: map[string]bool{}}
 	b.Container = k
 	b.creationSent = true
 	b.nativeCommand = m.command
@@ -74,6 +81,24 @@ func (m *lifetimeReceipts) command(ctx context.Context, args ...string) ([]byte,
 		reply := ownerReply{Lease: m.b.name, Instance: m.b.instance, Done: &done}
 		switch action {
 		case "inspect":
+			done = !m.building
+		case "start":
+			m.building = true
+			if m.neverStart {
+				return nil, unstartedDispatch(false)
+			}
+			m.buildStarted = true
+			if m.loseStart {
+				return nil, errors.New("start dispatch reply lost")
+			}
+			done = false
+		case "build-started":
+			reply.Started = m.buildStarted
+		case "detach-started":
+			if len(args) != 8 || len(m.detachAttempts) == 0 || args[7] != m.detachAttempts[len(m.detachAttempts)-1] {
+				m.core.t.Fatal("detach marker query changed invocation identity")
+			}
+			reply.Attempt, reply.Started = args[7], !m.unranDetach[args[7]]
 		case "start-detach":
 			if len(args) != 8 || args[7] == "" {
 				m.core.t.Fatal("detach dispatch lacks an invocation identity")
@@ -81,6 +106,11 @@ func (m *lifetimeReceipts) command(ctx context.Context, args ...string) ([]byte,
 			reply.Attempt = args[7]
 			m.detachAttempts = append(m.detachAttempts, reply.Attempt)
 			m.detachCalls++
+			if m.neverDetach {
+				m.neverDetach = false
+				m.unranDetach[reply.Attempt] = true
+				return nil, unstartedDispatch(false)
+			}
 			m.detachError = ""
 			if m.detachFailures > 0 {
 				m.detachFailures--
@@ -99,6 +129,9 @@ func (m *lifetimeReceipts) command(ctx context.Context, args ...string) ([]byte,
 				reply.Attempt = "another-invocation"
 			}
 			reply.Detached, reply.Error = m.detached, m.detachError
+			if m.unranDetach[args[7]] {
+				reply.Done = new(bool)
+			}
 		case "unlink":
 			m.unlinkCalls++
 			if !m.fileRemoved {
@@ -137,6 +170,11 @@ func (m *lifetimeReceipts) command(ctx context.Context, args ...string) ([]byte,
 				}
 			}
 			m.core.ids = append(m.core.ids, id)
+			if m.neverRemove {
+				m.neverRemove = false
+				m.core.unstarted[id] = true
+				return nil, unstartedDispatch(false)
+			}
 			m.core.steps = append(m.core.steps, "remove")
 			m.removeCalls++
 			m.removed = true
@@ -351,5 +389,81 @@ func TestTerminateNeverRedispatchesUnknownDetachAttempt(t *testing.T) {
 				t.Fatalf("unknown detach replayed: %v", m.detachAttempts)
 			}
 		})
+	}
+}
+
+func TestTerminateReleasesKeeperAfterCreationDispatchNeverRan(t *testing.T) {
+	b, m := newLifetimeFixture(t)
+	b.ready, b.creationSent, m.neverStart = false, false, true
+	if err := b.startCreation(context.Background()); err == nil {
+		t.Fatal("pre-empted creation dispatch accepted")
+	}
+	if !b.creationSent {
+		t.Fatal("creation dispatch was not recorded before evidence")
+	}
+	status, err := b.Status(context.Background())
+	if err != nil || status.PendingStep != "" {
+		t.Fatalf("unstarted creation reported pending: %+v %v", status, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := b.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !b.released || m.keeper.calls != 1 || m.removeCalls+m.detachCalls+m.unlinkCalls != 0 {
+		t.Fatalf("keeper not released alone: %+v", m)
+	}
+}
+
+func TestTerminateRetainsKeeperAfterLostCreationReply(t *testing.T) {
+	b, m := newLifetimeFixture(t)
+	b.ready, b.creationSent, m.loseStart = false, false, true
+	if err := b.startCreation(context.Background()); err == nil {
+		t.Fatal("lost creation reply accepted")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := b.Terminate(ctx); err == nil {
+		t.Fatal("started creation released before completion")
+	}
+	if !b.creationSent || b.released || m.keeper.calls != 0 {
+		t.Fatalf("started creation was not retained: %+v", m)
+	}
+}
+
+func TestTerminateRedispatchesDetachThatNeverRan(t *testing.T) {
+	b, m := newLifetimeFixture(t)
+	m.neverDetach = true
+	if err := b.Terminate(context.Background()); err == nil {
+		t.Fatal("pre-empted detach accepted")
+	}
+	first := b.detachID
+	if !b.detachSent || b.loopReleased || m.unlinkCalls != 0 || m.keeper.calls != 0 {
+		t.Fatalf("pre-empted detach progress: %+v", m)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := b.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.detachAttempts) != 2 || m.detachAttempts[1] == first || !b.released || m.keeper.calls != 1 {
+		t.Fatalf("unstarted detach was not redispatched: %v %+v", m.detachAttempts, m)
+	}
+}
+
+func TestTerminateRedispatchesRemoveThatNeverRan(t *testing.T) {
+	b, m := newLifetimeFixture(t)
+	m.neverRemove = true
+	if err := b.Terminate(context.Background()); err == nil {
+		t.Fatal("pre-empted remove accepted")
+	}
+	if !b.removeSent || b.record.Unsettled != "remove" || m.removed || m.keeper.calls != 0 {
+		t.Fatalf("pre-empted remove progress: %+v %+v", b.record, m)
+	}
+	if err := b.Terminate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m.removeCalls != 1 || len(m.core.ids) != 2 || m.core.ids[0] == m.core.ids[1] || !b.released || m.keeper.calls != 1 {
+		t.Fatalf("unstarted remove was not redispatched: %v %+v", m.core.ids, m)
 	}
 }

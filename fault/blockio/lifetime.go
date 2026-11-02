@@ -31,6 +31,11 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		return nil
 	}
 	b.closing = true
+	if !b.backingReleased {
+		if err := b.withdrawUnstarted(ctx); err != nil {
+			return err
+		}
+	}
 	if b.creationSent && !b.backingReleased {
 		state, err := b.waitOwner(ctx, "inspect")
 		if err != nil {
@@ -73,6 +78,9 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 				}
 				return err
 			}
+		}
+		// settle withdraws a removal whose dispatch provably never ran.
+		if b.removeSent && !b.mappingRemoved {
 			view, err := b.observe(ctx)
 			if err != nil {
 				return err
@@ -128,6 +136,7 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 				b.detachID = randomID()
 				b.detachSent = true
 				if _, err := b.owner(ctx, "start-detach"); err != nil {
+					b.detachStopped = stopped(err)
 					return err
 				}
 			}

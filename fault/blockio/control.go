@@ -74,7 +74,17 @@ func (b *Container) settle(ctx context.Context) error {
 	}
 	b.record.Settle(view)
 	if !view.Done {
-		return errPending
+		if id != b.stoppedStep || view.Started {
+			return errPending
+		}
+		// The dispatching invocation is confirmed stopped and never claimed
+		// the step, so no kernel operation ran or can run under this id.
+		b.record.Begin("", "", "")
+		b.stoppedStep = ""
+		if op == "remove" {
+			b.removeSent = false
+		}
+		return nil
 	}
 	if view.RC != 0 {
 		return failure(ceph.ErrNativeFailure, "%s was refused: %s", op, view.Error)
@@ -97,6 +107,9 @@ func (b *Container) step(ctx context.Context, op, table string) error {
 	}
 	view, err := b.control(ctx, "step", args...)
 	if err != nil {
+		if stopped(err) {
+			b.stoppedStep = id
+		}
 		return err
 	}
 	if view.ID != id || view.Op != op {
@@ -120,6 +133,16 @@ func (b *Container) step(ctx context.Context, op, table string) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// stopped reports whether a failed keeper command can no longer run: every
+// supervised failure except one that leaves its end unconfirmed. The exec
+// cushion cancels an invocation whose exec ended early, and its claim keeps a
+// late supervisor from starting. Whether a stopped dispatch began is told only
+// by the started marker its owner claims before launching detached work.
+func stopped(err error) bool {
+	_, unconfirmed := supervised.Unconfirmed(err)
+	return err != nil && !unconfirmed
 }
 
 func (b *Container) transition(ctx context.Context, want string) error {

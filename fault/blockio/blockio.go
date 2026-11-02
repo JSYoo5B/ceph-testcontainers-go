@@ -117,6 +117,11 @@ type Container struct {
 	excluded, mappingRemoved, detachSent, unlinkSent bool
 	loopReleased, removeSent, backingReleased        bool
 	detachID                                         string
+	// creationStopped, detachStopped and stoppedStep mark a dispatch that
+	// failed without a reply while its keeper invocation was confirmed
+	// stopped; withdrawUnstarted and settle then consult its started marker.
+	creationStopped, detachStopped bool
+	stoppedStep                    string
 }
 
 func failure(kind error, format string, args ...any) error {
@@ -224,8 +229,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if !contains(probe.Targets, "linear") {
 		return b, failure(ceph.ErrEnvironmentUnavailable, "device-mapper linear target is not registered")
 	}
-	b.creationSent = true
-	if _, err := b.owner(ctx, "start"); err != nil {
+	if err := b.startCreation(ctx); err != nil {
 		return b, err
 	}
 	for {
@@ -372,6 +376,9 @@ func (b *Container) restore(ctx context.Context) error {
 		return nil
 	}
 	if !b.ready {
+		if err := b.withdrawUnstarted(ctx); err != nil {
+			return err
+		}
 		if !b.creationSent {
 			return nil
 		}
@@ -429,6 +436,9 @@ func (b *Container) Status(ctx context.Context) (Status, error) {
 		return status, nil
 	}
 	if !b.ready {
+		if err := b.withdrawUnstarted(ctx); err != nil {
+			return status, err
+		}
 		if !b.creationSent {
 			return status, nil
 		}

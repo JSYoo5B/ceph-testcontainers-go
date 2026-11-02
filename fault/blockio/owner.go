@@ -31,11 +31,12 @@ type ownerReply struct {
 	LoopMajor, LoopMinor  uint32
 	Bytes                 int64 `json:"bytes"`
 	Detached, FileRemoved bool
+	Started               bool `json:"started"`
 }
 
 func (b *Container) owner(ctx context.Context, action string) (ownerReply, error) {
 	argv := []string{"python3", "-I", ownerProgram, action, b.name, strconv.FormatInt(b.size, 10), b.instance}
-	detachAction := action == "start-detach" || action == "detached"
+	detachAction := action == "start-detach" || action == "detached" || action == "detach-started"
 	if detachAction {
 		if b.detachID == "" {
 			return ownerReply{}, failure(ceph.ErrNativeFailure, "detach invocation identity is missing")
@@ -69,6 +70,38 @@ func (b *Container) owner(ctx context.Context, action string) (ownerReply, error
 	return reply, nil
 }
 
+// startCreation dispatches the owner's detached build once.
+func (b *Container) startCreation(ctx context.Context) error {
+	b.creationSent = true
+	_, err := b.owner(ctx, "start")
+	b.creationStopped = stopped(err)
+	return err
+}
+
+// withdrawUnstarted settles a creation or detachment dispatch that failed
+// while its keeper invocation was confirmed stopped. The owner claims the
+// started marker before launching the detached process, so an absent marker
+// proves that nothing ran and nothing can run later: the dispatch is recorded
+// as not sent, and a retry allocates a fresh detachment identity. A present
+// marker keeps the dispatch pending.
+func (b *Container) withdrawUnstarted(ctx context.Context) error {
+	if b.creationSent && b.creationStopped {
+		r, err := b.owner(ctx, "build-started")
+		if err != nil {
+			return err
+		}
+		b.creationSent, b.creationStopped = r.Started, false
+	}
+	if b.detachSent && b.detachStopped {
+		r, err := b.owner(ctx, "detach-started")
+		if err != nil {
+			return err
+		}
+		b.detachSent, b.detachStopped = r.Started, false
+	}
+	return nil
+}
+
 func (b *Container) acceptOwner(r ownerReply) error {
 	if r.File != "/tc-blk/data-"+b.name || r.Inode == 0 || r.FileDev == 0 || r.Loop == "" || r.LoopMajor == 0 || r.Bytes != b.size {
 		return failure(ceph.ErrNativeFailure, "owned file/loop identity or device size is incomplete")
@@ -85,8 +118,8 @@ func (b *Container) acceptOwner(r ownerReply) error {
 const ownerScript = `import json, os, re, shutil, stat, subprocess, sys
 action, name, size, expected = sys.argv[1:5]
 size = int(size)
-attempt=sys.argv[5] if action in ("start-detach","detach","detached") and len(sys.argv)>5 else ""
-if action in ("start-detach","detach","detached") and not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}",attempt):
+attempt=sys.argv[5] if action in ("start-detach","detach","detached","detach-started") and len(sys.argv)>5 else ""
+if action in ("start-detach","detach","detached","detach-started") and not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}",attempt):
     raise SystemExit("detach invocation identity is missing or invalid")
 work = "/tc-blk"
 detach_path=work+"/detach-"+attempt+".json"
@@ -211,6 +244,8 @@ elif action=="detached":
     if r.get("done") and not r.get("Error"):
         m=load();check_file(m);r["Detached"]=not associated(m["file"])
     emit(r)
+elif action=="build-started": emit({"started":os.path.exists(work+"/build.started")})
+elif action=="detach-started": emit({"started":os.path.exists(work+"/detach-"+attempt+".started")})
 elif action=="unlink":
     m=load()
     if not os.path.lexists(m["file"]):emit({"done":True,"FileRemoved":True});sys.exit(0)

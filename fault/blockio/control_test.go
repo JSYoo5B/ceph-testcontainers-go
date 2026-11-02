@@ -25,11 +25,28 @@ type controlReceipts struct {
 	finished                                    map[string]control.View
 	lose, refuse                                string
 	cancel                                      context.CancelFunc
+	// never names a step whose dispatch the exec cushion pre-empted, so it
+	// never claimed its started marker; unconfirmed leaves that stop
+	// unconfirmed instead. unstarted holds the ids of those dispatches.
+	never       string
+	unconfirmed bool
+	unstarted   map[string]bool
+}
+
+// unstartedDispatch is the supervised failure of a dispatch that never ran:
+// a backend error alone when the cushion confirmed the stop, or joined with
+// NotStoppedError when the cancel itself failed.
+func unstartedDispatch(unconfirmed bool) error {
+	err := error(&supervised.BackendError{Op: "exec block I/O keeper supervisor", Err: context.DeadlineExceeded})
+	if unconfirmed {
+		err = errors.Join(err, &supervised.NotStoppedError{Marker: supervised.MarkerDir + "/pending", Err: errors.New("canceler unavailable")})
+	}
+	return err
 }
 
 func newControlFixture(t *testing.T) (*Container, *controlReceipts) {
 	t.Helper()
-	m := &controlReceipts{t: t, name: "owned", instance: "keeper-generation", uuid: "TC-BLK-owned", live: "0 2097152 linear 7:1 0", state: "ACTIVE", finished: map[string]control.View{}}
+	m := &controlReceipts{t: t, name: "owned", instance: "keeper-generation", uuid: "TC-BLK-owned", live: "0 2097152 linear 7:1 0", state: "ACTIVE", finished: map[string]control.View{}, unstarted: map[string]bool{}}
 	b := &Container{name: m.name, instance: m.instance, size: DefaultSize, ready: true, linear: m.live,
 		loop:   control.LoopIdentity{Loop: "/dev/loop1", File: "/tc-blk/data-owned", Inode: 42, Dev: "7:1"},
 		record: control.Record{Name: m.name, UUID: m.uuid, Major: 253, Minor: 1, Live: m.live}}
@@ -85,6 +102,9 @@ func (m *controlReceipts) command(ctx context.Context, args ...string) ([]byte, 
 		if len(tail) != 1 {
 			m.t.Fatal("invalid settle query")
 		}
+		if m.unstarted[tail[0]] {
+			return encode(control.View{Action: "settled", Name: m.name, ID: tail[0]})
+		}
 		value, ok := m.finished[tail[0]]
 		if !ok {
 			m.t.Fatalf("unknown completion id %q", tail[0])
@@ -101,8 +121,13 @@ func (m *controlReceipts) command(ctx context.Context, args ...string) ([]byte, 
 				m.t.Fatalf("operation id %s was dispatched twice", id)
 			}
 		}
-		m.steps = append(m.steps, op)
 		m.ids = append(m.ids, id)
+		if m.never == op {
+			m.never = ""
+			m.unstarted[id] = true
+			return nil, unstartedDispatch(m.unconfirmed)
+		}
+		m.steps = append(m.steps, op)
 		value := control.View{Action: "step", Name: m.name, Op: op, ID: id, Done: true}
 		if m.refuse == op {
 			value.RC = 1
@@ -277,6 +302,45 @@ func TestCancellationAfterDispatchRetainsRecoverableRecord(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.steps, []string{"load", "clear"}) {
 		t.Fatalf("cancel recovery replayed: %v", m.steps)
+	}
+}
+
+func TestStepDispatchThatNeverRanIsWithdrawnAndRetried(t *testing.T) {
+	b, m := newControlFixture(t)
+	m.never = "load"
+	if err := b.Apply(context.Background(), Profile{EIO: true}); err == nil {
+		t.Fatal("pre-empted dispatch accepted")
+	}
+	first := b.record.UnsettledID
+	if b.record.Unsettled != "load" || first == "" || len(m.steps) != 0 {
+		t.Fatalf("pre-empted dispatch record: %+v %v", b.record, m.steps)
+	}
+	if err := b.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if b.record.Unsettled != "" || len(m.steps) != 0 || m.live != b.linear {
+		t.Fatalf("unstarted step was not withdrawn: %+v %v", b.record, m.steps)
+	}
+	if err := b.Apply(context.Background(), Profile{EIO: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.steps, []string{"load", "suspend", "resume"}) || m.ids[1] == first {
+		t.Fatalf("retry did not dispatch a fresh step: %v %v", m.steps, m.ids)
+	}
+}
+
+func TestUnconfirmedStopOfUnstartedStepStaysPending(t *testing.T) {
+	b, m := newControlFixture(t)
+	m.never, m.unconfirmed = "load", true
+	if err := b.Apply(context.Background(), Profile{EIO: true}); err == nil {
+		t.Fatal("unconfirmed dispatch accepted")
+	}
+	id := b.record.UnsettledID
+	if err := b.Restore(context.Background()); !errors.Is(err, errPending) {
+		t.Fatalf("unconfirmed stop settled: %v", err)
+	}
+	if b.record.Unsettled != "load" || b.record.UnsettledID != id || len(m.ids) != 1 {
+		t.Fatalf("unconfirmed dispatch record changed: %+v %v", b.record, m.ids)
 	}
 }
 
