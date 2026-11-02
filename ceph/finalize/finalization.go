@@ -34,7 +34,11 @@ type Config struct {
 	// Archive enables the failure archive: when the test has failed, a
 	// check failed or a finalization cleanup failed, the diagnostics, crash
 	// metadata and a manifest are written before the cluster is terminated.
-	// A passing run collects nothing.
+	// A passing run collects nothing. For a testing.T with a deadline, it
+	// also arms a before-deadline archive: when the test still runs
+	// ArchiveTimeout plus ten seconds before the test binary's -timeout,
+	// whose panic runs no cleanup, the archive is written while the test
+	// and the cluster still run.
 	Archive bool
 	// ArchiveDirectory is the root under which each archive gets its own
 	// directory, named after the test, the cluster and a random execution
@@ -106,6 +110,16 @@ type Finalization struct {
 	artifactDir func() (string, bool)
 	now         func() time.Time
 	newID       func() string
+	// deadline is the test binary's deadline, and afterFunc arms the
+	// before-deadline archive; both are replaced in tests.
+	//testdouble:wired-operation
+	deadline func() (time.Time, bool)
+	//testdouble:wired-operation
+	afterFunc func(time.Duration, func()) *time.Timer
+	// deadlineTimer is the armed before-deadline archive, and deadlineDone
+	// is closed when its function has returned.
+	deadlineTimer *time.Timer
+	deadlineDone  chan struct{}
 }
 
 type finalizationStep struct {
@@ -118,6 +132,9 @@ const (
 	defaultArchiveTimeout = 3 * time.Minute
 	defaultCleanupTimeout = 3 * time.Minute
 	maxFinalizationBound  = 10 * time.Minute
+	// deadlineArchiveGrace is the time left between the end of a
+	// before-deadline archive's bound and the test binary's deadline.
+	deadlineArchiveGrace = 10 * time.Second
 )
 
 // TerminateOnCleanup registers one t.Cleanup that finalizes and then
@@ -131,7 +148,9 @@ const (
 // test's context has ended by then. Check, collection and storage errors
 // never skip the cleanups or Terminate. A check's error and Terminate's error
 // fail the test; collection and storage errors are logged and recorded in the
-// manifest. Nothing runs after a forced process exit or a lost runner.
+// manifest. With Config.Archive and a test binary deadline, it also arms the
+// before-deadline archive that Config.Archive describes. Nothing else runs
+// after a forced process exit or a lost runner.
 //
 //purpose:observation,lifetime
 func TerminateOnCleanup(t testing.TB, cluster *ceph.Container, config Config) (*Finalization, error) {
@@ -154,6 +173,7 @@ func TerminateOnCleanup(t testing.TB, cluster *ceph.Container, config Config) (*
 	f.activate = func(ctx context.Context, config VerificationConfig) (*Verification, error) {
 		return startVerification(ctx, cluster, config)
 	}
+	f.armDeadline()
 	t.Cleanup(f.finalize)
 	return f, nil
 }
@@ -192,6 +212,10 @@ func newFinalization(t testing.TB, config Config) (*Finalization, error) {
 	}
 	f := &Finalization{t: t, config: config, now: func() time.Time { return time.Now().UTC() }, newID: newExecutionID}
 	f.writeFile = func(path string, data []byte) error { return os.WriteFile(path, data, 0o644) }
+	if deadliner, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
+		f.deadline = deadliner.Deadline
+	}
+	f.afterFunc = time.AfterFunc
 	f.artifactDir = func() (string, bool) {
 		retained := false
 		if value := flag.Lookup("test.artifacts"); value != nil {
@@ -252,11 +276,61 @@ type finalizationRun struct {
 	archiveAttempted bool
 }
 
+// armDeadline arms the before-deadline archive when the archive is enabled
+// and the test binary has a deadline that leaves room for it.
+func (f *Finalization) armDeadline() {
+	if !f.config.Archive || f.deadline == nil {
+		return
+	}
+	deadline, ok := f.deadline()
+	if !ok {
+		return
+	}
+	wait := time.Until(deadline) - f.config.ArchiveTimeout - deadlineArchiveGrace
+	if wait <= 0 {
+		return
+	}
+	done := make(chan struct{})
+	f.deadlineDone = done
+	f.deadlineTimer = f.afterFunc(wait, func() {
+		defer close(done)
+		f.archiveBeforeDeadline(deadline)
+	})
+}
+
+// archiveBeforeDeadline writes an archive of the still-running test into
+// its own directory, labelled before-deadline. The test binary's timeout
+// panic that follows runs no cleanup, so its manifest is never final and
+// records no cleanup or termination. A test that ends after it is finalized
+// as usual, with its own archive when it has failed.
+func (f *Finalization) archiveBeforeDeadline(deadline time.Time) {
+	f.mu.Lock()
+	started := f.started
+	f.mu.Unlock()
+	if started {
+		return
+	}
+	run := &finalizationRun{manifest: f.newManifest()}
+	run.manifest.Trigger.TestFailed = f.t.Failed()
+	run.manifest.Trigger.TestDeadline = &deadline
+	f.archive(run, "before-deadline")
+}
+
+// endDeadline disarms the before-deadline archive, or waits for one that
+// has started, so that it never runs alongside the finalization.
+func (f *Finalization) endDeadline() {
+	if f.deadlineTimer == nil || f.deadlineTimer.Stop() {
+		return
+	}
+	<-f.deadlineDone
+}
+
 func (f *Finalization) finalize() {
 	f.mu.Lock()
 	f.started = true
 	checks, cleanups, captures := f.checks, f.cleanups, f.captures
 	f.mu.Unlock()
+	f.endDeadline()
 	run := &finalizationRun{manifest: f.newManifest()}
 	run.manifest.Trigger.TestFailed = f.t.Failed()
 	// Deferred, so that the cleanups and Terminate still run when the
@@ -629,8 +703,12 @@ type finalizationExecution struct {
 }
 
 type finalizationTrigger struct {
-	// TestFailed is the test's state before the checks ran.
+	// TestFailed is the test's state before the checks ran, or when a
+	// before-deadline archive started.
 	TestFailed bool `json:"test_failed"`
+	// TestDeadline is the test binary's deadline that a before-deadline
+	// archive preceded; the test was still running when it started.
+	TestDeadline *time.Time `json:"test_deadline,omitempty"`
 	// CheckFailed and CleanupFailed mean that a step returned an error,
 	// panicked or ended its goroutine.
 	CheckFailed   bool `json:"check_failed"`

@@ -350,6 +350,21 @@ archive is first written while the cluster runs; after the cleanups and
 Nothing is collected again after termination. The manifest records the
 archive's directory name, not its host path.
 
+A test that `go test -timeout` ends runs no cleanup: Go panics and exits, and
+the containers stay until Ryuk removes them. So with `Archive` and a test
+binary deadline, the finalization arms one more archive, at `ArchiveTimeout`
+plus ten seconds before that deadline. If the test still runs then, the
+archive is written into its own directory with phase `before-deadline`,
+`trigger.test_deadline` set to the deadline and `trigger.test_failed` as it
+was at that moment. The test and the cluster still run during the snapshot,
+and its manifest is never final, since no cleanup or termination outcome
+follows the panic. A test that ends after it is finalized as usual, and
+writes its own archive when it has failed; the finalization waits for a
+before-deadline archive in progress first. A test that registers its
+finalization when less than that margin is left gets no before-deadline
+archive. Nothing runs after any other forced exit: `os.Exit`, a signal such
+as a cancelled job's, or a lost runner.
+
 By default the archive goes into the test's `ArtifactDir`, which `go test`
 keeps under its output directory only with `-artifacts` (and `-outputdir`
 for another place than the package directory). Without the flag the

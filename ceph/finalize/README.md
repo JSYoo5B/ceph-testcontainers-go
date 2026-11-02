@@ -69,8 +69,14 @@ finalization.Check("pool still clean", observer.WaitForClean)
 - A verification that is unexpected or incomplete fails the test. It never
   changes the cluster, and clean is evidence for the reported sources and
   window only.
+- When the test binary has a `-timeout`, the archive is armed to run while a
+  test still runs `ArchiveTimeout` plus ten seconds before that deadline. Go's
+  timeout panic runs no cleanup, so this `before-deadline` archive is the
+  only evidence such a test leaves; its manifest is never final. A test that
+  ends after it is finalized as usual.
 - Adding a step after finalization has started fails the test. Nothing runs
-  after a forced process exit or a lost runner.
+  after another forced process exit (`os.Exit`, a signal, a cancelled job) or
+  a lost runner.
 
 ## Reference
 

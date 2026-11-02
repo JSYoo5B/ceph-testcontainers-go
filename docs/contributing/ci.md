@@ -927,8 +927,13 @@ files present after the run. For a failed native step, the job summary's
 `Failure archive` section records the manifest count, the upload outcome and
 the artifact ID. Only downloading the artifact and reading its manifest shows
 that the archive was retained. An archive is a snapshot taken before
-termination; nothing is archived when the runner is lost or the process is
-killed or panics.
+termination. A test that is still running near the profile's `timeout`
+writes a `before-deadline` archive before Go's timeout panic, which runs no
+cleanup; its manifest is never final. Nothing is archived when the runner is
+lost, the job is cancelled or the process is killed: the test binary exits
+on the cancellation's SIGINT without cleanups, and Ryuk removes the
+containers about ten seconds later, so a later step would race it and is not
+a supported collector.
 
 `archive_audit.py` audits a downloaded archive directory without changing
 any verdict:
