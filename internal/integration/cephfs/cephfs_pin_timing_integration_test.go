@@ -1,6 +1,6 @@
 //go:build native_regression && (all || (integration && features)) && (!ci || (ci_optional && (!ci_batch || ci_batch_cephfs_pin_timing)))
 
-//ci: timeout=30m job-timeout=40 image-roles=essential,client,cephfs
+//ci: timeout=45m job-timeout=55 image-roles=essential,client,cephfs
 
 package cephfs_test
 
@@ -23,11 +23,12 @@ import (
 
 // TestCephFSPinTimingQualification alternates the same native pin handoffs
 // without changing polling, data, topology or concurrency. It is opt-in because
-// six comparisons deliberately spend time at the ordinary daemon tick rate.
+// balanced ABBA comparisons deliberately spend time at the ordinary daemon tick
+// rate. Equal average order positions reduce a linear warm-up bias.
 func TestCephFSPinTimingQualification(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		t.Run(mode.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 			defer cancel()
 			options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: "pin-timing", ActiveMDS: 2})}
 			if mode.Host {
@@ -56,7 +57,8 @@ func TestCephFSPinTimingQualification(t *testing.T) {
 			}
 			bases := map[string]bool{path.Dir(volume.Path): true}
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "write", []string{volume.Path})
-			for trial, seconds := range []int{5, 1, 5, 1, 5, 1} {
+			t.Log("PIN_TIMING_DESIGN order=ABBA ticks=5,1,1,5 handoffs=16 comparison=within-cluster")
+			for trial, seconds := range []int{5, 1, 1, 5} {
 				t.Run(fmt.Sprintf("trial-%d-tick-%d", trial, seconds), func(t *testing.T) {
 					start := time.Now()
 					status, err := fs.MDSStatus(ctx)
@@ -94,7 +96,7 @@ func TestCephFSPinTimingQualification(t *testing.T) {
 							pinTimingEffective(t, ctx, cluster, "mds."+mds.Name, 5)
 						}
 					}
-					for _, rank := range []int{1, 0, 1, 0, 1, 0, 1, 0} {
+					for _, rank := range []int{1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0} {
 						started := time.Now()
 						pin, err := volume.OverridePin(ctx, subvolume.PinSetting{Type: subvolume.PinExport, Value: float64(rank)})
 						if err != nil {
