@@ -27,7 +27,7 @@ type cephFSStandbyFailover struct {
 
 func startCephFSStandbyFailover(t *testing.T, ctx context.Context) *cephFSStandbyFailover {
 	t.Helper()
-	m := harness.StartCephFSSingleMDS(t, ctx, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
+	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
 	status, err := m.FS.MDSStatus(ctx)
 	if err != nil || len(status.Standby) != 1 || len(status.StandbyReplay) != 0 || !status.Standby[0].Owned || !m.MDS.Owned || len(m.FS.MDSs()) != 2 {
 		t.Fatalf("want one owned active MDS and one owned standby: %+v, %v", status, err)
