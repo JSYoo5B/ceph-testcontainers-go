@@ -26,10 +26,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: full runs the matrix; representative runs the repeated representative campaign
+        description: full runs the matrix; representative repeats batches; storage qualifies conditional runner preparation
         type: choice
-        options: [full, representative]
+        options: [full, representative, storage]
         default: full
+      storage_policy:
+        description: Storage qualification only; auto skips when safe, always is the control, pressure exercises required reclamation
+        type: choice
+        options: [auto, always, pressure]
+        default: auto
       repetitions:
         description: Attempts of each representative batch (representative only, 1 to 10)
         type: number
@@ -65,6 +70,7 @@ env:
 
 jobs:
   gate:
+    if: inputs.mode != 'storage'
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -183,6 +189,21 @@ jobs:
       repetitions: ${{ fromJSON(inputs.repetitions || 3) }}
       ref: ${{ needs.pin.outputs.sha }}
       role_digests: ${{ needs.pin.outputs.digests }}
+  # One bounded workload per explicitly requested run. Dispatch the same ref
+  # repeatedly with auto/always/pressure for equivalent-source comparisons.
+  storage:
+    name: Storage qualification
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: selected
+      profiles: short-rados_fixtures_watchers-52f45dc3
+      check_name: Runner storage qualification
+      max_parallel: 1
+      networks: default
+      release: ${{ inputs.release }}
+      ref: ${{ inputs.ref || github.sha }}
+      storage_policy: ${{ inputs.storage_policy }}
   # Durable history: the rows of this run's jobs go to the scenario-history
   # branch, one append-only file per run attempt, and summary.json there is
   # recomputed. A branch keeps rows without expiry (artifacts expire, caches
@@ -190,7 +211,7 @@ jobs:
   # is a commit. The runtime jobs read summary.json for their failure notes.
   history:
     name: History
-    needs: [gate, environment, releases, runtime, pin, representative]
+    needs: [gate, environment, releases, runtime, pin, representative, storage]
     if: always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

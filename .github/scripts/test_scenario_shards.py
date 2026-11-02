@@ -333,6 +333,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(gate, "CI_RELEASE_PHASE"), "${{ vars.CI_RELEASE_PHASE }}")
             self.assertEqual(scalar(gate, "PERIODIC_SCHEDULE"), "${{ github.event.schedule }}")
             self.assertEqual(scalar(gate, "PERIODIC_MODE"), "${{ inputs.mode }}")
+            qualification = jobs.pop("storage")
+            self.assertEqual(scalar(qualification, "if"), "github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'")
+            self.assertEqual(scalar(qualification, "category"), "selected")
+            self.assertEqual(scalar(qualification, "profiles"), "short-rados_fixtures_watchers-52f45dc3")
+            self.assertEqual(scalar(qualification, "max_parallel"), "1")
+            self.assertEqual(scalar(qualification, "ref"), "${{ inputs.ref || github.sha }}")
+            self.assertEqual(scalar(qualification, "storage_policy"), "${{ inputs.storage_policy }}")
+            self.assertEqual(scalar(gate, "if"), "inputs.mode != 'storage'")
+            self.assertFalse(periodic_gate.runtime_job({"name": "Storage qualification / rados_fixtures_watchers"}))
             # The campaign: one pinned commit and pinned digests for every
             # attempt of the source-owned representative batches.
             pin, representative, history = jobs.pop("pin"), jobs.pop("representative"), jobs.pop("history")
@@ -404,6 +413,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertRegex(optional, r"(?m)^  workflow_dispatch:")
         self.assertNotRegex(optional, r"(?m)^  (?:push|pull_request|workflow_call):")
         self.assertNotIn("concurrency:", optional)
+
+    def test_storage_pressure_is_explicit_owned_and_never_uploaded(self):
+        runtime = dict(blocks(self.workflows["tagged-runtime.yml"].split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["runtime"]
+        release = next(step for step in steps(runtime) if "Release the qualification pressure file" in step)
+        self.assertEqual(scalar(release, "if"), "always() && inputs.storage_policy == 'pressure'")
+        self.assertLess(runtime.index("Release the qualification pressure file"), runtime.index("Save compile, native and phase results"))
+        self.assertIn("!artifacts/scenario/runner-storage/qualification-pressure.bin", runtime)
+        self.assertIn("Verify post-image runner headroom", runtime)
+        self.assertLess(runtime.index("Verify post-image runner headroom"), runtime.index("Native assertions and completion proof"))
 
     def test_comment_command_runs_named_profiles_with_minimal_permissions_per_job(self):
         workflow, jobs = self.workflows[self.COMMAND], self.jobs[self.COMMAND]
