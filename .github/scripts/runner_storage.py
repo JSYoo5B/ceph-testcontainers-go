@@ -137,7 +137,7 @@ GIB = 1 << 30
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def qualification(compile_directory, release, roles, digests="", tests="", root=ROOT):
+def qualification(compile_directory, release, roles, digests="", tests="", root=ROOT, environ=os.environ):
     """An exact workload declaration/dependency and immutable image cohort only.
 
     A workload/dependency or image-pin change expires the small qualification;
@@ -154,6 +154,14 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
         if len(matches) != 1:
             return None
         budget = matches[0]
+        if "max_parallel_fixtures" in budget:
+            limit = budget["max_parallel_fixtures"]
+            raw = environ.get("CEPH_TEST_PARALLEL", "")
+            if not isinstance(raw, str) or raw and re.fullmatch(r"\+?[0-9]+", raw) is None:
+                return None
+            parallel = int(raw) if raw else 1
+            if type(limit) is not int or limit < 1 or not 1 <= parallel <= limit:
+                return None
         selected = sorted(tests.split(",") if tests else binary["tests"])
         # Startup/data helpers are part of the workload's storage bound too.
         # Keep their declarations pinned without expiring on unrelated code.

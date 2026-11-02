@@ -86,7 +86,8 @@
         "internal/integration/harness/cephfs_retained_client_integration_helpers.go",
         "internal/integration/harness/parallel_integration_helpers.go",
         "internal/integration/harness/services_integration.go"
-      ]
+      ],
+      "max_parallel_fixtures": 2
     },
     {
       "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
@@ -115,6 +116,35 @@
         "internal/integration/harness/rbd_multicluster_scenarios_integration_helpers.go",
         "internal/integration/harness/services_integration.go"
       ]
+    },
+    {
+      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+      "platform": "linux/amd64",
+      "releases": [
+        "20.2.4"
+      ],
+      "image_prepare_bytes": 8589934592,
+      "minimum_free_inodes": 100000,
+      "profile": "short-default-0b24074f",
+      "package": "./internal/integration/rbd",
+      "tests": [
+        "TestRBDLifecycle",
+        "TestRBDNamespaces"
+      ],
+      "sources_sha256": "db767dd9fd59b7bfed1e712b73ba3034f17b21a9a0fc9ee5ca56004b2cd72b27",
+      "roles": "essential,client,cephfs,rgw",
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+      "runtime_bytes": 8589934592,
+      "helper_sources": [
+        "ceph/ceph.go",
+        "internal/integration/harness/ceph_integration_helpers.go",
+        "internal/integration/harness/network_modes_integration_helpers.go",
+        "internal/integration/harness/parallel_integration_helpers.go",
+        "internal/integration/harness/rbd_integration_helpers.go",
+        "internal/integration/harness/services_integration.go",
+        "internal/integration/rbd/rbd_namespace_integration_helpers_test.go"
+      ],
+      "max_parallel_fixtures": 2
     }
   ]
 }

@@ -794,10 +794,12 @@ additional to the per-filesystem MON share and its runtime allowance.
 | `cephfs_fixtures_data` | Two parallel fixtures with up to three 1GiB OSDs each | 8GiB |
 | `cephfs_fixtures_admin` | One sequential fixture with up to two 1GiB OSDs | 8GiB |
 | `rbd_fixtures_mirror` | Two clusters with two 1GiB OSDs each | 8GiB |
+| RBD `default` | Two parallel fixtures: lifecycle with up to three 1GiB OSDs and namespaces with two 1GiB OSDs | 8GiB |
 
 The data profile retains the three OSDs required by its erasure-coded pool
-assertions; its host-network topology still adds and removes an OSD. All
-qualified startup paths explicitly retain 1GiB stores and skip calibration.
+assertions; its host-network topology still adds and removes an OSD. Qualified startup paths retain 1GiB stores and skip calibration. The RBD
+default profile pins its startup and topology helpers, including the default
+OSD size and count; its lifecycle assertions still add a third OSD.
 Logical capacity is a conservative source bound, not reserved physical space
 or a measured runtime peak. Control stores, client data and logs are additional;
 the qualification evidence records sampled filesystem consumption separately.
@@ -806,9 +808,11 @@ The catalog selects exactly one entry for the compiled profile. Its workload
 sources, listed startup/data helpers, dependency manifests, tags, selected tests
 and image pins must match. Changes to a relevant helper expire that workload's
 qualification. Unrelated profiles cannot inherit its allowance, and an ambiguous
-or missing entry retains conservative cleanup. Other profiles and releases
-remain unqualified. Image and native comparison evidence belongs in the
-implementation pull request.
+or missing entry retains conservative cleanup. The data and RBD default qualifications
+also require `CEPH_TEST_PARALLEL` to be at most two; higher or invalid values
+retain conservative preparation instead of inheriting their two-fixture bounds.
+Other profiles and releases remain unqualified. Image and native comparison
+evidence belongs in the implementation pull request.
 
 Only verified local classic-overlay2 or socket-linked containerd-overlayfs
 layouts may skip. Existing local volume mounts and nested mounts are inspected.

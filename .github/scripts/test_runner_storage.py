@@ -337,7 +337,14 @@ class QualificationTests(unittest.TestCase):
             self.assertIsNotNone(check(changed))
             changed["binary"]["sources"]["workload-helper.go"] = "helper-v2"
             self.assertIsNone(check(changed))
-            self.assertIsNotNone(check(build))
+            changed["binary"]["sources"]["workload-helper.go"] = "helper-v1"
+            other["max_parallel_fixtures"] = 2
+            catalog_file.write_text(json.dumps(catalog))
+            for parallel in ("", "1", "2", "+2"):
+                self.assertIsNotNone(check(changed, environ={"CEPH_TEST_PARALLEL": parallel}))
+            for parallel in ("0", "3", "-1", "invalid", " 2", "٢"):
+                self.assertIsNone(check(changed, environ={"CEPH_TEST_PARALLEL": parallel}))
+            self.assertIsNotNone(check(build, environ={"CEPH_TEST_PARALLEL": "3"}))
             pins_file.write_text(json.dumps(pins) + "\n")
             self.assertIsNone(check(build))
 
