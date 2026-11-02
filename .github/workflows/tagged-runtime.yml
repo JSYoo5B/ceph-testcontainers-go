@@ -60,7 +60,7 @@ on:
         default: 256
         type: number
       storage_policy:
-        description: auto is conservative conditional preparation; always/pressure are explicit hosted qualification controls
+        description: auto is conservative conditional preparation; always/pressure/pressure-supplemental are explicit hosted qualification controls
         default: auto
         type: string
       bug_compatibility:
@@ -331,7 +331,7 @@ jobs:
           action: record
           phase: after
       - name: Release the qualification pressure file
-        if: always() && inputs.storage_policy == 'pressure'
+        if: always() && startsWith(inputs.storage_policy, 'pressure')
         run: python3 .github/scripts/runner_storage.py release-pressure --directory artifacts/scenario/runner-storage
       - name: Verify owned Docker resource cleanup
         id: cleanup

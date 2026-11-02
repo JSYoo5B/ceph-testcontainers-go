@@ -452,7 +452,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     def test_storage_pressure_is_explicit_owned_and_never_uploaded(self):
         runtime = dict(blocks(self.workflows["tagged-runtime.yml"].split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["runtime"]
         release = next(step for step in steps(runtime) if "Release the qualification pressure file" in step)
-        self.assertEqual(scalar(release, "if"), "always() && inputs.storage_policy == 'pressure'")
+        self.assertEqual(scalar(release, "if"), "always() && startsWith(inputs.storage_policy, 'pressure')")
         self.assertLess(runtime.index("Release the qualification pressure file"), runtime.index("Save compile, native and phase results"))
         self.assertIn("!artifacts/scenario/runner-storage/qualification-pressure.bin", runtime)
         self.assertIn("Verify post-image runner headroom", runtime)

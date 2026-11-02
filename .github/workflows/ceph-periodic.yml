@@ -31,9 +31,9 @@ on:
         options: [full, representative, storage]
         default: full
       storage_policy:
-        description: Storage qualification only; auto skips when safe, always is the control, pressure exercises required reclamation
+        description: Storage qualification only; auto skips when safe, always is the control, pressure exercises reclamation; pressure-supplemental exhausts standard cleanup first
         type: choice
-        options: [auto, always, pressure]
+        options: [auto, always, pressure, pressure-supplemental]
         default: auto
       storage_profiles:
         description: Comma-separated source-owned profile IDs for explicit storage qualification only
