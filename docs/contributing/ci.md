@@ -385,7 +385,7 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Restore the Go module and build caches | n/a | Restores what a `Plan` job saved. A build-cache miss only slows compilation. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
-| Free the runner's preinstalled directories | n/a | Ceph batches only. `runner_storage.py free` removes the runner image's Android SDK, .NET, Haskell, CodeQL and Boost directories, which no job uses, and writes `runner-storage/storage-free.json`. It never touches Docker resources and refuses to run outside a GitHub-hosted runner. |
+| Prepare runner storage | n/a | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload/images and actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
 | Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source: each image reference among the constants of the declarations that the tests reach (constants of other packages included), a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag), and a read of `.github/ceph-role-images.json` (the declared roles of every supported release). With prepared role images, the published role image fallback is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
@@ -770,15 +770,54 @@ composite action) has already failed at upload time.
 succeeded but the receipt was not recorded, so the binary is not reused). A
 timed-out command is killed with its process group and has `exit_code: null`.
 
-`runner-storage/storage-<phase>.json` records the filesystem that holds
-Docker's data root: total, available and free bytes, inodes, the available
-share as a MON computes it, and `docker system df` by type. Every container
-layer and the MON store live there, so a MON raises `MON_DISK_LOW` once that
-share is below `mon_data_avail_warn` (30%), and a test that requires
-`HEALTH_OK` fails before its own assertions. Compare `storage-free.json`
-(the runner's baseline after the removal), `storage-images.json` (after the
-pulls) and `storage-after.json` (after the tests) to tell which one took the
-space.
+`runner-storage/storage-prepare.json` records the observed Docker storage roots,
+their independent filesystems, required and available bytes/inodes, the
+skip/reclaim decision, cleanup duration and post-check. Paths on the same
+device share one observation; space on different filesystems is never added.
+The MON store filesystem must retain its default 30% available share after
+the preparation and runtime allowances. `storage-ready.json` repeats the
+check after actual image pulls, retaining the runtime allowance. Failure of
+either guard stops the job before native assertions.
+
+The small qualification in `.github/runner-storage.json` currently covers the
+Tentacle AMD64 `rados_fixtures_watchers` profile: two 1GiB sparse OSDs, a tiny
+watched object and the essential/client/Ryuk images. It reserves 8GiB for image
+preparation and 4GiB for runtime allocation, additional to the MON share and
+100,000 free inodes. These are conservative admission allowances, not measured
+peak claims. Image measurements and equivalent native comparisons belong in
+the implementation pull request. The qualification is tied to the compiled
+source/dependency fingerprint, tags, selected tests and checked-in image pins;
+a change expires it and restores conservative cleanup. Other profiles and
+releases retain cleanup, rather than inheriting this workload's allowance.
+
+Only verified local classic-overlay2 or socket-linked containerd-overlayfs
+layouts may skip. Existing local volume mounts and nested mounts are inspected.
+Containerd must have one running process whose CLI/configuration root and socket
+match Docker's reported socket; imported/proxy configuration and snapshotter
+root overrides keep conservative preparation. Unlinked roots are recorded as
+candidates and cannot authorize skipping. Remote endpoints,
+unknown roots, volume plugins/options and missing evidence keep conservative
+cleanup. The post-cleanup guard for an unqualified workload is explicitly a
+minimum safety check, not a claim to know its peak.
+
+`storage-free.json` records the existing allowlist removal when needed.
+`storage-images.json` and `storage-after.json` retain the Docker-root filesystem
+and `docker system df` observations after pulls and tests. These endpoints
+separate image and run allocation from runner baseline; they do not establish
+a transient peak or reclaim historical preparation time.
+
+For a controlled hosted comparison, dispatch `Ceph periodic` with `mode=storage`
+and the same commit `ref`, release and `storage_policy=auto`, `always` or
+`pressure`. Each dispatch runs only the qualified watcher profile and retains
+its ordinary assertions and cleanup checks; repeat dispatches for each policy.
+`always` is the reclamation control. `pressure` creates one exclusive owned file
+on the Docker filesystem to cross the admission boundary, retaining the MON
+floor, runtime reserve and 2GiB extra; it refuses allocations outside 1–40GiB
+or any non-hosted/unqualified layout. The file stays through native assertions
+and an always-run step removes it only when its device/inode receipt matches.
+The pressure file is also excluded from artifact uploads.
+This qualification never fills a shared host or intentionally approaches ENOSPC.
+Normal schedules, workload coverage and runner concurrency limits are unchanged.
 
 ### Typical causes by phase
 
