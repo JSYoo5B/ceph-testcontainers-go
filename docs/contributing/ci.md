@@ -824,7 +824,14 @@ unknown roots, volume plugins/options and missing evidence keep conservative
 cleanup. The post-cleanup guard for an unqualified workload is explicitly a
 minimum safety check, not a claim to know its peak.
 
-`storage-free.json` records the existing allowlist removal when needed.
+`storage-free.json` records the fixed allowlist removal when needed. The list
+includes unused Android, .NET, Haskell, CodeQL, Boost, Swift, PowerShell and
+vcpkg installations. Go, the system Python interpreter, runner files and
+Docker/containerd data are retained. A smaller hosted filesystem uses the same
+MON reserve and workload allowances: it must recover enough actual space from
+these directories or fail admission. Neither the runner label nor successful
+directory removal guarantees sufficient space; the post-cleanup and post-image
+checks still decide from each filesystem's observed bytes and inodes.
 `storage-images.json` and `storage-after.json` retain the Docker-root filesystem
 and `docker system df` observations after pulls and tests. These endpoints
 separate image and run allocation from runner baseline; they do not establish

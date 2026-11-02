@@ -22,8 +22,9 @@ import runner_storage_layout
 
 
 # Directories of the GitHub-hosted Ubuntu image that no job here uses: the
-# Android SDK, .NET, the Haskell toolchains, CodeQL bundles and Boost. Go and
-# Python come from setup-go and the system interpreter.
+# Android SDK, .NET, Haskell, CodeQL, Boost, Swift, PowerShell and vcpkg.
+# Integration jobs use Go, the system Python interpreter and Docker; none
+# uses these SDKs. Keep this list fixed, including on smaller root disks.
 PREINSTALLED = (
     "/usr/local/lib/android",
     "/usr/share/dotnet",
@@ -31,6 +32,10 @@ PREINSTALLED = (
     "/usr/local/.ghcup",
     "/opt/hostedtoolcache/CodeQL",
     "/usr/local/share/boost",
+    "/usr/share/swift",
+    "/usr/local/share/powershell",
+    "/opt/microsoft/powershell",
+    "/usr/local/share/vcpkg",
 )
 # Ceph's defaults, in percent of the available share.
 MON_DATA_AVAIL_WARN = 30
