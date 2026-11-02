@@ -4,3 +4,5 @@ package lib
 
 // Helper is an image that a test names through this constant.
 const Helper = "ghcr.io/example-org/helper:extension-v1"
+
+const Published = "ghcr.io/example-org/ceph@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

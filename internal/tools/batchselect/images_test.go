@@ -96,3 +96,24 @@ func TestImageReferenceShapes(t *testing.T) {
 		}
 	}
 }
+
+// A prepared role set replaces only the harness fallback. Requiring the same
+// image explicitly must survive deduplication in either test traversal order.
+func TestRoleFallbackProvenanceAndExplicitUses(t *testing.T) {
+	const reference = "image ghcr.io/example-org/ceph@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fallback := imagesOf(t, "TestRoleFallback")[reference]
+	if !fallback.RoleFallback || fallback.Declaration != "func IntegrationImage" || !strings.HasPrefix(fallback.Position, "harness/services_integration.go:") {
+		t.Fatalf("fallback provenance = %+v", fallback)
+	}
+	other := imagesOf(t, "TestOtherIntegrationImage")[reference]
+	if other.RoleFallback || !strings.HasPrefix(other.Position, "pkg/pkg.go:") {
+		t.Fatalf("unknown IntegrationImage treated as fallback: %+v", other)
+	}
+	for _, tests := range [][]string{{"TestExplicitImage"}, {"TestFallbackThenExplicit"}, {"TestExplicitThenFallback"}, {"TestRoleFallback", "TestExplicitImage"}, {"TestExplicitImage", "TestRoleFallback"}} {
+		found := imagesOf(t, tests...)
+		use := found[reference]
+		if len(found) != 1 || use.RoleFallback || use.Declaration != "func ExplicitImage" || !slices.Equal(use.Tests, tests) {
+			t.Fatalf("%v: explicit image requirement = %+v", tests, found)
+		}
+	}
+}
