@@ -49,6 +49,24 @@ class WorkflowPhaseTests(unittest.TestCase):
         self.assertIn("do not establish its root cause", text)
         self.assertNotIn("passed", result)
 
+    def test_runner_storage_refusals_are_failed_phases(self):
+        result = reporter.report(environment(
+            SCENARIO_STORAGE_OUTCOME="failure", SCENARIO_DOCKER_OUTCOME="skipped",
+            SCENARIO_IMAGES_OUTCOME="skipped", SCENARIO_TEST_IMAGES_OUTCOME="skipped",
+            SCENARIO_STORAGE_READY_OUTCOME="skipped", SCENARIO_NATIVE_OUTCOME="skipped",
+            SCENARIO_CLEANUP_OUTCOME="skipped"))
+        self.assertEqual(result["failed_phases"], ["storage"])
+        self.assertIn("| Runner storage preparation | failure |", reporter.summary(result))
+        ready = reporter.report(environment(SCENARIO_STORAGE_READY_OUTCOME="failure", SCENARIO_NATIVE_OUTCOME="skipped"))
+        self.assertEqual(ready["failed_phases"], ["storage_ready"])
+
+    def test_docker_only_batch_does_not_require_runner_storage(self):
+        result = reporter.report(environment(
+            SCENARIO_REQUIRES_CEPH="false", SCENARIO_STORAGE_OUTCOME="skipped",
+            SCENARIO_IMAGES_OUTCOME="skipped", SCENARIO_STORAGE_READY_OUTCOME="skipped"))
+        for name in ("storage", "images", "storage_ready"):
+            self.assertEqual(phase(result, name)["display"], "not required")
+
     def test_compile_failure_does_not_label_skipped_native_assertions_as_failed(self):
         result = reporter.report(environment(
             SCENARIO_COMPILE_OUTCOME="failure", SCENARIO_DOCKER_OUTCOME="skipped",

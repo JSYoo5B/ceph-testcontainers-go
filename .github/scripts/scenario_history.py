@@ -44,7 +44,9 @@ SCHEMA = "ceph-scenario-history/v1"
 MISSING = "missing"
 # The workflow phases of report_workflow_phases.py, in execution order, and
 # the receipt that is each phase's own evidence.
-PHASES = ("modules", "compile", "docker", "images", "test_images", "native", "cleanup")
+PHASES = ("modules", "compile", "storage", "docker", "images", "test_images", "storage_ready", "native", "cleanup")
+# The phases that only Ceph batches run; a Docker-only batch does not need them.
+CEPH_ONLY_PHASES = ("storage", "images", "storage_ready")
 WORKFLOW_OUTCOMES = {"success": "success", "failure": "failure", "cancelled": "cancelled",
                      "skipped": "skipped", "": "not_run"}
 # The execution key fields that ingest needs to tell two attempts apart.
@@ -297,6 +299,8 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
     log = evidence.text("scenario", "native/native.log")
     phases = evidence.json("scenario", "phases.json")
     test_images = evidence.json("scenario", "test-images/summary.json")
+    storage = evidence.json("scenario", "runner-storage/storage-prepare.json")
+    storage_ready = evidence.json("scenario", "runner-storage/storage-ready.json")
     before = evidence.json("cleanup", "before.json")
     after = evidence.json("cleanup", "after.json")
     summary = evidence.json("images", "summary.json")
@@ -390,13 +394,13 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
                               for role, image in sorted((summary.get("images") or {}).items())
                               if isinstance(image, dict)}}
 
-    own = {"modules": modules, "compile": compiled, "docker": before, "images": summary, "test_images": test_images,
-           "native": native, "cleanup": after}
+    own = {"modules": modules, "compile": compiled, "storage": storage, "docker": before, "images": summary,
+           "test_images": test_images, "storage_ready": storage_ready, "native": native, "cleanup": after}
     rows = []
     for name in PHASES:
         report = own[name]
         phase = {"phase": name, "workflow": workflow.get(name, MISSING) if isinstance(phases, dict) else MISSING}
-        required = not (name == "images" and requires_ceph is False)
+        required = not (name in CEPH_ONLY_PHASES and requires_ceph is False)
         phase["evidence"] = receipt_evidence(report) if required else "not_applicable"
         if isinstance(report, dict):
             for field in ("classification", "elapsed_seconds", "exit_code", "timed_out"):
@@ -593,7 +597,7 @@ def summarize(rows):
 # configuration's pass/fail record. Runner and image failures and cancelled
 # or incomplete attempts are counted apart, never as scenario failures.
 CLASSIFICATION_SCHEMA = SCHEMA + "/classification"
-INFRASTRUCTURE_PHASES = ("modules", "compile", "docker")
+INFRASTRUCTURE_PHASES = ("modules", "compile", "storage", "docker", "storage_ready")
 DECIDED = ("passed", "assertion_failure", "timeout", "cleanup_failure")
 SCENARIO_FAILURES = DECIDED[1:]
 CLASSIFICATIONS = ("insufficient_samples", "confirmed_pass", "deterministic_failure", "confirmed_fail",

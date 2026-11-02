@@ -114,10 +114,17 @@ class Job:
                        "attempts: registry transport tls-handshake-timeout at token https://auth.docker.io/token"}
         write(self.scenario / "test-images/summary.json", report)
 
+    def storage(self, prepared=True, ready=True):
+        if prepared is not None:
+            write(self.scenario / "runner-storage/storage-prepare.json", {"schema": 2, "phase": "prepare", "passed": prepared})
+        if ready is not None:
+            write(self.scenario / "runner-storage/storage-ready.json", {"schema": 2, "phase": "ready", "passed": ready})
+
     def passing(self):
         self.phases()
         self.modules()
         self.compile()
+        self.storage()
         self.docker()
         self.roles()
         self.test_images()
@@ -474,6 +481,42 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(phase(row, "images")["status"], "not_required")
         self.assertEqual(row["runtime"]["status"], "not_applicable")
         self.assertEqual(row["outcome"]["status"], "passed")
+
+    def test_profile_without_ceph_needs_no_runner_storage(self):
+        global PROFILE
+        saved = PROFILE
+        PROFILE = saved | {"requires_ceph": False}
+        self.addCleanup(lambda: globals().__setitem__("PROFILE", saved))
+        job = self.job.passing()
+        (job.images / "summary.json").unlink()
+        for name in ("storage-prepare.json", "storage-ready.json"):
+            (job.scenario / "runner-storage" / name).unlink()
+        job.phases(storage="skipped", images="skipped", storage_ready="skipped")
+        row = job.row()
+        self.assertEqual(phase(row, "storage")["status"], "not_required")
+        self.assertEqual(phase(row, "storage_ready")["status"], "not_required")
+        self.assertEqual(row["outcome"]["status"], "passed")
+
+    def test_refused_runner_storage_is_a_runner_failure(self):
+        # A headroom refusal skips every later step; it must count as a
+        # failure of its own phase, not as a skipped or incomplete job.
+        job = self.job.passing()
+        job.storage(prepared=False, ready=None)
+        job.phases(storage="failure", docker="skipped", images="skipped", test_images="skipped",
+                   storage_ready="skipped", native="skipped", cleanup="skipped")
+        row = job.row()
+        self.assertEqual(row["outcome"]["status"], "failed")
+        self.assertEqual(row["outcome"]["failed_phases"], ["storage"])
+        self.assertEqual(row["first_failure"]["phase"], "storage")
+        self.assertEqual(history.attempt_kind(row), "runner_failure")
+
+    def test_refused_post_image_headroom_is_a_runner_failure(self):
+        job = self.job.passing()
+        job.storage(ready=False)
+        job.phases(storage_ready="failure", native="skipped")
+        row = job.row()
+        self.assertEqual(row["outcome"]["failed_phases"], ["storage_ready"])
+        self.assertEqual(history.attempt_kind(row), "runner_failure")
 
     def test_cancelled_native_step(self):
         job = self.job.passing()
