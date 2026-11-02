@@ -27,6 +27,7 @@ type options struct {
 	blockSize         int64
 	osdMemorySize     int64
 	osdVolumeStorage  bool
+	osdBenchmark      OSDBenchmarkPolicy
 	// osdStorageSet records which OSDStorage fields a carrier already set, so a
 	// second carrier setting the same field is refused.
 	osdStorageSet  osdStorageField

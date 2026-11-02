@@ -21,7 +21,6 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
@@ -283,7 +282,8 @@ func TestBlockDeviceFault(t *testing.T) {
 	defer func() { receipt["control"] = b.control.log }()
 	number := strconv.FormatUint(uint64(created.Major), 10) + ":" + strconv.FormatUint(uint64(created.Minor), 10)
 
-	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 	cluster, err = ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
@@ -298,9 +298,6 @@ func TestBlockDeviceFault(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.cluster = cluster
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-		t.Fatal(err)
-	}
 	osd, err := faulthook.AddBlockDeviceOSD(ctx, cluster, b.device, b.chain.Name)
 	if osd != nil {
 		osdID = osd.GetContainerID()

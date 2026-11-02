@@ -29,7 +29,8 @@ internal paths breaks the bootstrap. The rules are in
 [configuration composition](../contributing/configuration-composition.md).
 
 For scenario-qualified opt-in daemon waits, see
-[Fixture daemon timing](daemon-timing.md).
+[Fixture daemon timing](daemon-timing.md). For OSD startup capacity
+calibration, see [OSD startup calibration](osd-startup-benchmark.md).
 
 ## Service packages
 

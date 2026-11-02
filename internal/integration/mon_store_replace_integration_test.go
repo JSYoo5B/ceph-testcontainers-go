@@ -12,7 +12,6 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -65,7 +64,8 @@ func monitorStoreReplace(t *testing.T, host bool) {
 	image, opts := harness.IntegrationImages(t)
 	run := func(monitors int, volume bool) *ceph.Container {
 		t.Helper()
-		cfg := append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(monitors).WithOSDCount(1).WithPoolDefaults(1, 1)))
+		cfg := append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(monitors).WithOSDCount(1).WithPoolDefaults(1, 1)),
+			ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 		if volume {
 			cfg = append(cfg, ceph.WithMonitorStorage(ceph.MonitorStorage{}.WithVolume()))
 		}
@@ -106,9 +106,6 @@ func monitorStoreReplace(t *testing.T, host bool) {
 	}
 
 	cluster := run(3, true)
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: upgradePool, Application: "rados", Replicas: 1, MinSize: 1, PGNum: 8}); err != nil {
 		t.Fatal(err)
 	}

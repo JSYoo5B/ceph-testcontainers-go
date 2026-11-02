@@ -15,7 +15,6 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -74,7 +73,7 @@ func startUpgradeCluster(t *testing.T, ctx context.Context, host bool) *upgradeR
 	opts := []testcontainers.ContainerCustomizer{
 		ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: from, Client: fromClient})),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3).WithPoolDefaults(3, 2)),
-		ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()),
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithVolume()),
 		ceph.WithMonitorStorage(ceph.MonitorStorage{}.WithVolume()),
 	}
 	if host {
@@ -94,9 +93,6 @@ func startUpgradeCluster(t *testing.T, ctx context.Context, host bool) *upgradeR
 		t.Fatal(err)
 	}
 	u := &upgradeRun{cluster: cluster}
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-		t.Fatal(err)
-	}
 	if facts, err := ceph.FactsOf(cluster); err != nil || facts.CephVersion != upgradeFrom || facts.UsesHostNetwork != host {
 		t.Fatalf("cluster release %q host network %v, want %s and %v: %v", facts.CephVersion, facts.UsesHostNetwork, upgradeFrom, host, err)
 	}

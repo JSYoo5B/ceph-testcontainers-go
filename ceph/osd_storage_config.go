@@ -10,6 +10,7 @@ const (
 	osdStorageObjectStore
 	osdStorageInMemory
 	osdStorageVolume
+	osdStorageBenchmark
 )
 
 // OSDStorage is the OSD storage group of the Ceph configuration: where and how
@@ -34,13 +35,14 @@ type OSDStorage struct {
 	store      OSDObjectStore
 	memoryMax  int64
 	volumeKept bool
+	benchmark  OSDBenchmarkPolicy
 }
 
 // WithBlockSize sets each sparse BlueStore file's logical size in bytes. The
 // minimum is 64 MiB and the default remains 1 GiB. These are disposable files,
 // not real disks. It is also the capacity of a MemStore OSD. Small functional
-// fixtures can use ClusterConfig.WithNoInitialOSDs and override.SetConfig to skip mClock's
-// startup capacity benchmark before AddOSD; the benchmark can exhaust a small
+// fixtures can select WithStartupBenchmark(OSDBenchmarkSkip) before the initial
+// OSDs or later AddOSD calls; native mClock calibration can exhaust a small
 // file even without client data. A size below the minimum, including zero, is an
 // explicit invalid setting, not an unspecified one.
 //
@@ -158,6 +160,12 @@ func (s OSDStorage) apply(o *options) error {
 	if s.set&osdStorageVolume != 0 {
 		o.osdVolumeStorage = s.volumeKept
 	}
+	if s.set&osdStorageBenchmark != 0 {
+		if s.benchmark != OSDBenchmarkNative && s.benchmark != OSDBenchmarkSkip {
+			return fmt.Errorf("unknown OSD startup benchmark policy %q", s.benchmark)
+		}
+		o.osdBenchmark = s.benchmark
+	}
 	o.osdStorageSet |= s.set
 	return nil
 }
@@ -170,7 +178,9 @@ func osdStorageFieldName(f osdStorageField) string {
 		return "object store"
 	case f&osdStorageInMemory != 0:
 		return "in-memory size"
-	default:
+	case f&osdStorageVolume != 0:
 		return "volume"
+	default:
+		return "startup benchmark"
 	}
 }
