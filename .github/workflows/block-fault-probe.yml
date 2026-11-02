@@ -10,9 +10,21 @@ on:
       - .github/scripts/test_block_fault_probe.py
       - .github/workflows/block-fault-probe.yml
   workflow_dispatch:
+    inputs:
+      public_api:
+        description: Qualify the public blockio API on both supported releases
+        type: boolean
+        default: false
+      prepare_kernel:
+        description: Allow loop and dm_delay module setup on this disposable hosted runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+env:
+  GOPROXY: 'https://proxy.golang.org|direct'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -20,6 +32,7 @@ concurrency:
 
 jobs:
   probe:
+    if: ${{ !inputs.public_api }}
     name: Scratch device probe
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -57,4 +70,87 @@ jobs:
           name: block-fault-report
           path: artifacts/block-fault-report.json
           retention-days: 30
+          if-no-files-found: warn
+
+  public-api:
+    if: github.event_name == 'workflow_dispatch' && inputs.public_api
+    name: Public block I/O / ${{ matrix.release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['20.2.4', '19.2.5']
+    env:
+      CGO_ENABLED: '0'
+      TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
+      CEPH_TEST_BLOCKIO_REQUIRE_DELAY: '1'
+      HELPER_REVISION: 711be98130c5173ef63ce56edf48fbdbdfe086ba
+      CEPH_RELEASE: ${{ matrix.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: JSYoo5B/ceph-testcontainers-images
+          ref: 711be98130c5173ef63ce56edf48fbdbdfe086ba
+          path: helper-source
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Prepare the explicitly admitted disposable kernel
+        if: inputs.prepare_kernel
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo -n modprobe loop
+          sudo -n modprobe dm_delay
+      - name: Build and quick-check the pinned helper
+        run: |
+          test "$(git -C helper-source rev-parse HEAD)" = "$HELPER_REVISION"
+          mkdir -p artifacts/blockio
+          docker build --tag blockio-qualification:local helper-source/image/extensions/blockio
+          helper=$(docker image inspect --format '{{.Id}}' blockio-qualification:local)
+          echo "CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper" >> "$GITHUB_ENV"
+          python3 helper-source/image/extension_check.py --extension blockio --image "$helper" \
+            > artifacts/blockio/helper-check.log
+          printf '%s\n' "$GITHUB_SHA" "$HELPER_REVISION" "$helper" > artifacts/blockio/sources.txt
+      - name: Pull fixed Ceph role digests
+        shell: python
+        run: |
+          import json, os, subprocess
+          pins = json.load(open('.github/ceph-role-images.json'))['images'][os.environ['CEPH_RELEASE']]['official']
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for role in ('essential', 'client'):
+                  image = 'ghcr.io/jsyoo5b/ceph-testcontainers-images@' + pins[role]
+                  subprocess.run(['docker', 'pull', image], check=True)
+                  output.write('CEPH_TEST_' + role.upper() + '_IMAGE=' + image + '\n')
+      - uses: ./.github/actions/runtime-cleanup
+        id: baseline
+        with:
+          phase: snapshot
+          directory: artifacts/blockio/cleanup
+      - name: Compile the source-owned public API batch
+        run: >-
+          python3 .github/scripts/tag_scenarios.py compile --category optional
+          --batch block_io --package ./internal/integration
+          --directory artifacts/blockio/compile
+      - name: Qualify delay, EIO, recovery and lifetime through the public API
+        run: >-
+          python3 .github/scripts/tag_scenarios.py optional --batch block_io
+          --package ./internal/integration --binary artifacts/blockio/compile
+          --directory artifacts/blockio/native
+      - uses: ./.github/actions/runtime-cleanup
+        if: always() && steps.baseline.outcome == 'success'
+        with:
+          phase: check
+          directory: artifacts/blockio/cleanup
+          artifact_name: blockio-cleanup-${{ matrix.release }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: public-blockio-${{ matrix.release }}
+          path: artifacts/blockio/
+          retention-days: 14
           if-no-files-found: warn

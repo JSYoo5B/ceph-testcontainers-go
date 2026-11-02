@@ -82,7 +82,7 @@ func (c *dmControl) dev() string { return fmt.Sprintf("%d:%d", c.rec.Major, c.re
 // outcome is unknown until its status file says otherwise.
 func (c *dmControl) dispatch(ctx context.Context, op, table string, wait time.Duration) (dmControlReply, error) {
 	id := randomName(op + "-")
-	c.rec.begin(op, table, id)
+	c.rec.Begin(op, table, id)
 	args := []string{op, strconv.FormatFloat(wait.Seconds(), 'f', 1, 64), id}
 	if op == "load" {
 		args = append(args, table)
@@ -94,7 +94,7 @@ func (c *dmControl) dispatch(ctx context.Context, op, table string, wait time.Du
 	if err != nil {
 		return r, err
 	}
-	c.rec.settle(r)
+	c.rec.Settle(r)
 	return r, nil
 }
 
@@ -107,7 +107,7 @@ func (c *dmControl) poll(ctx context.Context) (dmControlReply, error) {
 	if err != nil {
 		return r, err
 	}
-	c.rec.settle(r)
+	c.rec.Settle(r)
 	return r, nil
 }
 

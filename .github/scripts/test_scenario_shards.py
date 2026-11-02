@@ -23,6 +23,30 @@ import tag_scenarios as engine
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class PublicBlockIOQualificationTests(unittest.TestCase):
+    def test_disposable_qualification_is_explicit_and_uses_source_owned_batch(self):
+        workflow = (ROOT / '.github/workflows/block-fault-probe.yml').read_text()
+        jobs = dict(blocks(workflow.split('\njobs:\n', 1)[1], r'^  ([\w-]+):$'))
+        self.assertEqual(re.search(r'^    if: (.+)$', jobs['probe'], re.MULTILINE)[1], '${{ !inputs.public_api }}')
+        public = jobs['public-api']
+        self.assertEqual(re.search(r'^    if: (.+)$', public, re.MULTILINE)[1],
+                         "github.event_name == 'workflow_dispatch' && inputs.public_api")
+        kernel = next(step for step in steps(public) if 'modprobe' in step)
+        self.assertEqual(scalar(kernel, 'if'), 'inputs.prepare_kernel')
+        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', kernel)
+        self.assertIn("CEPH_TEST_BLOCKIO_REQUIRE_DELAY: '1'", public)
+        self.assertIn('--category optional', public)
+        self.assertIn('--batch block_io --package ./internal/integration', public)
+        self.assertIn('--binary artifacts/blockio/compile', public)
+        self.assertIn('steps.baseline.outcome ==', public)
+        self.assertNotIn('docker push', public)
+        self.assertNotIn('packages: write', workflow)
+        revision = re.search(r'HELPER_REVISION: ([0-9a-f]{40})$', public, re.MULTILINE)[1]
+        self.assertIn('ref: ' + revision, public)
+        source = (ROOT / 'internal/integration/public_block_io_integration_test.go').read_text()
+        self.assertIn('integration && ci_optional && ci_batch_block_io', source)
+
+
 def blocks(text, pattern):
     matches = list(re.finditer(pattern, text, re.MULTILINE))
     return [(match[1], text[match.start():matches[index + 1].start()

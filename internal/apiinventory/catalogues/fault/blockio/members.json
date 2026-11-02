@@ -1,0 +1,40 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "fault/blockio",
+  "count": 20,
+  "types": {
+    "fault/blockio.Config": [
+      "Config.Size field int64"
+    ],
+    "fault/blockio.Container": [
+      "Container embed testcontainers.Container"
+    ],
+    "fault/blockio.Identity": [
+      "Identity.Major field uint32",
+      "Identity.Minor field uint32",
+      "Identity.Path field string",
+      "Identity.Size field int64",
+      "Identity.UUID field string"
+    ],
+    "fault/blockio.Profile": [
+      "Profile.Delay field time.Duration",
+      "Profile.EIO field bool"
+    ],
+    "fault/blockio.Status": [
+      "Status.Identity field *Identity",
+      "Status.PendingStep field string",
+      "Status.Released field bool",
+      "Status.Requested field Profile",
+      "Status.Tables field *Tables"
+    ],
+    "fault/blockio.Tables": [
+      "Tables.Inactive field string",
+      "Tables.Live field string",
+      "Tables.Openers field int",
+      "Tables.ReadsInFlight field int64",
+      "Tables.Suspended field bool",
+      "Tables.WritesInFlight field int64"
+    ]
+  }
+}

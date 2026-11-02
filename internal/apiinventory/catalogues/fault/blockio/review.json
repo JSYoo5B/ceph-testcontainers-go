@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "fault/blockio",
+  "declarations_sha256": "f22321103784cda42374e0dc9e587c39f46533d6a36e87990bb56289f6b52a8b",
+  "members_sha256": "27edc49f60f604d8bfa94f931afbb01b2e66cfe84b68d293d4c6e74806ce6b6b",
+  "declarations": 20,
+  "members": 20,
+  "review": "api-naming.md",
+  "page": "fault/blockio/README.md"
+}

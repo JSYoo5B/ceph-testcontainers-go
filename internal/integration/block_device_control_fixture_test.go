@@ -64,7 +64,7 @@ func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
 
 	// The reply of a dispatched load is lost: the record still holds it.
 	lost := owned
-	lost.begin("load", ctlError, "load-1")
+	lost.Begin("load", ctlError, "load-1")
 	if got := classifyDM(lost, ctlError, view); got != dmStepUnsettled {
 		t.Errorf("a load whose reply was lost: %s", got)
 	}
@@ -74,12 +74,12 @@ func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
 
 	// The load finishes after its wait: the retained table is the load.
 	late := owned
-	late.begin("load", ctlError, "load-1")
-	late.settle(dmControlReply{Done: false})
+	late.Begin("load", ctlError, "load-1")
+	late.Settle(dmControlReply{Done: false})
 	if late.Unsettled != "load" || late.UnsettledTable != ctlError || late.UnsettledID != "load-1" {
 		t.Fatalf("a load still running was not kept: %+v", late)
 	}
-	late.settle(dmControlReply{Done: true})
+	late.Settle(dmControlReply{Done: true})
 	if late.Unsettled != "" || late.Loaded != ctlError {
 		t.Fatalf("a late load was not recorded as the control's: %+v", late)
 	}
@@ -88,15 +88,15 @@ func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
 	}
 
 	refused := owned
-	refused.begin("load", ctlError, "load-1")
-	refused.settle(dmControlReply{Done: true, RC: 1})
+	refused.Begin("load", ctlError, "load-1")
+	refused.Settle(dmControlReply{Done: true, RC: 1})
 	if refused.Unsettled != "" || refused.Loaded != "" {
 		t.Errorf("a refused load: %+v", refused)
 	}
 
 	swapped := late
-	swapped.begin("resume", "", "resume-1")
-	swapped.settle(dmControlReply{Done: true})
+	swapped.Begin("resume", "", "resume-1")
+	swapped.Settle(dmControlReply{Done: true})
 	if swapped.Live != ctlError || swapped.Loaded != "" {
 		t.Errorf("a resume of the loaded table: %+v", swapped)
 	}
