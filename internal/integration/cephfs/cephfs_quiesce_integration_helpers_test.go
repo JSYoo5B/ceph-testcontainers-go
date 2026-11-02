@@ -25,7 +25,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Minute)
 	defer cancel()
 	const filesystem = "tc-quiesce"
-	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1 << 30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}

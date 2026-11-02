@@ -150,7 +150,7 @@ func lookRecoveryPG(ctx context.Context, cluster *ceph.Container, pool, pgid str
 func testCephFSOSDRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 	osds := clusteraccess.OSDs(t, m.Cluster)
 	if len(osds) != 2 {
 		t.Fatalf("want two owned OSDs, have %d", len(osds))
