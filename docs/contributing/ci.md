@@ -774,9 +774,14 @@ timed-out command is killed with its process group and has `exit_code: null`.
 their independent filesystems, required and available bytes/inodes, the
 skip/reclaim decision, cleanup duration and post-check. Paths on the same
 device share one observation; space on different filesystems is never added.
-The MON store filesystem must retain its default 30% available share after
-the preparation and runtime allowances. `storage-ready.json` repeats the
-check after actual image pulls, retaining the runtime allowance. Failure of
+Every candidate store filesystem must retain the default MON 30% available
+share after the preparation and runtime allowances. Containerd writable
+snapshots can hold the MON store on a different device from Docker's metadata
+root, so the guard conservatively keeps this floor on every candidate device.
+The receipt's `docker_root` marker identifies the metadata filesystem for the
+controlled pressure file; it does not locate the MON store.
+`storage-ready.json` repeats the check after actual image pulls, retaining the
+runtime allowance. Failure of
 either guard stops the job before native assertions.
 
 The small qualification in `.github/runner-storage.json` currently covers the
