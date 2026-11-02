@@ -363,7 +363,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(qualification, "profiles"), "${{ inputs.storage_profiles }}")
             storage_input = next(block for key, block in blocks(workflow.split("\npermissions:", 1)[0], r"^      ([\w-]+):$") if key == "storage_profiles")
             self.assertEqual(scalar(storage_input, "default"), "short-rados_fixtures_watchers-52f45dc3")
-            self.assertEqual(scalar(qualification, "max_parallel"), "5")
+            self.assertEqual(scalar(qualification, "max_parallel"), str(engine.STORAGE_MAX_PARALLEL))
             self.assertEqual(scalar(qualification, "ref"), "${{ inputs.ref || github.sha }}")
             self.assertEqual(scalar(qualification, "storage_policy"), "${{ inputs.storage_policy }}")
             self.assertEqual(scalar(gate, "if"), "inputs.mode != 'storage'")
@@ -895,13 +895,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         be in progress at once, so the periodic budget adds both up."""
         keys = self.periodic_group_keys()
         self.assertEqual({mode: key.removeprefix("Ceph periodic-refs/heads/main") for mode, key in keys.items()},
-                         engine.PERIODIC_GROUP_SUFFIX)
+                         {mode: engine.PERIODIC_GROUP_SUFFIX[mode] for mode in keys})
         self.assertNotEqual(keys["full"], keys["representative"])
         entries = engine.release_matrix("all", "Ceph periodic")
         full = engine.runner_budget(entries)["runners"]
         campaign = int(scalar(self.jobs[self.PERIODIC]["representative"], "max_parallel"))
         budget = engine.periodic_runner_budget(entries, campaign)
-        self.assertEqual(budget["modes"], {"full": full, "representative": campaign})
+        self.assertEqual(budget["modes"], {"full": full, "representative": campaign,
+                                           "storage": engine.STORAGE_MAX_PARALLEL})
         self.assertEqual(budget["runners"], full + campaign)
         self.assertLessEqual(budget["runners"], engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
         self.assertTrue(budget["passed"], budget)
@@ -917,9 +918,20 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # One shared group would let the runs wait for each other: the
         # budget is then the larger mode's, not the sum.
         shared = engine.periodic_runner_budget(entries, engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS,
-                                               {"full": "", "representative": ""})
+                                               {"full": "", "representative": "", "storage": ""})
         self.assertEqual(shared["runners"], engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
         self.assertTrue(shared["passed"])
+
+    def test_storage_dispatch_waits_in_the_full_matrix_group(self):
+        """A storage dispatch is neither the campaign schedule nor the
+        representative mode, so the group expression gives it the full
+        matrix's key. A group of its own would take pull request runners."""
+        self.assertEqual(engine.PERIODIC_GROUP_SUFFIX["storage"], engine.PERIODIC_GROUP_SUFFIX["full"])
+        entries = engine.release_matrix("all", "Ceph periodic")
+        self.assertTrue(engine.periodic_runner_budget(entries)["passed"])
+        separate = engine.periodic_runner_budget(entries, groups=dict(engine.PERIODIC_GROUP_SUFFIX, storage="-storage"))
+        self.assertEqual(separate["runners"], engine.periodic_runner_budget(entries)["runners"] + engine.STORAGE_MAX_PARALLEL)
+        self.assertFalse(separate["passed"])
 
     def test_runner_budget_refuses_callers_that_take_pull_request_runners(self):
         entries = engine.release_matrix("all", "Ceph periodic")

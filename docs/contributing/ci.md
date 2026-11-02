@@ -130,7 +130,7 @@ lists renames as a deletion and an addition.
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
 | Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run. Manual runs are never cancelled. |
-| Ceph periodic | workflow name and ref, plus `-campaign` for the representative campaign | A new run waits for the run in progress and never cancels it. GitHub keeps one waiting run per group. |
+| Ceph periodic | workflow name and ref, plus `-campaign` for the representative campaign; a storage qualification dispatch shares the matrix's group | A new run waits for the run in progress and never cancels it. GitHub keeps one waiting run per group, so a waiting storage dispatch and a waiting matrix firing replace each other; dispatch the storage run again when it ends cancelled. |
 | Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
@@ -385,13 +385,15 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Restore the Go module and build caches | n/a | Restores what a `Plan` job saved. A build-cache miss only slows compilation. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
-| Prepare runner storage | n/a | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload/images and actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
+| Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload/images and actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
 | Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source: each image reference among the constants of the declarations that the tests reach (constants of other packages included), a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag), and a read of `.github/ceph-role-images.json` (the declared roles of every supported release). With prepared role images, the published role image fallback is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
+| Verify post-image runner headroom | Post-image runner headroom | Ceph batches only. `runner_storage.py ready` refuses the job before the tests when the pulled images left too little headroom for the workload. Writes `runner-storage/storage-ready.json`. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
 | Record runner storage after the tests | n/a | Ceph batches only, also after a failure. Writes `runner-storage/storage-after.json`. |
+| Release the qualification pressure file | n/a | `pressure` storage policies only, also after a failure. Deletes the pressure file only when its device and inode match `storage-pressure.json`. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs whenever the baseline succeeded, also after a failure. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. Never deletes anything. |
 | Show actual failure phases in PR check annotations and summary | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
 | Normalize the scenario history row | n/a | Writes `history-row.json` (see [Scenario history](#scenario-history)). Its failure never changes the job result. |
@@ -817,7 +819,9 @@ evidence belongs in the implementation pull request.
 Only verified local classic-overlay2 or socket-linked containerd-overlayfs
 layouts may skip. Existing local volume mounts and nested mounts are inspected.
 Containerd must have one running process whose CLI/configuration root and socket
-match Docker's reported socket; imported/proxy configuration and snapshotter
+match Docker's reported socket. The built-in defaults are not inferred, so a
+package-default containerd whose `root` and `grpc.address` are left unset always
+retains cleanup; imported/proxy configuration and snapshotter
 root overrides keep conservative preparation. Unlinked roots are recorded as
 candidates and cannot authorize skipping. Remote endpoints,
 unknown roots, volume plugins/options and missing evidence keep conservative
@@ -870,6 +874,8 @@ unqualified workloads. Use its measured start/end times and final job to assess
 workflow completion, rather than summing avoided preparation seconds. The
 manual control cannot change the policy or checkout of push/PR events.
 Normal schedules, workload coverage and runner concurrency limits are unchanged.
+A storage dispatch of `Ceph periodic` shares the matrix's concurrency group (see
+[Concurrency and cancellation](#concurrency-and-cancellation)).
 
 ### Typical causes by phase
 

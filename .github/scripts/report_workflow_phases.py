@@ -11,12 +11,16 @@ import sys
 PHASES = (
     ("modules", "Go module preparation", "SCENARIO_MODULES_OUTCOME"),
     ("compile", "Compilation", "SCENARIO_COMPILE_OUTCOME"),
+    ("storage", "Runner storage preparation", "SCENARIO_STORAGE_OUTCOME"),
     ("docker", "Docker baseline", "SCENARIO_DOCKER_OUTCOME"),
     ("images", "Published image preparation", "SCENARIO_IMAGES_OUTCOME"),
     ("test_images", "Ryuk and test image preparation", "SCENARIO_TEST_IMAGES_OUTCOME"),
+    ("storage_ready", "Post-image runner headroom", "SCENARIO_STORAGE_READY_OUTCOME"),
     ("native", "Native assertions and completion", "SCENARIO_NATIVE_OUTCOME"),
     ("cleanup", "Docker resource cleanup", "SCENARIO_CLEANUP_OUTCOME"),
 )
+# The phases that only Ceph batches run; a Docker-only batch skips them.
+CEPH_ONLY = frozenset(("storage", "images", "storage_ready"))
 OUTCOMES = frozenset(("success", "failure", "cancelled", "skipped", ""))
 CHECK_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 /._-]{0,63}\Z")
 PROFILE = re.compile(r"[a-z][a-z0-9_-]{0,79}\Z")
@@ -35,7 +39,7 @@ def report(environment):
         outcome = environment.get(variable, "")
         if outcome not in OUTCOMES:
             raise ValueError("workflow step outcome is invalid")
-        status = "not required" if key == "images" and requires_ceph == "false" and outcome == "skipped" else outcome or "not run"
+        status = "not required" if key in CEPH_ONLY and requires_ceph == "false" and outcome == "skipped" else outcome or "not run"
         phases.append({"phase": key, "label": label, "outcome": outcome, "display": status})
     return {"check": check, "profile": profile, "phases": phases,
             "failed_phases": [phase["phase"] for phase in phases if phase["outcome"] == "failure"],

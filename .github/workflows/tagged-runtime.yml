@@ -252,6 +252,7 @@ jobs:
       # Skip cleanup only for an exact qualified workload/image cohort with
       # enough headroom on every actual Docker storage filesystem.
       - name: Prepare runner storage
+        id: storage
         if: matrix.requires_ceph
         env:
           STORAGE_POLICY: ${{ inputs.storage_policy }}
@@ -294,6 +295,7 @@ jobs:
           action: record
           phase: images
       - name: Verify post-image runner headroom
+        id: storage_ready
         if: matrix.requires_ceph
         env:
           STORAGE_RELEASE: ${{ inputs.release }}
@@ -348,9 +350,11 @@ jobs:
           SCENARIO_REQUIRES_CEPH: ${{ matrix.requires_ceph }}
           SCENARIO_MODULES_OUTCOME: ${{ steps.modules.outcome }}
           SCENARIO_COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          SCENARIO_STORAGE_OUTCOME: ${{ steps.storage.outcome }}
           SCENARIO_DOCKER_OUTCOME: ${{ steps.docker_baseline.outcome }}
           SCENARIO_IMAGES_OUTCOME: ${{ steps.role_images.outcome }}
           SCENARIO_TEST_IMAGES_OUTCOME: ${{ steps.test_images.outcome }}
+          SCENARIO_STORAGE_READY_OUTCOME: ${{ steps.storage_ready.outcome }}
           SCENARIO_NATIVE_OUTCOME: ${{ steps.native.outcome }}
           SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: python3 .github/scripts/report_workflow_phases.py

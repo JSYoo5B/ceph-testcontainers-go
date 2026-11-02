@@ -732,7 +732,10 @@ PULL_REQUEST_RUNNERS = 16
 RELEASE_MAX_PARALLEL = {"short": 4, "topology": 2, "multicluster": 2, "recovery": 2}
 ENVIRONMENT_MAX_PARALLEL = 1
 CAMPAIGN_MAX_PARALLEL = 3
-PERIODIC_GROUP_SUFFIX = {"full": "", "representative": "-campaign"}
+# A storage qualification dispatch shares the full matrix's group: the full
+# matrix and a campaign already hold every runner that pull requests leave.
+STORAGE_MAX_PARALLEL = 5
+PERIODIC_GROUP_SUFFIX = {"full": "", "representative": "-campaign", "storage": ""}
 
 
 def release_matrix(scope, check_prefix, current=None):
@@ -770,18 +773,20 @@ def runner_budget(entries):
     return {"runners": used, "available": available, "passed": used <= available}
 
 
-def periodic_runner_budget(entries, campaign=None, groups=None):
+def periodic_runner_budget(entries, campaign=None, groups=None, storage=None):
     """The runners that Ceph periodic holds at most at once, over all its
     concurrency groups, against those that pull requests leave.
 
     Each mode (the full matrix of release callers entries with the
-    environment caller, and the representative campaign with max-parallel
-    campaign) runs in the group that its suffix in groups names. A group
+    environment caller, the representative campaign with max-parallel
+    campaign, and a storage qualification dispatch with max-parallel
+    storage) runs in the group that its suffix in groups names. A group
     runs one run at a time and lets the next wait, so modes that share a
     group hold the larger of their budgets, and separate groups add up."""
     campaign = CAMPAIGN_MAX_PARALLEL if campaign is None else campaign
+    storage = STORAGE_MAX_PARALLEL if storage is None else storage
     groups = PERIODIC_GROUP_SUFFIX if groups is None else groups
-    modes = {"full": runner_budget(entries)["runners"], "representative": campaign}
+    modes = {"full": runner_budget(entries)["runners"], "representative": campaign, "storage": storage}
     held = {}
     for mode, runners in modes.items():
         held[groups[mode]] = max(held.get(groups[mode], 0), runners)

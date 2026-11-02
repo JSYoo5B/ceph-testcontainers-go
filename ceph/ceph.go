@@ -202,8 +202,8 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // remaining MGRs (the first stays active), waits for an available active MGR (or, with
 // ClusterConfig.WithNoInitialManagers, for quorum and the OSDs), and finally
 // creates the ClusterConfig.WithPools pools and the resources of the service
-// options. Run does not wait for clean placement groups; call WaitForClean
-// before client I/O.
+// options. Run does not wait for clean placement groups; call
+// Observer.WaitForClean before client I/O.
 //
 // Contradictory options fail before any Docker resource exists, regardless of
 // their order: a host address without WithHostNetwork; host networking with a
@@ -1102,7 +1102,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	c.closed = true
 	// Undo faults in their fixed phases: network delays first, with c.mu
 	// released around each Restore, while their helpers and targets still
-	// run; then interruptions of caller-owned clients and owned daemons
+	// run; then owned block I/O faults, also with c.mu released, before a
+	// daemon is stopped or its device released; then interruptions of caller-owned clients and owned daemons
 	// before any network is removed; then pauses, because a frozen process
 	// cannot handle the stop signal until it is thawed. A failed undo
 	// remains retryable through its handle.

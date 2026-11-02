@@ -94,6 +94,18 @@ func TestOSDBenchmarkPolicyScriptUsesLocalAdmissionAndLiveDaemon(t *testing.T) {
 				if err != nil || len(calls) == 0 {
 					t.Fatalf("bootstrap: %v %s %v", calls, out, err)
 				}
+				admissions := 0
+				for _, call := range calls {
+					if strings.Contains(call, "--show-config-value osd_mclock_skip_benchmark") {
+						admissions++
+						if test.want == "" || strings.Count(call, test.want) != 1 {
+							t.Fatalf("admission did not check the selected policy: %s", call)
+						}
+					}
+				}
+				if want := map[bool]int{false: 0, true: 1}[test.want != ""]; admissions != want {
+					t.Fatalf("local admission calls = %d, want %d: %v", admissions, want, calls)
+				}
 				for i, call := range calls {
 					has := strings.Contains(call, "--osd-mclock-skip-benchmark=")
 					if i == len(calls)-1 {

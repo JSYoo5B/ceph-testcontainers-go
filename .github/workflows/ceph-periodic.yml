@@ -44,12 +44,12 @@ on:
         type: number
         default: 3
       release:
-        description: Ceph release of the campaign's role images (representative only)
+        description: Ceph release of the role images (representative and storage only)
         type: choice
         options: ['20.2.4', '19.2.5']
         default: '20.2.4'
       ref:
-        description: Commit the campaign pins (representative only); empty pins the dispatched branch head
+        description: Commit the campaign pins or the storage run checks out (representative and storage only); empty uses the dispatched branch head
         type: string
         default: ''
 
@@ -62,7 +62,11 @@ permissions:
 # matrix firing never replaces a waiting campaign, or the reverse. A matrix
 # run and a campaign run can therefore run at once, and their runtime bounds
 # together stay within the runners that pull requests leave
-# (tag_scenarios.periodic_runner_budget).
+# (tag_scenarios.periodic_runner_budget). A storage dispatch shares the
+# matrix's group, because a group of its own would take pull request
+# runners. GitHub keeps one waiting run per group, so a storage dispatch
+# that waits behind a matrix run is replaced by the next matrix firing, and
+# replaces a waiting one; dispatch it again when it ends cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}${{ (github.event.schedule == '23 4 * * *' || inputs.mode == 'representative') && '-campaign' || '' }}
   cancel-in-progress: false

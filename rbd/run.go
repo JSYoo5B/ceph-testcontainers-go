@@ -16,8 +16,8 @@ import (
 // A non-nil Container returned with an error must still be terminated.
 //
 // Run returns after the pools exist and their RBD metadata is initialized.
-// PG peering may still be finishing, so call WaitForClean before the first
-// client I/O.
+// PG peering may still be finishing, so call ceph.Observer.WaitForClean
+// (ceph.Observe(c.Container)) before the first client I/O.
 //
 //purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {

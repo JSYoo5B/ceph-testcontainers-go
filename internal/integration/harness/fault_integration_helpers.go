@@ -60,3 +60,15 @@ func ExecOutput(t *testing.T, ctx context.Context, ctr testcontainers.Container,
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// NativeBinaryRelease is the Ceph release that binary in ctr reports with
+// --version, the value a role's timing qualification judges, which can differ
+// from the cluster's own release when role images are pinned separately.
+func NativeBinaryRelease(t *testing.T, ctx context.Context, ctr testcontainers.Container, binary string) string {
+	t.Helper()
+	words := strings.Fields(ExecOutput(t, ctx, ctr, binary, "--version"))
+	if len(words) < 3 || words[0] != "ceph" || words[1] != "version" {
+		t.Fatalf("%s --version did not report a Ceph release: %q", binary, strings.Join(words, " "))
+	}
+	return words[2]
+}

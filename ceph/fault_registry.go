@@ -35,14 +35,15 @@ const (
 	// faultShaping entries are undone first, each with c.mu released,
 	// because their undo takes c.mu inside its own mutex.
 	faultShaping
-	// faultEndpoint entries are undone second, under c.mu. A failure
-	// keeps the entry's network, which the undo still needs.
+	// faultEndpoint entries are undone third, after faultStorage, under
+	// c.mu. A failure keeps the entry's network, which the undo still needs.
 	faultEndpoint
 	// faultFreeze entries are undone last, under c.mu, before native
 	// commands are stopped: a frozen process cannot handle a stop signal.
 	faultFreeze
-	// faultStorage restores owned block tables without the topology mutex,
-	// before a daemon is stopped or its device claim can be released.
+	// faultStorage entries are undone second, after faultShaping: they
+	// restore owned block tables with c.mu released, before a daemon is
+	// stopped or its device claim can be released.
 	faultStorage
 )
 
@@ -261,7 +262,8 @@ func (r *faultRegistry) held(phase faultPhase) []*faultEntry {
 }
 
 // undo runs terminate's fault phases in order. The caller holds mu, the
-// cluster mutex, which only faultShaping releases around each undo. Failed
+// cluster mutex, which faultShaping and faultStorage release around each
+// undo. Failed
 // entries stay registered, so terminate is retryable, and a failed endpoint
 // fault blocks the removal of its network.
 func (r *faultRegistry) undo(ctx context.Context, mu sync.Locker) ([]error, map[string]bool) {

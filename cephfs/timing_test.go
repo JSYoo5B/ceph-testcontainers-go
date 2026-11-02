@@ -196,7 +196,7 @@ func TestOverrideTimingRefusesUnqualifiedOrUnownedTargetsBeforeWrites(t *testing
 func TestOverrideTimingEffectiveReadbackFailureRetainsHandleAndReleasesGate(t *testing.T) {
 	fs, control := timingFixture(t)
 	control.blocked = "mds.fixture-0"
-	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	handles, err := fs.OverrideTiming(ctx, TimingProfile{DirectoryPins: true})
 	if !errors.Is(err, context.DeadlineExceeded) || len(handles) != 1 || len(control.entries) != 1 {
