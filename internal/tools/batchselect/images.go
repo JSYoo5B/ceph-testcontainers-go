@@ -142,11 +142,14 @@ const rolePins = ".github/ceph-role-images.json"
 type imageUse struct {
 	// Kind is image (Reference is complete), prefix (Reference is completed at
 	// run time) or role-pins (the test reads the pinned role images).
-	Kind        string   `json:"kind"`
-	Reference   string   `json:"reference,omitempty"`
-	Declaration string   `json:"declaration"`
-	Position    string   `json:"position"`
-	Tests       []string `json:"tests"`
+	Kind string `json:"kind"`
+	// RoleFallback is true only when every reachable use is the integration
+	// harness fallback that prepared role images replace. Explicit uses win.
+	RoleFallback bool     `json:"role_fallback,omitempty"`
+	Reference    string   `json:"reference,omitempty"`
+	Declaration  string   `json:"declaration"`
+	Position     string   `json:"position"`
+	Tests        []string `json:"tests"`
 }
 
 type imagesResult struct {
@@ -213,11 +216,22 @@ func testImages(opts options, tags string, tests []string) (imagesResult, error)
 				}
 				key := kind + "\x00" + reference
 				use := uses[key]
+				declaration := g.nodes[n]
+				fallback := kind == "image" && declaration.display == "func IntegrationImage" &&
+					strings.HasSuffix("/"+declaration.file, "/harness/services_integration.go")
 				if use == nil {
 					position := g.fset.Position(v.pos)
-					use = &imageUse{Kind: kind, Reference: reference, Declaration: g.nodes[n].display,
-						Position: fmt.Sprintf("%s:%d", g.nodes[n].file, position.Line), Tests: []string{}}
+					use = &imageUse{Kind: kind, Reference: reference, Declaration: declaration.display,
+						RoleFallback: fallback,
+						Position:     fmt.Sprintf("%s:%d", declaration.file, position.Line), Tests: []string{}}
 					uses[key] = use
+				} else if use.RoleFallback && !fallback {
+					// Retain the explicit use's provenance as well as its
+					// requirement, regardless of test or graph traversal order.
+					position := g.fset.Position(v.pos)
+					use.RoleFallback = false
+					use.Declaration = declaration.display
+					use.Position = fmt.Sprintf("%s:%d", declaration.file, position.Line)
 				}
 				if !slices.Contains(use.Tests, name) {
 					use.Tests = append(use.Tests, name)

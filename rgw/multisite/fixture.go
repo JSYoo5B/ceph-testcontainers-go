@@ -33,7 +33,9 @@ type Config struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
 	// SetupImage explicitly selects the RGW administration runtime.
-	SetupImage           string
+	SetupImage string
+	// Timing selects startup polling for every gateway this fixture owns.
+	Timing               TimingProfile
 	destinationZonegroup string
 }
 
@@ -135,6 +137,10 @@ func WithTopology(config TopologyConfig) Option {
 // cannot set up multisite: the master gateway rejects realm pull from a
 // secondary with HTTP 403 ("'x-amz-content-sha256' supplied, but not in
 // CanonicalHeaders"), and no setting disables the check; use 19.2.5.
+//
+// Timing.IncrementalSync fixes qualified idle polling for each owned gateway
+// from startup, including subsequently added zones. It is qualified only for
+// Ceph 20.2.4 and preserves the fixture's sync lease duration.
 //
 //purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
@@ -542,12 +548,15 @@ func (f *Fixture) runGateway(ctx context.Context, image string, cluster *ceph.Co
 	gateway, err := start(ctx, rgw.Config{
 		Name: alias, Realm: f.realm.config.Realm, Zonegroup: f.realm.zoneGroupName(zone), Zone: zone,
 		Region: f.realm.zoneGroupName(zone), SkipUserCreation: true,
-	}, append(moduleOpts, opts...)...)
+	}, f.realm.config.Timing.gatewayOptions(moduleOpts, opts)...)
 	if gateway != nil {
 		f.owned.AddContainer(gateway.Container)
 	}
 	if err != nil {
 		return gateway, fmt.Errorf("run RGW zone %s: %w", zone, err)
+	}
+	if err := f.realm.config.Timing.verifyGateway(ctx, gateway); err != nil {
+		return gateway, fmt.Errorf("verify RGW zone %s timing: %w", zone, err)
 	}
 	return gateway, nil
 }

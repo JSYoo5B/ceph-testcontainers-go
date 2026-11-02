@@ -44,6 +44,8 @@ type TopologyConfig struct {
 	SetupImage                       string
 	Zonegroups                       []ZonegroupConfig
 	MasterZonegroup                  string
+	// Timing applies to the initial and subsequently added owned gateways.
+	Timing TimingProfile
 }
 
 // Zone describes one owned multisite zone. PeerEndpoint is reachable by
@@ -89,7 +91,7 @@ func runTopology(ctx context.Context, image string, config TopologyConfig, opts 
 		Source: zones[0].Cluster, Destination: zones[1].Cluster,
 		SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
 		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, SetupImage: config.SetupImage,
-		destinationZonegroup: zones[1].Zonegroup,
+		destinationZonegroup: zones[1].Zonegroup, Timing: config.Timing,
 	}, opts...)
 	if err != nil {
 		return f, err

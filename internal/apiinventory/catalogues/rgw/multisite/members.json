@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw/multisite",
-  "count": 113,
+  "count": 116,
   "types": {
     "rgw/multisite.BucketSyncPolicyStatus": [
       "BucketSyncPolicyStatus.Bucket field SyncBucketIdentity",
@@ -42,6 +42,7 @@
       "Config.SetupImage field string",
       "Config.Source field *ceph.Container",
       "Config.SourceZone field string",
+      "Config.Timing field TimingProfile",
       "Config.Zonegroup field string"
     ],
     "rgw/multisite.DataSyncStatus": [
@@ -123,11 +124,15 @@
       "SyncStatus.ZoneID field string",
       "SyncStatus.ZonegroupID field string"
     ],
+    "rgw/multisite.TimingProfile": [
+      "TimingProfile.IncrementalSync field bool"
+    ],
     "rgw/multisite.TopologyConfig": [
       "TopologyConfig.MasterZonegroup field string",
       "TopologyConfig.MetadataMaster field string",
       "TopologyConfig.Realm field string",
       "TopologyConfig.SetupImage field string",
+      "TopologyConfig.Timing field TimingProfile",
       "TopologyConfig.Zonegroup field string",
       "TopologyConfig.Zonegroups field []ZonegroupConfig",
       "TopologyConfig.Zones field []ZoneConfig"

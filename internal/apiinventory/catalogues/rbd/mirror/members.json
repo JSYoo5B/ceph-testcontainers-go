@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rbd/mirror",
-  "count": 74,
+  "count": 76,
   "types": {
     "rbd/mirror.Config": [
       "Config.DaemonCount field int",
@@ -15,7 +15,8 @@
       "Config.Scope field Scope",
       "Config.Source field *ceph.Container",
       "Config.SourceNamespace field string",
-      "Config.SourceSite field string"
+      "Config.SourceSite field string",
+      "Config.Timing field TimingProfile"
     ],
     "rbd/mirror.Daemon": [
       "Daemon embed testcontainers.Container",
@@ -97,6 +98,9 @@
       "ReceiverStatus.SourceFSID field string",
       "ReceiverStatus.SourceNamespace field string",
       "ReceiverStatus.SourcePoolID field int64"
+    ],
+    "rbd/mirror.TimingProfile": [
+      "TimingProfile.JournalPolling field bool"
     ]
   }
 }
