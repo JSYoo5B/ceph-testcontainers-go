@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 22,
+  "count": 24,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -72,6 +72,14 @@
       "signature": "func() []*MDS",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.MDSs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideTiming",
+      "kind": "method",
+      "signature": "func(ctx context.Context, profile TimingProfile) ([]*override.ConfigHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideTiming",
       "decision": "baseline"
     },
     {
@@ -151,6 +159,12 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Filesystem, error)",
       "proposed": "cephfs.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TimingProfile",
+      "kind": "type",
+      "proposed": "cephfs.TimingProfile",
       "decision": "baseline"
     },
     {
