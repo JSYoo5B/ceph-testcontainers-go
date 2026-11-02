@@ -252,6 +252,22 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 					}
 				})
 			}
+			facts, factsErr := ceph.FactsOf(source)
+			if factsErr != nil {
+				t.Fatal(factsErr)
+			}
+			if facts.CephVersion != "20.2.4" {
+				if err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), facts.CephVersion) || link == nil {
+					t.Fatalf("unqualified profile did not retain its partial fixture: version=%s fixture=%t error=%v", facts.CephVersion, link != nil, err)
+				}
+				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer stop()
+				if err := link.Terminate(cleanup); err != nil {
+					t.Fatal("terminate unqualified profile fixture", err)
+				}
+				t.Logf("RGW startup timing: unqualified release %s refused and partial fixture cleaned up", facts.CephVersion)
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

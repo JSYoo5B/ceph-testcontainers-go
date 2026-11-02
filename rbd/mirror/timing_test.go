@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -85,8 +86,13 @@ func TestTimingProfileRequiresActualQualifiedVersionAndEffectiveReadback(t *test
 			if (err == nil) != test.valid {
 				t.Fatalf("valid=%v err=%v", test.valid, err)
 			}
-			if !strings.HasPrefix(test.version, "ceph version 20.2.4 ") && len(d.calls) != 2 {
-				t.Fatal("unqualified version reached config readback", d.calls)
+			if !strings.HasPrefix(test.version, "ceph version 20.2.4 ") {
+				if len(d.calls) != 2 {
+					t.Fatal("unqualified version reached config readback", d.calls)
+				}
+				if errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), strings.Fields(test.version)[2]) || !strings.Contains(err.Error(), "qualified only") {
+					t.Fatalf("unqualified profile lost version or claimed native incapability: %v", err)
+				}
 			}
 		})
 	}
@@ -120,5 +126,16 @@ func TestTimingProfileRejectsRemovedDuplicateAndAliasedStartupFlags(t *testing.T
 		if len(d.calls) != 1 {
 			t.Fatal("invalid command reached later verification", d.calls)
 		}
+	}
+}
+
+func TestTimingProfileDoesNotClassifyUnparseableVersionAsUnsupported(t *testing.T) {
+	d := &timingDaemon{version: "not native version output", effective: `{"rbd_mirror_journal_poll_age":"1"}`}
+	err := (TimingProfile{JournalPolling: true}).verify(t.Context(), d)
+	if err == nil || errors.Is(err, ceph.ErrUnsupported) {
+		t.Fatalf("unparseable version claimed a native unsupported capability: %v", err)
+	}
+	if len(d.calls) != 2 {
+		t.Fatal("unparseable version reached config readback", d.calls)
 	}
 }

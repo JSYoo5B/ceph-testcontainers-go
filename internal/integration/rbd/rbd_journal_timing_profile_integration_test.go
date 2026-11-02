@@ -48,6 +48,19 @@ func TestRBDJournalTimingProfile(t *testing.T) {
 			}
 		})
 	}
+	if version := harness.StaticFacts(source).CephVersion; version != "20.2.4" {
+		if link == nil || len(link.Daemons()) == 0 || err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), version) {
+			t.Fatalf("unqualified release did not return a qualification refusal with owned partial fixture: ceph=%s fixture=%v err=%v", version, link != nil, err)
+		}
+		if err := link.Terminate(ctx); err != nil {
+			t.Fatal("cleanup partial unqualified timing fixture", err)
+		}
+		if len(link.Daemons()) != 0 || link.Container != nil {
+			t.Fatal("unqualified timing fixture retained daemon membership after cleanup")
+		}
+		t.Logf("RBD_JOURNAL_PUBLIC_PROFILE_UNQUALIFIED ceph=%s partial_cleanup=passed", version)
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
