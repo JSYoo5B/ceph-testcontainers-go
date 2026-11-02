@@ -22,7 +22,7 @@ func TestCephFSAdditionalErasureCodedDataPool(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	const ecPool = "ecfs-file-data"
 	fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "ecfs", AdditionalDataPools: []ceph.PoolConfig{{
 		Name: ecPool, PGNum: 8, MinSize: 3, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
