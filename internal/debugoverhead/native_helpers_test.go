@@ -61,7 +61,7 @@ func runDebugOverhead(t *testing.T, option string) {
 		}
 		image = images.Essential
 	}
-	opts := []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip))}
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	var finalization *finalize.Finalization
 	if cluster != nil {

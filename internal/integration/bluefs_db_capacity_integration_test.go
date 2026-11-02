@@ -81,7 +81,7 @@ func TestBlueFSDBCapacity(t *testing.T) {
 	defer cancel()
 	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
-		ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(logicalCeiling).WithBlockSize(512<<20)))
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithInMemory(logicalCeiling).WithBlockSize(512<<20)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
@@ -98,7 +98,6 @@ func TestBlueFSDBCapacity(t *testing.T) {
 	// The device paths must differ from block.db and block.wal: BlueStore
 	// links those names to the configured paths.
 	for _, s := range []ceph.ConfigSetting{
-		{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"},
 		{Section: "osd", Name: "bluestore_block_db_path", Value: "/var/lib/ceph/osd/ceph-$id/db.file"},
 		{Section: "osd", Name: "bluestore_block_db_size", Value: strconv.FormatInt(dbDeviceSize, 10)},
 		{Section: "osd", Name: "bluestore_block_db_create", Value: "true"},

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 263,
+  "count": 267,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1147,6 +1147,24 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDBenchmarkNative",
+      "kind": "const",
+      "proposed": "ceph.OSDBenchmarkNative",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDBenchmarkPolicy",
+      "kind": "type",
+      "proposed": "ceph.OSDBenchmarkPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDBenchmarkSkip",
+      "kind": "const",
+      "proposed": "ceph.OSDBenchmarkSkip",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.OSDBlueStore",
       "kind": "const",
       "proposed": "ceph.OSDBlueStore",
@@ -1376,6 +1394,14 @@
       "signature": "func(store OSDObjectStore) OSDStorage",
       "receiver": "OSDStorage",
       "proposed": "ceph.OSDStorage.WithObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithStartupBenchmark",
+      "kind": "method",
+      "signature": "func(policy OSDBenchmarkPolicy) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithStartupBenchmark",
       "decision": "baseline"
     },
     {

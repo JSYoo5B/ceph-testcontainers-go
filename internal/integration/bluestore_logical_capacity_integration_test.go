@@ -116,7 +116,7 @@ func newLogicalEnv(t *testing.T, ctx context.Context) *logicalEnv {
 	t.Cleanup(func() { _ = docker.Close() })
 	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
-		ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(logicalCeiling).WithBlockSize(logicalBlockSize)))
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithInMemory(logicalCeiling).WithBlockSize(logicalBlockSize)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
@@ -128,9 +128,6 @@ func newLogicalEnv(t *testing.T, ctx context.Context) *logicalEnv {
 		})
 	}
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 		t.Fatal(err)
 	}
 	osd, err := cluster.AddOSD(ctx)

@@ -18,7 +18,6 @@ import (
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/google/uuid"
@@ -200,13 +199,10 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 			mode = ceph.MessengerV2Secure
 		}
 		options := append([]testcontainers.ContainerCustomizer{}, roleOptions...)
-		options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(mode)))
+		options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(512<<20)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(mode)))
 		cluster, client := harness.NewServiceClusterWithOptions(t, image, options...)
 		if harness.StaticFacts(cluster).MessengerMode != mode {
 			t.Fatal("cluster bootstrap mode changed")
-		}
-		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-			t.Fatal(err)
 		}
 		if _, err := cluster.AddOSD(ctx); err != nil {
 			t.Fatal(err)

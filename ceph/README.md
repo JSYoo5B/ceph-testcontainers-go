@@ -39,6 +39,10 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    defaults, initial pools), `WithOSDStorage`, `WithMonitorStorage`, `WithNetworkConfig`,
    `WithImageOptions`, plus `WithAuth`, `WithConfigFile`, `WithHostNetwork` and
    `WithStartupTimeout`. Contradictory options fail before anything is created.
+   For small functional OSDs, select
+   `OSDStorage{}.WithStartupBenchmark(OSDBenchmarkSkip)` explicitly;
+   [OSD startup calibration](../docs/guides/osd-startup-benchmark.md) explains
+   native controls, configuration precedence and backing-storage costs.
    Register cleanup before checking the error: a partially started cluster is
    returned with the error and still owns containers.
 2. **Prepare the state the test needs.** `WaitForClean` before client I/O;

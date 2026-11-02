@@ -40,7 +40,11 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("small-device engine identity unavailable", err)
 	}
 	image, opts := harness.IntegrationImages(t)
-	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(size)))
+	policy := ceph.OSDBenchmarkNative
+	if skipBenchmark {
+		policy = ceph.OSDBenchmarkSkip
+	}
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(size).WithStartupBenchmark(policy)))
 	ramCap := int64(0)
 	if ram {
 		// The cluster allocation ceiling is independent of per-OSD logical bytes
@@ -81,11 +85,6 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	fsid := q.MonMap.FSID
 	if id, err := uuid.Parse(fsid); err != nil || id == uuid.Nil || id.String() != fsid {
 		t.Fatal("original cluster identity unavailable")
-	}
-	if skipBenchmark {
-		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-			t.Fatal("explicit lightweight preparation failed", err)
-		}
 	}
 	for range 2 {
 		if _, err := cluster.AddOSD(ctx); err != nil {

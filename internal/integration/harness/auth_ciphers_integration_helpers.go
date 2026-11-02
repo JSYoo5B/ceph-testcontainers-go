@@ -145,7 +145,7 @@ func KeyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := append(slices.Clone(imageOpts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
+	base := append(slices.Clone(imageOpts), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	cluster, _ := NewServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	}))...)
