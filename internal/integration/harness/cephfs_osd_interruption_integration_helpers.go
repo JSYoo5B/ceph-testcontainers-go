@@ -237,10 +237,10 @@ func ObjecterRequests(ctx context.Context, cluster *ceph.Container, ctr testcont
 // reads every byte through its original fd and finds the new directory,
 // another client reads every byte, the MDS keeps its GID, and the sessions
 // are the same.
-func RunCephFSOSDInterruption(t *testing.T) {
+func RunCephFSOSDInterruption(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := StartCephFSSingleMDS(t, ctx)
+	m := StartCephFSSingleMDS(t, ctx, opts...)
 	const path, directory = "/interrupted", "/held"
 	const writerDir, waiterDir = "/tmp/osd-writer", "/tmp/osd-waiter"
 	writerAsok, waiterAsok := writerDir+"/client.asok", waiterDir+"/client.asok"

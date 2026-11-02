@@ -27,7 +27,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, imageOpts := harness.IntegrationImages(t)
-	cluster, _ := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, imageOpts...)
+	cluster, _ := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, append(imageOpts, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)

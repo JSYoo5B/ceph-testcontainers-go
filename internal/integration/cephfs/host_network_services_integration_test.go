@@ -13,5 +13,5 @@ import (
 
 func TestHostNetworkCephFSFilesystem(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	testCephFSFilesystem(t, ceph.WithHostNetwork())
+	testCephFSFilesystem(t, ceph.WithHostNetwork(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 }

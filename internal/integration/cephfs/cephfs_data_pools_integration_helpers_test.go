@@ -23,7 +23,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	const filesystem, replicated, erasure, unused = "dynamic", "dynamic-replicated", "dynamic-erasure", "dynamic-unused"
-	options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1 << 30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
