@@ -31,6 +31,34 @@ func TopologyWait(t *testing.T, parent context.Context, check func() bool) {
 	}
 }
 
+// TopologyWaitLast waits like TopologyWait for check to report done, and keeps
+// what the last attempt saw. check returns an error describing an observation
+// that did not meet the condition, or the read that failed, so a timeout says
+// whether the cluster answered with another state or stopped answering. check
+// gets the wait's context, so a read that stops answering ends with the wait.
+func TopologyWaitLast(t *testing.T, parent context.Context, check func(context.Context) (bool, error)) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	defer cancel()
+	var last error
+	for {
+		done, err := check(ctx)
+		if done && err == nil {
+			return
+		}
+		// A read the wait's own deadline cut short says nothing new; keep the
+		// observation before it unless there was none.
+		if err != nil && (ctx.Err() == nil || last == nil) {
+			last = err
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("topology transition: %v: last observation: %v", ctx.Err(), last)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func TopologyRados(t *testing.T, ctx context.Context, client testcontainers.Container, phase string) {
 	t.Helper()
 	TopologyExecOutput(t, ctx, client, "python3", "-c", `import rados, sys

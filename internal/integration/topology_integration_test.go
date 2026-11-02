@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,9 +164,18 @@ func TestMonitorManagerTopology(t *testing.T) {
 					}
 				}
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			// A read that fails and a map that still names the stopped MGR, or
+			// no available one, are different failures: keep the last of them.
+			// The replacement bundle adds the MGRs' sessions and debug_monc.
+			harness.TopologyWaitLast(t, ctx, func(ctx context.Context) (bool, error) {
 				status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-				return err == nil && status.Available && status.ActiveName != previous
+				if err != nil {
+					return false, fmt.Errorf("read manager status: %w", err)
+				}
+				if !status.Available || status.ActiveName == previous {
+					return false, fmt.Errorf("manager status after stopping %s: available=%t active=%s gid=%d standbys=%v", previous, status.Available, status.ActiveName, status.ActiveGID, status.Standbys)
+				}
+				return true, nil
 			})
 			if _, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "after-failover"}); err != nil {
 				t.Fatal(err)
