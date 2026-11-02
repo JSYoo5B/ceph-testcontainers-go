@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "profile": "short-rados_fixtures_watchers-52f45dc3",
+  "package": "./internal/integration",
+  "tests": [
+    "TestPausedObjectWatcher"
+  ],
+  "sources_sha256": "4921cb33c197605e2be6e851c7acc09564c354106fca7a52f4f6614ecdae9d78",
+  "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
+  "roles": "essential,client",
+  "platform": "linux/amd64",
+  "releases": [
+    "20.2.4"
+  ],
+  "image_prepare_bytes": 8589934592,
+  "runtime_bytes": 4294967296,
+  "minimum_free_inodes": 100000,
+  "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
+}
