@@ -7,7 +7,7 @@
       "tests": [
         "TestPausedObjectWatcher"
       ],
-      "sources_sha256": "4c36cee9dc87c7383e3ec0e1a25a4badb2f70896edbf88ccb2c248e216987778",
+      "sources_sha256": "66b90bd9a10f8c3bb2dbf3fed669753f40899c1321f833ce0d9499fa0ef5f80f",
       "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "roles": "essential,client",
       "platform": "linux/amd64",
@@ -17,7 +17,10 @@
       "image_prepare_bytes": 8589934592,
       "runtime_bytes": 4294967296,
       "minimum_free_inodes": 100000,
-      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
+      "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers",
+      "helper_sources": [
+        "internal/integration/harness/services_integration.go"
+      ]
     },
     {
       "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
@@ -38,13 +41,14 @@
         "TestCephFSRetainedSnapshotAndMetadataRecipe",
         "TestCephFSSubvolumeClientAuthorization"
       ],
-      "sources_sha256": "e7f2acbb94010f676521f94f9be12aa239592580e85bc07c57587800253ad646",
+      "sources_sha256": "6aeef6a41e247b3eb3cd6d7fdc398e80ce3188aabb9f62e85da7e2b3291aabdd",
       "roles": "essential,client,cephfs",
       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_cephfs_fixtures_admin",
       "runtime_bytes": 8589934592,
       "helper_sources": [
         "ceph/ceph.go",
         "internal/integration/cephfs/cephfs_authorization_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_flock_contention_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_mds_failover_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_osd_recovery_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_quiesce_integration_helpers_test.go",
@@ -73,7 +77,7 @@
         "TestCephFSSnapshotSchedule",
         "TestHostNetworkCephFSFilesystem"
       ],
-      "sources_sha256": "51561c9f131405c02555dc17c6d52a0614daf15c7906d05e9b695fdde91ca24c",
+      "sources_sha256": "a4fd842ee72045b349e455e34e1640e4f68ed1f60517ed8915c2910514d5aaa1",
       "roles": "essential,client,cephfs",
       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_cephfs_fixtures_data",
       "runtime_bytes": 8589934592,
@@ -81,7 +85,9 @@
         "ceph/ceph.go",
         "internal/integration/cephfs/cephfs_clone_lifecycle_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_data_pools_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_snapshot_integration_helpers_test.go",
+        "internal/integration/cephfs/cephfs_subvolume_integration_helpers_test.go",
         "internal/integration/cephfs/cephfs_topology_integration_helpers_test.go",
         "internal/integration/harness/cephfs_retained_client_integration_helpers.go",
         "internal/integration/harness/parallel_integration_helpers.go",
