@@ -38,6 +38,7 @@ import time
 CALLED_JOB = " / "
 PLAN_JOB = "Plan"
 CAMPAIGN_CALLER = "Representative"
+STORAGE_CALLER = "Storage qualification"
 REPEAT_AFTER = datetime.timedelta(days=7)
 # Statuses of a run that has not finished yet.
 UNFINISHED = ("in_progress", "queued", "waiting", "pending", "requested")
@@ -54,7 +55,7 @@ def runtime_job(job):
     Plan job, and not a campaign attempt. A job of the periodic workflow
     itself, such as Gate or Releases, plans or records and never counts."""
     caller, separator, called = job["name"].partition(CALLED_JOB)
-    return bool(separator) and called != PLAN_JOB and caller != CAMPAIGN_CALLER
+    return bool(separator) and called != PLAN_JOB and caller not in (CAMPAIGN_CALLER, STORAGE_CALLER)
 
 
 def campaign(event, schedule, campaign_schedule, mode):
