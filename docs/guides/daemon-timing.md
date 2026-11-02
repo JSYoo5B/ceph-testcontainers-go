@@ -18,6 +18,9 @@ take precedence over local files and central configuration. Do not replace the
 fixture's required command, entrypoint or internal environment with a Docker
 customizer. A partial fixture returned with an error still needs termination.
 
+For mClock startup I/O and allocation policy, see
+[OSD startup calibration](osd-startup-benchmark.md).
+
 ## Directory pins
 
 The CephFS profile requires two or more active ranks owned by the original
