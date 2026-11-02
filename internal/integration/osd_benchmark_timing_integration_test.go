@@ -56,7 +56,7 @@ func osdBenchmarkTrial(t *testing.T, backend string, skip bool) {
 	if err := os.WriteFile(config, []byte(fmt.Sprintf("[osd]\nosd_mclock_skip_benchmark = %t\nosd_mclock_force_run_benchmark_on_init = false\n", skip)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	image, options := harness.IntegrationImages(t)
+	image, options := harness.NativeIntegrationImages(t)
 	storage := ceph.OSDStorage{}.WithBlockSize(1 << 30)
 	switch backend {
 	case "tmpfs":

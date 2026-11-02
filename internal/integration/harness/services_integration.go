@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,7 +45,22 @@ func EssentialImage(t *testing.T) string {
 	return image
 }
 
+// IntegrationImages selects fixture images and skips mClock startup calibration
+// for functional tests. Explicit storage policy and later config files can
+// override this local default before the first OSD starts.
 func IntegrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
+	t.Helper()
+	image, opts := NativeIntegrationImages(t)
+	config := filepath.Join(t.TempDir(), "functional-osd.conf")
+	if err := os.WriteFile(config, []byte("[osd]\nosd_mclock_skip_benchmark = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return image, append(opts, ceph.WithConfigFile(config))
+}
+
+// NativeIntegrationImages selects images without the functional-test benchmark
+// default. Use it only when testing native calibration or configuration precedence.
+func NativeIntegrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
 	t.Helper()
 	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
 		image := EssentialImage(t)
