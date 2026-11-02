@@ -20,7 +20,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -97,10 +96,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	t.Logf("OSD_OOM_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
 	image, opts := harness.IntegrationImages(t)
-	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
-	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-		t.Fatal(err)
-	}
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))...)
 	for range 3 {
 		if _, err := cluster.AddOSD(ctx); err != nil {
 			t.Fatal(err)

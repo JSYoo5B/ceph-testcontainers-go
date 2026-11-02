@@ -15,7 +15,6 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -40,14 +39,14 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			name:  "host-memory-storage",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20).WithInMemory(1 << 30))},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(256 << 20).WithInMemory(1 << 30))},
 			pool:  "tc-combo",
 			small: true,
 		},
 		{
 			name:  "host-small-blocks",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(128 << 20))},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(128 << 20))},
 			pool:  "tc-combo",
 			small: true,
 		},
@@ -88,9 +87,6 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			opts = append(opts, test.opts...)
 			cluster, client := harness.NewServiceClusterRun(t, test.run, image, opts...)
 			if test.small {
-				if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-					t.Fatal(err)
-				}
 				for range 2 {
 					if _, err := cluster.AddOSD(ctx); err != nil {
 						t.Fatal(err)

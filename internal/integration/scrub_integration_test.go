@@ -15,7 +15,6 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // One PG with two replicas makes every object share the same primary and
@@ -28,15 +27,12 @@ func TestScrubInconsistency(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
 			image, opts := harness.IntegrationImages(t)
-			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 			fsid := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "fsid")))
-			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
-				t.Fatal(err)
-			}
 			for range 2 {
 				if _, err := cluster.AddOSD(ctx); err != nil {
 					t.Fatal("add OSD", err)
