@@ -12,6 +12,11 @@ a handle use the cluster created by `ceph.Run` and are restored by its
 `Terminate`. `InjectObjectDataError` is one-shot: it returns no handle and
 `Terminate` does not undo it.
 
+The separate [`fault/blockio`](blockio/README.md) module prepares disposable
+block storage before attaching an OSD. Its keeper has its own lifetime: cluster
+teardown restores the registered fault, and the caller releases the backend
+after the cluster.
+
 ## Order of use
 
 1. **Start a cluster** with `ceph.Run` (and any service fixture the SUT needs).

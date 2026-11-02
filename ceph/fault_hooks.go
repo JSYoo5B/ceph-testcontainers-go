@@ -22,6 +22,7 @@ func init() {
 // faultKindNames are the kinds that internal/faulthook names. The phase,
 // overlap refusal and Terminate message of each stay fixed in faultKinds.
 var faultKindNames = map[string]faultKind{
+	"BlockIO":             faultBlockIO,
 	"NetworkDelay":        faultNetworkDelay,
 	"NetworkInterruption": faultNetworkInterruption,
 	"ContainerPause":      faultContainerPause,
