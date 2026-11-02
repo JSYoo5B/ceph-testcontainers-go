@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-"""Free and record the filesystem under Docker's data root on a CI runner.
+"""Prepare and record actual Docker storage on disposable CI runners.
 
-Every container's writable layer, the MON store included, lives on the
-filesystem that holds Docker's data root. A MON raises MON_DISK_LOW when that
-filesystem's available share falls below mon_data_avail_warn (30% by
-default), and a fixture that requires HEALTH_OK then fails before its own
-assertions (issue 365). The runner image's preinstalled toolchains take much
-of that filesystem.
-
-free removes a fixed list of preinstalled runner directories, and only on a
-GitHub-hosted runner, whose machine is discarded after the job. It never
-touches Docker resources. record writes one receipt per phase: the
-filesystem's bytes and inodes, its available share against the MON
-thresholds, and Docker's own usage by type. Comparing the receipts separates
-the runner's baseline, the pulled images and the run's own allocation.
+Only an exact source/image cohort with independently sufficient filesystem
+headroom may skip the existing allowlist cleanup. Unknown work/layout keeps
+cleanup. Both paths recheck bytes and inodes; a post-image check gates native
+assertions before Ceph's 30% MON free-space threshold can be crossed.
 """
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +17,8 @@ import re
 import subprocess
 import sys
 import time
+
+import runner_storage_layout
 
 
 # Directories of the GitHub-hosted Ubuntu image that no job here uses: the
@@ -139,16 +133,230 @@ def free(directory, environ=os.environ, run=run_command, statvfs=os.statvfs, exi
     return report
 
 
+GIB = 1 << 30
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def qualification(compile_directory, release, roles, digests="", tests="", root=ROOT):
+    """An exact compiled workload and checked-in immutable image cohort only.
+
+    A source/dependency or image-pin change expires the small qualification;
+    it does not grant an unmeasured workload the old storage allowance.
+    """
+    try:
+        budget = json.loads((root / ".github/runner-storage.json").read_text())
+        compiled = json.loads((Path(compile_directory) / "compile-report.json").read_text())
+        profile, binary = compiled["profile"], compiled["binary"]
+        key = binary["build_key"]
+        selected = sorted(tests.split(",") if tests else binary["tests"])
+        sources = binary["sources"]
+        source_hash = hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        pins_file = root / ".github/ceph-role-images.json"
+        if (compiled.get("passed") is not True or budget.get("schema") != 1
+                or profile["id"] != budget["profile"] or profile["package"] != budget["package"]
+                or key["tags"] != budget["tags"]
+                or selected != budget["tests"] or not set(selected) <= set(binary["tests"])
+                or roles != budget["roles"] or profile["image_roles"] != roles
+                or release not in budget["releases"]
+                or key["goos"] + "/" + key["goarch"] != budget["platform"]
+                or source_hash != budget["sources_sha256"]
+                or hashlib.sha256(pins_file.read_bytes()).hexdigest() != budget["role_pins_sha256"]):
+            return None
+        pins = json.loads(pins_file.read_text())["images"][release]["official"]
+        overrides = dict(entry.split("=", 1) for entry in digests.split(",") if entry)
+        if any(role not in pins or digest != pins[role] for role, digest in overrides.items()):
+            return None
+        for name in ("image_prepare_bytes", "runtime_bytes", "minimum_free_inodes"):
+            if type(budget[name]) is not int or budget[name] <= 0:
+                return None
+        return budget
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=os.environ, layout=None):
+    info = json.loads(run(["docker", "info", "--format", "{{json .}}"] ))
+    layout = (layout or runner_storage_layout.storage_roots)(info, run)
+    # A remote Docker context's host paths do not describe this process's
+    # statvfs view. Never use them to authorize skipping reclamation.
+    context = json.loads(run(["docker", "context", "inspect"]))
+    endpoint = context[0]["Endpoints"]["docker"]["Host"]
+    if (endpoint != "unix:///var/run/docker.sock" or environ.get("DOCKER_HOST") not in (None, "", endpoint)
+            or environ.get("DOCKER_CONTEXT") not in (None, "", "default")):
+        layout["verified"] = False
+        layout["reasons"].append("docker-endpoint-not-qualified")
+    if info.get("OSType") != "linux" or info.get("Architecture") not in ("x86_64", "amd64"):
+        layout["verified"] = False
+        layout["reasons"].append("docker-platform-not-qualified")
+    filesystems = {}
+    mon_device = stat(info["DockerRootDir"]).st_dev
+    for path in layout["roots"]:
+        device = stat(path).st_dev
+        if device in filesystems:
+            filesystems[device]["paths"].append(path)
+            continue
+        fs = filesystem(path, statvfs)
+        fs.update(device=device, paths=[path], mon_store=device == mon_device)
+        filesystems[device] = fs
+    if not filesystems:
+        raise ValueError("no Docker storage filesystem could be inspected")
+    return {"layout": layout, "filesystems": list(filesystems.values())}
+
+
+def headroom(snapshot, budget, before_images):
+    """Independent requirements per filesystem; never add unrelated free space.
+
+    Reserve 30% of the MON filesystem after the image and workload allowance.
+    Unknown work retains cleanup and a post-cleanup minimum guard, not a claim
+    that an unqualified workload's peak has been measured.
+    """
+    runtime = budget["runtime_bytes"] if budget else 2 * GIB
+    images = budget["image_prepare_bytes"] if budget and before_images else 0
+    inodes = budget["minimum_free_inodes"] if budget else 100000
+    requirements = []
+    for fs in snapshot["filesystems"]:
+        mon = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100 if fs["mon_store"] else 0
+        required = mon + runtime + images
+        requirements.append({"device": fs["device"], "paths": fs["paths"], "available_bytes": fs["available_bytes"],
+                             "required_bytes": required, "minimum_free_inodes": inodes,
+                             "free_inodes": fs["free_inodes"],
+                             "passed": fs["available_bytes"] >= required and fs["free_inodes"] >= inodes})
+    return {"passed": all(row["passed"] for row in requirements), "requirements": requirements,
+            "runtime_bytes": runtime, "image_prepare_bytes": images,
+            "qualification": "measured-cohort" if budget else "conservative-minimum-only"}
+
+
+def pressure_size(observed, budget):
+    """Qualification only: cross the policy boundary while retaining Ceph's floor.
+
+    At most 40 GiB on a disposable hosted runner; never approach ENOSPC.
+    The file remains present during native assertions and is removed by the
+    job's always-run owned cleanup step.
+    """
+    rows = headroom(observed, budget, True)["requirements"]
+    mon = next(row for row, fs in zip(rows, observed["filesystems"]) if fs["mon_store"])
+    amount = mon["available_bytes"] - mon["required_bytes"] + GIB
+    if not GIB <= amount <= 40 * GIB:
+        raise RuntimeError("qualification pressure would exceed its 1..40 GiB bound")
+    fs = next(fs for fs in observed["filesystems"] if fs["mon_store"])
+    floor = (fs["total_bytes"] * MON_DATA_AVAIL_WARN + 99) // 100 + budget["runtime_bytes"] + 2 * GIB
+    if mon["available_bytes"] - amount < floor:
+        raise RuntimeError("qualification pressure would compromise the Ceph floor")
+    return amount
+
+
+def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, reclaim=None):
+    """Skip only a qualified sufficient-space workload; retain the fixed cleanup otherwise."""
+    if policy not in ("auto", "always", "pressure"):
+        raise ValueError("storage policy must be auto, always or pressure")
+    snapshot = snapshot or (lambda: storage_snapshot(run))
+    reclaim = reclaim or (lambda: free(directory, run=run))
+    report = {"schema": 2, "phase": "prepare", "started_at": timestamp(), "passed": False,
+              "policy": policy, "qualified": budget is not None}
+    try:
+        report["before"] = snapshot()
+        if policy == "pressure":
+            if (os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted" or budget is None
+                    or not report["before"]["layout"]["verified"]):
+                raise RuntimeError("qualification pressure needs a verified qualified GitHub-hosted runner")
+            directory = Path(directory)
+            directory.mkdir(parents=True, exist_ok=True)
+            mon = next(fs for fs in report["before"]["filesystems"] if fs["mon_store"])
+            if directory.stat().st_dev != mon["device"]:
+                raise RuntimeError("qualification pressure directory is not on the Docker filesystem")
+            amount = pressure_size(report["before"], budget)
+            pressure = directory / "qualification-pressure.bin"
+            with pressure.open("xb") as output:
+                identity = os.fstat(output.fileno())
+                write(directory, "storage-pressure.json", {"schema": 1, "device": identity.st_dev,
+                                                           "inode": identity.st_ino, "bytes": amount})
+                os.posix_fallocate(output.fileno(), 0, amount)
+            report["pressure_bytes"] = amount
+            report["unpressured"] = report["before"]
+            report["before"] = snapshot()
+        report["before_headroom"] = headroom(report["before"], budget, True)
+        if policy == "pressure" and report["before_headroom"]["passed"]:
+            raise RuntimeError("qualification pressure did not cross the headroom boundary")
+        reason = ("comparison-always" if policy == "always" else "unknown-workload" if budget is None
+                  else "unknown-storage-layout" if not report["before"]["layout"]["verified"]
+                  else "insufficient-headroom" if not report["before_headroom"]["passed"] else "sufficient-headroom")
+        report["decision"] = "skip" if reason == "sufficient-headroom" else "reclaim"
+        report["reason"] = reason
+        report["reclamation_seconds"] = 0
+        if report["decision"] == "reclaim":
+            freed = reclaim()
+            report["reclamation_seconds"] = freed["seconds"]
+            report["removed"] = freed["removed"]
+        report["after"] = snapshot()
+        report["headroom"] = headroom(report["after"], budget, True)
+        if not report["headroom"]["passed"]:
+            raise RuntimeError("insufficient Docker filesystem headroom after preparation; see storage-prepare.json")
+        report["passed"] = True
+    except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as error:
+        report["error"] = str(error)
+    write(directory, "storage-prepare.json", report)
+    return report
+
+
+def release_pressure(directory):
+    directory = Path(directory)
+    pressure, receipt = directory / "qualification-pressure.bin", directory / "storage-pressure.json"
+    if not pressure.exists():
+        return
+    if not receipt.exists():
+        raise RuntimeError("refusing to remove an unowned qualification pressure file")
+    owner, identity = json.loads(receipt.read_text()), pressure.stat()
+    if owner.get("device") != identity.st_dev or owner.get("inode") != identity.st_ino:
+        raise RuntimeError("qualification pressure file identity changed; refusing removal")
+    pressure.unlink()
+
+
+def ready(directory, budget, run=run_command, snapshot=None):
+    """Recheck after actual pulls, before native tests can encounter MON_DISK_LOW."""
+    observed = (snapshot or (lambda: storage_snapshot(run)))()
+    result = headroom(observed, budget, False)
+    report = {"schema": 2, "phase": "ready", "started_at": timestamp(), "snapshot": observed,
+              "headroom": result, "passed": result["passed"]}
+    write(directory, "storage-ready.json", report)
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
-    for action in ("free", "record"):
+    for action in ("free", "record", "prepare", "ready", "release-pressure"):
         child = subparsers.add_parser(action)
         child.add_argument("--directory", type=Path, required=True)
         if action == "record":
             child.add_argument("--phase", required=True)
+        if action in ("prepare", "ready"):
+            child.add_argument("--compile", type=Path, required=True)
+            child.add_argument("--release", required=True)
+            child.add_argument("--roles", required=True)
+            child.add_argument("--digests", default="")
+            child.add_argument("--tests", default="")
+            if action == "prepare":
+                child.add_argument("--policy", choices=("auto", "always", "pressure"), default="auto")
     args = parser.parse_args(argv)
     try:
+        if args.action == "release-pressure":
+            # This single exclusive-created file is the only qualification
+            # allocation; never delete pre-existing directories or Docker data.
+            release_pressure(args.directory)
+            return 0
+        if args.action in ("prepare", "ready"):
+            budget = qualification(args.compile, args.release, args.roles, args.digests, args.tests)
+            report = (prepare(args.directory, budget, args.policy) if args.action == "prepare"
+                      else ready(args.directory, budget))
+            print("Runner storage %s: %s" % (args.action, json.dumps(report, sort_keys=True)), flush=True)
+            if os.environ.get("GITHUB_STEP_SUMMARY"):
+                with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+                    output.write("\nRunner storage %s: %s; passed=%s; reclamation=%.3fs. See runner-storage receipts.\n" %
+                                 (args.action, report.get("decision", "post-image check"), report["passed"],
+                                  report.get("reclamation_seconds", 0)))
+            if not report["passed"]:
+                print("::error title=Runner storage preflight::Insufficient or unverified preparation; inspect runner-storage receipts.")
+            return 0 if report["passed"] else 1
         if args.action == "free":
             report = free(args.directory)
             print("Freed %d preinstalled directories in %.0f s" % (len(report["removed"]), report["seconds"]))
