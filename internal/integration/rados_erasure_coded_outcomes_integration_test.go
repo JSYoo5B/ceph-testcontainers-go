@@ -40,7 +40,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	erasureCodedPhase(t, ctx, cluster, client, "opcodes", appendOnly, "0")
@@ -101,7 +101,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pgs, err = harness.PoolHandle(t, ctx, cluster, overwrite).PGs(ctx)

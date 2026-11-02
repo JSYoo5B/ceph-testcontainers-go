@@ -39,7 +39,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.CopyToContainer(ctx, []byte(cephFSQuiesceIOScript), "/tmp/tc-quiesce.py", 0o600); err != nil {

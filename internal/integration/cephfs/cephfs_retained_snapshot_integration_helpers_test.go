@@ -28,7 +28,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	}
 	cluster, client := harness.NewServiceCluster(t, options...)
 	fs := cephfs.Filesystems(cluster)[0]
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: groupName})

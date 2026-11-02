@@ -28,7 +28,7 @@ func RunClientFencing(t *testing.T, host bool) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-fencing", Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	const other = "192.0.2.245:0/9999"

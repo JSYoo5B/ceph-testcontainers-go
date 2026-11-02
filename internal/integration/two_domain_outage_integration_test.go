@@ -50,7 +50,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		FailureDomain: "host", CRUSHRoot: "tc-storage", DeviceClass: "fast"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -331,7 +331,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		case <-time.After(time.Second):
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range manifest.Members {

@@ -41,7 +41,7 @@ func TestRGWTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			gateways := clusteraccess.Gateways(t, cluster)
-			if len(gateways) != 2 || gateways[0] != first || gateways[1] != second || first.GatewayName != "gateway-a" || second.GatewayName != "gateway-b" || first.GetContainerID() == second.GetContainerID() || len(cluster.ServiceContainers()) != 2 {
+			if len(gateways) != 2 || gateways[0] != first || gateways[1] != second || first.GatewayName != "gateway-a" || second.GatewayName != "gateway-b" || first.GetContainerID() == second.GetContainerID() || len(clusteraccess.ServiceContainers(t, cluster)) != 2 {
 				t.Fatal("fixture did not own two separately named gateways")
 			}
 			if second.AccessKey != "" || second.SecretKey != "" {
@@ -104,7 +104,7 @@ func TestRGWTopology(t *testing.T) {
 			if err := second.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if len(clusteraccess.Gateways(t, cluster)) != 1 || len(cluster.ServiceContainers()) != 1 {
+			if len(clusteraccess.Gateways(t, cluster)) != 1 || len(clusteraccess.ServiceContainers(t, cluster)) != 1 {
 				t.Fatal("removed gateway is still owned")
 			}
 			check(a, "from-b", reverse)

@@ -118,7 +118,11 @@ func TestWithCeph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 

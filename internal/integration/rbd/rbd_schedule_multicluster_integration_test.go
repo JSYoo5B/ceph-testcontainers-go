@@ -40,11 +40,11 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := source.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
+			if err := harness.ObserveCluster(source).WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
 				t.Fatal(err)
 			}
 			runtimeImage := harness.StaticFacts(source).Images.RBDAux

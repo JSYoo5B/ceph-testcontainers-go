@@ -91,7 +91,7 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 	client.Request(t, ctx, http.MethodDelete, "/tc-minimal/binary", nil, http.StatusNoContent)
 	client.Request(t, ctx, http.MethodGet, "/tc-minimal/binary", nil, http.StatusNotFound)
 	client.Request(t, ctx, http.MethodDelete, "/tc-minimal", nil, http.StatusNoContent)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster.Container).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("rgw.Run started 1 MON, 1 MGR, 1 OSD and 1 gateway in %v; %d pools of size 1; signed S3 bucket create, PUT/GET of %d bytes (sha256 %x), DELETE, GET 404 and bucket DELETE passed",

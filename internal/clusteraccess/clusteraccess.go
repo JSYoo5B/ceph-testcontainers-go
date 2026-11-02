@@ -6,6 +6,7 @@ package clusteraccess
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 
@@ -102,4 +103,24 @@ func RGWGateways(tb testing.TB, c *rgw.Container) []*rgw.Gateway {
 		tb.Fatalf("list gateways: %v", err)
 	}
 	return gateways
+}
+
+// ServiceContainers returns tracked optional-service handles, including those
+// still recorded after termination. Its bounded detached context also works
+// during cleanup, without turning inventory failure into an empty result.
+//
+//testdouble:shared-assertion
+func ServiceContainers(tb testing.TB, c *ceph.Container) []testcontainers.Container {
+	tb.Helper()
+	observer, err := ceph.Observe(c)
+	if err != nil {
+		tb.Fatalf("observe service inventory: %v", err)
+	}
+	inventoryCtx, cancel := context.WithTimeout(ctx(tb), 5*time.Second)
+	defer cancel()
+	services, err := observer.ServiceContainers(inventoryCtx)
+	if err != nil {
+		tb.Fatalf("list service containers: %v", err)
+	}
+	return services
 }

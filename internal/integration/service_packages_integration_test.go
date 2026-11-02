@@ -32,7 +32,7 @@ func TestServicePackages(t *testing.T) {
 		defer cancel()
 		cluster, client := harness.NewServiceClusterRun(t, harness.RBDRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
 		servicePackageApplication(t, ctx, cluster, "rbd", "rbd")
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 		servicePackageProbe(t, ctx, client, "rbd", "rbd")
@@ -82,7 +82,7 @@ func TestServicePackages(t *testing.T) {
 			if err := filesystems[0].WaitReady(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			// All three protocols use the same OSDs in one session of work.
@@ -103,6 +103,34 @@ func TestServicePackages(t *testing.T) {
 				if !names[want] {
 					t.Logf("SERVICE_PACKAGES pools=%v", names)
 					t.Fatalf("combined cluster lacks pool %s", want)
+				}
+			}
+
+			observer, err := ceph.Observe(cluster)
+			if err != nil {
+				t.Fatal(err)
+			}
+			services, err := observer.ServiceContainers(ctx)
+			if err != nil || len(services) != 2 {
+				t.Fatalf("tracked services: %d %v", len(services), err)
+			}
+			tracked := map[string]bool{}
+			for _, service := range services {
+				tracked[service.GetContainerID()] = true
+			}
+			if !tracked[gateways[0].GetContainerID()] {
+				t.Fatal("gateway missing from tracked service inventory")
+			}
+			if err := gateways[0].Container.Stop(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			stopped, err := observer.ServiceContainers(ctx)
+			if err != nil || len(stopped) != len(services) {
+				t.Fatalf("stopped handle lost: %d %v", len(stopped), err)
+			}
+			for _, service := range stopped {
+				if !tracked[service.GetContainerID()] {
+					t.Fatal("inventory changed after stopping a tracked service")
 				}
 			}
 			t.Logf("SERVICE_PACKAGES combined host=%v pools=%d rbd=volumes cephfs=shared rgw=s3", host, len(pools))

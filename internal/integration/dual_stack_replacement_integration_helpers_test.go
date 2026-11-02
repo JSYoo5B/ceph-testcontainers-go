@@ -439,7 +439,7 @@ func testDualStackReplacement(t *testing.T) {
 		t.Helper()
 		addresses := topology.addresses
 		// Objects map to their acting primaries only once peering settled.
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 		primaries := objectsPerPrimary(t, ctx, cluster, pool, len(addresses.OSDs))
@@ -551,7 +551,7 @@ func testDualStackReplacement(t *testing.T) {
 	// New clients whose MON session mon_host_override pins to one family of
 	// mon.c.
 	monC := checkDualStackVector(t, "mon.c", newMon.Addrs)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	primaries := objectsPerPrimary(t, ctx, cluster, pool, 2)

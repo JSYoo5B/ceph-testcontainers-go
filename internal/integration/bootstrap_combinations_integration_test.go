@@ -105,7 +105,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			// Clean PG statistics come from a manager; without one the
 			// object round trip below is the readiness check.
 			if len(clusteraccess.Managers(t, cluster)) != 0 {
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}

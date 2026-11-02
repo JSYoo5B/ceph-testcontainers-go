@@ -73,7 +73,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 1, MinSize: 1, PGNum: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	client, err := cluster.ClientContainer(ctx)
@@ -120,7 +120,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 		t.Fatal("clean control restart", err)
 	}
 	osdVolumeWaitState(t, ctx, cluster, registered, true)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var cleanRead map[string]abruptObjectState
@@ -265,7 +265,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	} else {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(canceled); !errors.Is(err, context.Canceled) {
+	if err := harness.ObserveCluster(cluster).WaitForClean(canceled); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled recovery wait", err)
 	}
 	if err := osd.Start(canceled); !errors.Is(err, context.Canceled) {
@@ -284,7 +284,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 	osdVolumeWaitState(t, ctx, cluster, registered, true)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal("recovery independently failed", err)
 	}
 	restarted := osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID())

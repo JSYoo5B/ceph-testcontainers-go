@@ -138,7 +138,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-topology", PGNum: 1, Replicas: 2, MinSize: 2, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.TopologyRados(t, ctx, client, "seed")
@@ -201,7 +201,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 		t.Fatal(err)
 	}
 	harness.FinishHeldReplicationWrite(t, ctx, cluster, &receipt, held)
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cluster.Ceph(ctx, "osd", "map", "tc-topology", "held", "--format", "json")
@@ -226,7 +226,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 		t.Fatal(err)
 	}
 	checkAddresses()
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := added.Remove(ctx); err != nil {
@@ -276,7 +276,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	}
 	harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-topology", "8")
 	harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-topology", "rados")
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.TopologyRados(t, ctx, client, "seed")

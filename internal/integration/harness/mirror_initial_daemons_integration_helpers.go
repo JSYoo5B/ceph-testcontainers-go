@@ -138,7 +138,7 @@ func RunMirrorInitialRBD(t *testing.T, host, journal bool) {
 				}
 			}
 		}
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -280,7 +280,7 @@ func RunMirrorInitialCephFS(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

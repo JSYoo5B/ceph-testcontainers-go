@@ -94,7 +94,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 	rbdFanoutRead(t, ctx, aClient, fsids[0], pool, name, final)
 	rbdFanoutAssertImageIdentity(t, ctx, clients, image)
 	for _, cluster := range clusters {
-		if err := cluster.WaitForClean(ctx); err != nil {
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

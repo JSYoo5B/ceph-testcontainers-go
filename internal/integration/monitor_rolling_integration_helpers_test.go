@@ -59,7 +59,7 @@ func monitorRollingWithoutBootstrap(config []byte) []byte {
 
 func monitorRollingQuorum(t *testing.T, ctx context.Context, cluster *ceph.Container, count int) {
 	t.Helper()
-	if err := cluster.WaitForQuorum(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
 	harness.TopologyWait(t, ctx, func() bool {

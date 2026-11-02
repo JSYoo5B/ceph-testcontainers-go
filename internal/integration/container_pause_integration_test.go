@@ -54,7 +54,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: poolName, Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			probe := func(t *testing.T, phase string) {
@@ -101,7 +101,7 @@ func TestPausedOSDFaults(t *testing.T) {
 				if err := hold.Restore(ctx); err != nil {
 					t.Fatal("restore nodown", err)
 				}
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 				probe(t, "thawed")
@@ -123,7 +123,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal("resume OSD", err)
 				}
 				waitOSDsUp(t, ctx, cluster, 2)
-				if err := cluster.WaitForClean(ctx); err != nil {
+				if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 				probe(t, "rejoined")

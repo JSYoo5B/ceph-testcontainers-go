@@ -52,7 +52,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			}
 			harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-topology", "8")
 			harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-topology", "rados")
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),
@@ -76,7 +76,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 2
 			})
-			if err := cluster.WaitForQuorum(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 				t.Fatal(err)
 			}
 			harness.TopologyRados(t, ctx, client, "verify")

@@ -77,10 +77,10 @@ func TestMGRModules(t *testing.T) {
 			if _, err := override.SetMGRModule(ctx, cluster, "rbd_support", false); err == nil {
 				t.Fatal("always-on disable accepted")
 			}
-			if err := cluster.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitMGRModuleReady(ctx, "volumes"); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitMGRModuleReady(ctx, "volumes"); err != nil {
 				t.Fatal(err)
 			}
 			const pool = "tc-mgr-modules"
@@ -90,7 +90,7 @@ func TestMGRModules(t *testing.T) {
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			harness.ExecCommand(t, ctx, client, "python3", "-c", mgrModuleRBDProbe, pool)

@@ -20,14 +20,8 @@ type MGRModuleState struct {
 	ErrorString                      string
 }
 
-// WaitMGRModuleReady waits for enabled/can-run metadata and successful native
-// read-only commands. Supported modules are rbd_support (task and snapshot
-// schedule lists) and volumes (volume list). Other modules need an application
-// specific command probe. Each poll releases the cluster lock; cancellation and
-// termination stop the wait. Success does not claim worker tasks have completed.
-//
-//purpose:observation
-func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
+// waitMGRModuleReady implements the observer wait and is available to cluster startup.
+func (c *Container) waitMGRModuleReady(ctx context.Context, name string) error {
 	var probes [][]string
 	switch name {
 	case "rbd_support":

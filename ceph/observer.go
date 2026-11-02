@@ -8,7 +8,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Observer groups the read-only live observations of one cluster. Each query
+// Observer groups read-only observations and readiness waits of one cluster.
+// ServiceContainers reads tracked ownership handles, including stopped handles;
+// it makes no liveness claim. Other queries read live native state. Each query
 // reads current state rather than retaining a snapshot. It owns no resource
 // and needs no cleanup. Queries keep the cluster's normal locking, liveness
 // and command-outcome checks.

@@ -32,7 +32,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "placement-user", SkipUserCreation: true})

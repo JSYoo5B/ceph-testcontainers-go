@@ -126,7 +126,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ecAdmissionPool(t, ctx, cluster, pool)
@@ -251,7 +251,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := victim.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := pool.PGs(ctx)

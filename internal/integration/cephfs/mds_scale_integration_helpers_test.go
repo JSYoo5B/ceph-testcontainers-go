@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"io"
 	"slices"
 	"testing"
@@ -72,7 +73,7 @@ func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 		if status := cephFSTopologyStatus(t, ctx, other); len(status.Active) != 1 || status.Active[0].GID != otherBefore.Active[0].GID || len(other.MDSs()) != 1 {
 			t.Fatalf("scaling touched another filesystem's MDS: %+v", status)
 		}
-		if len(cluster.ServiceContainers()) != counts[0]+counts[1]+1 {
+		if len(clusteraccess.ServiceContainers(t, cluster)) != counts[0]+counts[1]+1 {
 			t.Fatal("cluster optional-service ownership retained removed MDS containers")
 		}
 		ioFixture(fs.FilesystemName, "scale-data", stage, stage+1)

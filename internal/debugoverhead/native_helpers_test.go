@@ -107,7 +107,7 @@ func runDebugOverhead(t *testing.T, option string) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := observeCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Create and exercise the object before any measured arm. All measured

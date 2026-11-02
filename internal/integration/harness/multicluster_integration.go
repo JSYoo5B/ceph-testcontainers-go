@@ -39,7 +39,13 @@ func NewMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 				if t.Failed() {
 					// The current MONs and MGRs too: after a MON replacement the
 					// first MON is gone, and MGR modules serve mirror commands.
-					ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+					serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
+					services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
+					cancelServices()
+					if inventoryErr != nil {
+						t.Logf("service inventory unavailable: %v", inventoryErr)
+					}
+					ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, services...)
 					for _, monitor := range clusteraccess.Monitors(t, cluster) {
 						if monitor != nil && monitor.Container != nil {
 							ctrs = append(ctrs, monitor.Container)
@@ -189,7 +195,7 @@ func MultiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.
 // running, but no source MON, OSD, MDS or RGW can serve or replicate data.
 func StopMultiClusterSource(t *testing.T, ctx context.Context, source *ceph.Container) {
 	t.Helper()
-	ctrs := append(source.ServiceContainers(), OSDContainers(t, source)...)
+	ctrs := append(clusteraccess.ServiceContainers(t, source), OSDContainers(t, source)...)
 	ctrs = append(ctrs, source.Container)
 	for _, ctr := range ctrs {
 		timeout := 3 * time.Second

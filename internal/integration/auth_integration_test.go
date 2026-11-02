@@ -38,7 +38,7 @@ func TestClientIdentities(t *testing.T) {
 				harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
 				harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rados")
 			}
-			if err := cluster.WaitForClean(ctx); err != nil {
+			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
 			admin, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint())

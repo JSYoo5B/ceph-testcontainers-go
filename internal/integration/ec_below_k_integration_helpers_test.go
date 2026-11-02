@@ -78,7 +78,7 @@ func testECBelowK(t *testing.T) {
 	if err != nil {
 		t.Fatal("2+1 topology admission:", err)
 	}
-	if err := c.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(c).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ecAdmissionPool(t, ctx, c, pool)
@@ -277,7 +277,7 @@ func testECBelowK(t *testing.T) {
 		t.Fatal(err)
 	}
 	stopped[remaining] = false
-	if err := c.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(c).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	full := ecBelowKWait(t, ctx, c, pool.Name, p, base, nil, resumedAfter.PGs[0].ReportedEpoch)

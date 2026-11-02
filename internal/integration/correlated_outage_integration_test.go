@@ -49,7 +49,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -338,7 +338,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		return qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
 			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In })
 	})
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range manifest.Members {

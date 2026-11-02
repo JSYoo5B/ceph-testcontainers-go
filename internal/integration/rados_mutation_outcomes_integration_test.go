@@ -33,7 +33,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	if err != nil || poolState.ID <= 0 {
 		t.Fatal("pool identity unavailable", err)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pg := fmt.Sprintf("%d.0", poolState.ID)
@@ -77,7 +77,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if err := cluster.WaitForClean(ctx); err != nil {
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	phase(&acked, "verify", string(receipt))
