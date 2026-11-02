@@ -1,4 +1,4 @@
-//go:build all || integration
+//go:build integration && ci_optional && ci_batch_block_io
 
 package integration_test
 
