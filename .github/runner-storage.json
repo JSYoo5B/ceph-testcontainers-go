@@ -5,7 +5,7 @@
   "tests": [
     "TestPausedObjectWatcher"
   ],
-  "sources_sha256": "4921cb33c197605e2be6e851c7acc09564c354106fca7a52f4f6614ecdae9d78",
+  "sources_sha256": "4c36cee9dc87c7383e3ec0e1a25a4badb2f70896edbf88ccb2c248e216987778",
   "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
   "roles": "essential,client",
   "platform": "linux/amd64",

@@ -138,9 +138,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def qualification(compile_directory, release, roles, digests="", tests="", root=ROOT):
-    """An exact compiled workload and checked-in immutable image cohort only.
+    """An exact workload declaration/dependency and immutable image cohort only.
 
-    A source/dependency or image-pin change expires the small qualification;
+    A workload/dependency or image-pin change expires the small qualification;
     it does not grant an unmeasured workload the old storage allowance.
     """
     try:
@@ -149,7 +149,10 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
         profile, binary = compiled["profile"], compiled["binary"]
         key = binary["build_key"]
         selected = sorted(tests.split(",") if tests else binary["tests"])
-        sources = binary["sources"]
+        # The profile owns the workload; unrelated library changes still
+        # exercise its explicit two-store bound without expiring qualification.
+        paths = sorted(set(profile["sources"] + ["go.mod", "go.sum"]))
+        sources = {path: binary["sources"][path] for path in paths}
         source_hash = hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         pins_file = root / ".github/ceph-role-images.json"
         if (compiled.get("passed") is not True or budget.get("schema") != 1
@@ -175,7 +178,7 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
 
 
 def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=os.environ, layout=None):
-    info = json.loads(run(["docker", "info", "--format", "{{json .}}"] ))
+    info = json.loads(run(["docker", "info", "--format", "{{json .}}"]))
     layout = (layout or runner_storage_layout.storage_roots)(info, run)
     # A remote Docker context's host paths do not describe this process's
     # statvfs view. Never use them to authorize skipping reclamation.
@@ -200,7 +203,9 @@ def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=
         filesystems[device] = fs
     if not filesystems:
         raise ValueError("no Docker storage filesystem could be inspected")
-    return {"layout": layout, "filesystems": list(filesystems.values())}
+    return {"layout": layout, "filesystems": list(filesystems.values()),
+            "engine": {"driver": info.get("Driver"), "driver_status": info.get("DriverStatus"),
+                       "platform": info.get("OSType", "") + "/" + info.get("Architecture", "")}}
 
 
 def headroom(snapshot, budget, before_images):
@@ -343,6 +348,7 @@ def main(argv=None):
             # This single exclusive-created file is the only qualification
             # allocation; never delete pre-existing directories or Docker data.
             release_pressure(args.directory)
+            print("Qualification pressure allocation removed or already absent.", flush=True)
             return 0
         if args.action in ("prepare", "ready"):
             budget = qualification(args.compile, args.release, args.roles, args.digests, args.tests)

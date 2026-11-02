@@ -235,8 +235,8 @@ class QualificationTests(unittest.TestCase):
             pins = {"images": {"20.2.4": {"official": {"essential": "sha256:one", "client": "sha256:two"}}}}
             pins_file = root / ".github/ceph-role-images.json"
             pins_file.write_text(json.dumps(pins))
-            sources = {"fixture.go": "synthetic-source-hash"}
-            build = {"passed": True, "profile": {"id": "short-watch", "package": "./internal/integration", "image_roles": "essential,client"},
+            sources = {"fixture.go": "synthetic-source-hash", "go.mod": "modules", "go.sum": "sums"}
+            build = {"passed": True, "profile": {"id": "short-watch", "package": "./internal/integration", "image_roles": "essential,client", "sources": ["fixture.go"]},
                      "binary": {"tests": ["TestWatcher"], "sources": sources,
                                 "build_key": {"goos": "linux", "goarch": "amd64", "tags": "ci,watch"}}}
             budget = dict(BUDGET, schema=1, profile="short-watch", package="./internal/integration", tests=["TestWatcher"],
@@ -249,6 +249,9 @@ class QualificationTests(unittest.TestCase):
                 compile_file.write_text(json.dumps(value))
                 return storage.qualification(root / "compile", "20.2.4", "essential,client", root=root, **kwargs)
             self.assertIsNotNone(check(build))
+            unrelated = copy.deepcopy(build)
+            unrelated["binary"]["sources"]["unrelated-library.go"] = "changed"
+            self.assertIsNotNone(check(unrelated))
             self.assertIsNotNone(check(build, digests="essential=sha256:one,client=sha256:two"))
             self.assertIsNone(check(build, digests="essential=sha256:other"))
             self.assertIsNone(check(build, tests="TestOther"))
