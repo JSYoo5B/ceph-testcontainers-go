@@ -5,9 +5,9 @@
 package cephfs_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -233,8 +233,11 @@ func TestCephFSCloneTimingQualification(t *testing.T) {
 	}
 }
 
-// cloneTimingWorkerLog reads only the owned MGR's bounded logs and reports the
-// expected non-secret marker. Raw daemon logs are not emitted by this probe.
+// cloneTimingWorkerLog scans only the owned MGR's logs line by line and
+// reports the expected non-secret marker. Raw daemon logs are not emitted by
+// this probe. Each poll streams the whole log with one bounded line buffer,
+// so a log that grows past any fixed size across the trials still shows a
+// later marker.
 func cloneTimingWorkerLog(t *testing.T, parent context.Context, mgr *ceph.ManagerContainer, marker string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
@@ -244,17 +247,20 @@ func cloneTimingWorkerLog(t *testing.T, parent context.Context, mgr *ceph.Manage
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, readErr := io.ReadAll(io.LimitReader(reader, 16<<20))
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+		found := false
+		for !found && scanner.Scan() {
+			found = strings.Contains(scanner.Text(), marker)
+		}
+		readErr := scanner.Err()
 		closeErr := reader.Close()
 		if readErr != nil || closeErr != nil {
 			t.Fatalf("read owned manager logs: %v %v", readErr, closeErr)
 		}
-		if strings.Contains(string(data), marker) {
+		if found {
 			t.Logf("CLONE_TIMING_WORKER %s", marker)
 			return
-		}
-		if len(data) == 16<<20 {
-			t.Fatal("manager log observation exceeded bounded buffer")
 		}
 		select {
 		case <-ctx.Done():
