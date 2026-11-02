@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,11 +21,15 @@ type TimingProfile struct {
 	// does not accelerate initial full synchronization or guarantee an elapsed
 	// bound. It is fixed for the lifetime of each owned gateway, including added
 	// zones: terminating the fixture ends the condition. It sets no persistent
-	// configuration entry and changes no gateway outside the fixture.
+	// configuration entry and changes no gateway outside the fixture. A native
+	// version outside the qualified release returns a qualification error after
+	// startup; retain the partial Fixture for termination even on that error.
 	IncrementalSync bool
 }
 
 const incrementalTimingEnv = "CEPH_RGW_INCREMENTAL_SYNC_TIMING"
+
+var timingVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z._-]+)?$`)
 
 // gatewayOptions injects the profile before caller customizers, and checks it
 // afterwards without executing any customizer twice. The startup script is
@@ -41,7 +46,7 @@ func (p TimingProfile) gatewayOptions(base, opts []testcontainers.ContainerCusto
 			want = "1"
 		}
 		if req.Env[incrementalTimingEnv] != want {
-			return servicehook.Invalid(errors.New("RGW timing profile startup marker must not be replaced by a customizer"))
+			return errors.New("RGW timing profile startup marker must not be replaced by a customizer")
 		}
 		return nil
 	}))
@@ -64,8 +69,12 @@ func (p TimingProfile) verifyGateway(ctx context.Context, gateway *rgw.Gateway) 
 	if err != nil {
 		return fmt.Errorf("read RGW timing binary version: %w", err)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(string(version)), "ceph version 20.2.4 ") {
-		return errors.New("incremental RGW timing is qualified only for Ceph 20.2.4")
+	words := strings.Fields(string(version))
+	if len(words) < 3 || words[0] != "ceph" || words[1] != "version" || !timingVersionPattern.MatchString(words[2]) {
+		return errors.New("could not identify the RGW timing binary version")
+	}
+	if words[2] != "20.2.4" {
+		return fmt.Errorf("incremental RGW timing is qualified only for Ceph 20.2.4 (observed %s)", words[2])
 	}
 	data, err := servicehook.Command(ctx, gateway.Container, "cat", "/proc/1/cmdline")
 	if err != nil {

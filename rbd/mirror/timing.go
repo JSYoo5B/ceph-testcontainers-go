@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
+
+var timingNativeVersion = regexp.MustCompile(`^ceph version ([0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9+_.-]*) `)
 
 // TimingProfile selects qualified startup conditions of owned mirror daemons.
 // Its zero value preserves ordinary native timing. Pass it in Config through
@@ -67,7 +70,12 @@ func (p TimingProfile) verify(parent context.Context, daemon testcontainers.Cont
 		return err
 	}
 	if !strings.HasPrefix(strings.TrimSpace(string(version)), "ceph version 20.2.4 ") {
-		return fmt.Errorf("journal polling timing is not qualified for this rbd-mirror release")
+		match := timingNativeVersion.FindStringSubmatch(strings.TrimSpace(string(version)))
+		if match == nil {
+			return errors.New("cannot establish native rbd-mirror release for timing qualification")
+		}
+		observed := match[1]
+		return fmt.Errorf("journal polling timing is qualified only for Ceph 20.2.4 (observed %s)", observed)
 	}
 	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "config", "get", "rbd_mirror_journal_poll_age")
 	if err != nil {

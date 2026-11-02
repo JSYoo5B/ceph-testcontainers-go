@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
@@ -91,6 +92,7 @@ func TestTimingProfileVerifiesNativeVersionAndOwnedProcessInputs(t *testing.T) {
 		wantErr       bool
 	}{
 		{name: "qualified", version: "ceph version 20.2.4 (build) tentacle (stable)", args: good},
+		{name: "unreadable", version: "ceph version not-a-release (build)", args: good, wantErr: true},
 		{name: "unqualified", version: "ceph version 19.2.5 (build) squid (stable)", args: good, wantErr: true},
 		{name: "missing", version: "ceph version 20.2.4 (build)", args: good[:4], wantErr: true},
 		{name: "changed", version: "ceph version 20.2.4 (build)", args: []string{"radosgw", "--rgw-meta-sync-poll-interval", "1", "--rgw-data-sync-poll-interval", "20"}, wantErr: true},
@@ -104,6 +106,13 @@ func TestTimingProfileVerifiesNativeVersionAndOwnedProcessInputs(t *testing.T) {
 			err := (TimingProfile{IncrementalSync: true}).verifyGateway(t.Context(), &rgw.Gateway{Container: ctr})
 			if (err != nil) != test.wantErr {
 				t.Fatalf("verify: %v", err)
+			}
+			if test.name == "unqualified" {
+				if errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "19.2.5") || !strings.Contains(err.Error(), "qualified only") {
+					t.Fatalf("unqualified profile lost version or claimed native incapability: %v", err)
+				}
+			} else if errors.Is(err, ceph.ErrUnsupported) {
+				t.Fatalf("non-version error classified unsupported: %v", err)
 			}
 		})
 	}
@@ -126,7 +135,7 @@ func TestTimingProfilePartialGatewayRemainsOwnedAfterVerificationFailure(t *test
 		return gateway, nil
 	}
 	got, err := f.runGateway(t.Context(), "image", nil, nil, "gateway", "zone", start)
-	if got != gateway || err == nil || f.owned.Len() != 1 {
+	if got != gateway || err == nil || !strings.Contains(err.Error(), "qualified only") || f.owned.Len() != 1 {
 		t.Fatalf("partial gateway lost: %v %v", got, err)
 	}
 	if err := f.Terminate(t.Context()); err != nil || ctr.terminations != 1 {
