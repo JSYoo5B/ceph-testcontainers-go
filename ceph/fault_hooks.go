@@ -26,8 +26,6 @@ var faultKindNames = map[string]faultKind{
 	"NetworkDelay":        faultNetworkDelay,
 	"NetworkInterruption": faultNetworkInterruption,
 	"ContainerPause":      faultContainerPause,
-	"Blocklist":           faultBlocklist,
-	"FullRatios":          faultFullRatios,
 }
 
 var errFaultToken = errors.New("fault registry token is not one that a cluster issued")
@@ -63,13 +61,6 @@ func (faultHooks) Settle(c *Container, token any, network string, handle any, un
 func (faultHooks) Release(c *Container, token any) bool {
 	entry, _ := token.(*faultEntry)
 	return c.faults.release(entry)
-}
-
-// Tracks reports whether token is still the fault of its key. The caller
-// holds the mutex.
-func (faultHooks) Tracks(c *Container, token any) bool {
-	entry, _ := token.(*faultEntry)
-	return c.faults.tracks(entry)
 }
 
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.

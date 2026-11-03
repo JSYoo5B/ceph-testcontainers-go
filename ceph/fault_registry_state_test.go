@@ -95,7 +95,6 @@ var faultRegistryCallers = map[string]stateCaller{
 	"faultHooks.Reserve":    {"hook", []string{"reserve"}},
 	"faultHooks.Settle":     {"hook", []string{"settle"}},
 	"faultHooks.Release":    {"hook", []string{"release"}},
-	"faultHooks.Tracks":     {"hook", []string{"tracks"}},
 	"unitAccess.UnitFaults": {"hook", []string{"handles"}},
 	"overrideHooks.Reserve": {"hook", []string{"reserve"}},
 	"overrideHooks.Settle":  {"hook", []string{"settle"}},

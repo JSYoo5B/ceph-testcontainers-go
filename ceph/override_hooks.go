@@ -46,14 +46,6 @@ func (overrideHooks) WithTopology(ctx context.Context, c *Container, fn func() e
 	return fn()
 }
 
-// WithTopologyNoContext runs fn with the cluster mutex held, waiting for it
-// without a context as the blocklist addition and every lease release do.
-func (overrideHooks) WithTopologyNoContext(c *Container, fn func()) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	fn()
-}
-
 // Ready refuses a terminated cluster or one without a control container with
 // the identical errors of the operations that it replaces. The caller holds
 // the mutex.
