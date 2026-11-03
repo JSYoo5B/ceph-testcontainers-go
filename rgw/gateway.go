@@ -432,10 +432,6 @@ func (r *hostPortReservation) releaseUnused(ctx context.Context) error {
 	return r.release(ctx)
 }
 
-func discardAttempt(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) error {
-	return discardNamedAttempt(ctx, c, "rgw", ctr)
-}
-
 func discardNamedAttempt(ctx context.Context, c *ceph.Container, serviceName string, ctr testcontainers.Container) error {
 	if err := ctr.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {
 		// Retain the partial service so cluster Terminate can retry cleanup.
