@@ -96,16 +96,23 @@ func (inv Inventory) Select(additional []Member, limit int) ([]Member, int) {
 
 // Handle returns ctr, or nil when ctr is a typed nil.
 func Handle(ctr testcontainers.Container) testcontainers.Container {
-	if ctr != nil {
-		value := reflect.ValueOf(ctr)
-		switch value.Kind() {
-		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-			if value.IsNil() {
-				return nil
-			}
-		}
+	if IsNil(ctr) {
+		return nil
 	}
 	return ctr
+}
+
+// IsNil reports a nil interface or a typed nil: a dynamic value of a nilable
+// kind that is nil, on which a method call would panic.
+func IsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch value := reflect.ValueOf(v); value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return value.IsNil()
+	}
+	return false
 }
 
 // SameContainer reports whether a and b are the same container: by ID, or for

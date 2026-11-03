@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // CaptureSettler is a running packet capture that a Finalization settles.
@@ -72,7 +73,7 @@ func (f *Finalization) Capture(name string, session CaptureSettler) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if isNilSession(session) {
+	if evidence.IsNil(session) {
 		f.t.Errorf("ceph finalization: Capture %q has no session", name)
 		return
 	}
@@ -133,19 +134,6 @@ type finalizationCaptureOutcome struct {
 
 func captureReportFile(sequence int, name string) string {
 	return fmt.Sprintf("capture-%d-%s.json", sequence, artifactName(name))
-}
-
-// isNilSession reports a nil interface and an interface that holds a nil
-// pointer, map, slice, function or channel, which would panic on first use.
-func isNilSession(session CaptureSettler) bool {
-	if session == nil {
-		return true
-	}
-	switch v := reflect.ValueOf(session); v.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
-		return v.IsNil()
-	}
-	return false
 }
 
 // safeAllowance reads the allowance without letting a misbehaving session end

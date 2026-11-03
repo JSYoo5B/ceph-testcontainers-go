@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -39,6 +40,29 @@ func TestRedactorIsIdempotent(t *testing.T) {
 		}
 		if strings.Contains(once, "]]") {
 			t.Fatalf("redacted %q to %q", input, once)
+		}
+	}
+}
+
+// IsNil finds a typed nil of every nilable kind and keeps a non-nil value or
+// a value of a kind that cannot be nil.
+func TestIsNil(t *testing.T) {
+	var (
+		pointer *selectTestContainer
+		fn      func()
+		ch      chan int
+		m       map[string]int
+		s       []int
+		iface   error
+	)
+	for _, v := range []any{nil, pointer, fn, ch, m, s, iface, unsafe.Pointer(nil)} {
+		if !IsNil(v) {
+			t.Errorf("IsNil(%T) = false", v)
+		}
+	}
+	for _, v := range []any{&selectTestContainer{}, 0, "", struct{}{}, []int{}} {
+		if IsNil(v) {
+			t.Errorf("IsNil(%T) = true", v)
 		}
 	}
 }
