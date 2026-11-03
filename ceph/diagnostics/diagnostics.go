@@ -2,11 +2,9 @@ package diagnostics
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strconv"
 	"sync"
@@ -466,31 +464,8 @@ func diagnosticLogs(ctx context.Context, docker diagnosticsDocker, id string, co
 	stop := context.AfterFunc(ctx, func() { _ = reader.Close() })
 	defer stop()
 	tail := &diagnosticTail{limit: config.MaxOutputBytes}
-	if inspection.Container.Config != nil && inspection.Container.Config.Tty {
-		_, err = io.Copy(tail, reader)
-	} else {
-		// stdcopy allocates from the advertised frame size. Stream each frame
-		// through a fixed-size copy buffer instead, even for a huge frame header.
-		header := make([]byte, 8)
-		for {
-			_, err = io.ReadFull(reader, header)
-			if err == io.EOF {
-				err = nil
-				break
-			}
-			if err != nil {
-				break
-			}
-			if (header[0] != 1 && header[0] != 2) || header[1] != 0 || header[2] != 0 || header[3] != 0 {
-				err = errors.New("invalid Docker log frame")
-				break
-			}
-			_, err = io.CopyN(tail, reader, int64(binary.BigEndian.Uint32(header[4:])))
-			if err != nil {
-				break
-			}
-		}
-	}
+	tty := inspection.Container.Config != nil && inspection.Container.Config.Tty
+	err = evidence.DemuxLogs(reader, tty, tail, tail)
 	return string(tail.data), tail.truncated, errors.Join(err, ctx.Err())
 }
 

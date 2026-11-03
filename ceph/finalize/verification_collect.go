@@ -3,7 +3,6 @@ package finalize
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -505,36 +504,10 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		e.truncated = e.truncated || truncated
 		emit(e)
 	}
-	streams := map[byte]*verificationLines{1: {emit: line}, 2: {emit: line}}
-	if tty {
-		_, err = io.Copy(streams[1], counted)
-	} else {
-		header := make([]byte, 8)
-		for {
-			_, err = io.ReadFull(counted, header)
-			if err == io.EOF {
-				err = nil
-				break
-			}
-			if err != nil {
-				break
-			}
-			lines := streams[header[0]]
-			if lines == nil || header[1] != 0 || header[2] != 0 || header[3] != 0 {
-				err = errors.New("invalid Docker log frame")
-				break
-			}
-			if _, err = io.CopyN(lines, counted, int64(binary.BigEndian.Uint32(header[4:]))); err != nil {
-				break
-			}
-		}
-	}
-	if err == io.ErrUnexpectedEOF {
-		err = errors.New("the log stream ends inside a frame")
-	}
-	for _, lines := range streams {
-		lines.flush()
-	}
+	stdout, stderr := &verificationLines{emit: line}, &verificationLines{emit: line}
+	err = evidence.DemuxLogs(counted, tty, stdout, stderr)
+	stdout.flush()
+	stderr.flush()
 	read := min(counted.n, config.MaxLogBytes)
 	if counted.n > config.MaxLogBytes {
 		// The limit ended the stream, whatever the reader made of that.
