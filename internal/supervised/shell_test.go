@@ -209,6 +209,31 @@ func TestRunShellStopsASupervisorThatDidNotReport(t *testing.T) {
 	}
 }
 
+func TestPrefixBufferKeepsTheFirstBytes(t *testing.T) {
+	for _, tc := range []struct {
+		limit     int
+		writes    []string
+		want      string
+		truncated bool
+	}{
+		{0, []string{"abc", "def"}, "abcdef", false},
+		{6, []string{"abc", "def"}, "abcdef", false},
+		{4, []string{"abc", "def"}, "abcd", true},
+		{3, []string{"abc", "def", "g"}, "abc", true},
+		{2, []string{"abc"}, "ab", true},
+	} {
+		buffer := &prefixBuffer{limit: tc.limit}
+		for _, write := range tc.writes {
+			if n, err := buffer.Write([]byte(write)); n != len(write) || err != nil {
+				t.Fatalf("limit %d: Write(%q) = %d, %v; the stream must keep flowing", tc.limit, write, n, err)
+			}
+		}
+		if buffer.String() != tc.want || buffer.truncated != tc.truncated {
+			t.Errorf("limit %d, writes %q: kept %q, truncated %t", tc.limit, tc.writes, buffer.String(), buffer.truncated)
+		}
+	}
+}
+
 func TestShellEnd(t *testing.T) {
 	for stderr, want := range map[string]int{
 		"detail\n" + ShellEndPrefix + "3\n": 3, ShellEndPrefix + "0\n": 0, "detail\n": -1, ShellEndPrefix + "3": -1,

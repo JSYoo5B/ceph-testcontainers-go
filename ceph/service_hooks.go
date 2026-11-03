@@ -178,7 +178,7 @@ func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
 // RunOwnedShell returns, and a stop that cannot be confirmed returns a
 // NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
 // cancels a running call. label names the command in errors.
-func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
@@ -187,7 +187,7 @@ func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target test
 	if c.native.calls.admit(inv, nil) == nativeRefusedClosed {
 		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
-	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
+	report, err := supervised.RunShellLimited(runCtx, target, label, limit, stdoutLimit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
 	c.native.calls.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
