@@ -70,9 +70,12 @@ type authorizationRecord struct {
 // provides no layout, snapshot or root-squash administration capabilities.
 //
 // A non-nil result with an error may contain an owned partial creation. It is
-// never silently adopted by a second Authorize call; inspect through Ceph or
-// explicitly Authorization.Deauthorize when its Client creation was confirmed.
-// External auth/layout edits must not race these operations.
+// never silently adopted by a second Authorize call. When the native grant was
+// attempted, clean it up with Authorization.Deauthorize. When only the Client
+// was created and the grant was never attempted, Deauthorize refuses the
+// result with ceph.ErrInvalidRequest because the principal holds no file-data
+// rights: remove it with grant.Client.Delete. External auth/layout edits must
+// not race these operations.
 //
 //purpose:construction,handoff
 func (volume *Subvolume) Authorize(ctx context.Context, config AuthorizationConfig) (*Authorization, error) {
