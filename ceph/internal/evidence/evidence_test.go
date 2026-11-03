@@ -25,7 +25,7 @@ func TestRedactorDoesNotRewriteItsOutput(t *testing.T) {
 // Redacting text that is already redacted changes nothing, so a report
 // redacted on several paths keeps one "[REDACTED]" per secret.
 func TestRedactorIsIdempotent(t *testing.T) {
-	redact := Redactor([]string{"AQBvalue=="})
+	redact := Redactor([]string{"AQBvalue==", "known-prefix"})
 	for _, input := range []string{
 		"key = AQBvalue==",
 		"key = plain",
@@ -35,6 +35,10 @@ func TestRedactorIsIdempotent(t *testing.T) {
 		`password="[review-secret]"`,
 		`password="prefix[review-secret]"`,
 		"token=a[b]c[d",
+		`password="[REDACTED]review-secret"`,
+		`token="[REDACTED-review-secret]"`,
+		`password="known-prefix-review-secret"`,
+		"private_key: [REDACTED PRIVATE KEY]",
 		"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
 	} {
 		once := redact(input)

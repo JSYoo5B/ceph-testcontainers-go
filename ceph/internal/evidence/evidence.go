@@ -156,18 +156,30 @@ func KeyringSecrets(keyring []byte) []string {
 // secretPattern takes the value after a secret-looking name. A bracketed
 // part of the value is taken whole, closing bracket included, so a secret
 // such as "[x]" or "a[b]" is masked entirely; a closing bracket outside one
-// ends the value, as at the end of a JSON array. maskSecret leaves a value
-// that is already a redaction marker alone, which keeps redaction idempotent.
+// ends the value, as at the end of a JSON array. maskSecrets leaves a value
+// that is exactly a redaction marker alone, which keeps redaction idempotent.
 var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)((?:\[[^"'\s,;}\[\]]*\]|[^"'\s,;}\]])+)`)
 
-// maskSecret replaces the value of one secretPattern match, unless the value
-// is a redaction marker that an earlier pass wrote.
-func maskSecret(match string) string {
-	groups := secretPattern.FindStringSubmatch(match)
-	if groups == nil || strings.HasPrefix(groups[2], "[REDACTED") {
-		return match
+// maskSecrets replaces the value of every secretPattern match with
+// "[REDACTED]", except a value that is a complete marker an earlier pass
+// wrote: "[REDACTED]" itself, or the "[REDACTED" that begins
+// "[REDACTED PRIVATE KEY]". A value that only starts with a marker, such as
+// what a configured value's replacement leaves before the rest of a
+// credential, is masked whole.
+func maskSecrets(data string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range secretPattern.FindAllStringSubmatchIndex(data, -1) {
+		value := data[m[4]:m[5]]
+		if value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[m[5]:], " PRIVATE KEY]") {
+			continue
+		}
+		out.WriteString(data[last:m[4]])
+		out.WriteString("[REDACTED]")
+		last = m[5]
 	}
-	return groups[1] + "[REDACTED]"
+	out.WriteString(data[last:])
+	return out.String()
 }
 
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
@@ -196,7 +208,7 @@ func Redactor(values []string) func(string) string {
 		// Bearer tokens first: the secret pattern takes only the word after
 		// "Authorization:", which would leave the token behind it.
 		data = bearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return secretPattern.ReplaceAllStringFunc(data, maskSecret)
+		return maskSecrets(data)
 	}
 }
 
