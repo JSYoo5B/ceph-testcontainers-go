@@ -25,15 +25,15 @@ func TestMultiClusterRBDPeerLifecycle(t *testing.T) {
 	const size = 8 << 20
 	harness.RBDMultiClusterPool(t, ctx, source, sourceClient, pool)
 	harness.RBDMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	link := harness.RBDScenarioRunLink(t, ctx, source, destination, pool, "source", "destination")
+	link := rbdScenarioRunLink(t, ctx, source, destination, pool, "source", "destination")
 	harness.RBDScenarioWaitTransmitPeer(t, ctx, link.SourceRBD, pool, "destination")
-	before := harness.RBDScenarioSeed(t, ctx, sourceClient, image, 53)
+	before := rbdScenarioSeed(t, ctx, sourceClient, image, 53)
 	harness.RBDScenarioCommand(t, ctx, link.SourceRBD, "mirror", "image", "enable", image, "snapshot")
-	harness.RBDScenarioWaitBytes(t, ctx, destinationClient, image, before)
+	rbdScenarioWaitBytes(t, ctx, destinationClient, image, before)
 	oldPeer := harness.RBDScenarioPeer(t, ctx, link, pool)
-	harness.RBDScenarioStop(t, ctx, link)
+	rbdScenarioStop(t, ctx, link)
 	harness.RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "peer", "remove", pool, oldPeer)
-	harness.RBDScenarioRequireNoPeers(t, ctx, link, pool)
+	rbdScenarioRequireNoPeers(t, ctx, link, pool)
 	if err := link.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestMultiClusterRBDPeerLifecycle(t *testing.T) {
 	harness.RBDMultiClusterWriteRange(t, ctx, sourceClient, image, size, 5<<20, patch)
 	harness.RBDScenarioCommand(t, ctx, link.SourceRBD, "mirror", "image", "snapshot", image)
 	for i := 0; i < 3; i++ {
-		harness.VerifyRBDBytes(t, ctx, destinationClient, image, before)
+		verifyRBDBytes(t, ctx, destinationClient, image, before)
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -58,12 +58,12 @@ func TestMultiClusterRBDPeerLifecycle(t *testing.T) {
 		t.Fatal("removed peer UUID was reused rather than creating a new relationship")
 	}
 	harness.RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "image", "resync", image)
-	harness.RBDScenarioWaitBytes(t, ctx, destinationClient, image, after)
+	rbdScenarioWaitBytes(t, ctx, destinationClient, image, after)
 	latest := bytes.Clone(after)
 	lastPatch := harness.RBDMultiClusterPayload(256<<10, 211)
 	copy(latest[:len(lastPatch)], lastPatch)
 	harness.RBDMultiClusterWriteRange(t, ctx, sourceClient, image, size, 0, lastPatch)
 	harness.RBDScenarioCommand(t, ctx, link.SourceRBD, "mirror", "image", "snapshot", image)
-	harness.RBDScenarioWaitBytes(t, ctx, destinationClient, image, latest)
+	rbdScenarioWaitBytes(t, ctx, destinationClient, image, latest)
 	t.Logf("RBD peer lifecycle: removed %s, no peer/no new data while daemon ran, rebootstrap created %s; resync and subsequent checkpoint restored native replication", oldPeer, newPeer)
 }

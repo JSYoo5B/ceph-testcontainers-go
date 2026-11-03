@@ -14,5 +14,5 @@ import (
 // map a kernel block device or mount a filesystem on an RBD image.
 func TestRBDLifecycle(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunRBDLifecycle(t)
+	runRBDLifecycle(t)
 }

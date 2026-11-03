@@ -8,11 +8,10 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Host-mode federation reuses the complete bridge-mode native mirror and
 // backup assertions. Each cluster retains its own FSID, credentials and data.
 func TestHostNetworkRBDSnapshotMirror(t *testing.T) {
-	harness.RunMultiClusterRBDSnapshotMirror(t, ceph.WithHostNetwork())
+	runMultiClusterRBDSnapshotMirror(t, ceph.WithHostNetwork())
 }

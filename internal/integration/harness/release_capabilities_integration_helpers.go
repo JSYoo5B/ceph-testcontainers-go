@@ -22,9 +22,9 @@ import (
 type capabilityID string
 
 const (
-	// capabilityRBDNamespaceMapping maps a mirrored RBD namespace to another
+	// CapabilityRBDNamespaceMapping maps a mirrored RBD namespace to another
 	// name (Ceph 20 and later, or a patched image that has the option).
-	capabilityRBDNamespaceMapping capabilityID = "rbd mirror pool enable --remote-namespace"
+	CapabilityRBDNamespaceMapping capabilityID = "rbd mirror pool enable --remote-namespace"
 	// CapabilityMessengerDump is the daemon command "messenger dump" (Ceph
 	// 20). Without it the native probes prove encryption from secure-only
 	// service modes and client debug_ms READY lines instead.
@@ -58,8 +58,8 @@ type releaseCapability struct {
 // command-form choices (see docs/contributing/testing.md); this table owns
 // the test expectations.
 var ReleaseCapabilities = map[capabilityID]releaseCapability{
-	capabilityRBDNamespaceMapping: {
-		ID:      capabilityRBDNamespaceMapping,
+	CapabilityRBDNamespaceMapping: {
+		ID:      CapabilityRBDNamespaceMapping,
 		Detect:  detectRBDNamespaceMapping,
 		refusal: "needs Ceph 20 or later",
 	},
@@ -220,10 +220,10 @@ func cachedCapability(t *testing.T, cluster *ceph.Container, id capabilityID, pr
 // the client runtime, as the fixture does before it maps namespaces.
 func detectRBDNamespaceMapping(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
-	return cachedCapability(t, cluster, capabilityRBDNamespaceMapping, func() bool {
+	return cachedCapability(t, cluster, CapabilityRBDNamespaceMapping, func() bool {
 		client, err := cluster.ClientContainer(ctx)
 		if err != nil {
-			t.Fatalf("select the client container for capability %q: %v", capabilityRBDNamespaceMapping, err)
+			t.Fatalf("select the client container for capability %q: %v", CapabilityRBDNamespaceMapping, err)
 		}
 		return strings.Contains(ExecOutput(t, ctx, client, "rbd", "help", "mirror", "pool", "enable"), "--remote-namespace")
 	})

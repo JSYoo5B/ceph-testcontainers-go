@@ -267,7 +267,7 @@ func rbdDaemonPoolIdentity(t *testing.T, ctx context.Context, destinationClient 
 func rbdDaemonImageIdentity(t *testing.T, ctx context.Context, source, destination testcontainers.Container, image, expected string) string {
 	t.Helper()
 	for index, client := range []testcontainers.Container{source, destination} {
-		harness.RBDMultiClusterAssertPrimary(t, ctx, client, image, index == 0)
+		rbdMultiClusterAssertPrimary(t, ctx, client, image, index == 0)
 		var info struct {
 			Mirroring struct {
 				GlobalID string `json:"global_id"`
