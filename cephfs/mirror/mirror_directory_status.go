@@ -60,10 +60,25 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Di
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	return mirror.directoryStatus(ctx, directory, nil)
+}
+
+// directoryStatus is one DirectoryStatus observation of a normalized
+// directory under Mirror.mu, bounded by ctx including the lock wait. admit,
+// when set, runs first under the lock and refuses the observation with its
+// error; WatchDirectory checks its pinned identities there. Every lock is
+// released before it returns.
+func (mirror *Mirror) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
+	var result DirectoryStatus
 	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
 		return result, err
 	}
 	defer mirror.mu.Unlock()
+	if admit != nil {
+		if err := admit(ctx); err != nil {
+			return result, err
+		}
+	}
 	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.pendingPeerImport != nil || mirror.peerID == "" || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 {
 		return result, cephFSObserveGuard("CephFS mirror filesystem and peer identities are not confirmed")
 	}
