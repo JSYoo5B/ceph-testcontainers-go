@@ -183,7 +183,7 @@ use `Observer.WatchOSDs`: one goroutine polls the OSDMap and sends events on
 one receive-only channel. Fan-out to several consumers is yours to build.
 
 ```golang
-watch, err := observer.WatchOSDs(ctx, ceph.OSDWatchConfig{Interval: time.Second})
+watch, err := observer.WatchOSDs(ctx, ceph.WatchConfig{Interval: time.Second})
 if err != nil {
 	t.Fatal(err) // the baseline read failed; nothing runs
 }
@@ -194,7 +194,7 @@ baseline := <-watch.Events() // already buffered
 // ... stop an owned OSD and run the SUT ...
 
 for event := range watch.Events() {
-	if event.Kind == ceph.OSDWatchGap {
+	if event.Kind == ceph.WatchGap {
 		continue // a failed read: event.Err says why
 	}
 	if slices.ContainsFunc(event.States, func(s ceph.OSDState) bool { return s.ID == osd.ID && !s.Up }) {
@@ -212,7 +212,7 @@ if err := watch.Stop(); err != nil {
   watch with an error.
 - An event is sent only when the compared fields (ID, UUID, up, in, weight)
   differ from the previous successful read. A failed read is an
-  `OSDWatchGap`, and the next success is `OSDWatchResumed` even when nothing
+  `WatchGap`, and the next success is `WatchResumed` even when nothing
   changed. Two states either side of a gap or of one interval do not show what
   happened between them: a transition shorter than the interval can be
   missed.

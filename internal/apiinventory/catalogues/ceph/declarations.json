@@ -1519,45 +1519,9 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.OSDWatchBaseline",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchBaseline",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchChanged",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchChanged",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchConfig",
-      "kind": "type",
-      "proposed": "ceph.OSDWatchConfig",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.OSDWatchEvent",
       "kind": "type",
       "proposed": "ceph.OSDWatchEvent",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchEventKind",
-      "kind": "type",
-      "proposed": "ceph.OSDWatchEventKind",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchGap",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchGap",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchResumed",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchResumed",
       "decision": "baseline"
     },
     {
@@ -1758,7 +1722,7 @@
     {
       "current": "ceph.Observer.WatchOSDs",
       "kind": "method",
-      "signature": "func(ctx context.Context, cfg OSDWatchConfig) (*OSDWatch, error)",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*OSDWatch, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.WatchOSDs",
       "decision": "baseline"
@@ -1977,6 +1941,42 @@
       "current": "ceph.Status",
       "kind": "type",
       "proposed": "ceph.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchBaseline",
+      "kind": "const",
+      "proposed": "ceph.WatchBaseline",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchChanged",
+      "kind": "const",
+      "proposed": "ceph.WatchChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchConfig",
+      "kind": "type",
+      "proposed": "ceph.WatchConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchEventKind",
+      "kind": "type",
+      "proposed": "ceph.WatchEventKind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchGap",
+      "kind": "const",
+      "proposed": "ceph.WatchGap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchResumed",
+      "kind": "const",
+      "proposed": "ceph.WatchResumed",
       "decision": "baseline"
     },
     {

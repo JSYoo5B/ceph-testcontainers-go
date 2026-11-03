@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
 const osdUUID2 = "33333333-3333-4333-8333-333333333333"
@@ -98,11 +100,11 @@ func (s *watchSource) awaitReads(t *testing.T, n int) {
 	}
 }
 
-func fastWatch(buffer int) osdWatchSettings {
-	return osdWatchSettings{interval: 2 * time.Millisecond, timeout: time.Second, buffer: buffer}
+func fastWatch(buffer int) watch.Settings {
+	return watch.Settings{Interval: 2 * time.Millisecond, Timeout: time.Second, Buffer: buffer}
 }
 
-func startTestWatch(t *testing.T, ctx context.Context, settings osdWatchSettings, source *watchSource) *OSDWatch {
+func startTestWatch(t *testing.T, ctx context.Context, settings watch.Settings, source *watchSource) *OSDWatch {
 	t.Helper()
 	w, err := startOSDWatch(ctx, settings, source.read)
 	if err != nil {
@@ -147,19 +149,19 @@ func requireClosed(t *testing.T, w *OSDWatch) []OSDWatchEvent {
 func awaitDone(t *testing.T, w *OSDWatch) {
 	t.Helper()
 	select {
-	case <-w.done:
+	case <-w.stream.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("the watch did not end by itself")
 	}
 }
 
-func TestOSDWatchBaselineIsBufferedBeforeWatchOSDsReturns(t *testing.T) {
+func TestWatchBaselineIsBufferedBeforeWatchOSDsReturns(t *testing.T) {
 	source := newWatchSource()
-	w := startTestWatch(t, t.Context(), osdWatchSettings{interval: time.Hour, timeout: time.Second, buffer: 1}, source)
+	w := startTestWatch(t, t.Context(), watch.Settings{Interval: time.Hour, Timeout: time.Second, Buffer: 1}, source)
 	select {
 	case event := <-w.Events():
 		want := []OSDState{source.osds[0], source.osds[1]}
-		if event.Sequence != 1 || event.Kind != OSDWatchBaseline || event.Epoch != 10 || event.Err != nil || !reflect.DeepEqual(event.States, want) {
+		if event.Sequence != 1 || event.Kind != WatchBaseline || event.Epoch != 10 || event.Err != nil || !reflect.DeepEqual(event.States, want) {
 			t.Fatalf("baseline = %+v", event)
 		}
 		if event.Started.IsZero() || event.Finished.Before(event.Started) {
@@ -212,7 +214,7 @@ func TestOSDWatchReportsChangesInOrderWithoutOverwriting(t *testing.T) {
 		if i == 0 {
 			continue
 		}
-		if event.Kind != OSDWatchChanged || event.States[1].Up != (i%2 == 0) || !event.States[0].Up {
+		if event.Kind != WatchChanged || event.States[1].Up != (i%2 == 0) || !event.States[0].Up {
 			t.Fatalf("event %d = %+v", i, event)
 		}
 		if event.Epoch <= events[i-1].Epoch {
@@ -233,7 +235,7 @@ func TestOSDWatchAlreadyCanceledContextStartsNothing(t *testing.T) {
 	}
 	cluster, ctr := newWatchCluster()
 	observer, _ := Observe(cluster)
-	if w, err := observer.WatchOSDs(ctx, OSDWatchConfig{}); w != nil || !errors.Is(err, context.Canceled) {
+	if w, err := observer.WatchOSDs(ctx, WatchConfig{}); w != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("observer watch = %v, %v", w, err)
 	}
 	if got := ctr.commands(); len(got) != 0 {
@@ -275,7 +277,7 @@ func TestOSDWatchStopDuringQuery(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop did not interrupt the query")
 	}
-	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != OSDWatchBaseline {
+	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != WatchBaseline {
 		t.Fatalf("events = %+v", rest)
 	}
 	if err := w.Stop(); err != nil {
@@ -290,7 +292,7 @@ func TestOSDWatchStopWhenTheNextReadIsOverdue(t *testing.T) {
 	for range 5 {
 		source := newWatchSource()
 		source.delay = 120 * time.Millisecond
-		w, err := startOSDWatch(t.Context(), osdWatchSettings{interval: 100 * time.Millisecond, timeout: time.Second, buffer: 16}, source.read)
+		w, err := startOSDWatch(t.Context(), watch.Settings{Interval: 100 * time.Millisecond, Timeout: time.Second, Buffer: 16}, source.read)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,14 +321,14 @@ func TestOSDWatchStopDuringBlockedDelivery(t *testing.T) {
 	source := newWatchSource()
 	// One slot holds the unread baseline; the change then waits for space
 	// for up to one interval.
-	w := startTestWatch(t, t.Context(), osdWatchSettings{interval: 400 * time.Millisecond, timeout: time.Second, buffer: 1}, source)
+	w := startTestWatch(t, t.Context(), watch.Settings{Interval: 400 * time.Millisecond, Timeout: time.Second, Buffer: 1}, source)
 	source.setUp(0, false)
 	source.awaitReads(t, 1)
 	time.Sleep(50 * time.Millisecond)
 	if err := w.Stop(); err != nil {
 		t.Fatalf("Stop during delivery = %v", err)
 	}
-	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != OSDWatchBaseline {
+	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != WatchBaseline {
 		t.Fatalf("events = %+v", rest)
 	}
 }
@@ -346,7 +348,7 @@ func TestOSDWatchStalledConsumerOverflowsWithAnAttributableCause(t *testing.T) {
 		t.Fatalf("Stop is not stable: %v then %v", err, err2)
 	}
 	rest := requireClosed(t, w)
-	if len(rest) != 2 || rest[0].Kind != OSDWatchBaseline || rest[1].Sequence != 2 || rest[1].States[1].Up {
+	if len(rest) != 2 || rest[0].Kind != WatchBaseline || rest[1].Sequence != 2 || rest[1].States[1].Up {
 		t.Fatalf("the buffered events before the overflow = %+v", rest)
 	}
 }
@@ -358,22 +360,22 @@ func TestOSDWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 	boom := errors.New("transient")
 	source.update(func(s *watchSource) { s.fail = boom })
 	gap := nextEvent(t, w)
-	if gap.Kind != OSDWatchGap || !errors.Is(gap.Err, boom) || gap.States != nil || gap.Epoch != 0 || gap.Sequence != 2 {
+	if gap.Kind != WatchGap || !errors.Is(gap.Err, boom) || gap.States != nil || gap.Epoch != 0 || gap.Sequence != 2 {
 		t.Fatalf("gap = %+v", gap)
 	}
 	source.update(func(s *watchSource) { s.fail = nil })
 	var resumed OSDWatchEvent
-	for resumed = nextEvent(t, w); resumed.Kind == OSDWatchGap; resumed = nextEvent(t, w) {
+	for resumed = nextEvent(t, w); resumed.Kind == WatchGap; resumed = nextEvent(t, w) {
 		if !errors.Is(resumed.Err, boom) {
 			t.Fatalf("gap = %+v", resumed)
 		}
 	}
-	if resumed.Kind != OSDWatchResumed || resumed.Err != nil || !reflect.DeepEqual(resumed.States, baseline.States) {
+	if resumed.Kind != WatchResumed || resumed.Err != nil || !reflect.DeepEqual(resumed.States, baseline.States) {
 		t.Fatalf("resumed = %+v (an unchanged state after a gap is still reported)", resumed)
 	}
 	source.setUp(0, false)
 	changed := nextEvent(t, w)
-	if changed.Kind != OSDWatchChanged || changed.Sequence != resumed.Sequence+1 || changed.States[0].Up {
+	if changed.Kind != WatchChanged || changed.Sequence != resumed.Sequence+1 || changed.States[0].Up {
 		t.Fatalf("changed = %+v", changed)
 	}
 	if err := w.Stop(); err != nil {
@@ -402,7 +404,7 @@ func TestOSDWatchIdentityDriftEndsTheWatch(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "watched osd.1") {
 				t.Fatalf("Stop = %v", err)
 			}
-			if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != OSDWatchBaseline {
+			if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != WatchBaseline {
 				t.Fatalf("a drifted read produced events: %+v", rest)
 			}
 		})
@@ -481,28 +483,28 @@ func TestOSDWatchStopIsSafeConcurrentlyAndOnZeroValue(t *testing.T) {
 	}
 }
 
-func TestOSDWatchConfigValidation(t *testing.T) {
-	got, err := OSDWatchConfig{}.settings()
-	if err != nil || got != (osdWatchSettings{interval: 2 * time.Second, timeout: 30 * time.Second, buffer: 16}) {
+func TestWatchConfigValidation(t *testing.T) {
+	got, err := watchSettings("watch OSDs", WatchConfig{}, osdWatchDefaultInterval)
+	if err != nil || got != (watch.Settings{Interval: 2 * time.Second, Timeout: 30 * time.Second, Buffer: 16}) {
 		t.Fatalf("defaults = %+v, %v", got, err)
 	}
-	for name, cfg := range map[string]OSDWatchConfig{
+	for name, cfg := range map[string]WatchConfig{
 		"negative interval": {Interval: -1},
 		"negative timeout":  {QueryTimeout: -1},
 		"negative buffer":   {Buffer: -1},
 		"short interval":    {Interval: 99 * time.Millisecond},
 		"large buffer":      {Buffer: 1025},
 	} {
-		if _, err := cfg.settings(); !errors.Is(err, ErrInvalidRequest) {
+		if _, err := watchSettings("watch OSDs", cfg, osdWatchDefaultInterval); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	cluster, ctr := newWatchCluster()
 	observer, _ := Observe(cluster)
-	if w, err := observer.WatchOSDs(t.Context(), OSDWatchConfig{Buffer: -1}); w != nil || !errors.Is(err, ErrInvalidRequest) || len(ctr.commands()) != 0 {
+	if w, err := observer.WatchOSDs(t.Context(), WatchConfig{Buffer: -1}); w != nil || !errors.Is(err, ErrInvalidRequest) || len(ctr.commands()) != 0 {
 		t.Fatalf("invalid config = %v, %v, %q", w, err, ctr.commands())
 	}
-	if w, err := (&Observer{}).WatchOSDs(t.Context(), OSDWatchConfig{}); w != nil || !errors.Is(err, ErrInvalidRequest) {
+	if w, err := (&Observer{}).WatchOSDs(t.Context(), WatchConfig{}); w != nil || !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("unconstructed observer = %v, %v", w, err)
 	}
 }
@@ -524,7 +526,7 @@ func watchDump(epoch int, up1 int) string {
 func TestOSDWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	cluster, ctr := newWatchCluster()
 	observer, _ := Observe(cluster)
-	w, err := observer.WatchOSDs(t.Context(), OSDWatchConfig{Interval: 500 * time.Millisecond, QueryTimeout: 50 * time.Millisecond, Buffer: 1})
+	w, err := observer.WatchOSDs(t.Context(), WatchConfig{Interval: 500 * time.Millisecond, QueryTimeout: 50 * time.Millisecond, Buffer: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,10 +554,10 @@ func TestOSDWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	if states, err := observer.OSDStates(t.Context()); err != nil || states[1].Up {
 		t.Fatalf("consumer query during the watch = %+v, %v", states, err)
 	}
-	if baseline := nextEvent(t, w); baseline.Kind != OSDWatchBaseline || baseline.Epoch != 1 || !baseline.States[1].Up {
+	if baseline := nextEvent(t, w); baseline.Kind != WatchBaseline || baseline.Epoch != 1 || !baseline.States[1].Up {
 		t.Fatalf("baseline = %+v", baseline)
 	}
-	if changed := nextEvent(t, w); changed.Kind != OSDWatchChanged || changed.Epoch != 2 || changed.States[1].Up {
+	if changed := nextEvent(t, w); changed.Kind != WatchChanged || changed.Epoch != 2 || changed.States[1].Up {
 		t.Fatalf("changed = %+v", changed)
 	}
 	// A consumer that holds the lock longer than QueryTimeout gets a gap
@@ -563,11 +565,11 @@ func TestOSDWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	cluster.mu.Lock()
 	gap := nextEvent(t, w)
 	cluster.mu.Unlock()
-	if gap.Kind != OSDWatchGap || !errors.Is(gap.Err, context.DeadlineExceeded) {
+	if gap.Kind != WatchGap || !errors.Is(gap.Err, context.DeadlineExceeded) {
 		t.Fatalf("gap = %+v", gap)
 	}
-	for event := nextEvent(t, w); event.Kind != OSDWatchResumed; event = nextEvent(t, w) {
-		if event.Kind != OSDWatchGap {
+	for event := nextEvent(t, w); event.Kind != WatchResumed; event = nextEvent(t, w) {
+		if event.Kind != WatchGap {
 			t.Fatalf("event after the lock was released = %+v", event)
 		}
 	}
@@ -580,7 +582,7 @@ func TestOSDWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 func TestOSDWatchEndsWhenTheClusterTerminates(t *testing.T) {
 	cluster, ctr := newWatchCluster()
 	observer, _ := Observe(cluster)
-	w, err := observer.WatchOSDs(t.Context(), OSDWatchConfig{Interval: 100 * time.Millisecond, Buffer: 4})
+	w, err := observer.WatchOSDs(t.Context(), WatchConfig{Interval: 100 * time.Millisecond, Buffer: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +597,7 @@ func TestOSDWatchEndsWhenTheClusterTerminates(t *testing.T) {
 	if got := ctr.commands(); len(got) != before {
 		t.Fatalf("a terminated cluster ran commands: %q", got[before:])
 	}
-	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != OSDWatchBaseline {
+	if rest := requireClosed(t, w); len(rest) != 1 || rest[0].Kind != WatchBaseline {
 		t.Fatalf("events = %+v", rest)
 	}
 }

@@ -246,16 +246,11 @@
       "OSDState.Up field bool",
       "OSDState.Weight field float64"
     ],
-    "ceph.OSDWatchConfig": [
-      "OSDWatchConfig.Buffer field int",
-      "OSDWatchConfig.Interval field time.Duration",
-      "OSDWatchConfig.QueryTimeout field time.Duration"
-    ],
     "ceph.OSDWatchEvent": [
       "OSDWatchEvent.Epoch field uint64",
       "OSDWatchEvent.Err field error",
       "OSDWatchEvent.Finished field time.Time",
-      "OSDWatchEvent.Kind field OSDWatchEventKind",
+      "OSDWatchEvent.Kind field WatchEventKind",
       "OSDWatchEvent.Sequence field uint64",
       "OSDWatchEvent.Started field time.Time",
       "OSDWatchEvent.States field []OSDState"
@@ -388,6 +383,11 @@
       "Status.PGMap.PGsByState field []struct {\n\tStateName string `json:\"state_name\"`\n\tCount     int    `json:\"count\"`\n} `json:\"pgs_by_state\"`",
       "Status.PGMap.PGsByState[].Count field int `json:\"count\"`",
       "Status.PGMap.PGsByState[].StateName field string `json:\"state_name\"`"
+    ],
+    "ceph.WatchConfig": [
+      "WatchConfig.Buffer field int",
+      "WatchConfig.Interval field time.Duration",
+      "WatchConfig.QueryTimeout field time.Duration"
     ]
   }
 }
