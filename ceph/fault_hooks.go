@@ -73,7 +73,9 @@ func (faultHooks) WithTopology(ctx context.Context, c *Container, fn func() erro
 }
 
 // WithTopologyNoContext runs fn with the cluster mutex held, waiting for it
-// without a context as override.AddBlocklist and lease releases do.
+// without a context. Only finalization uses it: settling a network delay
+// reservation and releasing a lease must record or free what the fault owns
+// even after the caller's context ended.
 func (faultHooks) WithTopologyNoContext(c *Container, fn func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
