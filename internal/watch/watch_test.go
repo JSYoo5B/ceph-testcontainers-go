@@ -134,3 +134,18 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestNextReadRestsAtLeastAsLongAsTheReadTook(t *testing.T) {
+	r := &run[int, event]{spec: Spec[int, event]{Settings: Settings{Interval: 5 * time.Second}}}
+	start := time.Unix(1000, 0)
+	for _, c := range []struct{ took, want time.Duration }{
+		{time.Second, 5 * time.Second},             // short read: one interval
+		{2500 * time.Millisecond, 5 * time.Second}, // half the interval: still one interval
+		{4 * time.Second, 8 * time.Second},         // long read: rest 4s after it
+		{7 * time.Second, 14 * time.Second},        // longer than the interval
+	} {
+		if got := r.next(start, start.Add(c.took)).Sub(start); got != c.want {
+			t.Errorf("read of %v: next read %v after the start, want %v", c.took, got, c.want)
+		}
+	}
+}

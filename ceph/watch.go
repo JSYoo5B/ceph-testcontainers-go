@@ -13,8 +13,10 @@ import (
 type WatchConfig struct {
 	// Interval is the time between the starts of consecutive reads. Each
 	// Watch documents its own default, chosen from the cost of its read.
-	// Reads never overlap: a read that takes longer delays the next one. A
-	// transition that is shorter than the interval can be missed.
+	// Reads never overlap, and after a read the watch rests at least as long
+	// as that read took, so it leaves the fixture's locks free at least half
+	// the time: a read that takes longer than half the interval delays the
+	// next one. A transition that is shorter than the interval can be missed.
 	Interval time.Duration
 	// QueryTimeout bounds one read, including its wait for fixture locks, 30
 	// seconds by default. A read that exceeds it is a gap, not the end of the

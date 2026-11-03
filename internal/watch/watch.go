@@ -203,7 +203,7 @@ func Start[S, E any](ctx context.Context, spec Spec[S, E]) (*Stream[E], error) {
 		close(r.stream.done)
 		return r.stream, nil
 	}
-	go r.loop(watchCtx, started)
+	go r.loop(watchCtx, started, finished)
 	return r.stream, nil
 }
 
@@ -218,29 +218,44 @@ func (r *run[S, E]) event(kind Kind, started, finished time.Time, sample S, err 
 	return r.spec.Event(Meta{Sequence: r.sequence, Kind: kind, Started: started, Finished: finished}, sample, err)
 }
 
-func (r *run[S, E]) loop(ctx context.Context, previous time.Time) {
+func (r *run[S, E]) loop(ctx context.Context, started, finished time.Time) {
 	s := r.stream
 	defer func() {
 		s.cancel(nil)
 		close(s.events)
 		close(s.done)
 	}()
-	s.err = r.poll(ctx, previous)
+	s.err = r.poll(ctx, started, finished)
 	if errors.Is(s.err, ErrStopped) {
 		s.err = nil
 	}
 }
 
+// next is the start of the read after one that ran from started to
+// finished: one interval after started, and never sooner than the read's own
+// duration after it finished. A read holds fixture locks, which the other
+// callers acquire by polling, so a watch must leave them free at least half
+// the time even when its reads take longer than the interval.
+func (r *run[S, E]) next(started, finished time.Time) time.Time {
+	return later(started.Add(r.spec.Settings.Interval), finished.Add(finished.Sub(started)))
+}
+
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
+}
+
 // poll runs the reads until one ends the watch, and returns that cause.
-func (r *run[S, E]) poll(ctx context.Context, previous time.Time) error {
+func (r *run[S, E]) poll(ctx context.Context, started, finished time.Time) error {
 	for {
-		if err := r.wait(ctx, time.Until(previous.Add(r.spec.Settings.Interval))); err != nil {
+		if err := r.wait(ctx, time.Until(r.next(started, finished))); err != nil {
 			return err
 		}
-		started := time.Now()
-		previous = started
+		started = time.Now()
 		sample, err := r.read(ctx)
-		finished := time.Now()
+		finished = time.Now()
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
