@@ -94,6 +94,36 @@ func TestFinalizationCaptureFileConsentIdentityAndOrdering(t *testing.T) {
 	}
 }
 
+// A file capture whose settlement returned no report, also a typed nil one,
+// archives its pcap but no capture-<n>-<name>.json holding null, and the
+// manifest records it as not reported.
+func TestFinalizationCaptureFileWithoutReportWritesNoReportFile(t *testing.T) {
+	var typedNil *struct{ Status string }
+	for name, report := range map[string]any{"nil": nil, "typed nil": typedNil} {
+		t.Run(name, func(t *testing.T) {
+			fx := newFinalizationFixture(t, Config{Archive: true})
+			raw := captureFileFixture(fx, []byte("packet bytes"))
+			raw.report = report
+			fx.CaptureWithFile("traffic", raw, 128)
+			fx.tb.Errorf("workload failed")
+			fx.run()
+			dir := fx.archives(t)[0]
+			m := readManifest(t, dir)
+			if len(m.Captures) != 1 || m.Captures[0].Reported || len(m.CaptureFiles) != 1 || !m.CaptureFiles[0].Copied {
+				t.Fatalf("captures %+v, files %+v", m.Captures, m.CaptureFiles)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "capture-1-traffic.json")); !os.IsNotExist(err) {
+				t.Fatalf("a report file was written without a report: %v", err)
+			}
+			for _, file := range m.Files {
+				if strings.HasSuffix(file.Name, ".json") && strings.HasPrefix(file.Name, "capture-") {
+					t.Fatalf("manifest lists %s", file.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestFinalizationPassingCaptureFileNeverOpens(t *testing.T) {
 	fx := newFinalizationFixture(t, Config{Archive: true})
 	raw := captureFileFixture(fx, []byte("bytes"))

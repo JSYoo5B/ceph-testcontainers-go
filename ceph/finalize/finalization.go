@@ -563,6 +563,10 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	captureReports := slices.Clone(f.captureReports)
 	f.mu.Unlock()
 	for _, report := range captureReports {
+		if !report.reported {
+			// A file capture without a report keeps only its pcap.
+			continue
+		}
 		m.Files = append(m.Files, f.writeReport(directory, captureReportFile(report.sequence, report.name), report.report))
 	}
 	f.archiveCaptureFiles(ctx, directory, captureReports, m)

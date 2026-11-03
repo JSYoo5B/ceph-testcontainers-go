@@ -35,9 +35,12 @@ type finalizationCapture struct {
 // archive.
 type finalizationCaptureReport struct {
 	// sequence is the capture's registration order, from one.
-	sequence  int
-	name      string
+	sequence int
+	name     string
+	// report is the redacted report, kept as capture-<n>-<name>.json only
+	// when the settlement returned one (reported).
 	report    any
+	reported  bool
 	source    CaptureFileSource
 	fileLimit int64
 }
@@ -101,7 +104,11 @@ func (f *Finalization) settleCaptures(run *finalizationRun, captures []finalizat
 			}
 			r, err := capture.session.Settle(ctx)
 			mu.Lock()
-			report, reported = f.redactReport(r), r != nil
+			// A typed nil is no report either: it would be archived as null.
+			reported = !evidence.IsNil(r)
+			if reported {
+				report = f.redactReport(r)
+			}
 			mu.Unlock()
 			return err
 		}})
@@ -109,7 +116,7 @@ func (f *Finalization) settleCaptures(run *finalizationRun, captures []finalizat
 		mu.Lock()
 		if reported || capture.fileLimit > 0 {
 			f.mu.Lock()
-			f.captureReports = append(f.captureReports, finalizationCaptureReport{sequence: i + 1, name: capture.name, report: report, source: captureFileSource(capture), fileLimit: capture.fileLimit})
+			f.captureReports = append(f.captureReports, finalizationCaptureReport{sequence: i + 1, name: capture.name, report: report, reported: reported, source: captureFileSource(capture), fileLimit: capture.fileLimit})
 			f.mu.Unlock()
 		}
 		run.manifest.Captures = append(run.manifest.Captures, finalizationCaptureOutcome{
