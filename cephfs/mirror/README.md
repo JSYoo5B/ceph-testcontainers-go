@@ -61,6 +61,21 @@ if _, err := mirror.WaitDirectoryReady(ctx, "/data"); err != nil {
 }
 ```
 
+To react to a directory's assignment and replay while the SUT runs,
+`mirror.WatchDirectory(ctx, directory, cfg)` polls `DirectoryStatus` in one
+goroutine and sends changes on one channel: a new owner or native instance,
+idle/syncing/failed, the exact source snapshot reported as current or last
+synced, and the members listed in `DaemonProblems`. The baseline is buffered
+before it returns and fixes the filesystem and peer identities and this
+registration of the directory policy. Wait for it before you stop a daemon or
+take the checkpoint. A failed read is a `ceph.WatchGap` event and the next
+success is `ceph.WatchResumed`. A full buffer ends the watch with
+`ceph.ErrWatchOverflow` instead of dropping events, and so do a removed or
+re-added policy, a replaced peer or filesystem, and a terminated mirror or
+cluster. An event is a native report, not proof of the destination bytes:
+compare them separately. Call `Stop` before the mirror's cleanup: it joins the
+watch and returns why it ended.
+
 ## Concepts and limits
 
 - The mirror owns only its daemon containers and the network attachments it
