@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -522,7 +523,9 @@ func (l *Lease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	l.mu.Lock()
+	if err := clusterutil.LockMutex(ctx, &l.mu); err != nil {
+		return err
+	}
 	defer l.mu.Unlock()
 	if l.restored {
 		return nil

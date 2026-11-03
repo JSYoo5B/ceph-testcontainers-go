@@ -293,19 +293,22 @@ func policyOSDWaitDown(t *testing.T, parent context.Context, cluster *ceph.Conta
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()
+	want := ceph.OSDExpectation{Select: []ceph.OSDState{{ID: id}}, Up: false, In: true}
 	for {
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, state := range states {
-			if state.ID == id && !state.Up && state.In {
-				return
-			}
+		result, err := want.Evaluate(states)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Matched {
+			return
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("owned OSD did not become down/in", ctx.Err())
+			t.Fatalf("owned OSD did not become down/in: %v: %v", ctx.Err(), result)
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

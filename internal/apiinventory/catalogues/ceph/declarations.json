@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 267,
+  "count": 279,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1247,6 +1247,34 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDEvaluation",
+      "kind": "type",
+      "proposed": "ceph.OSDEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDEvaluation",
+      "proposed": "ceph.OSDEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDExpectation",
+      "kind": "type",
+      "proposed": "ceph.OSDExpectation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDExpectation.Evaluate",
+      "kind": "method",
+      "signature": "func(observed []OSDState) (OSDEvaluation, error)",
+      "receiver": "OSDExpectation",
+      "proposed": "ceph.OSDExpectation.Evaluate",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.OSDFlag",
       "kind": "type",
       "proposed": "ceph.OSDFlag",
@@ -1330,6 +1358,56 @@
       "current": "ceph.OSDMemStore",
       "kind": "const",
       "proposed": "ceph.OSDMemStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatch",
+      "kind": "type",
+      "proposed": "ceph.OSDMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDMismatch",
+      "proposed": "ceph.OSDMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph.OSDMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchIn",
+      "kind": "const",
+      "proposed": "ceph.OSDMismatchIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchReason",
+      "kind": "type",
+      "proposed": "ceph.OSDMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchReplaced",
+      "kind": "const",
+      "proposed": "ceph.OSDMismatchReplaced",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchUnselected",
+      "kind": "const",
+      "proposed": "ceph.OSDMismatchUnselected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMismatchUp",
+      "kind": "const",
+      "proposed": "ceph.OSDMismatchUp",
       "decision": "baseline"
     },
     {
