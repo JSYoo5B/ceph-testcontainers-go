@@ -242,11 +242,11 @@ func TestRBDMirrorMonitorRefreshRejectsChangedPoliciesBeforeCopy(t *testing.T) {
 				fixture.destination.poolID++
 			case "source base UUID":
 				policy := fixture.source.policies["images"]
-				policy.MirrorUUID = "replacement-base"
+				policy.MirrorUUID = testMirrorUUID("replacement-base")
 				fixture.source.policies["images"] = policy
 			case "destination selected UUID":
 				policy := fixture.destination.policies["images/ns-b"]
-				policy.MirrorUUID = "replacement-selected"
+				policy.MirrorUUID = testMirrorUUID("replacement-selected")
 				fixture.destination.policies["images/ns-b"] = policy
 			case "source scope":
 				policy := fixture.source.policies["images/ns-a"]

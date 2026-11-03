@@ -299,7 +299,7 @@ func (m *Mirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, m
 		return result, nil
 	}
 	result.report.Running, result.report.StartedAt = true, before.StartedAt
-	data, err := rbdReceiverExec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	data, err := rbdReceiverRead.exec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 	if err != nil {
 		result.problem = "receiver-status-query-failed"
 		return result, err
@@ -356,7 +356,7 @@ type rbdReceiverDiscovery struct {
 // namespaces and no namespace_replayers; one report never mixes the shapes.
 func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerIdentity) (rbdReceiverDiscovery, bool, error) {
 	var selected rbdReceiverDiscovery
-	if err := rbdReceiverJSON(data); err != nil {
+	if err := rbdReceiverRead.json(data); err != nil {
 		return selected, false, err
 	}
 	var native struct {

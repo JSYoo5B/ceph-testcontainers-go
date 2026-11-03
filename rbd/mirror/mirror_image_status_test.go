@@ -155,7 +155,7 @@ func TestRBDMirrorImageStatusRejectsUnsafeNameAndNativeIdentityDrift(t *testing.
 				destination.poolID++
 			case "policy":
 				policy := destination.policies["images"]
-				policy.MirrorUUID = "replacement"
+				policy.MirrorUUID = testMirrorUUID("replacement")
 				destination.policies["images"] = policy
 			case "global":
 				destination.imageInfo = rbdImageStatusInfo("destination-local", "snapshot", "foreign", false)
@@ -449,7 +449,7 @@ func TestRBDMirrorImageStatusRechecksNativePoliciesAfterImageStatus(t *testing.T
 						spec = "images/ns-a"
 					}
 					policy := source.policies[spec]
-					policy.MirrorUUID = "outside-replacement"
+					policy.MirrorUUID = testMirrorUUID("outside-replacement")
 					source.policies[spec] = policy
 				case "destination selected mapping":
 					policy := destination.policies["images/ns-b"]

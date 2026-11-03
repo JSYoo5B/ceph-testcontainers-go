@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -88,7 +89,7 @@ func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *test
 	for _, mode := range []string{"disabled", "init-only", "image", "pool"} {
 		base := disabled
 		if mode != "disabled" {
-			base = nativeRBDMirrorPolicy{Mode: mode, MirrorUUID: "base-uuid", RemoteNamespace: stringPointer(""), SiteName: "source"}
+			base = nativeRBDMirrorPolicy{Mode: mode, MirrorUUID: testMirrorUUID("base-uuid"), RemoteNamespace: stringPointer(""), SiteName: "source"}
 		}
 		steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", ScopePool, base, disabled, false)
 		if err != nil {
@@ -105,8 +106,8 @@ func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *test
 			t.Fatalf("default mode %q was unnecessarily changed: %+v", mode, steps)
 		}
 	}
-	base := nativeRBDMirrorPolicy{Mode: "init-only", MirrorUUID: "base-uuid", RemoteNamespace: stringPointer(""), SiteName: "source"}
-	selected := nativeRBDMirrorPolicy{Mode: "pool", MirrorUUID: "namespace-uuid", RemoteNamespace: &remote}
+	base := nativeRBDMirrorPolicy{Mode: "init-only", MirrorUUID: testMirrorUUID("base-uuid"), RemoteNamespace: stringPointer(""), SiteName: "source"}
+	selected := nativeRBDMirrorPolicy{Mode: "pool", MirrorUUID: testMirrorUUID("namespace-uuid"), RemoteNamespace: &remote}
 	steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", ScopePool, base, selected, false)
 	if err != nil || len(steps) != 0 {
 		t.Fatalf("matching policy must be unchanged: %+v %v", steps, err)
@@ -208,15 +209,15 @@ func TestRBDMirrorNamespaceProvisionRejectsBothEndpointsBeforeMutation(t *testin
 			}}}
 			switch scenario {
 			case "destination scope":
-				destination.policies["images/ns-b"] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: "uuid", RemoteNamespace: stringPointer("ns-a")}
+				destination.policies["images/ns-b"] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: testMirrorUUID("uuid"), RemoteNamespace: stringPointer("ns-a")}
 			case "destination mapping":
-				destination.policies["images/ns-b"] = nativeRBDMirrorPolicy{Mode: "pool", MirrorUUID: "uuid", RemoteNamespace: stringPointer("other")}
+				destination.policies["images/ns-b"] = nativeRBDMirrorPolicy{Mode: "pool", MirrorUUID: testMirrorUUID("uuid"), RemoteNamespace: stringPointer("other")}
 			case "site on another pool":
 				destination.site = "existing-other-site"
 			case "outside edit":
 				source.beforeInfo = func(c *rbdNamespacePolicyFixture, spec string, count int) {
 					if spec == "images" && count == 2 {
-						c.policies[spec] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: "outside-uuid", RemoteNamespace: stringPointer(""), SiteName: "source"}
+						c.policies[spec] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: testMirrorUUID("outside-uuid"), RemoteNamespace: stringPointer(""), SiteName: "source"}
 					}
 				}
 			case "bad readback":
@@ -254,28 +255,32 @@ func TestRBDMirrorNamespacePartialSetupCanBeReadAfterLostReply(t *testing.T) {
 }
 
 func TestRBDMirrorNamespaceReadRequiresNativeModeUUIDAndRemote(t *testing.T) {
-	for _, data := range []string{`{`, `{}`, `{"mode":"unexpected"}`, `{"mode":"pool","mirror_uuid":"uuid"}`, `{"mode":"image","remote_namespace":""}`} {
+	const mirrorUUID = "4f0c2d64-8e0d-4b5e-9c41-6d1c3f6b2a10"
+	for _, data := range []string{`{`, `{}`, `{"mode":"unexpected"}`, `{"mode":"pool","mirror_uuid":"` + mirrorUUID + `"}`, `{"mode":"image","remote_namespace":""}`,
+		`{"mode":"image","mirror_uuid":"uuid","remote_namespace":""}`, `{"mode":"image","mirror_uuid":"00000000-0000-0000-0000-000000000000","remote_namespace":""}`,
+		`{"mode":"image","mirror_uuid":"4F0C2D64-8E0D-4B5E-9C41-6D1C3F6B2A10","remote_namespace":""}`,
+		`{"mode":"image","mode":"image","mirror_uuid":"` + mirrorUUID + `","remote_namespace":""}`, `{"mode":"image","mirror_uuid":"` + mirrorUUID + `","remote_namespace":""} {}`} {
 		client := newRBDNamespacePolicyFixture()
 		client.infoOverride = data
-		if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", false); err == nil {
-			t.Errorf("incomplete native policy accepted: %s", data)
+		if _, _, err := rbdSetupRead.policy(t.Context(), client, "images", "ns-a", false); err == nil {
+			t.Errorf("incomplete, non-canonical or malformed native policy accepted: %s", data)
 		}
 	}
 	client := newRBDNamespacePolicyFixture()
-	client.infoOverride = `{"mode":"init-only","mirror_uuid":"uuid","remote_namespace":""}`
-	if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", false); err == nil {
+	client.infoOverride = `{"mode":"init-only","mirror_uuid":"` + mirrorUUID + `","remote_namespace":""}`
+	if _, _, err := rbdSetupRead.policy(t.Context(), client, "images", "ns-a", false); err == nil {
 		t.Fatal("named init-only policy accepted")
 	}
 	// Ceph 19 omits remote_namespace because it pairs only same-named
 	// namespaces; only a legacy read fills it and the UUID is still required.
 	client = newRBDNamespacePolicyFixture()
-	client.infoOverride = `{"mode":"pool","mirror_uuid":"uuid"}`
-	policy, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", true)
+	client.infoOverride = `{"mode":"pool","mirror_uuid":"` + mirrorUUID + `"}`
+	policy, _, err := rbdSetupRead.policy(t.Context(), client, "images", "ns-a", true)
 	if err != nil || policy.RemoteNamespace == nil || *policy.RemoteNamespace != "ns-a" {
 		t.Fatalf("Ceph 19 policy = %+v, %v", policy, err)
 	}
 	client.infoOverride = `{"mode":"pool"}`
-	if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", true); err == nil {
+	if _, _, err := rbdSetupRead.policy(t.Context(), client, "images", "ns-a", true); err == nil {
 		t.Fatal("Ceph 19 policy without UUID accepted")
 	}
 }
@@ -331,7 +336,7 @@ func TestRBDMirrorNativePolicyIdentityGuardsLaterMutations(t *testing.T) {
 			policy := client.policies[spec]
 			switch scenario {
 			case "source base UUID", "source namespace UUID", "destination namespace UUID":
-				policy.MirrorUUID = "same-name-native-replacement"
+				policy.MirrorUUID = testMirrorUUID("same-name-native-replacement")
 			case "namespace scope":
 				policy.Mode = "pool"
 			case "namespace mapping", "default mapping":
@@ -431,7 +436,7 @@ func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...
 			if len(args) == 10 {
 				remote = args[9]
 			}
-			c.policies[args[6]] = nativeRBDMirrorPolicy{Mode: args[7], MirrorUUID: "native-" + args[6], RemoteNamespace: &remote}
+			c.policies[args[6]] = nativeRBDMirrorPolicy{Mode: args[7], MirrorUUID: testMirrorUUID("native-" + args[6]), RemoteNamespace: &remote}
 		}
 		if c.lostReply {
 			return 0, nil, errors.New("lost native mutation reply")
@@ -480,4 +485,9 @@ func TestRBDMirrorNamespaceNamesFollowTheRBDResourceRule(t *testing.T) {
 			t.Errorf("namespace %q was bound", name)
 		}
 	}
+}
+
+// testMirrorUUID is a canonical, non-nil mirror UUID that stands for name.
+func testMirrorUUID(name string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
 }

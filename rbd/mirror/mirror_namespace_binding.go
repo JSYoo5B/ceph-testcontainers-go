@@ -150,7 +150,7 @@ func (p *rbdMirrorPair) readBindingPolicies(ctx context.Context, scope *rbdRecei
 		if err := readRBDNamespaceBindingCatalog(ctx, site.client, scope.selection[0], site.namespace); err != nil {
 			return nil, err
 		}
-		selected, _, err := readRBDReceiverPolicy(ctx, site.client, scope.selection[0], site.namespace, p.legacyClient(site.client))
+		selected, _, err := rbdReceiverRead.policy(ctx, site.client, scope.selection[0], site.namespace, p.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
@@ -171,11 +171,11 @@ func readRBDNamespaceBindingCatalog(ctx context.Context, client testcontainers.C
 	if namespace == "" {
 		return nil // Ceph deliberately omits the default namespace from this list.
 	}
-	data, err := rbdReceiverExec(ctx, client, "read RBD namespace binding catalog", "rbd", "namespace", "list", "--pool", pool, "--format", "json")
+	data, err := rbdReceiverRead.exec(ctx, client, "read RBD namespace binding catalog", "rbd", "namespace", "list", "--pool", pool, "--format", "json")
 	if err != nil {
 		return err
 	}
-	if err := rbdReceiverJSON(data); err != nil {
+	if err := rbdReceiverRead.json(data); err != nil {
 		return err
 	}
 	var entries []struct {

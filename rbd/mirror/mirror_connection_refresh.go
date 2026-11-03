@@ -97,42 +97,17 @@ func (p *rbdMirrorPair) checkMonitorRefreshIdentities(ctx context.Context) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, site := range []struct {
-		cluster   *ceph.Container
-		poolID    int64
-		namespace string
-		identity  rbdMirrorSitePolicyIdentity
-	}{
-		{p.config.Source, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source},
-		{p.config.Destination, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination},
-	} {
-		control, err := site.cluster.ClientContainer(ctx)
+	sites := p.setupSites()
+	for i, cluster := range []*ceph.Container{p.config.Source, p.config.Destination} {
+		control, err := cluster.ClientContainer(ctx)
 		if err != nil {
 			return fmt.Errorf("inspect RBD mirror cluster toolkit handle: %w", err)
 		}
 		if control == nil {
 			return errors.New("RBD mirror cluster toolkit container is unavailable")
 		}
-		if err := readRBDMirrorObservedPool(ctx, control, p.config.Pool, site.poolID); err != nil {
-			return err
-		}
-		base, err := readRBDMirrorObservedPolicy(ctx, control, p.config.Pool, "", p.legacyCluster(site.cluster))
-		if err != nil {
-			return err
-		}
-		selected := base
-		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, control, p.config.Pool, site.namespace, p.legacyCluster(site.cluster))
-			if err != nil {
-				return err
-			}
-		}
-		if !sameRBDMirrorPolicy(base, site.identity.base) || !sameRBDMirrorPolicy(selected, site.identity.selected) {
-			return errors.New("RBD mirror UUID, scope, remote mapping or site identity changed; refusing monitor refresh")
-		}
-		if err := readRBDMirrorObservedPool(ctx, control, p.config.Pool, site.poolID); err != nil {
-			return err
-		}
+		sites[i].client, sites[i].legacy = control, p.legacyCluster(cluster)
 	}
-	return ctx.Err()
+	_, err := rbdObservedRead.checkSites(ctx, p.config.Pool, sites, "RBD mirror UUID, scope, remote mapping or site identity changed; refusing monitor refresh")
+	return err
 }
