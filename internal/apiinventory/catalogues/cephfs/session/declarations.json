@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/session",
-  "count": 7,
+  "count": 10,
   "entries": [
     {
       "current": "cephfs/session.Limits",
@@ -18,10 +18,31 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs/session.OverrideRefusal",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem) (*RefusalOverrideHandle, error)",
+      "proposed": "cephfs/session.OverrideRefusal",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs/session.OverrideTimeouts",
       "kind": "function",
       "signature": "func(ctx context.Context, fs *cephfs.Filesystem, requested Limits) (*TimeoutsOverrideHandle, error)",
       "proposed": "cephfs/session.OverrideTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RefusalOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs/session.RefusalOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RefusalOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*RefusalOverrideHandle",
+      "proposed": "cephfs/session.RefusalOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

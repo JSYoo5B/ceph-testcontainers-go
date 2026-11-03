@@ -47,8 +47,9 @@ func callee(call *ast.CallExpr) string {
 // TestNativeIdentityIsCapturedNotReplacedInProduction pinned for it while it
 // was in package cephfs: only begin calls Admit, with exactly one own Check
 // and no lock of its own; only begin reads the exported descriptor through
-// DescriptorIntact; nothing installs or captures a native identity; only the
-// override's Restore reads under the setup gate without an admission; and the
+// DescriptorIntact; nothing installs or captures a native identity; only
+// confirmedRestore, which the overrides' Restore methods share, reads under
+// the setup gate without an admission; and the
 // package adds no init and no mutex, so the override state is guarded by the
 // setup gate alone.
 func TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
@@ -90,7 +91,7 @@ func TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 	want := map[string][]string{
 		"Admit":            {"begin"},
 		"DescriptorIntact": {"begin"},
-		"WithSetupGate":    {"TimeoutsOverrideHandle.Restore"},
+		"WithSetupGate":    {"confirmedRestore"},
 	}
 	if !reflect.DeepEqual(sites, want) {
 		t.Errorf("session admission sites changed: %v, want %v", sites, want)

@@ -17,6 +17,10 @@ import (
 // minTimeout is the MDSMonitor's lower bound for both values.
 const minTimeout = 30 * time.Second
 
+// readbackTimeout bounds the readback after a write, which outlives
+// cancellation of the caller's context.
+const readbackTimeout = 5 * time.Second
+
 // Limits are the filesystem's MDSMap client session limits, session_timeout
 // and session_autoclose.
 // A silent client whose capabilities nobody wants stays open until Autoclose.
@@ -157,15 +161,8 @@ func (change *TimeoutsOverrideHandle) Restore(ctx context.Context) error {
 	}
 	fs := change.filesystem
 	state := change.state
-	// A confirmed restore stays complete after the filesystem or cluster is gone.
-	if fs.Cluster() != nil {
-		var restored bool
-		if err := fs.WithSetupGate(ctx, func() { restored = state.restored }); err != nil {
-			return err
-		}
-		if restored {
-			return nil
-		}
+	if restored, err := confirmedRestore(ctx, fs, func() bool { return state.restored }); err != nil || restored {
+		return err
 	}
 	ctx, fsID, done, err := begin(ctx, fs)
 	if err != nil {
@@ -196,6 +193,18 @@ func (change *TimeoutsOverrideHandle) Restore(ctx context.Context) error {
 	state.restored = true
 	delete(overrides.byCore, fs)
 	return nil
+}
+
+// confirmedRestore reports, under the setup gate and without an admission,
+// whether a handle's restore was already confirmed, so a confirmed restore
+// stays complete after the filesystem or cluster is gone.
+func confirmedRestore(ctx context.Context, fs *fsbase.Core, restored func() bool) (bool, error) {
+	if fs.Cluster() == nil {
+		return false, nil
+	}
+	var done bool
+	err := fs.WithSetupGate(ctx, func() { done = restored() })
+	return done, err
 }
 
 // ownedSessionValue accepts either side of an interrupted apply or restore.
@@ -329,7 +338,7 @@ func writeLimits(ctx context.Context, v fsbase.VolumeCommands, fsID int64, curre
 			return fmt.Errorf("set CephFS %q %s: %w", v.Name(), field.name, err)
 		}
 	}
-	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readbackTimeout)
 	defer cancel()
 	stored, err := readLimits(readCtx, v, fsID)
 	if err != nil {
@@ -341,25 +350,27 @@ func writeLimits(ctx context.Context, v fsbase.VolumeCommands, fsID int64, curre
 	return nil
 }
 
-// overrideKind is the cluster extension that holds the session timeouts
-// override of every filesystem of the cluster.
-const overrideKind = "cephfs/session.timeouts"
+// overrideKind is the cluster extension that holds the session overrides of
+// every filesystem of the cluster.
+const overrideKind = "cephfs/session.overrides"
 
-// overrides is the session timeouts override of each filesystem of one
-// cluster that is not restored yet, keyed by the filesystem's core: one per
-// filesystem. The setup gate of the cluster's filesystem registry, which every
-// session operation holds through begin, guards it, so it has no lock of its
-// own. A removed filesystem's entry stays but is inert: no operation admits
-// that core again, and a filesystem created later under the same name gets a
-// new core. It lives as long as its cluster.
+// overrides are the session overrides of each filesystem of one cluster that
+// are not restored yet, keyed by the filesystem's core: at most one timeouts
+// override and one new-session refusal per filesystem. The setup gate of the
+// cluster's filesystem registry, which every session operation holds through
+// begin, guards them, so they have no lock of their own. A removed
+// filesystem's entries stay but are inert: no operation admits that core
+// again, and a filesystem created later under the same name gets a new core.
+// They live as long as their cluster.
 type overrides struct {
-	byCore map[*fsbase.Core]*timeoutsState
+	byCore   map[*fsbase.Core]*timeoutsState
+	refusals map[*fsbase.Core]*refusalState
 }
 
 // overridesOf returns the overrides of the cluster of core. The caller holds
 // the setup gate.
 func overridesOf(core *fsbase.Core) *overrides {
 	return servicehook.Extension(core.Cluster(), overrideKind, func() any {
-		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState)}
+		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState)}
 	}).(*overrides)
 }
