@@ -178,3 +178,13 @@ pass, and set `Exact` when no other owned OSD may exist. `Evaluate` performs no
 query or retry: the test polls with its own loop or assertion helper, a failed
 query stays an error, and `OSDEvaluation` lists each absent, replaced, down,
 out or unselected OSD from the observation it evaluated.
+
+To react to owned OSD state while the SUT runs, `observer.WatchOSDs(ctx, cfg)`
+polls the OSDMap in one goroutine and sends changes on one channel. The
+baseline is buffered before it returns and fixes the watched OSDs by ID and
+UUID. Wait for it before you cause the fault. A failed read is an
+`OSDWatchGap` event and the next success is `OSDWatchResumed`. A full buffer
+ends the watch with `ErrWatchOverflow` instead of dropping events, and so do
+identity drift and cluster termination. Call `Stop` before the fixture's
+cleanup: it joins the watch and returns why it ended. See
+[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-owned-osd-state).

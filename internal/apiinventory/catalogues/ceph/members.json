@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 269,
+  "count": 279,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -245,6 +245,20 @@
       "OSDState.UUID field string",
       "OSDState.Up field bool",
       "OSDState.Weight field float64"
+    ],
+    "ceph.OSDWatchConfig": [
+      "OSDWatchConfig.Buffer field int",
+      "OSDWatchConfig.Interval field time.Duration",
+      "OSDWatchConfig.QueryTimeout field time.Duration"
+    ],
+    "ceph.OSDWatchEvent": [
+      "OSDWatchEvent.Epoch field uint64",
+      "OSDWatchEvent.Err field error",
+      "OSDWatchEvent.Finished field time.Time",
+      "OSDWatchEvent.Kind field OSDWatchEventKind",
+      "OSDWatchEvent.Sequence field uint64",
+      "OSDWatchEvent.Started field time.Time",
+      "OSDWatchEvent.States field []OSDState"
     ],
     "ceph.ObjectWatcher": [
       "ObjectWatcher.Address field string",
