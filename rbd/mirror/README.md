@@ -34,7 +34,9 @@ import rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 5. **Observe and verify**: `WaitReceiverReady` (daemons discovered the pool and
    agree on a leader), `WaitReplayReady` / `ImageStatus` (an owned receiver
    replays the image), then compare the destination data; readiness never
-   proves that a write arrived. `BindNamespace` observes extra namespace pairs.
+   proves that a write arrived. `WatchReceivers` and `WatchImage` report the
+   changes of the same observations while a fault runs. `BindNamespace`
+   observes extra namespace pairs.
    `Daemon.Remove`, `AddDaemon`, `Daemon.InterruptPeerLink` and `Rebootstrap`
    change the receiving side for HA and recovery scenarios.
 6. **Clean up**: register the clusters' cleanup first and the mirror's after,
@@ -57,6 +59,25 @@ if _, err := link.WaitReceiverReady(ctx); err != nil {
 	t.Fatal(err)
 }
 ```
+
+## Watching receivers and image replay
+
+To react to the receiving side while the SUT runs, `link.WatchReceivers(ctx,
+cfg, names...)` polls the same observation as `ReceiverStatus`, and
+`link.WatchImage(ctx, cfg, "volume")` the same as `ImageStatus`; a bound
+`Namespace` has both methods for its scope. Each sends changes on one channel,
+5 seconds apart by default. The baseline is buffered before the call returns
+and pins what `WaitReceiverReady` or `WaitReplayReady` pins: the cohort with
+its original containers, or the source and destination image identities.
+Wait for it before you stop a receiver or interrupt its peer link. A stopped
+member, a new native instance of the same container, a moved leader and a
+moved image replay are events; a replaced daemon, image or policy and a
+terminated mirror or cluster end the watch. A failed read is a `WatchGap`
+event that keeps the partial report, and the next success is `WatchResumed`.
+A full buffer ends the watch with `ceph.ErrWatchOverflow` instead of dropping
+events. Neither watch proves that a write or checkpoint arrived: compare the
+destination data. Call `Stop` before the mirror's cleanup: it joins the watch
+and returns why it ended.
 
 ## Journal polling timing
 
