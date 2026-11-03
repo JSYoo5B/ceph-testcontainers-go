@@ -683,3 +683,19 @@ func renewalTTL(lastRenew, capTTL string) (time.Duration, error) {
 func featureBits(session admissionSession) (uint64, error) {
 	return strconv.ParseUint(strings.TrimPrefix(session.Metadata.Features.Bits, "0x"), 16, 64)
 }
+
+// findCephFSSession returns the session of client id from any active rank
+// of fs, or nil.
+func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, id string) *cephfssession.Session {
+	t.Helper()
+	sessions, err := cephfssession.List(ctx, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range sessions {
+		if strconv.FormatUint(session.ID, 10) == id {
+			return &session
+		}
+	}
+	return nil
+}

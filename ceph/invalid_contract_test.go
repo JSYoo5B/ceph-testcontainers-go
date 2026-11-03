@@ -36,7 +36,7 @@ import (
 // input, existing-role, tracked-name, ownership, replaced-role and
 // outside-edit refusals of its roles.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 24, "rgw": 47,
+	"rbd": 28, "cephfs": 25, "rgw": 47,
 	"cephfs/subvolume": 29, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,

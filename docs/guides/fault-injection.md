@@ -25,6 +25,8 @@ separate helper image alone gets `NET_ADMIN` (see
 | The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosHandle.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
+| A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
+| A CephFS client cannot open a new session | `session.OverrideRefusal` (`cephfs/session`) | The new mount fails with EPERM; open sessions keep working | Yes | `RefusalOverrideHandle.Restore` |
 | The MDS evicts a silent CephFS client quickly | `session.OverrideTimeouts` (`cephfs/session`) with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `TimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `override.AddBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 

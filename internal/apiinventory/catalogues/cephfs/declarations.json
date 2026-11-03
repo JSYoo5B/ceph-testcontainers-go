@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 24,
+  "count": 28,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -72,6 +72,14 @@
       "signature": "func() []*MDS",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.MDSs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideMaxFileSize",
+      "kind": "method",
+      "signature": "func(ctx context.Context, bytes int64) (*MaxFileSizeOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideMaxFileSize",
       "decision": "baseline"
     },
     {
@@ -145,6 +153,26 @@
       "current": "cephfs.MDSStatus",
       "kind": "type",
       "proposed": "cephfs.MDSStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MaxFileSizeOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs.MaxFileSizeOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MaxFileSizeOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MaxFileSizeOverrideHandle",
+      "proposed": "cephfs.MaxFileSizeOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MinMaxFileSize",
+      "kind": "const",
+      "proposed": "cephfs.MinMaxFileSize",
       "decision": "baseline"
     },
     {

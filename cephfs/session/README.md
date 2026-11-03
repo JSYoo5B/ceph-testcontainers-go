@@ -1,9 +1,10 @@
 # CephFS sessions
 
 Import `github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session` to observe the
-client sessions of an existing filesystem and to shorten its session limits, so
+client sessions of an existing filesystem, to shorten its session limits, so
 that a test can watch the MDS evict a silent or frozen client within seconds
-instead of minutes. The filesystem stays in the [cephfs package](../README.md);
+instead of minutes, and to make the MDS refuse new client sessions while open
+ones keep working. The filesystem stays in the [cephfs package](../README.md);
 the package starts no container. See
 [API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
@@ -38,6 +39,26 @@ if err != nil {
 // Match the client by Session.ID or Address, then poll until it is gone.
 ```
 
+To refuse new sessions, call `session.OverrideRefusal(ctx, fs)`. It sets the
+filesystem's `refuse_client_session` flag: a client that mounts afterwards
+fails with EPERM and gets no session, while a client mounted before keeps
+working. `RefusalOverrideHandle.Restore` clears the flag again.
+
+```golang
+refusal, err := session.OverrideRefusal(ctx, fs)
+if refusal != nil {
+	defer refusal.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+// A new mount of the SUT now fails with EPERM; a session it opened before still works.
+if err := refusal.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+// New mounts succeed again.
+```
+
 ## Concepts and limits
 
 - Both limits are MDSMap settings of one filesystem, not central
@@ -48,6 +69,20 @@ if err != nil {
   returned with an error, since a lost reply can leave either value changed.
 - `Restore` refuses a value that is neither the applied nor the captured one,
   and a filesystem recreated under the same name.
+- `OverrideRefusal` owns only the change from admitting to refusing: on a
+  filesystem that already refuses new sessions it returns an error and no
+  handle. One refusal per filesystem may be active, independent of the
+  timeouts override. Its `Restore` accepts a flag that was cleared outside it.
+- While new sessions are refused, every new session fails, including the
+  fixture's own libcephfs probes (pin reads, clone checks, snapshot schedule
+  listings) and a session the MGR `volumes` module opens; restore the flag
+  before those operations.
+- Do not restart, fail or replace an MDS during the refusal unless the test
+  wants to lose its clients: an open session that must reconnect is refused
+  like a new one, the MDS drops it and blocklists the client, and the client's
+  I/O does not come back after `Restore`.
+- The flag exists on every supported release; a cluster whose MDSMap does
+  not report it returns `ceph.ErrUnsupported` before any change.
 - `List` reports a client once per rank and includes the fixture's own
   short-lived libcephfs probes. `Session.Address` has the form that
   blocklist entries use.

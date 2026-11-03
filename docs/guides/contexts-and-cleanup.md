@@ -421,7 +421,7 @@ result:
 | `rgw.Gateway.CreateRole` | Role whose creation or permission policies failed or are unknown | `Role.Remove`, or discard the cluster; do not create the same name again |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](ceph-operations.md#clientconfigreplacekey)) |
-| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
+| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `quiesce.Start` | Quiesce set handle (the set may exist and hold I/O paused) | `Release`, or let its `Expiration` pass before terminating the cluster |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
@@ -446,6 +446,8 @@ back. Some wrap several native settings:
 | `override.SetFullRatios` | The nearfull, backfillfull and full ratios; a refused call still returns a handle whose `Restore` does nothing |
 | `override.AddBlocklist` | Adds one exact client-session blocklist entry; a refused call still returns a handle whose `Restore` does nothing |
 | `session.OverrideTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
+| `session.OverrideRefusal` | Sets a filesystem's `refuse_client_session`; a filesystem that already refuses new sessions is refused without a handle |
+| `cephfs.Filesystem.OverrideMaxFileSize` | A filesystem's `max_file_size` |
 | `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin` | One pin policy field of a subvolume or group |
 | `rgw.User.OverrideRateLimit` | The rate-limit policy of one owned user or of one bucket it owns; a refused call still returns a handle whose `Restore` does nothing |
 

@@ -295,17 +295,3 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	}
 	return states, evicted
 }
-
-func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, id string) *cephfssession.Session {
-	t.Helper()
-	sessions, err := cephfssession.List(ctx, fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, session := range sessions {
-		if strconv.FormatUint(session.ID, 10) == id {
-			return &session
-		}
-	}
-	return nil
-}
