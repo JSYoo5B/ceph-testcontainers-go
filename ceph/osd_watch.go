@@ -318,10 +318,15 @@ func (r *osdWatchRun) resolve(dump osdPolicySnapshot, owned map[int]*osdRegistra
 	return states, nil
 }
 
-// wait sleeps for d unless ctx ends first.
+// wait sleeps for d unless ctx ends first. Every return of an ended ctx is
+// its cause, so poll can tell Stop from the WatchOSDs context ending, also
+// when the next read is already overdue.
 func (r *osdWatchRun) wait(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return ctx.Err()
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		return nil
 	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()

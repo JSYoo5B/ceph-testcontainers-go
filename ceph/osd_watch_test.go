@@ -23,6 +23,7 @@ type watchSource struct {
 	owned map[int]*osdRegistration
 	fail  error
 	block bool
+	delay time.Duration
 	reads int
 }
 
@@ -37,7 +38,7 @@ func newWatchSource() *watchSource {
 func (s *watchSource) read(ctx context.Context) (osdPolicySnapshot, map[int]*osdRegistration, error) {
 	s.mu.Lock()
 	s.reads++
-	block, fail := s.block, s.fail
+	block, fail, delay := s.block, s.fail, s.delay
 	dump := osdPolicySnapshot{epoch: s.epoch, osds: maps.Clone(s.osds)}
 	owned := make(map[int]*osdRegistration, len(s.owned))
 	for id, reg := range s.owned {
@@ -45,6 +46,13 @@ func (s *watchSource) read(ctx context.Context) (osdPolicySnapshot, map[int]*osd
 		owned[id] = &copied
 	}
 	s.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-ctx.Done():
+			return osdPolicySnapshot{}, nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
 	if block {
 		<-ctx.Done()
 		return osdPolicySnapshot{}, nil, ctx.Err()
@@ -272,6 +280,24 @@ func TestOSDWatchStopDuringQuery(t *testing.T) {
 	}
 	if err := w.Stop(); err != nil {
 		t.Fatalf("second Stop = %v", err)
+	}
+}
+
+// A read that takes at least one interval makes the next read overdue, so
+// the watch goes straight to it without a timed wait. Stop must still be
+// recognized as the cause there.
+func TestOSDWatchStopWhenTheNextReadIsOverdue(t *testing.T) {
+	for range 5 {
+		source := newWatchSource()
+		source.delay = 120 * time.Millisecond
+		w, err := startOSDWatch(t.Context(), osdWatchSettings{interval: 100 * time.Millisecond, timeout: time.Second, buffer: 16}, source.read)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Stop(); err != nil {
+			t.Fatalf("Stop with an overdue read = %v", err)
+		}
+		requireClosed(t, w)
 	}
 }
 
