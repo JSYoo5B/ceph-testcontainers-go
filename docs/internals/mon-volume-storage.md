@@ -140,9 +140,11 @@ selector for every generation after the first (`monitorGenerations.Create`).
   still opens and validates the store. The default fixture
   `TestAddressFamilyBootstrapRenderingGolden` pins the rendering of the default
   mode.
-- The `require_store` function is duplicated in both scripts between marker
-  comments because each script runs alone in the container;
-  `TestMonRequireStoreBlocksAreIdentical` keeps the two copies equal.
+- The `require_store` function (block `mon-store-mode`) and the address
+  helpers `messenger_address` and `mon_entries` (block `mon-address`) are
+  duplicated in both scripts between marker comments because each script runs
+  alone in the container; `TestMonSharedBlocksAreIdentical` keeps the copies
+  of each block equal.
 
 ## Replacement path
 

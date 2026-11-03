@@ -5,7 +5,7 @@ id=${CEPH_MON_ID}
 # require_store implements CEPH_MON_STORE_MODE=require for the data directory
 # $1: an existing store must be reused, and a missing or non-store directory is
 # a hard failure instead of the mkfs below. It runs before any write. Unset
-# keeps the historical behavior; any other value, also an empty one, is
+# runs mkfs when store.db is absent; any other value, also an empty one, is
 # refused so that a misspelled mode cannot fall back to formatting a store.
 # The shape checks mirror what ceph-mon itself needs: store.db is the RocksDB
 # directory, kv_backend (absent in stores of old monitors, which are read as
@@ -45,6 +45,7 @@ require_store() {
 }
 # END mon-store-mode
 require_store "/var/lib/ceph/mon/ceph-$id"
+# BEGIN mon-address (identical in mon.sh and mon-join.sh)
 # messenger_address prints this container's address of the address family,
 # $1 or CEPH_ADDRESS_FAMILY: IPv4, global IPv6, or IPv4 as an IPv4-mapped
 # IPv6 address in the hexadecimal form that Ceph parses.
@@ -76,32 +77,37 @@ messenger_address() {
     echo "tc-ceph: environment: this container has no $family address" >&2
     exit 2
 }
-v2=${CEPH_MON_PORT_V2:-3300}
-v1=${CEPH_MON_PORT_V1:-6789}
-# entries prints the address vector entries of host $1: v2, and v1 unless the
-# Messenger mode has no v1 listener.
-entries() {
-    if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
-        echo "v2:$1:$v2"
+mon_v2=${CEPH_MON_PORT_V2:-3300}
+mon_v1=${CEPH_MON_PORT_V1:-6789}
+msgr2_only=false
+if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+    msgr2_only=true
+fi
+# mon_entries prints the address vector entries of host $1: v2, and v1
+# unless the Messenger mode has no v1 listener.
+mon_entries() {
+    if [ "$msgr2_only" = true ]; then
+        echo "v2:$1:${mon_v2}"
     else
-        echo "v2:$1:$v2,v1:$1:$v1"
+        echo "v2:$1:${mon_v2},v1:$1:${mon_v1}"
     fi
 }
+# END mon-address
 # Assign each address on its own so that a missing address stops the script.
 case "${CEPH_ADDRESS_FAMILY:-ipv4}" in
 dual-stack)
     # IPv6 first, as mon.sh renders the first MON; see there.
     ip=$(messenger_address ipv4)
     ip6=$(messenger_address ipv6)
-    addrs="[$(entries "[$ip6]"),$(entries "$ip")]"
+    addrs="[$(mon_entries "[$ip6]"),$(mon_entries "$ip")]"
     ;;
 ipv6 | ipv4-mapped)
     ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
-    addrs="[$(entries "[$ip]")]"
+    addrs="[$(mon_entries "[$ip]")]"
     ;;
 *)
     ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
-    addrs="[$(entries "$ip")]"
+    addrs="[$(mon_entries "$ip")]"
     ;;
 esac
 mkdir -p "/var/lib/ceph/mon/ceph-$id" /var/run/ceph
