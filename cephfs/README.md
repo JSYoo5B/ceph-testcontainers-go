@@ -36,9 +36,9 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `cluster.WithClient()` (admin keyring) or `grant.Client.WithIdentity()` (one
    principal), and pass it `fs.FilesystemName` and the subvolume path.
 4. **Reproduce conditions and observe**: stop an MDS or `fault.Pause` a client,
-   `quiesce.Start`, then check `MDSStatus`, `WaitReady`, `session.List`,
-   `subvolume.Info`, `Clone.Status`, `DataPools` and the `ceph` observation
-   APIs.
+   `quiesce.Start`, then check `MDSStatus`, `WatchMDSs`, `WaitReady`,
+   `session.List`, `subvolume.Info`, `Clone.Status`, `DataPools` and the
+   `ceph` observation APIs.
 5. **Clean up**: terminate the cluster; it removes owned filesystems,
    subvolumes, principals and daemons. Use the handles' `Remove`,
    `Deauthorize` and `Restore` only to test those steps or to restore state
@@ -97,6 +97,22 @@ if err != nil {
   hour; a mount against a silent MDS fails after `client_mount_timeout` (300 s).
   Shorten what a test waits for with `session.OverrideTimeouts` and client
   options.
+
+## Watching MDS ranks
+
+To react to a filesystem's MDS topology while the SUT runs,
+`fs.WatchMDSs(ctx, cfg)` polls the FSMap in one goroutine and sends a change
+of `MDSStatus` (max_mds, active ranks, ordinary and replay standbys) on one
+channel, with the FSMap and MDSMap epochs of that read. The baseline is
+buffered before it returns. Wait for it before you stop an MDS. A takeover, a
+restarted daemon's new GID and a standby that registers again are events; a
+rank still in replay is in no list, as in `MDSStatus`. A failed read is a
+`WatchGap` event and the next success is `WatchResumed`. A full buffer ends
+the watch with `ceph.ErrWatchOverflow` instead of dropping events, and so do
+a filesystem recreated under the same name, a removed filesystem and cluster
+termination. The watch never waits for readiness; use `WaitReady` for the
+requested standby capacity. Call `Stop` before the fixture's cleanup: it joins
+the watch and returns why it ended.
 
 ## File size limit
 
