@@ -672,7 +672,9 @@ _, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume
 
 In multisite fixtures, `ZoneAdmin(ctx, name, ...)` addresses any owned zone by
 name, including those of a `multisite.WithTopology` fixture. It passes the
-zone's scope but does not add `--format json`. Do not edit periods or zones while `AddZone`,
+zone's scope but does not add `--format json`. Like `Gateway.Admin`, it
+refuses flags that change the scope or connection and redacts a failure's
+output. Do not edit periods or zones while `AddZone`,
 `AddZonegroup`, `RemoveZone`, `SyncGroup.Apply` or a metadata master transition
 runs.
 
