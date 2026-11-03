@@ -142,7 +142,13 @@ func (c *Container) monitorReplacementMaterial(ctx context.Context) (key, monmap
 	if err != nil {
 		return nil, nil, err
 	}
+	// The monmap holds no secret, so a failed removal is not tracked.
 	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+		defer cancel()
+		_, _ = command(cleanupCtx, c.conn().cliContainer(), "rm", "-f", mapPath)
+	}()
 	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
 		return nil, nil, err
 	}

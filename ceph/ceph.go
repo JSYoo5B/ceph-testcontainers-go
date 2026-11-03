@@ -687,6 +687,26 @@ type osdLaunch struct {
 	recipe *osdLaunchRecipe
 }
 
+// newOSDIdentity registers osdUUID with osd new from a key file in control
+// that holds the cephx secret in keys, and returns what osd new printed. The
+// file is removed once osd new returns; one whose removal fails, or whose copy
+// Docker may still complete, is left to the auth ledger's stray removal.
+func (f osdFleet) newOSDIdentity(ctx context.Context, control testcontainers.Container, osdUUID string, keys []byte) ([]byte, error) {
+	keyPath := "/tmp/osd-" + osdUUID + ".json"
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+		defer cancel()
+		if _, err := command(cleanupCtx, control, "rm", "-f", keyPath); err != nil {
+			f.addStray(keyPath, false)
+		}
+	}()
+	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
+		f.addStray(keyPath, true)
+		return nil, fmt.Errorf("copy osd registration key: %w", err)
+	}
+	return f.conn.ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
+}
+
 // registerOSD allocates the next OSD ID with a new key and records the OSD in
 // c.osdHandles before its container exists, so that Terminate owns it from then on.
 // The caller holds c.mu and has normalized config. A nonnil buckets is the
@@ -727,11 +747,7 @@ func (f osdFleet) registerOSD(ctx context.Context, config OSDConfig, image strin
 	if err != nil {
 		return osdLaunch{}, err
 	}
-	keyPath := "/tmp/osd-" + osdUUID + ".json"
-	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
-		return osdLaunch{}, fmt.Errorf("copy osd registration key: %w", err)
-	}
-	result, err := f.conn.ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
+	result, err := f.newOSDIdentity(ctx, control, osdUUID, keys)
 	if err != nil {
 		return osdLaunch{}, err
 	}
