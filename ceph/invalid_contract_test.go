@@ -34,20 +34,20 @@ import (
 // rgw has eight more for the input, ownership, replaced-target and
 // outside-edit refusals of its rate-limit overrides, and thirteen more for the
 // input, existing-role, tracked-name, ownership, replaced-role and
-// outside-edit refusals of its roles. cephfs has one more for the refusals
-// of its MDS watch, which share mdsWatchInvalid. cephfs/subvolume has three
-// more for the configuration, unstarted-Stop and ending-read refusals of its
-// clone watch.
-// rbd/mirror has five more for its
-// receiver and image watches: an invalid configuration, Stop of an unstarted
-// watch, a terminated mirror, a terminated cluster and a receiver cohort
-// without a daemon.
+// outside-edit refusals of its roles. The watches add their configuration,
+// unstarted-Stop and ending-read refusals: one more in cephfs for its MDS
+// watch, which share mdsWatchInvalid; three more in cephfs/subvolume for its
+// clone watch; five more in rbd/mirror for its receiver and image watches
+// (an invalid configuration, Stop of an unstarted watch, a terminated mirror,
+// a terminated cluster and a receiver cohort without a daemon); and six more
+// in cephfs/mirror for the refused config, path, fixture and unstarted Stop
+// of its directory watch and the terminated mirror or cluster that ends one.
 var invalidCallSites = map[string]int{
 	"rbd": 28, "cephfs": 26, "rgw": 47,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
-	"rbd/mirror": 34, "cephfs/mirror": 15,
+	"rbd/mirror": 34, "cephfs/mirror": 21,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare
