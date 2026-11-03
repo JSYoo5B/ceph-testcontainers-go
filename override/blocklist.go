@@ -83,6 +83,8 @@ func notApplied(address string, cause error) (*BlocklistHandle, error) {
 //     override.AddBlocklist.
 //   - Invalid address: not applied handle; ceph.ErrInvalidRequest.
 //   - Duration below one second: not applied handle; plain error.
+//   - Context already ended, or ended while waiting for the topology lock: not
+//     applied handle; the context error.
 //   - Terminated cluster or no control container: not applied handle; the
 //     cluster's own error.
 //   - This session is already held by another handle: not applied handle;
@@ -115,9 +117,12 @@ func AddBlocklist(ctx context.Context, c *ceph.Container, address string, durati
 		handle   *BlocklistHandle
 		applyErr error
 	)
-	overridehook.WithTopologyNoContext(c, func() {
+	if err := overridehook.WithTopology(ctx, c, func() error {
 		handle, applyErr = addBlocklistLocked(ctx, c, address, duration)
-	})
+		return nil
+	}); err != nil {
+		return notApplied(address, err)
+	}
 	return handle, applyErr
 }
 
@@ -168,7 +173,9 @@ func addBlocklistLocked(ctx context.Context, c *ceph.Container, address string, 
 // Lost removal replies can be retried; after confirmed absence copies are no-ops.
 // A handle of a call that was not applied returns nil without taking a lock.
 // A cluster that has been terminated refuses the restore with the error of an
-// operation on a terminated cluster, and the entry stays registered.
+// operation on a terminated cluster, and the entry stays registered. A context
+// that ends before the topology lock is free returns the context error, and the
+// entry stays registered.
 //
 //purpose:condition,lifetime
 func (h *BlocklistHandle) Restore(ctx context.Context) error {
@@ -182,9 +189,7 @@ func (h *BlocklistHandle) Restore(ctx context.Context) error {
 		return errors.New("client blocklist override is unavailable")
 	}
 	c := h.owner
-	var err error
-	overridehook.WithTopologyNoContext(c, func() { err = h.restoreLocked(ctx, c) })
-	return err
+	return overridehook.WithTopology(ctx, c, func() error { return h.restoreLocked(ctx, c) })
 }
 
 func (h *BlocklistHandle) restoreLocked(ctx context.Context, c *ceph.Container) error {

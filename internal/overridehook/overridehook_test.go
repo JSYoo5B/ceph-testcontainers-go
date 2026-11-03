@@ -100,7 +100,7 @@ func TestRegistryThroughHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overridehook.WithTopologyNoContext(c, func() {
+	if err := overridehook.WithTopology(ctx, c, func() error {
 		if !overridehook.Tracks(c, first) || !overridehook.Release(c, first) || overridehook.Tracks(c, first) || overridehook.Release(c, first) {
 			t.Error("release through the hooks did not forget the token exactly once")
 		}
@@ -145,7 +145,10 @@ func TestRegistryThroughHooks(t *testing.T) {
 		if err := overridehook.SetOSDFlag(ctx, c, ceph.OSDFlagNoOut, true); err == nil {
 			t.Error("OSD flag write without a control container")
 		}
-	})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// A context that has ended stops the wait for a held mutex.
 	servicehook.Lock(c)
 	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
@@ -182,7 +185,9 @@ func TestDebugHooks(t *testing.T) {
 		t.Errorf("a terminated cluster: %v", err)
 	}
 	// The lock is released again: the cluster mutex can be taken.
-	overridehook.WithTopologyNoContext(c, func() {})
+	if err := overridehook.WithTopology(ctx, c, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	registry := overridehook.DebugWindowRegistry(c)
 	first, second := new(int), new(int)
 	if err := registry.Reserve("osd.0/debug_osd", first); err != nil {
@@ -274,11 +279,14 @@ func (f *fullRatiosControl) Exec(_ context.Context, argv []string, _ ...tcexec.P
 func TestFullRatiosSessionThroughHooks(t *testing.T) {
 	ctx := t.Context()
 	bare := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second})
-	overridehook.WithTopologyNoContext(bare, func() {
+	if err := overridehook.WithTopology(ctx, bare, func() error {
 		if _, err := overridehook.OpenFullRatios(ctx, bare); err == nil {
 			t.Error("a session opened without a control container")
 		}
-	})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	control := &fullRatiosControl{}
 	c := testhelper.TestCluster(control, testhelper.TestConfig{StartupTimeout: time.Second})
 	testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+sessionFSID+"\nmon_host = mon\n"))
@@ -333,11 +341,14 @@ func TestFullRatiosSessionThroughHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	testhelper.TestSetClosed(c, true)
-	overridehook.WithTopologyNoContext(c, func() {
+	if err := overridehook.WithTopology(ctx, c, func() error {
 		if _, err := overridehook.OpenFullRatios(ctx, c); err == nil {
 			t.Error("a session opened on a terminated cluster")
 		}
-	})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestConfigOperationsWithoutNativeCommands calls the pure operations of the

@@ -68,6 +68,8 @@ func mgrModuleNotApplied(name string, cause error) (*MGRModuleHandle, error) {
 //     override.SetMGRModule.
 //   - Invalid module name: not applied handle; plain error invalid Ceph
 //     manager module name.
+//   - Context already ended, or ended while waiting for the topology lock: not
+//     applied handle; the context error.
 //   - Terminated cluster or no control container: not applied handle; the
 //     cluster's own error.
 //   - This module is already held by another handle: not applied handle; plain
@@ -93,9 +95,12 @@ func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled b
 		handle   *MGRModuleHandle
 		applyErr error
 	)
-	overridehook.WithTopologyNoContext(c, func() {
+	if err := overridehook.WithTopology(ctx, c, func() error {
 		handle, applyErr = setMGRModuleLocked(ctx, c, name, enabled)
-	})
+		return nil
+	}); err != nil {
+		return mgrModuleNotApplied(name, err)
+	}
 	return handle, applyErr
 }
 
@@ -162,7 +167,9 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 // applied or previous boolean state cannot be distinguished and must not race.
 // A handle of a call that was not applied returns nil without taking a lock.
 // A cluster that has been terminated refuses the restore with the error of an
-// operation on a terminated cluster, and the module stays registered.
+// operation on a terminated cluster, and the module stays registered. A context
+// that ends before the topology lock is free returns the context error, and the
+// module stays registered.
 //
 //purpose:condition,lifetime
 func (h *MGRModuleHandle) Restore(ctx context.Context) error {
@@ -176,9 +183,7 @@ func (h *MGRModuleHandle) Restore(ctx context.Context) error {
 		return errors.New("MGR module override is unavailable")
 	}
 	c := h.owner
-	var err error
-	overridehook.WithTopologyNoContext(c, func() { err = h.restoreLocked(ctx, c) })
-	return err
+	return overridehook.WithTopology(ctx, c, func() error { return h.restoreLocked(ctx, c) })
 }
 
 func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) error {
