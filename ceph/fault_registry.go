@@ -73,10 +73,10 @@ var faultKinds = map[faultKind]faultKindSpec{
 		return invalidRequest("restore the existing network delay of this endpoint first")
 	}},
 	faultNetworkInterruption: {phase: faultEndpoint, undone: "restore interrupted network", refuse: func(bool) error {
-		return errors.New("restore the existing endpoint interruption first")
+		return invalidRequest("restore the existing endpoint interruption first")
 	}},
 	faultContainerPause: {phase: faultFreeze, undone: "resume paused container", refuse: func(bool) error {
-		return errors.New("resume the existing container pause first")
+		return invalidRequest("resume the existing container pause first")
 	}},
 	faultBlocklist: {phase: faultTracked, refuse: func(bool) error {
 		return errors.New("restore the existing client blocklist override first")

@@ -148,7 +148,10 @@ func TestFaultRegistryStaleTokenCannotTouchSuccessor(t *testing.T) {
 }
 
 func TestFaultRegistryCompletionKindsReturnPreviousHandle(t *testing.T) {
-	for _, kind := range []faultKind{faultNetworkInterruption, faultContainerPause} {
+	for kind, want := range map[faultKind]string{
+		faultNetworkInterruption: "restore the existing endpoint interruption first",
+		faultContainerPause:      "resume the existing container pause first",
+	} {
 		c := &Container{}
 		var log []string
 		previous := hold(t, c, kind, "net/osd-0", "net", &log)
@@ -157,6 +160,10 @@ func TestFaultRegistryCompletionKindsReturnPreviousHandle(t *testing.T) {
 		c.mu.Unlock()
 		if err == nil || handle != previous {
 			t.Fatalf("kind %v: an incomplete fault was not returned with the refusal: %v %v", kind, handle, err)
+		}
+		// The overlap is the caller's request against held state.
+		if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("kind %v: overlap refusal %v is not ErrInvalidRequest with %q", kind, err, want)
 		}
 		// A failing completion check returns its error with the handle.
 		probeErr := errors.New("probe canceled")
