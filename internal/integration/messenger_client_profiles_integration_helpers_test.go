@@ -99,7 +99,7 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if preferred == "" {
 		preferred = auth.KeyType
 	}
-	if harness.KeyTypeOption(t, ctx, cluster) {
+	if keyTypeOption(t, ctx, cluster) {
 		allowed := auth.AllowedCiphers
 		if allowed == nil {
 			for _, cipher := range []ceph.CephxCipher{auth.KeyType, service, preferred} {
@@ -108,7 +108,7 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 				}
 			}
 		}
-		gotService, gotAllowed, gotPreferred := harness.ReadMonMapCiphers(t, ctx, cluster)
+		gotService, gotAllowed, gotPreferred := readMonMapCiphers(t, ctx, cluster)
 		var want []string
 		for _, cipher := range allowed {
 			want = append(want, string(cipher))
@@ -121,14 +121,14 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	}
 	cc, err := cluster.ConnectionConfig(ctx)
 	keyring := cc.Keyring
-	if err != nil || harness.CephxKeyType(t, keyring, "client.admin") != auth.KeyType {
+	if err != nil || cephxKeyType(t, keyring, "client.admin") != auth.KeyType {
 		t.Fatalf("client.admin key type: %v", err)
 	}
-	if got := harness.AuthEntityKeyType(t, ctx, cluster, "mon."); got != auth.KeyType {
+	if got := authEntityKeyType(t, ctx, cluster, "mon."); got != auth.KeyType {
 		t.Fatalf("mon. has a %s key, want %s", got, auth.KeyType)
 	}
 	for _, mgr := range clusteraccess.Managers(t, cluster) {
-		if got := harness.AuthEntityKeyType(t, ctx, cluster, "mgr."+mgr.DaemonName); got != preferred {
+		if got := authEntityKeyType(t, ctx, cluster, "mgr."+mgr.DaemonName); got != preferred {
 			t.Fatalf("mgr.%s has a %s key, want %s", mgr.DaemonName, got, preferred)
 		}
 	}
@@ -139,10 +139,10 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 func checkProfileTickets(t *testing.T, ctx context.Context, cluster *ceph.Container, monTTL, serviceTTL float64) {
 	t.Helper()
 	for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
-		if got := harness.RunningOption(t, ctx, cluster, daemon, "auth_mon_ticket_ttl"); got != monTTL {
+		if got := runningOption(t, ctx, cluster, daemon, "auth_mon_ticket_ttl"); got != monTTL {
 			t.Fatalf("%s auth_mon_ticket_ttl = %v, want %v", daemon, got, monTTL)
 		}
-		if got := harness.RunningOption(t, ctx, cluster, daemon, "auth_service_ticket_ttl"); got != serviceTTL {
+		if got := runningOption(t, ctx, cluster, daemon, "auth_service_ticket_ttl"); got != serviceTTL {
 			t.Fatalf("%s auth_service_ticket_ttl = %v, want %v", daemon, got, serviceTTL)
 		}
 	}
@@ -195,7 +195,7 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := harness.CephxKeyType(t, harness.ClientKeyring(t, identity), identity.Name()); got != keyType {
+		if got := cephxKeyType(t, clientKeyring(t, identity), identity.Name()); got != keyType {
 			t.Fatalf("%s has a %s key, want %s", identity.Name(), got, keyType)
 		}
 		identities[name] = identity
@@ -699,7 +699,7 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 	checkProfileTickets(t, ctx, cluster, monTTL.Seconds(), serviceTTL.Seconds())
 	for name, want := range options {
 		for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
-			if got := harness.RunningOption(t, ctx, cluster, daemon, name); got != want {
+			if got := runningOption(t, ctx, cluster, daemon, name); got != want {
 				t.Fatalf("%s %s = %v, want %v", daemon, name, got, want)
 			}
 		}
@@ -763,7 +763,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	monsAndMgrs := slices.DeleteFunc(profileDaemons(t, cluster), func(daemon string) bool { return strings.HasPrefix(daemon, "osd.") })
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "crc", monsAndMgrs...)
 	waitEffectiveMode(t, ctx, cluster, "ms_service_mode", "crc", "osd.0")
-	if got := harness.AuthEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
+	if got := authEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
 		t.Fatalf("osd.0 has a %s key, want %s", got, auth.KeyType)
 	}
 
@@ -787,7 +787,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	crc.expect(t, ctx, "crc only", "accepted", "tell", "osd.0", "version")
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
 	harness.ExecCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
-	harness.AssertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
+	assertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
 	if harness.StaticFacts(cluster).UsesHostNetwork {
 		checkHostProcessReachesDaemons(t, ctx, cluster)

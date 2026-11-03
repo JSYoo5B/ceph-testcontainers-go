@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package harness
+package integration_test
 
 import (
 	"context"
@@ -11,16 +11,17 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Compare against independently decoded native JSON at a quiet observation.
 // HealthDetails performs three reads, so changes between the surrounding raw
 // observations are pending rather than evidence of an atomic health snapshot.
-func IntegrationHealthDetails(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, phase string) ceph.HealthSnapshot {
+func integrationHealthDetails(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, phase string) ceph.HealthSnapshot {
 	t.Helper()
 	for {
 		before := integrationNativeHealth(t, ctx, cluster, fsid)
-		actual, err := ObserveCluster(cluster).HealthDetails(ctx)
+		actual, err := harness.ObserveCluster(cluster).HealthDetails(ctx)
 		if err != nil {
 			t.Fatal("HealthDetails failed", phase, err)
 		}

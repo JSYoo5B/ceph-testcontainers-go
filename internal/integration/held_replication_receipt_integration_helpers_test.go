@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package harness
+package integration_test
 
 import (
 	"context"
@@ -16,15 +16,16 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// HeldReplicationReceipt records one replicated write that an OSD held while
+// heldReplicationReceipt records one replicated write that an OSD held while
 // the cluster plane of one OSD was cut: which PG and OSDs it involved, the
 // request the primary held and for how long, the controls that kept working
 // meanwhile, and how the writer and an independent reader saw the result.
 // It is evidence for this release and profile, not a Messenger decoder.
-type HeldReplicationReceipt struct {
+type heldReplicationReceipt struct {
 	Family string `json:"family"`
 	FSID   string `json:"fsid"`
 	Images struct {
@@ -32,7 +33,7 @@ type HeldReplicationReceipt struct {
 		OSD     string `json:"osd"`
 		Client  string `json:"client"`
 	} `json:"images"`
-	Mapping     HeldMapping `json:"mapping"`
+	Mapping     heldMapping `json:"mapping"`
 	Interrupted struct {
 		OSD     int                  `json:"osd"`
 		CID     string               `json:"cid"`
@@ -49,16 +50,16 @@ type HeldReplicationReceipt struct {
 	} `json:"held"`
 	Controls struct {
 		OSDMapEpoch    uint32      `json:"osdmap_epoch"`
-		Mapping        HeldMapping `json:"mapping"`
+		Mapping        heldMapping `json:"mapping"`
 		PublicListener string      `json:"public_listener"`
 	} `json:"controls"`
-	Writer       HeldReadback `json:"writer"`
-	Reader       HeldReadback `json:"reader"`
-	MappingAfter HeldMapping  `json:"mapping_after"`
+	Writer       heldReadback `json:"writer"`
+	Reader       heldReadback `json:"reader"`
+	MappingAfter heldMapping  `json:"mapping_after"`
 }
 
-// HeldMapping is the native "osd map" of one object.
-type HeldMapping struct {
+// heldMapping is the native "osd map" of one object.
+type heldMapping struct {
 	Epoch         uint32 `json:"epoch"`
 	Pool          string `json:"pool"`
 	PoolID        int64  `json:"pool_id"`
@@ -70,18 +71,34 @@ type HeldMapping struct {
 	ActingPrimary int    `json:"acting_primary"`
 }
 
-// HeldReadback is what one native client saw of the object.
-type HeldReadback struct {
+// SamePlacement reports an unchanged PG, acting set and primary, whatever the
+// epoch; unrelated map changes do not undo a held phase.
+func (m heldMapping) SamePlacement(other heldMapping) bool {
+	return m.PoolID == other.PoolID && m.PGID == other.PGID && slices.Equal(m.Acting, other.Acting) && m.ActingPrimary == other.ActingPrimary
+}
+
+// replica returns the acting OSD that is not the primary.
+func (m heldMapping) Replica() int {
+	for _, osd := range m.Acting {
+		if osd != m.ActingPrimary {
+			return osd
+		}
+	}
+	return -1
+}
+
+// heldReadback is what one native client saw of the object.
+type heldReadback struct {
 	Client  string `json:"client,omitempty"`
 	Size    int    `json:"size"`
 	SHA256  string `json:"sha256"`
 	Version uint64 `json:"version"`
 }
 
-// ParseHeldMapping decodes "osd map" output for pool and object and requires a
+// parseHeldMapping decodes "osd map" output for pool and object and requires a
 // two-OSD acting set that contains its primary.
-func ParseHeldMapping(data []byte, pool, object string) (HeldMapping, error) {
-	var mapping HeldMapping
+func parseHeldMapping(data []byte, pool, object string) (heldMapping, error) {
+	var mapping heldMapping
 	if err := json.Unmarshal(data, &mapping); err != nil {
 		return mapping, fmt.Errorf("osd map: %w", err)
 	}
@@ -94,14 +111,8 @@ func ParseHeldMapping(data []byte, pool, object string) (HeldMapping, error) {
 	return mapping, nil
 }
 
-// SamePlacement reports an unchanged PG, acting set and primary, whatever the
-// epoch; unrelated map changes do not undo a held phase.
-func (m HeldMapping) SamePlacement(other HeldMapping) bool {
-	return m.PoolID == other.PoolID && m.PGID == other.PGID && slices.Equal(m.Acting, other.Acting) && m.ActingPrimary == other.ActingPrimary
-}
-
-// HeldOp is an operation from an OSD's dump_ops_in_flight.
-type HeldOp struct {
+// heldOp is an operation from an OSD's dump_ops_in_flight.
+type heldOp struct {
 	Description string `json:"description"`
 	TypeData    struct {
 		FlagPoint string `json:"flag_point"`
@@ -113,20 +124,43 @@ type HeldOp struct {
 
 // request returns the client request that the operation serves, such as
 // "client.4211.0:1".
-func (op HeldOp) Request() string {
+func (op heldOp) Request() string {
 	request, _, _ := strings.Cut(strings.TrimPrefix(op.Description, "osd_op("), " ")
 	return request
 }
 
-// FindHeldOp returns the operation in a dump_ops_in_flight output that writes
+// WaitingFor returns the replicas that the operation's "waiting for subops
+// from" event names, such as "0" or "1,2", or "" without that event.
+func (op heldOp) WaitingFor() string {
+	for _, event := range op.TypeData.Events {
+		if replicas, found := strings.CutPrefix(event.Event, "waiting for subops from "); found {
+			return replicas
+		}
+	}
+	return ""
+}
+
+// events returns the operation's event names, at most 32.
+func (op heldOp) Events() []string {
+	var names []string
+	for _, event := range op.TypeData.Events {
+		if len(names) == 32 {
+			break
+		}
+		names = append(names, event.Event)
+	}
+	return names
+}
+
+// findHeldOp returns the operation in a dump_ops_in_flight output that writes
 // object and waits for its replica, which has not reported a commit. The
 // description names the object as ":::<object>:head".
-func FindHeldOp(data []byte, object string) (HeldOp, bool, error) {
+func findHeldOp(data []byte, object string) (heldOp, bool, error) {
 	var dump struct {
-		Ops []HeldOp `json:"ops"`
+		Ops []heldOp `json:"ops"`
 	}
 	if err := json.Unmarshal(data, &dump); err != nil {
-		return HeldOp{}, false, fmt.Errorf("dump_ops_in_flight: %w", err)
+		return heldOp{}, false, fmt.Errorf("dump_ops_in_flight: %w", err)
 	}
 	for _, op := range dump.Ops {
 		if !strings.HasPrefix(op.Description, "osd_op(") || !strings.Contains(op.Description, ":::"+object+":head") || op.TypeData.FlagPoint != "waiting for sub ops" {
@@ -141,40 +175,7 @@ func FindHeldOp(data []byte, object string) (HeldOp, bool, error) {
 			return op, true, nil
 		}
 	}
-	return HeldOp{}, false, nil
-}
-
-// WaitingFor returns the replicas that the operation's "waiting for subops
-// from" event names, such as "0" or "1,2", or "" without that event.
-func (op HeldOp) WaitingFor() string {
-	for _, event := range op.TypeData.Events {
-		if replicas, found := strings.CutPrefix(event.Event, "waiting for subops from "); found {
-			return replicas
-		}
-	}
-	return ""
-}
-
-// replica returns the acting OSD that is not the primary.
-func (m HeldMapping) Replica() int {
-	for _, osd := range m.Acting {
-		if osd != m.ActingPrimary {
-			return osd
-		}
-	}
-	return -1
-}
-
-// events returns the operation's event names, at most 32.
-func (op HeldOp) Events() []string {
-	var names []string
-	for _, event := range op.TypeData.Events {
-		if len(names) == 32 {
-			break
-		}
-		names = append(names, event.Event)
-	}
-	return names
+	return heldOp{}, false, nil
 }
 
 // heldWriter writes the held object with no client-side timeout and reports
@@ -205,18 +206,18 @@ type heldReplicationWrite struct {
 	err    error
 }
 
-// StartHeldReplicationWrite maps the held object, starts the write from client
+// startHeldReplicationWrite maps the held object, starts the write from client
 // and waits until the primary has reported the same request waiting for its
 // replica, without a replica commit, for 10 seconds, while the writer still
 // waits. A normal replicated write passes that state in milliseconds. It
 // fills the receipt's mapping and held fields.
-func StartHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, receipt *HeldReplicationReceipt) *heldReplicationWrite {
+func startHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, receipt *heldReplicationReceipt) *heldReplicationWrite {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "osd", "map", "tc-topology", "held", "--format", "json")
 	if err != nil {
 		t.Fatal("map of the held object:", err)
 	}
-	if receipt.Mapping, err = ParseHeldMapping(out, "tc-topology", "held"); err != nil {
+	if receipt.Mapping, err = parseHeldMapping(out, "tc-topology", "held"); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("HELD_REPLICATION_RAW osd map: %.2048s", out)
@@ -241,7 +242,7 @@ func StartHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.
 		}
 	})
 	primary := fmt.Sprintf("osd.%d", receipt.Mapping.ActingPrimary)
-	var current HeldOp
+	var current heldOp
 	var since time.Time
 	for deadline := time.Now().Add(2 * time.Minute); ; {
 		select {
@@ -249,17 +250,17 @@ func StartHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.
 			t.Fatalf("the write finished while the backend was cut: %v", write.err)
 		default:
 		}
-		data, err := AdminSocket(t, ctx, cluster, primary, "dump_ops_in_flight")
+		data, err := adminSocket(t, ctx, cluster, primary, "dump_ops_in_flight")
 		if err != nil {
 			t.Fatal(err)
 		}
-		op, found, err := FindHeldOp(data, "held")
+		op, found, err := findHeldOp(data, "held")
 		if err != nil {
 			t.Fatal(err)
 		}
 		switch {
 		case !found:
-			current = HeldOp{}
+			current = heldOp{}
 		case op.Request() != current.Request():
 			current, since = op, time.Now()
 		case time.Since(since) >= 10*time.Second:
@@ -286,11 +287,11 @@ func StartHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.
 	}
 }
 
-// CheckHeldControls checks, while the write is held, that a MON command still
+// checkHeldControls checks, while the write is held, that a MON command still
 // answers, that the placement is the one the write was held in, with every
 // OSD up, and that the interrupted OSD's public listener accepts TCP. A
 // changed placement or a down OSD leaves the held phase unproven.
-func CheckHeldControls(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, receipt *HeldReplicationReceipt, write *heldReplicationWrite) {
+func checkHeldControls(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, receipt *heldReplicationReceipt, write *heldReplicationWrite) {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
@@ -317,11 +318,11 @@ func CheckHeldControls(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	if err != nil {
 		t.Fatal("osd map during the held write:", err)
 	}
-	if receipt.Controls.Mapping, err = ParseHeldMapping(out, "tc-topology", "held"); err != nil || !receipt.Controls.Mapping.SamePlacement(receipt.Mapping) {
+	if receipt.Controls.Mapping, err = parseHeldMapping(out, "tc-topology", "held"); err != nil || !receipt.Controls.Mapping.SamePlacement(receipt.Mapping) {
 		t.Fatalf("held phase unproven: placement %+v, held in %+v: %v", receipt.Controls.Mapping, receipt.Mapping, err)
 	}
 	address := receipt.Interrupted.Public[0].Addr
-	ExecCommand(t, ctx, client, "python3", "-c", `import socket,sys; host,_,port=sys.argv[1].rpartition(":"); s=socket.create_connection((host.strip("[]"),int(port)),5); s.close()`, address)
+	harness.ExecCommand(t, ctx, client, "python3", "-c", `import socket,sys; host,_,port=sys.argv[1].rpartition(":"); s=socket.create_connection((host.strip("[]"),int(port)),5); s.close()`, address)
 	receipt.Controls.PublicListener = address
 	select {
 	case <-write.done:
@@ -330,10 +331,10 @@ func CheckHeldControls(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	}
 }
 
-// FinishHeldReplicationWrite waits for the writer after the backend is
+// finishHeldReplicationWrite waits for the writer after the backend is
 // restored, then reads the object with a client of its own in the control
 // container and requires the same bytes and version.
-func FinishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.Container, receipt *HeldReplicationReceipt, write *heldReplicationWrite) {
+func finishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.Container, receipt *heldReplicationReceipt, write *heldReplicationWrite) {
 	t.Helper()
 	select {
 	case <-write.done:
@@ -343,18 +344,18 @@ func FinishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph
 	if write.err != nil || write.result.ExitCode != 0 || !write.result.Complete() {
 		t.Fatalf("held write: exit %d, complete %t: %v: %.2048s", write.result.ExitCode, write.result.Complete(), write.err, write.result.Stderr)
 	}
-	if err := json.Unmarshal([]byte(LastJSONLine(string(write.result.Stdout))), &receipt.Writer); err != nil {
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(write.result.Stdout))), &receipt.Writer); err != nil {
 		t.Fatalf("held writer output: %v: %.512s", err, write.result.Stdout)
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, ToolkitContainer(t, cluster), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, harness.ToolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", heldReader}, Timeout: 2 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent held reader",
 	})
 	cancel()
 	if err != nil || read.ExitCode != 0 || !read.Complete() {
 		t.Fatalf("independent reader: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
 	}
-	if err := json.Unmarshal([]byte(LastJSONLine(string(read.Stdout))), &receipt.Reader); err != nil {
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(read.Stdout))), &receipt.Reader); err != nil {
 		t.Fatalf("independent reader output: %v: %.512s", err, read.Stdout)
 	}
 	payload := make([]byte, 0, 256*64)
@@ -364,7 +365,7 @@ func FinishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph
 		}
 	}
 	sum := sha256.Sum256(payload)
-	want := HeldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:]), Version: receipt.Writer.Version}
+	want := heldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:]), Version: receipt.Writer.Version}
 	got := receipt.Reader
 	got.Client = ""
 	if receipt.Writer != want || got != want || receipt.Writer.Version == 0 {
@@ -372,8 +373,8 @@ func FinishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph
 	}
 }
 
-// ImageID returns the image ID that Docker runs ctr from.
-func ImageID(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
+// imageID returns the image ID that Docker runs ctr from.
+func imageID(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
 	t.Helper()
 	inspection, err := ctr.Inspect(ctx)
 	if err != nil {

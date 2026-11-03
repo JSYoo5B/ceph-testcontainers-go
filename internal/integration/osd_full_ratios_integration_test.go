@@ -143,7 +143,7 @@ func waitFullRatioHealth(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	phaseCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	for {
-		state := harness.IntegrationHealthDetails(t, phaseCtx, cluster, fsid, code)
+		state := integrationHealthDetails(t, phaseCtx, cluster, fsid, code)
 		_, found := state.Checks[code]
 		if found == present {
 			return

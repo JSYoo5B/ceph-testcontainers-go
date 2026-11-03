@@ -211,7 +211,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	platform := strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm")))
 	manifestJSON, _ := json.Marshal(manifest)
 	t.Logf("CORRELATED_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s plan=osd.%s,mgr.%s,mon.%s election_leader=%s election_epoch=%d active_mgr_gid=%d manifest=%s",
-		version, platform, harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, client), osdA.Name, mgrA.Name, monA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
+		version, platform, imageID(t, ctx, cluster.Container), imageID(t, ctx, client), osdA.Name, mgrA.Name, monA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
 
 	// Baseline: seed the placement pool, then run the retained client.
 	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "seed")
@@ -331,7 +331,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if err := plan.Restore(ctx, "primary"); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyWait(t, ctx, func() bool {
+	topologyWait(t, ctx, func() bool {
 		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		m, merr := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 		s, serr := harness.ObserveCluster(cluster).OSDStates(ctx)

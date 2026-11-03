@@ -198,11 +198,11 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if manager.GetContainerID() != managerID || gateway.GetContainerID() != gatewayID || mds.GetContainerID() != mdsID {
 				t.Fatal("cold restart replaced an original daemon container")
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName == manager.DaemonName && status.ActiveGID != 0 && status.ActiveGID != initialManager.ActiveGID
 			})
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				status, err := filesystem.MDSStatus(ctx)
 				if err != nil || status.FilesystemID != initialMDS.FilesystemID || len(status.Active) != 1 {
 					return false

@@ -12,5 +12,5 @@ import (
 
 func TestDaemonKeyRotation(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunDaemonKeyRotation(t)
+	runDaemonKeyRotation(t)
 }

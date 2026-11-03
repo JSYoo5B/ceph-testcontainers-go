@@ -159,7 +159,7 @@ func checkDumpedSession(daemon string, c harness.MessengerConnection, phase comp
 }
 
 // checkLoggedSession compares one READY log line with the phase.
-func checkLoggedSession(daemon string, c harness.ReadyLogConnection, phase compressionPhase) []string {
+func checkLoggedSession(daemon string, c readyLogConnection, phase compressionPhase) []string {
 	where := fmt.Sprintf("%s session with %s.%s", daemon, c.PeerType, c.PeerID)
 	if c.PeerType != "osd" {
 		if c.Compression {

@@ -587,7 +587,7 @@ func testDualStackReplacement(t *testing.T) {
 	if added.ID != 2 {
 		t.Fatalf("the new OSD is osd.%d, want osd.2", added.ID)
 	}
-	if err := harness.OSDHandle(t, ctx, cluster, 0).Remove(ctx); err != nil {
+	if err := osdHandle(t, ctx, cluster, 0).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("osd.0", oldOSD.Public, oldOSD.Cluster, oldOSD.HeartbeatFront, oldOSD.HeartbeatBack)

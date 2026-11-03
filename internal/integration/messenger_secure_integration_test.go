@@ -113,7 +113,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, harness.MessengerDumpArg(t, ctx, cluster))
+			data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, messengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_CEPHFS %s", data)
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
@@ -131,7 +131,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mds := range fs.MDSs() {
-				data := harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", harness.MessengerDumpArg(t, ctx, cluster))
+				data := harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(t, ctx, cluster))
 				t.Logf("MSGR2_NATIVE %s", data)
 			}
 			inspection, err := gateway.Inspect(ctx)
@@ -144,7 +144,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			}
 			// ServiceMap GID plus hostname/frontend binds server-side OSD
 			// connections to this owned gateway, not an unrelated CLI client.
-			data = harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, harness.MessengerDumpArg(t, ctx, cluster))
+			data = harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_RGW %s", data)
 			s3.Request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
 			s3.Request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)

@@ -83,7 +83,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 		t.Fatal("original native FSID unavailable")
 	}
 	afterVolumes, afterKeepers := osdMemoryLabelInventory(t, ctx, docker.Client)
-	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeKeepers, afterKeepers) || len(clusteraccess.OSDs(t, cluster)) != 0 || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeKeepers, afterKeepers) || len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero-OSD bootstrap allocated memory storage or registered an OSD")
 	}
 	t.Logf("OSD_MEMORY_LAZY fsid=%s new_volumes=0 new_keepers=0", fsid)
@@ -235,7 +235,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	t.Logf("OSD_MEMORY_REPLACEMENT old_id=%d new_id=%d reused_numeric_id=%t old_uuid=%s new_uuid=%s old_cid=%s new_cid=%s old_directory_absent_before_add=true", original.ID, replacement.ID, original.ID == replacement.ID, oldUUID, current[replacement.ID], oldCID, replacement.GetContainerID())
 	osdMemoryPhase(t, "drain-and-fresh-replacement", started)
 	started = time.Now()
-	beforeRefusal := harness.NoInitialOSDNativeDump(t, ctx, cluster)
+	beforeRefusal := noInitialOSDNativeDump(t, ctx, cluster)
 	stopSeconds := 1
 	if _, err := docker.Client.ContainerStop(ctx, keeper.ID, mobycl.ContainerStopOptions{Timeout: &stopSeconds}); err != nil {
 		t.Fatal("stop original keeper failed", err)
@@ -247,7 +247,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if refused != nil || refusalErr == nil || contextErr != nil || errors.Is(refusalErr, context.DeadlineExceeded) || refusalErr.Error() != "OSD memory keeper is not running; stored data may be lost" {
 		t.Fatal("lost keeper was not a completed pre-registration refusal", refusalErr, contextErr)
 	}
-	if !slices.Equal(beforeRefusal, harness.NoInitialOSDNativeDump(t, ctx, cluster)) || !maps.Equal(current, osdMemoryIdentities(t, ctx, cluster)) || len(clusteraccess.OSDs(t, cluster)) != 3 {
+	if !slices.Equal(beforeRefusal, noInitialOSDNativeDump(t, ctx, cluster)) || !maps.Equal(current, osdMemoryIdentities(t, ctx, cluster)) || len(clusteraccess.OSDs(t, cluster)) != 3 {
 		t.Fatal("lost-keeper refusal changed native OSD IDs/UUIDs or ownership")
 	}
 	afterRefusal := osdMemoryInspect(t, ctx, docker.Client, keeper.ID)

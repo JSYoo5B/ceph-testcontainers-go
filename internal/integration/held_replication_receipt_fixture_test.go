@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Native output saved from TestSeparateClusterNetworksAndInterruptions on
@@ -52,7 +50,7 @@ const (
 )
 
 func TestHeldReplicationMapping(t *testing.T) {
-	mapping, err := harness.ParseHeldMapping([]byte(heldOSDMapSample), "tc-topology", "held")
+	mapping, err := parseHeldMapping([]byte(heldOSDMapSample), "tc-topology", "held")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +67,7 @@ func TestHeldReplicationMapping(t *testing.T) {
 		"no epoch":             {strings.Replace(heldOSDMapSample, `"epoch":17`, `"epoch":0`, 1), "tc-topology", "held"},
 		"not an osd map reply": {`[]`, "tc-topology", "held"},
 	} {
-		if _, err := harness.ParseHeldMapping([]byte(test.data), test.pool, test.object); err == nil {
+		if _, err := parseHeldMapping([]byte(test.data), test.pool, test.object); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -78,11 +76,11 @@ func TestHeldReplicationMapping(t *testing.T) {
 	if !later.SamePlacement(mapping) {
 		t.Error("an unrelated new epoch changed the placement")
 	}
-	for name, change := range map[string]func(*harness.HeldMapping){
-		"acting":  func(m *harness.HeldMapping) { m.Acting = []int{0, 1} },
-		"primary": func(m *harness.HeldMapping) { m.ActingPrimary = 0 },
-		"PG":      func(m *harness.HeldMapping) { m.PGID = "2.1" },
-		"pool":    func(m *harness.HeldMapping) { m.PoolID = 3 },
+	for name, change := range map[string]func(*heldMapping){
+		"acting":  func(m *heldMapping) { m.Acting = []int{0, 1} },
+		"primary": func(m *heldMapping) { m.ActingPrimary = 0 },
+		"PG":      func(m *heldMapping) { m.PGID = "2.1" },
+		"pool":    func(m *heldMapping) { m.PoolID = 3 },
 	} {
 		changed := mapping
 		changed.Acting = slices.Clone(mapping.Acting)
@@ -94,7 +92,7 @@ func TestHeldReplicationMapping(t *testing.T) {
 }
 
 func TestHeldReplicationOp(t *testing.T) {
-	op, found, err := harness.FindHeldOp([]byte(heldOpsSample), "held")
+	op, found, err := findHeldOp([]byte(heldOpsSample), "held")
 	if err != nil || !found {
 		t.Fatalf("held op not found: %v", err)
 	}
@@ -108,17 +106,17 @@ func TestHeldReplicationOp(t *testing.T) {
 		"not a client op":   strings.Replace(heldOpsSample, `osd_op(client.4215.0:1`, `osd_repop(client.4215.0:1`, 1),
 		"no ops":            `{"ops": [], "num_ops": 0}`,
 	} {
-		if _, found, err := harness.FindHeldOp([]byte(data), "held"); err != nil || found {
+		if _, found, err := findHeldOp([]byte(data), "held"); err != nil || found {
 			t.Errorf("%s: found=%t err=%v", name, found, err)
 		}
 	}
-	if _, found, err := harness.FindHeldOp([]byte(heldOpsSample), "hel"); err != nil || found {
+	if _, found, err := findHeldOp([]byte(heldOpsSample), "hel"); err != nil || found {
 		t.Errorf("a prefix of the object name matched: found=%t err=%v", found, err)
 	}
-	if _, _, err := harness.FindHeldOp([]byte(`{"ops": {}}`), "held"); err == nil {
+	if _, _, err := findHeldOp([]byte(`{"ops": {}}`), "held"); err == nil {
 		t.Error("malformed dump accepted")
 	}
-	if waiting := (harness.HeldOp{}).WaitingFor(); waiting != "" {
+	if waiting := (heldOp{}).WaitingFor(); waiting != "" {
 		t.Errorf("an op without the event waits for %q", waiting)
 	}
 }

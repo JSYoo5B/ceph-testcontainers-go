@@ -67,7 +67,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	afterVolumes, afterHelpers := osdVolumeInventory(t, ctx, docker.Client)
-	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeHelpers, afterHelpers) || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeHelpers, afterHelpers) || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero-OSD bootstrap allocated storage")
 	}
 	for range 2 {
@@ -206,11 +206,11 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 		t.Fatal("restart changed registration")
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "all-stopped-helper-stopped")
-	beforeRefusal := harness.NoInitialOSDNativeDump(t, ctx, cluster)
+	beforeRefusal := noInitialOSDNativeDump(t, ctx, cluster)
 	if refused, err := cluster.AddOSD(ctx); err == nil || refused != nil {
 		t.Fatal("stopped helper admitted new storage operation", err)
 	}
-	if !slices.Equal(beforeRefusal, harness.NoInitialOSDNativeDump(t, ctx, cluster)) || osdMemoryInspect(t, ctx, docker.Client, helper.ID).State.Running {
+	if !slices.Equal(beforeRefusal, noInitialOSDNativeDump(t, ctx, cluster)) || osdMemoryInspect(t, ctx, docker.Client, helper.ID).State.Running {
 		t.Fatal("helper refusal registered an OSD or restarted helper")
 	}
 	// The observer intentionally has no cluster ownership label. Docker must

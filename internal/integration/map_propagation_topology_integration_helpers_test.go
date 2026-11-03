@@ -121,7 +121,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := harness.OSDHandle(t, ctx, cluster, osd.ID).AdminSocket(ctx, "status")
+			out, err := osdHandle(t, ctx, cluster, osd.ID).AdminSocket(ctx, "status")
 			if err != nil {
 				t.Fatalf("status of osd.%d: %v", osd.ID, err)
 			}

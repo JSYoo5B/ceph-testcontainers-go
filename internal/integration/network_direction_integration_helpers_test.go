@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package harness
+package integration_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -77,9 +78,9 @@ type directionRead struct {
 
 func freshDirectionReads(t *testing.T, ctx context.Context, client testcontainers.Container, names ...string) map[string]directionRead {
 	t.Helper()
-	out := DelayExec(t, ctx, client, append([]string{"python3", "-c", fmt.Sprintf(directionFreshRead, directionReadTimeout), delayPool}, names...)...)
+	out := delayExec(t, ctx, client, append([]string{"python3", "-c", fmt.Sprintf(directionFreshRead, directionReadTimeout), delayPool}, names...)...)
 	reads := map[string]directionRead{}
-	if err := json.Unmarshal([]byte(LastJSONLine(out)), &reads); err != nil || len(reads) != len(names) {
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(out)), &reads); err != nil || len(reads) != len(names) {
 		t.Fatalf("fresh reads %q: %v", out, err)
 	}
 	return reads
@@ -88,11 +89,11 @@ func freshDirectionReads(t *testing.T, ctx context.Context, client testcontainer
 // heldDirectionReads asks the held reader for round n and waits for it.
 func heldDirectionReads(t *testing.T, ctx context.Context, client testcontainers.Container, n int) map[string]directionRead {
 	t.Helper()
-	DelayExec(t, ctx, client, "touch", "/tmp/direction.go-"+strconv.Itoa(n))
+	delayExec(t, ctx, client, "touch", "/tmp/direction.go-"+strconv.Itoa(n))
 	path := "/tmp/direction.result-" + strconv.Itoa(n)
 	deadline := time.Now().Add(time.Duration(2*directionReadTimeout+20) * time.Second)
 	for {
-		if code, out, err := SessionExec(ctx, client, "cat", path); err == nil && code == 0 && strings.TrimSpace(out) != "" {
+		if code, out, err := harness.SessionExec(ctx, client, "cat", path); err == nil && code == 0 && strings.TrimSpace(out) != "" {
 			reads := map[string]directionRead{}
 			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &reads); err != nil {
 				t.Fatalf("held reads %q: %v", out, err)
@@ -109,7 +110,7 @@ func heldDirectionReads(t *testing.T, ctx context.Context, client testcontainers
 // osdV2Address returns the msgr2 public address of osd from the OSDMap.
 func osdV2Address(t *testing.T, ctx context.Context, cluster *ceph.Container, osd int) (netip.Addr, uint16) {
 	t.Helper()
-	addresses, err := ObserveCluster(cluster).DaemonAddresses(ctx)
+	addresses, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func directionApply(t *testing.T, ctx context.Context, cluster *ceph.Container, 
 	return lease
 }
 
-// RunNetworkDirectionAndPhase shows the Direction and Phase selectors of
+// runNetworkDirectionAndPhase shows the Direction and Phase selectors of
 // fault.NetworkProfile against two OSDs, A and B, each the primary of one
 // object of a single-replica pool:
 //
@@ -160,11 +161,11 @@ func directionApply(t *testing.T, ctx context.Context, cluster *ceph.Container, 
 //     both.
 //
 // RUN_RECEIPT logs every read, the leases and the netem counters.
-func RunNetworkDirectionAndPhase(t *testing.T) {
+func runNetworkDirectionAndPhase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image := NetemImage(t)
-	cluster, client := NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(1, 1)))
+	image := harness.NetemImage(t)
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(1, 1)))
 	objects := placeDelayObjects(t, ctx, cluster, client)
 	osds := clusteraccess.OSDs(t, cluster)
 	cutOSD, otherOSD := osds[0], osds[1]
@@ -185,11 +186,11 @@ func RunNetworkDirectionAndPhase(t *testing.T) {
 		if err := client.CopyToContainer(ctx, []byte(script), "/tmp/direction_held.py", 0o644); err != nil {
 			t.Fatal(err)
 		}
-		DelayExec(t, ctx, client, "sh", "-c", `rm -f /tmp/direction.*; python3 /tmp/direction_held.py "$@" > /tmp/direction.log 2> /tmp/direction.err &`, "sh", delayPool, cut, other)
-		defer DelayExec(t, context.WithoutCancel(ctx), client, "touch", "/tmp/direction.stop")
+		delayExec(t, ctx, client, "sh", "-c", `rm -f /tmp/direction.*; python3 /tmp/direction_held.py "$@" > /tmp/direction.log 2> /tmp/direction.err &`, "sh", delayPool, cut, other)
+		defer delayExec(t, context.WithoutCancel(ctx), client, "touch", "/tmp/direction.stop")
 		deadline := time.Now().Add(60 * time.Second)
 		for {
-			if code, _, err := SessionExec(ctx, client, "test", "-s", "/tmp/direction.ready"); err == nil && code == 0 {
+			if code, _, err := harness.SessionExec(ctx, client, "test", "-s", "/tmp/direction.ready"); err == nil && code == 0 {
 				break
 			}
 			if time.Now().After(deadline) {
@@ -238,7 +239,7 @@ func RunNetworkDirectionAndPhase(t *testing.T) {
 		if err != nil || !status.Applied {
 			t.Fatalf("status of osd.%d's lease %+v, %v", cutOSD.ID, status, err)
 		}
-		clientRoot := RootQdisc(t, ctx, image, client, "eth0")
+		clientRoot := rootQdisc(t, ctx, image, client, "eth0")
 		fresh := freshDirectionReads(t, ctx, client, cut, other)
 		counted, err := peer.Status(ctx)
 		if err != nil {
@@ -248,7 +249,7 @@ func RunNetworkDirectionAndPhase(t *testing.T) {
 			t.Fatal(err)
 		}
 		restored := freshDirectionReads(t, ctx, client, cut, other)
-		helpers := NetemHelpers(t, ctx)
+		helpers := netemHelpers(t, ctx)
 		receipt["inbound"] = map[string]any{"fresh": fresh, "restored": restored, "peer_container": peer.ContainerID,
 			"peer_selection": peer.Peers, "client_root": clientRoot, "netem_packets": counted.Packets, "netem_drops": counted.Drops, "helpers_after": helpers}
 		switch {

@@ -624,7 +624,7 @@ func testManagerTransitionReceipt(t *testing.T) {
 	phase := func(name string, deadline time.Duration) mgrPhaseSample {
 		t.Helper()
 		expect.Phase = name
-		record, sample := awaitMgrPhase(ctx, harness.WithSockets(t, cluster), expect, managers, deadline, bound, pause)
+		record, sample := awaitMgrPhase(ctx, withSockets(t, cluster), expect, managers, deadline, bound, pause)
 		receipt.Phases = append(receipt.Phases, record)
 		if !record.Accepted {
 			fail("phase %s ended %s: %s", name, sample.State, sample.Reason)

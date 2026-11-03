@@ -38,7 +38,7 @@ func TestParseReadyRevisionSavedLines(t *testing.T) {
 		}
 	}
 	// The revision parser selects exactly the sessions the compression parser does.
-	sessions := harness.ParseReadyLogLines(readyLogSample)
+	sessions := parseReadyLogLines(readyLogSample)
 	for i, o := range observations {
 		if o.Mode != sessions[i].Mode || o.PeerType != sessions[i].PeerType || o.PeerID != sessions[i].PeerID {
 			t.Errorf("session %d: revision %+v, compression %+v", i, o, sessions[i])
@@ -74,7 +74,7 @@ func TestParseReadyRevisionLabelledMutations(t *testing.T) {
 				t.Fatal("unavailable revision has no reason")
 			}
 			// Compression parsing is unchanged by the revision field.
-			if before, after := harness.ParseReadyLogLines([]string{line}), harness.ParseReadyLogLines([]string{c.line}); !slices.Equal(before, after) {
+			if before, after := parseReadyLogLines([]string{line}), parseReadyLogLines([]string{c.line}); !slices.Equal(before, after) {
 				t.Fatalf("compression fields moved: %+v vs %+v", before, after)
 			}
 		})

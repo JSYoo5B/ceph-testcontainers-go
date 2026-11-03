@@ -517,17 +517,17 @@ type osdBackoffReceipt struct {
 		OSD    string `json:"osd"`
 		Client string `json:"client"`
 	} `json:"images"`
-	Target      backoffTarget        `json:"target"`
-	Replica     string               `json:"replica"`
-	Seeded      harness.HeldReadback `json:"seeded"`
-	Clean       backoffPlacement     `json:"clean"`
-	Held        backoffPlacement     `json:"held"`
-	StillHeld   backoffPlacement     `json:"still_held"`
-	After       backoffPlacement     `json:"after"`
-	Chain       backoffChain         `json:"chain"`
-	ReadSeconds float64              `json:"read_seconds"`
-	Read        harness.HeldReadback `json:"read"`
-	Cleanup     []string             `json:"cleanup"`
+	Target      backoffTarget    `json:"target"`
+	Replica     string           `json:"replica"`
+	Seeded      heldReadback     `json:"seeded"`
+	Clean       backoffPlacement `json:"clean"`
+	Held        backoffPlacement `json:"held"`
+	StillHeld   backoffPlacement `json:"still_held"`
+	After       backoffPlacement `json:"after"`
+	Chain       backoffChain     `json:"chain"`
+	ReadSeconds float64          `json:"read_seconds"`
+	Read        heldReadback     `json:"read"`
+	Cleanup     []string         `json:"cleanup"`
 }
 
 // testOSDBackoffReceipt makes the primary of a PG send a PG-wide backoff to
@@ -564,7 +564,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	}
 	payload := backoffPayload(0)
 	sum := sha256.Sum256(payload)
-	receipt.Seeded = harness.HeldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:])}
+	receipt.Seeded = heldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:])}
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(seed.Stdout))), &receipt.Seeded); err != nil || receipt.Seeded.Version == 0 {
 		t.Fatalf("seed output: %v: %.512s", err, seed.Stdout)
 	}
@@ -576,7 +576,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var mapping harness.HeldMapping
+	var mapping heldMapping
 	if err := json.Unmarshal(out, &mapping); err != nil || mapping.PGID != clean.PGID.String() || mapping.ActingPrimary != clean.ActingPrimary {
 		t.Fatalf("osd map of %s: %v: %.1024s, PG %s primary %d", backoffObject, err, out, clean.PGID, clean.ActingPrimary)
 	}
@@ -594,7 +594,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	}
 	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: backoffObject, Op: "read", Scope: "pg"}
 	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
-	receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, primary), harness.ImageID(t, ctx, client)
+	receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, primary), imageID(t, ctx, client)
 	version := targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")
 	receipt.Release = version["version"]
 
@@ -717,7 +717,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(reader.result.Stdout))), &read); err != nil {
 		t.Fatalf("reader output: %v: %.512s", err, reader.result.Stdout)
 	}
-	receipt.Read = harness.HeldReadback{Client: receipt.Target.Client, Size: read.Size, SHA256: read.SHA256}
+	receipt.Read = heldReadback{Client: receipt.Target.Client, Size: read.Size, SHA256: read.SHA256}
 	receipt.ReadSeconds = read.Seconds
 	if read.RC != len(payload) || read.Size != len(payload) || read.SHA256 != receipt.Seeded.SHA256 {
 		t.Fatalf("held read returned %+v, want %d bytes with SHA-256 %s", read, len(payload), receipt.Seeded.SHA256)
@@ -775,14 +775,14 @@ type osdObjectBackoffReceipt struct {
 	// DownVersion is the object version written while the replica was down,
 	// DegradedObjects how many objects the PG reported degraded just before
 	// the held write.
-	DownVersion     uint64               `json:"down_version"`
-	DegradedObjects int64                `json:"degraded_objects"`
-	Chain           backoffChain         `json:"chain"`
-	WriteSeconds    float64              `json:"write_seconds"`
-	ReaderReadback  harness.HeldReadback `json:"reader_readback"`
-	Readback        harness.HeldReadback `json:"readback"`
-	After           backoffPlacement     `json:"after"`
-	Cleanup         []string             `json:"cleanup"`
+	DownVersion     uint64           `json:"down_version"`
+	DegradedObjects int64            `json:"degraded_objects"`
+	Chain           backoffChain     `json:"chain"`
+	WriteSeconds    float64          `json:"write_seconds"`
+	ReaderReadback  heldReadback     `json:"reader_readback"`
+	Readback        heldReadback     `json:"readback"`
+	After           backoffPlacement `json:"after"`
+	Cleanup         []string         `json:"cleanup"`
 }
 
 // waitDaemonConfig waits until daemon runs with option set to value.
@@ -861,7 +861,7 @@ func testOSDObjectBackoffReceipt(t *testing.T) {
 	}
 	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: objectBackoffObject, Op: "writefull", Scope: "object"}
 	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
-	receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, primary), harness.ImageID(t, ctx, client)
+	receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, primary), imageID(t, ctx, client)
 	receipt.Release = targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")["version"]
 
 	restore := func(what string, fn func(context.Context) error) {
@@ -970,7 +970,7 @@ func testOSDObjectBackoffReceipt(t *testing.T) {
 	payload := backoffPayload(2)
 	sum := sha256.Sum256(payload)
 	want := hex.EncodeToString(sum[:])
-	receipt.ReaderReadback = harness.HeldReadback{Client: receipt.Target.Client, Size: written.Size, SHA256: written.SHA256}
+	receipt.ReaderReadback = heldReadback{Client: receipt.Target.Client, Size: written.Size, SHA256: written.SHA256}
 	receipt.WriteSeconds = written.Seconds
 	if written.RC != 0 || written.Size != len(payload) || written.SHA256 != want {
 		t.Fatalf("held write returned %+v, want rc 0 and %d bytes with SHA-256 %s", written, len(payload), want)

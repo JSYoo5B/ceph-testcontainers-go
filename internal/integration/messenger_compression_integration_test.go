@@ -149,7 +149,7 @@ func waitOSDOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	t.Helper()
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		out, err := harness.AdminSocket(t, ctx, cluster, daemon, "config", "get", option)
+		out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
 		var value map[string]string
 		if err == nil && json.Unmarshal(out, &value) == nil && value[option] == want {
 			return
@@ -279,7 +279,7 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 				}
 				receipt.Revision1 += len(revisions)
 				osdSessions := 0
-				for _, c := range harness.ParseReadyLogLines(lines) {
+				for _, c := range parseReadyLogLines(lines) {
 					problems = append(problems, checkLoggedSession(fmt.Sprintf("osd.%d", osd.ID), c, phase)...)
 					switch {
 					case c.PeerType == "osd":

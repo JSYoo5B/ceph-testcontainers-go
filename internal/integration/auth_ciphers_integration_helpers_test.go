@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package harness
+package integration_test
 
 import (
 	"context"
@@ -17,17 +17,18 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// TentacleWithoutKeyTypes is the last Tentacle release whose ceph-authtool
+// tentacleWithoutKeyTypes is the last Tentacle release whose ceph-authtool
 // has no --key-type and whose monmaptool has no cipher options.
-const TentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
 
-// CephxKeyType decodes the type field of a Cephx secret: 1 is AES and 2 is
+// cephxKeyType decodes the type field of a Cephx secret: 1 is AES and 2 is
 // AES256KRB5.
-func CephxKeyType(t *testing.T, keyring []byte, entity string) ceph.CephxCipher {
+func cephxKeyType(t *testing.T, keyring []byte, entity string) ceph.CephxCipher {
 	t.Helper()
 	active := false
 	for _, line := range strings.Split(string(keyring), "\n") {
@@ -56,7 +57,7 @@ func CephxKeyType(t *testing.T, keyring []byte, entity string) ceph.CephxCipher 
 	return ""
 }
 
-func ClientKeyring(t *testing.T, client *ceph.ClientConfig) []byte {
+func clientKeyring(t *testing.T, client *ceph.ClientConfig) []byte {
 	t.Helper()
 	cc, err := client.ConnectionConfig()
 	keyring := cc.Keyring
@@ -66,20 +67,20 @@ func ClientKeyring(t *testing.T, client *ceph.ClientConfig) []byte {
 	return keyring
 }
 
-func AuthEntityKeyType(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) ceph.CephxCipher {
+func authEntityKeyType(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) ceph.CephxCipher {
 	t.Helper()
 	keyring, err := cluster.Ceph(ctx, "auth", "get", entity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return CephxKeyType(t, keyring, entity)
+	return cephxKeyType(t, keyring, entity)
 }
 
 // clientAuthenticates reports whether a container that holds only the
 // client's keyring can authenticate and read the monmap.
 func clientAuthenticates(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) bool {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, NativeClientImage(t, StaticFacts(cluster).Images.Client), client.WithIdentity(), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), client.WithIdentity(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +102,7 @@ type monMapCiphers struct {
 	Preferred struct{ Name string }   `json:"auth_preferred_cipher"`
 }
 
-func ReadMonMapCiphers(t *testing.T, ctx context.Context, cluster *ceph.Container) (service string, allowed []string, preferred string) {
+func readMonMapCiphers(t *testing.T, ctx context.Context, cluster *ceph.Container) (service string, allowed []string, preferred string) {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	var dump monMapCiphers
@@ -114,7 +115,7 @@ func ReadMonMapCiphers(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	return dump.Service.Name, allowed, dump.Preferred.Name
 }
 
-func RunningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, name string) float64 {
+func runningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, name string) float64 {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "config", "show", daemon, name)
 	value, convErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
@@ -124,9 +125,9 @@ func RunningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	return value
 }
 
-// KeyTypeOption reports whether the cluster's essential image has
+// keyTypeOption reports whether the cluster's essential image has
 // ceph-authtool --key-type, which Squid and Tentacle before 20.2.4 lack.
-func KeyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
+func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
 	_, reader, err := clusteraccess.ControlContainer(t, cluster).Exec(ctx, []string{"ceph-authtool", "--help"}, tcexec.Multiplexed())
 	if err != nil {
@@ -136,45 +137,45 @@ func KeyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 	return strings.Contains(string(usage), "--key-type")
 }
 
-// RunAuthCiphers starts a cluster of image whose keys are all AES with
+// runAuthCiphers starts a cluster of image whose keys are all AES with
 // fractional ticket lifetimes. The MON ticket lifetime stays above the MON
 // clients' renewal cadence: with 1.5 seconds a busy MGR lost its MON session
 // now and then and Ceph aborted it during activation. With key type support it also checks AES256K
 // clients and a second cluster whose service cipher differs from its key
 // type; without it, that AES256K requests are refused before any change.
-func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
+func runAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	base := append(slices.Clone(imageOpts), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
-	cluster, _ := NewServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	}))...)
-	keyTypes := KeyTypeOption(t, ctx, cluster)
+	keyTypes := keyTypeOption(t, ctx, cluster)
 
 	// Every key the fixture created is AES, and the daemons run with the
 	// fractional lifetimes.
 	cc2, err := cluster.ConnectionConfig(ctx)
 	keyring := cc2.Keyring
-	if err != nil || CephxKeyType(t, keyring, "client.admin") != ceph.CipherAES {
+	if err != nil || cephxKeyType(t, keyring, "client.admin") != ceph.CipherAES {
 		t.Fatalf("client.admin key type: %v", err)
 	}
 	for _, entity := range []string{"mon.", "mgr.a", "osd.0"} {
-		if got := AuthEntityKeyType(t, ctx, cluster, entity); got != ceph.CipherAES {
+		if got := authEntityKeyType(t, ctx, cluster, entity); got != ceph.CipherAES {
 			t.Fatalf("%s has a %s key", entity, got)
 		}
 	}
-	if got := RunningOption(t, ctx, cluster, "mon.a", "auth_mon_ticket_ttl"); got != 10.5 {
+	if got := runningOption(t, ctx, cluster, "mon.a", "auth_mon_ticket_ttl"); got != 10.5 {
 		t.Fatalf("mon.a auth_mon_ticket_ttl = %v", got)
 	}
-	if got := RunningOption(t, ctx, cluster, "osd.0", "auth_service_ticket_ttl"); got != 120 {
+	if got := runningOption(t, ctx, cluster, "osd.0", "auth_service_ticket_ttl"); got != 120 {
 		t.Fatalf("osd.0 auth_service_ticket_ttl = %v", got)
 	}
 	aesClient, err := cluster.CreateClient(ctx, "aes-reader", ceph.ClientCaps{Mon: "allow r"})
-	if err != nil || CephxKeyType(t, ClientKeyring(t, aesClient), aesClient.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, aesClient) {
+	if err != nil || cephxKeyType(t, clientKeyring(t, aesClient), aesClient.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, aesClient) {
 		t.Fatalf("default AES client: %v", err)
 	}
 	explicit, err := cluster.CreateClient(ctx, "explicit-aes-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES))
-	if err != nil || CephxKeyType(t, ClientKeyring(t, explicit), explicit.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, explicit) {
+	if err != nil || cephxKeyType(t, clientKeyring(t, explicit), explicit.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, explicit) {
 		t.Fatalf("explicit AES client: %v", err)
 	}
 
@@ -184,7 +185,7 @@ func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 		_, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 		var refusal *ceph.OperationError
 		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || refusal.Capability != "ceph-authtool --key-type" ||
-			refusal.Version != StaticFacts(cluster).CephVersion || !strings.HasPrefix(refusal.Image, "sha256:") {
+			refusal.Version != harness.StaticFacts(cluster).CephVersion || !strings.HasPrefix(refusal.Image, "sha256:") {
 			t.Fatalf("an image without --key-type created an AES256K client: %v", err)
 		}
 		if _, err := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader"); err == nil {
@@ -196,17 +197,17 @@ func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 		if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
 		}
-		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", StaticFacts(cluster).CephVersion)
+		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", harness.StaticFacts(cluster).CephVersion)
 		return
 	}
 
 	// The MONs allow only AES, so an AES256K client cannot authenticate.
-	service, allowed, preferred := ReadMonMapCiphers(t, ctx, cluster)
+	service, allowed, preferred := readMonMapCiphers(t, ctx, cluster)
 	if service != "aes" || strings.Join(allowed, ",") != "aes" || preferred != "aes" {
 		t.Fatalf("monmap ciphers service=%s allowed=%v preferred=%s", service, allowed, preferred)
 	}
 	strong, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
-	if err != nil || CephxKeyType(t, ClientKeyring(t, strong), strong.Name()) != ceph.CipherAES256K {
+	if err != nil || cephxKeyType(t, clientKeyring(t, strong), strong.Name()) != ceph.CipherAES256K {
 		t.Fatalf("AES256K client: %v", err)
 	}
 	if clientAuthenticates(t, ctx, cluster, strong) {
@@ -216,7 +217,7 @@ func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 	if _, err := cluster.Ceph(ctx, "mon", "set", "auth_allowed_ciphers", "aes,aes256k"); err != nil {
 		t.Fatal(err)
 	}
-	if _, allowed, _ = ReadMonMapCiphers(t, ctx, cluster); !slices.Contains(allowed, "aes256k") {
+	if _, allowed, _ = readMonMapCiphers(t, ctx, cluster); !slices.Contains(allowed, "aes256k") {
 		t.Fatalf("allowed ciphers after mon set: %v", allowed)
 	}
 	if !clientAuthenticates(t, ctx, cluster, strong) {
@@ -224,16 +225,16 @@ func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 	}
 
 	// A service cipher other than the key type allows both types.
-	mixed, _ := NewServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
+	mixed, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES,
 	}))...)
-	service, allowed, preferred = ReadMonMapCiphers(t, ctx, mixed)
+	service, allowed, preferred = readMonMapCiphers(t, ctx, mixed)
 	// The MonMap lists allowed ciphers in its own order.
 	slices.Sort(allowed)
 	if service != "aes" || strings.Join(allowed, ",") != "aes,aes256k" || preferred != "aes256k" {
 		t.Fatalf("mixed monmap ciphers service=%s allowed=%v preferred=%s", service, allowed, preferred)
 	}
-	if got := AuthEntityKeyType(t, ctx, mixed, "mgr.a"); got != ceph.CipherAES256K {
+	if got := authEntityKeyType(t, ctx, mixed, "mgr.a"); got != ceph.CipherAES256K {
 		t.Fatalf("mixed cluster mgr.a has a %s key", got)
 	}
 	for _, cipher := range []ceph.CephxCipher{ceph.CipherAES, ceph.CipherAES256K} {
@@ -242,5 +243,5 @@ func RunAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 			t.Fatalf("%s client on the mixed cluster: %v", cipher, err)
 		}
 	}
-	t.Logf("Ceph %s with --key-type: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types", StaticFacts(cluster).CephVersion)
+	t.Logf("Ceph %s with --key-type: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types", harness.StaticFacts(cluster).CephVersion)
 }

@@ -65,28 +65,28 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := harness.StartTopologyRadosSession(t, ctx, client)
-			harness.TopologyFreshConnection(t, ctx, client, false)
+			session := startTopologyRadosSession(t, ctx, client)
+			topologyFreshConnection(t, ctx, client, false)
 			monitors := clusteraccess.Monitors(t, cluster)
 			primary := monitors[0]
 			stop := 3 * time.Second
 			if err := primary.Stop(ctx, &stop); err != nil {
 				t.Fatal(err)
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 2
 			})
 			if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 				t.Fatal(err)
 			}
-			harness.TopologyRados(t, ctx, client, "verify")
+			topologyRados(t, ctx, client, "verify")
 			session.Check(t, ctx, client, "one-monitor-down")
 			t.Log("MON a stopped: CLI control, the retained native librados session, and fresh authenticated I/O survived on quorum b,c")
 			if err := primary.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 3
 			})
@@ -98,7 +98,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				data := harness.TopologyExecOutput(t, ctx, monitors[2], "ceph", "--admin-daemon", "/var/run/ceph/ceph-mon."+monitors[2].DaemonName+".asok", "mon_status")
 				var status struct {
 					State  string `json:"state"`
@@ -109,33 +109,33 @@ func TestMonitorManagerTopology(t *testing.T) {
 				}
 				return len(status.Quorum) == 0 && status.State != "leader" && status.State != "peon"
 			})
-			harness.TopologyFreshConnection(t, ctx, client, true)
+			topologyFreshConnection(t, ctx, client, true)
 			t.Log("Two of three MONs stopped: the surviving daemon has no quorum and a fresh native session cannot authenticate within the bounded probe; retained sessions are left idle")
 			for _, mon := range monitors[:2] {
 				if err := mon.Start(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
-			harness.TopologyWait(t, ctx, func() bool {
+			topologyWait(t, ctx, func() bool {
 				q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 3
 			})
-			harness.TopologyFreshConnection(t, ctx, client, false)
+			topologyFreshConnection(t, ctx, client, false)
 			session.Check(t, ctx, client, "quorum-recovered")
-			harness.TopologyQuorumStall(t, ctx, cluster, clusteraccess.Monitors(t, cluster))
+			topologyQuorumStall(t, ctx, cluster, clusteraccess.Monitors(t, cluster))
 			// The replacement is recorded phase by phase. A later failure,
 			// such as the new MDS below never registering, logs an "after
 			// replacement" bundle from the cleanup: the MON session lists
 			// (mds.* included), the warm MGR and OSD debug_monc windows, the
 			// FSMap and every owned container's state and log tail, the new
 			// MDS's MonClient and beacon lines among them.
-			recorder := newMonReplacementRecorder("topology", harness.WithSockets(t, cluster), monReplacementDefaultBounds)
+			recorder := newMonReplacementRecorder("topology", withSockets(t, cluster), monReplacementDefaultBounds)
 			t.Cleanup(func() { finishMonReplacement(t, recorder) })
 			runMonReplacement(t, ctx, recorder, [][2]string{{"a", "replacement"}})
 			if len(clusteraccess.Monitors(t, cluster)) != 3 {
 				t.Fatal("replacement did not preserve three owned monitors")
 			}
-			harness.TopologyRados(t, ctx, client, "verify")
+			topologyRados(t, ctx, client, "verify")
 			session.Check(t, ctx, client, "monitor-replaced")
 			t.Log("MON replacement: 3 -> 4 -> 3, primary a removed, both retained and fresh client sessions retained data")
 			harness.CephCommand(t, ctx, cluster, "mgr", "module", "enable", "volumes")
@@ -167,7 +167,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			// A read that fails and a map that still names the stopped MGR, or
 			// no available one, are different failures: keep the last of them.
 			// The replacement bundle adds the MGRs' sessions and debug_monc.
-			harness.TopologyWaitLast(t, ctx, func(ctx context.Context) (bool, error) {
+			topologyWaitLast(t, ctx, func(ctx context.Context) (bool, error) {
 				status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 				if err != nil {
 					return false, fmt.Errorf("read manager status: %w", err)
@@ -185,7 +185,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if err != nil || json.Unmarshal(data, &groups) != nil || len(groups) != 2 {
 				t.Fatalf("MGR volumes operation lost state after failover: %v: %s", err, data)
 			}
-			harness.TopologyRados(t, ctx, client, "verify")
+			topologyRados(t, ctx, client, "verify")
 			session.Check(t, ctx, client, "manager-failed-over")
 			session.Finish(t, ctx, client)
 			t.Log("MGR failover: active identity changed, native volumes commands created and listed durable subvolume groups")

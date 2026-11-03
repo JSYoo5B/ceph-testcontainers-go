@@ -12,5 +12,5 @@ import (
 
 func TestClientKeyReplacement(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunClientKeyReplacement(t)
+	runClientKeyReplacement(t)
 }

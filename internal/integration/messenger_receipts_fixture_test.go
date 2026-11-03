@@ -81,11 +81,11 @@ func TestParseMessengerDump(t *testing.T) {
 }
 
 func TestParseReadyLogLines(t *testing.T) {
-	sessions := harness.ParseReadyLogLines(readyLogSample)
+	sessions := parseReadyLogLines(readyLogSample)
 	if len(sessions) != 4 {
 		t.Fatalf("%+v", sessions)
 	}
-	want := []harness.ReadyLogConnection{
+	want := []readyLogConnection{
 		{Mode: "unknown", PeerType: "osd", PeerID: "0"},
 		{Mode: "crc", Compression: true, PeerType: "osd", PeerID: "1"},
 		{Mode: "crc", PeerType: "client", PeerID: "4258"},

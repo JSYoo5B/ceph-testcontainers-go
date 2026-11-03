@@ -74,11 +74,11 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rec := newMonReplacementRecorder("majority-loss-client", harness.WithSockets(t, cluster), monReplacementBounds{
+	rec := newMonReplacementRecorder("majority-loss-client", withSockets(t, cluster), monReplacementBounds{
 		Operation: 4 * time.Minute, Quorum: 90 * time.Second, QuorumInterval: 500 * time.Millisecond,
 		Query: 8 * time.Second, Snapshot: 30 * time.Second, Bundle: 3 * time.Minute,
 	})
-	baseline, err := captureMajorityBaseline(ctx, rec, harness.WithSockets(t, cluster), 5)
+	baseline, err := captureMajorityBaseline(ctx, rec, withSockets(t, cluster), 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 		t.Logf("MON_LOSS_CLIENT_BASELINE mon.%s container=%.12s started=%s address=%s uptime_ms=%d", name, m.ContainerID, m.StartedAt, m.Address, m.UptimeMS)
 	}
 	platform := strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm")))
-	t.Logf("MON_LOSS_CLIENT_RUNTIME platform=%s essential_image=%s client_image=%s", platform, harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, client))
+	t.Logf("MON_LOSS_CLIENT_RUNTIME platform=%s essential_image=%s client_image=%s", platform, imageID(t, ctx, cluster.Container), imageID(t, ctx, client))
 	// The ticket policy is recorded, not changed. Expiry is neither forced nor
 	// observed: the outage is far shorter than the service ticket's lifetime.
 	ttl, ttlErr := cluster.Ceph(ctx, "config", "get", "mon", "auth_service_ticket_ttl")
@@ -158,7 +158,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	}
 	wait := func(step string, want []string, w majorityWait) []majorityRound {
 		t.Helper()
-		rounds, err := waitMajorityState(ctx, rec, harness.WithSockets(t, cluster), baseline, want, w, func(format string, args ...any) {
+		rounds, err := waitMajorityState(ctx, rec, withSockets(t, cluster), baseline, want, w, func(format string, args ...any) {
 			t.Logf("MON_LOSS_CLIENT_"+step+" "+format, args...)
 		})
 		if err != nil {
@@ -281,7 +281,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	token(monLossPhaseOutage)
 	windowStart := time.Now()
 	management := make(chan majorityManagement, 1)
-	go func() { management <- probeMajorityManagement(ctx, harness.WithSockets(t, cluster), 30*time.Second) }()
+	go func() { management <- probeMajorityManagement(ctx, withSockets(t, cluster), 30*time.Second) }()
 	outageProbe := probe("fresh-outage", false)
 	inWindow, settled := waitCalls("retained calls during the loss", 60*time.Second, func(l *monLossLedger) bool {
 		returned := func(kind string) int {
@@ -298,7 +298,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	mgmt := <-management
 	t.Logf("MON_LOSS_CLIENT_MANAGEMENT quorum_query_duration=%v quorum=%v error=%q (evidence only)", mgmt.Duration.Round(time.Millisecond), mgmt.Quorum, mgmt.Error)
 	// The outage must have held for the whole window, by the local oracle.
-	if after := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline); len(evaluateMajorityRound(baseline, after, nil)) > 0 {
+	if after := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline); len(evaluateMajorityRound(baseline, after, nil)) > 0 {
 		t.Fatalf("the outage did not persist through the client calls: %s", after.summary())
 	}
 	windowEnd := time.Now()
@@ -344,7 +344,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 		if attempt == 3 {
 			t.Fatalf("process continuity stayed undecided after %d observations: %v", attempt, undecided)
 		}
-		last = observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
+		last = observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
 		if reasons := evaluateMajorityRound(baseline, last, baseline.Members); len(reasons) > 0 {
 			t.Fatalf("the recovered quorum changed while continuity was re-observed: %v", reasons)
 		}

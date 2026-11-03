@@ -77,7 +77,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 	if fsids[0] == "" || fsids[1] == "" || fsids[0] == fsids[1] || bytes.Equal(keyrings[0], keyrings[1]) {
 		t.Fatal("host network clusters do not have independent FSIDs and credentials")
 	}
-	harness.HostNetworkAssertDistinctAddresses(t, ctx, clusters)
+	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
 	t.Logf("concurrent host network clusters: FSIDs %s and %s", fsids[0], fsids[1])
 
 	payloads := [][]byte{
@@ -85,15 +85,15 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 		bytes.Repeat([]byte("host-network-cluster-B\n"), 128),
 	}
 	for i := range clients {
-		harness.HostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "seed")
+		hostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "seed")
 	}
 	for i := range clients {
-		harness.HostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "initial")
+		hostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "initial")
 	}
 	for i, cluster := range clusters {
-		harness.HostNetworkAdvanceTopology(t, ctx, cluster, clusters)
+		hostNetworkAdvanceTopology(t, ctx, cluster, clusters)
 		for j := range clients {
-			harness.HostNetworkRadosProbe(t, ctx, clients[j], fsids[j], payloads[j], fmt.Sprintf("after-topology-%d", i))
+			hostNetworkRadosProbe(t, ctx, clients[j], fsids[j], payloads[j], fmt.Sprintf("after-topology-%d", i))
 		}
 	}
 	t.Log("native Python librados: identical pool/object names remained independent after both OSD 2 -> 3 -> 2 replacements; fresh sessions read retained bytes and wrote new objects")

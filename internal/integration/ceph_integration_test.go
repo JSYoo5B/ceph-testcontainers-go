@@ -58,7 +58,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err != nil || quorum.MonMap.FSID == "" {
 		t.Fatal("original health oracle FSID unavailable", err)
 	}
-	harness.IntegrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
+	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
 	originalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "initial-pool-clean")
 
 	// A separate container proves MON discovery and direct OSD connectivity.
@@ -79,7 +79,7 @@ func TestClusterLifecycle(t *testing.T) {
 	for i := range 16 {
 		harness.ExecCommand(t, ctx, client, "rados", "-p", "tc-poc", "put", fmt.Sprintf("object-%02d", i), "/tmp/payload")
 	}
-	harness.VerifyObjects(t, ctx, client, payload)
+	verifyObjects(t, ctx, client, payload)
 	t.Log("independent client: wrote and read 16 objects")
 
 	// Failure injection keeps OSD identity/data; graceful removal deletes it.
@@ -115,7 +115,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.VerifyObjects(t, ctx, client, payload)
+	verifyObjects(t, ctx, client, payload)
 	harness.LogStatus(t, ctx, cluster, fmt.Sprintf("removed original osd.%d; all objects intact", original.ID))
 	removedPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-original-osd-remove")
 	if removedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
@@ -135,9 +135,9 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.VerifyObjects(t, ctx, client, payload)
+	verifyObjects(t, ctx, client, payload)
 	t.Logf("second add/remove cycle: osd.%d; total %s", readded.ID, time.Since(started).Round(time.Millisecond))
-	harness.IntegrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
+	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
 	finalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-osd-lifecycle")
 	if finalPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD lifecycle replaced original pool")

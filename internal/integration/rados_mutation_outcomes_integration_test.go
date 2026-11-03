@@ -49,7 +49,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	var acked struct{}
 	receipt := phase(&acked, "acked")
 	booted := osdUpFrom(t, ctx, cluster, osd.ID)
-	harness.SignalContainer(t, ctx, osd, "KILL")
+	signalContainer(t, ctx, osd, "KILL")
 	for deadline := time.Now().Add(30 * time.Second); ; {
 		state, err := osd.State(ctx)
 		if err != nil {

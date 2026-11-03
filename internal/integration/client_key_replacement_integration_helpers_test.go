@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package harness
+package integration_test
 
 import (
 	"bytes"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -87,9 +88,9 @@ const (
 	heldObject    = "held-object"
 )
 
-// PrepareHeldObject creates the pool of heldObject and writes it with random
+// prepareHeldObject creates the pool of heldObject and writes it with random
 // bytes as client.admin, and returns the bytes.
-func PrepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Container) []byte {
+func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Container) []byte {
 	t.Helper()
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: heldPool, PGNum: 8, Replicas: 1, MinSize: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)
@@ -98,7 +99,7 @@ func PrepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
-	control := ToolkitContainer(t, cluster)
+	control := harness.ToolkitContainer(t, cluster)
 	if err := control.CopyToContainer(ctx, payload, "/tmp/held-object", 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -109,9 +110,9 @@ func PrepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	return payload
 }
 
-// OSDRead reads heldObject as client in ctr with a fresh connection, and
+// osdRead reads heldObject as client in ctr with a fresh connection, and
 // returns the exit code and the bytes.
-func OSDRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig) (int, []byte) {
+func osdRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig) (int, []byte) {
 	t.Helper()
 	code, reader, err := ctr.Exec(ctx, []string{"sh", "-c", `rados --id "$1" --client_mount_timeout 10 -p "$2" -N "$3" get "$4" /tmp/read-object && cat /tmp/read-object`,
 		"sh", client.User(), heldPool, heldNamespace, heldObject}, tcexec.Multiplexed())
@@ -122,29 +123,29 @@ func OSDRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, cl
 	return code, out
 }
 
-// ClientKeyMonTicketTTL makes a held session renew its MON ticket, and so
+// clientKeyMonTicketTTL makes a held session renew its MON ticket, and so
 // meet a replaced or removed key, within seconds.
-const ClientKeyMonTicketTTL = 20 * time.Second
+const clientKeyMonTicketTTL = 20 * time.Second
 
-// RunClientKeyReplacement replaces the keys of clients of each key type the
+// runClientKeyReplacement replaces the keys of clients of each key type the
 // image supports while a session with the old key is held, and checks native
 // authentication: the old key fails for a fresh client at once and for the
 // held session when it renews, the new key works for MON and MGR, the caps and
 // other identities stay as they were, and every MON of a three-MON cluster
 // agrees. Calls canceled at different times leave a key that a later call
 // confirms.
-func RunClientKeyReplacement(t *testing.T) {
+func runClientKeyReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, opts := IntegrationImages(t)
-	ciphers, auth := ClientKeyCiphers(t, ctx, image)
-	cluster, _ := NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
-	payload := PrepareHeldObject(t, ctx, cluster)
+	image, opts := harness.IntegrationImages(t)
+	ciphers, auth := clientKeyCiphers(t, ctx, image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
+	payload := prepareHeldObject(t, ctx, cluster)
 	bystander, err := cluster.CreateClient(ctx, "bystander", ceph.ClientCaps{Mon: "allow r"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bystanderEntry := AuthEntry(t, ctx, cluster, "client.bystander")
+	bystanderEntry := authEntry(t, ctx, cluster, "client.bystander")
 	for _, cipher := range ciphers {
 		t.Run(string(cipher), func(t *testing.T) {
 			caps := ceph.ClientCaps{Mon: "allow r", MGR: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}
@@ -152,20 +153,20 @@ func RunClientKeyReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := AuthEntry(t, ctx, cluster, client.Name())
-			holder := StartClientContainer(t, ctx, cluster, client)
-			StartHeldSession(t, ctx, holder, client, "hold")
-			replacedAt := ContainerTime(t, ctx, holder)
+			before := authEntry(t, ctx, cluster, client.Name())
+			holder := startClientContainer(t, ctx, cluster, client)
+			startHeldSession(t, ctx, holder, client, "hold")
+			replacedAt := containerTime(t, ctx, holder)
 			next, err := client.ReplaceKey(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			after := AuthEntry(t, ctx, cluster, client.Name())
+			after := authEntry(t, ctx, cluster, client.Name())
 			if after.Key == before.Key || after.Key != keyOf(t, next) || !maps.Equal(after.Caps, before.Caps) {
 				t.Fatalf("auth entry after the replacement: caps %v (before %v), key changed %t, key is the new descriptor's %t",
 					after.Caps, before.Caps, after.Key != before.Key, after.Key == keyOf(t, next))
 			}
-			if got := CephxKeyType(t, ClientKeyring(t, next), client.Name()); got != cipher {
+			if got := cephxKeyType(t, clientKeyring(t, next), client.Name()); got != cipher {
 				t.Fatalf("the new key is %s", got)
 			}
 			if got, err := next.Capabilities(ctx); err != nil || got != caps {
@@ -175,24 +176,24 @@ func RunClientKeyReplacement(t *testing.T) {
 				t.Fatal("the old descriptor still reads capabilities")
 			}
 			// The holder keeps the old keyring.
-			if code, out := ClientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
+			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client with the old key authenticated: %s", out)
 			}
-			if code, _ := OSDRead(t, ctx, holder, client); code == 0 {
+			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
 				t.Fatal("a fresh client with the old key read from the OSD")
 			}
-			fresh := StartClientContainer(t, ctx, cluster, next)
+			fresh := startClientContainer(t, ctx, cluster, next)
 			for _, command := range [][]string{{"mon", "stat"}, {"pg", "stat"}} {
-				if code, out := ClientCommand(t, ctx, fresh, next, command...); code != 0 {
+				if code, out := clientCommand(t, ctx, fresh, next, command...); code != 0 {
 					t.Fatalf("%s with the new key: exit %d: %s", strings.Join(command, " "), code, out)
 				}
 			}
-			if code, read := OSDRead(t, ctx, fresh, next); code != 0 || !bytes.Equal(read, payload) {
+			if code, read := osdRead(t, ctx, fresh, next); code != 0 || !bytes.Equal(read, payload) {
 				t.Fatalf("OSD read with the new key: exit %d, %d bytes, same bytes %t", code, len(read), bytes.Equal(read, payload))
 			}
-			rejected, failed := WaitHeldRenewalRejected(t, ctx, holder, replacedAt, ClientKeyMonTicketTTL+30*time.Second)
+			rejected, failed := waitHeldRenewalRejected(t, ctx, holder, replacedAt, clientKeyMonTicketTTL+30*time.Second)
 			t.Logf("%s: a fresh client with the old key failed at once for MON and OSD; the MONs rejected the held session's renewal %.1fs after the replacement (its MON reads failed after that: %t, its OSD reads: %s)",
-				cipher, rejected, failed, HeldOSDReads(t, ctx, holder, replacedAt))
+				cipher, rejected, failed, heldOSDReads(t, ctx, holder, replacedAt))
 			if len(ciphers) > 1 {
 				// A replacement may change the key type; the service cipher
 				// stays the same.
@@ -204,22 +205,22 @@ func RunClientKeyReplacement(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := CephxKeyType(t, ClientKeyring(t, changed), client.Name()); got != other {
+				if got := cephxKeyType(t, clientKeyring(t, changed), client.Name()); got != other {
 					t.Fatalf("the key replaced with type %s is %s", other, got)
 				}
-				if code, _ := ClientCommand(t, ctx, fresh, next, "mon", "stat"); code == 0 {
+				if code, _ := clientCommand(t, ctx, fresh, next, "mon", "stat"); code == 0 {
 					t.Fatalf("the %s key still authenticated after a replacement with a %s key", cipher, other)
 				}
-				changedClient := StartClientContainer(t, ctx, cluster, changed)
-				if code, out := ClientCommand(t, ctx, changedClient, changed, "mon", "stat"); code != 0 {
+				changedClient := startClientContainer(t, ctx, cluster, changed)
+				if code, out := clientCommand(t, ctx, changedClient, changed, "mon", "stat"); code != 0 {
 					t.Fatalf("mon stat with the %s key: exit %d: %s", other, code, out)
 				}
-				if code, read := OSDRead(t, ctx, changedClient, changed); code != 0 || !bytes.Equal(read, payload) {
+				if code, read := osdRead(t, ctx, changedClient, changed); code != 0 || !bytes.Equal(read, payload) {
 					t.Fatalf("OSD read with the %s key: exit %d, same bytes %t", other, code, bytes.Equal(read, payload))
 				}
 				t.Logf("%s -> %s: the new key type authenticated for MON and OSD with service cipher %s", cipher, other, auth.ServiceCipher)
 			}
-			if entry := AuthEntry(t, ctx, cluster, "client.bystander"); entry.Key != bystanderEntry.Key || !maps.Equal(entry.Caps, bystanderEntry.Caps) {
+			if entry := authEntry(t, ctx, cluster, "client.bystander"); entry.Key != bystanderEntry.Key || !maps.Equal(entry.Caps, bystanderEntry.Caps) {
 				t.Fatal("client.bystander changed")
 			}
 		})
@@ -229,12 +230,12 @@ func RunClientKeyReplacement(t *testing.T) {
 	}
 
 	t.Run("three MONs", func(t *testing.T) {
-		cluster, _ := NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
+		cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
 		client, err := cluster.CreateClient(ctx, "renewed", ceph.ClientCaps{Mon: "allow r", MGR: "allow r"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		holder := StartClientContainer(t, ctx, cluster, client)
+		holder := startClientContainer(t, ctx, cluster, client)
 		// Calls canceled at different points leave the key that the next
 		// call confirms, or a key the next call replaces.
 		current := client
@@ -256,28 +257,28 @@ func RunClientKeyReplacement(t *testing.T) {
 			default:
 				t.Logf("a call canceled after %v did not apply, and the next call replaced the key: %v", delay, err)
 			}
-			if AuthEntry(t, ctx, cluster, client.Name()).Key != keyOf(t, resolved) {
+			if authEntry(t, ctx, cluster, client.Name()).Key != keyOf(t, resolved) {
 				t.Fatalf("after a call canceled after %v, the MONs hold another key than the resolved descriptor", delay)
 			}
 			current = resolved
 		}
-		fresh := StartClientContainer(t, ctx, cluster, current)
-		for _, mon := range MonitorOverrides(t, ctx, cluster) {
-			if code, out := ClientCommand(t, ctx, fresh, current, "--mon_host_override", mon, "mon", "stat"); code != 0 {
+		fresh := startClientContainer(t, ctx, cluster, current)
+		for _, mon := range monitorOverrides(t, ctx, cluster) {
+			if code, out := clientCommand(t, ctx, fresh, current, "--mon_host_override", mon, "mon", "stat"); code != 0 {
 				t.Fatalf("the new key through %s: exit %d: %s", mon, code, out)
 			}
-			if code, out := ClientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code == 0 {
+			if code, out := clientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code == 0 {
 				t.Fatalf("the old key through %s authenticated: %s", mon, out)
 			}
 		}
 	})
 }
 
-// ClientKeyCiphers returns the key types that image supports and a cluster
+// clientKeyCiphers returns the key types that image supports and a cluster
 // configuration whose MONs allow them all, with short MON tickets.
-func ClientKeyCiphers(t *testing.T, ctx context.Context, image string) ([]ceph.CephxCipher, ceph.AuthConfig) {
+func clientKeyCiphers(t *testing.T, ctx context.Context, image string) ([]ceph.CephxCipher, ceph.AuthConfig) {
 	t.Helper()
-	auth := ceph.AuthConfig{MonTicketTTL: ClientKeyMonTicketTTL, ServiceTicketTTL: 10 * time.Second}
+	auth := ceph.AuthConfig{MonTicketTTL: clientKeyMonTicketTTL, ServiceTicketTTL: 10 * time.Second}
 	ctr, err := testcontainers.Run(ctx, image, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
@@ -302,7 +303,7 @@ type nativeAuthEntry struct {
 	Caps map[string]string `json:"caps"`
 }
 
-func AuthEntry(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) nativeAuthEntry {
+func authEntry(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) nativeAuthEntry {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "auth", "get", entity, "--format", "json")
 	var entries []nativeAuthEntry
@@ -314,7 +315,7 @@ func AuthEntry(t *testing.T, ctx context.Context, cluster *ceph.Container, entit
 
 func keyOf(t *testing.T, client *ceph.ClientConfig) string {
 	t.Helper()
-	for _, line := range strings.Split(string(ClientKeyring(t, client)), "\n") {
+	for _, line := range strings.Split(string(clientKeyring(t, client)), "\n") {
 		if name, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok && strings.TrimSpace(name) == "key" {
 			return strings.TrimSpace(value)
 		}
@@ -323,9 +324,9 @@ func keyOf(t *testing.T, client *ceph.ClientConfig) string {
 	return ""
 }
 
-func StartClientContainer(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) testcontainers.Container {
+func startClientContainer(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, NativeClientImage(t, StaticFacts(cluster).Images.Client), client.WithIdentity(), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), client.WithIdentity(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -333,8 +334,8 @@ func StartClientContainer(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	return ctr
 }
 
-// ClientCommand runs the ceph CLI as client in ctr with a fresh connection.
-func ClientCommand(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig, args ...string) (int, string) {
+// clientCommand runs the ceph CLI as client in ctr with a fresh connection.
+func clientCommand(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig, args ...string) (int, string) {
 	t.Helper()
 	argv := append([]string{"ceph", "--id", client.User(), "--connect-timeout", "10"}, args...)
 	code, reader, err := ctr.Exec(ctx, argv, tcexec.Multiplexed())
@@ -348,9 +349,9 @@ func ClientCommand(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 	return code, string(out)
 }
 
-// StartHeldSession starts heldSessionScript in ctr with mode as its second
+// startHeldSession starts heldSessionScript in ctr with mode as its second
 // argument, reading heldObject, and waits for its first successful reads.
-func StartHeldSession(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig, mode string) {
+func startHeldSession(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig, mode string) {
 	t.Helper()
 	if err := ctr.CopyToContainer(ctx, []byte(heldSessionScript), "/tmp/held.py", 0o644); err != nil {
 		t.Fatal(err)
@@ -396,7 +397,7 @@ func heldSessionLog(t *testing.T, ctx context.Context, ctr testcontainers.Contai
 	return lines
 }
 
-func ContainerTime(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
+func containerTime(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
 	t.Helper()
 	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", "import time; print(time.time())"}, tcexec.Multiplexed())
 	out, _ := io.ReadAll(reader)
@@ -413,9 +414,9 @@ var heldAuthResult = regexp.MustCompile(`^(\S+) \S+ +\d+ monclient: _finish_auth
 // (EACCES).
 const authRejected = -13
 
-// HeldAuthResults returns the time and the result of each authentication and
+// heldAuthResults returns the time and the result of each authentication and
 // ticket renewal of the held session's MON client.
-func HeldAuthResults(t *testing.T, ctx context.Context, ctr testcontainers.Container) []heldSessionLine {
+func heldAuthResults(t *testing.T, ctx context.Context, ctr testcontainers.Container) []heldSessionLine {
 	t.Helper()
 	var results []heldSessionLine
 	for _, line := range strings.Split(containerFile(t, ctx, ctr, "/tmp/held.err"), "\n") {
@@ -432,21 +433,21 @@ func HeldAuthResults(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 	return results
 }
 
-// ReconnectHeldSession asks the held session to connect anew and returns the
+// reconnectHeldSession asks the held session to connect anew and returns the
 // container time of the request.
-func ReconnectHeldSession(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
+func reconnectHeldSession(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
 	t.Helper()
-	requested := ContainerTime(t, ctx, ctr)
+	requested := containerTime(t, ctx, ctr)
 	if code, _, err := ctr.Exec(ctx, []string{"touch", "/tmp/held.reconnect"}); err != nil || code != 0 {
 		t.Fatalf("request a reconnect of the held session: exit %d, %v", code, err)
 	}
 	return requested
 }
 
-// WaitHeldSessionReconnected waits until the held session, after since,
+// waitHeldSessionReconnected waits until the held session, after since,
 // authenticated on a new connection and read from the MON, the MGR and the
 // OSD through it, and returns how many seconds after since it authenticated.
-func WaitHeldSessionReconnected(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) float64 {
+func waitHeldSessionReconnected(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) float64 {
 	t.Helper()
 	before := 0
 	for _, line := range heldSessionLog(t, ctx, ctr) {
@@ -456,7 +457,7 @@ func WaitHeldSessionReconnected(t *testing.T, ctx context.Context, ctr testconta
 	}
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
-		for _, result := range HeldAuthResults(t, ctx, ctr) {
+		for _, result := range heldAuthResults(t, ctx, ctr) {
 			if result.At <= since || result.MON != 0 {
 				continue
 			}
@@ -469,23 +470,23 @@ func WaitHeldSessionReconnected(t *testing.T, ctx context.Context, ctr testconta
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("the held session did not authenticate on a new connection within %v of the request at %.3f:\n%s\n%s", limit, since,
-		containerFile(t, ctx, ctr, "/tmp/held.log"), HeldAuthTrace(t, ctx, ctr))
+		containerFile(t, ctx, ctr, "/tmp/held.log"), heldAuthTrace(t, ctx, ctr))
 	return 0
 }
 
-// HeldAuthTrace returns the held session's authentication results, one per
+// heldAuthTrace returns the held session's authentication results, one per
 // line, for a failure message.
-func HeldAuthTrace(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
+func heldAuthTrace(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
 	t.Helper()
 	var trace []string
-	for _, result := range HeldAuthResults(t, ctx, ctr) {
+	for _, result := range heldAuthResults(t, ctx, ctr) {
 		trace = append(trace, fmt.Sprintf("%.3f _finish_auth %d", result.At, result.MON))
 	}
 	return strings.Join(trace, "\n")
 }
 
-// HeldOSDReads summarizes the held session's OSD reads after since.
-func HeldOSDReads(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64) string {
+// heldOSDReads summarizes the held session's OSD reads after since.
+func heldOSDReads(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64) string {
 	t.Helper()
 	ok, failed := 0, 0
 	for _, line := range heldSessionLog(t, ctx, ctr) {
@@ -500,17 +501,17 @@ func HeldOSDReads(t *testing.T, ctx context.Context, ctr testcontainers.Containe
 	return fmt.Sprintf("%d succeeded, %d failed", ok, failed)
 }
 
-// WaitHeldRenewalRejected waits until the MONs reject an authentication or
+// waitHeldRenewalRejected waits until the MONs reject an authentication or
 // ticket renewal of the held session with EACCES after since, and returns how
 // many seconds after since that was and whether the session's MON reads
 // failed since then. Squid keeps the MON session open and answering after a
 // rejected renewal, while Tentacle 20.2.4 drops it. Either way the session's
 // MGR reads keep working.
-func WaitHeldRenewalRejected(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) (float64, bool) {
+func waitHeldRenewalRejected(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) (float64, bool) {
 	t.Helper()
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
-		for _, result := range HeldAuthResults(t, ctx, ctr) {
+		for _, result := range heldAuthResults(t, ctx, ctr) {
 			if result.At > since && result.MON == authRejected {
 				// The session's reads show within a few seconds whether it
 				// lost its MON session, and that it kept its MGR session.
@@ -533,9 +534,9 @@ func WaitHeldRenewalRejected(t *testing.T, ctx context.Context, ctr testcontaine
 	return 0, false
 }
 
-// MonitorOverrides returns, per MON, the address vector that
+// monitorOverrides returns, per MON, the address vector that
 // mon_host_override takes.
-func MonitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container) []string {
+func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container) []string {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	var dump struct {

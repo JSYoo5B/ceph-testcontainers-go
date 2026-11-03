@@ -189,11 +189,11 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(selection.SurvivingMONs) != 1 || selection.SurvivingMONs[0] != survivorMON.Name || len(survivorContainers) != 2 {
 		t.Fatalf("survivors: %+v %+v", selection, survivorContainers)
 	}
-	rec := newMonReplacementRecorder("two-domain", harness.WithSockets(t, cluster), monReplacementBounds{
+	rec := newMonReplacementRecorder("two-domain", withSockets(t, cluster), monReplacementBounds{
 		Operation: 4 * time.Minute, Quorum: 90 * time.Second, QuorumInterval: 500 * time.Millisecond,
 		Query: 8 * time.Second, Snapshot: 30 * time.Second, Bundle: 3 * time.Minute,
 	})
-	baseline, err := captureMajorityBaseline(ctx, rec, harness.WithSockets(t, cluster), 3)
+	baseline, err := captureMajorityBaseline(ctx, rec, withSockets(t, cluster), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		order = append(order, m.Role+"."+m.Name)
 	}
 	t.Logf("TWO_DOMAIN_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s stop_order=%s survivor_mon=%s survivor_osd=%d election_epoch=%d manifest=%s",
-		harness.StaticFacts(cluster).CephVersion, strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm"))), harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, client),
+		harness.StaticFacts(cluster).CephVersion, strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm"))), imageID(t, ctx, cluster.Container), imageID(t, ctx, client),
 		strings.Join(order, ","), survivorMON.Name, survivorOSD, baseline.ElectionEpoch, manifestJSON)
 
 	// Baseline: the retained client writes under the baseline token.
@@ -281,7 +281,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	}
 	survivors, stopped := selection.SurvivingMONs, selection.LostMONs
 	rounds, err := waitStableRounds(majorityWait{Window: 20 * time.Second, Interval: 2 * time.Second, Bound: 2 * time.Minute, MinRounds: 5},
-		func() majorityRound { return observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline) },
+		func() majorityRound { return observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline) },
 		func(round majorityRound) []string { return evaluateSurvivorRound(round, survivors, stopped) })
 	if err != nil {
 		t.Fatal("lost majority not shown by the survivor: ", err)
@@ -291,7 +291,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		plan.Observe("mon", name)
 	}
 	t.Logf("TWO_DOMAIN_OUTAGE_QUORUM_LOST rounds=%d applied_interval_ms=%d last=%s", len(rounds), interval.Milliseconds(), last.summary())
-	management := probeMajorityManagement(ctx, harness.WithSockets(t, cluster), 20*time.Second)
+	management := probeMajorityManagement(ctx, withSockets(t, cluster), 20*time.Second)
 	t.Logf("TWO_DOMAIN_OUTAGE_MANAGEMENT quorum_query_duration=%v quorum=%v error=%q (evidence only)", management.Duration.Round(time.Millisecond), management.Quorum, management.Error)
 
 	// The token is issued once the lost majority was shown. OSD and MGR stops
@@ -303,7 +303,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		return out.Failed >= 1
 	}, "an unacknowledged operation that began under the fully applied outage", 4*time.Minute)
 	outcomes, _ := twoDomainLedgerOutcomes(ops)
-	after := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
+	after := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
 	if reasons := evaluateSurvivorRound(after, survivors, stopped); len(reasons) > 0 {
 		t.Fatalf("the lost majority did not persist through the client observation: %v", reasons)
 	}
@@ -344,7 +344,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	}
 	// The survivor MON was never restarted: its uptime continues.
 	for attempt := 1; ; attempt++ {
-		round := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
+		round := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
 		var own []majoritySample
 		for _, s := range round.Samples {
 			if s.Name == survivorMON.Name {

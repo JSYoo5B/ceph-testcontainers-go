@@ -184,36 +184,6 @@ func ParseMessengerSelf(data []byte) (MessengerSelf, error) {
 	return MessengerSelf{Name: name, Addrs: body.MyAddrs.Addrvec, ListenSockets: len(body.ListenSockets)}, nil
 }
 
-// ReadyLogConnection is one msgr2 session that a daemon logged as READY at
-// debug_ms 1. A release without messenger dump prints the session's crypto
-// and compression handlers there only as pointers, so the log tells whether
-// a handler exists, not which algorithm it runs.
-type ReadyLogConnection struct {
-	Mode        string `json:"mode"`
-	Crypto      bool   `json:"crypto"`
-	Compression bool   `json:"compression"`
-	PeerType    string `json:"peer_type"`
-	PeerID      string `json:"peer_id"`
-}
-
-var readyLogPattern = regexp.MustCompile(`conn\(\S+ \S+ (\w+) :\S+ s=READY .*? crypto rx=(\S+) tx=(\S+) comp rx=(\S+) tx=(\S+)\)\.ready entity=(\w+)\.(\S+)`)
-
-// ParseReadyLogLines returns the READY sessions in daemon log lines.
-func ParseReadyLogLines(lines []string) []ReadyLogConnection {
-	null := func(pointer string) bool { return pointer == "0" || pointer == "0x0" || pointer == "(nil)" }
-	var result []ReadyLogConnection
-	for _, line := range lines {
-		match := readyLogPattern.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		mode, cryptoRx, cryptoTx, compRx, compTx, peerType, peerID := match[1], match[2], match[3], match[4], match[5], match[6], match[7]
-		result = append(result, ReadyLogConnection{Mode: mode, Crypto: !null(cryptoRx) && !null(cryptoTx),
-			Compression: !null(compRx) && !null(compTx), PeerType: peerType, PeerID: peerID})
-	}
-	return result
-}
-
 // ReadyRevision is the msgr2 revision a daemon printed for one READY session.
 // "unavailable" is not revision 0: it means the line gave no usable rev1 field.
 type ReadyRevision string
