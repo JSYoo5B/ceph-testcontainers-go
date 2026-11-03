@@ -854,15 +854,50 @@ func (f mdsFleet) status(ctx context.Context) (*FilesystemStatus, error) {
 	if f.core.Cluster() == nil {
 		return nil, errors.New("cephfs cluster is unavailable")
 	}
-	daemons, err := f.mdsSnapshot(ctx)
+	owner, err := f.ownerSample(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot owned CephFS MDSs: %w", err)
 	}
-	data, err := f.core.Cluster().Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := f.readFSMap(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
 	}
-	return parseCephFSMDSStatus(data, f.core.Name(), daemons)
+	return parseCephFSMDSStatus(data, f.core.Name(), owner.daemons)
+}
+
+// mdsOwnerSample is the owner side of one MDS status read, captured in one
+// topology lock section before the FSMap is read: the owned daemons in
+// creation order, whether the cluster is open and still registers this
+// filesystem, and the native identity captured at creation (nil before it is
+// captured).
+type mdsOwnerSample struct {
+	daemons          []*MDS
+	open, registered bool
+	native           *fsbase.NativeIdentity
+}
+
+// ownerSample takes the topology lock through ctx, captures the owner side of
+// a status read and releases the lock before it returns. native is a copy
+// without the pool attachments.
+func (f mdsFleet) ownerSample(ctx context.Context) (mdsOwnerSample, error) {
+	c := f.core.Cluster()
+	if c == nil {
+		return mdsOwnerSample{}, errors.New("cephfs cluster is unavailable")
+	}
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return mdsOwnerSample{}, err
+	}
+	defer servicehook.Unlock(c)
+	sample := mdsOwnerSample{daemons: f.mds.roster.snapshot(), open: !servicehook.Closed(c), registered: f.core.Registered()}
+	if native := f.core.Native(); native != nil {
+		sample.native = &fsbase.NativeIdentity{ID: native.ID, MetadataPool: native.MetadataPool, DefaultPool: native.DefaultPool}
+	}
+	return sample, nil
+}
+
+// readFSMap reads the native FSMap without any fixture lock.
+func (f mdsFleet) readFSMap(ctx context.Context) ([]byte, error) {
+	return f.core.Cluster().Ceph(ctx, "fs", "dump", "--format", "json")
 }
 
 // waitReady is WaitReady.
@@ -920,10 +955,35 @@ func mdsStatus(info fsbase.MDSInfo) MDSStatus {
 	return MDSStatus{Name: info.Name, Rank: info.Rank, GID: info.GID, State: info.State, Owned: info.Owned}
 }
 
+// errFilesystemAbsent is the decode error of an FSMap that does not hold the
+// named filesystem.
+var errFilesystemAbsent = errors.New("is absent from FSMap")
+
+// mdsTopology is the MDS status of one filesystem together with the native
+// evidence of the same FSMap: the FSMap and MDSMap epochs and the
+// filesystem's metadata and default data pool IDs (-1 when the map lists no
+// data pool).
+type mdsTopology struct {
+	epoch, mdsMapEpoch        uint64
+	metadataPool, defaultPool int64
+	status                    *FilesystemStatus
+}
+
 func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*FilesystemStatus, error) {
+	topology, err := decodeCephFSMDSTopology(data, name, daemons)
+	if err != nil {
+		return nil, err
+	}
+	return topology.status, nil
+}
+
+// decodeCephFSMDSTopology decodes one FSMap into the named filesystem's MDS
+// status, with daemons as the owned roster. An FSMap without the filesystem
+// is errFilesystemAbsent.
+func decodeCephFSMDSTopology(data []byte, name string, daemons []*MDS) (mdsTopology, error) {
 	var fsmap fsbase.FSMap
 	if err := json.Unmarshal(data, &fsmap); err != nil {
-		return nil, fmt.Errorf("decode cephfs FSMap: %w", err)
+		return mdsTopology{}, fmt.Errorf("decode cephfs FSMap: %w", err)
 	}
 	owned := make(map[string]bool, len(daemons))
 	for _, daemon := range daemons {
@@ -962,9 +1022,14 @@ func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*Filesystem
 		slices.SortFunc(status.Active, less)
 		slices.SortFunc(status.Standby, less)
 		slices.SortFunc(status.StandbyReplay, less)
-		return status, nil
+		topology := mdsTopology{epoch: fsmap.Epoch, mdsMapEpoch: filesystem.MDSMap.Epoch,
+			metadataPool: filesystem.MDSMap.MetadataPool, defaultPool: -1, status: status}
+		if len(filesystem.MDSMap.DataPools) > 0 {
+			topology.defaultPool = filesystem.MDSMap.DataPools[0]
+		}
+		return topology, nil
 	}
-	return nil, fmt.Errorf("cephfs filesystem %q is absent from FSMap", name)
+	return mdsTopology{}, fmt.Errorf("cephfs filesystem %q %w", name, errFilesystemAbsent)
 }
 
 func validatePoolPlacement(ctx context.Context, c *ceph.Container, config Config) error {

@@ -30,8 +30,10 @@ type PoolAttachment struct {
 	Confirmed, Used, Removed, RemovalAttempted bool
 }
 
-// FSMap is the decoded native global MDS map (ceph fs dump).
+// FSMap is the decoded native global MDS map (ceph fs dump). Epoch is the
+// FSMap epoch and MDSMap.Epoch the epoch of one filesystem's MDSMap in it.
 type FSMap struct {
+	Epoch        uint64 `json:"epoch"`
 	FeatureFlags struct {
 		EnableMultiple bool `json:"enable_multiple"`
 	} `json:"feature_flags"`
@@ -39,6 +41,7 @@ type FSMap struct {
 	Filesystems []struct {
 		ID     int64 `json:"id"`
 		MDSMap struct {
+			Epoch        uint64             `json:"epoch"`
 			Name         string             `json:"fs_name"`
 			MaxMDS       int                `json:"max_mds"`
 			Info         map[string]MDSInfo `json:"info"`
