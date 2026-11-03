@@ -79,7 +79,7 @@ exist.
 ## Requirements
 
 - Go 1.26 or later; use a patched toolchain. The
-  repository selects Go 1.26.9 for its own checks. A consumer must select its
+  repository selects Go 1.26.10 for its own checks. A consumer must select its
   own toolchain; the toolchain line of this repository does not set it.
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in

@@ -28,8 +28,8 @@ fails instead of passing. An `Example...` that starts a cluster has no
 
 ## Prerequisites
 
-- Go 1.26 or later. `go.mod`'s `toolchain go1.26.9` line switches older 1.26
-  patches to 1.26.9, which `make vulncheck` needs.
+- Go 1.26 or later. `go.mod`'s `toolchain go1.26.10` line switches older 1.26
+  patches to 1.26.10, which `make vulncheck` needs.
 - A Docker engine for Linux containers that testcontainers-go can reach, with
   pull access to `ghcr.io/jsyoo5b/ceph-testcontainers-images` (the default
   image and the role images), `quay.io/ceph/ceph` for official or Squid
