@@ -673,13 +673,45 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     def test_every_go_setup_installs_the_latest_patch(self):
         # A cached older patch, such as go1.26.8, fails the vulnerability check
         # on standard-library advisories that the latest patch fixes.
+        # setup-go's own cache stays off: the explicit module and build
+        # cache steps are the only ones (see docs/contributing/ci.md).
+        setups = 0
         for name, workflow in self.workflows.items():
-            for match in re.finditer(r"(?m)^( +)go-version: .+\n", workflow):
-                following = workflow[match.end():].splitlines()[0] if workflow[match.end():] else ""
-                self.assertEqual(following, match.group(1) + "check-latest: true", name)
+            lines = workflow.splitlines()
+            for index, line in enumerate(lines):
+                found = re.match(r"^( *)(- )?uses: actions/setup-go@", line)
+                if not found:
+                    continue
+                setups += 1
+                # The column of the step's "- ", whether "uses" opens the
+                # step or follows its "name".
+                step = len(found.group(1)) if found.group(2) else len(found.group(1)) - 2
+                block = []
+                for following in lines[index + 1:]:
+                    indent = len(following) - len(following.lstrip(" "))
+                    if following.strip() and indent <= step:
+                        break
+                    block.append(following.strip())
+                with self.subTest(workflow=name, line=index + 1):
+                    self.assertIn("check-latest: true", block)
+                    self.assertIn("cache: false", block)
+                    self.assertTrue(any(entry.startswith("go-version: ") for entry in block), block)
+        self.assertGreater(setups, 10)
         toolchain = re.search(r"(?m)^toolchain go(\d+)\.(\d+)\.(\d+)$", (ROOT / "go.mod").read_text())
         self.assertIsNotNone(toolchain)
         self.assertGreaterEqual(tuple(map(int, toolchain.groups())), (1, 26, 9))
+
+    def test_every_runtime_cleanup_call_names_its_artifact(self):
+        # The default name is shared, so two jobs of one run, such as the
+        # releases of one matrix, would collide on their upload.
+        calls = 0
+        for name, workflow in self.workflows.items():
+            for block in re.split(r"(?m)^ *- ", workflow):
+                if "uses: ./.github/actions/runtime-cleanup" in block:
+                    calls += 1
+                    with self.subTest(workflow=name):
+                        self.assertRegex(block, r"(?m)^ +artifact_name: \S*\$\{\{")
+        self.assertGreater(calls, 1)
 
     def test_code_workflow_has_visible_unit_race_static_and_coverage_jobs(self):
         workflow = self.workflows["code.yml"]
