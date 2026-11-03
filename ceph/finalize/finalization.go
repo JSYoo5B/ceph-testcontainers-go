@@ -104,6 +104,8 @@ type Finalization struct {
 	//testdouble:wired-operation
 	collectCrash func(context.Context, diagnostics.CrashMetadataConfig) (*diagnostics.CrashMetadataReport, error)
 	//testdouble:wired-operation
+	clusterSecrets func(context.Context) []string
+	//testdouble:wired-operation
 	terminate   func(context.Context) error
 	activate    func(context.Context, VerificationConfig) (*Verification, error)
 	writeFile   func(string, []byte) error
@@ -120,6 +122,10 @@ type Finalization struct {
 	// is closed when its function has returned.
 	deadlineTimer *time.Timer
 	deadlineDone  chan struct{}
+	// secretsMu guards knownSecrets, every cluster secret that a lookup has
+	// returned, so that a lookup that times out still masks the earlier ones.
+	secretsMu    sync.Mutex
+	knownSecrets []string
 }
 
 type finalizationStep struct {
@@ -135,6 +141,9 @@ const (
 	// deadlineArchiveGrace is the time left between the end of a
 	// before-deadline archive's bound and the test binary's deadline.
 	deadlineArchiveGrace = 10 * time.Second
+	// secretLookupTimeout bounds one lookup of the cluster's secrets for
+	// redaction.
+	secretLookupTimeout = 5 * time.Second
 )
 
 // TerminateOnCleanup registers one t.Cleanup that finalizes and then
@@ -168,6 +177,10 @@ func TerminateOnCleanup(t testing.TB, cluster *ceph.Container, config Config) (*
 	}
 	f.collectCrash = func(ctx context.Context, config diagnostics.CrashMetadataConfig) (*diagnostics.CrashMetadataReport, error) {
 		return diagnostics.CollectCrashMetadata(ctx, cluster, config)
+	}
+	f.clusterSecrets = func(ctx context.Context) []string {
+		inv, _ := evidencehook.Inventory(ctx, cluster)
+		return inv.Secrets
 	}
 	f.terminate = func(ctx context.Context) error { return cluster.Terminate(ctx) }
 	f.activate = func(ctx context.Context, config VerificationConfig) (*Verification, error) {
@@ -331,6 +344,7 @@ func (f *Finalization) finalize() {
 	checks, cleanups, captures := f.checks, f.cleanups, f.captures
 	f.mu.Unlock()
 	f.endDeadline()
+	f.refreshSecrets()
 	run := &finalizationRun{manifest: f.newManifest()}
 	run.manifest.Trigger.TestFailed = f.t.Failed()
 	// Deferred, so that the cleanups and Terminate still run when the
@@ -355,6 +369,7 @@ func (f *Finalization) finalize() {
 
 func (f *Finalization) finish(run *finalizationRun, cleanups []finalizationStep) {
 	defer f.terminateCluster(run)
+	f.refreshSecrets()
 	ctx, cancel := context.WithTimeout(context.Background(), f.config.CleanupTimeout)
 	defer cancel()
 	for i := len(cleanups) - 1; i >= 0; i-- {
@@ -427,8 +442,9 @@ func (f *Finalization) runStep(ctx context.Context, step finalizationStep) (outc
 	return outcome
 }
 
-// redact masks the configured secrets and the recognized secret patterns of
-// diagnostics.Collect in an error that the manifest keeps.
+// redact masks what the collectors mask, the cluster's secrets, the
+// configured values and the recognized secret patterns, in an error that the
+// manifest keeps.
 func (f *Finalization) redact(message string) string {
 	message, _ = evidence.BoundText(f.redactor()(message), 64<<10)
 	if message == "" {
@@ -437,10 +453,36 @@ func (f *Finalization) redact(message string) string {
 	return message
 }
 
-// redactor masks the configured secrets and the recognized secret patterns.
+// redactor masks the cluster's secrets known so far, the configured values
+// and the recognized secret patterns, as the collectors do. It looks nothing
+// up, so that a cluster whose mutex a hung step holds costs no redaction a
+// wait; refreshSecrets updates the known secrets once per phase.
 func (f *Finalization) redactor() func(string) string {
-	values := append(append([]string{}, f.config.Diagnostics.RedactValues...), f.config.CrashMetadata.RedactValues...)
-	return evidence.Redactor(values)
+	f.secretsMu.Lock()
+	known := slices.Clone(f.knownSecrets)
+	f.secretsMu.Unlock()
+	return evidence.Redactor(slices.Concat(f.config.Diagnostics.RedactValues, f.config.CrashMetadata.RedactValues, known))
+}
+
+// refreshSecrets looks the cluster's secrets up again, within
+// secretLookupTimeout, and adds them to every secret seen so far, so that a
+// key generated since the last lookup is masked too and a lookup that times
+// out still masks the earlier ones. Each phase that can report an error
+// calls it once before it starts.
+func (f *Finalization) refreshSecrets() {
+	if f.clusterSecrets == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), secretLookupTimeout)
+	fresh := f.clusterSecrets(ctx)
+	cancel()
+	f.secretsMu.Lock()
+	defer f.secretsMu.Unlock()
+	for _, secret := range fresh {
+		if secret != "" && !slices.Contains(f.knownSecrets, secret) {
+			f.knownSecrets = append(f.knownSecrets, secret)
+		}
+	}
 }
 
 func boundedName(name string) string {
@@ -457,6 +499,7 @@ func boundedName(name string) string {
 // writes each one that it got, then the manifest.
 func (f *Finalization) archive(run *finalizationRun, phase string) {
 	run.archiveAttempted = true
+	f.refreshSecrets()
 	m := &run.manifest
 	m.Phase = phase
 	f.snapshotDebugWindows(m, phase, false)

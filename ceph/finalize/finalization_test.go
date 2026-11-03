@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -608,6 +609,33 @@ func TestFinalizationNegativeControls(t *testing.T) {
 			t.Fatalf("secret kept: %s %v", data, fx.tb.errors)
 		}
 	})
+	t.Run("cluster secrets", func(t *testing.T) {
+		fx := newFinalizationFixture(t, Config{Archive: true})
+		var lookups atomic.Int32
+		fx.clusterSecrets = func(ctx context.Context) []string {
+			if ctx.Err() != nil {
+				t.Error("the secret lookup got an ended context")
+			}
+			if lookups.Add(1) > 1 {
+				// A later lookup that no longer returns a secret still
+				// masks what an earlier one found.
+				return []string{"AQClaterkey=="}
+			}
+			return []string{"AQCclusterkey=="}
+		}
+		fx.Check("leaky", func(context.Context) error { return errors.New("auth AQCclusterkey== rejected") })
+		fx.Cleanup("leaky", func(context.Context) error {
+			return errors.New("auth AQCclusterkey== and AQClaterkey== rejected")
+		})
+		fx.run()
+		data, err := os.ReadFile(filepath.Join(fx.archives(t)[0], "manifest.json"))
+		all := string(data) + strings.Join(fx.tb.errors, "")
+		// One lookup for the checks, one for the archive and one for the
+		// cleanups: a redaction never waits for a lookup of its own.
+		if err != nil || strings.Contains(all, "AQCclusterkey") || strings.Contains(all, "AQClaterkey") || lookups.Load() != 3 {
+			t.Fatalf("secret kept after %d lookups: %s %v", lookups.Load(), data, fx.tb.errors)
+		}
+	})
 	t.Run("invalid configuration", func(t *testing.T) {
 		for _, config := range []Config{
 			{ArchiveTimeout: -time.Second},
@@ -637,7 +665,7 @@ func TestTerminateOnCleanupRegistersOneCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tb.cleanups) != 1 || f.terminate == nil || f.collectDiagnostics == nil || f.collectCrash == nil || f.activate == nil || f.cluster != evidencehook.Owner(cluster) {
+	if len(tb.cleanups) != 1 || f.terminate == nil || f.clusterSecrets == nil || f.collectDiagnostics == nil || f.collectCrash == nil || f.activate == nil || f.cluster != evidencehook.Owner(cluster) {
 		t.Fatalf("registration = %d cleanups, %+v", len(tb.cleanups), f)
 	}
 }
