@@ -701,6 +701,22 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(toolchain)
         self.assertGreaterEqual(tuple(map(int, toolchain.groups())), (1, 26, 9))
 
+    def test_workflow_release_literals_follow_the_supported_releases(self):
+        # A workflow input or matrix cannot import run_image_matrix, so each
+        # literal copy of the release table is checked against it.
+        supported = "[" + ", ".join("'" + release + "'" for release, _, _ in runner.SUPPORTED_RELEASES) + "]"
+        default = "'" + runner.RELEASE + "'"
+        periodic = self.workflows["ceph-periodic.yml"]
+        release_input = periodic.split("      release:\n", 1)[1].split("\n      ref:\n", 1)[0]
+        self.assertEqual(scalar(release_input, "options"), supported)
+        self.assertEqual(scalar(release_input, "default"), default)
+        self.assertIn("CAMPAIGN_RELEASE: ${{ inputs.release || " + default + " }}", periodic)
+        self.assertRegex(self.workflows["block-fault-probe.yml"], r"(?m)^        release: " + re.escape(supported) + "$")
+        runtime_input = self.workflows["tagged-runtime.yml"].split("\n      release:\n", 1)[1].split("\n      changed_since:", 1)[0]
+        self.assertEqual(scalar(runtime_input, "default"), default)
+        literals = re.findall(r"'(\d+\.\d+\.\d+)'", "\n".join(self.workflows.values()))
+        self.assertLessEqual(set(literals), set(runner.RELEASES))
+
     def test_every_runtime_cleanup_call_names_its_artifact(self):
         # The default name is shared, so two jobs of one run, such as the
         # releases of one matrix, would collide on their upload.

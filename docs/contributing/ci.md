@@ -604,12 +604,15 @@ release of the scope exactly once, and `test_scenario_shards.py` checks the
 same offline.
 
 To add a release, add its row once ceph-testcontainers-images publishes its
-role images, run the CI tooling tests, and for a new major release add it to
+role images, add it to the `release` options of `ceph-periodic.yml` and the
+`public-api` matrix of `block-fault-probe.yml`, which cannot read the table
+(`test_scenario_shards.py` fails until they match), run the CI tooling tests,
+and for a new major release add it to
 every release-limited row of the test expectation table (see
 [Release differences](testing.md#release-differences)). A release that is not
 a row is refused. The default release (`RELEASE`, the `release` defaults of
-`tagged-runtime.yml` and the scenario-images action, and `ceph.DefaultImage`)
-changes only with the current release.
+`tagged-runtime.yml`, `ceph-periodic.yml` and the scenario-images action, and
+`ceph.DefaultImage`) changes only with the current release.
 
 ### Release phase
 

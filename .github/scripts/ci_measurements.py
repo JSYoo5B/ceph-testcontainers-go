@@ -49,6 +49,7 @@ import re
 import subprocess
 import sys
 
+import run_image_matrix
 import scenario_history
 import tag_scenarios
 
@@ -85,8 +86,8 @@ SHARED_PHASES = ("setup", "storage", "docker", "images", "test_images", "reporti
 # Each member of a shared job still compiles its own tag set, runs as its
 # own process and proves its own cleanup.
 MEMBER_PHASES = ("compile", "native", "cleanup")
-RELEASE_CODENAMES = ("squid", "tentacle")
-CURRENT_CODENAME = "tentacle"
+RELEASE_CODENAMES = tuple(sorted(run_image_matrix.CODENAMES.values()))
+CURRENT_CODENAME = run_image_matrix.CODENAMES[run_image_matrix.RELEASE]
 RUNTIME_STEP = "Native assertions"
 
 
