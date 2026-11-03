@@ -82,41 +82,31 @@ func TestObserverLockedQueriesRefuseATerminatedClusterBeforeAnyCommand(t *testin
 	}
 }
 
-func TestObserverLockedQueriesKeepTheirOwnTopologyLockAcquisition(t *testing.T) {
+func TestLockedQueriesWaitForTheTopologyLockUnderTheCallersContext(t *testing.T) {
 	cluster, ctr := newLockedObserverCluster()
 	observer, _ := Observe(cluster)
+	pool := cluster.poolOf(PoolState{Name: "rbd", ID: 1, Type: "replicated", Size: 1, MinSize: 1})
+	queries := lockedQueries(observer)
+	queries["Pools"] = func(ctx context.Context) error { _, err := observer.Pools(ctx); return err }
+	queries["ObjectWatchers"] = func(ctx context.Context) error {
+		_, err := observer.ObjectWatchers(ctx, "rbd", "", "object")
+		return err
+	}
+	queries["Container.Pool"] = func(ctx context.Context) error { _, err := cluster.Pool(ctx, "rbd"); return err }
+	queries["Pool.Status"] = func(ctx context.Context) error { _, err := pool.Status(ctx); return err }
+	queries["Pool.SetQuota"] = func(ctx context.Context) error { return pool.SetQuota(ctx, PoolQuota{}) }
+	queries["Pool.SetReplication"] = func(ctx context.Context) error { return pool.SetReplication(ctx, 1, 1) }
 	cluster.mu.Lock()
-	// ManagerServices waits for the topology lock under the caller's context.
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-	defer cancel()
-	if _, err := observer.ManagerServices(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		cluster.mu.Unlock()
-		t.Fatalf("ManagerServices did not honor its deadline while the lock was held: %v", err)
-	}
-	// The others take the mutex without a context: they wait for the holder.
-	done := make(chan string, 5)
-	for name, query := range lockedQueries(observer) {
-		if name == "ManagerServices" {
-			continue
+	defer cluster.mu.Unlock()
+	for name, query := range queries {
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		err := query(ctx)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s did not honor its deadline while the lock was held: %v", name, err)
 		}
-		go func() { _ = query(t.Context()); done <- name }()
-	}
-	select {
-	case name := <-done:
-		cluster.mu.Unlock()
-		t.Fatalf("%s ran while the topology lock was held", name)
-	case <-time.After(50 * time.Millisecond):
 	}
 	if got := ctr.commands(); len(got) != 0 {
-		cluster.mu.Unlock()
 		t.Fatalf("commands ran under a held lock: %q", got)
-	}
-	cluster.mu.Unlock()
-	for range 5 {
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("a query did not resume after the lock was released")
-		}
 	}
 }

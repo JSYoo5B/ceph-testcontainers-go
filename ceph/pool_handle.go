@@ -31,7 +31,9 @@ func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 	if err := validateExistingPoolName(name); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -46,7 +48,9 @@ func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 // pools lists the native pools as handles, as Container.Pool returns one. It
 // implements Observer.Pools.
 func (c *Container) pools(ctx context.Context) ([]*Pool, error) {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -136,7 +140,9 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 	if err := validateExistingPoolName(name); err != nil {
 		return PoolState{}, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return PoolState{}, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return PoolState{}, err
@@ -621,7 +627,9 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return err
@@ -672,7 +680,9 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 	if replicas < 1 || replicas > 10 || minSize < 1 || minSize > replicas {
 		return errors.New("pool replicas must be 1..10 and min size must be 1..replicas")
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return err
