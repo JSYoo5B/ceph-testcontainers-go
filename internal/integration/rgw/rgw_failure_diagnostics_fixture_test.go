@@ -16,7 +16,6 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -172,7 +171,7 @@ func TestRGWSyncStatsEndClassifiesTheEnd(t *testing.T) {
 		{exited, nil, nil, `radosgw-admin exited 2 (errno "ENOENT")`},
 		{errors.New("inspect failed"), nil, nil, "before a native result"},
 	} {
-		if got := harness.RGWSyncStatsEnd(tc.err, tc.test, tc.phase); !strings.Contains(got, tc.want) {
+		if got := rgwSyncStatsEnd(tc.err, tc.test, tc.phase); !strings.Contains(got, tc.want) {
 			t.Errorf("%v: %q, want %q", tc.err, got, tc.want)
 		}
 	}

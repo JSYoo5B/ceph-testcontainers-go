@@ -86,14 +86,14 @@ func TestRGWS3(t *testing.T) {
 			t.Fatalf("unexpected %s S3 bucket listing: %+v", fixture.name, buckets)
 		}
 		if fixture.user != nil {
-			harness.RGWFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-before-writes", 0, 0)
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-before-writes", 0, 0)
 		}
 		for _, key := range keys {
 			client.Request(t, ctx, http.MethodPut, bucket+"/"+key, payload, http.StatusOK)
 		}
 		verify(client, bucket)
 		if fixture.user != nil {
-			harness.RGWFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "four-objects", uint64(len(keys)), uint64(len(keys)*len(payload)))
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "four-objects", uint64(len(keys)), uint64(len(keys)*len(payload)))
 		}
 
 		// Private buckets must reject both unsigned and incorrectly signed requests.
@@ -126,7 +126,7 @@ func TestRGWS3(t *testing.T) {
 		}
 		t.Logf("%s S3 payloads survived OSD add/remove; new writes/read after replacement succeeded", fixture.name)
 		if fixture.user != nil {
-			harness.RGWFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "after-topology-five-objects", uint64(len(keys)+1), uint64((len(keys)+1)*len(payload)))
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "after-topology-five-objects", uint64(len(keys)+1), uint64((len(keys)+1)*len(payload)))
 		}
 
 		for _, key := range append(keys, "after-topology") {
@@ -137,7 +137,7 @@ func TestRGWS3(t *testing.T) {
 			t.Fatalf("%s S3 delete left objects: %v", fixture.name, listed)
 		}
 		if fixture.user != nil {
-			harness.RGWFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-after-object-delete", 0, 0)
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-after-object-delete", 0, 0)
 		}
 		client.Request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
 		t.Logf("%s S3 object deletion, missing-object 404, empty listing and bucket deletion succeeded", fixture.name)

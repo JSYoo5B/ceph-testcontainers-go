@@ -14,6 +14,6 @@ func TestRGWS3ClientFeatures(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		host, name := mode.Host, mode.Name
-		t.Run(name, func(t *testing.T) { harness.RunRGWS3ClientFeatures(t, host) })
+		t.Run(name, func(t *testing.T) { runRGWS3ClientFeatures(t, host) })
 	}
 }

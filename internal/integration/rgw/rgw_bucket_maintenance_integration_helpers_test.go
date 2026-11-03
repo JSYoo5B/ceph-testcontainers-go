@@ -1,6 +1,6 @@
 //go:build all || (integration && features)
 
-package harness
+package rgw_test
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 type rgwMaintenanceQuota struct {
@@ -16,7 +18,7 @@ type rgwMaintenanceQuota struct {
 	MaxSize    int64 `json:"max_size"`
 }
 
-type RGWMaintenanceBucket struct {
+type rgwMaintenanceBucket struct {
 	Bucket string              `json:"bucket"`
 	ID     string              `json:"id"`
 	Owner  string              `json:"owner"`
@@ -24,7 +26,7 @@ type RGWMaintenanceBucket struct {
 	Quota  rgwMaintenanceQuota `json:"bucket_quota"`
 }
 
-func RGWMaintenanceRequest(t *testing.T, ctx context.Context, client S3HTTPClient, method, path string, payload []byte) (int, []byte, http.Header) {
+func rgwMaintenanceRequest(t *testing.T, ctx context.Context, client harness.S3HTTPClient, method, path string, payload []byte) (int, []byte, http.Header) {
 	t.Helper()
 	request, err := http.NewRequestWithContext(ctx, method, client.Endpoint+path, bytes.NewReader(payload))
 	if err != nil {

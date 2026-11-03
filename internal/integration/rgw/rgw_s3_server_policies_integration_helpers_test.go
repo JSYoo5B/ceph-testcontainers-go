@@ -1,6 +1,6 @@
 //go:build all || (integration && features)
 
-package harness
+package rgw_test
 
 import (
 	"bytes"
@@ -13,14 +13,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
-func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner S3HTTPClient, user *rgw.User) {
+func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner harness.S3HTTPClient, user *rgw.User) {
 	t.Helper()
 	req := func(method, path string, payload []byte, headers http.Header, want int) ([]byte, http.Header) {
 		t.Helper()
-		return S3FeatureRequest(t, ctx, owner, method, path, payload, headers, want)
+		return harness.S3FeatureRequest(t, ctx, owner, method, path, payload, headers, want)
 	}
 	const lifecycleBucket = "/tc-s3-lifecycle"
 	req(http.MethodPut, lifecycleBucket, nil, nil, http.StatusOK)
@@ -39,7 +40,7 @@ func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw
 		}
 	}
 	stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(lifecycleBucket, "/"))
-	var native RGWMaintenanceBucket
+	var native rgwMaintenanceBucket
 	if err != nil || json.Unmarshal(stats, &native) != nil || native.ID == "" || native.Owner != user.ID() {
 		t.Fatalf("native lifecycle bucket identity: %v", err)
 	}
@@ -53,7 +54,7 @@ func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		code, data, _ := RGWMaintenanceRequest(t, ctx, owner, http.MethodGet, lifecycleBucket+"/expiring/object", nil)
+		code, data, _ := rgwMaintenanceRequest(t, ctx, owner, http.MethodGet, lifecycleBucket+"/expiring/object", nil)
 		if code == http.StatusNotFound {
 			break
 		}
