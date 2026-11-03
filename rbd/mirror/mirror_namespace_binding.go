@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 	"slices"
 	"time"
 
@@ -73,7 +74,7 @@ func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destination
 		return nil, rbdReceiverGuard("RBD namespace binding owner is unavailable")
 	}
 	for _, name := range []string{sourceNamespace, destinationNamespace} {
-		if name != "" && !rbdMirrorNamespaceName.MatchString(name) {
+		if name != "" && resourcename.Check("namespace", name) != nil {
 			return nil, rbdReceiverGuard("RBD namespace binding names are invalid")
 		}
 	}

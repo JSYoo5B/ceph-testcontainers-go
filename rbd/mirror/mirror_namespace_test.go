@@ -465,3 +465,19 @@ func TestDecodeLegacyRBDMirrorUUID(t *testing.T) {
 		}
 	}
 }
+
+func TestRBDMirrorNamespaceNamesFollowTheRBDResourceRule(t *testing.T) {
+	for _, name := range []string{"", "ns", "_n.s-1", strings.Repeat("n", 128)} {
+		if _, err := normalizeRBDMirrorScopeAndNamespaces(Config{SourceNamespace: name, DestinationNamespace: name}); err != nil {
+			t.Errorf("namespace %q refused: %v", name, err)
+		}
+	}
+	for _, name := range []string{"-ns", ".ns", "n s", "n/s", strings.Repeat("n", 129)} {
+		if _, err := normalizeRBDMirrorScopeAndNamespaces(Config{DestinationNamespace: name}); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("namespace %q: %v, want ErrInvalidRequest", name, err)
+		}
+		if _, err := (&Mirror{}).BindNamespace(t.Context(), name, "ns"); err == nil {
+			t.Errorf("namespace %q was bound", name)
+		}
+	}
+}

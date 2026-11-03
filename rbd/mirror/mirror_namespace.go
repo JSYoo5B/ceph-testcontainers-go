@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"regexp"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 	"slices"
 	"strings"
 
@@ -89,8 +89,6 @@ func namespacePolicyState(pool, namespace string, native nativeRBDMirrorPolicy) 
 	return NamespaceState{Pool: pool, Namespace: namespace, RemoteNamespace: remote, Mode: native.Mode, MirrorUUID: native.MirrorUUID}
 }
 
-var rbdMirrorNamespaceName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-
 func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 	if config.Scope == "" {
 		config.Scope = ScopeImage
@@ -99,7 +97,7 @@ func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 		return config, servicehook.Invalid(errors.New("RBD mirror scope must be image or pool"))
 	}
 	for _, namespace := range []string{config.SourceNamespace, config.DestinationNamespace} {
-		if namespace != "" && !rbdMirrorNamespaceName.MatchString(namespace) {
+		if namespace != "" && resourcename.Check("namespace", namespace) != nil {
 			return config, servicehook.Invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
 		}
 	}
