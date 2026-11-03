@@ -188,3 +188,20 @@ ends the watch with `ErrWatchOverflow` instead of dropping events, and so do
 identity drift and cluster termination. Call `Stop` before the fixture's
 cleanup: it joins the watch and returns why it ended. See
 [watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-owned-osd-state).
+
+To follow one pool's reported PGs through an OSD loss or a placement change,
+`pool.WatchPGs(ctx, cfg)` repeats the `Pool.PGs` observation on the same
+watch contract. The baseline pins the original FSID and the pool's native ID;
+a split or merge is an event, and a removed, renamed or recreated pool ends
+the watch instead of being followed by name. Only PG states, ordered up and
+acting sets, primaries, the PG set, `PGReady` and pool policy are compared.
+Epochs, reported sequences and statistics travel with each event but cause
+none. A reported active+clean PG proves no write visibility or durability, so
+check those with the workload.
+
+To observe a fault-specific health check appear, change its mute state and
+clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
+contract with the original FSID pinned. It compares status, check codes,
+severities, counts and muted flags and the stored mutes, never message text,
+so countdowns cause no events. It never mutes or clears a check, and
+messages can contain application data, so do not print events unfiltered.
