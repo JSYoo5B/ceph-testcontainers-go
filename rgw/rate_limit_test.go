@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -227,6 +229,44 @@ func TestRGWRateLimitOverrideBucketScopeRestoresExactPriorPolicy(t *testing.T) {
 				t.Fatalf("rate-limit override ran %v", args)
 			}
 		}
+	}
+}
+
+// Applying and restoring an override wait for the cluster mutex only until
+// the caller's context ends. A queued call sends no radosgw-admin command and
+// leaves the policy and the handle as they were; the same call succeeds with
+// a fresh context.
+func TestRGWRateLimitOverrideWaitsForTheClusterOnlyUntilTheContextEnds(t *testing.T) {
+	user, f := newRateLimitFixture(t)
+	prior := rateLimitNative(false, 7, 0)
+	f.policies["bucket:limited"] = maps.Clone(prior)
+	mutex := testhelper.TestState(user.base().Origin.Cluster()).Mutex
+	scope, limit := RateLimitScope{Bucket: "limited"}, RateLimit{Enabled: true, MaxReadOps: 1}
+	clustertest.AssertContextLockQueued(t, mutex, func(ctx context.Context) error {
+		change, err := user.OverrideRateLimit(ctx, scope, limit)
+		// The not-applied handle has nothing to restore.
+		if restoreErr := change.Restore(t.Context()); restoreErr != nil {
+			t.Errorf("Restore of a queued override: %v", restoreErr)
+		}
+		return err
+	})
+	if len(f.calls) != 0 || !maps.Equal(f.policies["bucket:limited"], prior) {
+		t.Fatalf("a queued OverrideRateLimit reached radosgw-admin: %v", f.calls)
+	}
+	change, err := user.OverrideRateLimit(t.Context(), scope, limit)
+	if err != nil {
+		t.Fatalf("OverrideRateLimit with a fresh context: %v", err)
+	}
+	applied, calls := maps.Clone(f.policies["bucket:limited"]), len(f.calls)
+	clustertest.AssertContextLockQueued(t, mutex, change.Restore)
+	if len(f.calls) != calls || !maps.Equal(f.policies["bucket:limited"], applied) {
+		t.Fatalf("a queued Restore reached radosgw-admin: %v", f.calls[calls:])
+	}
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatalf("Restore with a fresh context: %v", err)
+	}
+	if !maps.Equal(f.policies["bucket:limited"], prior) {
+		t.Fatalf("restored policy %v", f.policies["bucket:limited"])
 	}
 }
 
