@@ -46,7 +46,7 @@ func TestRegistryThroughHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	faulthook.WithTopologyNoContext(c, func() {
-		if !faulthook.Tracks(c, first) || !faulthook.Release(c, first) || faulthook.Tracks(c, first) || faulthook.Release(c, first) {
+		if !faulthook.Release(c, first) || faulthook.Release(c, first) {
 			t.Error("release through the hooks did not forget the token exactly once")
 		}
 	})

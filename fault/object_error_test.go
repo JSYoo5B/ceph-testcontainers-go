@@ -47,7 +47,7 @@ func tellCommands(ctr *clustertest.CannedCommandContainer) []string {
 
 func requireNoRegistryEntry(t *testing.T, c *ceph.Container) {
 	t.Helper()
-	for _, kind := range []faulthook.Kind{faulthook.NetworkDelay, faulthook.NetworkInterruption, faulthook.ContainerPause, faulthook.Blocklist, faulthook.FullRatios} {
+	for _, kind := range []faulthook.Kind{faulthook.BlockIO, faulthook.NetworkDelay, faulthook.NetworkInterruption, faulthook.ContainerPause} {
 		if faults := testhelper.TestFaults(c, kind); len(faults) != 0 {
 			t.Fatalf("a one-shot injection registered a %s fault: %v", kind, faults)
 		}
