@@ -1912,8 +1912,10 @@ func classifyNetem(label string, code int, text string) error {
 }
 
 // removeNetemHelper removes helper, also after ctx ended: a helper of a
-// canceled call has no lease that could remove it later. One it cannot
-// remove keeps the cluster's label, so Terminate removes it.
+// canceled call has no lease that could remove it later. A cluster's helper
+// that it cannot remove keeps the cluster's label, so Terminate removes it.
+// An ApplyLinkProfile helper has no cluster and no such label: only the
+// testcontainers session reaper removes it.
 func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcontainers.Container) error {
 	if helper == nil {
 		return nil
