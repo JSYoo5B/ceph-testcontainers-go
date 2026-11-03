@@ -179,30 +179,6 @@ func parseAdminSocketDaemon(daemon string) (kind, id string, err error) {
 	return "", "", fmt.Errorf("admin socket daemon %q must be mon.<name>, mgr.<name> or osd.<id>", daemon)
 }
 
-// ownsDaemon reports a running-capable daemon descriptor that this cluster
-// owns. The caller holds c.mu.
-func (t monitorTopology) ownsDaemon(kind, id string) bool {
-	switch kind {
-	case "mon":
-		if id == "a" && t.firstMonitorStands() {
-			return true
-		}
-		mon := t.roster.monitor(id)
-		return mon != nil && mon.Container != nil
-	case "mgr":
-		mgr := t.roster.manager(id)
-		return mgr != nil && mgr.Container != nil && !mgr.terminated
-	case "osd":
-		n, err := strconv.Atoi(id)
-		if err != nil {
-			return false
-		}
-		osd := t.osds.osdHandles.get(n)
-		return osd != nil && osd.Container != nil && !osd.purged
-	}
-	return false
-}
-
 // clearAdminSocket removes a socket file that a removed daemon of the same
 // name left in the shared run directory, so the readiness check of a new
 // daemon cannot pass on the old file. The caller holds c.mu.

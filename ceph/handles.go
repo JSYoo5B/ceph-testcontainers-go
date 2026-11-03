@@ -59,9 +59,12 @@ func (r *memberRoster) currentManager(handle *ManagerContainer) (*ManagerContain
 
 func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa(o.ID) }
 
-// ownedBy reports, with c.mu held by the caller, whether c still owns o.
+// ownedBy reports, with c.mu held by the caller, whether o is the
+// running-capable OSD that c owns under its ID: registered, with a container,
+// and neither purged nor being purged or detached. Every daemon access to an
+// OSD (AdminSocket, Version, RotateKey and the debug-level target) uses it.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
+	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged && !o.purgeIssued && !o.detaching
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }
@@ -139,7 +142,8 @@ func (o *OSDContainer) Remove(ctx context.Context) error {
 // WaitForPGClean can wait for recovery while an OSD remains out. Ceph preserves
 // a nonzero map reweight across out/in. External replacement must not race
 // this method; Ceph has no compare-and-swap operation for OSD membership.
-// A handle of a removed or detached OSD returns an error.
+// A handle of an OSD that Remove or Detach removed, or has begun to remove,
+// returns an error.
 //
 //purpose:condition
 func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
@@ -232,11 +236,12 @@ func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 // newest OSDMap epoch in an OSD's "status". It runs in the control-plane container,
 // which shares the daemons' run directory, so it works whatever the daemon's
 // own image contains. The daemon must be running; a stopped or removed
-// daemon returns an error. A paused daemon accepts the connection but does not
-// answer, so the call waits for ctx or the cluster's startup timeout, which
-// also bounds every call. When the call ends early, AdminSocket stops its CLI
-// in the control container before it returns, including one that Docker has
-// not started yet. A nonzero exit returns the output with an error.
+// daemon, or one that Remove or Detach has begun to remove, returns an error.
+// A paused daemon accepts the connection but does not answer, so the call
+// waits for ctx or the cluster's startup timeout, which also bounds every call.
+// When the call ends early, AdminSocket stops its CLI in the control container
+// before it returns, including one that Docker has not started yet. A nonzero
+// exit returns the output with an error.
 //
 //purpose:native
 func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
@@ -302,7 +307,8 @@ func (m *ManagerContainer) AdminSocket(ctx context.Context, args ...string) ([]b
 // RotateKey replaces the Cephx key of this running OSD without a restart,
 // as cephadm's daemon key rotation does. The rotation is described at
 // ManagerContainer.RotateKey; the same steps and failure semantics apply.
-// A handle of a removed or detached OSD returns an error.
+// A handle of an OSD that Remove or Detach removed, or has begun to remove,
+// returns an error.
 //
 //purpose:condition
 func (o *OSDContainer) RotateKey(ctx context.Context) error {

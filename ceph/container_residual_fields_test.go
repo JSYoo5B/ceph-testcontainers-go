@@ -289,7 +289,6 @@ var monitorTerminatedReaders = []string{
 	"monitorTopology.firstMonitorTerminated",
 	"monitorTopology.monitorConfigTargets",
 	"monitorTopology.monitorsLocked",
-	"monitorTopology.ownsDaemon",
 	"monitorTopology.terminateMembers",
 }
 

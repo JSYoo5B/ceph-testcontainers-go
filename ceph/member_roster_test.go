@@ -283,7 +283,7 @@ var memberRosterCallers = map[string]stateCaller{
 	"startManager":                     {"holds", []string{"addManager", "manager", "recordInitialManager"}},
 	"currentMonitor":                   {"holds", []string{"monitor"}},
 	"ownedBy":                          {"holds", []string{"manager"}},
-	"ownsDaemon":                       {"holds", []string{"manager", "monitor"}},
+	"generationLocked":                 {"holds", nil},
 	"daemonKeyrings":                   {"holds", []string{"manager"}},
 	"monitorsLocked":                   {"holds", []string{"eachMonitor", "monitorCount"}},
 	"monitorConfigTargets":             {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager", "manager"}},
