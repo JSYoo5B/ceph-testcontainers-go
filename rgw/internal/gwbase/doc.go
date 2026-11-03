@@ -1,5 +1,5 @@
 // Package gwbase is the foundation that package rgw and its feature packages
-// (rgw/account, rgw/placement and rgw/multisite) share for one gateway and the
+// (rgw/account, rgw/placement, rgw/notification and rgw/multisite) share for one gateway and the
 // resources created through it: the gateway identity (its cluster, name,
 // configured scope, listener and container), the admin command transport, the
 // selection of the gateway that runs a resource handle's operations, the

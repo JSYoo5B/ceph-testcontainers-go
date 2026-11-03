@@ -5,9 +5,11 @@ that uses S3 (or Swift) a disposable Ceph cluster with one or more gateways and
 the server-side state its integration test needs: an S3 endpoint the test can
 reach (optionally native HTTPS), users with explicit Admin Ops capabilities,
 tenants, quotas and suspension, and storage counters. Accounts and their root
-users are in [`rgw/account`](account/README.md), and placement targets with
-storage classes in [`rgw/placement`](placement/README.md); a test that needs
-one gateway and an S3 user reads this package alone. Object operations belong
+users are in [`rgw/account`](account/README.md), placement targets with
+storage classes in [`rgw/placement`](placement/README.md), and the persistent
+queues of bucket notification topics in
+[`rgw/notification`](notification/README.md); a test that needs one gateway
+and an S3 user reads this package alone. Object operations belong
 to the S3 client under test; the package adds no S3 SDK. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
@@ -35,8 +37,9 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    client on the test host, `DaemonEndpoint` for a client in the cluster
    network, with `User.Credentials` (or the gateway's own `AccessKey` /
    `SecretKey`) and `Gateway.Region`, path-style addressing.
-4. **Observe and verify**: `User.Info`, `User.Usage`, and `Gateway.Admin` for
-   anything without a typed API.
+4. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
+   for a persistent notification topic, and `Gateway.Admin` for anything
+   without a typed API.
 5. **Clean up**: terminate the cluster; gateways, users and data go with it.
    `Gateway.Remove` and `User.Remove` are for tests of those steps.
 

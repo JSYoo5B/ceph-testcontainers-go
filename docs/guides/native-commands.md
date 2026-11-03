@@ -657,6 +657,11 @@ _, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume
   runs the essential image, which has no `radosgw-admin` when the cluster uses
   split role images (`ImageSet`). The default aggregate image happens to have
   it, but that is not part of the fixture's contract.
+- For the persistent queue of a bucket notification topic, prefer
+  `notification.Queue` of [`rgw/notification`](../../rgw/notification/README.md)
+  to `topic stats` and `topic dump` through Admin: it checks the topic's tenant,
+  name and ARN, bounds the sample and leaves out push endpoints and their
+  arguments, which can carry credentials.
 - Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
   endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
   (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the
