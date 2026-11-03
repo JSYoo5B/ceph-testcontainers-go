@@ -10,6 +10,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	control "github.com/JSYoo5B/ceph-testcontainers-go/internal/blockio"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -200,13 +201,22 @@ func (b *Container) prepare(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	want := fmt.Sprintf("0 %d linear %s 0", b.size/512, b.loop.Dev)
-	if !view.Exists || view.UUID != "TC-BLK-"+b.name || view.Live == nil || control.Normalize(*view.Live) != want || view.Inactive != nil || view.State != "ACTIVE" {
+	if !b.adoptLinear(view) {
 		return false, failure(ceph.ErrNativeFailure, "created mapping identity or linear table was not confirmed")
 	}
-	b.record = control.Record{Name: b.name, UUID: view.UUID, Major: view.Major, Minor: view.Minor, Live: want}
-	b.device.HostPath = "/dev/mapper/" + b.name
-	b.device.Major, b.device.Minor, b.device.SizeBytes = view.Major, view.Minor, b.size
-	b.linear, b.ready = want, true
 	return true, nil
+}
+
+// adoptLinear makes view the backend's ready mapping when it is this
+// backend's active mapping with exactly the linear table over its loop
+// device, and reports whether it was.
+func (b *Container) adoptLinear(view control.View) bool {
+	want := fmt.Sprintf("0 %d linear %s 0", b.size/512, b.loop.Dev)
+	if !view.Exists || view.UUID != "TC-BLK-"+b.name || view.Live == nil || control.Normalize(*view.Live) != want || view.Inactive != nil || view.State != "ACTIVE" {
+		return false
+	}
+	b.record = control.Record{Name: b.name, UUID: view.UUID, Major: view.Major, Minor: view.Minor, Live: want}
+	b.device = faulthook.BlockDevice{HostPath: "/dev/mapper/" + b.name, Major: view.Major, Minor: view.Minor, SizeBytes: b.size}
+	b.linear, b.ready = want, true
+	return true
 }

@@ -2,7 +2,6 @@ package blockio
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -60,13 +59,9 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 				return err
 			}
 			if view.Exists {
-				want := fmt.Sprintf("0 %d linear %s 0", b.size/512, b.loop.Dev)
-				if view.UUID != "TC-BLK-"+b.name || view.Live == nil || control.Normalize(*view.Live) != want || view.Inactive != nil || view.State != "ACTIVE" {
+				if !b.adoptLinear(view) {
 					return failure(ceph.ErrNativeFailure, "partial creation has an unrecognized mapping; keeper retained")
 				}
-				b.record = control.Record{Name: b.name, UUID: view.UUID, Major: view.Major, Minor: view.Minor, Live: want}
-				b.device = faulthook.BlockDevice{HostPath: "/dev/mapper/" + b.name, Major: view.Major, Minor: view.Minor, SizeBytes: b.size}
-				b.linear, b.ready = want, true
 			} else {
 				b.mappingRemoved = true
 			}
