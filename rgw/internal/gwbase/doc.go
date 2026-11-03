@@ -21,8 +21,9 @@
 // Unlike the cephfs foundation, a value copy is not detached.
 //
 // Lock contract: the operations of this package that issue native commands or
-// read the gateway registry are called with the owning cluster's mutex held
-// (servicehook.Lock); the public packages take it. The fields of User and
-// Account and their states are read and written with that mutex held. The
-// identity of a Core is fixed at construction and needs no lock.
+// read the gateway registry are called with the owning cluster's mutex held;
+// the public operations take it with servicehook.LockTopology under their
+// caller's context. The fields of User and Account and their states are read
+// and written with that mutex held. The identity of a Core is fixed at
+// construction and needs no lock.
 package gwbase
