@@ -25,7 +25,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `ceph.Run`, `rbd.Run` and `rgw.Run`), and `cephfs.Start` adds one to a
    running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
-   `ScaleMDS`, `AddDataPool`; `snapschedule.Add`, `session.OverrideTimeouts`;
+   `ScaleMDS`, `AddDataPool`, `OverrideMaxFileSize`; `snapschedule.Add`,
+   `session.OverrideTimeouts`, `session.OverrideRefusal`;
    in [`cephfs/subvolume`](subvolume/README.md)
    `subvolume.CreateGroup` / `subvolume.Create` (quotas, data pools, RADOS
    namespaces), `Subvolume.CreateSnapshot` and `Snapshot.Clone`,
@@ -96,6 +97,33 @@ if err != nil {
   hour; a mount against a silent MDS fails after `client_mount_timeout` (300 s).
   Shorten what a test waits for with `session.OverrideTimeouts` and client
   options.
+
+## File size limit
+
+`fs.OverrideMaxFileSize(ctx, bytes)` lowers the filesystem's `max_file_size`,
+so that a client write ending past `bytes` or a truncate past it fails with
+EFBIG while smaller files stay usable. `bytes` must be at least
+`cephfs.MinMaxFileSize` (64 KiB), the native minimum. The limit is
+filesystem-wide: it is not a quota, it does not count used capacity and it does
+not shrink existing files. Clients check the limit from the MDSMap they hold,
+so mount the client under test after the call returns.
+
+The handle binds the filesystem's FSMap ID and the captured previous value.
+`MaxFileSizeOverrideHandle.Restore` puts that value back; it refuses a value
+that is neither the applied nor the captured one, and a filesystem recreated
+under the same name. One override per filesystem may be active. Keep a non-nil
+handle returned with an error, since a lost reply can leave the value changed.
+
+```golang
+limit, err := fs.OverrideMaxFileSize(ctx, cephfs.MinMaxFileSize)
+if limit != nil {
+	defer limit.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+// The SUT's write past 64 KiB now fails with EFBIG; a 4 KiB file still works.
+```
 
 ## Directory-pin timing
 
