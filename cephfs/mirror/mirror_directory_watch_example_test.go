@@ -47,7 +47,7 @@ func ExampleMirror_WatchDirectory() {
 	if _, err := mirror.WaitDirectoryReady(ctx, "/data"); err != nil {
 		panic(err)
 	}
-	watch, err := mirror.WatchDirectory(ctx, "/data", ceph.WatchConfig{})
+	watch, err := mirror.WatchDirectory(ctx, ceph.WatchConfig{}, "/data")
 	if err != nil {
 		panic(err)
 	}

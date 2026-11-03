@@ -100,7 +100,7 @@ func runCephFSMirrorDirectoryWatch(t *testing.T) {
 	// state and every later change comes from this test's own steps.
 	harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, cephFSWatchScript, expected, "/federation", seeded)
 
-	w, err := mirror.WatchDirectory(ctx, "/federation", ceph.WatchConfig{Interval: 2 * time.Second, Buffer: 64})
+	w, err := mirror.WatchDirectory(ctx, ceph.WatchConfig{Interval: 2 * time.Second, Buffer: 64}, "/federation")
 	if err != nil {
 		t.Fatal(err)
 	}

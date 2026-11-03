@@ -435,7 +435,7 @@ func TestDirectoryWatchEndsWhenAClusterTerminates(t *testing.T) {
 
 func TestDirectoryWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	f := newDirectoryWatchFixture()
-	w, err := f.mirror.WatchDirectory(t.Context(), "/owned", ceph.WatchConfig{Interval: 500 * time.Millisecond, QueryTimeout: 50 * time.Millisecond, Buffer: 1})
+	w, err := f.mirror.WatchDirectory(t.Context(), ceph.WatchConfig{Interval: 500 * time.Millisecond, QueryTimeout: 50 * time.Millisecond, Buffer: 1}, "/owned")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,26 +521,26 @@ func TestDirectoryWatchRefusalsStartNothing(t *testing.T) {
 		"short interval":    {Interval: 99 * time.Millisecond},
 		"large buffer":      {Buffer: 1025},
 	} {
-		if w, err := f.mirror.WatchDirectory(t.Context(), "/owned", cfg); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+		if w, err := f.mirror.WatchDirectory(t.Context(), cfg, "/owned"); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v, %v", name, w, err)
 		}
 	}
-	if w, err := f.mirror.WatchDirectory(t.Context(), "owned", ceph.WatchConfig{}); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+	if w, err := f.mirror.WatchDirectory(t.Context(), ceph.WatchConfig{}, "owned"); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("relative path = %v, %v", w, err)
 	}
 	var none *Mirror
-	if w, err := none.WatchDirectory(t.Context(), "/owned", ceph.WatchConfig{}); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+	if w, err := none.WatchDirectory(t.Context(), ceph.WatchConfig{}, "/owned"); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("nil mirror = %v, %v", w, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if w, err := f.mirror.WatchDirectory(ctx, "/owned", ceph.WatchConfig{}); w != nil || !errors.Is(err, context.Canceled) {
+	if w, err := f.mirror.WatchDirectory(ctx, ceph.WatchConfig{}, "/owned"); w != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled context = %v, %v", w, err)
 	}
 	if n := commands(); n != 0 {
 		t.Fatalf("a refused watch ran %d commands", n)
 	}
-	if w, err := f.mirror.WatchDirectory(t.Context(), "/foreign", ceph.WatchConfig{}); w != nil || !errors.Is(err, errCephFSObservationGuard) {
+	if w, err := f.mirror.WatchDirectory(t.Context(), ceph.WatchConfig{}, "/foreign"); w != nil || !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatalf("a directory the mirror does not own = %v, %v", w, err)
 	}
 	f.change(func(f *directoryWatchFixture) { f.source.peerQueryError = errors.New("boom") })

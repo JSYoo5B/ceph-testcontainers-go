@@ -131,7 +131,7 @@ func (w *DirectoryWatch) Stop() error {
 // samples, not a complete history of native transitions.
 //
 //purpose:observation
-func (mirror *Mirror) WatchDirectory(ctx context.Context, directory string, cfg ceph.WatchConfig) (*DirectoryWatch, error) {
+func (mirror *Mirror) WatchDirectory(ctx context.Context, cfg ceph.WatchConfig, directory string) (*DirectoryWatch, error) {
 	if mirror == nil {
 		return nil, servicehook.Invalid(fmt.Errorf("%s: CephFS mirror fixture is unavailable", directoryWatchOperation))
 	}

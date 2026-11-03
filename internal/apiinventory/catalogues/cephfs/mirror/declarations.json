@@ -305,7 +305,7 @@
     {
       "current": "cephfs/mirror.Mirror.WatchDirectory",
       "kind": "method",
-      "signature": "func(ctx context.Context, directory string, cfg ceph.WatchConfig) (*DirectoryWatch, error)",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, directory string) (*DirectoryWatch, error)",
       "receiver": "*Mirror",
       "proposed": "cephfs/mirror.Mirror.WatchDirectory",
       "decision": "baseline"
