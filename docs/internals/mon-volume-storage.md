@@ -5,13 +5,12 @@ so that a replacement container (possibly from another image) mounts the same
 store and rejoins. `WithMonitorStorage(MonitorStorage{}.WithVolume())` selects
 it, and `MonitorContainer.Replace` moves a MON to a new container; see
 [Production wiring](#production-wiring) for what calls which primitive below.
-The identity observation and its adapters are still uncalled.
 
 Pinned source: Ceph 7f793731f1b39eb4f465e960113d2363c311b964 (Tentacle 20.2.4).
 
-The store records, their state machine, the identity observation and the
-inspector live in the internal package `ceph/internal/monstore`, which imports
-no part of package ceph. Package ceph keeps the container side of a generation
+The store records, their state machine and the generation and address paths
+live in the internal package `ceph/internal/monstore`, which imports no part of
+package ceph. Package ceph keeps the container side of a generation
 (`monitorGenerations` in `ceph/mon_store_container.go` and
 `ceph/mon_store_host.go`) and the replacement (`ceph/mon_store_replace.go`), and
 holds one `monstore.State` per cluster.
@@ -57,9 +56,8 @@ siblings. The volume is mounted with no-copy at the MON's data directory,
 Record fields: MON name; volume name derived from a UUID owner token; owner
 token; Docker creation timestamp; state; generation counter; the current
 attachment (empty, or the container of that generation with its Docker ID and
-whether its creation outcome is known); the store identity recorded when the
-store became bound (keyring digest, store shape, fingerprint, served cluster
-FSID, address vector from the live monmap).
+whether its creation outcome is known);
+the endpoint the first generation bound (see "Address handoff").
 
 Volume metadata checks are those of the OSD volume: exact name, `local` driver,
 owner label equal to the token, a MON-name label, no driver options, creation
@@ -72,8 +70,7 @@ timestamp unchanged. A volume that fails them is never removed or mounted.
 | planned | Record published, create not yet requested | yes | no |
 | created | Volume exists and passed the metadata checks | yes | first generation only |
 | fresh | A first generation was requested; mkfs may have run | yes, only after the attachment is confirmed gone | no |
-| bound | The first generation reached its ready check and the identity was recorded | only after native removal of the MON, or by `Terminate` | only by a replacement generation with a matching identity |
-| detached | `bound`, no attachment | `Terminate` only | a replacement generation only |
+| bound | The first generation reached its ready check | only after native removal of the MON, or by `Terminate` | only by a replacement generation in require-store mode, once the previous attachment is confirmed gone |
 | released | Volume removal confirmed | n/a | no |
 
 Rules:
@@ -147,171 +144,6 @@ selector for every generation after the first (`monitorGenerations.Create`).
   comments because each script runs alone in the container;
   `TestMonRequireStoreBlocksAreIdentical` keeps the two copies equal.
 
-## Identity observation
-
-Implemented in `ceph/internal/monstore/inspect.go`, tested Docker-free in
-`ceph/internal/monstore/inspect_test.go`. Nothing calls it in production and no native
-run exists.
-
-- Ports: `monStoreInspector` (a short-lived read-only inspector) reports the entries of the data directory (kind, mode, inode,
-  size, modification time, SHA-256 of regular files) and the `kv_backend`
-  marker. `monStoreMonmap` reports one member: name, FSID, address vector and
-  quorum. A nil inspector, monmap view or typed nil is refused.
-- Computation: `storeFacts` derives the keyring digest, the shape and the
-  fingerprint from a listing; `observeStopped` adds the FSID and address vector
-  of the live monmap entry. The fingerprint hashes the entries in path order with
-  length-delimited fields under a versioned domain line, and a golden value
-  computed by an independent script pins the encoding.
-- Refusals, all before any write: a member that is absent from the map, named
-  differently, in quorum or of unknown quorum state (the inspector is not
-  called); a listing with an unclean or absolute path, a duplicate, an orphan
-  entry, a symlink or other non-file kind, a file without a content digest, a
-  directory with one, a missing or empty `store.db` directory, a missing
-  `kv_backend` or one that was not read or does not hold `rocksdb`, or a missing
-  or non-regular `keyring`; an FSID that is not a canonical UUID; an empty,
-  empty-entry or duplicate address vector. Absent evidence is never read as an
-  empty value that matches.
-- Stricter than the entrypoint on purpose: `require_store` accepts an absent
-  `kv_backend` or `keyring` because `ceph-mon` recreates them. A binding
-  refuses both, since `MonitorDBStore::open` writes `kv_backend` whenever a store
-  is opened and the keyring digest is one of the bound fields.
-- `monstore.Volume.verifyStopped` runs the preflight: the record must hold a
-  retained identity with no attachment (so the inspector never reads a store a
-  MON may be writing), the volume metadata must pass `validate`, then the
-  observation is compared through `verify`. A mismatch error names the fields
-  (keyring digest, store shape, store fingerprint, cluster FSID, address vector)
-  and prints no value. A failure at any step leaves the record unverified.
-- What it does not establish: that an inspector can mount the volume read-only
-  while the cluster's labels, ordering and release rules hold; how the monmap
-  adapter decodes `mon dump` and the quorum status (its missing or null fields
-  must map to an absent value here); an identity at bind time, when the member
-  runs and the store is being written (the observation covers a stopped member
-  only); whether
-  `ceph-mon`, in particular a different release, accepts the store.
-## Identity adapters
-
-Implemented in `ceph/internal/monstore/monmap.go`, `ceph/internal/monstore/inspect_container.go`
-and `ceph/internal/monstore/json.go`, tested Docker-free. They are the concrete
-adapters behind the two ports above. Nothing calls them in production and no
-native run exists.
-
-- Monmap adapter. `monStoreMonmapCLI` runs `ceph mon dump --format json` and
-  then `ceph quorum_status --format json` through a `monStoreCLI` function (stdout
-  only; the CLI prints `dumped monmap epoch N` on stderr). Shapes were read at the
-  pinned commit 7f793731f1b39eb4f465e960113d2363c311b964: `MonMap::dump`,
-  `MonmapMonitor` (`quorum` is an array of ranks), `Monitor::_quorum_status`
-  (`quorum` ranks, `quorum_names`, `quorum_leader_name`, `quorum_age`), and
-  `entity_addrvec_t::dump`. The recorded 20.2.4 `mon dump` fixture of the
-  daemon-address tests is the real input of the decoder tests; no recorded
-  `quorum_status` exists, so that document is synthetic.
-- Strictness. Exactly one JSON value, no duplicate key at any depth, nesting
-  within the shared limit of `internal/strictjson`, no trailing data. A
-  required field that is missing, null or of the wrong type is an error: epoch (at least 1), canonical lowercase FSID, a non-empty `mons`
-  array in rank order with unique non-empty names, a non-empty address vector per
-  member whose entries have type `v1` or `v2`, an IP and a port in 1..65535 that
-  is not the unspecified address, and a 32-bit nonce, no repeated address. An
-  empty `quorum` is an error too, since only a member of a quorum answers.
-  Paired missing, null, wrong-type and empty controls run against each parser
-  alone and through the decoder, for both documents.
-- Three-state quorum. The two documents must agree on the epoch, FSID, member
-  names, every address vector and the quorum set, and `quorum_status` must agree
-  with itself (ranks and names, leader in the quorum). Only then is the member
-  in quorum or out of quorum. Any disagreement, for example an election between
-  the two commands, is an error, never the zero (unknown) state and never
-  "out". A name that is not in the map yields a nil member with a nil error, as
-  the port documents. The address strings are `type:addr/nonce` as Ceph prints
-  them (`v2:172.20.0.4:3300/0`).
-- Inspector request. `monStoreInspectRequest` is plain data, so it can be
-  validated without Docker: the volume at `/store` read-only, network mode
-  `none`, all capabilities dropped, no new privileges, a read-only root, not
-  privileged, no engine-side auto-remove, removal that never takes a volume, the
-  cluster owned label (so the `Terminate` scan finds a leaked inspector) and a
-  per-inspection token label. The command is `python3 -I -c <script> /store`
-  from the image given by the caller. The user must be the numeric uid:gid of the
-  store owner: with every capability dropped, root cannot read a `0600` keyring
-  of another owner. Which uid:gid that is for the retained image, and whether the
-  chosen image carries `python3`, are native questions.
-- Listing script and format. The embedded script classifies every entry from
-  `lstat`, never follows a symlink, opens regular files with `O_NOFOLLOW` and
-  requires the opened file to be the one `lstat` saw, treats a directory on
-  another device as `other`, refuses a name that is not UTF-8, and refuses more
-  than 100000 entries. It prints a format line, one JSON object per entry sorted
-  by path (path, kind, permission bits, inode, size, `mtime_ns`, SHA-256 of
-  regular files), and a trailer with the entry count and the `kv_backend`
-  content (`null` when it was not read). The marker is read completely or
-  refused: the script reads to EOF and fails when the file is larger than 4096
-  bytes (the bound of the pinned `MonitorDBStore` reader, which strips only
-  trailing whitespace) or is not UTF-8, so a suffix behind trailing whitespace
-  cannot be dropped and listed as `rocksdb`. The only other reads, the content
-  digests, loop to EOF. It exits 0 only after the trailer. The
-  tests execute it with the host `python3` against temporary directories.
-  Symlinks (to an outside file or directory, relative escapes, dangling, and a
-  keyring, `kv_backend` or `store.db` replaced by a link) and a FIFO appear as
-  entries that `storeFacts` refuses; nothing behind a link is listed or hashed.
-- Parser. `parseMonStoreListing` requires the final newline, valid UTF-8,
-  the format line, entries in strictly ascending path order, exactly the
-  expected fields on every line, a known kind, no control or replacement
-  character in a path, permission bits only, and a trailer whose count equals
-  the number of entries. A listing without its trailer is a truncated listing
-  and is refused. A `null` marker yields an unread marker, which `storeFacts`
-  refuses, as it refuses an empty one.
-- Driver. `monStoreContainerInspector.Inspect` validates the request, then
-  calls an engine (`Create`, `Start`, `Wait`, `Logs`, `Remove`) at most once
-  each. A failed `Create`, `Start` or `Wait` is an unknown outcome: it is not
-  retried and nothing is read afterwards. After `Create` returned an ID the
-  container is removed on every outcome, under a context that does not end with
-  the caller's. A removal failure withholds the listing and is joined with the
-  first failure, so the two stay separate. Output of more than 16 MiB, a
-  truncated stream, a non-zero exit or anything on stderr is refused. A
-  creation that returned an error leaves no ID to remove; the labelled
-  container is left to the `Terminate` scan.
-- Guards. `ceph/internal/monstore/adapters_test.go` pins that no production file
-  outside the adapter files mentions the adapter symbols, that the symbol table
-  matches the declarations, that the adapters import no `sync`, moby client or
-  testcontainers package, and that the guard detects a synthetic caller. The
-  port guard of `inspect_test.go` exempts the adapter files.
-- Known gap of the script. A regular file swapped for a symlink between the
-  `lstat` and the `open` is refused by `O_NOFOLLOW` and the inode comparison,
-  but no Docker-free test can force that race, so the mutation that removes
-  `O_NOFOLLOW` survives the tests. The mount is read-only and the inspector
-  runs only against a stopped store, which is the real protection.
-
-Engine translation. `ceph/internal/monstore/inspect_engine.go` implements the engine
-as `monStoreMobyEngine`, tested Docker-free in
-`ceph/internal/monstore/inspect_engine_test.go` with a small fake of the Docker client.
-Nothing constructs it: it has no default client, so the first caller supplies
-the constructor, and the production-caller guards cover its symbols. It holds no
-lock and no state.
-
-- `Create` runs `validate` first and then makes one create call: the numeric
-  user, the entrypoint and command, the two labels, a named-volume mount with
-  `ReadOnly` and `NoCopy`, `NetworkMode: none`, all capabilities dropped,
-  `no-new-privileges`, a read-only root file system, no terminal, no
-  auto-remove. Any error is an unknown outcome and is returned without a retry
-  or a removal by guessed name.
-- `Wait` returns the exit code only from the wait reply. A context end, a failed
-  wait request, a reply that carries an error and a closed channel are errors.
-- `Logs` demultiplexes the stream through a fixed buffer (it never allocates
-  from an advertised frame size), keeps at most the limit per stream and reports
-  truncation instead of returning a prefix. A stream that ends inside a frame,
-  a frame of another stream and a context end are errors.
-- `Remove` is forced, passes neither volume nor link removal, and treats a
-  missing container as success. A failed removal keeps the container, which
-  still carries the owned label for the `Terminate` scan.
-
-What this establishes: the translation, the error and truncation handling and
-the cleanup ordering against a fake client. What it does not: that a daemon
-accepts these create options, that the image carries `python3` and runs as the
-given owner, how a daemon ends the log stream, that the read-only named-volume
-mount rejects a write natively, and that the `Terminate` scan (which removes
-with `RemoveVolumes`) leaves a named store volume alone. No native run exists.
-
-The inspector image must carry `python3` and run as the numeric owner of the
-store; whether that uid:gid is read from the retained store or taken from the
-image's `ceph` user is a native question and must not be guessed in code. The
-inspector is a volume user while it exists, so a caller must keep a second
-replacement from starting while an inspection runs, under `Container.mu`.
-
 ## Replacement path
 
 Implemented in `ceph/internal/monstore/generation.go`, tested Docker-free in
@@ -323,17 +155,18 @@ first generation of a store, and `replaceMonitor` calls `ReplaceGeneration`.
   requires it. The pending attachment is published before the container is
   created, and an ID returned with an error is recorded. An unknown outcome is
   never replayed. A first generation that reaches its ready check marks the
-  store ready (`ready`), without an identity.
+  store ready (`ready`).
 - `StopGeneration`: removes the container and clears the attachment only after
   `confirmGone`. An attachment with an unknown creation outcome is left to
   `Terminate`.
 - `ReplaceGeneration`: checks the next generation first (a ready generation
-  exists, the volume is still the one this record created, an identity-bound
-  store is verified), then stops the old container, then starts the next one
-  from the new image on the same volume. A failure of the new container leaves
-  the volume and the record, and never formats.
-- `dispatch`: a store marked ready without an identity needs no verification;
-  a store bound with an identity (`bind`) needs it.
+  exists, it has a recorded address, the volume is still the one this record
+  created), then stops the old container, then starts the next one from the
+  new image on the same volume. A failure of the new container leaves the
+  volume and the record, and never formats.
+- `dispatch`: a bound store is retained by its volume and the require-store
+  mode. The volume metadata is validated before every generation, and a
+  generation that finds no store fails instead of formatting.
 - The Docker-free tests establish the order of the steps and the refusals.
   Real containers, the start of a new image on the old store and the rejoin
   are the native evidence of [Production wiring](#production-wiring).
@@ -451,5 +284,5 @@ failure keeps the handle and the record, so `Remove` can be retried. A MON added
 later under the same name gets a new store; a removed member's store is never
 reused.
 
-Not wired: the identity binding (`bind`, the inspector and the monmap adapter)
-and address families other than IPv4, which `Run` refuses with the volume.
+Not wired: address families other than IPv4, which `Run` refuses with the
+volume.

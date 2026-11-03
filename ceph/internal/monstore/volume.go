@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
@@ -30,12 +29,9 @@ const (
 	Created
 	// Fresh: a first generation was requested and mkfs may have run.
 	Fresh
-	// Bound: the first generation reached its ready check and the
-	// identity was recorded.
+	// Bound: the first generation reached its ready check, so the volume
+	// holds a store that every later generation must find.
 	Bound
-	// Detached: bound, with no attachment, and the identity was
-	// re-recorded after the last generation stopped.
-	Detached
 	// Released: the volume removal is confirmed.
 	Released
 )
@@ -50,8 +46,6 @@ func (p Phase) String() string {
 		return "fresh"
 	case Bound:
 		return "bound"
-	case Detached:
-		return "detached"
 	case Released:
 		return "released"
 	}
@@ -115,15 +109,11 @@ type Volume struct {
 	createRequested bool
 	generation      int
 	Attachment      *Attachment
-	identity        *monStoreIdentity
 	// Endpoint is the address the first generation bound, recorded after its
 	// ready check; hold is the exact hold on it while a replacement is created
 	// (address.go).
-	Endpoint *Endpoint
-	hold     EndpointHold
-	// verified is set by verify and consumed by the dispatch of a generation
-	// that must find the retained store.
-	verified  bool
+	Endpoint  *Endpoint
+	hold      EndpointHold
 	newClient func(context.Context) (monStoreDocker, error)
 }
 
@@ -206,20 +196,9 @@ func (s *Volume) dispatch(ctx context.Context) (Launch, error) {
 	case Created:
 		mode = Format
 	case Bound:
-		// A store bound with an identity needs it verified for each generation.
-		// A store marked ready without one (ready) is retained by its volume
-		// and the require-store mode alone: the volume is validated below and a
-		// missing store makes the generation fail instead of formatting.
-		if s.identity != nil && !s.verified {
-			return Launch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
-		}
-	case Detached:
-		if s.identity == nil {
-			return Launch{}, fmt.Errorf("MON %s store has no recorded identity", s.mon)
-		}
-		if !s.verified {
-			return Launch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
-		}
+		// A bound store is retained by its volume and the require-store mode:
+		// the volume is validated below, and a generation that finds no store
+		// fails instead of formatting.
 	case Fresh:
 		return Launch{}, fmt.Errorf("MON %s store is fresh: discard it after its first generation is gone", s.mon)
 	default:
@@ -233,12 +212,8 @@ func (s *Volume) dispatch(ctx context.Context) (Launch, error) {
 	}
 	s.generation++
 	s.Attachment = &Attachment{generation: s.generation, pending: true}
-	s.verified = false
-	switch s.Phase {
-	case Created:
+	if s.Phase == Created {
 		s.Phase = Fresh
-	case Detached:
-		s.Phase = Bound
 	}
 	return Launch{Volume: s.name, Mode: mode, Generation: s.generation}, nil
 }
@@ -257,28 +232,9 @@ func (s *Volume) recordContainer(id string) error {
 	return nil
 }
 
-// bind records the identity of the store once the first generation passed its
-// ready check. It needs a known attachment: a generation whose creation outcome
-// is unknown cannot be bound.
-func (s *Volume) bind(identity monStoreIdentity) error {
-	if s.Phase != Fresh {
-		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.Phase)
-	}
-	if s.Attachment == nil || s.Attachment.pending || s.Attachment.ID == "" {
-		return fmt.Errorf("MON %s store has no known attachment to bind", s.mon)
-	}
-	if err := identity.validate(); err != nil {
-		return fmt.Errorf("MON %s store identity: %w", s.mon, err)
-	}
-	cloned := identity.clone()
-	s.identity = &cloned
-	s.Phase = Bound
-	return nil
-}
-
-// ready records that the first generation reached its ready check, without an
-// identity: the store is retained by its volume alone. It needs a known
-// attachment, as bind does.
+// ready records that the first generation reached its ready check: from then
+// on the store is retained by its volume. It needs a known attachment: a
+// generation whose creation outcome is unknown cannot mark the store ready.
 func (s *Volume) ready() error {
 	if s.Phase != Fresh {
 		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.Phase)
@@ -287,62 +243,6 @@ func (s *Volume) ready() error {
 		return fmt.Errorf("MON %s store has no known attachment to mark ready", s.mon)
 	}
 	s.Phase = Bound
-	return nil
-}
-
-// detach records that the last generation is gone and re-records the observed
-// fingerprint and address vector. The keyring digest, shape and FSID are the
-// bound ones and must not change; the store content legitimately changed while
-// a generation ran.
-func (s *Volume) detach(observed monStoreIdentity) error {
-	if s.Phase != Bound || s.identity == nil {
-		return fmt.Errorf("MON %s store is %s, not bound", s.mon, s.Phase)
-	}
-	if s.Attachment != nil {
-		return fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
-	}
-	if err := observed.validate(); err != nil {
-		return fmt.Errorf("MON %s store identity: %w", s.mon, err)
-	}
-	for _, field := range s.identity.differences(observed) {
-		if field != "store fingerprint" && field != "address vector" {
-			return fmt.Errorf("MON %s store changed its %s", s.mon, field)
-		}
-	}
-	cloned := observed.clone()
-	s.identity = &cloned
-	s.Phase = Detached
-	s.verified = false
-	return nil
-}
-
-// requireRetained admits an observation of the stopped store: the record holds
-// a retained identity and no generation is attached.
-func (s *Volume) requireRetained() error {
-	if (s.Phase != Bound && s.Phase != Detached) || s.identity == nil {
-		return fmt.Errorf("MON %s store is %s and holds no retained identity", s.mon, s.Phase)
-	}
-	if s.Attachment != nil {
-		return fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
-	}
-	return nil
-}
-
-// verify compares an observation of the stopped store with the recorded
-// identity, without writing anything else. A mismatch refuses the next
-// generation; a match admits exactly one dispatch.
-func (s *Volume) verify(observed monStoreIdentity) error {
-	s.verified = false
-	if err := s.requireRetained(); err != nil {
-		return err
-	}
-	if err := observed.validate(); err != nil {
-		return fmt.Errorf("MON %s store observation: %w", s.mon, err)
-	}
-	if diff := s.identity.differences(observed); len(diff) != 0 {
-		return fmt.Errorf("MON %s store differs from the retained identity: %s", s.mon, strings.Join(diff, ", "))
-	}
-	s.verified = true
 	return nil
 }
 

@@ -70,21 +70,8 @@ func newMonStoreFixtureFor(mon string) (*State, *Volume, *monStoreDockerFake) {
 	return s, r, d
 }
 
-const (
-	digestA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	digestB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	digestC = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-	fsidOne = "0a1b2c3d-2222-3333-4444-55555555555a"
-	fsidTwo = "66666666-7777-8888-9999-000000000000"
-)
-
-func monStoreIdentityFixture() monStoreIdentity {
-	return monStoreIdentity{keyringDigest: digestA, shape: monStoreShapeRocksDB, fingerprint: digestB, fsid: fsidOne,
-		addresses: []string{"v2:192.0.2.10:3300/0", "v1:192.0.2.10:6789/0"}}
-}
-
 // monStoreBoundFixture drives a record through create, the first dispatch, the
-// container record and bind. The first generation container stays "existing".
+// container record and ready. The first generation container stays "existing".
 func monStoreBoundFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake) {
 	t.Helper()
 	s, r, d := newMonStoreFixture()
@@ -98,7 +85,7 @@ func monStoreBoundFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake) {
 	if err := r.recordContainer("ctr-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.bind(monStoreIdentityFixture()); err != nil {
+	if err := r.ready(); err != nil {
 		t.Fatal(err)
 	}
 	return s, r, d
@@ -246,8 +233,8 @@ func TestMonStoreUnknownContainerOutcomeStaysPendingUntilTheScan(t *testing.T) {
 	if err := r.recordContainer(""); err == nil || r.Attachment == nil || !r.Attachment.pending {
 		t.Fatalf("an empty container ID settled the outcome: %v", err)
 	}
-	if err := r.bind(monStoreIdentityFixture()); err == nil || r.Phase != Fresh {
-		t.Fatalf("a store with an unknown attachment was bound: %v", err)
+	if err := r.ready(); err == nil || r.Phase != Fresh {
+		t.Fatalf("a store with an unknown attachment was marked ready: %v", err)
 	}
 	// Before the labeled-container scan nothing settles it, not even an empty list.
 	listed := d.listed
@@ -301,195 +288,16 @@ func TestMonStoreConfirmGoneRequiresAbsenceByInspectAndByIndependentList(t *test
 	}
 }
 
-func TestMonStoreBindRejectsIncompleteIdentityInputs(t *testing.T) {
-	edits := map[string]func(i *monStoreIdentity){
-		"empty keyring digest":     func(i *monStoreIdentity) { i.keyringDigest = "" },
-		"short keyring digest":     func(i *monStoreIdentity) { i.keyringDigest = "abcd" },
-		"uppercase keyring digest": func(i *monStoreIdentity) { i.keyringDigest = strings.ToUpper(digestA) },
-		"non-hex keyring digest":   func(i *monStoreIdentity) { i.keyringDigest = strings.Repeat("z", 64) },
-		"empty shape":              func(i *monStoreIdentity) { i.shape = "" },
-		"other shape":              func(i *monStoreIdentity) { i.shape = "leveldb" },
-		"empty fingerprint":        func(i *monStoreIdentity) { i.fingerprint = "" },
-		"non-hex fingerprint":      func(i *monStoreIdentity) { i.fingerprint = strings.Repeat("g", 64) },
-		"empty fsid":               func(i *monStoreIdentity) { i.fsid = "" },
-		"malformed fsid":           func(i *monStoreIdentity) { i.fsid = "not-a-uuid" },
-		"uppercase fsid":           func(i *monStoreIdentity) { i.fsid = strings.ToUpper(fsidOne) },
-		"nil address vector":       func(i *monStoreIdentity) { i.addresses = nil },
-		"empty address vector":     func(i *monStoreIdentity) { i.addresses = []string{} },
-		"empty address":            func(i *monStoreIdentity) { i.addresses = []string{"v2:192.0.2.10:3300/0", ""} },
-		"duplicate address":        func(i *monStoreIdentity) { i.addresses = []string{"v2:192.0.2.10:3300/0", "v2:192.0.2.10:3300/0"} },
-		"zero value":               func(i *monStoreIdentity) { *i = monStoreIdentity{} },
-		"all fields blank strings": func(i *monStoreIdentity) { *i = monStoreIdentity{addresses: []string{""}} },
-	}
-	for name, edit := range edits {
-		t.Run(name, func(t *testing.T) {
-			_, r, d := newMonStoreFixture()
-			if err := r.Create(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := r.dispatch(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			d.existing["ctr-1"] = true
-			if err := r.recordContainer("ctr-1"); err != nil {
-				t.Fatal(err)
-			}
-			identity := monStoreIdentityFixture()
-			edit(&identity)
-			if err := r.bind(identity); err == nil || r.Phase != Fresh || r.identity != nil {
-				t.Fatalf("an incomplete identity bound the store: %v", err)
-			}
-		})
-	}
-	// Control: the complete identity binds.
-	_, r, _ := monStoreBoundFixture(t)
-	if r.Phase != Bound || r.identity == nil {
-		t.Fatalf("the complete identity did not bind: %s", r.Phase)
-	}
-}
-
-func TestMonStoreBindWorksOnACopyOfTheAddressVector(t *testing.T) {
-	s, r, d := newMonStoreFixture()
-	_ = s
-	if err := r.Create(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.dispatch(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	d.existing["ctr-1"] = true
-	_ = r.recordContainer("ctr-1")
-	identity := monStoreIdentityFixture()
-	if err := r.bind(identity); err != nil {
-		t.Fatal(err)
-	}
-	identity.addresses[0] = "v2:198.51.100.1:3300/0"
-	if len(r.identity.differences(monStoreIdentityFixture())) != 0 {
-		t.Fatal("the record aliases the caller's address slice")
-	}
-}
-
-func TestMonStoreBindNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
-	_, r, _ := newMonStoreFixture()
-	if err := r.bind(monStoreIdentityFixture()); err == nil {
-		t.Fatal("a planned store was bound")
-	}
-	_, r, _ = monStoreBoundFixture(t)
-	if err := r.bind(monStoreIdentityFixture()); err == nil {
-		t.Fatal("a bound store was bound again")
-	}
-}
-
-func TestMonStoreErrorsDoNotPrintDigestsOrFingerprints(t *testing.T) {
+// A bound store whose last generation is gone reopens on the same volume in
+// require-store mode, without creating a volume, once per gone attachment.
+func TestMonStoreReopenRequiresTheStoreAndAGoneAttachment(t *testing.T) {
 	_, r, d := monStoreBoundFixture(t)
-	delete(d.existing, "ctr-1")
-	if err := r.confirmGone(t.Context(), false); err != nil {
-		t.Fatal(err)
-	}
-	observed := monStoreIdentityFixture()
-	observed.keyringDigest, observed.fingerprint = digestC, digestC
-	err := r.verify(observed)
-	if err == nil {
-		t.Fatal("a different store verified")
-	}
-	for _, secret := range []string{digestA, digestB, digestC} {
-		if strings.Contains(err.Error(), secret) {
-			t.Fatalf("the error prints a digest: %v", err)
-		}
-	}
-	if !strings.Contains(err.Error(), "keyring digest") || !strings.Contains(err.Error(), "store fingerprint") {
-		t.Fatalf("the error does not name the fields: %v", err)
-	}
-}
-
-func TestMonStoreDetachRequiresAGoneAttachmentAndTheBoundSecrets(t *testing.T) {
-	_, r, d := monStoreBoundFixture(t)
-	if err := r.detach(monStoreIdentityFixture()); err == nil || r.Phase != Bound {
-		t.Fatalf("a store with a live attachment was detached: %v", err)
-	}
-	delete(d.existing, "ctr-1")
-	if err := r.confirmGone(t.Context(), false); err != nil {
-		t.Fatal(err)
-	}
-	immutable := map[string]func(i *monStoreIdentity){
-		"keyring digest": func(i *monStoreIdentity) { i.keyringDigest = digestC },
-		"cluster FSID":   func(i *monStoreIdentity) { i.fsid = fsidTwo },
-	}
-	for name, edit := range immutable {
-		observed := monStoreIdentityFixture()
-		edit(&observed)
-		if err := r.detach(observed); err == nil || !strings.Contains(err.Error(), name) || r.Phase != Bound {
-			t.Fatalf("a changed %s was accepted: %v", name, err)
-		}
-	}
-	incomplete := monStoreIdentityFixture()
-	incomplete.fingerprint = ""
-	if err := r.detach(incomplete); err == nil || r.Phase != Bound {
-		t.Fatalf("an incomplete observation detached the store: %v", err)
-	}
-	// The fingerprint legitimately changed while the generation ran.
-	observed := monStoreIdentityFixture()
-	observed.fingerprint = digestC
-	if err := r.detach(observed); err != nil || r.Phase != Detached || r.identity.fingerprint != digestC {
-		t.Fatalf("detach: %v, phase %s", err, r.Phase)
-	}
-	if err := r.detach(observed); err == nil {
-		t.Fatal("a detached store was detached again")
-	}
-}
-
-func TestMonStoreReopenNeedsAMatchingVerifiedIdentityAndRequiresTheStore(t *testing.T) {
-	_, r, d := monStoreBoundFixture(t)
-	delete(d.existing, "ctr-1")
-	if err := r.confirmGone(t.Context(), false); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.detach(monStoreIdentityFixture()); err != nil {
-		t.Fatal(err)
-	}
 	creates := d.creates
-	// No verification: refused, and no volume is created in its place.
-	if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil || d.creates != creates {
-		t.Fatalf("an unverified store was mounted: %v", err)
+	if _, err := r.dispatch(t.Context()); err == nil || r.generation != 1 {
+		t.Fatalf("a store with a live attachment was dispatched: %v", err)
 	}
-	mismatches := map[string]func(i *monStoreIdentity){
-		"keyring digest":    func(i *monStoreIdentity) { i.keyringDigest = digestC },
-		"store shape":       func(i *monStoreIdentity) { i.shape = "other" },
-		"store fingerprint": func(i *monStoreIdentity) { i.fingerprint = digestC },
-		"cluster FSID":      func(i *monStoreIdentity) { i.fsid = fsidTwo },
-		"address vector (port)": func(i *monStoreIdentity) {
-			i.addresses = []string{"v2:192.0.2.10:3301/0", "v1:192.0.2.10:6789/0"}
-		},
-		"address vector (family)": func(i *monStoreIdentity) {
-			i.addresses = []string{"v2:[2001:db8::10]:3300/0", "v1:192.0.2.10:6789/0"}
-		},
-		"address vector (missing)": func(i *monStoreIdentity) { i.addresses = i.addresses[:1] },
-	}
-	for name, edit := range mismatches {
-		observed := monStoreIdentityFixture()
-		edit(&observed)
-		if err := r.verify(observed); err == nil || r.verified {
-			t.Fatalf("a different %s verified: %v", name, err)
-		}
-		if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil || r.Phase != Detached {
-			t.Fatalf("a store with a different %s was mounted: %v", name, err)
-		}
-	}
-	// A missing observation is not a match.
-	if err := r.verify(monStoreIdentity{}); err == nil || r.verified {
-		t.Fatalf("an empty observation verified: %v", err)
-	}
-	// The address vector has no order: the same set verifies.
-	same := monStoreIdentityFixture()
-	same.addresses = []string{same.addresses[1], same.addresses[0]}
-	if err := r.verify(same); err != nil {
-		t.Fatal(err)
-	}
-	// A failed verification withdraws an earlier one.
-	if err := r.verify(monStoreIdentity{}); err == nil || r.verified {
-		t.Fatal("an earlier verification survived a failed one")
-	}
-	if err := r.verify(monStoreIdentityFixture()); err != nil {
+	delete(d.existing, "ctr-1")
+	if err := r.confirmGone(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
 	launch, err := r.dispatch(t.Context())
@@ -499,15 +307,8 @@ func TestMonStoreReopenNeedsAMatchingVerifiedIdentityAndRequiresTheStore(t *test
 	if d.creates != creates {
 		t.Fatal("reopen created a volume")
 	}
-	// The verification admits one dispatch only.
-	if _, err := r.dispatch(t.Context()); err == nil {
-		t.Fatal("one verification admitted two dispatches")
-	}
-	// A verification does not outlive a live attachment: dispatch checks the
-	// attachment itself, not only the verification that preceded it.
-	r.verified = true
 	if _, err := r.dispatch(t.Context()); err == nil || r.generation != 2 {
-		t.Fatalf("a verified store with a live attachment was dispatched: %v", err)
+		t.Fatal("one gone attachment admitted two dispatches")
 	}
 }
 
@@ -523,9 +324,6 @@ func TestMonStoreBoundStoreWithAMissingChangedOrForeignVolumeIsNeverRecreated(t 
 			_, r, d := monStoreBoundFixture(t)
 			delete(d.existing, "ctr-1")
 			if err := r.confirmGone(t.Context(), false); err != nil {
-				t.Fatal(err)
-			}
-			if err := r.verify(monStoreIdentityFixture()); err != nil {
 				t.Fatal(err)
 			}
 			apply(d)

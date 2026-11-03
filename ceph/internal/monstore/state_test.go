@@ -174,12 +174,10 @@ func TestMonStoreStateSeamHasNoProductionWriter(t *testing.T) {
 // fields of the same names.
 func TestMonStoreVolumeFieldsAreAssignedOnlyByTheirTransitions(t *testing.T) {
 	allowed := map[string][]string{
-		"Phase":           {"Create", "dispatch", "bind", "ready", "detach", "release"},
+		"Phase":           {"Create", "dispatch", "ready", "release"},
 		"createRequested": {"Create"},
 		"generation":      {"dispatch"},
 		"Attachment":      {"dispatch", "confirmGone"},
-		"identity":        {"bind", "detach"},
-		"verified":        {"dispatch", "detach", "verify", "verifyStopped"},
 		"createdAt":       {"Create"},
 	}
 	docker := map[string][]string{
