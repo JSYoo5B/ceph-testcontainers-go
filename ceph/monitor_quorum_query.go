@@ -18,11 +18,18 @@ const (
 )
 
 func queryMonitorQuorum(ctx context.Context, control testcontainers.Container) (QuorumStatus, error) {
-	var status QuorumStatus
 	data, err := monitorQuorumCommand(ctx, control, monitorQuorumProcessTimeout)
 	if err != nil {
-		return status, err
+		return QuorumStatus{}, err
 	}
+	return decodeMonitorQuorum(ctx, data)
+}
+
+// decodeMonitorQuorum validates and decodes the output of one quorum_status
+// command. The quorum watch decodes its further native fields from the same
+// output after this succeeds.
+func decodeMonitorQuorum(ctx context.Context, data []byte) (QuorumStatus, error) {
+	var status QuorumStatus
 	// Missing/null native arrays are not an observation of an empty membership.
 	// Empty arrays remain a valid native observation for quorum wait predicates.
 	var shape struct {
