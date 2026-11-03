@@ -180,15 +180,7 @@ func snapshotOf(inv evidence.Inventory, config Config) diagnosticsSnapshot {
 		hostNetwork: inv.HostNetwork, closed: inv.Closed, publicAddress: inv.PublicAddress,
 		secrets: append(slices.Clone(config.RedactValues), inv.Secrets...),
 	}
-	additional := make([]evidence.Member, len(config.AdditionalContainers))
-	for i, target := range config.AdditionalContainers {
-		additional[i] = evidence.Member(target)
-	}
-	members, omitted := inv.Select(additional, config.MaxContainers)
-	for _, member := range members {
-		snapshot.containers = append(snapshot.containers, Target(member))
-	}
-	snapshot.omitted = omitted
+	snapshot.containers, snapshot.omitted = evidence.SelectAs(inv, config.AdditionalContainers, config.MaxContainers)
 	return snapshot
 }
 

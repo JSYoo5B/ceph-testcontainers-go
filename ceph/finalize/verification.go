@@ -433,20 +433,8 @@ func checkVerificationBounds(config VerificationConfig) error {
 		return errors.New("limits out of range")
 	case len(config.Logs) > maxVerificationRules || len(config.Crashes) > maxVerificationRules:
 		return fmt.Errorf("more than %d expectations of one kind", maxVerificationRules)
-	case len(config.AdditionalContainers) > 64 || len(config.RedactValues) > 128:
-		return errors.New("too many additional containers or redaction values")
 	}
-	for _, target := range config.AdditionalContainers {
-		if len(target.Role) > 64 || len(target.Name) > 128 || strings.ContainsAny(target.Role+target.Name, "\x00\r\n") {
-			return errors.New("invalid container description")
-		}
-	}
-	for _, value := range config.RedactValues {
-		if len(value) > 4096 {
-			return errors.New("redaction value exceeds 4096 bytes")
-		}
-	}
-	return nil
+	return evidence.CheckCollectionInputs(config.AdditionalContainers, config.RedactValues)
 }
 
 // verificationRuleSet compiles the expectations of one configuration; names

@@ -94,6 +94,18 @@ func (inv Inventory) Select(additional []Member, limit int) ([]Member, int) {
 	return unique, 0
 }
 
+// SelectAs is Select for the container descriptions of a public
+// configuration: it selects the members of inv and additional, and returns
+// them as descriptions of the same type.
+func SelectAs[T Described](inv Inventory, additional []T, limit int) ([]T, int) {
+	members, omitted := inv.Select(Members(additional), limit)
+	selected := make([]T, len(members))
+	for i, member := range members {
+		selected[i] = T(member)
+	}
+	return selected, omitted
+}
+
 // Handle returns ctr, or nil when ctr is a typed nil.
 func Handle(ctr testcontainers.Container) testcontainers.Container {
 	if IsNil(ctr) {

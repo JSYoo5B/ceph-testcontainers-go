@@ -263,7 +263,13 @@ func (fx *verifyFixture) activate(t *testing.T) *Verification {
 
 func (fx *verifyFixture) wire(v *Verification) {
 	v.cluster, v.images = "cluster-id", ceph.ImageSet{Essential: "example.invalid/ceph:test"}
-	v.snapshot = func(context.Context) (clusterSnapshot, error) { return fx.snapshot, nil }
+	// The secrets start with the configured values, as takeClusterSnapshot
+	// makes them.
+	v.snapshot = func(context.Context) (clusterSnapshot, error) {
+		snapshot := fx.snapshot
+		snapshot.secrets = append(slices.Clone(v.config.RedactValues), snapshot.secrets...)
+		return snapshot, nil
+	}
 	v.docker = func(context.Context) (verificationDocker, func(), error) { return fx.docker, func() {}, nil }
 }
 
