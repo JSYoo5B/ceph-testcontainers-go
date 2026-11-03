@@ -94,7 +94,7 @@ func newRGWUserPlacementFixture(t *testing.T) (*gwtest.Gateway, *rgwUserPlacemen
 		t.Fatal(err)
 	}
 	f.Calls = nil
-	user := &gwbase.User{Origin: g.Core, ID: "test-user", AccessKey: "PRIVATE-ACCESS", SecretKey: "PRIVATE-SECRET",
+	user := &gwbase.User{Origin: g.Core, ID: "test-user", Creation: &gwbase.Key{AccessKey: "PRIVATE-ACCESS", SecretKey: "PRIVATE-SECRET"},
 		State: &gwbase.UserState{Created: true, Identity: &gwbase.CreationIdentity{OriginalType: "rgw"}}}
 	return g, f, p, user
 }

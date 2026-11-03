@@ -38,7 +38,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 		if err != nil {
 			t.Fatal(err)
 		}
-		access, secret, err := user.Credentials()
+		access, secret, err := user.CreationKey().Credentials()
 		if err != nil {
 			t.Fatal(err)
 		}

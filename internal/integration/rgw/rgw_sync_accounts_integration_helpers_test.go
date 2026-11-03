@@ -177,7 +177,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 
 func rgwSyncUserClient(t *testing.T, user *rgw.User, endpoint, region string) harness.S3HTTPClient {
 	t.Helper()
-	access, secret, err := user.Credentials()
+	access, secret, err := user.CreationKey().Credentials()
 	if err != nil {
 		t.Fatal(err)
 	}

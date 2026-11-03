@@ -291,7 +291,7 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 			if err == nil || user == nil || user.base().State.Identity != nil {
 				t.Fatal("unconfirmed root creation adopted a native identity")
 			}
-			if _, _, err := user.Credentials(); err == nil {
+			if _, _, err := user.CreationKey().Credentials(); err == nil {
 				t.Fatal("unconfirmed root creation exposed unconfirmed credentials")
 			}
 			// A later coherent reply cannot retroactively establish ownership.

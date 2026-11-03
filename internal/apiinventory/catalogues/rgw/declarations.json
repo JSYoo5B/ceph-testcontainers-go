@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 38,
+  "count": 45,
   "entries": [
     {
       "current": "rgw.AdminCapability",
@@ -127,6 +127,52 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.S3Key",
+      "kind": "type",
+      "proposed": "rgw.S3Key",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.S3Key.Credentials",
+      "kind": "method",
+      "signature": "func() (accessKey, secretKey string, err error)",
+      "receiver": "*S3Key",
+      "proposed": "rgw.S3Key.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.S3Key.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "S3Key",
+      "proposed": "rgw.S3Key.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.S3Key.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "S3Key",
+      "proposed": "rgw.S3Key.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.S3Key.Revoke",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*S3Key",
+      "proposed": "rgw.S3Key.Revoke",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.S3Key.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "S3Key",
+      "proposed": "rgw.S3Key.String",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.Start",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error)",
@@ -170,11 +216,19 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.User.Credentials",
+      "current": "rgw.User.CreateS3Key",
       "kind": "method",
-      "signature": "func() (accessKey, secretKey string, err error)",
+      "signature": "func(ctx context.Context) (*S3Key, error)",
       "receiver": "*User",
-      "proposed": "rgw.User.Credentials",
+      "proposed": "rgw.User.CreateS3Key",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.CreationKey",
+      "kind": "method",
+      "signature": "func() *S3Key",
+      "receiver": "*User",
+      "proposed": "rgw.User.CreationKey",
       "decision": "baseline"
     },
     {

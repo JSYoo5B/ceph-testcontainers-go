@@ -61,15 +61,18 @@ type NativeUser struct {
 }
 
 // User is the private state of one user created through a gateway. Every copy
-// of a public user handle shares one User. The identity fields are written
-// once, before the handle is returned; State is written with the owning
-// cluster's mutex held.
+// of a public user handle shares one User. The identity fields, ID and
+// Creation, are written once, before the handle is returned; State is
+// written with the owning cluster's mutex held.
 type User struct {
 	// Origin is the gateway that created the user. Its cluster and scope
 	// select the gateway that runs the user's operations.
-	Origin                   *Core
-	ID, AccessKey, SecretKey string
-	State                    *UserState
+	Origin *Core
+	ID     string
+	// Creation is the key pair that the user's creation generated, set only
+	// once the creation response confirmed it.
+	Creation *Key
+	State    *UserState
 }
 
 // UserState is the lifecycle state of a user.
@@ -80,6 +83,9 @@ type UserState struct {
 	// account.
 	NativeScope *NativeScope
 	Identity    *CreationIdentity
+	// Issued are the keys that CreateKey created or tried to create after
+	// the user's creation, in order, revoked ones included.
+	Issued []*Key
 }
 
 // CreationIdentity is the native user type and account association confirmed
@@ -120,7 +126,7 @@ func (u *User) Owned() bool { return u != nil && u.Origin.Cluster() != nil }
 // Confirmed reports whether the creation of u and its generated credentials
 // were confirmed.
 func (u *User) Confirmed() bool {
-	return u.State != nil && u.State.Created && u.State.Identity != nil && u.AccessKey != "" && u.SecretKey != ""
+	return u.State != nil && u.State.Created && u.State.Identity != nil && u.Creation != nil && u.Creation.SecretKey != ""
 }
 
 // Active reports whether u is a confirmed user that was not removed.
@@ -238,7 +244,7 @@ func (g *Core) CreateUser(ctx context.Context, spec UserSpec) (*User, error) {
 		return user, errors.New("RGW did not create an ordinary non-account identity")
 	}
 	user.State.Identity = &CreationIdentity{OriginalType: native.Info.Type, Account: creationAccount, AccountID: native.Info.AccountID, AccountVersionTag: accountVersionTag}
-	user.AccessKey, user.SecretKey = native.Keys[0].AccessKey, native.Keys[0].SecretKey
+	user.Creation = &Key{AccessKey: native.Keys[0].AccessKey, SecretKey: native.Keys[0].SecretKey, Status: KeyActive}
 	if spec.AdminCaps != "" {
 		if _, err := g.UserCommand(ctx, user, "caps", "add", "--uid", user.ID, "--caps", spec.AdminCaps); err != nil {
 			return user, err
@@ -278,12 +284,28 @@ func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte
 }
 
 // OwnedUser reads u through g and confirms that it is still the active
-// identity it created: the same ID, the created key, and the original type and
-// account association.
+// identity it created: the same ID, the fixture-created keys as CheckKeys
+// requires them, and the original type and account association.
 func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
 	if !u.Active() {
 		return nil, errors.New("RGW user must be an active identity created in this cluster")
 	}
+	native, err := g.readUser(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	if err := u.CheckKeys(native.Keys); err != nil {
+		return nil, err
+	}
+	if err := g.ValidateCreationIdentity(ctx, u, native); err != nil {
+		return nil, err
+	}
+	return native, nil
+}
+
+// readUser reads the native information of u through g and refuses another
+// user's. It checks no key.
+func (g *Core) readUser(ctx context.Context, u *User) (*NativeUser, error) {
 	data, err := g.UserCommand(ctx, u, "user", "info", "--uid", u.ID)
 	if err != nil {
 		return nil, err
@@ -292,13 +314,8 @@ func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	if native.Info.ID != u.ID || !slices.ContainsFunc(native.Keys, func(key NativeKey) bool {
-		return u.AccessKey != "" && key.AccessKey == u.AccessKey && key.SecretKey == u.SecretKey
-	}) {
+	if native.Info.ID != u.ID {
 		return nil, servicehook.Invalid(errors.New("RGW user has different credentials; refusing owned-user operation"))
-	}
-	if err := g.ValidateCreationIdentity(ctx, u, native); err != nil {
-		return nil, err
 	}
 	return native, nil
 }

@@ -33,7 +33,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	}
 	clientFor := func(user *rgw.User) harness.S3HTTPClient {
 		t.Helper()
-		access, secret, err := user.Credentials()
+		access, secret, err := user.CreationKey().Credentials()
 		if err != nil {
 			t.Fatal(err)
 		}

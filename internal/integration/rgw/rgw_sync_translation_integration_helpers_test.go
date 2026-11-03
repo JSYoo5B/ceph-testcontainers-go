@@ -179,7 +179,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	}
 	client := func(t *testing.T, user *rgw.User, endpoint string) harness.S3HTTPClient {
 		t.Helper()
-		access, secret, err := user.Credentials()
+		access, secret, err := user.CreationKey().Credentials()
 		if err != nil {
 			t.Fatal(err)
 		}

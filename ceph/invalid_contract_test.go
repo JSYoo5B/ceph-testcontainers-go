@@ -30,11 +30,13 @@ import (
 // was decomposed into. The 64 call sites of the former rgw package are split
 // across rgw and its packages in the same way, with one more in rgw: the
 // refusal of a root user's account from another cluster or gateway scope.
+// The S3 key handles add their refusals: 2 in rgw and 3 in
+// rgw/internal/gwbase.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 24, "rgw": 24,
+	"rbd": 28, "cephfs": 24, "rgw": 26,
 	"cephfs/subvolume": 29, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
-	"rgw/account": 11, "rgw/placement": 20, "rgw/internal/gwbase": 12,
+	"rgw/account": 11, "rgw/placement": 20, "rgw/internal/gwbase": 15,
 	"rbd/mirror": 29, "cephfs/mirror": 15,
 }
 

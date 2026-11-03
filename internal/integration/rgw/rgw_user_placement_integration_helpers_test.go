@@ -56,7 +56,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	if err != nil || baseline.DefaultPlacement != "" || len(baseline.PlacementTags) != 0 || baseline.Admin || baseline.System {
 		t.Fatal("fresh ordinary fixture user had unexpected placement policy")
 	}
-	access, secret, err := user.Credentials()
+	access, secret, err := user.CreationKey().Credentials()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,6 +35,6 @@ func ExampleRun() {
 	if err != nil {
 		panic(err)
 	}
-	// Sign S3 requests to endpoint with user.Credentials().
+	// Sign S3 requests to endpoint with user.CreationKey().Credentials().
 	_, _ = user, endpoint
 }

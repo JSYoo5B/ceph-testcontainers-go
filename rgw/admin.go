@@ -44,13 +44,19 @@ type UserConfig struct {
 	Account                RootAccount
 }
 
-// User is an identity created through a gateway. Credentials are returned
-// explicitly by Credentials; formatting this handle never includes secrets.
+// User is an identity created through a gateway. Its S3 credentials are key
+// handles: CreationKey for the key pair its creation generated and
+// CreateS3Key for more; formatting this handle never includes secrets.
 // Users remain in Ceph when a gateway is removed, until explicitly removed or
 // the disposable cluster is terminated. Its operations run through the first
 // running registered gateway, by name, in the scope of the gateway that created it, so
 // they keep working after that gateway is removed if another one serves it.
 // Copies of a user handle share its lifecycle state.
+//
+// Every operation on the user checks the keys the fixture created for it:
+// each active one must still be present with its secret, no revoked one may
+// be present again, and at least one active one must remain. Keys created
+// outside the fixture are neither checked nor changed.
 type User struct {
 	userHandle
 }
@@ -64,18 +70,6 @@ func (u *User) ID() string {
 		return user.ID
 	}
 	return ""
-}
-
-// Credentials returns the generated S3 access and secret keys as explicit
-// copies. Previously copied credentials are not erased by user removal.
-//
-//purpose:handoff
-func (u *User) Credentials() (accessKey, secretKey string, err error) {
-	user := u.base()
-	if user == nil || user.AccessKey == "" || user.SecretKey == "" {
-		return "", "", errors.New("RGW S3 credentials are unavailable")
-	}
-	return user.AccessKey, user.SecretKey, nil
 }
 
 // String names the user without its keys.
@@ -272,6 +266,10 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 	}
 	user, err := core.CreateUser(ctx, gwbase.UserSpec{ID: config.ID, Tenant: config.Tenant, DisplayName: config.DisplayName,
 		Email: config.Email, AdminCaps: config.AdminCaps, MaxBuckets: config.MaxBuckets, Account: account})
+	if user != nil {
+		registry := gateways(core.Cluster())
+		registry.users = append(registry.users, user)
+	}
 	return newUser(user), err
 }
 
@@ -404,7 +402,9 @@ func (u *User) Suspend(ctx context.Context, suspended bool) error {
 // user's removal; removing the account independently refuses a nonempty one.
 // Success is idempotent across copies of a handle. After an uncertain
 // native failure, an absent user is accepted as completed removal; a user still
-// present remains tracked and its created key is verified before retrying.
+// present remains tracked and its fixture-created keys are verified before
+// retrying. Removing the user removes all of its keys, so a later Revoke of
+// one of its S3Key handles returns nil.
 //
 //purpose:lifetime
 func (u *User) Remove(ctx context.Context) error {

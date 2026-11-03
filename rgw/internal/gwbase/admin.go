@@ -96,11 +96,16 @@ func (c *Core) AdmitAdmin() (testcontainers.Container, error) {
 // command when Terminate starts, and a target removed meanwhile fails the
 // command with a classified error.
 func (c *Core) AdminCommandIn(ctx context.Context, target testcontainers.Container, args ...string) ([]byte, error) {
+	return c.supervised(ctx, target, AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...))
+}
+
+// supervised runs the radosgw-admin command line argv in target under the
+// gateway's shell supervisor, as AdminCommandIn describes.
+func (c *Core) supervised(ctx context.Context, target testcontainers.Container, argv []string) ([]byte, error) {
 	if servicehook.DiagnosticHandle(target) == nil {
 		return nil, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	argv := AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...)
 	report, err := servicehook.RunOwnedShell(ctx, c.cluster, target, "radosgw-admin", limit, argv...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
