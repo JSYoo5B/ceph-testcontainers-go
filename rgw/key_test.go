@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
@@ -228,6 +229,43 @@ func TestS3KeyRevocationIsExplicitAndKeepsTheOwnedUser(t *testing.T) {
 	calls := len(ctr.calls)
 	if err := replacement.Revoke(t.Context()); err != nil || len(ctr.calls) != calls {
 		t.Fatal("revoking a key of a removed user ran a native command")
+	}
+}
+
+// Key creation and revocation wait for the cluster mutex only until the
+// caller's context ends. A queued call sends no radosgw-admin command and
+// changes no key or handle; the same call succeeds with a fresh context.
+func TestS3KeyOperationsWaitForTheClusterOnlyUntilTheContextEnds(t *testing.T) {
+	gateway, ctr, user := newKeyTestUser(t)
+	mutex := testhelper.TestState(gateway.base().Cluster()).Mutex
+	keys, calls := slices.Clone(ctr.keys), len(ctr.calls)
+	clustertest.AssertContextLockQueued(t, mutex, func(ctx context.Context) error {
+		key, err := user.CreateS3Key(ctx)
+		if key != nil {
+			t.Error("a queued CreateS3Key returned a key")
+		}
+		return err
+	})
+	if len(ctr.calls) != calls || !slices.Equal(ctr.keys, keys) {
+		t.Fatalf("a queued CreateS3Key reached radosgw-admin: %v", ctr.calls[calls:])
+	}
+	key, err := user.CreateS3Key(t.Context())
+	if err != nil {
+		t.Fatalf("CreateS3Key with a fresh context: %v", err)
+	}
+	keys, calls = slices.Clone(ctr.keys), len(ctr.calls)
+	clustertest.AssertContextLockQueued(t, mutex, key.Revoke)
+	if len(ctr.calls) != calls || !slices.Equal(ctr.keys, keys) {
+		t.Fatalf("a queued Revoke reached radosgw-admin: %v", ctr.calls[calls:])
+	}
+	if _, _, err := key.Credentials(); err != nil {
+		t.Fatalf("a queued Revoke changed the key handle: %v", err)
+	}
+	if err := key.Revoke(t.Context()); err != nil {
+		t.Fatalf("Revoke with a fresh context: %v", err)
+	}
+	if ctr.count("key rm") != 1 {
+		t.Fatalf("the fresh Revoke ran %d key removals", ctr.count("key rm"))
 	}
 }
 

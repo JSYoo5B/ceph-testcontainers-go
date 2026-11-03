@@ -76,7 +76,9 @@ func (u *User) CreateS3Key(ctx context.Context) (*S3Key, error) {
 		return nil, servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(cluster)
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {
@@ -127,7 +129,9 @@ func (k *S3Key) Revoke(ctx context.Context) error {
 	}
 	user := k.user
 	cluster := user.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	if k.key.Status == gwbase.KeyRevoked {
 		return nil
