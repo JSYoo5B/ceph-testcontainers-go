@@ -50,7 +50,9 @@ func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 	if err := resourcename.Check("pool", poolName); err != nil {
 		return servicehook.Invalid(err)
 	}
-	servicehook.Lock(c)
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(c)
 	if err := controlReady(ctx, c); err != nil {
 		return err
@@ -83,7 +85,9 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 	if err := resourcename.Check("namespace", name); err != nil {
 		return nil, servicehook.Invalid(err)
 	}
-	servicehook.Lock(c)
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(c)
 	if err := controlReady(ctx, c); err != nil {
 		return nil, err
@@ -116,7 +120,9 @@ func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]
 	if err := resourcename.Check("pool", poolName); err != nil {
 		return nil, servicehook.Invalid(err)
 	}
-	servicehook.Lock(c)
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(c)
 	if err := controlReady(ctx, c); err != nil {
 		return nil, err
@@ -137,7 +143,9 @@ func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]
 // namespace through another client while its descriptor is in use: native RBD
 // namespaces have no separate generation identity to distinguish replacements.
 func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) error {
-	servicehook.Lock(c)
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(c)
 	if err := controlReady(ctx, c); err != nil {
 		return err

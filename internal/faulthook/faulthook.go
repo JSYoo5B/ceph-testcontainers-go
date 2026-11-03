@@ -129,7 +129,8 @@ func WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error
 }
 
 // WithTopologyNoContext runs fn with the cluster mutex held, waiting for it
-// without a context.
+// without a context. It is for finalization only: recording or freeing a
+// reservation that must not be dropped when the caller's context ended.
 func WithTopologyNoContext(c *ceph.Container, fn func()) { get().WithTopologyNoContext(c, fn) }
 
 // Closed reports a terminated cluster. The caller holds the mutex.

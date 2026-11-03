@@ -23,8 +23,9 @@ commands may need their own stop-confirmation budget. Preserve returned
 results and errors, including `NativeCommandUnstoppedError`; see
 [Partial failures](#partial-failures-and-retries) and
 [Native cancellation](native-commands.md#cancellation-and-cleanup).
-Some methods also wait for a serialized operation regardless of `ctx`, as
-described below. A deadline is not a universal return-time guarantee.
+Waiting for a serialized operation also honors `ctx`, except for the
+finalization steps described below. A deadline is not a universal return-time
+guarantee.
 
 ### The startup timeout
 
@@ -76,17 +77,30 @@ result; the fixture still records every resource it created so that cleanup and
 retries keep working. A cancelled call does not drop the bookkeeping of what it
 already did.
 
-Not every call waits for the gate under your context. Many other methods of
-the same cluster also serialize with topology operations but wait for a running
-one to finish regardless of `ctx`, then apply `ctx` to their native work.
-Examples are `override.SetOSDFlag`, `override.SetMGRModule`,
-`override.AddBlocklist` and their `Restore` methods, `ConfigHandle.Restore`,
-`Pool.SetQuota`,
-`Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user helpers,
-the `rgw/account` and `rgw/placement` helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
-for example removing temporary keyring files. So a deadline bounds how long
-native work runs, but does not guarantee that every call returns before the
-deadline while another operation holds the cluster.
+The same holds for the methods that serialize with topology operations
+without changing topology themselves. Examples are the override functions and
+their `Restore` methods, the `Pool` methods, the RBD pool, namespace and image
+client helpers, the RGW user helpers, the `rgw/account` and `rgw/placement`
+helpers and the admission of `rgw.Gateway.Admin`. A queued call that your
+context cancels sends no native command, and its handle keeps everything it
+owns: a cancelled `User.Remove`, `Account.Remove` or override `Restore` leaves
+the handle as it was, so retry it with a fresh context.
+
+Calls on one handle also wait for each other under your context. Examples are
+`snapschedule.Lease.Restore` and the `Status`, `Stop` and `Restore` methods of
+`rbd.ImmutableObjectCacheLease`.
+
+Finalization steps are the exception. After a call has started a container or
+changed native state, it records the result under the gate without a context,
+so that a cancelled caller never loses the cleanup handle. Examples are
+publishing a started gateway or MDS, removing a retired MDS from the
+inventory, recording a new filesystem's native identity and settling a network
+delay lease. Such a step waits for a running topology operation to finish.
+Some cleanup steps also use their own short context, for example removing
+temporary keyring files or stopping a packet capture. So a deadline bounds how
+long the wait for admission and the native work run, but does not guarantee
+that every call returns before the deadline while another operation holds the
+cluster.
 
 ### Calls that are safe during long operations
 

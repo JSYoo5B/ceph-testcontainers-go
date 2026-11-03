@@ -170,3 +170,11 @@ and `observer.WaitMGRModuleReady(ctx, name)` checks the supported module's
 metadata and read-only command probes. These waits retain the cluster's
 startup timeout and release observation locks between polls. An observer can
 be acquired for a partial cluster without reading or changing its state.
+
+To assert the up/in state of particular OSDs, evaluate an `OSDStates`
+observation with an `OSDExpectation`. Select the OSDs from an earlier
+`OSDStates` baseline to pin their native UUIDs, so a re-registered ID does not
+pass, and set `Exact` when no other owned OSD may exist. `Evaluate` performs no
+query or retry: the test polls with its own loop or assertion helper, a failed
+query stays an error, and `OSDEvaluation` lists each absent, replaced, down,
+out or unselected OSD from the observation it evaluated.

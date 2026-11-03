@@ -154,7 +154,9 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*gwbase.Account
 	if g.Cluster() == nil {
 		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.Cluster())
+	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(g.Cluster())
 	if err := g.ValidateAdmin(); err != nil {
 		return nil, err
@@ -232,7 +234,9 @@ func accountInfo(ctx context.Context, a *gwbase.Account) (gwbase.AccountInfo, er
 		return gwbase.AccountInfo{}, servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
 	cluster := a.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return gwbase.AccountInfo{}, err
+	}
 	defer servicehook.Unlock(cluster)
 	ctx, cancel := gwbase.AdminContext(ctx, cluster)
 	defer cancel()
@@ -275,7 +279,9 @@ func setQuota(ctx context.Context, a *gwbase.Account, scope string, quota gwbase
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
 	cluster := a.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	ctx, cancel := gwbase.AdminContext(ctx, cluster)
 	defer cancel()
@@ -333,7 +339,9 @@ func remove(ctx context.Context, a *gwbase.Account) error {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
 	cluster := a.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	if a.State == nil || !a.State.Confirmed {
 		return servicehook.Invalid(errors.New("RGW account was not confirmed as created by this cluster"))

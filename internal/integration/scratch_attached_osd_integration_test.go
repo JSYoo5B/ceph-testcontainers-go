@@ -424,18 +424,27 @@ func attachedWaitUp(t *testing.T, parent context.Context, cluster *ceph.Containe
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
+	want := ceph.OSDExpectation{Select: osdSelection([]*ceph.OSDContainer{osd}), Up: true, In: true, Exact: true}
+	var last any
 	for {
 		state, err := osd.State(ctx)
 		if err != nil || state == nil || !state.Running {
 			t.Fatalf("the restarted OSD exited: %+v %v", state, err)
 		}
+		var result ceph.OSDEvaluation
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-		if err == nil && len(states) == 1 && states[0].Up && states[0].In {
+		if err == nil {
+			result, err = want.Evaluate(states)
+		}
+		if err == nil && result.Matched {
 			return
+		}
+		if last = result; err != nil {
+			last = err
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("the restarted OSD did not come up", ctx.Err())
+			t.Fatalf("the restarted OSD did not come up: %v: last observation: %v", ctx.Err(), last)
 		case <-time.After(time.Second):
 		}
 	}

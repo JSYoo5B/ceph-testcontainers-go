@@ -323,6 +323,10 @@ func (control *rbdTestControl) Exec(_ context.Context, args []string, _ ...tcexe
 			} else {
 				delete(control.namespaces, "blue")
 			}
+		case "rbd status --pool images --image disk --format json":
+			output = `{"watchers":[]}`
+		case "rbd lock ls --pool images --image disk --format json":
+			output = `[]`
 		default:
 			output, code = fmt.Sprintf("unexpected test command: %s", call), 1
 		}
