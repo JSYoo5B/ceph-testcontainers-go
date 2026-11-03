@@ -30,8 +30,10 @@ import (
 // was decomposed into. The 64 call sites of the former rgw package are split
 // across rgw and its packages in the same way, with one more in rgw: the
 // refusal of a root user's account from another cluster or gateway scope.
+// rgw has eight more for the input, ownership, replaced-target and
+// outside-edit refusals of its rate-limit overrides.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 24, "rgw": 24,
+	"rbd": 28, "cephfs": 24, "rgw": 32,
 	"cephfs/subvolume": 29, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 12,

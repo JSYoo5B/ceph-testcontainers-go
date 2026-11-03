@@ -4,8 +4,8 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/rgw` to give an application
 that uses S3 (or Swift) a disposable Ceph cluster with one or more gateways and
 the server-side state its integration test needs: an S3 endpoint the test can
 reach (optionally native HTTPS), users with explicit Admin Ops capabilities,
-tenants, quotas and suspension, and storage counters. Accounts and their root
-users are in [`rgw/account`](account/README.md), placement targets with
+tenants, quotas and suspension, rate limits, and storage counters. Accounts
+and their root users are in [`rgw/account`](account/README.md), placement targets with
 storage classes in [`rgw/placement`](placement/README.md), and the persistent
 queues of bucket notification topics in
 [`rgw/notification`](notification/README.md); a test that needs one gateway
@@ -37,10 +37,15 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    client on the test host, `DaemonEndpoint` for a client in the cluster
    network, with `User.Credentials` (or the gateway's own `AccessKey` /
    `SecretKey`) and `Gateway.Region`, path-style addressing.
-4. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
+4. **Throttle the SUT** when the scenario tests its reaction to 503
+   SlowDown: `User.OverrideRateLimit` applies a `rgw.RateLimit` to the user
+   (`rgw.RateLimitScope{}`) or to one bucket it owns (`RateLimitScope{Bucket:
+   ...}`, such as a bucket the SUT created), and the returned handle's
+   `Restore` puts the prior policy back.
+5. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.
-5. **Clean up**: terminate the cluster; gateways, users and data go with it.
+6. **Clean up**: terminate the cluster; gateways, users and data go with it.
    `Gateway.Remove` and `User.Remove` are for tests of those steps.
 
 The smallest S3 fixture keeps one daemon of each kind and single-copy pools:
@@ -92,9 +97,17 @@ recovery need the default two OSDs or more.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
   the ones done by `Placement.Apply`, `Placement.Reload` and multisite changes.
-- Quota enforcement, suspension, placement defaults and usage counters go
-  through caches and asynchronous accounting: poll with new requests instead of
-  asserting right after a change. Usage log persistence is asynchronous too.
+- Quota enforcement, suspension, placement defaults, rate limits and usage
+  counters go through caches and asynchronous accounting: poll with new
+  requests instead of asserting right after a change. Usage log persistence is
+  asynchronous too.
+- A rate limit is a per-minute budget that every gateway process counts on its
+  own: two gateways serving the same bucket admit up to twice the budget, so
+  it is not a cluster-wide request budget. A bucket scope throttles every
+  request to that bucket, whoever signs it; a user scope throttles every
+  request the user signs. The handle only references a bucket: it never
+  deletes it, and a bucket the SUT deletes and creates again is a different
+  bucket, whose restoration the handle refuses.
 - HTTPS is native Beast TLS without a proxy; clients must trust the CA.
   `NetworkConfig.WithMessengerMode` encrypts Ceph messenger traffic only.
 - Printing a handle never writes keys; `Gateway.Admin` output can contain
