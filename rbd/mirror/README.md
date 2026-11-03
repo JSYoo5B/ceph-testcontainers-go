@@ -77,7 +77,9 @@ event that keeps the partial report, and the next success is `WatchResumed`.
 A full buffer ends the watch with `ceph.ErrWatchOverflow` instead of dropping
 events. Neither watch proves that a write or checkpoint arrived: compare the
 destination data. Call `Stop` before the mirror's cleanup: it joins the watch
-and returns why it ended.
+and returns why it ended. See
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for the
+lifecycle that every Watch shares.
 
 ## Journal polling timing
 

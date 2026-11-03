@@ -112,7 +112,9 @@ the watch with `ceph.ErrWatchOverflow` instead of dropping events, and so do
 a filesystem recreated under the same name, a removed filesystem and cluster
 termination. The watch never waits for readiness; use `WaitReady` for the
 requested standby capacity. Call `Stop` before the fixture's cleanup: it joins
-the watch and returns why it ended.
+the watch and returns why it ended. See
+[watching state](../docs/guides/contexts-and-cleanup.md#watching-state) for the
+lifecycle that every Watch shares.
 
 ## File size limit
 

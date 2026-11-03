@@ -187,7 +187,7 @@ UUID. Wait for it before you cause the fault. A failed read is a
 ends the watch with `ErrWatchOverflow` instead of dropping events, and so do
 identity drift and cluster termination. Call `Stop` before the fixture's
 cleanup: it joins the watch and returns why it ended. See
-[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-owned-osd-state).
+[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-state).
 
 To follow one pool's reported PGs through an OSD loss or a placement change,
 `pool.WatchPGs(ctx, cfg)` repeats the `Pool.PGs` observation on the same

@@ -69,7 +69,9 @@ full buffer ends the watch with `ceph.ErrWatchOverflow`, and so do a replaced
 or removed target, source or filesystem and cluster termination. Stopping the
 watch never cancels the clone, and `Clone.Wait` stays the readiness result.
 Call `Stop` before the fixture's cleanup: it joins the watch and returns why it
-ended.
+ended. See
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for the
+lifecycle that every Watch shares.
 
 ## Concepts and limits
 
