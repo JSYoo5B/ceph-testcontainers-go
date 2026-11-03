@@ -42,7 +42,8 @@ func (runtime *NativeCallCounter) Terminate(ctx context.Context, _ ...testcontai
 }
 
 // AssertContextLockQueued holds mutex and checks that operation returns its
-// own short deadline without taking or releasing the busy gate.
+// own short deadline without taking or releasing the busy gate, and that no
+// goroutine it started still waits to take the gate once it is free.
 //
 //testdouble:shared-assertion
 func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(context.Context) error) {
@@ -81,6 +82,13 @@ func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(con
 	}
 	mutex.Unlock()
 	locked = false
+	// A waiter left behind would take the free gate within a poll or two.
+	for deadline := time.Now().Add(50 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if !mutex.TryLock() {
+			t.Fatal("a canceled caller left a goroutine that took the free fixture gate")
+		}
+		mutex.Unlock()
+	}
 }
 
 // ControlQueryCounter counts control queries that admission must not reach.
