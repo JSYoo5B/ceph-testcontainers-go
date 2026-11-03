@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -66,10 +67,10 @@ func goodProbe() map[string]any {
 type fakeBackend struct {
 	mu sync.Mutex
 
-	targetState     targetState
+	inspected       nshelper.Target
 	targetErr       error
-	targetAfter     *targetState // the target from the second inspection on
-	targetGone      bool         // removed from the second inspection on
+	targetAfter     *nshelper.Target // the target from the second inspection on
+	targetGone      bool             // removed from the second inspection on
 	targetCalls     int
 	probeReport     map[string]any
 	probeStdout     string
@@ -100,29 +101,29 @@ type fakeBackend struct {
 
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
-		targetState: targetState{running: true, networkMode: "tc-net", sandboxID: "sandbox-1", startedAt: "t1", driver: "bridge", mac: targetMAC},
+		inspected:   nshelper.Target{Running: true, NetworkMode: "tc-net", SandboxID: "sandbox-1", StartedAt: "t1", Driver: "bridge", MAC: targetMAC},
 		probeReport: goodProbe(),
 		readyLine:   "tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 128 bytes",
 		file:        pcapFile(128, 60, 128),
 	}
 }
 
-func (f *fakeBackend) target(_ context.Context, id, network string) (targetState, error) {
+func (f *fakeBackend) target(_ context.Context, id, network string) (nshelper.Target, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.targetCalls++
 	if f.targetErr != nil {
-		return targetState{}, f.targetErr
+		return nshelper.Target{}, f.targetErr
 	}
 	if f.targetCalls > 1 {
 		if f.targetGone {
-			return targetState{}, errdefs.ErrNotFound
+			return nshelper.Target{}, errdefs.ErrNotFound
 		}
 		if f.targetAfter != nil {
 			return *f.targetAfter, nil
 		}
 	}
-	return f.targetState, nil
+	return f.inspected, nil
 }
 
 func (f *fakeBackend) probe(_ context.Context, image, networkMode string, argv []string) (probeResult, string, error) {
@@ -293,17 +294,17 @@ func TestRequestValidation(t *testing.T) {
 }
 
 func TestStartRefusesTargets(t *testing.T) {
-	for name, change := range map[string]func(*targetState){
-		"stopped":        func(s *targetState) { s.running = false },
-		"paused":         func(s *targetState) { s.paused = true },
-		"host":           func(s *targetState) { s.networkMode = "host" },
-		"shared":         func(s *targetState) { s.networkMode = "container:other" },
-		"no sandbox":     func(s *targetState) { s.sandboxID = "" },
-		"not attached":   func(s *targetState) { s.mac, s.driver = "", "" },
-		"overlay driver": func(s *targetState) { s.driver = "overlay" },
+	for name, change := range map[string]func(*nshelper.Target){
+		"stopped":        func(s *nshelper.Target) { s.Running = false },
+		"paused":         func(s *nshelper.Target) { s.Paused = true },
+		"host":           func(s *nshelper.Target) { s.NetworkMode = "host" },
+		"shared":         func(s *nshelper.Target) { s.NetworkMode = "container:other" },
+		"no sandbox":     func(s *nshelper.Target) { s.SandboxID = "" },
+		"not attached":   func(s *nshelper.Target) { s.MAC, s.Driver = "", "" },
+		"overlay driver": func(s *nshelper.Target) { s.Driver = "overlay" },
 	} {
 		f := newFakeBackend()
-		change(&f.targetState)
+		change(&f.inspected)
 		req := request(t)
 		if _, err := startFake(t, f, req); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: err = %v", name, err)
@@ -456,8 +457,8 @@ func TestReadiness(t *testing.T) {
 		"no file":         {func(f *fakeBackend) { f.noFile = true }, ErrFailed},
 		"not ethernet":    {func(f *fakeBackend) { f.readyLine = strings.Replace(f.readyLine, "EN10MB (Ethernet)", "RAW", 1) }, ErrFailed},
 		"restarted": {func(f *fakeBackend) {
-			after := f.targetState
-			after.startedAt = "t2"
+			after := f.inspected
+			after.StartedAt = "t2"
 			f.targetAfter = &after
 		}, ErrFailed},
 		"run refused": {func(f *fakeBackend) { f.runErr = errors.New("operation not permitted") }, ErrPermissionDenied},

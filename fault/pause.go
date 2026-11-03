@@ -8,6 +8,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -66,7 +67,7 @@ func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcon
 			return terminated
 		}
 		if ctr == nil || ctr.GetContainerID() == "" {
-			return invalidRequest("container pause requires a live cluster and a started container")
+			return nshelper.InvalidRequest("container pause requires a live cluster and a started container")
 		}
 		id := ctr.GetContainerID()
 		control, err := faulthook.Control(ctx, c)
@@ -74,7 +75,7 @@ func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcon
 			return err
 		}
 		if control != nil && control.GetContainerID() == id {
-			return invalidRequest("pausing the control CLI container would block every fixture command")
+			return nshelper.InvalidRequest("pausing the control CLI container would block every fixture command")
 		}
 		// An incomplete previous pause is returned with the refusal; a complete
 		// one stays registered until this one replaces it.
@@ -104,7 +105,7 @@ func pauseContainer(ctx context.Context, docker containerPauseClient, id string)
 	}
 	state := inspection.Container.State
 	if state == nil || !state.Running || state.Paused || state.Restarting {
-		return nil, errors.Join(invalidRequest("only a running, unpaused container can be paused"), docker.Close())
+		return nil, errors.Join(nshelper.InvalidRequest("only a running, unpaused container can be paused"), docker.Close())
 	}
 	pause := &PauseLease{ContainerID: id, docker: docker}
 	// Return ownership even after an uncertain transport outcome.

@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -115,11 +116,11 @@ func (f NetworkPacketFault) matches(kernel NetworkPacketFault) bool {
 func (f NetworkPacketFault) validate(name string) error {
 	switch {
 	case math.IsNaN(f.Percent) || f.Percent < 0 || f.Percent > 100:
-		return invalidRequest("network delay %s.Percent must be a percentage from 0 to 100", name)
+		return nshelper.InvalidRequest("network delay %s.Percent must be a percentage from 0 to 100", name)
 	case math.IsNaN(f.Correlation) || f.Correlation < 0 || f.Correlation > 100:
-		return invalidRequest("network delay %s.Correlation must be a percentage from 0 to 100", name)
+		return nshelper.InvalidRequest("network delay %s.Correlation must be a percentage from 0 to 100", name)
 	case f.Percent == 0 && f.Correlation != 0:
-		return invalidRequest("network delay %s.Correlation needs a Percent", name)
+		return nshelper.InvalidRequest("network delay %s.Correlation needs a Percent", name)
 	}
 	return nil
 }
@@ -133,17 +134,17 @@ var (
 	// tc without netem, or, for a Rate, a tc that cannot parse netem's rate,
 	// or for a Reorder, Duplicate or Corrupt, a tc that cannot parse that
 	// fault with a correlation. It belongs to ceph.ErrImageCapability.
-	ErrNetemImageUnsupported error = &categoryError{text: "the netem helper image does not meet the netem contract", kind: ceph.ErrImageCapability}
+	ErrNetemImageUnsupported error = nshelper.Category("the netem helper image does not meet the netem contract", ceph.ErrImageCapability)
 	// ErrNetemPermissionDenied reports an engine that did not give the helper
 	// NET_ADMIN, or refused a qdisc change for lack of it. It belongs to
 	// ceph.ErrEnvironmentUnavailable.
-	ErrNetemPermissionDenied error = &categoryError{text: "the netem helper has no NET_ADMIN", kind: ceph.ErrEnvironmentUnavailable}
+	ErrNetemPermissionDenied error = nshelper.Category("the netem helper has no NET_ADMIN", ceph.ErrEnvironmentUnavailable)
 	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc,
 	// for a delay with peers without the prio qdisc or the u32 classifier, or
 	// for a Rate a netem qdisc that does not keep the rate, or for a Reorder,
 	// Duplicate or Corrupt one that does not keep that fault, its correlation
 	// or, for a Reorder, a gap of 1. It belongs to ceph.ErrEnvironmentUnavailable.
-	ErrNetemKernelUnsupported error = &categoryError{text: "the engine's kernel lacks a qdisc or classifier that the delay needs", kind: ceph.ErrEnvironmentUnavailable}
+	ErrNetemKernelUnsupported error = nshelper.Category("the engine's kernel lacks a qdisc or classifier that the delay needs", ceph.ErrEnvironmentUnavailable)
 )
 
 // NetworkProfile configures netem shaping for ApplyNetworkProfile or ApplyLinkProfile.
@@ -464,18 +465,7 @@ type NetworkProfileLease struct {
 	release  func()
 }
 
-// netemTarget is the Docker state of a delay's target.
-type netemTarget struct {
-	running, paused bool
-	networkMode     container.NetworkMode
-	sandboxID       string
-	// driver is the driver of the network that the endpoint is on.
-	driver   string
-	address  netip.Addr
-	address6 netip.Addr
-	mac      string
-}
-
+// nshelper.Target is the Docker state of a delay's target.
 // netemBackend runs the Docker and helper operations of a delay; tests
 // replace it with a model of namespaces and qdiscs.
 //
@@ -483,7 +473,7 @@ type netemTarget struct {
 type netemBackend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.
-	target(ctx context.Context, id, network string) (netemTarget, error)
+	target(ctx context.Context, id, network string) (nshelper.Target, error)
 	// endpoints maps every address of the running containers attached to
 	// network to the container's ID.
 	endpoints(ctx context.Context, network string) (map[netip.Addr]string, error)
@@ -751,41 +741,41 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 	noDelay := delay.Delay == 0 && (delay.Loss > 0 || delay.Rate > 0 || !delay.Duplicate.IsZero() || !delay.Corrupt.IsZero())
 	switch {
 	case plane && delay.Plane != ceph.PublicNetworkPlane && delay.Plane != ceph.ClusterNetworkPlane:
-		return invalidRequest("invalid Ceph network plane")
+		return nshelper.InvalidRequest("invalid Ceph network plane")
 	case !plane && delay.Plane != "":
-		return invalidRequest("a link delay names its network; leave NetworkProfile.Plane empty")
+		return nshelper.InvalidRequest("a link delay names its network; leave NetworkProfile.Plane empty")
 	case math.IsNaN(delay.Loss) || delay.Loss < 0 || delay.Loss > 100:
-		return invalidRequest("network delay Loss must be a percentage from 0 to 100")
+		return nshelper.InvalidRequest("network delay Loss must be a percentage from 0 to 100")
 	case !noDelay && (delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay):
-		return invalidRequest("network delay must be between 1ms and %v, or zero with a Loss, a Rate, a Duplicate or a Corrupt", MaxNetworkDelay)
+		return nshelper.InvalidRequest("network delay must be between 1ms and %v, or zero with a Loss, a Rate, a Duplicate or a Corrupt", MaxNetworkDelay)
 	case delay.Rate != 0 && (delay.Rate < MinNetworkRate || delay.Rate > MaxNetworkRate):
-		return invalidRequest("network delay Rate must be between %v and %v, or zero", MinNetworkRate, MaxNetworkRate)
+		return nshelper.InvalidRequest("network delay Rate must be between %v and %v, or zero", MinNetworkRate, MaxNetworkRate)
 	case delay.Rate%8 != 0:
-		return invalidRequest("network delay Rate must be whole bytes per second, a multiple of 8 bit/s")
+		return nshelper.InvalidRequest("network delay Rate must be whole bytes per second, a multiple of 8 bit/s")
 	case delay.QueueLimit != 0 && delay.Rate == 0:
-		return invalidRequest("network delay QueueLimit needs a Rate")
+		return nshelper.InvalidRequest("network delay QueueLimit needs a Rate")
 	case delay.QueueLimit < 0 || delay.QueueLimit > MaxNetworkQueueLimit:
-		return invalidRequest("network delay QueueLimit must be between 1 and %d packets, or zero for %d", MaxNetworkQueueLimit, DefaultNetworkQueueLimit)
+		return nshelper.InvalidRequest("network delay QueueLimit must be between 1 and %d packets, or zero for %d", MaxNetworkQueueLimit, DefaultNetworkQueueLimit)
 	case delay.Jitter < 0 || delay.Jitter > delay.Delay:
-		return invalidRequest("network delay jitter must be between 0 and the delay")
+		return nshelper.InvalidRequest("network delay jitter must be between 0 and the delay")
 	case delay.Delay%time.Microsecond != 0 || delay.Jitter%time.Microsecond != 0:
-		return invalidRequest("network delay and jitter must be whole microseconds")
+		return nshelper.InvalidRequest("network delay and jitter must be whole microseconds")
 	case delay.PeerPort != 0 && !delay.Peer.IsValid():
-		return invalidRequest("network delay PeerPort needs a Peer")
+		return nshelper.InvalidRequest("network delay PeerPort needs a Peer")
 	case delay.Peer.IsValid() && (delay.Peer.Is4In6() || delay.Peer.Zone() != "" || delay.Peer.IsUnspecified()):
-		return invalidRequest("network delay Peer %s is not a plain IPv4 or IPv6 address", delay.Peer)
+		return nshelper.InvalidRequest("network delay Peer %s is not a plain IPv4 or IPv6 address", delay.Peer)
 	case delay.Peer.IsValid() && delay.Peers != nil:
-		return invalidRequest("network delay takes either Peer and PeerPort or Peers")
+		return nshelper.InvalidRequest("network delay takes either Peer and PeerPort or Peers")
 	case delay.Peers != nil && (len(delay.Peers) == 0 || len(delay.Peers) > MaxNetworkPeers):
-		return invalidRequest("network delay Peers needs 1 to %d peers", MaxNetworkPeers)
+		return nshelper.InvalidRequest("network delay Peers needs 1 to %d peers", MaxNetworkPeers)
 	case delay.Direction < Outbound || delay.Direction > BothDirections:
-		return invalidRequest("network delay Direction %v is not Outbound, Inbound or BothDirections", delay.Direction)
+		return nshelper.InvalidRequest("network delay Direction %v is not Outbound, Inbound or BothDirections", delay.Direction)
 	case delay.Phase < AllPackets || delay.Phase > ConnectionSetup:
-		return invalidRequest("network delay Phase %v is not AllPackets or ConnectionSetup", delay.Phase)
+		return nshelper.InvalidRequest("network delay Phase %v is not AllPackets or ConnectionSetup", delay.Phase)
 	case delay.Direction != Outbound && !delay.Peer.IsValid() && delay.Peers == nil:
-		return invalidRequest("network delay Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", delay.Direction)
+		return nshelper.InvalidRequest("network delay Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", delay.Direction)
 	case delay.Phase == ConnectionSetup && !delay.Peer.IsValid() && delay.Peers == nil:
-		return invalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
+		return nshelper.InvalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
 	}
 	for _, fault := range []namedFault{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
 		if err := fault.fault.validate(fault.name); err != nil {
@@ -795,20 +785,20 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 	if !delay.Reorder.IsZero() {
 		switch {
 		case delay.Delay == 0:
-			return invalidRequest("network delay Reorder needs a Delay: netem reorders by sending some packets ahead of the delayed ones")
+			return nshelper.InvalidRequest("network delay Reorder needs a Delay: netem reorders by sending some packets ahead of the delayed ones")
 		case delay.Jitter != 0:
-			return invalidRequest("network delay Reorder takes no Jitter: a jitter reorders packets by itself, and the two cannot be told apart")
+			return nshelper.InvalidRequest("network delay Reorder takes no Jitter: a jitter reorders packets by itself, and the two cannot be told apart")
 		case delay.Rate != 0:
-			return invalidRequest("network delay Reorder takes no Rate: netem sends the reordered packets past the rate limit")
+			return nshelper.InvalidRequest("network delay Reorder takes no Rate: netem sends the reordered packets past the rate limit")
 		}
 	}
 	seen := map[NetworkPeer]bool{}
 	for _, peer := range delay.Peers {
 		switch {
 		case !peer.Addr.IsValid() || peer.Addr.Is4In6() || peer.Addr.Zone() != "" || peer.Addr.IsUnspecified():
-			return invalidRequest("network delay peer %v is not a plain IPv4 or IPv6 address", peer.Addr)
+			return nshelper.InvalidRequest("network delay peer %v is not a plain IPv4 or IPv6 address", peer.Addr)
 		case seen[peer]:
-			return invalidRequest("network delay Peers has %v port %d twice", peer.Addr, peer.Port)
+			return nshelper.InvalidRequest("network delay Peers has %v port %d twice", peer.Addr, peer.Port)
 		}
 		seen[peer] = true
 	}
@@ -1111,7 +1101,7 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 		return nil, err
 	}
 	if target == nil || target.GetContainerID() == "" {
-		return nil, invalidRequest("network delay requires a container")
+		return nil, nshelper.InvalidRequest("network delay requires a container")
 	}
 	name, err := admitNetworkDelayTarget(ctx, c, target, delay.Plane)
 	if err != nil {
@@ -1156,7 +1146,7 @@ type inboundPeer struct {
 // nothing. A non-nil lease returned with an error must be restored.
 func applyDirectedDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, hold endpointHold) (*NetworkProfileLease, error) {
 	var inbound []inboundPeer
-	var state netemTarget
+	var state nshelper.Target
 	if delay.Direction.inbound() {
 		var err error
 		if state, inbound, err = planInbound(ctx, backend, id, network, delay); err != nil {
@@ -1218,31 +1208,31 @@ func (l *NetworkProfileLease) peerLeases() []*NetworkProfileLease {
 // A peer address that no running container on the network has, or that is
 // the target's own, is refused, as is an IPv6 peer of a target without an
 // IPv6 address.
-func planInbound(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (netemTarget, []inboundPeer, error) {
+func planInbound(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (nshelper.Target, []inboundPeer, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return netemTarget{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+		return nshelper.Target{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
-		return netemTarget{}, nil, err
+		return nshelper.Target{}, nil, err
 	}
 	endpoints, err := backend.endpoints(ctx, network)
 	if err != nil {
-		return netemTarget{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the endpoints of %s: %w", network, err))
+		return nshelper.Target{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the endpoints of %s: %w", network, err))
 	}
 	var plan []inboundPeer
 	for _, peer := range delay.selection() {
 		owner, ok := endpoints[peer.Addr]
 		switch {
 		case !ok:
-			return netemTarget{}, nil, invalidRequest("network delay peer %s is not the address of a running container on %s: %v is shaped at the peer's endpoint", peer.Addr, network, delay.Direction)
+			return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is not the address of a running container on %s: %v is shaped at the peer's endpoint", peer.Addr, network, delay.Direction)
 		case owner == id:
-			return netemTarget{}, nil, invalidRequest("network delay peer %s is the target's own address", peer.Addr)
+			return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is the target's own address", peer.Addr)
 		}
-		address := state.address
+		address := state.Address
 		if peer.Addr.Is6() {
-			if address = state.address6; !address.IsValid() {
-				return netemTarget{}, nil, invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+			if address = state.Address6; !address.IsValid() {
+				return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 			}
 		}
 		i := slices.IndexFunc(plan, func(p inboundPeer) bool { return p.id == owner })
@@ -1278,9 +1268,9 @@ func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testconta
 	}
 	switch {
 	case ctr == nil || ctr.GetContainerID() == "":
-		return nil, invalidRequest("network delay requires a container")
+		return nil, nshelper.InvalidRequest("network delay requires a container")
 	case strings.TrimSpace(network) == "":
-		return nil, invalidRequest("a link delay requires a network name")
+		return nil, nshelper.InvalidRequest("a link delay requires a network name")
 	}
 	return applyDirectedDelay(ctx, backend, ctr.GetContainerID(), network, delay,
 		func(_ string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
@@ -1314,9 +1304,9 @@ func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target test
 	case closed:
 		return "", terminated
 	case hostNetwork:
-		return "", invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
+		return "", nshelper.InvalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
 	case name == "":
-		return "", invalidRequest("Ceph bridge is not initialized")
+		return "", nshelper.InvalidRequest("Ceph bridge is not initialized")
 	}
 	if !owned {
 		attached, err := target.Networks(ctx)
@@ -1324,7 +1314,7 @@ func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target test
 			return "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
 		}
 		if !slices.Contains(attached, name) {
-			return "", invalidRequest("the container is not attached to Ceph network %s", name)
+			return "", nshelper.InvalidRequest("the container is not attached to Ceph network %s", name)
 		}
 	}
 	return name, nil
@@ -1393,33 +1383,33 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 // admitNetworkDelay checks the target's endpoint, that every IPv6 peer has an
 // IPv6 target address, and the helper image, before anything is started. It
 // returns the target, the selected peers and the checked image's ID.
-func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (netemTarget, []NetworkPeer, string, error) {
+func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (nshelper.Target, []NetworkPeer, string, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return netemTarget{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+		return nshelper.Target{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
-		return netemTarget{}, nil, "", err
+		return nshelper.Target{}, nil, "", err
 	}
 	peers := delay.selection()
 	for _, peer := range peers {
-		if peer.Addr.Is6() && !state.address6.IsValid() {
-			return netemTarget{}, nil, "", invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+		if peer.Addr.Is6() && !state.Address6.IsValid() {
+			return nshelper.Target{}, nil, "", nshelper.InvalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 		}
 	}
 	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults(),
 		peerMatch{source: source, setup: delay.Phase == ConnectionSetup})
 	if err != nil {
-		return netemTarget{}, nil, "", err
+		return nshelper.Target{}, nil, "", err
 	}
 	return state, peers, imageID, nil
 }
 
 // newNetworkProfileLease records the requested profile and the target it is
 // applied to; the interface, handles and kernel state are filled in later.
-func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state netemTarget, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
-	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
-		MACAddress: state.mac, Address: state.address, HelperImageID: imageID, Delay: delay.Delay,
+func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state nshelper.Target, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
+	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.SandboxID,
+		MACAddress: state.MAC, Address: state.Address, HelperImageID: imageID, Delay: delay.Delay,
 		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, Direction: delay.Direction,
 		Phase: delay.Phase, backend: backend, helper: helper, shapes: true}
 	if delay.Rate > 0 {
@@ -1441,8 +1431,8 @@ func (l *NetworkProfileLease) discard(ctx context.Context, err error) (*NetworkP
 // its root qdisc to be the default one and records it. It then rechecks the
 // target: a restart between the first inspection and the helper's start would
 // have given the helper a namespace without this endpoint.
-func (l *NetworkProfileLease) locate(ctx context.Context, state netemTarget) error {
-	report, err := inspectNetem(ctx, l.backend, l.helper, "inspect", state.address.String(), state.mac)
+func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target) error {
+	report, err := inspectNetem(ctx, l.backend, l.helper, "inspect", state.Address.String(), state.MAC)
 	if err != nil {
 		return err
 	}
@@ -1454,10 +1444,10 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state netemTarget) err
 		return err
 	}
 	if root.Handle != "0:" {
-		return invalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle)
+		return nshelper.InvalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle)
 	}
 	l.Namespace, l.Interface, l.InterfaceIndex = report.Namespace, report.Links[0].Name, report.Links[0].Index
-	if again, err := l.backend.target(ctx, l.ContainerID, l.NetworkName); err != nil || again.sandboxID != state.sandboxID {
+	if again, err := l.backend.target(ctx, l.ContainerID, l.NetworkName); err != nil || again.SandboxID != state.SandboxID {
 		return errors.Join(errors.New("the network delay target restarted while it was being checked"), err)
 	}
 	return nil
@@ -1597,20 +1587,13 @@ func (l *NetworkProfileLease) checkFaults(status NetworkProfileStatus) error {
 }
 
 // admitNetemTarget refuses targets whose namespace the helper cannot join.
-func admitNetemTarget(state netemTarget) error {
-	switch {
-	case !state.running || state.paused:
-		return invalidRequest("network delay requires a running, unpaused container")
-	case state.networkMode.IsHost() || state.networkMode.IsNone() || state.networkMode.IsContainer():
-		return invalidRequest("network delay cannot join a container in network mode %s", state.networkMode)
-	case state.sandboxID == "":
-		return invalidRequest("the container has no network sandbox")
-	case !state.address.Is4() || state.mac == "":
-		return invalidRequest("network delay requires an IPv4 endpoint with a MAC address")
-	case state.driver != "bridge":
-		return invalidRequest("network delay requires a bridge network, not a %q one", state.driver)
-	}
-	return nil
+func admitNetemTarget(state nshelper.Target) error {
+	return nshelper.Admit(state, "network delay", "the container", func(state nshelper.Target) error {
+		if !state.Address.Is4() || state.MAC == "" {
+			return nshelper.InvalidRequest("network delay requires an IPv4 endpoint with a MAC address")
+		}
+		return nil
+	})
 }
 
 // preflightNetem checks the helper image, NET_ADMIN and the kernel's netem,
@@ -1943,10 +1926,10 @@ func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus,
 	}
 	defer l.mu.Unlock()
 	if l.complete {
-		return NetworkProfileStatus{}, invalidRequest("the network delay was restored")
+		return NetworkProfileStatus{}, nshelper.InvalidRequest("the network delay was restored")
 	}
 	if !l.shapes {
-		return NetworkProfileStatus{}, invalidRequest("an Inbound delay shapes only its peers' endpoints: read the Status of each lease in PeerLeases")
+		return NetworkProfileStatus{}, nshelper.InvalidRequest("an Inbound delay shapes only its peers' endpoints: read the Status of each lease in PeerLeases")
 	}
 	if err := l.settle(ctx); err != nil {
 		return NetworkProfileStatus{}, err
@@ -1983,7 +1966,7 @@ func (l *NetworkProfileLease) settle(ctx context.Context) error {
 		return nil
 	}
 	state, err := l.backend.target(ctx, l.ContainerID, l.NetworkName)
-	if errdefs.IsNotFound(err) || err == nil && (!state.running || state.sandboxID != l.SandboxID) {
+	if errdefs.IsNotFound(err) || err == nil && (!state.Running || state.SandboxID != l.SandboxID) {
 		return nil
 	}
 	if err != nil {
@@ -2160,7 +2143,7 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 		// when the delay itself is still applied.
 		if status.RootHandle == l.handle {
 			if err := l.ownedPrefix(status); err != nil {
-				return invalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.handle, err)
+				return nshelper.InvalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.handle, err)
 			}
 			result, err := l.backend.run(ctx, l.helper, "remove the netem delay", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.handle)
 			if err != nil {
@@ -2177,7 +2160,7 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 			}
 		}
 		if !status.Gone && status.RootHandle != "0:" {
-			return invalidRequest("the delayed interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
+			return nshelper.InvalidRequest("the delayed interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
 		}
 	}
 	if err := removeNetemHelper(ctx, l.backend, l.helper); err != nil {
@@ -2196,35 +2179,13 @@ type dockerNetemBackend struct {
 	label testcontainers.CustomizeRequestOption
 }
 
-func (dockerNetemBackend) target(ctx context.Context, id, network string) (netemTarget, error) {
+func (dockerNetemBackend) target(ctx context.Context, id, network string) (nshelper.Target, error) {
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
-		return netemTarget{}, err
+		return nshelper.Target{}, err
 	}
 	defer func() { _ = docker.Close() }()
-	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
-	if err != nil {
-		return netemTarget{}, err
-	}
-	var state netemTarget
-	if current := inspection.Container.State; current != nil {
-		state.running, state.paused = current.Running && !current.Restarting, current.Paused
-	}
-	if inspection.Container.HostConfig != nil {
-		state.networkMode = inspection.Container.HostConfig.NetworkMode
-	}
-	if settings := inspection.Container.NetworkSettings; settings != nil {
-		state.sandboxID = settings.SandboxID
-		if endpoint := settings.Networks[network]; endpoint != nil {
-			state.address, state.address6, state.mac = endpoint.IPAddress, endpoint.GlobalIPv6Address, endpoint.MacAddress.String()
-			inspection, err := docker.NetworkInspect(ctx, network, mobycl.NetworkInspectOptions{})
-			if err != nil {
-				return netemTarget{}, fmt.Errorf("inspect network %s: %w", network, err)
-			}
-			state.driver = inspection.Network.Driver
-		}
-	}
-	return state, nil
+	return nshelper.Inspect(ctx, docker, id, network)
 }
 
 func (dockerNetemBackend) endpoints(ctx context.Context, network string) (map[netip.Addr]string, error) {
@@ -2252,16 +2213,10 @@ func (dockerNetemBackend) endpoints(ctx context.Context, network string) (map[ne
 // contract says whatever the image's USER, with NET_ADMIN as its only
 // capability.
 func netemHelperOptions(networkMode container.NetworkMode) []testcontainers.ContainerCustomizer {
-	return []testcontainers.ContainerCustomizer{
+	return append([]testcontainers.ContainerCustomizer{
 		ceph.WithIdleEntrypoint(),
 		testcontainers.WithConfigModifier(func(config *container.Config) { config.User = "0:0" }),
-		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
-			host.NetworkMode = networkMode
-			host.CapDrop = []string{"ALL"}
-			host.CapAdd = []string{"NET_ADMIN"}
-		}),
-		testcontainers.WithLabels(map[string]string{"org.testcontainers.ceph.role": "netem-helper"}),
-	}
+	}, nshelper.Confine(networkMode, "NET_ADMIN", "netem-helper")...)
 }
 
 func (b dockerNetemBackend) startHelper(ctx context.Context, image string, networkMode container.NetworkMode) (testcontainers.Container, error) {
