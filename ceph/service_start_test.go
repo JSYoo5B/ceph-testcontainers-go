@@ -23,7 +23,7 @@ func TestStartServiceReturnsNoHandleWhenNoContainerWasCreated(t *testing.T) {
 	if ctr != nil || !errors.Is(err, cause) {
 		t.Fatalf("failed creation returned handle %#v and error %v", ctr, err)
 	}
-	if cluster.members.roster.serviceCount() != 0 {
+	if len(cluster.members.roster.services) != 0 {
 		t.Fatalf("a service without a container was registered: %v", cluster.members.roster.services)
 	}
 	if err := cluster.lockTopology(t.Context()); err != nil {

@@ -69,14 +69,6 @@ type osdDeviceClaim struct {
 	creation *atomic.Bool
 }
 
-// osdDeviceClaimInfo is a copy of a claim for callers; it shares nothing.
-type osdDeviceClaimInfo struct {
-	osd       int
-	lease     string
-	device    osdBlockDevice
-	attempted bool
-}
-
 // claim admits the device of osd under lease before the OSD's container is
 // created. creation must be the one-shot of the recipe that will start the OSD,
 // and must not be spent yet.
@@ -112,15 +104,6 @@ func (s *osdDeviceClaims) claim(osd int, lease string, device osdBlockDevice, cr
 	}
 	s.records[osd] = &osdDeviceClaim{osd: osd, lease: lease, device: device, creation: creation}
 	return nil
-}
-
-// claimOf returns a copy of the claim of osd.
-func (s *osdDeviceClaims) claimOf(osd int) (osdDeviceClaimInfo, bool) {
-	r := s.records[osd]
-	if r == nil {
-		return osdDeviceClaimInfo{}, false
-	}
-	return osdDeviceClaimInfo{osd: r.osd, lease: r.lease, device: r.device, attempted: r.creation.Load()}, true
 }
 
 // count returns the number of held claims.

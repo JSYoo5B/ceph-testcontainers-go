@@ -14,7 +14,7 @@ import (
 func TestMemberRosterZeroValueIsEmptyAndWritable(t *testing.T) {
 	var r memberRoster
 	if r.monitor("b") != nil || r.manager("a") != nil || r.service("rgw") != nil || r.initialManager() != nil ||
-		r.monitorCount() != 0 || r.managerCount() != 0 || r.serviceCount() != 0 || r.hasService("rgw") ||
+		r.monitorCount() != 0 || r.managerCount() != 0 || len(r.services) != 0 || r.hasService("rgw") ||
 		len(r.sortedServices()) != 0 || len(r.serviceCopy()) != 0 {
 		t.Fatalf("an empty roster reports a member: %+v", r)
 	}
@@ -38,13 +38,13 @@ func TestMemberRosterZeroValueIsEmptyAndWritable(t *testing.T) {
 	if r.monitor("b") != mon || r.manager("b") != mgr || r.monitorCount() != 1 || r.managerCount() != 1 {
 		t.Fatalf("an adder did not record: %+v", r)
 	}
-	if !r.hasService("rgw") || r.service("rgw") != nil || r.serviceCount() != 1 {
+	if !r.hasService("rgw") || r.service("rgw") != nil || len(r.services) != 1 {
 		t.Fatal("a service recorded without a container must still be present")
 	}
 	r.dropMonitor("b")
 	r.dropManager("b")
 	r.dropService("rgw")
-	if r.monitorCount() != 0 || r.managerCount() != 0 || r.serviceCount() != 0 || r.hasService("rgw") {
+	if r.monitorCount() != 0 || r.managerCount() != 0 || len(r.services) != 0 || r.hasService("rgw") {
 		t.Fatalf("a drop left a member: %+v", r)
 	}
 }
@@ -95,7 +95,7 @@ func TestMemberRosterEachAllowsDroppingTheVisitedKeyAndStopsEarly(t *testing.T) 
 		visited++
 		r.dropService(name)
 	}
-	if visited != 12 || r.monitorCount() != 0 || r.managerCount() != 0 || r.serviceCount() != 0 {
+	if visited != 12 || r.monitorCount() != 0 || r.managerCount() != 0 || len(r.services) != 0 {
 		t.Fatalf("visited %d: %+v", visited, r)
 	}
 	for _, name := range []string{"b", "c"} {
@@ -116,7 +116,7 @@ func TestMemberRosterEachAllowsDroppingTheVisitedKeyAndStopsEarly(t *testing.T) 
 		visited++
 		break
 	}
-	if visited != 3 || r.monitorCount() != 2 || r.managerCount() != 2 || r.serviceCount() != 2 {
+	if visited != 3 || r.monitorCount() != 2 || r.managerCount() != 2 || len(r.services) != 2 {
 		t.Fatalf("an early break visited %d: %+v", visited, r)
 	}
 }
@@ -133,7 +133,7 @@ func TestMemberRosterSortedServicesAndCopy(t *testing.T) {
 	cp := r.serviceCopy()
 	delete(cp, "rgw")
 	cp["extra"] = a
-	if r.serviceCount() != 3 || r.hasService("extra") {
+	if len(r.services) != 3 || r.hasService("extra") {
 		t.Fatal("a change to the copy reached the roster")
 	}
 }
@@ -224,7 +224,6 @@ var memberRosterMethods = map[string][]string{
 	"clearInitialManager":  nil,
 	"service":              nil,
 	"hasService":           nil,
-	"serviceCount":         {"len"},
 	"eachService":          {"yield"},
 	"sortedServices":       {"slices.Sorted", "maps.Keys", "make", "len", "append"},
 	"serviceCopy":          {"maps.Clone"},
