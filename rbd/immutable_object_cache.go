@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -283,7 +284,9 @@ func (l *ImmutableObjectCacheLease) ClientOptions() map[string]string {
 //
 //purpose:observation
 func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObjectCacheStatus, error) {
-	l.mu.Lock()
+	if err := clusterutil.LockMutex(ctx, &l.mu); err != nil {
+		return ImmutableObjectCacheStatus{}, err
+	}
 	defer l.mu.Unlock()
 	if l.complete {
 		return ImmutableObjectCacheStatus{}, servicehook.Invalid(errors.New("the immutable object cache lease was restored"))
@@ -320,7 +323,9 @@ func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObject
 //
 //purpose:condition
 func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
-	l.mu.Lock()
+	if err := clusterutil.LockMutex(ctx, &l.mu); err != nil {
+		return err
+	}
 	defer l.mu.Unlock()
 	if l.complete {
 		return nil
@@ -350,7 +355,9 @@ func (l *ImmutableObjectCacheLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	l.mu.Lock()
+	if err := clusterutil.LockMutex(ctx, &l.mu); err != nil {
+		return err
+	}
 	defer l.mu.Unlock()
 	return l.restore(ctx)
 }
