@@ -149,18 +149,18 @@ func runCephFSQuotaAdmin(ctx context.Context, cluster *ceph.Container, toolkit t
 func testCephFSLiveQuota(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	toolkit := harness.ToolkitContainer(t, m.Cluster)
 	const directory = "/live-quota"
 	base := bytes.Repeat([]byte("quota-baseline\x00\xff"), 256)
 	created := bytes.Repeat([]byte("quota-relaxed\x01\xfe"), 256)
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSQuotaActor, m.FS.FilesystemName, "/tmp/live-quota-actor",
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSQuotaActor, m.FS.FilesystemName, "/tmp/live-quota-actor",
 		directory, directory+"/baseline", directory+"/created", hex.EncodeToString(base), hex.EncodeToString(created))
 	first := actor.Receipt(t, ctx, 1)
 	if first.Client == 0 || first.Inode == 0 || first.DirInode == 0 || first.Size != int64(len(base)) || first.Full != hex.EncodeToString(base) {
 		t.Fatalf("quota baseline: %+v", first)
 	}
-	harness.CephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
+	cephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
 	before, err := runCephFSQuotaAdmin(ctx, m.Cluster, toolkit, "inspect", m.FS.FilesystemName, directory, 0)
 	if err != nil || before.Client == 0 || before.Client == first.Client || before.DirInode != first.DirInode || before.Present || before.Limit != 0 ||
 		before.Files != 1 || before.Directories == 0 || before.Entries != before.Files+before.Directories {
@@ -214,7 +214,7 @@ func testCephFSLiveQuota(t *testing.T) {
 		denied.Created == nil || denied.Created.Errno != int(syscall.ENOENT) || denied.Created.Inode != 0 || denied.Created.Size != 0 || denied.Created.Data != "" {
 		t.Fatalf("independent denied-create read: %+v, %v", denied, err)
 	}
-	harness.CephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
+	cephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
 	relaxedBy := set(before.Entries + 1)
 	actor.Open(t, ctx, "relaxed")
 	relaxed := actor.Receipt(t, ctx, 3)
@@ -222,7 +222,7 @@ func testCephFSLiveQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness.CephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
+	cephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
 	read, err := runCephFSQuotaAdmin(ctx, m.Cluster, toolkit, "read", m.FS.FilesystemName, directory, 0)
 	if err != nil || read.Client == 0 || read.Client == first.Client || read.DirInode != first.DirInode ||
 		read.Baseline == nil || read.Baseline.Errno != 0 || read.Baseline.Inode != first.Inode || read.Baseline.Size != int64(len(base)) || read.Baseline.Data != hex.EncodeToString(base) ||

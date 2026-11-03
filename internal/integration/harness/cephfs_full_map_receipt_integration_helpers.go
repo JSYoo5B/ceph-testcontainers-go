@@ -89,7 +89,7 @@ func NewRetainedClientReceipt(client, inode uint64, pool int64) *RetainedClientR
 func (r *RetainedClientReceipt) Phase(name string) { r.Phases = append(r.Phases, name) }
 
 // unpromptedStatus records the raw status read before the poke.
-func (r *RetainedClientReceipt) unpromptedStatus(status CephFSClientStatus) {
+func (r *RetainedClientReceipt) RecordUnpromptedStatus(status CephFSClientStatus) {
 	sample := retainedMapSample{ID: status.ID, OSDEpoch: status.OSDEpoch, Barrier: status.Barrier, Blocklisted: status.Blocklisted}
 	r.Unprompted = &sample
 }

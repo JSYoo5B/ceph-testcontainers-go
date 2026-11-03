@@ -107,7 +107,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	}
 	expected.PeerID = peers[0]
 	harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", first)
-	harness.CephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-1", true)
+	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-1", true)
 	verify("backup-1")
 	daemon := mirror.Daemons()[0]
 	synced, err := harness.Observe(ctx, time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (cephFSMirrorReplay, bool, error) {
@@ -161,7 +161,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 		if _, seen := mappings[mapping]; !seen {
 			mappings[mapping] = time.Since(cutAt).Round(time.Second)
 		}
-		harness.CephFSAssertSnapshotRemainsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-2", 0)
+		cephFSAssertSnapshotRemainsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-2", 0)
 		t.Logf("during the cut: daemon %s, syncing %q, last synced %s, %d synced; MGR dirmap %s", during.State, during.Current.Name, during.Last.Name, during.Synced, mapping)
 		samples++
 	}

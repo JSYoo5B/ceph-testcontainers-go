@@ -331,7 +331,7 @@ finally:
 	if err != nil {
 		t.Fatalf("native warning did not clear after restoration/disposal: %v health=%s", err, clearHealth)
 	}
-	readA, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", harness.CephFSIndependentReader, a.FilesystemName, "/qualification"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent survivor reader"})
+	readA, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", cephFSIndependentReader, a.FilesystemName, "/qualification"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent survivor reader"})
 	var data struct {
 		Client uint64 `json:"client"`
 		Inode  uint64 `json:"inode"`

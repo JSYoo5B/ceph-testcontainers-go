@@ -14,14 +14,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // These are receipt/model controls, not claims of native quota propagation.
 func TestCephFSLiveQuotaReceipt(t *testing.T) {
 	base, created := []byte("acknowledged"), []byte("after relaxation")
-	first := harness.CephFSActorReceipt{Token: "one-run", PID: 123, Client: 45, Inode: 67, DirInode: 89}
+	first := cephFSActorReceipt{Token: "one-run", PID: 123, Client: 45, Inode: 67, DirInode: 89}
 	current := first
 	current.Size, current.Full = int64(len(base)), hex.EncodeToString(base)
 	limited := `{"limit":2,"files":1,"directories":1,"entries":2,"samples":3,"elapsed_ms":400,"create_errno":122}`
@@ -38,14 +36,14 @@ func TestCephFSLiveQuotaReceipt(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	for name, mutate := range map[string]func(*harness.CephFSActorReceipt){
-		"new client":      func(r *harness.CephFSActorReceipt) { r.Client++ },
-		"new process":     func(r *harness.CephFSActorReceipt) { r.PID++ },
-		"new fd inode":    func(r *harness.CephFSActorReceipt) { r.Inode++ },
-		"new directory":   func(r *harness.CephFSActorReceipt) { r.DirInode++ },
-		"other run":       func(r *harness.CephFSActorReceipt) { r.Token = "another-run" },
-		"wrong old bytes": func(r *harness.CephFSActorReceipt) { r.Full = hex.EncodeToString([]byte("changed")) },
-		"wrong old size":  func(r *harness.CephFSActorReceipt) { r.Size++ },
+	for name, mutate := range map[string]func(*cephFSActorReceipt){
+		"new client":      func(r *cephFSActorReceipt) { r.Client++ },
+		"new process":     func(r *cephFSActorReceipt) { r.PID++ },
+		"new fd inode":    func(r *cephFSActorReceipt) { r.Inode++ },
+		"new directory":   func(r *cephFSActorReceipt) { r.DirInode++ },
+		"other run":       func(r *cephFSActorReceipt) { r.Token = "another-run" },
+		"wrong old bytes": func(r *cephFSActorReceipt) { r.Full = hex.EncodeToString([]byte("changed")) },
+		"wrong old size":  func(r *cephFSActorReceipt) { r.Size++ },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := current

@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The OSD that holds a live client's file freezes while the client fsyncs a
@@ -17,7 +15,7 @@ import (
 // and the MDS's journal writes wait at the OSD, both calls wait without an
 // eviction, and both return 0 when the OSD resumes.
 func TestCephFSOSDInterruption(t *testing.T) {
-	harness.RunCephFSOSDInterruption(t, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
+	runCephFSOSDInterruption(t, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 }
 
 // The OSD that holds a live client's file stops and comes back with its

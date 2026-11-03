@@ -332,7 +332,7 @@ func RunMirrorInitialCephFS(t *testing.T, host bool) {
 	if err := policy.Capture(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed})
+	CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed})
 	oracle.AssertPolicyOnly(t, ctx, 0, "cephfs-seed")
 	CephFSAssertOriginalProcessSnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, script, seed, seedBacklog.Name, "zero-initial-seed", 5*time.Second)
 	addedBacklog := checkpoint(added, "typed-policy-only-backlog")
@@ -340,13 +340,13 @@ func RunMirrorInitialCephFS(t *testing.T, host bool) {
 	if addition == nil {
 		t.Fatal("zero typed addition lost retained intent", err)
 	}
-	cephFSDirectoryAdditionReconcile(t, ctx, mirror, added, addition)
+	CephFSDirectoryAdditionReconcile(t, ctx, mirror, added, addition)
 	status, err := addition.Status(ctx)
-	cephFSDirectoryAdditionAssertStatus(t, status, expected, added, true, true)
+	CephFSDirectoryAdditionAssertStatus(t, status, expected, added, true, true)
 	if err != nil || !slices.Equal(mirror.Directories, []string{seed, added}) || len(mirror.Daemons()) != 0 || customizers.Load() != 0 || factoryCalls.Load() != 0 {
 		t.Fatal("zero typed addition started or adopted process", err)
 	}
-	cephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, added})
+	CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, added})
 	oracle.AssertPolicyOnly(t, ctx, 0, "cephfs-typed-addition")
 	CephFSAssertOriginalProcessSnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, script, added, addedBacklog.Name, "zero-initial-added", 5*time.Second)
 	zeroCtx, zeroCancel := context.WithTimeout(ctx, 2*time.Second)
@@ -379,7 +379,7 @@ func RunMirrorInitialCephFS(t *testing.T, host bool) {
 	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)
+	CephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)
 	partial, err := mirror.AddDaemon(ctx, "partial", testcontainers.WithWaitStrategy(wait.ForExec([]string{"sh", "-c", "exit 1"}).WithStartupTimeout(2*time.Second)))
 	if partial == nil || err == nil || len(mirror.Daemons()) != 1 || mirror.Container != nil || customizers.Load() != 2 || factoryCalls.Load() != 1 || partial.ProcessObserverBindingStatus().State != "partial-startup" {
 		t.Fatal("explicit partial startup lost cleanup/factory contract", err)
@@ -387,14 +387,14 @@ func RunMirrorInitialCephFS(t *testing.T, host bool) {
 	if err := partial.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)
+	CephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)
 	resumed, err := mirror.AddDaemon(ctx, "resumed")
 	if err != nil || resumed == nil || mirror.Container != nil || len(mirror.Daemons()) != 1 || customizers.Load() != 3 || factoryCalls.Load() != 2 || !resumed.ProcessObserverBindingStatus().Available {
 		t.Fatal("explicit resumed process rebound original embedded handle/factory", err)
 	}
 	verify(added, checkpoint(added, "after-explicit-partial"), "zero-initial-partial-resumed")
-	if err := cephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, added}); err != nil {
+	if err := CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, added}); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("MIRROR_INITIAL_CEPHFS_COMPLETE source_fsid=%s destination_fsid=%s peer=%s customizers=%d raw_factory_calls=%d directories=%q", policy.fsids[0], policy.fsids[1], expected.PeerID, customizers.Load(), factoryCalls.Load(), mirror.Directories)
+	t.Logf("MIRROR_INITIAL_CEPHFS_COMPLETE source_fsid=%s destination_fsid=%s peer=%s customizers=%d raw_factory_calls=%d directories=%q", policy.FSIDs[0], policy.FSIDs[1], expected.PeerID, customizers.Load(), factoryCalls.Load(), mirror.Directories)
 }

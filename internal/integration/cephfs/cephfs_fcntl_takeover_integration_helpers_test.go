@@ -61,15 +61,15 @@ publish(len(operations)+2, closed=True)
 `
 
 type fcntlTakeoverRun struct {
-	*harness.CephFSActorRun
-	first harness.CephFSActorReceipt
+	*cephFSActorRun
+	first cephFSActorReceipt
 	ops   []string
 }
 
-func startFcntlTakeoverActor(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, ctr testcontainers.Container, work, path string, payload []byte, ops ...string) *fcntlTakeoverRun {
+func startFcntlTakeoverActor(t *testing.T, ctx context.Context, m *cephFSSingleMDS, ctr testcontainers.Container, work, path string, payload []byte, ops ...string) *fcntlTakeoverRun {
 	t.Helper()
-	run := harness.StartCephFSActor(t, ctx, m.Cluster, ctr, fcntlTakeoverActor, m.FS.FilesystemName, work, path, strings.Join(ops, ","), hex.EncodeToString(payload))
-	a := &fcntlTakeoverRun{CephFSActorRun: run, ops: ops}
+	run := startCephFSActor(t, ctx, m.Cluster, ctr, fcntlTakeoverActor, m.FS.FilesystemName, work, path, strings.Join(ops, ","), hex.EncodeToString(payload))
+	a := &fcntlTakeoverRun{cephFSActorRun: run, ops: ops}
 	a.first = a.read(t, ctx, 1)
 	if _, err := fcntlTakeoverFDView(a.first); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func startFcntlTakeoverActor(t *testing.T, ctx context.Context, m *harness.CephF
 	return a
 }
 
-func (a *fcntlTakeoverRun) read(t *testing.T, parent context.Context, phase int) harness.CephFSActorReceipt {
+func (a *fcntlTakeoverRun) read(t *testing.T, parent context.Context, phase int) cephFSActorReceipt {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 45*time.Second)
 	defer cancel()
@@ -89,7 +89,7 @@ func (a *fcntlTakeoverRun) read(t *testing.T, parent context.Context, phase int)
 	return r
 }
 
-func (a *fcntlTakeoverRun) op(t *testing.T, ctx context.Context, index int) harness.CephFSActorReceipt {
+func (a *fcntlTakeoverRun) op(t *testing.T, ctx context.Context, index int) cephFSActorReceipt {
 	t.Helper()
 	a.Open(t, ctx, "op-"+strconv.Itoa(index))
 	r := a.read(t, ctx, index+2)
@@ -117,7 +117,7 @@ func fuseTakeoverProcessStart(t *testing.T, ctx context.Context, ctr testcontain
 // Stop the actor callbacks before this callback (LIFO), then unmount while
 // the foreground FUSE process and MDS are still reachable. If unmount fails,
 // the separately registered process/container/cluster cleanups still run.
-func cleanFcntlTakeoverMount(ctx context.Context, m *harness.CephFSSingleMDS, mount *fuseMount) error {
+func cleanFcntlTakeoverMount(ctx context.Context, m *cephFSSingleMDS, mount *fuseMount) error {
 	result, err := m.Cluster.RunNativeCommand(ctx, mount.ctr, ceph.NativeCommand{
 		Argv: []string{"umount", mount.point}, Timeout: 30 * time.Second, MaxStdout: 4096, MaxStderr: 4096, Label: "owned FUSE unmount",
 	})
@@ -146,7 +146,7 @@ func cleanFcntlTakeoverMount(ctx context.Context, m *harness.CephFSSingleMDS, mo
 func testCephFSFcntlStandbyTakeover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
+	m := startCephFSSingleMDS(t, ctx, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
 	before, err := m.FS.MDSStatus(ctx)
 	if err != nil || len(before.Active) != 1 || len(before.Standby) != 1 || !before.Standby[0].Owned {
 		t.Fatalf("one owned active/standby required: %+v, %v", before, err)
@@ -315,7 +315,7 @@ finally:
 		t.Fatalf("contender unlock: %+v", r)
 	}
 	read, err := m.Cluster.RunNativeCommand(ctx, harness.ToolkitContainer(t, m.Cluster), ceph.NativeCommand{
-		Argv: []string{"python3", "-c", harness.CephFSIndependentReader, m.FS.FilesystemName, root + "/file"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent fcntl takeover reader",
+		Argv: []string{"python3", "-c", cephFSIndependentReader, m.FS.FilesystemName, root + "/file"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent fcntl takeover reader",
 	})
 	var independent struct {
 		Client uint64 `json:"client"`

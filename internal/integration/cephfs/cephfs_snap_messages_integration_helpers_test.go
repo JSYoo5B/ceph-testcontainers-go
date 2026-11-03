@@ -114,7 +114,7 @@ type snapMessageReceipt struct {
 func testCephFSSnapMessages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	toolkit := harness.ToolkitContainer(t, m.Cluster)
 	fsName := m.FS.FilesystemName
 	if _, err := m.Cluster.Ceph(ctx, "fs", "set", fsName, "allow_new_snaps", "true"); err != nil {
@@ -149,7 +149,7 @@ func testCephFSSnapMessages(t *testing.T) {
 	logfile := workdir + "/client.log"
 	base := []byte("snap-message-base\x00\xff")
 	updated := []byte("snap-message-updated\x01\xfe")
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSSnapWireActor, fsName, workdir,
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSSnapWireActor, fsName, workdir,
 		directory, directory+"/"+leaf, hex.EncodeToString(base), hex.EncodeToString(updated), asok, logfile)
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 || baseline.Inode == 0 || baseline.DirInode == 0 {

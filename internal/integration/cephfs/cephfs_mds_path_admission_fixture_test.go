@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The lookup records below are the values that TestCephFSClientMDSPathCut
@@ -34,7 +32,7 @@ const (
 // read from them.
 var lookupHistoricEvents = strings.Fields("initiated header_read throttled all_read dispatched creating lookup batch head acquired locks acquired locks acquired locks replying finishing request cleaned up request done")
 
-func historicOp(t *testing.T, client, tid uint64, description string, events ...string) harness.MDSRequestOp {
+func historicOp(t *testing.T, client, tid uint64, description string, events ...string) mdsRequestOp {
 	t.Helper()
 	entries := make([]map[string]string, 0, len(events))
 	for _, event := range events {
@@ -50,7 +48,7 @@ func historicOp(t *testing.T, client, tid uint64, description string, events ...
 	if err != nil {
 		t.Fatal(err)
 	}
-	ops, err := harness.ParseMDSRequestOps(dump)
+	ops, err := parseMDSRequestOps(dump)
 	if err != nil || len(ops) != 1 {
 		t.Fatalf("historic fixture: %v, %d ops", err, len(ops))
 	}
@@ -58,9 +56,9 @@ func historicOp(t *testing.T, client, tid uint64, description string, events ...
 }
 
 func TestCephFSMDSPathAdmitsOnlyThePendingMkdir(t *testing.T) {
-	pending := func(body string) []harness.ClientMDSRequest {
+	pending := func(body string) []clientMDSRequest {
 		t.Helper()
-		requests, err := harness.ParseClientMDSRequests([]byte(body))
+		requests, err := parseClientMDSRequests([]byte(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,11 +111,11 @@ func TestCephFSMDSPathRequiresTheMkdirToComplete(t *testing.T) {
 		t.Fatalf("a completed lookup counted as the mkdir: %v", err)
 	}
 	for name, test := range map[string]struct {
-		op    harness.MDSRequestOp
+		op    mdsRequestOp
 		found bool
 		other string
 	}{
-		"no record":           {op: harness.MDSRequestOp{}, found: false},
+		"no record":           {op: mdsRequestOp{}, found: false},
 		"other client":        {op: historicOp(t, client, tid, strings.Replace(mkdir, "client.4239", "client.4240", 1), safe...), found: true},
 		"other tid":           {op: historicOp(t, client, tid, strings.Replace(mkdir, ":4 ", ":5 ", 1), safe...), found: true},
 		"other name":          {op: historicOp(t, client, tid, strings.Replace(mkdir, "/created ", "/other ", 1), safe...), found: true},

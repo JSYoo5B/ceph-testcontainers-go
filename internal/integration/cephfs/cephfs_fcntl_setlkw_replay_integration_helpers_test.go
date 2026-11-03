@@ -30,7 +30,7 @@ import (
 func testCephFSFcntlSetlkwReplay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
+	m := startCephFSSingleMDS(t, ctx, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
 	before, err := m.FS.MDSStatus(ctx)
 	if err != nil || len(before.Active) != 1 || len(before.Standby) != 1 || !before.Standby[0].Owned {
 		t.Fatalf("one owned active and standby required: %+v, %v", before, err)

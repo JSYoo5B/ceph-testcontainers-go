@@ -119,7 +119,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatalf("original owned peer: %v %v", peers, err)
 	}
 	expected.PeerID = peers[0]
-	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != owners[directory] {
 		t.Fatal("public checkpoint disagrees with independent mapped owner")
@@ -140,15 +140,15 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	if err := policy.Check(ctx, "initial"); err != nil {
 		t.Fatal("positive original native policy", err)
 	}
-	original, err := harness.CephFSOriginalProcessRawInspect(ctx, oracle.Client, binding)
-	if err != nil || original.Missing || !harness.CephFSOriginalProcessLive(original.State) {
+	original, err := cephFSOriginalProcessRawInspect(ctx, oracle.Client, binding)
+	if err != nil || original.Missing || !cephFSOriginalProcessLive(original.State) {
 		t.Fatalf("positive original raw process witness: %+v %v", original, err)
 	}
 	watchers, err := harness.CephFSOriginalProcessWatchers(ctx, source, sourceFS.MetadataPool)
 	if err != nil {
 		t.Fatal("positive original complete watcher set", err)
 	}
-	session, err := harness.CephFSOriginalProcessSession(ctx, daemon, expected, true, 1, watchers)
+	session, err := cephFSOriginalProcessSession(ctx, daemon, expected, true, 1, watchers)
 	if err != nil || len(watchers) != 1 || watchers[session.Gid] != session.Address || ready.InstanceID != session.Gid {
 		t.Fatalf("complete original native watcher/assignment witness: %+v %+v %v", watchers, session, err)
 	}
@@ -163,13 +163,13 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	if err := daemon.Start(ctx); err != nil {
 		t.Fatal("pre-Begin start on original binding", err)
 	}
-	original, session = harness.CephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
-	owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	original, session = cephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready = harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != session.Gid || owners[directory] != session.Gid || daemon.ProcessObserverBindingStatus() != binding || factoryCalls.Load() != 1 || customizerCalls.Load() != 1 {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")
 	}
-	baseline := harness.CephFSOriginalProcessBaseline{StartedAt: original.State.StartedAt, InstanceID: session.Gid}
+	baseline := cephFSOriginalProcessBaseline{StartedAt: original.State.StartedAt, InstanceID: session.Gid}
 	originalPeer := expected.PeerID
 	originalControl := source.Container
 	control, err := source.ControlContainer(ctx)
@@ -259,7 +259,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 				t.Fatal("explicit original member removal before recovery acknowledgment", err)
 			}
 		}
-		harness.CephFSWaitOriginalProcessQuiescence(t, ctx, evidence, kind, daemon, oracle.Client, binding, baseline, policy, observe)
+		cephFSWaitOriginalProcessQuiescence(t, ctx, evidence, kind, daemon, oracle.Client, binding, baseline, policy, observe)
 		if evidence == "exited" {
 			backlog = checkpoint("after-original-process-quiescence")
 		}
@@ -314,7 +314,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 			t.Fatalf("fresh explicit removed-original acknowledgment %s: %+v %v", stage, attempt, err)
 		}
 		cephFSAssertProcessRecoveryAcknowledgment(t, attempt.Observation, kind, daemon, binding, baseline, expected, directory)
-		if err := harness.CephFSCheckOriginalProcessEvidence(ctx, "container-removed", kind, daemon, oracle.Client, binding, baseline, policy); err != nil || counter.originalRemovals(kind) != before || len(mirror.Daemons()) != 0 {
+		if err := cephFSCheckOriginalProcessEvidence(ctx, "container-removed", kind, daemon, oracle.Client, binding, baseline, policy); err != nil || counter.originalRemovals(kind) != before || len(mirror.Daemons()) != 0 {
 			t.Fatal("accepted acknowledgment changed original removal/evidence/inventory", err)
 		}
 		if complete, _ := legacyStatus(ctx); complete {
@@ -386,8 +386,8 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatalf("old receipt adopted recovery generation: legacy=%v process=%+v ack=%+v errors=%v/%v/%v", complete, oldProcess, oldAck, legacyErr, processErr, ackErr)
 	}
 	policy.Expected = expected
-	_, newSession := harness.CephFSWaitOriginalProcessFreshSession(t, ctx, newDaemon, oracle.Client, newBinding, policy, baseline.StartedAt, baseline.InstanceID)
-	owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	_, newSession := cephFSWaitOriginalProcessFreshSession(t, ctx, newDaemon, oracle.Client, newBinding, policy, baseline.StartedAt, baseline.InstanceID)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	if owners[directory] != newSession.Gid || newSession.Gid == baseline.InstanceID {
 		t.Fatal("recovery did not acquire a fresh native watcher/assignment")
 	}
@@ -426,7 +426,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	if initial.ID == backlog.ID || initial.ID == fresh.ID || backlog.ID == fresh.ID {
 		t.Fatal("original, backlog and fresh source checkpoints are not independent")
 	}
-	oldRaw, err := harness.CephFSOriginalProcessRawInspect(ctx, oracle.Client, binding)
+	oldRaw, err := cephFSOriginalProcessRawInspect(ctx, oracle.Client, binding)
 	watchers, watcherErr := harness.CephFSOriginalProcessWatchers(ctx, source, sourceFS.MetadataPool)
 	if err != nil || !oldRaw.Missing || watcherErr != nil || len(watchers) != 1 || watchers[newSession.Gid] != newSession.Address {
 		t.Fatal("recovery lost independent old-CID absence/new watcher proof", err, watcherErr)
@@ -453,7 +453,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	t.Logf("CEPHFS_PROCESS_QUIESCENCE_RECOVERED %s", log)
 }
 
-func cephFSAssertProcessRecoveryAcknowledgment(t *testing.T, observation cephfsmirror.ProcessQuiescenceStatus, kind string, daemon *cephfsmirror.Daemon, binding cephfsmirror.ProcessBindingStatus, baseline harness.CephFSOriginalProcessBaseline, expected cephfsmirror.DirectoryStatus, directory string) {
+func cephFSAssertProcessRecoveryAcknowledgment(t *testing.T, observation cephfsmirror.ProcessQuiescenceStatus, kind string, daemon *cephfsmirror.Daemon, binding cephfsmirror.ProcessBindingStatus, baseline cephFSOriginalProcessBaseline, expected cephfsmirror.DirectoryStatus, directory string) {
 	t.Helper()
 	wantDirectory := ""
 	if kind == "directory" {

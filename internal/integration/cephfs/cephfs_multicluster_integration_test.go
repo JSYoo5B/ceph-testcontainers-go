@@ -6,13 +6,11 @@ package cephfs_test
 
 import (
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // This exercises two separate mechanisms: an application snapshot archive and
 // the native cephfs-mirror daemon. The archive is deliberately a small fixture
 // format, not a general-purpose filesystem backup utility.
 func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
-	harness.RunMultiClusterCephFSSnapshotMirrorAndBackup(t)
+	runMultiClusterCephFSSnapshotMirrorAndBackup(t)
 }

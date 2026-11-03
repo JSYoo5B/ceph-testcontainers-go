@@ -52,9 +52,9 @@ func mutate(t *testing.T, line, from, to string) string {
 	return strings.Replace(line, from, to, 1)
 }
 
-func readySessions(t *testing.T, lines ...string) []harness.ReadySession {
+func readySessions(t *testing.T, lines ...string) []readySession {
 	t.Helper()
-	sessions, unusable := harness.ParseReadySessions(lines)
+	sessions, unusable := parseReadySessions(lines)
 	if len(unusable) != 0 || len(sessions) != len(lines) {
 		t.Fatalf("%d sessions from %d lines, unusable %v", len(sessions), len(lines), unusable)
 	}
@@ -75,7 +75,7 @@ func TestParseReadySessionsSavedLines(t *testing.T) {
 		})
 	}
 	last := readySessions(t, tentacleMDSReady[2])[0]
-	want := harness.ReadySession{Line: tentacleMDSReady[2], Conn: "0xaaaafafb5000", Mode: "unknown", PeerGlobalSeq: 16, ConnectSeq: 2, Revision1: true,
+	want := readySession{Line: tentacleMDSReady[2], Conn: "0xaaaafafb5000", Mode: "unknown", PeerGlobalSeq: 16, ConnectSeq: 2, Revision1: true,
 		PeerType: "client", PeerID: "4229", ClientCookie: "b0dd0c933d57dfbf", ServerCookie: "7d57e11b3399ed44", InSeq: 46, OutSeq: 34}
 	if last != want {
 		t.Errorf("got %+v\nwant %+v", last, want)
@@ -98,13 +98,13 @@ func TestParseReadySessionsRefusesIncompleteLines(t *testing.T) {
 		{"no out_seq (synthetic)", mutate(t, line, " out_seq=21", "")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			sessions, unusable := harness.ParseReadySessions([]string{c.line})
+			sessions, unusable := parseReadySessions([]string{c.line})
 			if len(sessions) != 0 || len(unusable) != 1 || !strings.HasSuffix(unusable[0], c.line) {
 				t.Fatalf("sessions %+v, unusable %v", sessions, unusable)
 			}
 		})
 	}
-	if sessions, unusable := harness.ParseReadySessions([]string{"not a READY line", strings.Replace(line, "s=READY", "s=STANDBY", 1)}); len(sessions) != 0 || len(unusable) != 0 {
+	if sessions, unusable := parseReadySessions([]string{"not a READY line", strings.Replace(line, "s=READY", "s=STANDBY", 1)}); len(sessions) != 0 || len(unusable) != 0 {
 		t.Fatalf("other lines selected: %+v %v", sessions, unusable)
 	}
 }

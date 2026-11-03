@@ -21,18 +21,18 @@ import (
 // cephFSStandbyFailover is a cluster whose filesystem has one active, owned
 // MDS and one owned standby.
 type cephFSStandbyFailover struct {
-	*harness.CephFSSingleMDS
+	*cephFSSingleMDS
 	standby cephfs.MDSStatus
 }
 
 func startCephFSStandbyFailover(t *testing.T, ctx context.Context) *cephFSStandbyFailover {
 	t.Helper()
-	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)), cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))
 	status, err := m.FS.MDSStatus(ctx)
 	if err != nil || len(status.Standby) != 1 || len(status.StandbyReplay) != 0 || !status.Standby[0].Owned || !m.MDS.Owned || len(m.FS.MDSs()) != 2 {
 		t.Fatalf("want one owned active MDS and one owned standby: %+v, %v", status, err)
 	}
-	return &cephFSStandbyFailover{CephFSSingleMDS: m, standby: status.Standby[0]}
+	return &cephFSStandbyFailover{cephFSSingleMDS: m, standby: status.Standby[0]}
 }
 
 // failToStandby SIGKILLs the active MDS, which leaves it no chance to hand
@@ -68,13 +68,13 @@ func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context)
 		if err != nil {
 			return nil, false, nil
 		}
-		active, ok := harness.ActiveRank(status, 0)
+		active, ok := activeRank(status, 0)
 		return status, ok && len(status.Active) == 1 && active.State == "up:active" && active.GID != old.GID, nil
 	})
 	if err != nil {
 		t.Fatalf("the standby did not take rank 0: last %+v: %v", seen.Value, err)
 	}
-	current, _ := harness.ActiveRank(seen.Value, 0)
+	current, _ := activeRank(seen.Value, 0)
 	if current.Name != m.standby.Name || current.GID != m.standby.GID || !current.Owned {
 		t.Fatalf("rank 0 is not served by standby mds.%s (GID %d): %+v", m.standby.Name, m.standby.GID, seen.Value)
 	}
@@ -92,7 +92,7 @@ func (m *cephFSStandbyFailover) noEviction(t *testing.T, ctx context.Context, be
 		t.Fatal(err)
 	}
 	for client, session := range before {
-		if after := harness.CephFSRetainedSession(t, ctx, m.FS, client, 0); after.Address != session.Address || after.PID != session.PID {
+		if after := cephFSRetainedSession(t, ctx, m.FS, client, 0); after.Address != session.Address || after.PID != session.PID {
 			t.Fatalf("client.%d session %+v, before %+v", client, after, session)
 		}
 		if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
@@ -106,20 +106,20 @@ func (m *cephFSStandbyFailover) noEviction(t *testing.T, ctx context.Context, be
 // replies before it cleans the request up and moves it into its history, so
 // a dump read right after the client's reply can still lack it; the history
 // is observed until the request is there.
-func (m *cephFSStandbyFailover) historicFlock(t *testing.T, ctx context.Context, client uint64) harness.MDSRequestOp {
+func (m *cephFSStandbyFailover) historicFlock(t *testing.T, ctx context.Context, client uint64) mdsRequestOp {
 	t.Helper()
 	var last []byte
-	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (harness.MDSRequestOp, bool, error) {
+	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (mdsRequestOp, bool, error) {
 		data, err := m.Cluster.Ceph(probeCtx, "tell", "mds."+m.MDS.Name, "dump_historic_ops")
 		if err != nil {
-			return harness.MDSRequestOp{}, false, err
+			return mdsRequestOp{}, false, err
 		}
 		last = data
-		ops, err := harness.ParseMDSRequestOps(data)
+		ops, err := parseMDSRequestOps(data)
 		if err != nil {
-			return harness.MDSRequestOp{}, false, fmt.Errorf("dump_historic_ops: %v: %.1024s", err, data)
+			return mdsRequestOp{}, false, fmt.Errorf("dump_historic_ops: %v: %.1024s", err, data)
 		}
-		op, found := harness.FindMDSRequest(ops, client, "setfilelock", 0)
+		op, found := findMDSRequest(ops, client, "setfilelock", 0)
 		return op, found, nil
 	})
 	if err != nil {
@@ -145,14 +145,14 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	defer cancel()
 	m := startCephFSStandbyFailover(t, ctx)
 	const path = "/failover-locks/file"
-	holder := startFlockActor(t, ctx, m.CephFSSingleMDS, m.Client, "/tmp/failover-holder", path, "ex-nb", "un", "ex-nb")
-	contender := startFlockActor(t, ctx, m.CephFSSingleMDS, harness.ToolkitContainer(t, m.Cluster), "/tmp/failover-contender", path, "ex-nb", "ex-nb", "ex", "un")
+	holder := startFlockActor(t, ctx, m.cephFSSingleMDS, m.Client, "/tmp/failover-holder", path, "ex-nb", "un", "ex-nb")
+	contender := startFlockActor(t, ctx, m.cephFSSingleMDS, harness.ToolkitContainer(t, m.Cluster), "/tmp/failover-contender", path, "ex-nb", "ex-nb", "ex", "un")
 	if holder.client == contender.client || holder.inode != contender.inode {
 		t.Fatalf("holder client.%d inode %d, contender client.%d inode %d", holder.client, holder.inode, contender.client, contender.inode)
 	}
 	sessions := map[uint64]cephfssession.Session{
-		holder.client:    harness.CephFSRetainedSession(t, ctx, m.FS, holder.client, 0),
-		contender.client: harness.CephFSRetainedSession(t, ctx, m.FS, contender.client, 0),
+		holder.client:    cephFSRetainedSession(t, ctx, m.FS, holder.client, 0),
+		contender.client: cephFSRetainedSession(t, ctx, m.FS, contender.client, 0),
 	}
 
 	if locked := holder.run(t, ctx, 0); locked.Errno != 0 {
@@ -167,7 +167,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	m.noEviction(t, ctx, sessions)
 	raw := map[uint64]string{}
 	for client := range sessions {
-		raw[client] = harness.CephFSRawSessionSummary(harness.CephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client))
+		raw[client] = cephFSRawSessionSummary(cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client))
 	}
 
 	refused := contender.run(t, ctx, 1)
@@ -181,7 +181,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	}
 
 	contender.start(t, ctx, 2)
-	waiting := mdsWaitingFlock(t, ctx, m.CephFSSingleMDS, flockWait{client: contender.client, rule: 2, inode: holder.inode})
+	waiting := mdsWaitingFlock(t, ctx, m.cephFSSingleMDS, flockWait{client: contender.client, rule: 2, inode: holder.inode})
 	// The receipt is checked after the MDS showed the request waiting, so a
 	// lock granted at once would already have published it.
 	if contender.Published(ctx, 4) {
@@ -194,7 +194,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	if granted.Errno != 0 {
 		t.Fatalf("contender's blocking lock: %+v, want 0 after the unlock", granted)
 	}
-	mdsFlockGone(t, ctx, m.CephFSSingleMDS, contender.client)
+	mdsFlockGone(t, ctx, m.cephFSSingleMDS, contender.client)
 	reversed := holder.run(t, ctx, 2)
 	if reversed.Errno != 11 {
 		t.Fatalf("former holder's non-blocking lock while the contender holds it: %+v, want EWOULDBLOCK (11)", reversed)
@@ -219,7 +219,7 @@ type mdsLogCounters struct {
 	ExpirePos *uint64 `json:"expos"`
 }
 
-func mdsLog(m *harness.CephFSSingleMDS, t *testing.T, ctx context.Context) mdsLogCounters {
+func mdsLog(m *cephFSSingleMDS, t *testing.T, ctx context.Context) mdsLogCounters {
 	t.Helper()
 	out, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "perf", "dump", "mds_log")
 	if err != nil {
@@ -241,7 +241,7 @@ func (c mdsLogCounters) String() string {
 // dirfragDentries lists the dentries that the metadata pool holds for an
 // unfragmented directory: the omap keys of its dirfrag object, without the
 // "_head" suffix. It reads RADOS directly, not through an MDS.
-func dirfragDentries(m *harness.CephFSSingleMDS, t *testing.T, ctx context.Context, directory uint64) []string {
+func dirfragDentries(m *cephFSSingleMDS, t *testing.T, ctx context.Context, directory uint64) []string {
 	t.Helper()
 	object := fmt.Sprintf("%x.00000000", directory)
 	out := harness.ExecOutput(t, ctx, m.Client, "rados", "-p", m.FS.MetadataPool, "listomapkeys", object)
@@ -259,7 +259,7 @@ func dirfragDentries(m *harness.CephFSSingleMDS, t *testing.T, ctx context.Conte
 
 // flushJournal makes the current MDS flush its journal and write every dirty
 // object back to the metadata pool.
-func flushJournal(m *harness.CephFSSingleMDS, t *testing.T, ctx context.Context) {
+func flushJournal(m *cephFSSingleMDS, t *testing.T, ctx context.Context) {
 	t.Helper()
 	if out, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "flush", "journal"); err != nil {
 		t.Fatalf("flush journal on mds.%s: %v: %.512s", m.MDS.Name, err, out)
@@ -286,18 +286,18 @@ func testCephFSJournaledRenameAcrossMDSCrash(t *testing.T) {
 	defer cancel()
 	m := startCephFSStandbyFailover(t, ctx)
 	const workdir = "/tmp/journaled-actor"
-	h := &harness.CephFSUnsafeHold{CephFSSingleMDS: m.CephFSSingleMDS, Asok: workdir + "/client.asok"}
-	h.Actor = harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, harness.CephFSUnsafeActor, m.FS.FilesystemName, workdir, "/unsafe", "/unsafe/source", "/unsafe/target", h.Asok)
+	h := &cephFSUnsafeHold{cephFSSingleMDS: m.cephFSSingleMDS, Asok: workdir + "/client.asok"}
+	h.Actor = startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSUnsafeActor, m.FS.FilesystemName, workdir, "/unsafe", "/unsafe/source", "/unsafe/target", h.Asok)
 	h.Baseline = h.Actor.Receipt(t, ctx, 1)
 	if h.Baseline.Client == 0 || h.Baseline.Inode == 0 || h.Baseline.DirInode == 0 || h.Baseline.Size != int64(len("unsafe-window")) {
 		t.Fatalf("baseline receipt = %+v", h.Baseline)
 	}
-	session := harness.CephFSRetainedSession(t, ctx, m.FS, h.Baseline.Client, 0)
-	flushJournal(m.CephFSSingleMDS, t, ctx)
-	if written := dirfragDentries(m.CephFSSingleMDS, t, ctx, h.Baseline.DirInode); !slices.Equal(written, []string{"source"}) {
+	session := cephFSRetainedSession(t, ctx, m.FS, h.Baseline.Client, 0)
+	flushJournal(m.cephFSSingleMDS, t, ctx)
+	if written := dirfragDentries(m.cephFSSingleMDS, t, ctx, h.Baseline.DirInode); !slices.Equal(written, []string{"source"}) {
 		t.Fatalf("after a journal flush the dirfrag of directory %d holds %v, want [source]", h.Baseline.DirInode, written)
 	}
-	logBefore := mdsLog(m.CephFSSingleMDS, t, ctx)
+	logBefore := mdsLog(m.cephFSSingleMDS, t, ctx)
 
 	h.Actor.Open(t, ctx, "rename")
 	h.Renamed = h.Actor.Receipt(t, ctx, 2)
@@ -307,52 +307,52 @@ func testCephFSJournaledRenameAcrossMDSCrash(t *testing.T) {
 	// The rename is journaled when the MDS's history has it committed and
 	// replied and the client holds no request any more.
 	type journaled struct {
-		op      harness.MDSRequestOp
-		pending []harness.ClientMDSRequest
+		op      mdsRequestOp
+		pending []clientMDSRequest
 	}
 	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (journaled, bool, error) {
 		data, err := m.Cluster.Ceph(probeCtx, "tell", "mds."+m.MDS.Name, "dump_historic_ops")
 		if err != nil {
 			return journaled{}, false, err
 		}
-		ops, err := harness.ParseMDSRequestOps(data)
+		ops, err := parseMDSRequestOps(data)
 		if err != nil {
 			return journaled{}, false, fmt.Errorf("%w: %.512s", err, data)
 		}
-		requests, err := harness.QueryClientMDSRequests(probeCtx, m.Cluster, m.Client, h.Asok)
+		requests, err := queryClientMDSRequests(probeCtx, m.Cluster, m.Client, h.Asok)
 		if err != nil {
 			return journaled{}, false, err
 		}
-		op, found := harness.FindMDSRequest(ops, h.Baseline.Client, "rename", 0)
+		op, found := findMDSRequest(ops, h.Baseline.Client, "rename", 0)
 		state := journaled{op: op, pending: requests}
-		return state, found && harness.RenameSafe(harness.JoinUnsafeRename(nil, requests, h.Baseline.Client, op.TypeData.ReqID.TID), ops, h.Baseline.Client), nil
+		return state, found && renameSafe(joinUnsafeRename(nil, requests, h.Baseline.Client, op.TypeData.ReqID.TID), ops, h.Baseline.Client), nil
 	})
 	if err != nil {
 		t.Fatalf("the rename was not journaled and replied: last %q %v, client %+v: %v", seen.Value.op.Description, seen.Value.op.Events(), seen.Value.pending, err)
 	}
 	committed := seen.Value.op
 	tid := committed.TypeData.ReqID.TID
-	logAfter := mdsLog(m.CephFSSingleMDS, t, ctx)
+	logAfter := mdsLog(m.cephFSSingleMDS, t, ctx)
 	if *logAfter.Submitted <= *logBefore.Submitted || *logAfter.WritePos <= *logBefore.WritePos {
 		t.Fatalf("mds.%s journal did not grow with the rename: before %s, after %s", m.MDS.Name, logBefore, logAfter)
 	}
-	if written := dirfragDentries(m.CephFSSingleMDS, t, ctx, h.Baseline.DirInode); !slices.Equal(written, []string{"source"}) {
+	if written := dirfragDentries(m.cephFSSingleMDS, t, ctx, h.Baseline.DirInode); !slices.Equal(written, []string{"source"}) {
 		t.Fatalf("the rename reached the dirfrag of directory %d before the crash: %v", h.Baseline.DirInode, written)
 	}
 
 	old, took := m.failToStandby(t, ctx)
-	replayed := mdsLog(m.CephFSSingleMDS, t, ctx)
+	replayed := mdsLog(m.cephFSSingleMDS, t, ctx)
 	// The replay starts at the journal's expire position, which must lie
 	// before the rename's entry, and ends at or past its end.
 	if *replayed.Replayed == 0 || *replayed.ExpirePos > *logBefore.WritePos || *replayed.WritePos < *logAfter.WritePos {
 		t.Fatalf("new mds.%s did not replay the journal up to %d: %s", m.MDS.Name, *logAfter.WritePos, replayed)
 	}
 	m.noEviction(t, ctx, map[uint64]cephfssession.Session{h.Baseline.Client: session})
-	raw := harness.CephFSRawSessionSummary(harness.CephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, h.Baseline.Client))
+	raw := cephFSRawSessionSummary(cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, h.Baseline.Client))
 	h.Finish(t, ctx)
 	reader := h.ReadNamespace(t, ctx)
-	flushJournal(m.CephFSSingleMDS, t, ctx)
-	written := dirfragDentries(m.CephFSSingleMDS, t, ctx, h.Baseline.DirInode)
+	flushJournal(m.cephFSSingleMDS, t, ctx)
+	written := dirfragDentries(m.cephFSSingleMDS, t, ctx, h.Baseline.DirInode)
 	if !slices.Equal(written, []string{"target"}) {
 		t.Fatalf("after the new MDS flushed, the dirfrag of directory %d holds %v, want [target]", h.Baseline.DirInode, written)
 	}

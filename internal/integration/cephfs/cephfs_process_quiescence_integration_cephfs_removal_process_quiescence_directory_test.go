@@ -13,7 +13,7 @@ import (
 func TestMultiClusterCephFSOriginalProcessQuiescence(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		t.Run(mode.Name, func(t *testing.T) {
-			t.Run("directory", func(t *testing.T) { harness.RunCephFSOriginalProcessQuiescence(t, mode.Host, "directory") })
+			t.Run("directory", func(t *testing.T) { runCephFSOriginalProcessQuiescence(t, mode.Host, "directory") })
 		})
 	}
 }

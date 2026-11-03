@@ -70,11 +70,11 @@ func requireMDSMkdirExposed(t *testing.T, ctx context.Context, cluster *ceph.Con
 			if err != nil {
 				return "", false, fmt.Errorf("%s of mds.%s: %w", dump, mds, err)
 			}
-			ops, err := harness.ParseMDSRequestOps(data)
+			ops, err := parseMDSRequestOps(data)
 			if err != nil {
 				return "", false, fmt.Errorf("%s of mds.%s: %w", dump, mds, err)
 			}
-			if op, ok := harness.FindMDSRequest(ops, clientID, "mkdir", tid); ok {
+			if op, ok := findMDSRequest(ops, clientID, "mkdir", tid); ok {
 				return fmt.Sprintf("%s %v", dump, op.Events()), true, nil
 			}
 		}
@@ -244,7 +244,7 @@ type mdsPathSample struct {
 	ClientState  string
 	RenewSeq     uint64
 	CapTTL       string
-	Pending      []harness.ClientMDSRequest
+	Pending      []clientMDSRequest
 	MDSInodeSize uint64
 }
 
@@ -271,13 +271,13 @@ func containerIP(t *testing.T, ctx context.Context, ctr testcontainers.Container
 }
 
 // mdsOps reads one of an MDS's request dumps.
-func mdsOps(t *testing.T, ctx context.Context, cluster *ceph.Container, mds, dump string) []harness.MDSRequestOp {
+func mdsOps(t *testing.T, ctx context.Context, cluster *ceph.Container, mds, dump string) []mdsRequestOp {
 	t.Helper()
 	data, err := cluster.Ceph(ctx, "tell", "mds."+mds, dump)
 	if err != nil {
 		t.Fatalf("%s of mds.%s: %v", dump, mds, err)
 	}
-	ops, err := harness.ParseMDSRequestOps(data)
+	ops, err := parseMDSRequestOps(data)
 	if err != nil {
 		t.Fatalf("%s of mds.%s: %v: %.1024s", dump, mds, err, data)
 	}
@@ -285,14 +285,14 @@ func mdsOps(t *testing.T, ctx context.Context, cluster *ceph.Container, mds, dum
 }
 
 // findClientRequest returns the client's request with tid, of any operation.
-func findClientRequest(ops []harness.MDSRequestOp, client, tid uint64) (harness.MDSRequestOp, bool) {
+func findClientRequest(ops []mdsRequestOp, client, tid uint64) (mdsRequestOp, bool) {
 	for _, op := range ops {
 		reqid := op.TypeData.ReqID
 		if reqid.Entity.Type == "client" && reqid.Entity.Num == client && reqid.TID == tid {
 			return op, true
 		}
 	}
-	return harness.MDSRequestOp{}, false
+	return mdsRequestOp{}, false
 }
 
 // testCephFSClientMDSPathCut cuts one direction of the path between a
@@ -325,7 +325,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	netem := harness.NetemImage(t)
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	cluster, client, fs := m.Cluster, m.Client, m.FS
 
 	// With a 30 s session timeout the client renews every 10 s, and the MDS
@@ -352,7 +352,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	whole := append(append([]byte{}, base...), tail...)
 	const workdir = "/tmp/mds-path-actor"
 	asok := workdir + "/client.asok"
-	actor := harness.StartCephFSActor(t, ctx, cluster, client, cephFSPathCutActor, fs.FilesystemName, workdir,
+	actor := startCephFSActor(t, ctx, cluster, client, cephFSPathCutActor, fs.FilesystemName, workdir,
 		"/pathcut", "/pathcut/file", "/pathcut/created", asok, hex.EncodeToString(base), hex.EncodeToString(tail), direction.trigger())
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len(base)) {
@@ -482,7 +482,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		actor.Open(t, ctx, "metadata")
 		actor.Receipt(t, ctx, 2)
 	}
-	submitted, err := harness.Observe(ctx, 30*time.Second, 20*time.Second, 500*time.Millisecond, func(probeCtx context.Context) ([]harness.ClientMDSRequest, bool, error) {
+	submitted, err := harness.Observe(ctx, 30*time.Second, 20*time.Second, 500*time.Millisecond, func(probeCtx context.Context) ([]clientMDSRequest, bool, error) {
 		requests, err := clientRequests(probeCtx, cluster, client, asok)
 		return requests, err == nil && len(requests) > 0, err
 	})
@@ -518,14 +518,14 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	var samples []mdsPathSample
 	for deadline := cutAt.Add(50 * time.Second); ; {
 		sample := mdsPathSample{At: time.Since(cutAt).Round(time.Second)}
-		raw := harness.CephFSRawSession(t, ctx, cluster, m.MDS.Name, baseline.Client)
+		raw := cephFSRawSession(t, ctx, cluster, m.MDS.Name, baseline.Client)
 		_ = json.Unmarshal(raw["state"], &sample.MDSState)
 		own, err := readClientMDSSessions(ctx, cluster, client, asok)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sample.ClientState, sample.RenewSeq, sample.CapTTL = own.Sessions[0].State, own.Sessions[0].RenewSeq, own.Sessions[0].CapTTL
-		sample.Pending = harness.ClientMDSRequests(t, ctx, cluster, client, asok)
+		sample.Pending = clientMDSRequests(t, ctx, cluster, client, asok)
 		sample.MDSInodeSize = m.MDSInodeSize(t, ctx, m.MDS.Name, baseline.Inode)
 		if actor.Published(ctx, 4) {
 			t.Fatalf("the metadata request returned during the cut: %+v", actor.Receipt(t, ctx, 4))
@@ -588,7 +588,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	}
 	// The mkdir can return on the early reply; the client drops the request
 	// when the safe reply arrives.
-	settled, err := harness.Observe(ctx, 2*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) ([]harness.ClientMDSRequest, bool, error) {
+	settled, err := harness.Observe(ctx, 2*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) ([]clientMDSRequest, bool, error) {
 		requests, err := clientRequests(probeCtx, cluster, client, asok)
 		return requests, err == nil && len(requests) == 0, err
 	})
@@ -659,7 +659,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 
 // clientRequests is ClientMDSRequests for an observe probe: it returns its
 // error instead of failing the test.
-func clientRequests(ctx context.Context, cluster *ceph.Container, client testcontainers.Container, asok string) ([]harness.ClientMDSRequest, error) {
+func clientRequests(ctx context.Context, cluster *ceph.Container, client testcontainers.Container, asok string) ([]clientMDSRequest, error) {
 	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 		Argv: []string{"ceph", "--admin-daemon", asok, "mds_requests"}, Timeout: 15 * time.Second,
 		MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "client mds_requests",
@@ -667,7 +667,7 @@ func clientRequests(ctx context.Context, cluster *ceph.Container, client testcon
 	if err != nil || result.ExitCode != 0 {
 		return nil, fmt.Errorf("client mds_requests: exit=%d err=%v stderr=%.512s", result.ExitCode, err, result.Stderr)
 	}
-	return harness.ParseClientMDSRequests(result.Stdout)
+	return parseClientMDSRequests(result.Stdout)
 }
 
 type cephFSObject struct {

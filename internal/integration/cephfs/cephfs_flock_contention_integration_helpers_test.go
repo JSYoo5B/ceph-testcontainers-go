@@ -62,20 +62,20 @@ publish(len(operations) + 2, closed=True, **closing)
 
 // flockActor is one cephFSFlockActor with its operations.
 type flockActor struct {
-	*harness.CephFSActorRun
+	*cephFSActorRun
 	client uint64
 	inode  uint64
 	ops    []string
 }
 
-func startFlockActor(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, in testcontainers.Container, workdir, path string, ops ...string) *flockActor {
+func startFlockActor(t *testing.T, ctx context.Context, m *cephFSSingleMDS, in testcontainers.Container, workdir, path string, ops ...string) *flockActor {
 	t.Helper()
-	run := harness.StartCephFSActor(t, ctx, m.Cluster, in, cephFSFlockActor, m.FS.FilesystemName, workdir, path, strings.Join(ops, ","))
+	run := startCephFSActor(t, ctx, m.Cluster, in, cephFSFlockActor, m.FS.FilesystemName, workdir, path, strings.Join(ops, ","))
 	opened := run.Receipt(t, ctx, 1)
 	if opened.Client == 0 || opened.Inode == 0 {
 		t.Fatalf("flock actor receipt 1 = %+v", opened)
 	}
-	return &flockActor{CephFSActorRun: run, client: opened.Client, inode: opened.Inode, ops: ops}
+	return &flockActor{cephFSActorRun: run, client: opened.Client, inode: opened.Inode, ops: ops}
 }
 
 // start opens the gate of operation index without waiting for its receipt.
@@ -85,7 +85,7 @@ func (a *flockActor) start(t *testing.T, ctx context.Context, index int) {
 }
 
 // run runs operation index and returns its receipt.
-func (a *flockActor) run(t *testing.T, ctx context.Context, index int) harness.CephFSActorReceipt {
+func (a *flockActor) run(t *testing.T, ctx context.Context, index int) cephFSActorReceipt {
 	t.Helper()
 	a.start(t, ctx, index)
 	return a.Receipt(t, ctx, index+2)
@@ -128,7 +128,7 @@ type flockWait struct {
 // inode) is returned with found false, so that a timeout reports it. A request
 // of w at an earlier stage, such as "acquired locks" while the MDS still
 // evaluates it, is found but not waiting.
-func (w flockWait) find(ops []harness.MDSRequestOp) (seen waitingFlock, found, waiting bool) {
+func (w flockWait) find(ops []mdsRequestOp) (seen waitingFlock, found, waiting bool) {
 	prefix := fmt.Sprintf("client_request(client.%d:", w.client)
 	shape := fmt.Sprintf("rule %d, type 2,", w.rule)
 	inode := fmt.Sprintf("#0x%x ", w.inode)
@@ -149,12 +149,12 @@ func (w flockWait) find(ops []harness.MDSRequestOp) (seen waitingFlock, found, w
 }
 
 // mdsFlockOps reads the MDS's requests in flight.
-func mdsFlockOps(ctx context.Context, m *harness.CephFSSingleMDS) ([]harness.MDSRequestOp, error) {
+func mdsFlockOps(ctx context.Context, m *cephFSSingleMDS) ([]mdsRequestOp, error) {
 	data, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "dump_ops_in_flight")
 	if err != nil {
 		return nil, err
 	}
-	ops, err := harness.ParseMDSRequestOps(data)
+	ops, err := parseMDSRequestOps(data)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %.512s", err, data)
 	}
@@ -165,7 +165,7 @@ func mdsFlockOps(ctx context.Context, m *harness.CephFSSingleMDS) ([]harness.MDS
 // holds w's request at the waiting stage. The bounded poll itself requires the
 // stage: a request still at an earlier stage keeps the poll going, and a
 // timeout reports the last stage seen.
-func mdsWaitingFlock(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, w flockWait) waitingFlock {
+func mdsWaitingFlock(t *testing.T, ctx context.Context, m *cephFSSingleMDS, w flockWait) waitingFlock {
 	t.Helper()
 	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (waitingFlock, bool, error) {
 		ops, err := mdsFlockOps(probeCtx, m)
@@ -183,14 +183,14 @@ func mdsWaitingFlock(t *testing.T, ctx context.Context, m *harness.CephFSSingleM
 
 // mdsFlockGone observes, bounded, the MDS's dump_ops_in_flight until it holds
 // no setfilelock request of client.
-func mdsFlockGone(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, client uint64) {
+func mdsFlockGone(t *testing.T, ctx context.Context, m *cephFSSingleMDS, client uint64) {
 	t.Helper()
 	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (waitingFlock, bool, error) {
 		ops, err := mdsFlockOps(probeCtx, m)
 		if err != nil {
 			return waitingFlock{}, false, err
 		}
-		op, found := harness.FindMDSRequest(ops, client, "setfilelock", 0)
+		op, found := findMDSRequest(ops, client, "setfilelock", 0)
 		if !found {
 			return waitingFlock{}, true, nil
 		}
@@ -213,15 +213,15 @@ func mdsFlockGone(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS,
 func testCephFSFlockContention(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	const path = "/locks/file"
 	holder := startFlockActor(t, ctx, m, m.Client, "/tmp/flock-holder", path, "ex-nb", "un", "ex-nb")
 	contender := startFlockActor(t, ctx, m, harness.ToolkitContainer(t, m.Cluster), "/tmp/flock-contender", path, "ex-nb", "ex", "un")
 	if holder.client == contender.client || holder.inode != contender.inode {
 		t.Fatalf("holder client.%d inode %d, contender client.%d inode %d", holder.client, holder.inode, contender.client, contender.inode)
 	}
-	holderSession := harness.CephFSRetainedSession(t, ctx, m.FS, holder.client, 0)
-	contenderSession := harness.CephFSRetainedSession(t, ctx, m.FS, contender.client, 0)
+	holderSession := cephFSRetainedSession(t, ctx, m.FS, holder.client, 0)
+	contenderSession := cephFSRetainedSession(t, ctx, m.FS, contender.client, 0)
 
 	if locked := holder.run(t, ctx, 0); locked.Errno != 0 {
 		t.Fatalf("holder's exclusive lock: %+v", locked)
@@ -269,7 +269,7 @@ func testCephFSFlockContention(t *testing.T) {
 		before cephfssession.Session
 		client uint64
 	}{{holderSession, holder.client}, {contenderSession, contender.client}} {
-		if after := harness.CephFSRetainedSession(t, ctx, m.FS, session.client, 0); after.Address != session.before.Address || after.PID != session.before.PID {
+		if after := cephFSRetainedSession(t, ctx, m.FS, session.client, 0); after.Address != session.before.Address || after.PID != session.before.PID {
 			t.Fatalf("client.%d session %+v, before %+v", session.client, after, session.before)
 		}
 		if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.before.Address }) {

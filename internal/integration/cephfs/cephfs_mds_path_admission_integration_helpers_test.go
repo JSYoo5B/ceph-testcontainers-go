@@ -5,8 +5,6 @@ package cephfs_test
 import (
 	"fmt"
 	"strings"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // admitPendingMkdir admits the one request that the path cut is meant to
@@ -15,16 +13,16 @@ import (
 // dentry lease on the way to the parent ran out, and the mkdir itself is not
 // sent until it returns, so a cut that holds a lookup has not exposed the
 // mkdir to the MDS at all. A missing operation or tid is no evidence either.
-func admitPendingMkdir(requests []harness.ClientMDSRequest) (harness.ClientMDSRequest, error) {
+func admitPendingMkdir(requests []clientMDSRequest) (clientMDSRequest, error) {
 	if len(requests) != 1 {
-		return harness.ClientMDSRequest{}, fmt.Errorf("the client lists %d pending requests, want the one mkdir: %+v", len(requests), requests)
+		return clientMDSRequest{}, fmt.Errorf("the client lists %d pending requests, want the one mkdir: %+v", len(requests), requests)
 	}
 	request := requests[0]
 	switch {
 	case request.Op == "" || request.TID == 0:
-		return harness.ClientMDSRequest{}, fmt.Errorf("the client's pending request has no operation or tid: %+v", request)
+		return clientMDSRequest{}, fmt.Errorf("the client's pending request has no operation or tid: %+v", request)
 	case request.Op != "mkdir":
-		return harness.ClientMDSRequest{}, fmt.Errorf("the client's pending request is a %s, not the mkdir: the mkdir has not reached the cut (tid %d): %+v", request.Op, request.TID, request)
+		return clientMDSRequest{}, fmt.Errorf("the client's pending request is a %s, not the mkdir: the mkdir has not reached the cut (tid %d): %+v", request.Op, request.TID, request)
 	}
 	return request, nil
 }
@@ -33,7 +31,7 @@ func admitPendingMkdir(requests []harness.ClientMDSRequest) (harness.ClientMDSRe
 // request tid: it must be this client's mkdir of name, and the MDS must have
 // journaled it and sent the final reply after the early one. A completed
 // request of another operation under the same tid does not count.
-func requireMDSMkdirCompleted(historic harness.MDSRequestOp, found bool, client, tid uint64, name string) error {
+func requireMDSMkdirCompleted(historic mdsRequestOp, found bool, client, tid uint64, name string) error {
 	if !found {
 		return fmt.Errorf("no historic record of tid %d", tid)
 	}
@@ -43,7 +41,7 @@ func requireMDSMkdirCompleted(historic harness.MDSRequestOp, found bool, client,
 	if !strings.Contains(historic.Description, "/"+name+" ") {
 		return fmt.Errorf("the mkdir of tid %d does not name %q: %q", tid, name, historic.Description)
 	}
-	if safety := harness.RequestSafety(historic); safety != "safe" {
+	if safety := requestSafety(historic); safety != "safe" {
 		return fmt.Errorf("the mkdir of tid %d is %s at the MDS: %v", tid, safety, historic.Events())
 	}
 	return nil

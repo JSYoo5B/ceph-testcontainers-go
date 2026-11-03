@@ -107,7 +107,7 @@ func cephFSMetricsExecutor(t *testing.T, ctx context.Context, c testcontainers.C
 func testCephFSClientMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	helper := harness.ToolkitContainer(t, m.Cluster)
 	const path = "/client-metrics"
 	payload := make([]byte, 131072)
@@ -121,8 +121,8 @@ func testCephFSClientMetrics(t *testing.T) {
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(harness.ExecOutput(t, ctx, helper, "python3", "-c", cephFSMetricsSeed, m.FS.FilesystemName, path))), &seed); err != nil || seed.Client == 0 || seed.Size != 0 {
 		t.Fatalf("seed: %+v, %v", seed, err)
 	}
-	writer := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-writer", path, "writer", strconv.Itoa(len(payload)))
-	idle := harness.StartCephFSActor(t, ctx, m.Cluster, helper, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-idle", path, "idle", "0")
+	writer := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-writer", path, "writer", strconv.Itoa(len(payload)))
+	idle := startCephFSActor(t, ctx, m.Cluster, helper, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-idle", path, "idle", "0")
 	a, b := writer.Receipt(t, ctx, 1), idle.Receipt(t, ctx, 1)
 	if a.Client == 0 || b.Client == 0 || a.Client == b.Client || a.Client == seed.Client || b.Client == seed.Client {
 		t.Fatalf("client identities: seed %d, writer %+v, idle %+v", seed.Client, a, b)
@@ -216,7 +216,7 @@ func testCephFSClientMetrics(t *testing.T) {
 		read.Size != len(payload) || read.SHA256 != hex.EncodeToString(wantSum[:]) {
 		t.Fatalf("independent readback: %s, %v", out, err)
 	}
-	for _, run := range []*harness.CephFSActorRun{writer, idle} {
+	for _, run := range []*cephFSActorRun{writer, idle} {
 		run.Open(t, ctx, "finish")
 		if closed := run.Receipt(t, ctx, 3); !closed.Closed {
 			t.Fatalf("actor did not close: %+v", closed)

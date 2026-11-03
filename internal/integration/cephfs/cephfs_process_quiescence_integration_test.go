@@ -4,8 +4,6 @@ package cephfs_test
 
 import (
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Each receipt kind/network mode gets a fresh
@@ -19,7 +17,7 @@ func TestMultiClusterCephFSOriginalProcessQuiescence(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			for _, kind := range []string{"peer", "directory"} {
-				t.Run(kind, func(t *testing.T) { harness.RunCephFSOriginalProcessQuiescence(t, host, kind) })
+				t.Run(kind, func(t *testing.T) { runCephFSOriginalProcessQuiescence(t, host, kind) })
 			}
 		})
 	}

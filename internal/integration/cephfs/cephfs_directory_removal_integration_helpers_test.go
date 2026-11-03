@@ -48,7 +48,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	const script = "/tmp/cephfs-mirror-daemons.py"
 	const probe = "/tmp/cephfs-directory-removal-probe.py"
 	for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
-		if err := client.CopyToContainer(ctx, []byte(harness.CephFSMirrorDaemonScript), script, 0o600); err != nil {
+		if err := client.CopyToContainer(ctx, []byte(cephFSMirrorDaemonScript), script, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := client.CopyToContainer(ctx, []byte(cephFSDirectoryRemovalProbeScript), probe, 0o600); err != nil {
@@ -92,7 +92,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	expected.PeerID = peers[0]
 	waitCheckpoints := func(selected []string, snapshots map[string]cephfsmirror.Snapshot) map[string]string {
 		t.Helper()
-		owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, selected, 2)
+		owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, selected, 2)
 		for _, directory := range selected {
 			status := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, snapshots[directory])
 			if status.InstanceID != owners[directory] {
@@ -102,7 +102,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		return owners
 	}
 	owners := waitCheckpoints(directories, initial)
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
+	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	daemons := mirror.Daemons()
 	if len(daemons) != 2 {
 		t.Fatal("strict native release requires the complete two-daemon cohort")
@@ -197,9 +197,9 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	if current, err := mirror.PeerIDs(ctx); err != nil || !slices.Equal(current, peers) {
 		t.Fatal("directory release changed original peer policy", err)
 	}
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
+	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	pending := checkpoint("while-directory-removed")
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
+	cephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
 	waitCheckpoints(remaining, pending)
 	cephFSVerifyDirectoryRemovalSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, probe, "verify", "while-directory-removed", remaining)
 	cephFSAssertRemovedDirectorySnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, probe, selected, "while-directory-removed", 10*time.Second)
@@ -210,12 +210,12 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		t.Fatalf("old receipt adopted the newly registered path: %+v %v", old, err)
 	}
 	waitCheckpoints(directories, pending)
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "while-directory-removed")
+	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "while-directory-removed")
 	fresh := checkpoint("after-directory-readd")
 	waitCheckpoints(directories, fresh)
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "after-directory-readd")
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
-	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
+	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "after-directory-readd")
+	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
+	cephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
 	t.Logf("public strict directory release: path=%s original peer=%s two original CID/StartedAt/watcher sessions preserved; real lost reply reconciled without another delete; other three paths copied bytes while removed path stayed absent; same-path re-add superseded old receipt and copied independent checkpoints", selected, expected.PeerID)
 }
 

@@ -8,9 +8,8 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestHostNetworkCephFSSnapshotMirrorAndBackup(t *testing.T) {
-	harness.RunMultiClusterCephFSSnapshotMirrorAndBackup(t, ceph.WithHostNetwork())
+	runMultiClusterCephFSSnapshotMirrorAndBackup(t, ceph.WithHostNetwork())
 }

@@ -15,6 +15,6 @@ import (
 func TestMultiClusterCephFSDirectoryAdditionIntent(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, mode := mode.Host, mode.Name
-		t.Run(mode, func(t *testing.T) { harness.RunCephFSDirectoryAdditionIntent(t, host) })
+		t.Run(mode, func(t *testing.T) { runCephFSDirectoryAdditionIntent(t, host) })
 	}
 }

@@ -107,14 +107,14 @@ func jeProbeRole(t *testing.T, role, env string) (receipt harness.JeRoleReceipt,
 		receipt.ImageID = inspect.Image
 	}
 
-	report, err := supervised.RunShell(ctx, ctr, "journal tool probe", 120, "sh", "-c", harness.JeProbeScript)
+	report, err := supervised.RunShell(ctx, ctr, "journal tool probe", 120, "sh", "-c", jeProbeScript)
 	if err != nil {
 		receipt.Reason = fmt.Sprintf("run probe: %v", err)
 		return receipt, errors.New(receipt.Reason)
 	}
 	stdout := string(report.Stdout)
-	receipt.ExitCode, receipt.Stdout, receipt.Stderr = report.ExitCode, harness.JeClip(stdout), harness.JeClip(string(report.Stderr))
-	receipt.StdoutSHA256 = harness.JeHash(stdout)
+	receipt.ExitCode, receipt.Stdout, receipt.Stderr = report.ExitCode, jeClip(stdout), jeClip(string(report.Stderr))
+	receipt.StdoutSHA256 = jeHash(stdout)
 	parsed := harness.JeParseProbe(stdout, report.ExitCode, report.Stopped)
 	receipt.Verdict, receipt.Reason = parsed.Verdict, parsed.Reason
 	receipt.Tools, receipt.Hits = parsed.Tools, parsed.Hits

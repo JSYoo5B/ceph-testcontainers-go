@@ -150,7 +150,7 @@ func lookRecoveryPG(ctx context.Context, cluster *ceph.Container, pool, pgid str
 func testCephFSOSDRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
 	osds := clusteraccess.OSDs(t, m.Cluster)
 	if len(osds) != 2 {
 		t.Fatalf("want two owned OSDs, have %d", len(osds))
@@ -166,17 +166,17 @@ func testCephFSOSDRecovery(t *testing.T) {
 	recovering := append([]byte("\x00written while recovery waited\xff"), bytes.Repeat([]byte{0x6b, 0xb6}, 8<<10)...)
 	whole := slices.Concat(base, degraded, recovering)
 
-	writer := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRecoveryWriter, m.FS.FilesystemName, workdir, asok, path,
+	writer := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRecoveryWriter, m.FS.FilesystemName, workdir, asok, path,
 		hex.EncodeToString(base), hex.EncodeToString(degraded), hex.EncodeToString(recovering))
 	opened := writer.Receipt(t, ctx, 1)
 	if opened.Client == 0 || opened.Inode == 0 || opened.Size != int64(len(base)) {
 		t.Fatalf("writer receipt 1 = %+v", opened)
 	}
-	session := harness.CephFSRetainedSession(t, ctx, m.FS, opened.Client, 0)
+	session := cephFSRetainedSession(t, ctx, m.FS, opened.Client, 0)
 
 	object := fmt.Sprintf("%x.00000000", opened.Inode)
-	placed := harness.CephOSDMapObject(t, ctx, m.Cluster, m.FS.DataPool, object)
-	if pool := harness.CephFSDataPool(t, ctx, m, opened.Inode); pool != placed.PoolID {
+	placed := cephOSDMapObject(t, ctx, m.Cluster, m.FS.DataPool, object)
+	if pool := cephFSDataPool(t, ctx, m, opened.Inode); pool != placed.PoolID {
 		t.Fatalf("inode %d lives in pool %d, osd map names %d", opened.Inode, pool, placed.PoolID)
 	}
 	var victim *ceph.OSDContainer
@@ -319,7 +319,7 @@ func testCephFSOSDRecovery(t *testing.T) {
 		t.Fatalf("pg %s after recovery: %s, want acting %v: %v", placed.PGID, final, placed.Acting, err)
 	}
 
-	if after := harness.CephFSRetainedSession(t, ctx, m.FS, opened.Client, 0); after.Address != session.Address {
+	if after := cephFSRetainedSession(t, ctx, m.FS, opened.Client, 0); after.Address != session.Address {
 		t.Fatalf("client.%d session after recovery %+v, before %+v", opened.Client, after, session)
 	}
 	writer.Open(t, ctx, "finish")

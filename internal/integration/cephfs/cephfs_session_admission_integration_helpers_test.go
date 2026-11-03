@@ -230,10 +230,10 @@ type cephFSAdmission struct {
 
 // admissionAttempt is one admission actor and what it reported.
 type admissionAttempt struct {
-	run     *harness.CephFSActorRun
+	run     *cephFSActorRun
 	label   string
-	init    harness.CephFSActorReceipt
-	mounted harness.CephFSActorReceipt
+	init    cephFSActorReceipt
+	mounted cephFSActorReceipt
 	session admissionSession
 }
 
@@ -249,7 +249,7 @@ func (h *cephFSAdmission) attempt(t *testing.T, ctx context.Context, label, user
 	h.runs++
 	workdir := "/tmp/admission-" + strconv.Itoa(h.runs)
 	a := &admissionAttempt{label: label}
-	a.run = harness.StartCephFSActor(t, ctx, h.cluster, h.client, cephFSAdmissionActor, h.fs.FilesystemName, workdir, user, keyring, root, asok, features, mkdirs)
+	a.run = startCephFSActor(t, ctx, h.cluster, h.client, cephFSAdmissionActor, h.fs.FilesystemName, workdir, user, keyring, root, asok, features, mkdirs)
 	a.init = a.run.Receipt(t, ctx, 1)
 	if found := h.processSessions(t, ctx, a); len(found) != 0 {
 		t.Fatalf("%s: PID %d has a session before it mounted: %+v", label, a.init.PID, found)
@@ -297,7 +297,7 @@ func (h *cephFSAdmission) processSessions(t *testing.T, ctx context.Context, a *
 
 // finish unmounts a mounted attempt and waits until its session is gone
 // without a blocklist entry for its address.
-func (h *cephFSAdmission) Finish(t *testing.T, ctx context.Context, a *admissionAttempt) harness.CephFSActorReceipt {
+func (h *cephFSAdmission) Finish(t *testing.T, ctx context.Context, a *admissionAttempt) cephFSActorReceipt {
 	t.Helper()
 	a.run.Open(t, ctx, "finish")
 	closed := a.run.Receipt(t, ctx, 3)
