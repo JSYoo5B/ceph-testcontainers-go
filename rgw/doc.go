@@ -1,6 +1,6 @@
 // Package rgw prepares RADOS Gateway fixtures in disposable Ceph clusters:
-// gateways, S3 users with tenants, Admin Ops capabilities, quotas and storage
-// counters, and native TLS. Accounts are in package rgw/account, placement
+// gateways, S3 users with tenants, Admin Ops capabilities, quotas, reversible
+// rate limits and storage counters, and native TLS. Accounts are in package rgw/account, placement
 // targets and storage classes in package rgw/placement, and multisite
 // orchestration across clusters in package rgw/multisite; this package imports
 // none of them.
