@@ -484,30 +484,21 @@ func (l *Lease) Snapshots(ctx context.Context) ([]string, error) {
 	return scheduled, nil
 }
 
-const snapshotListScript = `import cephfs, json, os, sys, threading
-filesystem, directory = sys.argv[1:]
-deadline = threading.Timer(30, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
-fs.conf_set("client_mount_timeout", "30")
-fs.mount(filesystem_name=filesystem.encode())
-try:
-    snap = directory.rstrip("/") + "/.snap"
-    handle = fs.opendir(snap.encode())
-    names = []
+// snapshotListScript prints the entries of the .snap directory of the
+// directory named by its second argument.
+var snapshotListScript = fsbase.LibCephFSScript(`import json
+snap = args[0].rstrip("/") + "/.snap"
+handle = fs.opendir(snap.encode())
+names = []
+entry = fs.readdir(handle)
+while entry:
+    name = entry.d_name.decode()
+    if name not in (".", ".."):
+        names.append(name)
     entry = fs.readdir(handle)
-    while entry:
-        name = entry.d_name.decode()
-        if name not in (".", ".."):
-            names.append(name)
-        entry = fs.readdir(handle)
-    fs.closedir(handle)
-    print(json.dumps(names))
-finally:
-    fs.unmount()
-    fs.shutdown()
-`
+fs.closedir(handle)
+print(json.dumps(names))
+`)
 
 // Restore removes the retention rules that the lease added, then its
 // schedule; the snapshots stay. The module keeps retention per directory:

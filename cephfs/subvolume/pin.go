@@ -420,26 +420,17 @@ func readPinPolicy(ctx context.Context, v fsbase.VolumeCommands, base string) (*
 	return &PinPolicy{Path: raw.Path, Inode: raw.Inode, ExportRank: export, Distributed: distributed == 1, RandomProbability: random}, nil
 }
 
-const pinReadScript = `import cephfs, json, os, stat, sys, threading
-filesystem, base = sys.argv[1:]
-deadline = threading.Timer(30, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id='admin')
-fs.conf_set('client_mount_timeout', '15')
-fs.conf_set('rados_osd_op_timeout', '10')
-try:
-    fs.mount(filesystem_name=filesystem.encode())
-    status = fs.statx(base, cephfs.CEPH_STATX_INO | cephfs.CEPH_STATX_MODE, cephfs.AT_SYMLINK_NOFOLLOW)
-    if not stat.S_ISDIR(status['mode']): raise ValueError('pin target is not a directory')
-    result = {'path':base, 'inode':status['ino']}
-    for field, xattr in [('export', 'ceph.dir.pin'), ('distributed', 'ceph.dir.pin.distributed'), ('random', 'ceph.dir.pin.random')]:
-        result[field] = fs.getxattr(base, xattr).decode('utf-8')
-    print(json.dumps(result))
-finally:
-    fs.shutdown()
-    deadline.cancel()
-`
+// pinReadScript prints the inode and the pin xattrs of the directory named
+// by its second argument.
+var pinReadScript = fsbase.LibCephFSScript(`import json, stat
+base = args[0]
+status = fs.statx(base, cephfs.CEPH_STATX_INO | cephfs.CEPH_STATX_MODE, cephfs.AT_SYMLINK_NOFOLLOW)
+if not stat.S_ISDIR(status['mode']): raise ValueError('pin target is not a directory')
+result = {'path':base, 'inode':status['ino']}
+for field, xattr in [('export', 'ceph.dir.pin'), ('distributed', 'ceph.dir.pin.distributed'), ('random', 'ceph.dir.pin.random')]:
+    result[field] = fs.getxattr(base, xattr).decode('utf-8')
+print(json.dumps(result))
+`)
 
 // pinOverrides is the set of directory pin overrides of one filesystem that
 // are not restored yet, keyed by directory and pin field: one override per
