@@ -152,6 +152,10 @@ jobs:
       check_name: CI command
       release: ${{ matrix.release }}
       ref: ${{ needs.command.outputs.sha }}
+      # The run belongs to the default branch, so a cache saved here from
+      # the unmerged head would be restored by every later main and pull
+      # request run.
+      save_caches: false
 
   # Runs after a refusal, a validation failure, a finished run and a
   # cancelled one alike. It never re-runs anything.

@@ -1008,12 +1008,28 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertLess(plan_steps.index(restore), plan_steps.index(warm))
         self.assertLess(plan_steps.index(warm), plan_steps.index(save))
         # Only a successful warm compile on a miss is saved, and its failure
-        # never fails the plan: the cache is only an acceleration.
-        self.assertEqual(scalar(warm, "if"),
+        # never fails the plan: the cache is only an acceleration. A caller
+        # that may not save caches skips the warm compile and both saves.
+        self.assertEqual(scalar(warm, "if"), "inputs.save_caches && "
                          "steps.build_cache.outputs.cache-hit != 'true' && steps.plan.outputs.count != '0'")
         self.assertEqual(scalar(warm, "continue-on-error"), "true")
         self.assertEqual(scalar(warm, "GOPROXY"), "'off'")
-        self.assertEqual(scalar(save, "if"), "steps.warm_build.outcome == 'success'")
+        self.assertEqual(scalar(save, "if"), "inputs.save_caches && steps.warm_build.outcome == 'success'")
+        self.assertEqual(scalar(named(plan_steps, "Save the Go module cache"), "if"),
+                         "inputs.save_caches && steps.modules_cache.outputs.cache-hit != 'true'")
+        save_input = self.workflows["tagged-runtime.yml"].split("\n      save_caches:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual((scalar(save_input, "default"), scalar(save_input, "type")), ("true", "boolean"))
+        # An issue_comment run belongs to the default branch, so its caches
+        # would reach every later run although it checks out an unmerged head.
+        for name, workflow in self.workflows.items():
+            calls = workflow.count("uses: ./.github/workflows/tagged-runtime.yml")
+            refusals = workflow.count("      save_caches: false\n")
+            with self.subTest(workflow=name):
+                if re.search(r"(?m)^  issue_comment:", workflow):
+                    self.assertGreater(calls, 0)
+                    self.assertEqual(refusals, calls)
+                else:
+                    self.assertEqual(refusals, 0)
         restored = named(runtime_steps, "Restore the Go build cache")
         self.assertEqual(scalar(restored, "key"), key)
         self.assertIn("actions/cache/restore", restored)

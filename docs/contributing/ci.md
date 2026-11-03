@@ -80,8 +80,11 @@ cache keyed by `go.sum`, and the runtime jobs share one build cache keyed by
 the installed Go version and `go.sum`. Each runtime `Plan` job fills a missing
 module cache with `tag_scenarios.py modules` and a missing build cache with
 `tag_scenarios.py buildcache` (one batch per package); runtime jobs and Code
-checks only restore them. `setup-go`'s own cache is off. A cache only speeds
-up a build: each job still compiles, records and verifies its own binary.
+checks only restore them. A [comment run](#running-chosen-batches-from-a-comment)
+passes `save_caches: false` and saves neither: it belongs to the default
+branch, whose caches every later run restores, but checks out an unmerged
+head. `setup-go`'s own cache is off. A cache only speeds up a build: each job
+still compiles, records and verifies its own binary.
 
 ### Documentation-only changes
 
