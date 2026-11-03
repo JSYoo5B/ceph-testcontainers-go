@@ -38,6 +38,17 @@ func TestBeginKeepsItsRefusalTextAndNoOpDone(t *testing.T) {
 			if err == nil || err.Error() != refusal || done == nil {
 				t.Fatalf("subvolume refusal changed: %v", err)
 			}
+			// Only a core that no later admission can accept is an identity
+			// change; an edited descriptor or an uncaptured identity is not.
+			permanent := change == "unregistered" || change == "closed"
+			if fsbase.IdentityChanged(err) != permanent {
+				t.Fatalf("%s refusal classified as identity change = %v", change, !permanent)
+			}
+			if _, _, observed, err := BeginObservation(t.Context(), fs.Core); err == nil || err.Error() != refusal || fsbase.IdentityChanged(err) != permanent {
+				t.Fatalf("observation refusal = %v", err)
+			} else {
+				observed()
+			}
 			done() // a no-op on refusal
 			if len(fs.Control.Calls) != 0 {
 				t.Fatalf("a refused admission ran native commands: %v", fs.Control.Calls)
@@ -136,9 +147,10 @@ func receiver(fn *ast.FuncDecl) string {
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal,
 // TestFilesystemIdentityIsReadOnlyFromImmutableName and
 // TestNativeIdentityIsCapturedNotReplacedInProduction pin for package cephfs:
-// in volbase, cephfs/subvolume and cephfs/quiesce only Begin calls Admit, it
-// passes exactly one own Check function and takes, releases or unlocks no lock
-// itself; only Begin reads the exported descriptor through DescriptorIntact;
+// in volbase, cephfs/subvolume and cephfs/quiesce only admit (shared by Begin
+// and BeginObservation) calls Admit, it passes exactly one own Check function
+// and takes, releases or unlocks no lock itself; only admit reads the exported
+// descriptor through DescriptorIntact;
 // no production code installs or captures a native identity; and only the
 // pin restoration reads under the setup gate without an admission.
 func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
@@ -154,7 +166,7 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 			if r := receiver(fn); r != "" {
 				name = r + "." + name
 			}
-			if name == "Begin" {
+			if name == "admit" {
 				begin = fn
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -169,15 +181,15 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"Admit":            {"Begin"},
-		"DescriptorIntact": {"Begin"},
+		"Admit":            {"admit"},
+		"DescriptorIntact": {"admit"},
 		"WithSetupGate":    {"PinOverrideHandle.Restore"},
 	}
 	if !reflect.DeepEqual(sites, want) {
 		t.Errorf("shared admission sites changed: %v, want %v", sites, want)
 	}
 	if begin == nil {
-		t.Fatal("Begin is missing")
+		t.Fatal("admit is missing")
 	}
 	checks := 0
 	ast.Inspect(begin.Body, func(n ast.Node) bool {
@@ -191,13 +203,13 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 		if call, ok := n.(*ast.CallExpr); ok {
 			switch callee(call) {
 			case "LockMutex", "LockTopology", "Lock", "Unlock":
-				t.Errorf("Begin calls %s; the lifetime belongs to Admit", callee(call))
+				t.Errorf("admit calls %s; the lifetime belongs to Admit", callee(call))
 			}
 		}
 		return true
 	})
 	if checks != 1 {
-		t.Errorf("Begin must pass exactly one own check function, has %d", checks)
+		t.Errorf("admit must pass exactly one own check function, has %d", checks)
 	}
 }
 
@@ -269,4 +281,37 @@ func TestBeginTakesTheCoreItIsGiven(t *testing.T) {
 		t.Fatalf("a core without a captured identity was admitted: %v", err)
 	}
 	fstest.AssertAdmissionReleased(t, fs.Core.Cluster(), fs.SetupMu)
+}
+
+// A successful pool read that shows the owned filesystem replaced or absent is
+// an identity change that a watch ends on; a failed read is not.
+func TestBeginObservationClassifiesNativeIdentityChanges(t *testing.T) {
+	for name, edit := range map[string]func(*fstest.Filesystem){
+		"replaced filesystem": func(fs *fstest.Filesystem) {
+			fs.Control.Output["fs dump --format json"] = strings.Replace(fs.Control.Output["fs dump --format json"], `"id":41`, `"id":42`, 1)
+		},
+		"absent filesystem": func(fs *fstest.Filesystem) {
+			fs.Control.Output["fs dump --format json"] = `{"filesystems":[],"standbys":[]}`
+		},
+		"renamed pool": func(fs *fstest.Filesystem) {
+			fs.Control.Output["osd pool ls detail --format json"] = strings.Replace(fs.Control.Output["osd pool ls detail --format json"], `"pool_name":"data"`, `"pool_name":"other"`, 1)
+		},
+		"failed dump": func(fs *fstest.Filesystem) { fs.Control.Fail = "fs dump --format json" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs := fstest.NewFilesystem()
+			edit(fs)
+			_, _, done, err := BeginObservation(t.Context(), fs.Core)
+			done()
+			if err == nil || fsbase.IdentityChanged(err) != (name != "failed dump") {
+				t.Fatalf("observation = %v, identity change %v", err, fsbase.IdentityChanged(err))
+			}
+			for _, call := range fs.Control.Calls {
+				if slices.Contains(call, "module") {
+					t.Fatalf("observation touched the volumes module: %v", call)
+				}
+			}
+			fstest.AssertAdmissionReleased(t, fs.Core.Cluster(), fs.SetupMu)
+		})
+	}
 }
