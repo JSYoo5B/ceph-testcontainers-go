@@ -93,9 +93,6 @@ func (volume *Subvolume) PinPolicy(ctx context.Context) (*PinPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	if volume == nil {
-		return nil, errors.New("subvolume is unavailable")
-	}
 	return readOwnedPinPolicy(ctx, fs, pinTarget{identity: volume.identity})
 }
 
@@ -106,9 +103,6 @@ func (group *Group) PinPolicy(ctx context.Context) (*PinPolicy, error) {
 	fs, err := group.filesystem()
 	if err != nil {
 		return nil, err
-	}
-	if group == nil {
-		return nil, errors.New("subvolume group is unavailable")
 	}
 	return readOwnedPinPolicy(ctx, fs, pinTarget{identity: group.identity, group: true})
 }
@@ -123,9 +117,6 @@ func (volume *Subvolume) OverridePin(ctx context.Context, setting PinSetting) (*
 	if err != nil {
 		return nil, err
 	}
-	if volume == nil {
-		return nil, errors.New("subvolume is unavailable")
-	}
 	return temporaryPin(ctx, fs, pinTarget{identity: volume.identity}, setting)
 }
 
@@ -136,9 +127,6 @@ func (group *Group) OverridePin(ctx context.Context, setting PinSetting) (*PinOv
 	fs, err := group.filesystem()
 	if err != nil {
 		return nil, err
-	}
-	if group == nil {
-		return nil, errors.New("subvolume group is unavailable")
 	}
 	return temporaryPin(ctx, fs, pinTarget{identity: group.identity, group: true}, setting)
 }

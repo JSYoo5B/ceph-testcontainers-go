@@ -90,9 +90,6 @@ func (volume *Subvolume) Authorize(ctx context.Context, config AuthorizationConf
 	if config.Access != "r" && config.Access != "rw" {
 		return nil, servicehook.Invalid(errors.New("subvolume access must be r or rw"))
 	}
-	if volume == nil {
-		return nil, errors.New("subvolume is required")
-	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err

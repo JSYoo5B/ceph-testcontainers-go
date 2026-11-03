@@ -388,9 +388,6 @@ func (group *Group) Resize(ctx context.Context, sizeBytes int64) error {
 	if err != nil {
 		return err
 	}
-	if group == nil {
-		return errors.New("subvolume group is unavailable")
-	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
@@ -423,9 +420,6 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	if err != nil {
 		return err
 	}
-	if subvolume == nil {
-		return errors.New("subvolume is unavailable")
-	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
@@ -455,9 +449,6 @@ func (group *Group) Remove(ctx context.Context) error {
 	fs, err := group.filesystem()
 	if err != nil {
 		return err
-	}
-	if group == nil {
-		return errors.New("subvolume group is unavailable")
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
@@ -506,9 +497,6 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 	fs, err := subvolume.filesystem()
 	if err != nil {
 		return err
-	}
-	if subvolume == nil {
-		return errors.New("subvolume is unavailable")
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {

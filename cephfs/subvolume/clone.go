@@ -205,7 +205,7 @@ func (clone *Clone) RemovePartial(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
+	if !clone.identity.submitted {
 		return errors.New("partial clone must have been submitted by this filesystem")
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)

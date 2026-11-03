@@ -118,9 +118,6 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if subvolume == nil {
-		return nil, errors.New("subvolume is unavailable")
-	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return nil, err
@@ -145,9 +142,6 @@ func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*S
 	}
 	if err := validateName(name, false); err != nil {
 		return nil, err
-	}
-	if subvolume == nil {
-		return nil, errors.New("subvolume is unavailable")
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {

@@ -214,9 +214,6 @@ func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if fs == nil || attachment == nil || attachment.identity.record == nil || attachment.identity.filesystem != fs {
-		return errors.New("data pool attachment must have been created by this filesystem")
-	}
 	ctx, done, err := fs.beginDataPoolOperation(ctx)
 	if err != nil {
 		return err
