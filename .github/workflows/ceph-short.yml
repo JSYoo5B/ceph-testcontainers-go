@@ -5,7 +5,8 @@ name: Ceph short
 #
 # Every batch runs on every push to main and on every pull request. A pull
 # request can opt in to running only the batches that reach a declaration it
-# changes, with the ci:selected-batches label. The selection is
+# changes, with the ci:selected-batches label, outside a release phase
+# (CI_RELEASE_PHASE "true"). The selection is
 # advisory: adding or removing the label starts a new run, and pushes to main
 # always run every batch, so a selection miss surfaces at the next merge.
 on:
@@ -58,6 +59,7 @@ jobs:
       select_declarations: >-
         ${{ github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&
+        vars.CI_RELEASE_PHASE != 'true' &&
         github.event.pull_request.base.sha || '' }}
       storage_policy: ${{ github.event_name == 'workflow_dispatch' && inputs.storage_policy || 'auto' }}
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}

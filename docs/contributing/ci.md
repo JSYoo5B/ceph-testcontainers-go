@@ -306,7 +306,8 @@ tool failure selects every profile.
 #### Opting in to declaration selection
 
 Ceph short is the only workflow that narrows by declarations, and only for a
-pull request with the `ci:selected-batches` label. The caller then passes the
+pull request with the `ci:selected-batches` label outside a
+[release phase](#release-phase). The caller then passes the
 base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 `Plan` runs `plan --select-declarations BASE --apply-declarations --summary
 "$GITHUB_STEP_SUMMARY"`. The `Plan` summary lists every batch with `yes` or

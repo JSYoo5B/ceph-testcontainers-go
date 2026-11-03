@@ -1145,8 +1145,8 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
     """Ceph short narrows a pull request to the declaration selection only
-    when the pull request carries the opt-in label. Every other event,
-    and every push to main, runs every batch."""
+    when the pull request carries the opt-in label outside a release phase.
+    Every other event, and every push to main, runs every batch."""
 
     LABEL = SourceDrivenWorkflowTests.OPT_IN["ceph-short.yml"]
     BASE = "0123456789abcdef0123456789abcdef01234567"
@@ -1160,7 +1160,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         cls.plan_step = engine_step(steps(plan), "plan")
         cls.reusable_inputs = reusable.split("\npermissions:", 1)[0]
 
-    def context(self, event, action=None, labels=(), label=None):
+    def context(self, event, action=None, labels=(), label=None, release_phase=""):
         github = {"workflow": "Ceph short", "event_name": event, "run_id": 99,
                   "ref": "refs/heads/main" if event == "push" else "refs/pull/7/merge", "event": {}}
         if event == "pull_request":
@@ -1168,7 +1168,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                 "number": 7, "base": {"sha": self.BASE}, "labels": [{"name": name} for name in labels]}}
             if label is not None:
                 github["event"]["label"] = {"name": label}
-        return {"github": github}
+        return {"github": github, "vars": {"CI_RELEASE_PHASE": release_phase}}
 
     def outcome(self, context):
         """(runs, select_declarations, concurrency group) for one event."""
@@ -1198,6 +1198,14 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                          (True, self.BASE, "Ceph short-pull_request-7"))
         self.assertEqual(self.outcome(self.context("pull_request", "unlabeled", labels=(), label=self.LABEL)),
                          (True, "", "Ceph short-pull_request-7"))
+
+    def test_a_release_phase_runs_every_batch_of_a_labelled_pull_request(self):
+        for action in ("opened", "synchronize", "labeled"):
+            with self.subTest(action=action):
+                label = self.LABEL if action == "labeled" else None
+                self.assertEqual(self.outcome(self.context("pull_request", action, labels=(self.LABEL,), label=label,
+                                                           release_phase="true")),
+                                 (True, "", "Ceph short-pull_request-7"))
 
     def test_another_label_starts_nothing_and_cancels_nothing(self):
         for action, labels in (("labeled", (self.LABEL, "docs")), ("unlabeled", (self.LABEL,)), ("labeled", ("docs",))):
