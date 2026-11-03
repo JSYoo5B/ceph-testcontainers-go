@@ -105,11 +105,22 @@ func (c *Core) AdminCommandIn(ctx context.Context, target testcontainers.Contain
 // the command wrote more, which was discarded as it arrived. A failed command
 // is reported as by AdminCommandIn, from what was kept.
 func (c *Core) AdminPrefixIn(ctx context.Context, target testcontainers.Container, maxBytes int, args ...string) (data []byte, truncated bool, err error) {
+	argv := AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...)
+	return c.supervisedPrefix(ctx, target, maxBytes, argv)
+}
+
+// supervised runs the already scoped command line argv without limiting stdout.
+func (c *Core) supervised(ctx context.Context, target testcontainers.Container, argv []string) ([]byte, error) {
+	data, _, err := c.supervisedPrefix(ctx, target, 0, argv)
+	return data, err
+}
+
+// supervisedPrefix preserves supervisor tracking while retaining a bounded stdout prefix.
+func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Container, maxBytes int, argv []string) ([]byte, bool, error) {
 	if servicehook.DiagnosticHandle(target) == nil {
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	argv := AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...)
 	report, err := servicehook.RunOwnedShell(ctx, c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {

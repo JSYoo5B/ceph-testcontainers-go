@@ -180,7 +180,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 	if err == nil || user == nil || !user.base().State.Created || strings.Contains(err.Error(), "PRIVATE") {
 		t.Fatal("caps failure lost the created owned user or exposed credentials")
 	}
-	key, secret, err := user.Credentials()
+	key, secret, err := user.CreationKey().Credentials()
 	if err != nil || key != "PRIVATE-ACCESS" || secret != "PRIVATE-SECRET" {
 		t.Fatal("partial successful creation lost generated credentials")
 	}
@@ -214,7 +214,7 @@ func TestRGWCreationWithoutConfirmedKeysCannotAdoptNativeIdentity(t *testing.T) 
 			if err == nil || user == nil || !user.base().State.Created || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatal("unconfirmed successful native creation lost its partial handle or exposed keys")
 			}
-			if access, secret, err := user.Credentials(); err == nil || access != "" || secret != "" {
+			if access, secret, err := user.CreationKey().Credentials(); err == nil || access != "" || secret != "" {
 				t.Fatal("incomplete native result exposed unconfirmed credentials")
 			}
 			if _, err := user.Info(t.Context()); err == nil || len(ctr.calls) != 2 {
@@ -246,7 +246,7 @@ func TestRGWOwnedUserGuardsClusterScopeAndReplacedKeys(t *testing.T) {
 	if err := foreign.SetQuota(t.Context(), Quota{}); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("a handle whose scope has no gateway reached native mutation")
 	}
-	foreign = editedUser(user, func(u *gwbase.User) { u.SecretKey = "REPLACED" })
+	foreign = editedUser(user, func(u *gwbase.User) { u.Creation = &gwbase.Key{AccessKey: "PRIVATE-ACCESS", SecretKey: "REPLACED"} })
 	if err := foreign.Suspend(t.Context(), true); err == nil || len(ctr.calls) != 1 {
 		t.Fatal("replaced native credentials allowed a user mutation")
 	}

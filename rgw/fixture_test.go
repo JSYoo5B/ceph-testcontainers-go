@@ -36,7 +36,7 @@ func rgwAdminFixture(id, secret string, suspended bool, quota Quota) string {
 // rgwAdminOwnedTestUser is the confirmed ordinary user test-user created
 // through gateway.
 func rgwAdminOwnedTestUser(gateway *Gateway) *User {
-	return newUser(&gwbase.User{Origin: gateway.base(), ID: "test-user", AccessKey: "PRIVATE-ACCESS", SecretKey: "PRIVATE-SECRET",
+	return newUser(&gwbase.User{Origin: gateway.base(), ID: "test-user", Creation: &gwbase.Key{AccessKey: "PRIVATE-ACCESS", SecretKey: "PRIVATE-SECRET"},
 		State: &gwbase.UserState{Created: true, Identity: &gwbase.CreationIdentity{OriginalType: "rgw"}}})
 }
 

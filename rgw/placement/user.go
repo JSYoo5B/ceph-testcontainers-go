@@ -170,7 +170,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 }
 
 // ownedUser reads user in the placement's exact native scope and confirms its
-// created key and creation identity.
+// fixture-created keys and creation identity.
 func ownedUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, scope gwbase.NativeScope) (*gwbase.NativeUser, error) {
 	data, err := g.Command(ctx, scope, "user", "info", "--uid", user.ID)
 	if err != nil {
@@ -180,9 +180,7 @@ func ownedUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, scope gwb
 	if err != nil {
 		return nil, err
 	}
-	if native.Info.ID != user.ID || !slices.ContainsFunc(native.Keys, func(key gwbase.NativeKey) bool {
-		return key.AccessKey == user.AccessKey && key.SecretKey == user.SecretKey
-	}) {
+	if native.Info.ID != user.ID || user.CheckKeys(native.Keys) != nil {
 		return nil, servicehook.Invalid(errors.New("RGW user has different credentials in the actual native scope; refusing placement update"))
 	}
 	if err := g.ValidateCreationIdentity(ctx, user, native); err != nil {

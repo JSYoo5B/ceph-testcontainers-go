@@ -84,10 +84,13 @@ func defaultGateway() ceph.Option {
 	return servicehook.WithBootstrap(bootstrapKind, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
 }
 
-// gatewayRegistry holds the gateways this cluster owns. The cluster mutex
-// guards byName; the diagnostics and configuration readers use the same state.
+// gatewayRegistry holds the gateways this cluster owns and the users that
+// CreateUser created or tried to create through them. The cluster mutex
+// guards byName, users and the users' keys; the diagnostics and configuration
+// readers use the same state.
 type gatewayRegistry struct {
 	byName map[string]*Gateway
+	users  []*gwbase.User
 }
 
 // gateways returns the cluster's owned gateways, creating their state on first use.
@@ -119,13 +122,18 @@ func (r *gatewayRegistry) cores() []*gwbase.Core {
 	return result
 }
 
-// Secrets lists owned gateway credentials for diagnostic redaction.
+// Secrets lists owned gateway credentials and every S3 key the fixture
+// created, tried to create or saw for an owned user, revoked ones included,
+// for diagnostic redaction. The cluster reads it with the cluster mutex held.
 func (r *gatewayRegistry) Secrets() []string {
 	var result []string
 	for _, g := range r.byName {
 		if g != nil {
 			result = append(result, g.AccessKey, g.SecretKey)
 		}
+	}
+	for _, user := range r.users {
+		result = append(result, user.Secrets()...)
 	}
 	return result
 }

@@ -18,7 +18,7 @@ owns. Gateways, ordinary users and their credentials stay in the
 3. **Create its root users** with `gateway.CreateUser(ctx,
    rgw.UserConfig{..., Account: acct})`. The gateway must belong to the
    account's cluster and scope. A root user is an ordinary `*rgw.User`: hand
-   `User.Credentials` to the SUT, which runs IAM operations itself.
+   `User.CreationKey` credentials to the SUT, which runs IAM operations itself.
 4. **Observe**: `Account.Info` reads the native policy; `User.Info` and
    `User.Usage` of a root user report the account association and the
    account aggregate.
@@ -47,7 +47,7 @@ root, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "root", DisplayName: "Ro
 if err != nil {
 	t.Fatal(err)
 }
-accessKey, secretKey, err := root.Credentials()
+accessKey, secretKey, err := root.CreationKey().Credentials()
 // Give the SUT the endpoint, gateway.Region and these keys.
 ```
 

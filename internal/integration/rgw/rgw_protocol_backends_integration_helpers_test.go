@@ -99,7 +99,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		access, secret, err := users[i].Credentials()
+		access, secret, err := users[i].CreationKey().Credentials()
 		if err != nil {
 			t.Fatal(err)
 		}

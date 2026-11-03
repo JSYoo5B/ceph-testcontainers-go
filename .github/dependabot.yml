@@ -7,6 +7,7 @@ updates:
     directories:
       - "/"
       - "/internal/integration/goceph/probe"
+      - "/internal/integration/awssdk/probe"
     schedule:
       interval: daily
     groups:

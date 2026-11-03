@@ -110,7 +110,8 @@ vet:
 # the policy: a vulnerable symbol or package that the code reaches fails, one
 # only in a required module is listed. The scanner is built for the host with
 # the current toolchain, and each scan loads the packages of its platform and
-# tags. The nested go-ceph probe module, which needs cgo, gets a module scan.
+# tags. The nested go-ceph probe module, which needs cgo, and the nested AWS
+# SDK probe module get a module scan.
 GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.9.0
 VULNCHECK_DIR ?= artifacts/vulncheck
 VULNCHECK_SCANS ?= linux/amd64: linux/amd64:all linux/amd64:all,goceph,native_regression linux/arm64: darwin/arm64:
@@ -130,6 +131,10 @@ vulncheck:
 	(cd internal/integration/goceph/probe && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 GOWORK=off GOFLAGS=-mod=readonly \
 		$(abspath $(VULNCHECK_DIR)/bin/govulncheck) -format json -scan module) > $(VULNCHECK_DIR)/goceph-probe-module.json || status=1; \
 	python3 .github/scripts/check_vulns.py $(VULNCHECK_DIR)/goceph-probe-module.json || status=1; \
+	echo "== govulncheck module scan of internal/integration/awssdk/probe"; \
+	(cd internal/integration/awssdk/probe && CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly \
+		$(abspath $(VULNCHECK_DIR)/bin/govulncheck) -format json -scan module) > $(VULNCHECK_DIR)/awssdk-probe-module.json || status=1; \
+	python3 .github/scripts/check_vulns.py $(VULNCHECK_DIR)/awssdk-probe-module.json || status=1; \
 	exit $$status
 
 # golangci-lint v2.15.0 with .golangci.yml, as in the Code checks workflow.

@@ -28,15 +28,17 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    start.
 2. **Prepare the identities** the scenario needs on a `*rgw.Gateway` (from
    `Gateways` or `Start`): `CreateUser` (with tenant, Admin Ops caps, bucket
-   limit), `User.SetQuota` / `SetBucketQuota`, `User.Suspend`. For an account,
+   limit), `User.SetQuota` / `SetBucketQuota`, `User.Suspend`, and
+   `User.CreateS3Key` / `S3Key.Revoke` for credential rotation. For an account,
    create it with `account.Create(ctx, gateway, cfg)` and its root user with
    `CreateUser` and `UserConfig.Account`; for a placement target, use
    `placement.Create(ctx, gateway, cfg)`, then `Placement.Apply` and
    `Placement.SetUserDefault`.
 3. **Hand the endpoint to the SUT**: `S3Endpoint` (or `S3SecureEndpoint`) for a
    client on the test host, `DaemonEndpoint` for a client in the cluster
-   network, with `User.Credentials` (or the gateway's own `AccessKey` /
-   `SecretKey`) and `Gateway.Region`, path-style addressing.
+   network, with `User.CreationKey().Credentials()` or the credentials of a
+   key from `CreateS3Key` (or the gateway's own `AccessKey` / `SecretKey`)
+   and `Gateway.Region`, path-style addressing.
 4. **Throttle the SUT** when the scenario tests its reaction to 503
    SlowDown: `User.OverrideRateLimit` applies a `rgw.RateLimit` to the user
    (`rgw.RateLimitScope{}`) or to one bucket it owns (`RateLimitScope{Bucket:
@@ -94,6 +96,23 @@ recovery need the default two OSDs or more.
   `UserConfig.Account`; the gateway must belong to the account's cluster and
   scope, and every later operation on the user checks the account's native
   lifetime again.
+- Credential rotation keeps the user and its data: `User.CreateS3Key` adds a
+  key pair, and `S3Key.Revoke` removes one irreversibly (nothing restores
+  it). Each `*rgw.S3Key` names one key pair for good, so creating a key never
+  changes what an earlier handle or copied credentials mean, and a revoked
+  handle still returns its credentials for refusal checks. The fixture
+  touches only the keys it created: keys added with `Gateway.Admin` stay as
+  they are. The last active fixture-created key of a user cannot be revoked,
+  because it identifies the owned user; create its replacement first. A
+  failed `CreateS3Key` is never retried by the fixture: a returned key whose
+  outcome is unknown is only revocable, and its `Revoke` settles and removes
+  it.
+- Creating or revoking a key changes what RGW accepts, not what the SUT
+  uses: it does not show that the SUT reloaded its configuration or dropped
+  a cached credential. Hand the new key to the SUT the way it reads its
+  configuration, and assert with requests the SUT makes afterwards. RGW
+  refuses a revoked key once its metadata caches see the removal, so poll
+  with new requests.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
   the ones done by `Placement.Apply`, `Placement.Reload` and multisite changes.
@@ -111,7 +130,9 @@ recovery need the default two OSDs or more.
 - HTTPS is native Beast TLS without a proxy; clients must trust the CA.
   `NetworkConfig.WithMessengerMode` encrypts Ceph messenger traffic only.
 - Printing a handle never writes keys; `Gateway.Admin` output can contain
-  keys, and a failed call never includes native output.
+  keys, and a failed call never includes native output. Every key the
+  fixture created or tried to create, revoked ones included, is masked in
+  diagnostics reports.
 - Gateways run 4 worker threads: functional tests, not load tests. Docker exec
   cancellation does not stop a native worker already running (such as
   `bucket sync run`).
