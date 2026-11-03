@@ -55,6 +55,11 @@ type result struct {
 // does not accept.
 var refusedCodes = map[string]bool{"InvalidAccessKeyId": true, "SignatureDoesNotMatch": true, "AccessDenied": true}
 
+// assumeRefusedCodes are the STS error codes of an AssumeRole that RGW
+// refuses: refused credentials, a principal the trust policy does not allow,
+// or a role that does not exist.
+var assumeRefusedCodes = map[string]bool{"InvalidAccessKeyId": true, "SignatureDoesNotMatch": true, "AccessDenied": true, "NoSuchEntity": true}
+
 func main() {
 	var endpoint, region, bucket, object, operation, data, roleARN string
 	flag.StringVar(&endpoint, "endpoint", "", "S3 endpoint URL")
@@ -90,7 +95,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "s3 probe: AssumeRole answered without temporary credentials")
 				os.Exit(1)
 			}
-		case errors.As(err, &apiErr) && refusedCodes[apiErr.ErrorCode()]:
+		case errors.As(err, &apiErr) && assumeRefusedCodes[apiErr.ErrorCode()]:
 			out.Role = "refused"
 			if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 				os.Exit(1)
