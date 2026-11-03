@@ -84,13 +84,14 @@ func defaultGateway() ceph.Option {
 	return servicehook.WithBootstrap(bootstrapKind, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
 }
 
-// gatewayRegistry holds the gateways this cluster owns and the users that
-// CreateUser created or tried to create through them. The cluster mutex
-// guards byName, users and the users' keys; the diagnostics and configuration
-// readers use the same state.
+// gatewayRegistry holds the gateways this cluster owns and the users and
+// roles that CreateUser and CreateRole created or tried to create through
+// them. The cluster mutex guards byName, users, the users' keys and roles; the
+// diagnostics and configuration readers use the same state.
 type gatewayRegistry struct {
 	byName map[string]*Gateway
 	users  []*gwbase.User
+	roles  []*roleState
 }
 
 // gateways returns the cluster's owned gateways, creating their state on first use.
