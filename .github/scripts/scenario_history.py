@@ -36,17 +36,17 @@ from pathlib import Path
 import sys
 import tempfile
 
-import tag_scenarios
 import messenger_evidence
+import report_workflow_phases
+import tag_scenarios
 
 
 SCHEMA = "ceph-scenario-history/v1"
 MISSING = "missing"
-# The workflow phases of report_workflow_phases.py, in execution order, and
-# the receipt that is each phase's own evidence.
-PHASES = ("modules", "compile", "storage", "docker", "images", "test_images", "storage_ready", "native", "cleanup")
-# The phases that only Ceph batches run; a Docker-only batch does not need them.
-CEPH_ONLY_PHASES = ("storage", "images", "storage_ready")
+# The workflow phases that report_workflow_phases.py reports, in execution
+# order, and those that only Ceph batches run.
+PHASES = tuple(key for key, _, _ in report_workflow_phases.PHASES)
+CEPH_ONLY_PHASES = report_workflow_phases.CEPH_ONLY
 WORKFLOW_OUTCOMES = {"success": "success", "failure": "failure", "cancelled": "cancelled",
                      "skipped": "skipped", "": "not_run"}
 # The execution key fields that ingest needs to tell two attempts apart.
