@@ -7,11 +7,14 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 type linkDockerFake struct {
@@ -162,5 +165,35 @@ func TestClusterCleanupRetainsNetworkAfterCallerRestoreFailure(t *testing.T) {
 	trackInterruption(cluster, "client", link)
 	if err := cluster.Terminate(t.Context()); err == nil || testhelper.TestNetworkRemoved(cluster) || link.complete || d.closes != 0 {
 		t.Fatal("cleanup removed the original network needed to restore a caller-owned client")
+	}
+}
+
+func TestInterruptNetworkClassifiesRefusalsBeforeDocker(t *testing.T) {
+	target := pauseTestContainer{id: "osd-0"}
+	_, terminated := faulthook.Terminated()
+	for name, refusal := range map[string]struct {
+		config testhelper.TestConfig
+		ctr    testcontainers.Container
+		plane  ceph.NetworkPlane
+	}{
+		"host network":  {testhelper.TestConfig{HostNetwork: true, NetworkName: "ceph-public"}, target, ceph.PublicNetworkPlane},
+		"nil container": {testhelper.TestConfig{NetworkName: "ceph-public"}, nil, ceph.PublicNetworkPlane},
+		"unstarted":     {testhelper.TestConfig{NetworkName: "ceph-public"}, pauseTestContainer{}, ceph.PublicNetworkPlane},
+		"invalid plane": {testhelper.TestConfig{NetworkName: "ceph-public"}, target, ceph.NetworkPlane("storage")},
+		"no bridge yet": {testhelper.TestConfig{}, target, ceph.PublicNetworkPlane},
+		"terminated":    {testhelper.TestConfig{Closed: true, NetworkName: "ceph-public"}, target, ceph.PublicNetworkPlane},
+	} {
+		link, err := InterruptNetwork(t.Context(), testhelper.TestCluster(nil, refusal.config), refusal.ctr, refusal.plane)
+		if !errors.Is(err, ceph.ErrInvalidRequest) || link != nil {
+			t.Fatalf("%s: refusal is not ceph.ErrInvalidRequest: %v", name, err)
+		}
+		if refusal.config.Closed && !errors.Is(err, terminated) {
+			t.Fatalf("%s: refusal is not the terminated cluster error: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "host", "none", "bridge"} {
+		if link, err := InterruptLink(t.Context(), target, name); !errors.Is(err, ceph.ErrInvalidRequest) || link != nil {
+			t.Fatalf("InterruptLink(%q) refusal is not ceph.ErrInvalidRequest: %v", name, err)
+		}
 	}
 }

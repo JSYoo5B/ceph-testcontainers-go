@@ -60,7 +60,7 @@ func TestPauseFreezesOnlyRunningUnpausedContainers(t *testing.T) {
 		"restarting": {Running: true, Restarting: true},
 	} {
 		docker := &fakePauseDocker{state: &state}
-		if pause, err := pauseContainer(t.Context(), docker, "fixture"); err == nil || pause != nil || docker.pauses != 0 || docker.close != 1 {
+		if pause, err := pauseContainer(t.Context(), docker, "fixture"); !errors.Is(err, ceph.ErrInvalidRequest) || pause != nil || docker.pauses != 0 || docker.close != 1 {
 			t.Fatalf("%s container was adopted: pause=%v err=%v calls=%+v", name, pause, err, docker)
 		}
 	}
@@ -118,13 +118,14 @@ func TestPauseRefusesControlAndUnavailableContainers(t *testing.T) {
 	control := pauseTestContainer{id: "control"}
 	cluster := testhelper.TestCluster(control, testhelper.TestConfig{StartupTimeout: time.Second})
 	for name, target := range map[string]testcontainers.Container{"nil": nil, "unstarted": pauseTestContainer{}, "control": control} {
-		if pause, err := Pause(t.Context(), cluster, target); err == nil || pause != nil {
+		if pause, err := Pause(t.Context(), cluster, target); !errors.Is(err, ceph.ErrInvalidRequest) || pause != nil {
 			t.Fatalf("%s container accepted: %v", name, err)
 		}
 	}
 	testhelper.TestSetClosed(cluster, true)
-	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); err == nil || pause != nil {
-		t.Fatal("terminated cluster accepted a pause")
+	_, terminated := faulthook.Terminated()
+	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); !errors.Is(err, terminated) || !errors.Is(err, ceph.ErrInvalidRequest) || pause != nil {
+		t.Fatalf("terminated cluster accepted a pause: %v", err)
 	}
 	var missing *PauseLease
 	if err := missing.Resume(t.Context()); err == nil {
