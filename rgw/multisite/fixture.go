@@ -14,6 +14,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
@@ -573,8 +574,7 @@ func (r *rgwRealmAccess) admin(ctx context.Context, client testcontainers.Contai
 }
 
 func (r *rgwRealmAccess) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
-	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", r.config.Realm, "--rgw-zonegroup", group, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
-	return multicluster.Exec(ctx, client, append(command, args...)...)
+	return multicluster.Exec(ctx, client, gwbase.AdminArgv(gwbase.Scope{Realm: r.config.Realm, Zonegroup: group, Zone: zone}, args...)...)
 }
 
 func (r *rgwRealmAccess) zoneGroupName(zone string) string {

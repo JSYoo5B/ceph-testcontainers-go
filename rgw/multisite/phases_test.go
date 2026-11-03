@@ -503,6 +503,24 @@ func TestRGWZoneAdminRunsOnlyInAnOwnedRunningZone(t *testing.T) {
 	}
 }
 
+func TestRGWZoneAdminRefusesScopeOverridesAndRedactsFailures(t *testing.T) {
+	cli := &rgwScriptCLI{fail: map[string]bool{"user info --uid u": true}}
+	f := newPhaseFixture(cli, cli)
+	for _, args := range [][]string{nil, {"zone", "get", "--rgw-zone=foreign"}, {"zone", "get", "-c/tmp/other.conf"}, {"zone", "get", "bad\nargument"}} {
+		if _, err := f.ZoneAdmin(t.Context(), "a", args...); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("ZoneAdmin %q = %v, want ErrInvalidRequest", args, err)
+		}
+	}
+	if len(cli.ops) != 0 {
+		t.Fatalf("refused arguments reached radosgw-admin: %q", cli.ops)
+	}
+	_, err := f.ZoneAdmin(t.Context(), "a", "user", "info", "--uid", "u")
+	var failure *ceph.NativeFailure
+	if !errors.As(err, &failure) || failure.ExitCode != 1 || strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("native failure was not classified and redacted: %v", err)
+	}
+}
+
 func TestRGWTopologyNormalizationRefusesAmbiguousLayouts(t *testing.T) {
 	two := []ZoneConfig{{Name: "a"}, {Name: "b"}}
 	for name, config := range map[string]TopologyConfig{
