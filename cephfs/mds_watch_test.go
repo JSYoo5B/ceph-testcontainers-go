@@ -34,6 +34,7 @@ type mdsWatchSource struct {
 	info               map[string]fsbase.MDSInfo
 	standbys           []fsbase.MDSInfo
 	absent, garbled    bool
+	raw                []byte // replaces the encoded FSMap when set
 	open, registered   bool
 	native             *fsbase.NativeIdentity
 	daemons            []*MDS
@@ -58,6 +59,9 @@ func newMDSWatchSource() *mdsWatchSource {
 func (s *mdsWatchSource) dump() []byte {
 	if s.garbled {
 		return []byte(`{"filesystems":`)
+	}
+	if s.raw != nil {
+		return s.raw
 	}
 	filesystems := []any{map[string]any{"id": 8, "mdsmap": map[string]any{"epoch": 3, "fs_name": "other", "max_mds": 1, "metadata_pool": 9, "data_pools": []int64{10}, "info": map[string]any{}}}}
 	if !s.absent {
@@ -411,6 +415,20 @@ func TestMDSWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 	for name, fault := range map[string]func(*mdsWatchSource, error){
 		"failed read":       func(s *mdsWatchSource, err error) { s.fail = err },
 		"undecodable FSMap": func(s *mdsWatchSource, _ error) { s.garbled = true },
+		// Valid JSON that is not a complete FSMap must not pass for a
+		// removed or recreated filesystem.
+		"empty object":     func(s *mdsWatchSource, _ error) { s.raw = []byte(`{}`) },
+		"null":             func(s *mdsWatchSource, _ error) { s.raw = []byte(`null`) },
+		"null filesystems": func(s *mdsWatchSource, _ error) { s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":null}`) },
+		"unnamed entry": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41}]}`)
+		},
+		"entry without its ID": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[2]}}]}`)
+		},
+		"entry without pools": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant"}}]}`)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := newMDSWatchSource()
@@ -422,7 +440,7 @@ func TestMDSWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 			if gap.Kind != ceph.WatchGap || gap.Err == nil || !reflect.DeepEqual(gap.Status, FilesystemStatus{}) || gap.Epoch != 0 || gap.MDSMapEpoch != 0 || gap.Sequence != 2 {
 				t.Fatalf("gap = %+v", gap)
 			}
-			source.update(func(s *mdsWatchSource) { s.fail, s.garbled = nil, false })
+			source.update(func(s *mdsWatchSource) { s.fail, s.garbled, s.raw = nil, false, nil })
 			var resumed MDSWatchEvent
 			for resumed = nextMDSEvent(t, w); resumed.Kind == ceph.WatchGap; resumed = nextMDSEvent(t, w) {
 			}

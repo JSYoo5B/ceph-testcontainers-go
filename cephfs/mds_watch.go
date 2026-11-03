@@ -2,6 +2,7 @@ package cephfs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -210,16 +211,60 @@ func resolveWatchedMDSs(name string, owner mdsOwnerSample, data []byte) (mdsSamp
 	native := owner.native
 	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
 	if errors.Is(err, errFilesystemAbsent) {
+		if err := checkWatchedFSMap(data, name); err != nil {
+			return mdsSample{}, err
+		}
 		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q (FSMap ID %d) is absent from the FSMap: the filesystem was removed", name, native.ID))
 	}
 	if err != nil {
 		return mdsSample{}, err
 	}
 	if topology.status.FilesystemID != native.ID || topology.metadataPool != native.MetadataPool || topology.defaultPool != native.DefaultPool {
+		if err := checkWatchedFSMap(data, name); err != nil {
+			return mdsSample{}, err
+		}
 		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q now has FSMap ID %d with metadata pool %d and default data pool %d instead of %d, %d and %d: recreated under the same name",
 			name, topology.status.FilesystemID, topology.metadataPool, topology.defaultPool, native.ID, native.MetadataPool, native.DefaultPool))
 	}
 	return mdsSample{epoch: topology.epoch, mdsMapEpoch: topology.mdsMapEpoch, status: *topology.status}, nil
+}
+
+// watchedFSMapSchema is the presence view of the FSMap fields that the
+// watch's permanent refusals rest on. A field that is absent or null is nil.
+type watchedFSMapSchema struct {
+	Filesystems *[]struct {
+		ID     *int64 `json:"id"`
+		MDSMap *struct {
+			Name         *string  `json:"fs_name"`
+			MetadataPool *int64   `json:"metadata_pool"`
+			DataPools    *[]int64 `json:"data_pools"`
+		} `json:"mdsmap"`
+	} `json:"filesystems"`
+}
+
+// checkWatchedFSMap confirms that an FSMap which lacks the watched filesystem,
+// or shows it with other identities, is a complete report before the watch
+// ends on it: the filesystems list is present, every entry is named, and the
+// named entry carries its ID and pools. An empty or truncated reply such as {}
+// is a gap, because a later read can still show the filesystem unchanged.
+func checkWatchedFSMap(data []byte, name string) error {
+	var schema watchedFSMapSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return fmt.Errorf("decode cephfs FSMap: %w", err)
+	}
+	if schema.Filesystems == nil {
+		return errors.New("decode cephfs FSMap: the filesystems list is missing")
+	}
+	for i, filesystem := range *schema.Filesystems {
+		m := filesystem.MDSMap
+		if m == nil || m.Name == nil {
+			return fmt.Errorf("decode cephfs FSMap: filesystem entry %d has no name", i)
+		}
+		if *m.Name == name && (filesystem.ID == nil || m.MetadataPool == nil || m.DataPools == nil) {
+			return fmt.Errorf("decode cephfs FSMap: the entry of cephfs %q lacks its ID or pools", name)
+		}
+	}
+	return nil
 }
 
 // mdsStatusEqual compares the semantic fields of two statuses of the same
