@@ -55,8 +55,8 @@ siblings. The volume is mounted with no-copy at the MON's data directory,
 
 Record fields: MON name; volume name derived from a UUID owner token; owner
 token; Docker creation timestamp; state; generation counter; the current
-attachment (empty, or the container of that generation with its Docker ID and
-whether its creation outcome is known);
+attachment (empty, or the container of that generation with its Docker ID,
+whether its creation outcome is known and whether its removal was requested);
 the endpoint the first generation bound (see "Address handoff").
 
 Volume metadata checks are those of the OSD volume: exact name, `local` driver,
@@ -156,9 +156,12 @@ first generation of a store, and `replaceMonitor` calls `ReplaceGeneration`.
   created, and an ID returned with an error is recorded. An unknown outcome is
   never replayed. A first generation that reaches its ready check marks the
   store ready (`ready`).
-- `StopGeneration`: removes the container and clears the attachment only after
-  `confirmGone`. An attachment with an unknown creation outcome is left to
-  `Terminate`.
+- `StopGeneration`: records the removal request on the attachment
+  (`RemoveRequested`), removes the container and clears the attachment only
+  after `confirmGone`. An attachment with an unknown creation outcome is left
+  to `Terminate`. A caller that finds the old attachment after a failure tells
+  from `RemoveRequested` whether the old container may already be stopped or
+  gone.
 - `ReplaceGeneration`: checks the next generation first (a ready generation
   exists, it has a recorded address, the volume is still the one this record
   created), then stops the old container, then starts the next one from the

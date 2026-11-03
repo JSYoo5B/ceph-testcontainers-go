@@ -265,6 +265,11 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 			if len(g.launches) != 1 || r.generation != 1 || r.Attachment == nil {
 				t.Fatalf("a second container was dispatched: launches %d generation %d attachment %+v", len(g.launches), r.generation, r.Attachment)
 			}
+			// The old container was touched: the remaining attachment says so,
+			// so the caller does not take it for an untouched one.
+			if r.Attachment.ID != "ctr-1" || !r.Attachment.RemoveRequested {
+				t.Fatalf("the removal request was not recorded: %+v", r.Attachment)
+			}
 		})
 	}
 	// Control: with none of those the same call succeeds.
@@ -287,7 +292,7 @@ func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testi
 			if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil {
 				t.Fatal("the replacement went on")
 			}
-			if g.removeCalls != 0 || len(g.launches) != 1 || r.Attachment == nil || d.creates != 1 {
+			if g.removeCalls != 0 || len(g.launches) != 1 || r.Attachment == nil || r.Attachment.RemoveRequested || d.creates != 1 {
 				t.Fatalf("the old generation was touched: removes %d launches %d creates %d", g.removeCalls, len(g.launches), d.creates)
 			}
 		})

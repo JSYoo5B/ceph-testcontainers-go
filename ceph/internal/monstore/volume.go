@@ -78,11 +78,14 @@ type Launch struct {
 
 // Attachment is the one container that may use the volume. pending is
 // true until the creation request returned a container ID: a pending attachment
-// is an unknown creation outcome, which is never replayed.
+// is an unknown creation outcome, which is never replayed. RemoveRequested is
+// set before the container's removal is requested: from then on the container
+// may be stopped or gone even while the attachment is not confirmed gone.
 type Attachment struct {
-	generation int
-	ID         string
-	pending    bool
+	generation      int
+	ID              string
+	pending         bool
+	RemoveRequested bool
 }
 
 // monStoreDocker is the Docker surface of the store records: the volume calls

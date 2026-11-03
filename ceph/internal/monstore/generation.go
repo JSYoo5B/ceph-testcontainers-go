@@ -119,9 +119,11 @@ func (s *Volume) StartGeneration(ctx context.Context, g Generations, image strin
 }
 
 // StopGeneration removes the attached container and confirms that nothing uses
-// the volume any more. The attachment is cleared only by that confirmation. An
-// attachment whose creation outcome is unknown has no ID to remove and is
-// settled only by Terminate.
+// the volume any more. The attachment is cleared only by that confirmation; it
+// records the removal request before Remove is called, so a caller can tell a
+// container that may be gone from one that was never touched. An attachment
+// whose creation outcome is unknown has no ID to remove and is settled only by
+// Terminate.
 func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 	if evidence.IsNil(g) {
 		return errors.New("the MON store has no container side")
@@ -132,6 +134,7 @@ func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 	if s.Attachment.pending {
 		return fmt.Errorf("MON %s store creation outcome is unknown; only the labeled-container scan of Terminate settles it", s.mon)
 	}
+	s.Attachment.RemoveRequested = true
 	if err := g.Remove(ctx, s.Attachment.ID); err != nil {
 		return fmt.Errorf("remove MON %s generation %d: %w", s.mon, s.Attachment.generation, err)
 	}
@@ -143,7 +146,9 @@ func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 // generation needs run before the old container is touched, so a store that
 // the next generation would refuse, or that has no address to give it, is found while the old MON still runs. If
 // the new container then fails, the volume and its attachment record stay, and
-// the store is neither formatted nor released.
+// the store is neither formatted nor released. When the old container was
+// touched, the attachment that remains has RemoveRequested set, or it is the
+// next generation's.
 func (s *Volume) ReplaceGeneration(ctx context.Context, g Generations, image string) (string, error) {
 	if err := checkMonStoreGenerations(g, image); err != nil {
 		return "", err
