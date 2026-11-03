@@ -295,15 +295,7 @@ func testECBelowK(t *testing.T) {
 			}
 		}
 	}
-	final, err := harness.ObserveCluster(c).OSDStates(ctx)
-	if err != nil || len(final) != len(initial) {
-		t.Fatal("OSD registrations unavailable", err)
-	}
-	for i, s := range final {
-		if s.ID != initial[i].ID || s.UUID != initial[i].UUID || !s.Up || !s.In {
-			t.Fatal("OSD registration changed")
-		}
-	}
+	final := requireOSDs(t, ctx, c, "OSD registrations restored", ceph.OSDExpectation{Select: initial, Up: true, In: true, Exact: true})
 	read := ecBelowKRead(t, ctx, c, client, pool.Name, size, seed, recoveredAck)
 	if slices.Contains([]uint64{kRead.Reader, recoveredAck.Writer, recoveredAck.Reader}, read.Reader) {
 		t.Fatal("final read reused prior client")

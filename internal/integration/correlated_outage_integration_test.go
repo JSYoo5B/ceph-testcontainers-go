@@ -7,6 +7,8 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -72,15 +74,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
-	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-	if err != nil || len(states) != 3 {
-		t.Fatalf("initial OSD identities: %v %+v", err, states)
-	}
-	for _, state := range states {
-		if !state.Up || !state.In || state.UUID == "" {
-			t.Fatalf("initial OSD identity: %+v", state)
-		}
-	}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
 	acting := func(object string) []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -193,6 +188,13 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		t.Fatalf("host-a is missing a role or lacks the active MGR: %+v", hostA)
 	}
 	osdAID, _ := strconv.Atoi(osdA.Name)
+	// The stopped OSD is reported down but stays in, under its own registration.
+	stoppedOSD := ceph.OSDExpectation{Up: false, In: true}
+	for _, state := range states {
+		if state.ID == osdAID {
+			stoppedOSD.Select = []ceph.OSDState{state}
+		}
+	}
 	start := time.Now()
 	// The stops run OSD, MGR, MON and the restores run in reverse, so the MON
 	// starts first. The primary MON is pinned to its bridge address, and Docker
@@ -303,11 +305,9 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		}
 		if !observed["osd"] {
 			if current, err := harness.ObserveCluster(cluster).OSDStates(ctx); err == nil {
-				for _, state := range current {
-					if state.ID == osdAID && !state.Up && state.In {
-						observed["osd"] = true
-						plan.Observe("osd", osdA.Name)
-					}
+				if r, err := stoppedOSD.Evaluate(current); err == nil && r.Matched {
+					observed["osd"] = true
+					plan.Observe("osd", osdA.Name)
 				}
 			}
 		}
@@ -331,12 +331,30 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if err := plan.Restore(ctx, "primary"); err != nil {
 		t.Fatal(err)
 	}
-	topologyWait(t, ctx, func() bool {
-		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(ctx)
-		m, merr := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-		s, serr := harness.ObserveCluster(cluster).OSDStates(ctx)
-		return qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
-			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In })
+	topologyWaitLast(t, ctx, func(ctx context.Context) (bool, error) {
+		q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
+		if err != nil {
+			return false, err
+		}
+		m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
+		if err != nil {
+			return false, err
+		}
+		if len(q.QuorumNames) != 3 || !m.Available || len(m.Standbys) != 1 {
+			return false, fmt.Errorf("quorum %v, manager available=%t standbys=%d", q.QuorumNames, m.Available, len(m.Standbys))
+		}
+		s, err := harness.ObserveCluster(cluster).OSDStates(ctx)
+		if err != nil {
+			return false, err
+		}
+		osdEval, err := restored.Evaluate(s)
+		if err != nil {
+			return false, err
+		}
+		if !osdEval.Matched {
+			return false, errors.New(osdEval.String())
+		}
+		return true, nil
 	})
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)

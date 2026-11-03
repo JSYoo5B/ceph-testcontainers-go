@@ -265,15 +265,11 @@ func testECRecoveredContribution(t *testing.T) {
 
 	// Second outage: a different holder, so exactly K indices remain.
 	receipt.Stage = "second outage"
-	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-	if err != nil {
-		t.Fatal(err)
+	holders := make([]ceph.OSDState, len(clean.Acting))
+	for i, id := range clean.Acting {
+		holders[i].ID = id
 	}
-	for _, id := range clean.Acting {
-		if i := slices.IndexFunc(states, func(s ceph.OSDState) bool { return s.ID == id }); i < 0 || !states[i].Up || !states[i].In {
-			t.Fatalf("osd.%d is not up and in before the second outage: %+v", id, states)
-		}
-	}
+	requireOSDs(t, ctx, cluster, "holders up and in before the second outage", ceph.OSDExpectation{Select: holders, Up: true, In: true})
 	// Admission: the same running instances as before. The restored holder is
 	// the incarnation that Start created, and neither the primary nor the second
 	// holder may have restarted, crashed or been killed for memory.

@@ -103,15 +103,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 						t.Fatalf("object %s with primary osd.%d: %+v", result.Name, primaries[result.Name], result)
 					}
 				}
-				states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, state := range states {
-					if !state.Up || !state.In {
-						t.Fatalf("osd.%d left the map while dropping client messages: %+v", state.ID, state)
-					}
-				}
+				requireOSDs(t, ctx, cluster, "OSDs stay in the map while dropping client messages", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
 				hold()
 				allWritten(t, "after-blackhole", 10)
 			})
