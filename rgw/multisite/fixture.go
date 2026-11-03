@@ -568,60 +568,6 @@ func rgwEndpointArgs(args []string, endpoint string) []string {
 	return args
 }
 
-func (f *Fixture) validatePeriodEndpoints(data []byte) error {
-	var period struct {
-		RealmID    string `json:"realm_id"`
-		MasterZone string `json:"master_zone"`
-		PeriodMap  struct {
-			Zonegroups []struct {
-				Name       string   `json:"name"`
-				MasterZone string   `json:"master_zone"`
-				Endpoints  []string `json:"endpoints"`
-				Zones      []struct {
-					ID        string   `json:"id"`
-					Name      string   `json:"name"`
-					Endpoints []string `json:"endpoints"`
-				} `json:"zones"`
-			} `json:"zonegroups"`
-		} `json:"period_map"`
-	}
-	if err := json.Unmarshal(data, &period); err != nil {
-		return fmt.Errorf("decode committed RGW period: %w", err)
-	}
-	if period.RealmID != f.RealmID || period.MasterZone != f.SourceZoneID {
-		return fmt.Errorf("committed RGW period has unexpected realm or metadata master")
-	}
-	for _, group := range period.PeriodMap.Zonegroups {
-		if group.Name != f.realm.config.Zonegroup {
-			continue
-		}
-		if group.MasterZone != f.SourceZoneID || !slices.Equal(group.Endpoints, []string{f.realm.sourceURL}) {
-			return fmt.Errorf("committed zonegroup %s has unexpected master/endpoints: %v", group.Name, group.Endpoints)
-		}
-		found := 0
-		for _, zone := range group.Zones {
-			var expectedID, expectedURL string
-			switch zone.Name {
-			case f.realm.config.SourceZone:
-				expectedID, expectedURL = f.SourceZoneID, f.realm.sourceURL
-			case f.realm.config.DestinationZone:
-				expectedID, expectedURL = f.DestinationZoneID, f.realm.destinationURL
-			default:
-				continue
-			}
-			if zone.ID != expectedID || !slices.Equal(zone.Endpoints, []string{expectedURL}) {
-				return fmt.Errorf("committed zone %s has unexpected ID/endpoints: %v; expected endpoint %s", zone.Name, zone.Endpoints, expectedURL)
-			}
-			found++
-		}
-		if found != 2 {
-			return fmt.Errorf("committed zonegroup contains %d expected zones, want 2", found)
-		}
-		return nil
-	}
-	return fmt.Errorf("committed period has no zonegroup %s", f.realm.config.Zonegroup)
-}
-
 func (r *rgwRealmAccess) admin(ctx context.Context, client testcontainers.Container, zone string, args ...string) ([]byte, error) {
 	return r.adminInGroup(ctx, client, r.zoneGroupName(zone), zone, args...)
 }
