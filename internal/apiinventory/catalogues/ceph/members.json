@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 279,
+  "count": 291,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -112,6 +112,14 @@
       "HealthSnapshot.FSID field string",
       "HealthSnapshot.Mutes field []HealthMute",
       "HealthSnapshot.Status field string"
+    ],
+    "ceph.HealthWatchEvent": [
+      "HealthWatchEvent.Err field error",
+      "HealthWatchEvent.Finished field time.Time",
+      "HealthWatchEvent.Health field HealthSnapshot",
+      "HealthWatchEvent.Kind field WatchEventKind",
+      "HealthWatchEvent.Sequence field uint64",
+      "HealthWatchEvent.Started field time.Time"
     ],
     "ceph.ImageSet": [
       "ImageSet.All field string",
@@ -316,6 +324,14 @@
       "PoolPGSnapshot.PGs field []PGState",
       "PoolPGSnapshot.PoolAfter field PoolState",
       "PoolPGSnapshot.PoolBefore field PoolState"
+    ],
+    "ceph.PoolPGWatchEvent": [
+      "PoolPGWatchEvent.Err field error",
+      "PoolPGWatchEvent.Finished field time.Time",
+      "PoolPGWatchEvent.Kind field WatchEventKind",
+      "PoolPGWatchEvent.Sequence field uint64",
+      "PoolPGWatchEvent.Snapshot field PoolPGSnapshot",
+      "PoolPGWatchEvent.Started field time.Time"
     ],
     "ceph.PoolPlacement": [
       "PoolPlacement.CRUSHRoot field string",

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 291,
+  "count": 301,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -719,6 +719,34 @@
       "current": "ceph.HealthSnapshot",
       "kind": "type",
       "proposed": "ceph.HealthSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatch",
+      "kind": "type",
+      "proposed": "ceph.HealthWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan HealthWatchEvent",
+      "receiver": "*HealthWatch",
+      "proposed": "ceph.HealthWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*HealthWatch",
+      "proposed": "ceph.HealthWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.HealthWatchEvent",
       "decision": "baseline"
     },
     {
@@ -1720,6 +1748,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.WatchHealth",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*HealthWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchHealth",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.WatchOSDs",
       "kind": "method",
       "signature": "func(ctx context.Context, cfg WatchConfig) (*OSDWatch, error)",
@@ -1883,6 +1919,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Pool.WatchPGs",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*PoolPGWatch, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.WatchPGs",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.PoolConfig",
       "kind": "type",
       "proposed": "ceph.PoolConfig",
@@ -1892,6 +1936,34 @@
       "current": "ceph.PoolPGSnapshot",
       "kind": "type",
       "proposed": "ceph.PoolPGSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch",
+      "kind": "type",
+      "proposed": "ceph.PoolPGWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan PoolPGWatchEvent",
+      "receiver": "*PoolPGWatch",
+      "proposed": "ceph.PoolPGWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*PoolPGWatch",
+      "proposed": "ceph.PoolPGWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.PoolPGWatchEvent",
       "decision": "baseline"
     },
     {
