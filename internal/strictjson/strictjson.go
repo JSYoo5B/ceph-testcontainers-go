@@ -181,17 +181,43 @@ func (w walker) array(expected reflect.Type, depth int) error {
 // structFields maps the tagged JSON names of a struct type to their field
 // types. An untagged field is matched by encoding/json case-insensitively on
 // purpose (native keys are lowercase, Go names are not), so it has no canonical
-// spelling to enforce and stays out of the map.
+// spelling to enforce and stays out of the map. The fields of an untagged
+// embedded struct are promoted as encoding/json promotes them, and a field of
+// the outer struct hides a promoted field of the same name.
 func structFields(t reflect.Type) map[string]reflect.Type {
 	fields := map[string]reflect.Type{}
-	if t == nil || t.Kind() != reflect.Struct {
-		return fields
+	collectFields(t, fields, map[reflect.Type]bool{})
+	return fields
+}
+
+func collectFields(t reflect.Type, fields map[string]reflect.Type, visiting map[reflect.Type]bool) {
+	if t == nil || t.Kind() != reflect.Struct || visiting[t] {
+		return
 	}
+	visiting[t] = true
+	defer delete(visiting, t)
+	var embedded []reflect.Type
 	for i := 0; i < t.NumField(); i++ {
-		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-		if name != "" && name != "-" {
-			fields[name] = t.Field(i).Type
+		field := t.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name != "" {
+			if _, ok := fields[name]; !ok {
+				fields[name] = field.Type
+			}
+			continue
+		}
+		if field.Anonymous {
+			inner := field.Type
+			if inner.Kind() == reflect.Pointer {
+				inner = inner.Elem()
+			}
+			embedded = append(embedded, inner)
 		}
 	}
-	return fields
+	for _, inner := range embedded {
+		collectFields(inner, fields, visiting)
+	}
 }
