@@ -65,17 +65,17 @@ func TestDefaultGatewayAppliesOnlyWithoutExplicitGateways(t *testing.T) {
 
 func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	ctx := t.Context()
-	if _, err := Start(ctx, nil, Config{}); err == nil {
-		t.Fatal("nil cluster started a gateway")
+	if _, err := Start(ctx, nil, Config{}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("nil cluster Start = %v, want ErrInvalidRequest", err)
 	}
-	if err := (&Gateway{GatewayName: "a"}).Remove(ctx); err == nil {
-		t.Fatal("a gateway without a cluster was removed")
+	if err := (&Gateway{GatewayName: "a"}).Remove(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("Remove without a cluster = %v, want ErrInvalidRequest", err)
 	}
-	if err := (*Gateway)(nil).Remove(ctx); err == nil {
-		t.Fatal("a nil gateway was removed")
+	if err := (*Gateway)(nil).Remove(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("nil gateway Remove = %v, want ErrInvalidRequest", err)
 	}
-	if _, err := Gateways(ctx, nil); err == nil {
-		t.Fatal("nil cluster listed gateways")
+	if _, err := Gateways(ctx, nil); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("nil cluster Gateways = %v, want ErrInvalidRequest", err)
 	}
 }
 
