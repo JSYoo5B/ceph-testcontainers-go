@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -98,25 +99,25 @@ type Container struct {
 	// nativeCommand substitutes command receipts for cancellation/identity tests.
 	// Production uses the supervised keeper command when nil.
 	//testdouble:nil-default-hook
-	nativeCommand                                    func(context.Context, ...string) ([]byte, error)
-	name, instance                                   string
-	size                                             int64
-	docker                                           *testcontainers.DockerClient
-	creationSent, ready, closing, released           bool
-	loop                                             control.LoopIdentity
-	fileDev                                          uint64
-	device                                           faulthook.BlockDevice
-	record                                           control.Record
-	linear                                           string
-	requested                                        Profile
-	cluster                                          *ceph.Container
-	osd                                              *ceph.OSDContainer
-	attachmentSent                                   bool
-	token                                            faulthook.Token
-	registered                                       bool
-	excluded, mappingRemoved, detachSent, unlinkSent bool
-	loopReleased, removeSent, backingReleased        bool
-	detachID                                         string
+	nativeCommand                             func(context.Context, ...string) ([]byte, error)
+	name, instance                            string
+	size                                      int64
+	docker                                    *testcontainers.DockerClient
+	creationSent, ready, closing, released    bool
+	loop                                      control.LoopIdentity
+	fileDev                                   uint64
+	device                                    faulthook.BlockDevice
+	record                                    control.Record
+	linear                                    string
+	requested                                 Profile
+	cluster                                   *ceph.Container
+	osd                                       *ceph.OSDContainer
+	attachmentSent                            bool
+	token                                     faulthook.Token
+	registered                                bool
+	excluded, mappingRemoved, detachSent      bool
+	loopReleased, removeSent, backingReleased bool
+	detachID                                  string
 	// creationStopped, detachStopped and stoppedStep mark a dispatch that
 	// failed without a reply while its keeper invocation was confirmed
 	// stopped; withdrawUnstarted and settle then consult its started marker.
@@ -226,7 +227,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return b, err
 	}
 	b.instance = probe.Instance
-	if !contains(probe.Targets, "linear") {
+	if !slices.Contains(probe.Targets, "linear") {
 		return b, failure(ceph.ErrEnvironmentUnavailable, "device-mapper linear target is not registered")
 	}
 	if err := b.startCreation(ctx); err != nil {
@@ -256,15 +257,6 @@ func (b *Container) GetContainerID() string {
 		return ""
 	}
 	return b.Container.GetContainerID()
-}
-
-func contains(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }
 
 // AttachOSD creates and starts one OSD on this backend. It accepts only a ready
@@ -348,7 +340,7 @@ func (b *Container) Apply(ctx context.Context, profile Profile) error {
 	if profile.EIO {
 		target = "error"
 	}
-	if !contains(probe.Targets, target) {
+	if !slices.Contains(probe.Targets, target) {
 		return failure(ceph.ErrEnvironmentUnavailable, "device-mapper %s target is not registered", target)
 	}
 	b.requested = profile

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -169,7 +170,7 @@ func (b *Container) transition(ctx context.Context, want string) error {
 			if err != nil {
 				return err
 			}
-			if !contains(probe.Targets, strings.Fields(want)[2]) {
+			if !slices.Contains(probe.Targets, strings.Fields(want)[2]) {
 				return failure(ceph.ErrEnvironmentUnavailable, "requested device-mapper target is no longer registered")
 			}
 		}

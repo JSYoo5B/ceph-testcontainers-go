@@ -154,7 +154,6 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			}
 			b.loopReleased = true
 		}
-		b.unlinkSent = true
 		removed, err := b.owner(ctx, "unlink")
 		if err != nil {
 			return err
