@@ -11,7 +11,7 @@ import (
 )
 
 // TestPackageDoesNotImportItsFeaturePackages keeps the dependency one way:
-// packages rgw/account, rgw/placement and rgw/multisite import rgw, never the
+// packages rgw/account, rgw/placement, rgw/notification and rgw/multisite import rgw, never the
 // reverse. The check covers production and test sources of this package.
 func TestPackageDoesNotImportItsFeaturePackages(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
@@ -32,7 +32,7 @@ func TestPackageDoesNotImportItsFeaturePackages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, feature := range []string{"/rgw/account", "/rgw/placement", "/rgw/multisite"} {
+			for _, feature := range []string{"/rgw/account", "/rgw/placement", "/rgw/notification", "/rgw/multisite"} {
 				if strings.HasSuffix(imported, feature) {
 					t.Errorf("%s imports %s; rgw must not import its feature package", path, imported)
 				}

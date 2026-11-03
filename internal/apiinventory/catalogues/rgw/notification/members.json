@@ -1,0 +1,48 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rgw/notification",
+  "count": 28,
+  "types": {
+    "rgw/notification.Metadata": [
+      "Metadata.ARN field string",
+      "Metadata.MaxRetries field string",
+      "Metadata.Name field string",
+      "Metadata.Owner field string",
+      "Metadata.Queue field string",
+      "Metadata.RetrySleepDuration field string",
+      "Metadata.Tenant field string",
+      "Metadata.TimeToLive field string"
+    ],
+    "rgw/notification.PendingEntry": [
+      "PendingEntry.Bucket field string",
+      "PendingEntry.ConfigurationID field string",
+      "PendingEntry.CreationTime field string",
+      "PendingEntry.EventID field string",
+      "PendingEntry.EventName field string",
+      "PendingEntry.EventTime field string",
+      "PendingEntry.Key field string",
+      "PendingEntry.Sequencer field string",
+      "PendingEntry.VersionID field string"
+    ],
+    "rgw/notification.QueueSnapshot": [
+      "QueueSnapshot.Pending field []PendingEntry",
+      "QueueSnapshot.Sampled field bool",
+      "QueueSnapshot.Stats field Stats",
+      "QueueSnapshot.Topic field Metadata"
+    ],
+    "rgw/notification.Sample": [
+      "Sample.MaxBytes field int",
+      "Sample.MaxEntries field int"
+    ],
+    "rgw/notification.Stats": [
+      "Stats.Entries field uint64",
+      "Stats.Reservations field uint64",
+      "Stats.SizeBytes field uint64"
+    ],
+    "rgw/notification.Topic": [
+      "Topic.Name field string",
+      "Topic.Tenant field string"
+    ]
+  }
+}
