@@ -40,24 +40,24 @@ type CrashOutcome string
 const (
 	// CrashRecordsFound means that the directory was read and held at least
 	// one accepted record.
-	CrashRecordsFound CrashOutcome = "records"
+	CrashRecordsFound = CrashOutcome(evidence.CrashRecordsFound)
 	// CrashEntriesRejected means that the directory was read, but every
 	// metadata file in it was rejected; Omitted says why.
-	CrashEntriesRejected CrashOutcome = "rejected"
+	CrashEntriesRejected = CrashOutcome(evidence.CrashEntriesRejected)
 	// CrashDirectoryEmpty means that the directory was read and held no
 	// metadata file. It is not proof that the daemon never crashed.
-	CrashDirectoryEmpty CrashOutcome = "empty"
+	CrashDirectoryEmpty = CrashOutcome(evidence.CrashDirectoryEmpty)
 	// CrashDirectoryAbsent means that the container has no crash directory.
-	CrashDirectoryAbsent CrashOutcome = "absent"
+	CrashDirectoryAbsent = CrashOutcome(evidence.CrashDirectoryAbsent)
 	// CrashContainerUnavailable means that the container was never created
 	// or was removed, with its crash directory.
-	CrashContainerUnavailable CrashOutcome = "unavailable"
+	CrashContainerUnavailable = CrashOutcome(evidence.CrashContainerUnavailable)
 	// CrashReadFailed means that Docker or the container implementation
 	// failed, for example without permission or after the context ended.
-	CrashReadFailed CrashOutcome = "failed"
+	CrashReadFailed = CrashOutcome(evidence.CrashReadFailed)
 	// CrashArchiveIncomplete means that the archive was malformed, cut off or
 	// over a limit; Records holds what was read before.
-	CrashArchiveIncomplete CrashOutcome = "incomplete"
+	CrashArchiveIncomplete = CrashOutcome(evidence.CrashArchiveIncomplete)
 )
 
 // CrashMetadataReport is an independent, JSON-serializable report of the Ceph
@@ -194,7 +194,10 @@ func collectCrashMetadata(ctx context.Context, config CrashMetadataConfig, snaps
 	return report, err
 }
 
-// crashMetadataReport is the public form of a collected report.
+// crashMetadataReport is the public form of a collected report. The public
+// types repeat the collector's fields, so that the internal Identity stays
+// out of the API; TestCrashMetadataTypesMirrorTheCollector fails when a
+// collector field has no public counterpart here.
 func crashMetadataReport(collected *evidence.CrashReport) CrashMetadataReport {
 	report := CrashMetadataReport{SchemaVersion: collected.SchemaVersion, StartedAt: collected.StartedAt, FinishedAt: collected.FinishedAt,
 		Closed: collected.Closed, Complete: collected.Complete, Containers: make([]CrashMetadataContainer, 0, len(collected.Containers))}
