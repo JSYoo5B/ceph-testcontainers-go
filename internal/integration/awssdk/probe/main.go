@@ -10,6 +10,12 @@
 // and the SHA-256 of the object it read or wrote. It exits nonzero only when
 // the operation failed for another reason than refused credentials; its
 // messages never include the keys.
+//
+// With -role-arn, the probe is an STS consumer: it first calls AssumeRole for
+// that role with the key pair and reports whether STS issued temporary
+// credentials and the assumed-role ARN; when it did, it performs the
+// operation with the temporary credentials and their session token, which it
+// never prints.
 package main
 
 import (
@@ -28,14 +34,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 )
 
 type result struct {
 	Operation string `json:"operation"`
+	// Role, with -role-arn, is assumed when STS issued temporary credentials
+	// for the role and refused when it refused the AssumeRole request;
+	// AssumedARN is the assumed-role identity STS returned.
+	Role       string `json:"role,omitempty"`
+	AssumedARN string `json:"assumed_arn,omitempty"`
 	// Outcome is accepted when RGW accepted the credentials and refused when
-	// it refused them.
-	Outcome string `json:"outcome"`
+	// it refused them. It is empty when the role was refused.
+	Outcome string `json:"outcome,omitempty"`
 	SHA256  string `json:"sha256,omitempty"`
 }
 
@@ -43,14 +55,20 @@ type result struct {
 // does not accept.
 var refusedCodes = map[string]bool{"InvalidAccessKeyId": true, "SignatureDoesNotMatch": true, "AccessDenied": true}
 
+// assumeRefusedCodes are the STS error codes of an AssumeRole that RGW
+// refuses: refused credentials, a principal the trust policy does not allow,
+// or a role that does not exist.
+var assumeRefusedCodes = map[string]bool{"InvalidAccessKeyId": true, "SignatureDoesNotMatch": true, "AccessDenied": true, "NoSuchEntity": true}
+
 func main() {
-	var endpoint, region, bucket, object, operation, data string
+	var endpoint, region, bucket, object, operation, data, roleARN string
 	flag.StringVar(&endpoint, "endpoint", "", "S3 endpoint URL")
 	flag.StringVar(&region, "region", "", "S3 region")
 	flag.StringVar(&bucket, "bucket", "", "existing bucket")
 	flag.StringVar(&object, "object", "", "object key")
 	flag.StringVar(&operation, "operation", "", "get or put")
 	flag.StringVar(&data, "data", "", "object content that put writes")
+	flag.StringVar(&roleARN, "role-arn", "", "role to assume with STS before the operation")
 	flag.Parse()
 	access, secret := os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")
 	if endpoint == "" || region == "" || bucket == "" || object == "" || access == "" || secret == "" || (operation != "get" && operation != "put") {
@@ -59,10 +77,43 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	out := result{Operation: operation}
+	token := ""
+	if roleARN != "" {
+		assumed, err := sts.New(sts.Options{
+			BaseEndpoint:     aws.String(endpoint),
+			Region:           region,
+			Credentials:      credentials.NewStaticCredentialsProvider(access, secret, ""),
+			RetryMaxAttempts: 1,
+		}).AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: aws.String(roleARN), RoleSessionName: aws.String("tc-probe"), DurationSeconds: aws.Int32(900)})
+		var apiErr smithy.APIError
+		switch {
+		case err == nil && assumed.Credentials != nil && assumed.AssumedRoleUser != nil:
+			out.Role, out.AssumedARN = "assumed", aws.ToString(assumed.AssumedRoleUser.Arn)
+			access, secret, token = aws.ToString(assumed.Credentials.AccessKeyId), aws.ToString(assumed.Credentials.SecretAccessKey), aws.ToString(assumed.Credentials.SessionToken)
+			if access == "" || secret == "" || token == "" {
+				fmt.Fprintln(os.Stderr, "s3 probe: AssumeRole answered without temporary credentials")
+				os.Exit(1)
+			}
+		case errors.As(err, &apiErr) && assumeRefusedCodes[apiErr.ErrorCode()]:
+			out.Role = "refused"
+			if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+				os.Exit(1)
+			}
+			return
+		default:
+			code := "none"
+			if errors.As(err, &apiErr) {
+				code = apiErr.ErrorCode()
+			}
+			fmt.Fprintf(os.Stderr, "s3 probe: AssumeRole failed (STS error code %s)\n", code)
+			os.Exit(1)
+		}
+	}
 	client := s3.New(s3.Options{
 		BaseEndpoint: aws.String(endpoint),
 		Region:       region,
-		Credentials:  credentials.NewStaticCredentialsProvider(access, secret, ""),
+		Credentials:  credentials.NewStaticCredentialsProvider(access, secret, token),
 		UsePathStyle: true,
 		// One attempt: the caller polls, and a refused request is not retried.
 		RetryMaxAttempts: 1,
@@ -71,7 +122,7 @@ func main() {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	out := result{Operation: operation, Outcome: "accepted"}
+	out.Outcome = "accepted"
 	var content []byte
 	var err error
 	switch operation {
