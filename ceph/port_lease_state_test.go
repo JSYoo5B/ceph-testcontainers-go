@@ -110,15 +110,14 @@ func TestPortLeaseStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 //	         not shared (the exported test state view)
 var portLeaseCallers = map[string]stateCaller{
 	"reserveTrackedHostPortsWith": {"takes", []string{"track"}},
-	"trackHostPortLease":          {"takes", []string{"track"}},
-	"startJoiningMonitor":         {"holds", []string{"track"}},
+	"startOnLeasedPorts":          {"holds", []string{"track"}},
+	"startJoiningMonitor":         {"holds", nil},
 	// The host-network ports of a MON store generation, chosen ones for a
 	// first generation and the recorded ones held for a replacement, are
 	// published through the track function its constructor hands it.
 	"monitorGenerations": {"holds", []string{"track"}},
-	// runMonitor builds the first MON's generations in Run, before the
-	// cluster is shared.
-	"runMonitor": {"init", nil},
+	// runMonitor builds the first MON's generations under the lock it takes.
+	"runMonitor": {"takes", nil},
 	"terminate":  {"takes", []string{"release"}},
 	"UnitState":  {"hook", []string{"count"}},
 }

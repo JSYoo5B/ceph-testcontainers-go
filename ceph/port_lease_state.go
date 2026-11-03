@@ -7,10 +7,10 @@ import "context"
 // until Terminate releases it.
 //
 // The type has no mutex. Every
-// reader and writer runs under Container.mu: track from the three places that
-// publish a lease (reserveTrackedHostPortsWith and AddMonitor after
-// lockTopology, trackHostPortLease with mu.Lock) and release from terminate,
-// which holds it. A lease is published as soon as its allocator exists, even
+// reader and writer runs under Container.mu: track from the places that
+// publish a lease (reserveTrackedHostPortsWith after lockTopology, and
+// startOnLeasedPorts and the MON store generations for every MON start, whose
+// callers hold it) and release from terminate, which holds it. A lease is published as soon as its allocator exists, even
 // when the reservation failed or its context ended, so that Terminate cannot
 // miss it. Each lease has its own mutex, taken by hostPortLease.Release, so a
 // release that blocks on one lease does not need a lock of this type.
