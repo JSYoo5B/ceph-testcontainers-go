@@ -32,13 +32,16 @@ func TestRedactorIsIdempotent(t *testing.T) {
 		`{"secret_key": "abc", "token":"def"}`,
 		"Authorization: Bearer abc.def",
 		"password=hunter2; key=[x]",
+		`password="[review-secret]"`,
+		`password="prefix[review-secret]"`,
+		"token=a[b]c[d",
 		"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
 	} {
 		once := redact(input)
 		if twice := redact(once); twice != once {
 			t.Fatalf("redacting %q again changed %q to %q", input, once, twice)
 		}
-		if strings.Contains(once, "]]") {
+		if strings.Contains(once, "]]") || strings.Contains(once, "review-secret") || strings.Contains(once, "hunter2") {
 			t.Fatalf("redacted %q to %q", input, once)
 		}
 	}

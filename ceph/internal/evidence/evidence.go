@@ -153,10 +153,23 @@ func KeyringSecrets(keyring []byte) []string {
 	return secrets
 }
 
-// secretPattern takes the value after a secret-looking name. The value never
-// contains a bracket, so an already masked "[REDACTED]" is not matched again
-// and redaction is idempotent.
-var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)([^"'\s,;}\[\]]+)`)
+// secretPattern takes the value after a secret-looking name. A bracketed
+// part of the value is taken whole, closing bracket included, so a secret
+// such as "[x]" or "a[b]" is masked entirely; a closing bracket outside one
+// ends the value, as at the end of a JSON array. maskSecret leaves a value
+// that is already a redaction marker alone, which keeps redaction idempotent.
+var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)((?:\[[^"'\s,;}\[\]]*\]|[^"'\s,;}\]])+)`)
+
+// maskSecret replaces the value of one secretPattern match, unless the value
+// is a redaction marker that an earlier pass wrote.
+func maskSecret(match string) string {
+	groups := secretPattern.FindStringSubmatch(match)
+	if groups == nil || strings.HasPrefix(groups[2], "[REDACTED") {
+		return match
+	}
+	return groups[1] + "[REDACTED]"
+}
+
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 
@@ -183,7 +196,7 @@ func Redactor(values []string) func(string) string {
 		// Bearer tokens first: the secret pattern takes only the word after
 		// "Authorization:", which would leave the token behind it.
 		data = bearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return secretPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		return secretPattern.ReplaceAllStringFunc(data, maskSecret)
 	}
 }
 
