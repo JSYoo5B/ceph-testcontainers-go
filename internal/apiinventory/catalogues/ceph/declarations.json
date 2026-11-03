@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 301,
+  "count": 311,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -878,6 +878,34 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ManagerWatch",
+      "kind": "type",
+      "proposed": "ceph.ManagerWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan ManagerWatchEvent",
+      "receiver": "*ManagerWatch",
+      "proposed": "ceph.ManagerWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*ManagerWatch",
+      "proposed": "ceph.ManagerWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.ManagerWatchEvent",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.MaxNativeCommandInput",
       "kind": "const",
       "proposed": "ceph.MaxNativeCommandInput",
@@ -1013,6 +1041,34 @@
       "signature": "func() MonitorStorage",
       "receiver": "MonitorStorage",
       "proposed": "ceph.MonitorStorage.WithVolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch",
+      "kind": "type",
+      "proposed": "ceph.MonitorWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan MonitorWatchEvent",
+      "receiver": "*MonitorWatch",
+      "proposed": "ceph.MonitorWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*MonitorWatch",
+      "proposed": "ceph.MonitorWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.MonitorWatchEvent",
       "decision": "baseline"
     },
     {
@@ -1753,6 +1809,22 @@
       "signature": "func(ctx context.Context, cfg WatchConfig) (*HealthWatch, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.WatchHealth",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WatchManagers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*ManagerWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WatchMonitors",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*MonitorWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchMonitors",
       "decision": "baseline"
     },
     {

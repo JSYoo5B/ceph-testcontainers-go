@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 291,
+  "count": 309,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -169,6 +169,16 @@
       "ManagerStatus.Standbys[].GID field uint64 `json:\"gid\"`",
       "ManagerStatus.Standbys[].Name field string `json:\"name\"`"
     ],
+    "ceph.ManagerWatchEvent": [
+      "ManagerWatchEvent.Epoch field uint64",
+      "ManagerWatchEvent.Err field error",
+      "ManagerWatchEvent.Finished field time.Time",
+      "ManagerWatchEvent.Kind field WatchEventKind",
+      "ManagerWatchEvent.Sequence field uint64",
+      "ManagerWatchEvent.Services field map[string]string",
+      "ManagerWatchEvent.Started field time.Time",
+      "ManagerWatchEvent.Status field ManagerStatus"
+    ],
     "ceph.MessengerPolicy": [
       "MessengerPolicy.Managers field []MessengerConnectionMode",
       "MessengerPolicy.Monitors field []MessengerConnectionMode",
@@ -183,6 +193,18 @@
     "ceph.MonitorContainer": [
       "MonitorContainer embed testcontainers.Container",
       "MonitorContainer.DaemonName field string"
+    ],
+    "ceph.MonitorWatchEvent": [
+      "MonitorWatchEvent.ElectionEpoch field uint64",
+      "MonitorWatchEvent.Err field error",
+      "MonitorWatchEvent.Finished field time.Time",
+      "MonitorWatchEvent.Kind field WatchEventKind",
+      "MonitorWatchEvent.Leader field string",
+      "MonitorWatchEvent.Members field []DaemonAddress",
+      "MonitorWatchEvent.MonMapEpoch field uint64",
+      "MonitorWatchEvent.Quorum field []string",
+      "MonitorWatchEvent.Sequence field uint64",
+      "MonitorWatchEvent.Started field time.Time"
     ],
     "ceph.NativeCommand": [
       "NativeCommand.Argv field []string",
