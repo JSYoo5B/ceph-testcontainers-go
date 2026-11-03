@@ -365,7 +365,7 @@ func validateVolumeHandle(fs *fsbase.Core, identity *volumeRecord) error {
 
 func resizeQuota(size int64) (string, error) {
 	if size < 0 {
-		return "", errors.New("subvolume quota must not be negative; zero means unlimited")
+		return "", servicehook.Invalid(errors.New("subvolume quota must not be negative; zero means unlimited"))
 	}
 	if size == 0 {
 		return "inf", nil

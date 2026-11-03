@@ -85,7 +85,7 @@ func (volume *Subvolume) Authorize(ctx context.Context, config AuthorizationConf
 		return nil, err
 	}
 	if config.Access != "r" && config.Access != "rw" {
-		return nil, errors.New("subvolume access must be r or rw")
+		return nil, servicehook.Invalid(errors.New("subvolume access must be r or rw"))
 	}
 	if volume == nil {
 		return nil, errors.New("subvolume is required")
@@ -538,7 +538,7 @@ func (grant *Authorization) EvictClients(ctx context.Context) error {
 func clientEntity(name string) (string, error) {
 	id := strings.TrimPrefix(name, "client.")
 	if !naming.ClientID.MatchString(id) {
-		return "", errors.New("client name must be an ID or client.ID using letters, digits, dots, underscores or hyphens")
+		return "", servicehook.Invalid(errors.New("client name must be an ID or client.ID using letters, digits, dots, underscores or hyphens"))
 	}
 	return "client." + id, nil
 }

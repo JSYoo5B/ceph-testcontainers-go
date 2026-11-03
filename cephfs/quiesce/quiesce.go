@@ -89,11 +89,11 @@ func Start(ctx context.Context, fs *cephfs.Filesystem, volumes []*subvolume.Subv
 
 func start(ctx context.Context, fs *fsbase.Core, volumes []*volbase.Volume, config Config) (*Set, error) {
 	if config.Timeout < time.Second || config.Expiration < time.Second || len(volumes) == 0 {
-		return nil, errors.New("quiesce requires subvolumes and timeout/expiration of at least one second")
+		return nil, servicehook.Invalid(errors.New("quiesce requires subvolumes and timeout/expiration of at least one second"))
 	}
 	for _, volume := range volumes {
 		if fs == nil || volume == nil || volume.Core != fs {
-			return nil, errors.New("quiesce members must be confirmed subvolumes owned by this filesystem")
+			return nil, servicehook.Invalid(errors.New("quiesce members must be confirmed subvolumes owned by this filesystem"))
 		}
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
@@ -116,7 +116,7 @@ func start(ctx context.Context, fs *fsbase.Core, volumes []*volbase.Volume, conf
 		}
 		member := "file:" + identity.Path
 		if slices.Contains(members, member) {
-			return nil, errors.New("quiesce members must be distinct")
+			return nil, servicehook.Invalid(errors.New("quiesce members must be distinct"))
 		}
 		members = append(members, member)
 		name := identity.Name

@@ -121,7 +121,7 @@ func TestDefaultFilesystemAppliesOnlyWithoutExplicitFilesystems(t *testing.T) {
 
 func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	ctx := t.Context()
-	if _, err := Start(ctx, nil, Config{}); err == nil {
+	if _, err := Start(ctx, nil, Config{}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatal("nil cluster started a filesystem")
 	}
 	if err := newFilesystem(nil, Config{Name: "a"}, nil).Remove(ctx); err == nil || !strings.Contains(err.Error(), "unavailable") {
