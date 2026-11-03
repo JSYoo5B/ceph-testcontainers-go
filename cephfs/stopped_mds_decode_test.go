@@ -223,7 +223,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 					return true
 				}
 				switch name := calleeName(call); name {
-				case "decodeStoppedMDSMap", "verifyStoppedMDSSurvivors", "decodeStoppedMDSScope":
+				case "DecodeStopped", "verifyStoppedMDSSurvivors", "decodeStoppedMDSScope":
 					callers[name] = append(callers[name], fn.Name.Name)
 				case "Inspect":
 					inspectIn[fn.Name.Name]++
@@ -233,7 +233,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 		}
 	}
 	want := map[string][]string{
-		"decodeStoppedMDSMap":       {"decodeStoppedMDSScope"},
+		"DecodeStopped":             {"decodeStoppedMDSScope"},
 		"verifyStoppedMDSSurvivors": {"decodeStoppedMDSScope"},
 		"decodeStoppedMDSScope":     {"readStoppedMDSScope"},
 	}
@@ -251,7 +251,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 	ast.Inspect(scopeFn.Body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
-			if name := calleeName(node); name == "decodeStoppedMDSMap" || name == "verifyStoppedMDSSurvivors" {
+			if name := calleeName(node); name == "DecodeStopped" || name == "verifyStoppedMDSSurvivors" {
 				order = append(order, name)
 			}
 		case *ast.ReturnStmt:
@@ -263,7 +263,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 		}
 		return true
 	})
-	if !slices.Equal(order, []string{"decodeStoppedMDSMap", "verifyStoppedMDSSurvivors"}) || !returned {
+	if !slices.Equal(order, []string{"DecodeStopped", "verifyStoppedMDSSurvivors"}) || !returned {
 		t.Errorf("decode must come first and the verified scope must be returned: %v returned=%v", order, returned)
 	}
 }

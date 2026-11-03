@@ -53,8 +53,8 @@ func TestDecodersArePureFunctionsOfTheirArguments(t *testing.T) {
 }
 
 // TestRowStateListHasOneCopy guards the shared allowlist: the state names
-// are written only in state.go, and each decoder reaches them through
-// StateAccepted, once.
+// are written only in state.go, and every decoder reaches them through
+// admitRow, the one caller of StateAccepted.
 func TestRowStateListHasOneCopy(t *testing.T) {
 	callers := map[string][]string{}
 	for name, file := range parseFiles(t) {
@@ -78,7 +78,7 @@ func TestRowStateListHasOneCopy(t *testing.T) {
 			})
 		}
 	}
-	want := map[string][]string{"DecodeCold": {"cold.go"}, "admitStoppedMDSRow": {"stopped.go"}, "admitReplacementMDSRow": {"replacement.go"}}
+	want := map[string][]string{"admitRow": {"rows.go"}}
 	if !reflect.DeepEqual(callers, want) {
 		t.Errorf("state-list callers changed: %v, pinned %v", callers, want)
 	}

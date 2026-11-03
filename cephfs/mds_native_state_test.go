@@ -64,7 +64,7 @@ func TestMDSRowStateAllowlistReachesEveryStrictDecoder(t *testing.T) {
 		for _, state := range append(slices.Clone(assignedMDSRowStates), refusedMDSRowStates...) {
 			refused := !mdsmap.StateAccepted(state)
 			native := map[string]any{"standbys": []any{}, "filesystems": append(slices.Clone(n.native["filesystems"].([]any)), foreign(state))}
-			err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools})
+			err := mdsmap.DecodeCold([]byte(coldMDSTestJSON(native)), mdsmap.ColdExpectation{Filesystem: fs.config.Name, ReservedName: "cold-target-0", Native: mdsMapNative(fs.mds.coldMDS.identity), DataPools: fs.mds.coldMDS.dataPools})
 			if refused && (err == nil || err.Error() != want) || !refused && err != nil {
 				t.Fatalf("cold decoder, state %q: %v", state, err)
 			}

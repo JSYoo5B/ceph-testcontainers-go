@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -344,6 +345,7 @@ func TestNoInitialMDSColdScopeGuardsAndForeignStandby(t *testing.T) {
 	fs, n := coldMDSTestConstruct(t, false)
 	other := coldMDSTestMap("_other", 30, 31)
 	other["info"] = map[string]any{"gid_40": coldMDSTestRow("_other-0", "up:active", 40, 0, 9)}
+	other["up"] = map[string]any{"mds_0": uint64(40)}
 	n.native["filesystems"] = append(n.native["filesystems"].([]any), map[string]any{"id": 9, "mdsmap": other})
 	n.native["standbys"] = []any{coldMDSTestRow("_other-1", "up:standby", 41, -1, 9)}
 	if err := fs.fleet().verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil {
@@ -365,14 +367,14 @@ func TestNoInitialMDSStrictNativeAbsenceSchema(t *testing.T) {
 				} else {
 					m[field] = nil
 				}
-				if err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil {
+				if err := mdsmap.DecodeCold([]byte(coldMDSTestJSON(native)), mdsmap.ColdExpectation{Filesystem: fs.config.Name, ReservedName: "cold-target-0", Native: mdsMapNative(fs.mds.coldMDS.identity), DataPools: fs.mds.coldMDS.dataPools}); err == nil {
 					t.Fatal("missing/null absence authority accepted")
 				}
 			})
 		}
 	}
 	for _, bad := range []string{good + " {}", `{"standbys":[],"standbys":[],"filesystems":[]}`, "null", "[]", `{"standbys":null,"filesystems":[]}`, `{"standbys":[],"filesystems":null}`, "never-log-this-native-secret"} {
-		if err := decodeColdMDSMap([]byte(bad), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil || strings.Contains(err.Error(), "never-log") {
+		if err := mdsmap.DecodeCold([]byte(bad), mdsmap.ColdExpectation{Filesystem: fs.config.Name, ReservedName: "cold-target-0", Native: mdsMapNative(fs.mds.coldMDS.identity), DataPools: fs.mds.coldMDS.dataPools}); err == nil || strings.Contains(err.Error(), "never-log") {
 			t.Fatalf("malformed map accepted or leaked: %v", err)
 		}
 	}

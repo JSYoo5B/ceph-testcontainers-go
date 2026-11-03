@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
@@ -289,23 +288,12 @@ func (f mdsFleet) checkMDSReplacementAuth(ctx context.Context, control testconta
 	if err != nil {
 		return clusterutil.OperationError(ctx, "check replacement MDS identity names", err)
 	}
-	var auth struct {
-		Entities *[]struct {
-			Entity *string `json:"entity"`
-		} `json:"auth_dump"`
+	present, err := mdsmap.IdentityPresent(data, "mds."+name)
+	if err != nil {
+		return err
 	}
-	if coldMDSJSON(data, &auth) != nil || auth.Entities == nil {
-		return errors.New("replacement MDS identity names are incomplete")
-	}
-	seen := map[string]bool{}
-	for _, entry := range *auth.Entities {
-		if entry.Entity == nil || *entry.Entity == "" || strings.TrimSpace(*entry.Entity) != *entry.Entity || seen[*entry.Entity] {
-			return errors.New("replacement MDS identity names are malformed or duplicated")
-		}
-		seen[*entry.Entity] = true
-		if *entry.Entity == "mds."+name {
-			return servicehook.Invalid(errors.New("reserved replacement MDS identity already exists"))
-		}
+	if present {
+		return servicehook.Invalid(errors.New("reserved replacement MDS identity already exists"))
 	}
 	return ctx.Err()
 }
@@ -355,8 +343,8 @@ func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *ce
 
 // readMDSReplacementScope reads the native pools and the global map (two
 // commands) and returns the decoded scope. The decoding itself is
-// decodeMDSReplacementMap, a function of its arguments. The cluster mutex is
-// held by its callers, as before the split.
+// mdsmap.DecodeReplacement, a function of its arguments. Its callers hold the
+// cluster mutex.
 func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIdentity, r *cephFSMDSReplacement) (*mdsmap.Scope, bool, error) {
 	pools, err := f.core.ReadNativePools(ctx)
 	if err != nil {
@@ -366,8 +354,9 @@ func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIde
 	if err != nil {
 		return nil, false, clusterutil.OperationError(ctx, "read original MDS replacement map", err)
 	}
-	state, err := decodeMDSReplacementMap(data, replacementMDSMapExpectation{
-		oldName: old.name, filesystem: f.core.Name(), reservedName: r.name, workerExists: r.daemon != nil, native: old.native, pools: pools,
+	state, err := mdsmap.DecodeReplacement(data, mdsmap.ReplacementExpectation{
+		OldName: old.name, Filesystem: f.core.Name(), ReservedName: r.name, WorkerExists: r.daemon != nil,
+		Native: mdsMapNative(old.native), Pools: mdsMapPools(pools),
 	})
 	if err != nil {
 		return nil, false, err

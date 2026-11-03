@@ -229,7 +229,7 @@ func checkStoppedMDSCluster(ctx context.Context, v fsbase.VolumeCommands, i *cep
 		return clusterutil.OperationError(ctx, "read stopped MDS cluster quorum", err)
 	}
 	var quorum ceph.QuorumStatus
-	if coldMDSJSON(data, &quorum) != nil || quorum.MonMap.FSID != i.fsid {
+	if mdsmap.DecodeJSON(data, &quorum) != nil || quorum.MonMap.FSID != i.fsid {
 		return errors.New("native stopped MDS cluster identity changed")
 	}
 	if _, err := servicehook.MonitorAddresses(quorum); err != nil {
@@ -273,14 +273,14 @@ func (f mdsFleet) readStoppedMDSScope(ctx context.Context, target *cephFSMDSIden
 }
 
 func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *fsbase.NativePools, data []byte) (*mdsmap.Scope, error) {
-	state, err := decodeStoppedMDSMap(data, stoppedMDSMapExpectation{
-		targetName:    target.name,
-		filesystem:    f.core.Name(),
-		native:        target.native,
-		pools:         pools,
-		activeMDS:     f.config.ActiveMDS,
-		standbyMDS:    f.config.StandbyMDS,
-		standbyReplay: f.config.StandbyReplay,
+	state, err := mdsmap.DecodeStopped(data, mdsmap.StoppedExpectation{
+		TargetName:    target.name,
+		Filesystem:    f.core.Name(),
+		Native:        mdsMapNative(target.native),
+		Pools:         mdsMapPools(pools),
+		ActiveMDS:     f.config.ActiveMDS,
+		StandbyMDS:    f.config.StandbyMDS,
+		StandbyReplay: f.config.StandbyReplay,
 	})
 	if err != nil {
 		return nil, err
