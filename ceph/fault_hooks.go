@@ -115,12 +115,6 @@ func (faultHooks) CLI(ctx context.Context, c *Container, args ...string) ([]byte
 	return c.conn().ceph(ctx, args...)
 }
 
-// ClusterIdentity returns the bootstrap FSID and whether the configuration
-// and admin keyring were confirmed. The error is only ctx's.
-func (faultHooks) ClusterIdentity(ctx context.Context, c *Container) (string, bool, error) {
-	return serviceHooks{}.ClusterIdentity(ctx, c)
-}
-
 // PoolPolicyReady refuses a terminated cluster or one without a control
 // container. The caller holds the mutex.
 func (faultHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady() }

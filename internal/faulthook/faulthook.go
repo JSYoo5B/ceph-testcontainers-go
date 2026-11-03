@@ -82,7 +82,6 @@ type hooks interface {
 	OwnedLabel(c *ceph.Container) testcontainers.CustomizeRequestOption
 	Control(ctx context.Context, c *ceph.Container) (testcontainers.Container, error)
 	CLI(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
-	ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error)
 	PoolPolicyReady(c *ceph.Container) error
 	PoolState(ctx context.Context, c *ceph.Container, name string) (ceph.PoolState, error)
 	CheckPoolID(ctx context.Context, c *ceph.Container, expected ceph.PoolState) error
@@ -163,12 +162,6 @@ func Control(ctx context.Context, c *ceph.Container) (testcontainers.Container, 
 // CLI runs a Ceph CLI command with the admin identity.
 func CLI(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error) {
 	return get().CLI(ctx, c, args...)
-}
-
-// ClusterIdentity returns the bootstrap FSID and whether the configuration
-// and admin keyring were confirmed. The error is only ctx's.
-func ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error) {
-	return get().ClusterIdentity(ctx, c)
 }
 
 // PoolPolicyReady refuses a terminated cluster or one without a control
