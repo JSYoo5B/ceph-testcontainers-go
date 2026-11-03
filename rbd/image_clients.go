@@ -85,7 +85,9 @@ func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 	if err := resourcename.Check("image", image); err != nil {
 		return nil, servicehook.Invalid(err)
 	}
-	servicehook.Lock(c)
+	if err := servicehook.LockTopology(ctx, c); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(c)
 	if err := controlReady(ctx, c); err != nil {
 		return nil, err

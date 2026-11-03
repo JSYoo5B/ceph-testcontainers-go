@@ -74,15 +74,8 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
-	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-	if err != nil || len(states) != 3 {
-		t.Fatalf("initial OSD identities: %v %+v", err, states)
-	}
-	for _, state := range states {
-		if !state.Up || !state.In || state.UUID == "" {
-			t.Fatalf("initial OSD identity: %+v", state)
-		}
-	}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
 	acting := func() []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -320,14 +313,17 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	for {
 		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(recoverCtx)
 		m, merr := harness.ObserveCluster(cluster).ManagerStatus(recoverCtx)
+		var osdEval ceph.OSDEvaluation
 		s, serr := harness.ObserveCluster(cluster).OSDStates(recoverCtx)
-		if qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
-			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In }) {
+		if serr == nil {
+			osdEval, serr = restored.Evaluate(s)
+		}
+		if qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 && osdEval.Matched {
 			break
 		}
 		select {
 		case <-recoverCtx.Done():
-			t.Fatalf("no recovery: quorum %v/%v manager %v/%v osds %v/%v", q.QuorumNames, qerr, m, merr, s, serr)
+			t.Fatalf("no recovery: quorum %v/%v manager %v/%v osds %v/%v", q.QuorumNames, qerr, m, merr, osdEval, serr)
 		case <-time.After(time.Second):
 		}
 	}

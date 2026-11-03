@@ -98,7 +98,9 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {

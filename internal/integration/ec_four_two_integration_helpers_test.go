@@ -313,18 +313,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			}
 		}
 	}
-	finalStates, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(finalStates) != len(initialStates) {
-		t.Fatal("owned OSD registrations changed")
-	}
-	for i, s := range finalStates {
-		if s.ID != initialStates[i].ID || s.UUID != initialStates[i].UUID || !s.Up || !s.In {
-			t.Fatalf("owned registration was replaced or not restored: %+v", s)
-		}
-	}
+	finalStates := requireOSDs(t, ctx, cluster, "owned registrations restored", ceph.OSDExpectation{Select: initialStates, Up: true, In: true, Exact: true})
 	r, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", ecFourTwoVerifyScript, pool.Name, strconv.Itoa(size), strconv.FormatUint(seed.Snap, 10), strconv.Itoa(last.Value)}, Timeout: time.Minute, MaxStdout: 1 << 16, MaxStderr: 1 << 16, Label: "fresh 4+2 readback"})
 	var readback ecFourTwoReadback
 	if err != nil || !r.Complete() || r.ExitCode != 0 || json.Unmarshal(r.Stdout, &readback) != nil || checkECFourTwoReadback(seed, last, readback, size, pool.MinSize == 5) != nil {

@@ -11,27 +11,31 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
-func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, id int, matches func(ceph.OSDState) bool) ceph.OSDState {
+// waitOSDPolicyState polls OSDStates until want, which selects one OSD,
+// matches, and returns that OSD's state from the matching observation.
+func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, want ceph.OSDExpectation) ceph.OSDState {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	var last ceph.OSDState
+	var last ceph.OSDEvaluation
 	for {
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, state := range states {
-			if state.ID == id {
-				last = state
-				if matches(state) {
+		if last, err = want.Evaluate(states); err != nil {
+			t.Fatal(err)
+		}
+		if last.Matched {
+			for _, state := range last.Observed {
+				if state.ID == want.Select[0].ID {
 					return state
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("OSD state not observed: %+v: %v", last, ctx.Err())
+			t.Fatalf("OSD state not observed: %v: %v", last, ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

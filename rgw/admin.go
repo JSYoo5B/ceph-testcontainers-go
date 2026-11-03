@@ -167,7 +167,9 @@ func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 	// The cluster mutex covers only the admission: the command runs for as
 	// long as the caller's ctx allows, and holding the mutex for it would
 	// block every other operation of the cluster.
-	servicehook.Lock(core.Cluster())
+	if err := servicehook.LockTopology(ctx, core.Cluster()); err != nil {
+		return nil, err
+	}
 	target, err := core.AdmitAdmin()
 	servicehook.Unlock(core.Cluster())
 	if err != nil {
@@ -254,7 +256,9 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 	if core.Cluster() == nil {
 		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(core.Cluster())
+	if err := servicehook.LockTopology(ctx, core.Cluster()); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(core.Cluster())
 	if err := core.ValidateAdmin(); err != nil {
 		return nil, err
@@ -282,7 +286,9 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *gwbase
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {
@@ -413,7 +419,9 @@ func (u *User) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	servicehook.Lock(cluster)
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(cluster)
 	if !user.Confirmed() {
 		return errors.New("RGW user was not created in this cluster")
