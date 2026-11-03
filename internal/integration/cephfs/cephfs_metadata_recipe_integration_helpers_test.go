@@ -278,7 +278,7 @@ type cephFSRecipeTable struct {
 	byName map[string]cephFSRecipeOp
 }
 
-func cephFSRecipeRows(t *testing.T, receipt harness.CephFSActorReceipt) cephFSRecipeTable {
+func cephFSRecipeRows(t *testing.T, receipt cephFSActorReceipt) cephFSRecipeTable {
 	t.Helper()
 	decoder := json.NewDecoder(bytes.NewReader(receipt.Ops))
 	decoder.DisallowUnknownFields()
@@ -382,7 +382,7 @@ func cephFSMDSInodeLinks(ctx context.Context, cluster *ceph.Container, mds strin
 func testCephFSMetadataRecipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	cluster, fs, mds := m.Cluster, m.FS, m.MDS.Name
 
 	// With the default split size of 10000 the directory stays in one
@@ -413,7 +413,7 @@ func testCephFSMetadataRecipe(t *testing.T) {
 		}
 	}
 	const root = "/recipe"
-	actor := harness.StartCephFSActor(t, ctx, cluster, m.Client, cephFSMetadataRecipeActor, fs.FilesystemName, "/tmp/metadata-recipe",
+	actor := startCephFSActor(t, ctx, cluster, m.Client, cephFSMetadataRecipeActor, fs.FilesystemName, "/tmp/metadata-recipe",
 		root, strconv.Itoa(entries), hex.EncodeToString(data), hex.EncodeToString(source), hex.EncodeToString(victim), hex.EncodeToString(value))
 	created := actor.Receipt(t, ctx, 1)
 	setup := cephFSRecipeRows(t, created)

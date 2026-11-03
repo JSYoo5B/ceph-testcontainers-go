@@ -94,18 +94,37 @@ func (inv Inventory) Select(additional []Member, limit int) ([]Member, int) {
 	return unique, 0
 }
 
+// SelectAs is Select for the container descriptions of a public
+// configuration: it selects the members of inv and additional, and returns
+// them as descriptions of the same type.
+func SelectAs[T Described](inv Inventory, additional []T, limit int) ([]T, int) {
+	members, omitted := inv.Select(Members(additional), limit)
+	selected := make([]T, len(members))
+	for i, member := range members {
+		selected[i] = T(member)
+	}
+	return selected, omitted
+}
+
 // Handle returns ctr, or nil when ctr is a typed nil.
 func Handle(ctr testcontainers.Container) testcontainers.Container {
-	if ctr != nil {
-		value := reflect.ValueOf(ctr)
-		switch value.Kind() {
-		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-			if value.IsNil() {
-				return nil
-			}
-		}
+	if IsNil(ctr) {
+		return nil
 	}
 	return ctr
+}
+
+// IsNil reports a nil interface or a typed nil: a dynamic value of a nilable
+// kind that is nil, on which a method call would panic.
+func IsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch value := reflect.ValueOf(v); value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return value.IsNil()
+	}
+	return false
 }
 
 // SameContainer reports whether a and b are the same container: by ID, or for
@@ -134,7 +153,35 @@ func KeyringSecrets(keyring []byte) []string {
 	return secrets
 }
 
-var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)([^"'\s,;}\]]+)`)
+// secretPattern takes the value after a secret-looking name. A bracketed
+// part of the value is taken whole, closing bracket included, so a secret
+// such as "[x]" or "a[b]" is masked entirely; a closing bracket outside one
+// ends the value, as at the end of a JSON array. maskSecrets leaves a value
+// that is exactly a redaction marker alone, which keeps redaction idempotent.
+var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)((?:\[[^"'\s,;}\[\]]*\]|[^"'\s,;}\]])+)`)
+
+// maskSecrets replaces the value of every secretPattern match with
+// "[REDACTED]", except a value that is a complete marker an earlier pass
+// wrote: "[REDACTED]" itself, or the "[REDACTED" that begins
+// "[REDACTED PRIVATE KEY]". A value that only starts with a marker, such as
+// what a configured value's replacement leaves before the rest of a
+// credential, is masked whole.
+func maskSecrets(data string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range secretPattern.FindAllStringSubmatchIndex(data, -1) {
+		value := data[m[4]:m[5]]
+		if value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[m[5]:], " PRIVATE KEY]") {
+			continue
+		}
+		out.WriteString(data[last:m[4]])
+		out.WriteString("[REDACTED]")
+		last = m[5]
+	}
+	out.WriteString(data[last:])
+	return out.String()
+}
+
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 
@@ -161,7 +208,7 @@ func Redactor(values []string) func(string) string {
 		// Bearer tokens first: the secret pattern takes only the word after
 		// "Authorization:", which would leave the token behind it.
 		data = bearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return secretPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		return maskSecrets(data)
 	}
 }
 

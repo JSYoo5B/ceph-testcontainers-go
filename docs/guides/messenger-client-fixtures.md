@@ -488,8 +488,8 @@ the peer address and entity, the policy (`l=1` lossy, `l=0` lossless),
 `cs` (connect_seq), `pgs` (peer global sequence) and `rev1`, and ends with
 the session's `client_cookie`, `server_cookie`, `in_seq` and `out_seq`.
 Squid prints fewer fields inside `conn(...)` than Tentacle; both print these.
-`harness.ParseReadySessions` reads them and returns lines that lack one as
-unusable instead of dropping them.
+`parseReadySessions` in `internal/integration/cephfs` reads them and returns
+lines that lack one as unusable instead of dropping them.
 
 | Recipe | What the test observes | Proven by |
 | --- | --- | --- |
@@ -499,7 +499,7 @@ unusable instead of dropping them.
 
 ```golang
 lines := harness.ContainerLogLines(t, ctx, mds) // mds is the *cephfs.MDS of the active rank
-sessions, unusable := harness.ParseReadySessions(lines[mark:])
+sessions, unusable := parseReadySessions(lines[mark:])
 ```
 
 The actor calls `fs.conf_set("ms_inject_socket_failures", "40")` on its own

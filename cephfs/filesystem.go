@@ -592,14 +592,15 @@ type mdsStartAdmission struct {
 	control testcontainers.Container
 }
 
-// Admission/publication hooks belong only to explicit replacement. The legacy
-// wrapper above passes nil hooks and preserves ordinary and cold behavior.
-// Admission and publication run under c.mu; auth and startService run unlocked.
+// startMDSWithAdmission starts one MDS. The admit and published hooks belong
+// only to explicit replacement; ordinary and cold starts, through
+// startMDSWithService, pass nil hooks. Admission and publication run under
+// c.mu; auth and startService run unlocked.
 //
 // The function runs three phases: admitMDSStart (under c.mu, released before it
 // returns), createMDSCredentials (unlocked) and publishStartedMDS (under c.mu).
 // The service start between the last two is unlocked. The caller holds setupMu
-// for all of it (R1, cephfs/entry.go:100-102).
+// for all of it (see filesystemRegistry.setupMu).
 func (f mdsFleet) startMDSWithAdmission(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error), admit func(context.Context, string) (testcontainers.Container, error), published func(*MDS)) (*MDS, error) {
 	c := f.core.Cluster()
 	a, err := f.admitMDSStart(ctx, admit)
@@ -637,7 +638,7 @@ func (f mdsFleet) startMDSWithAdmission(ctx context.Context, start func(context.
 // next name and the customizers, runs the cold-start ownership and control
 // checks and consumes cold permission, runs the replacement admission hook, and
 // reserves the name index. The mutex is released on every return, before any
-// auth command. Every refusal text and the order of the checks are unchanged.
+// auth command.
 func (f mdsFleet) admitMDSStart(ctx context.Context, admit func(context.Context, string) (testcontainers.Container, error)) (*mdsStartAdmission, error) {
 	c := f.core.Cluster()
 	if err := servicehook.LockTopology(ctx, c); err != nil {
@@ -689,8 +690,7 @@ func (f mdsFleet) admitMDSStart(ctx context.Context, admit func(context.Context,
 
 // createMDSCredentials runs the auth command for the reserved daemon, without
 // any lock. A cold or replacement start sends it through the control container
-// selected during admission; an ordinary start uses the cluster CLI. The three
-// failure texts are the ones the combined function returned.
+// selected during admission; an ordinary start uses the cluster CLI.
 func (f mdsFleet) createMDSCredentials(ctx context.Context, a *mdsStartAdmission, replacement bool) ([]byte, error) {
 	args := []string{"auth", "get-or-create", "mds." + a.id,
 		"mon", "allow profile mds", "mgr", "allow profile mds",

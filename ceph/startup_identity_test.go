@@ -111,7 +111,7 @@ var startupIdentityWriters = map[string]string{
 var startupIdentityCallers = map[string]stateCaller{
 	"bootstrapFirstMonitor":   {"record", []string{"recordFirstMonitorImage", "recordKeyTypeOption"}},
 	"monitorJoinOptions":      {"fact", []string{"ownedLabel"}},
-	"startJoiningMonitor":     {"fact", []string{"ownedLabel"}},
+	"startOnLeasedPorts":      {"fact", []string{"ownedLabel"}},
 	"OwnedLabel":              {"fact", []string{"ownedLabel"}},
 	"Owner":                   {"fact", []string{"ownerID"}},
 	"checkDualStackAddresses": {"fact", []string{"firstMonitorImage"}},

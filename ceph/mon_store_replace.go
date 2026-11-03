@@ -86,7 +86,7 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	oldID := cur.GetContainerID()
 	id, err := store.ReplaceGeneration(ctx, gens, image)
-	if store.Attachment != nil && store.Attachment.ID == oldID {
+	if store.Attachment != nil && store.Attachment.ID == oldID && !store.Attachment.RemoveRequested {
 		// Refused before the old container was touched: nothing changed.
 		return nil, err
 	}
@@ -142,7 +142,13 @@ func (c *Container) monitorReplacementMaterial(ctx context.Context) (key, monmap
 	if err != nil {
 		return nil, nil, err
 	}
+	// The monmap holds no secret, so a failed removal is not tracked.
 	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+		defer cancel()
+		_, _ = command(cleanupCtx, c.conn().cliContainer(), "rm", "-f", mapPath)
+	}()
 	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
 		return nil, nil, err
 	}

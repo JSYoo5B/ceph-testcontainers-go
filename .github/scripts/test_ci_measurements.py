@@ -111,6 +111,37 @@ class PhaseTests(unittest.TestCase):
         for name, phase in expected.items():
             self.assertEqual(measure.step_phase(name), phase, name)
 
+    def test_every_runtime_job_step_is_classified_explicitly(self):
+        expected = {
+            "Set up job": "setup", "Run actions/checkout": "setup", "Run actions/setup-go": "setup",
+            "Restore the Go module cache": "setup", "Restore the Go build cache": "setup",
+            "Prepare Go modules": "setup", "Compile selected tagged suite": "compile",
+            "Prepare runner storage": "storage", "Docker baseline and engine identity": "docker",
+            "Resolve native published Ceph roles": "images", "Prepare Ryuk and the test images": "test_images",
+            "Record runner storage with the images": "storage", "Verify post-image runner headroom": "storage",
+            "Native assertions and completion proof": "native", "Record runner storage after the tests": "storage",
+            "Release the qualification pressure file": "storage",
+            "Verify owned Docker resource cleanup": "cleanup",
+            "Show actual failure phases in PR check annotations and summary": "reporting",
+            "Normalize the scenario history row": "reporting", "Save compile, native and phase results": "reporting",
+            "Record the failure archive upload": "reporting", "Read the scenario history summary": "reporting",
+            "Identify completed failing tests": "reporting",
+            "Post Run actions/setup-go": "reporting", "Post Run actions/checkout": "reporting",
+            "Complete job": "reporting"}
+        text = (Path(__file__).resolve().parents[1] / "workflows" / "tagged-runtime.yml").read_text(encoding="utf-8")
+        block = text.split("\n  runtime:\n", 1)[1]
+        block = re.split(r"\n  [a-z_-]+:\n", block, maxsplit=1)[0]
+        names = ["Set up job"]
+        for line in block.splitlines():
+            found = re.match(r"      - (?:name: (.+)|uses: ([^@\s]+)@.*)$", line)
+            if found:
+                names.append(found.group(1) or "Run " + found.group(2))
+        names += ["Post Run actions/setup-go", "Post Run actions/checkout", "Complete job"]
+        self.assertGreater(len(names), 20)
+        self.assertEqual(sorted(set(names)), sorted(expected), "classify every runtime step in this table")
+        for name, phase in expected.items():
+            self.assertEqual(measure.step_phase(name), phase, name)
+
     def test_only_jobs_with_a_native_step_are_runtime_jobs(self):
         self.assertTrue(measure.is_runtime(runtime_job("Scenarios / x", at(0), at(0), 1)))
         self.assertFalse(measure.is_runtime(plan_job(at(0), at(0), at(1))))

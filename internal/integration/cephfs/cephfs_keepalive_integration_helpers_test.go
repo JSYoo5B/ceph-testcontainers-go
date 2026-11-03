@@ -139,7 +139,7 @@ func cephNetworkIP(t *testing.T, ctx context.Context, cluster *ceph.Container, c
 func testCephFSMessengerKeepalive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	for _, daemon := range []string{"mds", "mon"} {
 		if _, err := m.Cluster.Ceph(ctx, "config", "set", daemon, "debug_ms", "20"); err != nil {
 			t.Fatalf("%s debug_ms: %v", daemon, err)
@@ -166,7 +166,7 @@ func testCephFSMessengerKeepalive(t *testing.T) {
 
 	const logfile = "/tmp/keepalive-actor/client.log"
 	// Idle gaps longer than the keepalive interval, over several cycles.
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSKeepaliveActor, m.FS.FilesystemName, "/tmp/keepalive-actor", "/keepalive-file", logfile, "9", "4")
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSKeepaliveActor, m.FS.FilesystemName, "/tmp/keepalive-actor", "/keepalive-file", logfile, "9", "4")
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 {
 		t.Fatalf("baseline receipt = %+v", baseline)

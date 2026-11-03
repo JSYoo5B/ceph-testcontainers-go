@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -317,18 +318,18 @@ func (n *fakeNetem) liveHelpers() int {
 	return live
 }
 
-func (n *fakeNetem) target(_ context.Context, id, network string) (netemTarget, error) {
+func (n *fakeNetem) target(_ context.Context, id, network string) (nshelper.Target, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	target := n.targets[id]
 	if target == nil || target.removed {
-		return netemTarget{}, errdefs.ErrNotFound
+		return nshelper.Target{}, errdefs.ErrNotFound
 	}
-	state := netemTarget{running: target.running, paused: target.paused, networkMode: target.mode,
-		sandboxID: strconv.Itoa(target.sandbox)}
+	state := nshelper.Target{Running: target.running, Paused: target.paused, NetworkMode: target.mode,
+		SandboxID: strconv.Itoa(target.sandbox)}
 	if network == "tc-public" && len(target.namespace.links) > 1 {
-		state.address, state.address6, state.mac = target.namespace.links[1].address, target.address6, target.namespace.links[1].mac
-		state.driver = n.driver
+		state.Address, state.Address6, state.MAC = target.namespace.links[1].address, target.address6, target.namespace.links[1].mac
+		state.Driver = n.driver
 	}
 	return state, nil
 }

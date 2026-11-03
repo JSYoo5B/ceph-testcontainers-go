@@ -13,6 +13,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -248,6 +249,7 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 		"closed":          {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.closed = true }, want: "initialized and running"},
 		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.realm.systemSecret = "" }, want: "initialized and running"},
 		"already owned":   {config: ZoneConfig{Name: "a"}, want: "already owned"},
+		"essential image": {config: ZoneConfig{Name: "d", Cluster: splitRoleCluster("image")}, want: "not its rgw image"},
 	}
 	for name, tc := range cases {
 		f, cli, _, _, _ := rgwRemovalFixture()
@@ -263,6 +265,12 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 			t.Fatalf("%s: a refused addition ran commands or registered a zone", name)
 		}
 	}
+}
+
+// splitRoleCluster is a cluster whose essential image is essential and whose
+// RGW role has an image of its own.
+func splitRoleCluster(essential string) *ceph.Container {
+	return testhelper.TestCluster(nil, testhelper.TestConfig{Images: &ceph.ImageSet{Essential: essential, Client: essential, RGW: "rgw-role:test"}})
 }
 
 func TestRGWAdditionMasterRefusesANameInTheCommittedPeriod(t *testing.T) {
@@ -500,6 +508,45 @@ func TestRGWZoneAdminRunsOnlyInAnOwnedRunningZone(t *testing.T) {
 	}
 	if len(cli.ops) != 1 {
 		t.Fatalf("refused calls ran commands: %q", cli.ops)
+	}
+}
+
+func TestRGWPeriodPullRefusesATerminatedFixture(t *testing.T) {
+	cli := &rgwScriptCLI{}
+	f := newPhaseFixture(cli, cli)
+	f.realm.sourceURL, f.realm.destinationURL = "http://a:7480", "http://b:7480"
+	if err := f.PullSourcePeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PullDestinationPeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.closed = true
+	for name, pull := range map[string]func(context.Context) error{"source": f.PullSourcePeriod, "destination": f.PullDestinationPeriod} {
+		if err := pull(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("%s pull on a terminated fixture = %v", name, err)
+		}
+	}
+	if len(cli.ops) != 2 {
+		t.Fatalf("pulls = %q, want two before termination", cli.ops)
+	}
+}
+
+func TestRGWZoneAdminRefusesScopeOverridesAndRedactsFailures(t *testing.T) {
+	cli := &rgwScriptCLI{fail: map[string]bool{"user info --uid u": true}}
+	f := newPhaseFixture(cli, cli)
+	for _, args := range [][]string{nil, {"zone", "get", "--rgw-zone=foreign"}, {"zone", "get", "-c/tmp/other.conf"}, {"zone", "get", "bad\nargument"}} {
+		if _, err := f.ZoneAdmin(t.Context(), "a", args...); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("ZoneAdmin %q = %v, want ErrInvalidRequest", args, err)
+		}
+	}
+	if len(cli.ops) != 0 {
+		t.Fatalf("refused arguments reached radosgw-admin: %q", cli.ops)
+	}
+	_, err := f.ZoneAdmin(t.Context(), "a", "user", "info", "--uid", "u")
+	var failure *ceph.NativeFailure
+	if !errors.As(err, &failure) || failure.ExitCode != 1 || strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("native failure was not classified and redacted: %v", err)
 	}
 }
 

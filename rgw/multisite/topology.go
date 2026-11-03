@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"slices"
 	"strings"
 	"time"
@@ -306,8 +307,18 @@ func (f *Fixture) zoneStates() []*rgwZoneState {
 // zone whose CLI client started successfully. Do not edit period/zone state
 // concurrently with AddZone or external metadata master transitions.
 //
+// It passes the zone's realm, zonegroup and zone but does not add --format.
+// Arguments are checked as rgw.Gateway.Admin checks them: control characters
+// and flags that would change the zone scope or Ceph connection are refused
+// with ceph.ErrInvalidRequest. A failure keeps a *ceph.NativeFailure with the
+// exit code and errno but no reason, because the native output can include
+// secret keys.
+//
 //purpose:native
 func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if err := gwbase.ValidateAdminArgs(args); err != nil {
+		return nil, err
+	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
@@ -324,7 +335,11 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 	if client == nil {
 		return nil, fmt.Errorf("RGW zone %s has no running owned CLI client", name)
 	}
-	return f.realm.admin(ctx, client, name, args...)
+	data, err := f.realm.admin(ctx, client, name, args...)
+	if err != nil {
+		return nil, gwbase.RedactAdminFailure(err)
+	}
+	return data, nil
 }
 
 // AddZone joins another fresh storage cluster to the existing realm/zonegroup.
@@ -406,7 +421,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err := f.topology.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state }); err != nil {
 		return &state.Zone, err
 	}
-	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
+	setGatewayCredentials(config.Cluster, state.Gateway, f.Source.AccessKey, f.Source.SecretKey)
 	return &state.Zone, nil
 }
 
@@ -420,8 +435,9 @@ type zoneAddition struct {
 
 // admitZoneAddition refuses an addition before anything is created: invalid
 // names, detached or pending removals, a zonegroup that does not match
-// createGroup, an uninitialized or closed fixture, a duplicate or incompatible
-// zone and a cluster that is not fresh. The caller holds topologyMu.
+// createGroup, an uninitialized or closed fixture, a gateway image that the
+// cluster selects for another role, a duplicate or incompatible zone and a
+// cluster that is not fresh. The caller holds topologyMu.
 func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config ZoneConfig, createGroup bool) (zoneAddition, error) {
 	if config.Zonegroup == "" {
 		config.Zonegroup = f.realm.config.Zonegroup
@@ -445,6 +461,9 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 	}
 	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess == "" || f.realm.systemSecret == "" {
 		return zoneAddition{}, errors.New("RGW multisite must be initialized and running")
+	}
+	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Cluster); err != nil {
+		return zoneAddition{}, fmt.Errorf("RGW zone %s gateway image: %w", config.Name, err)
 	}
 	for _, zone := range f.zoneStates() {
 		if zone.Name == config.Name {

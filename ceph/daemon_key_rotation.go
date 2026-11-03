@@ -213,7 +213,10 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if !handle.ownedBy(c) {
 		return invalid(fmt.Errorf("daemon %s is not owned by this cluster, or this handle is stale", daemon))
 	}
-	ctr, keyrings := c.monitorTopology().daemonKeyrings(kind, id)
+	ctr, keyrings, err := c.monitorTopology().daemonKeyrings(kind, id)
+	if err != nil {
+		return err
+	}
 	if err := c.authLedger().stopEarlierAuthCommands(ctx, daemon); err != nil {
 		return err
 	}

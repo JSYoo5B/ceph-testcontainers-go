@@ -9,8 +9,8 @@
 // mutex, the keyring, the configuration bytes or a control container.
 //
 // Lock rules: Reserve, Settle, Release, Tracks, Ready, Terminated and the
-// native operations need the cluster mutex, held through WithTopology or
-// WithTopologyNoContext. A function passed to them must not call a public
+// native operations need the cluster mutex, held through WithTopology. A
+// function passed to them must not call a public
 // ceph.Container method that takes the cluster mutex and returns before the
 // hook unlocks.
 package overridehook
@@ -57,7 +57,6 @@ type Token struct{ entry any }
 
 type hooks interface {
 	WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error
-	WithTopologyNoContext(c *ceph.Container, fn func())
 	Ready(c *ceph.Container) error
 	StartupTimeout(c *ceph.Container) time.Duration
 	Terminated() error
@@ -137,10 +136,6 @@ func get() hooks {
 func WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error {
 	return get().WithTopology(ctx, c, fn)
 }
-
-// WithTopologyNoContext runs fn with the cluster mutex held, waiting for it
-// without a context.
-func WithTopologyNoContext(c *ceph.Container, fn func()) { get().WithTopologyNoContext(c, fn) }
 
 // Ready refuses a terminated cluster or one without a control container. A
 // terminated cluster returns the error that Terminated returns. The caller

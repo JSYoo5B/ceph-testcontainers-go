@@ -124,13 +124,31 @@ func (t monitorTopology) ownsNativeTarget(ctx context.Context, id string) (bool,
 }
 
 // daemonKeyrings returns the container of an owned daemon and the keyring
-// files from which it authenticates when it starts. The caller holds c.mu.
-func (t monitorTopology) daemonKeyrings(kind, id string) (testcontainers.Container, []string) {
-	if kind == "mgr" {
-		return t.roster.manager(id).Container, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-" + id + "/keyring"}
+// files from which it authenticates when it starts. Only MGRs and OSDs rotate
+// their keys; another kind, or a daemon the cluster does not own with a
+// container, is an error. The caller holds c.mu.
+func (t monitorTopology) daemonKeyrings(kind, id string) (testcontainers.Container, []string, error) {
+	var ctr testcontainers.Container
+	switch kind {
+	case "mgr":
+		if mgr := t.roster.manager(id); mgr != nil {
+			ctr = mgr.Container
+		}
+	case "osd":
+		n, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("daemon osd.%s has no numeric ID: %w", id, err)
+		}
+		if osd := t.osds.osdHandles.get(n); osd != nil {
+			ctr = osd.Container
+		}
+	default:
+		return nil, nil, fmt.Errorf("daemon %s.%s has no rotatable keyring", kind, id)
 	}
-	n, _ := strconv.Atoi(id)
-	return t.osds.osdHandles.get(n).Container, []string{"/etc/ceph/osd.keyring", "/var/lib/ceph/osd/ceph-" + id + "/keyring"}
+	if ctr == nil {
+		return nil, nil, fmt.Errorf("daemon %s.%s is not owned by this cluster with a container", kind, id)
+	}
+	return ctr, []string{"/etc/ceph/" + kind + ".keyring", "/var/lib/ceph/" + kind + "/ceph-" + id + "/keyring"}, nil
 }
 
 // diagnosticDaemons passes each MON and MGR container of the cluster to add,

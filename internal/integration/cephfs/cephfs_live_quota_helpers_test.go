@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The actor owns this process and its otherwise unused ITIMER_REAL. The
@@ -72,7 +70,7 @@ type cephFSQuotaStep struct {
 
 // validateLiveQuotaStep binds a create result to the retained process, client,
 // file and directory. Missing quota/count/errno evidence cannot satisfy a gate.
-func validateLiveQuotaStep(first, current harness.CephFSActorReceipt, limit uint64, base, created []byte, wantErrno int) (cephFSQuotaStep, error) {
+func validateLiveQuotaStep(first, current cephFSActorReceipt, limit uint64, base, created []byte, wantErrno int) (cephFSQuotaStep, error) {
 	if first.PID <= 0 || first.Client == 0 || first.Inode == 0 || first.DirInode == 0 ||
 		current.Token != first.Token || current.PID != first.PID || current.Client != first.Client ||
 		current.Inode != first.Inode || current.DirInode != first.DirInode || current.Errno != 0 {

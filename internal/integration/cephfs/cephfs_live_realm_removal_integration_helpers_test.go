@@ -23,7 +23,7 @@ type realmLook struct {
 
 // pollRealmGate polls the client's dump_cache with the given gate until it
 // releases, under one bounded phase.
-func pollRealmGate(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, asok string, gate func([]byte) (bool, clientSnapContext, error)) (realmLook, int, time.Duration, error) {
+func pollRealmGate(t *testing.T, ctx context.Context, m *cephFSSingleMDS, asok string, gate func([]byte) (bool, clientSnapContext, error)) (realmLook, int, time.Duration, error) {
 	t.Helper()
 	started := time.Now()
 	final, looks, err := boundedPoll(ctx, realPollClock, 90*time.Second, time.Second, func(attemptCtx context.Context) (realmLook, bool, error) {
@@ -41,7 +41,7 @@ func pollRealmGate(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS
 func testCephFSLiveSnapRealmRemoval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	toolkit := harness.ToolkitContainer(t, m.Cluster)
 	fsName := m.FS.FilesystemName
 	if _, err := m.Cluster.Ceph(ctx, "fs", "set", fsName, "allow_new_snaps", "true"); err != nil {
@@ -57,7 +57,7 @@ func testCephFSLiveSnapRealmRemoval(t *testing.T) {
 		snapName  = "live-realm-removal"
 	)
 	asok := workdir + "/client.asok"
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRealmActor, fsName, workdir,
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRealmActor, fsName, workdir,
 		directory, directory+"/"+leaf, hex.EncodeToString(base), hex.EncodeToString(updated), asok)
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 || baseline.Inode == 0 || baseline.DirInode == 0 || baseline.Size != int64(len(base)) {

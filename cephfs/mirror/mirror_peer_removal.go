@@ -392,13 +392,6 @@ func (r *PeerRemoval) WaitDrained(ctx context.Context) (PeerRemovalStatus, error
 	})
 }
 
-func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, error)) (PeerRemovalStatus, error) {
-	return waitCephFSPeerDrainWithAdmission(ctx, interval, func(attempt context.Context) (PeerRemovalStatus, bool, error) {
-		status, err := observe(attempt)
-		return status, true, err
-	})
-}
-
 func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, bool, error)) (PeerRemovalStatus, error) {
 	return waitCephFSRemovalCompletion(ctx, interval, observe,
 		func(status PeerRemovalStatus) bool { return status.Drained },

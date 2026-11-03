@@ -33,15 +33,15 @@ func (v reconnectVerdict) MarshalText() ([]byte, error) { return []byte(v.String
 // reconnectOutcome is a verdict with its reason and the READY sessions that
 // support it.
 type reconnectOutcome struct {
-	Verdict  reconnectVerdict       `json:"verdict"`
-	Reason   string                 `json:"reason"`
-	Sessions []harness.ReadySession `json:"sessions,omitempty"`
+	Verdict  reconnectVerdict `json:"verdict"`
+	Reason   string           `json:"reason"`
+	Sessions []readySession   `json:"sessions,omitempty"`
 }
 
 // clientSessions selects the READY sessions of client with the given policy.
-func clientSessions(sessions []harness.ReadySession, client uint64, lossy bool) []harness.ReadySession {
+func clientSessions(sessions []readySession, client uint64, lossy bool) []readySession {
 	id := strconv.FormatUint(client, 10)
-	var result []harness.ReadySession
+	var result []readySession
 	for _, s := range sessions {
 		if s.PeerType == "client" && s.PeerID == id && s.Lossy == lossy {
 			result = append(result, s)
@@ -59,7 +59,7 @@ func clientSessions(sessions []harness.ReadySession, client uint64, lossy bool) 
 // it, and in_seq and out_seq that never go back, so that what was received
 // and sent before a fault still counts after it. connect_seq can skip values,
 // because an attempt that faults before READY also takes one.
-func judgeLosslessReconnect(before, window []harness.ReadySession, client uint64) reconnectOutcome {
+func judgeLosslessReconnect(before, window []readySession, client uint64) reconnectOutcome {
 	base := clientSessions(before, client, false)
 	if len(base) != 1 {
 		return reconnectOutcome{Reason: fmt.Sprintf("%d lossless sessions of client.%d before the window, want 1", len(base), client)}
@@ -105,7 +105,7 @@ func judgeLosslessReconnect(before, window []harness.ReadySession, client uint64
 // lossy sessions were reset. A lossy session is never resumed: every READY in
 // the window must be a new session, with connect_seq 0, no server cookie, a
 // client cookie that no earlier session had, and in_seq and out_seq 0.
-func judgeLossyResets(before, window []harness.ReadySession, client uint64) reconnectOutcome {
+func judgeLossyResets(before, window []readySession, client uint64) reconnectOutcome {
 	base := clientSessions(before, client, true)
 	if len(base) == 0 {
 		return reconnectOutcome{Reason: fmt.Sprintf("no lossy session of client.%d before the window", client)}
@@ -117,12 +117,12 @@ func judgeLossyResets(before, window []harness.ReadySession, client uint64) reco
 	for i, s := range resets {
 		switch {
 		case !s.Revision1:
-			return reconnectOutcome{Verdict: reconnectContradicted, Reason: fmt.Sprintf("reset %d is not msgr2.1", i), Sessions: []harness.ReadySession{s}}
+			return reconnectOutcome{Verdict: reconnectContradicted, Reason: fmt.Sprintf("reset %d is not msgr2.1", i), Sessions: []readySession{s}}
 		case s.ConnectSeq != 0 || s.ServerCookie != "0" || s.InSeq != 0 || s.OutSeq != 0:
 			return reconnectOutcome{Verdict: reconnectContradicted, Reason: fmt.Sprintf("reset %d resumed: cs=%d server_cookie=%s in_seq=%d out_seq=%d",
-				i, s.ConnectSeq, s.ServerCookie, s.InSeq, s.OutSeq), Sessions: []harness.ReadySession{s}}
+				i, s.ConnectSeq, s.ServerCookie, s.InSeq, s.OutSeq), Sessions: []readySession{s}}
 		case s.ClientCookie == "0":
-			return reconnectOutcome{Reason: fmt.Sprintf("reset %d has no client cookie to tell it from another session", i), Sessions: []harness.ReadySession{s}}
+			return reconnectOutcome{Reason: fmt.Sprintf("reset %d has no client cookie to tell it from another session", i), Sessions: []readySession{s}}
 		}
 	}
 	// Each reset's fresh state (cs=0, server_cookie=0, seq 0/0) proves it is a
@@ -136,7 +136,7 @@ func judgeLossyResets(before, window []harness.ReadySession, client uint64) reco
 // client's lossless connection before and after the window with the last
 // logged reconnect: the same connection object and peer, now READY with that
 // reconnect's connect_seq.
-func judgeDumpedReconnect(before, after []harness.MessengerConnection, client uint64, last harness.ReadySession) reconnectOutcome {
+func judgeDumpedReconnect(before, after []harness.MessengerConnection, client uint64, last readySession) reconnectOutcome {
 	pick := func(connections []harness.MessengerConnection) []harness.MessengerConnection {
 		var result []harness.MessengerConnection
 		for _, c := range connections {

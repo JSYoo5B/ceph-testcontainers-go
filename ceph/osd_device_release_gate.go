@@ -37,7 +37,7 @@ import (
 //
 // Lock order. exclusionOf reads the claim table, so its caller holds
 // Container.mu taken with lockTopology (ceph/topology.go:380,
-// ceph/context_lock.go:11), as osdDeviceClaims.claimOf's callers do. The lease
+// ceph/context_lock.go:11), as every reader of osdDeviceClaims does. The lease
 // owner call (collectChainEvidence) may block on /proc and the kernel and must
 // therefore run before or after that hold, never inside it. judgeChainRelease
 // is pure and takes no lock. This file adds no mutex, goroutine, defer or
@@ -108,7 +108,7 @@ type osdClusterExclusion struct {
 }
 
 // exclusionOf reads the table; it changes nothing. The caller holds
-// Container.mu, as for claimOf.
+// Container.mu, as for every read of the table.
 func (s *osdDeviceClaims) exclusionOf(lease string, device osdBlockDevice) osdClusterExclusion {
 	ex := osdClusterExclusion{lease: lease, device: device}
 	for _, id := range s.osds() {

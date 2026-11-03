@@ -18,22 +18,22 @@ import (
 
 // mdsOpsInFlight reads an MDS's dump_ops_in_flight and finds the client's
 // rename with tid in it.
-func mdsOpsInFlight(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context, tid uint64) (harness.MDSRequestOp, bool) {
+func mdsOpsInFlight(h *cephFSUnsafeHold, t *testing.T, ctx context.Context, tid uint64) (mdsRequestOp, bool) {
 	t.Helper()
 	data, err := h.Cluster.Ceph(ctx, "tell", "mds."+h.MDS.Name, "dump_ops_in_flight")
 	if err != nil {
 		t.Fatalf("dump_ops_in_flight of mds.%s: %v", h.MDS.Name, err)
 	}
-	ops, err := harness.ParseMDSRequestOps(data)
+	ops, err := parseMDSRequestOps(data)
 	if err != nil {
 		t.Fatalf("dump_ops_in_flight of mds.%s: %v: %.1024s", h.MDS.Name, err, data)
 	}
-	return harness.FindMDSRequest(ops, h.Baseline.Client, "rename", tid)
+	return findMDSRequest(ops, h.Baseline.Client, "rename", tid)
 }
 
 // clientSession returns the actor client's session, or nil when the MDS has
 // none.
-func clientSession(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) *cephfssession.Session {
+func clientSession(h *cephFSUnsafeHold, t *testing.T, ctx context.Context) *cephfssession.Session {
 	t.Helper()
 	sessions, err := cephfssession.List(ctx, h.FS)
 	if err != nil {
@@ -52,7 +52,7 @@ func clientSession(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Contex
 // run's token, so no other process is killed. It waits, bounded, until
 // RunNativeCommand returns and the process is gone, and returns how the
 // command ended.
-func killActor(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) string {
+func killActor(h *cephFSUnsafeHold, t *testing.T, ctx context.Context) string {
 	t.Helper()
 	pid := strconv.Itoa(h.Baseline.PID)
 	cmdline := harness.ExecOutput(t, ctx, h.Client, "cat", "/proc/"+pid+"/cmdline")
@@ -89,7 +89,7 @@ func killActor(h *harness.CephFSUnsafeHold, t *testing.T, ctx context.Context) s
 func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	h := harness.HoldCephFSUnsafeRename(t, ctx)
+	h := holdCephFSUnsafeRename(t, ctx)
 	tid := h.Held.Tid
 
 	short := cephfssession.Limits{Timeout: 30 * time.Second, Autoclose: time.Minute}
@@ -110,7 +110,7 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	if session == nil || session.State != "open" || session.Address == "" {
 		t.Fatalf("client.%d has no open session before the kill: %+v", h.Baseline.Client, session)
 	}
-	before := harness.CephFSRawSessionSummary(harness.CephFSRawSession(t, ctx, h.Cluster, h.MDS.Name, h.Baseline.Client))
+	before := cephFSRawSessionSummary(cephFSRawSession(t, ctx, h.Cluster, h.MDS.Name, h.Baseline.Client))
 
 	exited := killActor(h, t, ctx)
 	killed := time.Now()
@@ -119,7 +119,7 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	// flight after its early reply.
 	time.Sleep(3 * time.Second)
 	held, inFlight := mdsOpsInFlight(h, t, ctx, tid)
-	if !inFlight || harness.RequestSafety(held) != "unsafe" {
+	if !inFlight || requestSafety(held) != "unsafe" {
 		t.Fatalf("after the kill the MDS does not hold rename %d unsafe: found=%t %q %v", tid, inFlight, held.Description, held.Events())
 	}
 	afterKill := clientSession(h, t, ctx)
@@ -133,12 +133,12 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	}
 	h.WaitDaemonConfig(t, ctx, "mds_log_pause", "false")
 	restored := time.Since(killed)
-	var committed harness.MDSRequestOp
+	var committed mdsRequestOp
 	deadline := time.Now().Add(time.Minute)
 	for {
 		_, flight := mdsOpsInFlight(h, t, ctx, tid)
 		_, op, found := h.HistoricRename(t, ctx, h.MDS.Name, tid)
-		if !flight && found && harness.RequestSafety(op) == "safe" {
+		if !flight && found && requestSafety(op) == "safe" {
 			committed = op
 			break
 		}

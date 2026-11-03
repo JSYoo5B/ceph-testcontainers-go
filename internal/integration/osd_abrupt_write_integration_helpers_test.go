@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -258,12 +257,12 @@ type abruptWitness struct {
 // admission, because the phase would not be proven.
 func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, bool, error) {
 	var dump struct {
-		Ops []harness.HeldOp `json:"ops"`
+		Ops []heldOp `json:"ops"`
 	}
 	if err := json.Unmarshal(data, &dump); err != nil {
 		return abruptWitness{}, false, fmt.Errorf("dump_ops_in_flight: %w", err)
 	}
-	var found []harness.HeldOp
+	var found []heldOp
 	for _, op := range dump.Ops {
 		if strings.HasPrefix(op.Description, "osd_op(") && strings.HasPrefix(op.Request(), client+".") {
 			found = append(found, op)
@@ -293,7 +292,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 func abruptWitnessOf(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, object, client string) (abruptWitness, bool) {
 	t.Helper()
 	before := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
-	data, err := harness.AdminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
+	data, err := adminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
 	if err != nil {
 		t.Fatal("abrupt in-flight observation", err)
 	}
@@ -315,7 +314,7 @@ var abruptLastDump []string
 
 func abruptDescriptions(data []byte) []string {
 	var dump struct {
-		Ops []harness.HeldOp `json:"ops"`
+		Ops []heldOp `json:"ops"`
 	}
 	_ = json.Unmarshal(data, &dump)
 	var out []string
@@ -361,7 +360,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	} {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := harness.AdminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
+			out, err := adminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
 			var reply map[string]string
 			if err == nil && json.Unmarshal(out, &reply) == nil && abruptSameNumber(reply[setting.Name], setting.Value) {
 				break

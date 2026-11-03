@@ -61,19 +61,19 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	}
 	// tell forwards admin-socket commands; the OSD role needs no ceph CLI.
 	for _, daemon := range daemons {
-		data := harness.TopologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", harness.MessengerDumpArg(t, ctx, cluster))
+		data := harness.TopologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 	// Standby MGRs have an admin socket but do not serve forwarded tell commands.
 	for _, mgr := range clusteraccess.Managers(t, cluster) {
-		data := harness.TopologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", harness.MessengerDumpArg(t, ctx, cluster))
+		data := harness.TopologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 }
 
 func secureMessengerClient(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, phase string) {
 	t.Helper()
-	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, harness.MessengerDumpArg(t, ctx, cluster))
+	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, messengerDumpArg(t, ctx, cluster))
 	t.Logf("MSGR2_CLIENT %s", data)
 }
 

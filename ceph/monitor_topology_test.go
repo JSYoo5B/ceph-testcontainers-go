@@ -3,8 +3,26 @@ package ceph
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 	"testing"
 )
+
+func TestDaemonKeyringsRefusesWhatItCannotResolve(t *testing.T) {
+	c, control := adminSocketCluster()
+	topology := c.monitorTopology()
+	for _, ref := range [][2]string{{"mgr", "a"}, {"osd", "0"}} {
+		ctr, keyrings, err := topology.daemonKeyrings(ref[0], ref[1])
+		want := []string{"/etc/ceph/" + ref[0] + ".keyring", "/var/lib/ceph/" + ref[0] + "/ceph-" + ref[1] + "/keyring"}
+		if err != nil || ctr != control || !slices.Equal(keyrings, want) {
+			t.Errorf("%s.%s = %v, %q, %v", ref[0], ref[1], ctr, keyrings, err)
+		}
+	}
+	for _, ref := range [][2]string{{"mon", "a"}, {"mds", "a"}, {"osd", "x"}, {"osd", "7"}, {"mgr", "z"}} {
+		if ctr, keyrings, err := topology.daemonKeyrings(ref[0], ref[1]); err == nil || ctr != nil || keyrings != nil {
+			t.Errorf("%s.%s = %v, %q, %v; want an error", ref[0], ref[1], ctr, keyrings, err)
+		}
+	}
+}
 
 // monitorTopologyBinding reports whether fn is Container.monitorTopology, the
 // one function that hands the membership state's addresses to the topology.

@@ -185,7 +185,9 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // After an uncertain restore reply, retrying reconciles the native state
 // first. Same value outside writes cannot be distinguished; external edits
 // must not race. A handle of a call that was not applied returns nil without
-// taking a lock. A cluster that has been terminated refuses the restore.
+// taking a lock. A cluster that has been terminated refuses the restore. A
+// context that ends before the topology lock is free returns the context
+// error, and the entry stays registered.
 //
 //purpose:condition,lifetime
 func (change *ConfigHandle) Restore(ctx context.Context) error {
@@ -199,9 +201,7 @@ func (change *ConfigHandle) Restore(ctx context.Context) error {
 		return errors.New("configuration override is unavailable")
 	}
 	c := change.owner
-	var err error
-	overridehook.WithTopologyNoContext(c, func() { err = change.restoreLocked(ctx, c) })
-	return err
+	return overridehook.WithTopology(ctx, c, func() error { return change.restoreLocked(ctx, c) })
 }
 
 func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container) error {

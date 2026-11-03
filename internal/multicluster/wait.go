@@ -4,30 +4,15 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // LockObservation acquires mutex unless ctx ends first. Observation waits
-// include time queued behind a topology mutation or another observer. TryLock
-// preserves the shared mutex without an abandoned lock goroutine.
+// include time queued behind a topology mutation or another observer. No
+// goroutine remains waiting after cancellation.
 func LockObservation(ctx context.Context, mutex *sync.Mutex) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if mutex.TryLock() {
-			if err := ctx.Err(); err != nil {
-				mutex.Unlock()
-				return err
-			}
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	return clusterutil.LockMutex(ctx, mutex)
 }
 
 // RetainWaitQueryCause handles a caller-context-only failure, which has no new independent native query cause.

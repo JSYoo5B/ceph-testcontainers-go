@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -991,16 +992,30 @@ const rbdCeph19ReceiverStatus = `{
 
 func TestRBDReceiverDiscoveryReadsCeph19Namespaces(t *testing.T) {
 	peer := &rbdReceiverPeerIdentity{uuid: "57df75d3-a2d5-4320-9122-3f8598fd02b3", site: "source", client: "client.rbd-mirror-peer"}
-	selected, found, err := decodeRBDReceiverDiscovery([]byte(rbdCeph19ReceiverStatus), "tc-rbd-receiver-0", peer, true)
+	selected, found, err := decodeRBDReceiverDiscovery([]byte(rbdCeph19ReceiverStatus), "tc-rbd-receiver-0", peer)
 	if err != nil || !found || selected.state != "running" || selected.instance != "4331" || !selected.leader || !slices.Equal(selected.members, []string{"4331"}) {
 		t.Fatalf("Ceph 19 discovery rejected: %+v %v %v", selected, found, err)
 	}
 	if want := []rbdReceiverNamespace{{"", ""}, {"ns-a", "ns-a"}}; !slices.Equal(selected.namespaces, want) {
 		t.Fatalf("Ceph 19 namespaces = %v, want %v", selected.namespaces, want)
 	}
-	// The later-release decoder must not accept the Ceph 19 shape.
-	if _, _, err := decodeRBDReceiverDiscovery([]byte(rbdCeph19ReceiverStatus), "tc-rbd-receiver-0", peer, false); err == nil {
-		t.Fatal("Ceph 19 status accepted without namespace_replayers")
+	// A report whose rows have both release shapes is malformed.
+	var report struct {
+		Pools []map[string]any `json:"pool_replayers"`
+	}
+	if err := json.Unmarshal([]byte(rbdCeph19ReceiverStatus), &report); err != nil {
+		t.Fatal(err)
+	}
+	later := map[string]any{"pool": "other", "peer": report.Pools[0]["peer"], "state": "stopped",
+		"namespace_replayers": []any{map[string]any{"local_namespace": "", "remote_namespace": "", "image_replayers": []any{}}}}
+	for _, rows := range [][]map[string]any{{report.Pools[0], later}, {later, report.Pools[0]}} {
+		mixed, err := json.Marshal(map[string]any{"pool_replayers": rows})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := decodeRBDReceiverDiscovery(mixed, "tc-rbd-receiver-0", peer); err == nil {
+			t.Fatal("a report that mixes the Ceph 19 and later row shapes was accepted")
+		}
 	}
 	for _, change := range []struct{ before, after string }{
 		{`"name": "ns-a",`, ``},
@@ -1009,8 +1024,30 @@ func TestRBDReceiverDiscoveryReadsCeph19Namespaces(t *testing.T) {
             "image_deleter"`, `"image_deleter"`},
 		{`"namespaces": [`, `"other": [`},
 	} {
-		if _, _, err := decodeRBDReceiverDiscovery([]byte(strings.Replace(rbdCeph19ReceiverStatus, change.before, change.after, 1)), "tc-rbd-receiver-0", peer, true); err == nil {
+		if _, _, err := decodeRBDReceiverDiscovery([]byte(strings.Replace(rbdCeph19ReceiverStatus, change.before, change.after, 1)), "tc-rbd-receiver-0", peer); err == nil {
 			t.Fatalf("malformed Ceph 19 discovery accepted after replacing %q", change.before)
 		}
+	}
+}
+
+// The rbd-mirror daemon image, not the destination cluster's release, writes
+// the status: a Ceph 19 daemon report on a cluster whose release is not
+// recorded as 19 still decodes.
+func TestRBDReceiverStatusDecodesTheDaemonReportShape(t *testing.T) {
+	h := newReceiverHarness(t, "ns-a", "ns-a", 1)
+	if multicluster.CephBefore(h.m.pair.config.Destination, 20) {
+		t.Fatal("the harness destination must not be recorded as Ceph 19")
+	}
+	row := map[string]any{"pool": "images", "peer": "uuid: " + receiverPeerUUID + " cluster: source client: " + receiverPeerClient, "state": "running",
+		"instance_id": "100", "leader_instance_id": "100", "leader": true, "instances": []string{"100"},
+		"image_replayers": []any{}, "namespaces": []any{map[string]any{"name": "ns-a", "image_replayers": []any{}}}}
+	data, err := json.Marshal(map[string]any{"pool_replayers": []any{row}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.daemons[0].status = string(data)
+	status, err := h.m.ReceiverStatus(t.Context())
+	if err != nil || !status.Ready || !status.Daemons["a"].NamespaceDiscovered {
+		t.Fatalf("Ceph 19 daemon report: %+v %v", status, err)
 	}
 }

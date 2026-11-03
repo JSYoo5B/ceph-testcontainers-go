@@ -2,6 +2,7 @@ package subvolume
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -132,8 +133,23 @@ func TestCephFSSubvolumeCreationOwnershipAndPrivateIdentity(t *testing.T) {
 		t.Fatalf("public descriptor edit redirected mutation: %v", ctr.Calls)
 	}
 	before := len(ctr.Calls)
-	if err := subvolume.Resize(t.Context(), -1); err == nil || len(ctr.Calls) != before {
+	if err := subvolume.Resize(t.Context(), -1); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.Calls) != before {
 		t.Fatal("negative resize reached Ceph")
+	}
+}
+
+// An Authorize request with an invalid client name or access level is
+// ceph.ErrInvalidRequest and runs no command.
+func TestCephFSAuthorizationRefusesInvalidRequests(t *testing.T) {
+	_, ctr, volume := cephFSAuthorizationFixture(t)
+	for _, config := range []AuthorizationConfig{
+		{ClientID: "bad name", Access: "rw"},
+		{ClientID: "client.", Access: "r"},
+		{ClientID: "writer", Access: "w"},
+	} {
+		if grant, err := volume.Authorize(t.Context(), config); !errors.Is(err, ceph.ErrInvalidRequest) || grant != nil || len(ctr.Calls) != 0 {
+			t.Fatalf("%+v: %v, %v, %v", config, grant, err, ctr.Calls)
+		}
 	}
 }
 

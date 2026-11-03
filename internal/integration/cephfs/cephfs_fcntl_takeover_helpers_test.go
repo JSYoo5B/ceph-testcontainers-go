@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 type fcntlTakeoverFD struct {
@@ -20,7 +18,7 @@ type fcntlTakeoverFD struct {
 	Data       string `json:"data,omitempty"`
 }
 
-func fcntlTakeoverFDView(r harness.CephFSActorReceipt) (fcntlTakeoverFD, error) {
+func fcntlTakeoverFDView(r cephFSActorReceipt) (fcntlTakeoverFD, error) {
 	var fd fcntlTakeoverFD
 	if err := json.Unmarshal(r.Ops, &fd); err != nil {
 		return fd, err
@@ -32,7 +30,7 @@ func fcntlTakeoverFDView(r harness.CephFSActorReceipt) (fcntlTakeoverFD, error) 
 	return fd, nil
 }
 
-func sameFcntlTakeoverFD(first, next harness.CephFSActorReceipt) error {
+func sameFcntlTakeoverFD(first, next cephFSActorReceipt) error {
 	a, err := fcntlTakeoverFDView(first)
 	if err != nil {
 		return err
@@ -48,7 +46,7 @@ func sameFcntlTakeoverFD(first, next harness.CephFSActorReceipt) error {
 	return nil
 }
 
-func fcntlTakeoverConflict(before, after harness.CephFSActorReceipt) error {
+func fcntlTakeoverConflict(before, after cephFSActorReceipt) error {
 	if !fcntlConflictResult(before.Errno) || !fcntlConflictResult(after.Errno) {
 		return fmt.Errorf("overlapping lock was not refused before/after takeover: %d/%d", before.Errno, after.Errno)
 	}
@@ -59,7 +57,7 @@ func fcntlConflictResult(errno int) bool { return errno == 11 || errno == 13 }
 
 // The remote FUSE client may report l_pid=0. Keep that field unchanged, but
 // do not identify the holder from it: the holder-only unlock is the owner oracle.
-func sameFcntlTakeoverLock(before, after *harness.FcntlLockView) error {
+func sameFcntlTakeoverLock(before, after *fcntlLockView) error {
 	if before == nil || after == nil || before.Type != 1 || after.Type != 1 ||
 		before.Start != 0 || after.Start != 0 || before.Len != 4096 || after.Len != 4096 || before.PID != after.PID {
 		return fmt.Errorf("F_GETLK did not retain the overlapping write lock: %+v -> %+v", before, after)

@@ -97,7 +97,7 @@ func (c *Container) openDebugTarget(ctx context.Context, daemon string) (*osdDeb
 		return nil, err
 	}
 	closed, osd := c.closed, c.fleet.osdHandles.get(n)
-	owns := c.monitorTopology().ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
+	owns := osd.ownedBy(c)
 	c.mu.Unlock()
 	switch {
 	case closed:
@@ -127,9 +127,8 @@ func (t *osdDebugTarget) generation(ctx context.Context) (debugLevelGeneration, 
 // generationLocked is generation for a caller that holds c.mu.
 func (t *osdDebugTarget) generationLocked(ctx context.Context) (debugLevelGeneration, error) {
 	c := t.c
-	osd := c.fleet.osdHandles.get(t.id)
-	owned := !c.closed && osd == t.osd && osd != nil && osd.Container != nil && !osd.purged && !osd.purgeIssued && !osd.detaching
-	if !owned {
+	osd := t.osd
+	if c.closed || !osd.ownedBy(c) {
 		return debugLevelGeneration{}, nil
 	}
 	state, err := osd.State(ctx)

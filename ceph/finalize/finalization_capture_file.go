@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // CaptureFileSource is a settled capture with a read-only local file. CaptureFile
@@ -50,7 +52,7 @@ func (f *Finalization) CaptureWithFile(name string, session CaptureFileSource, m
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if isNilSession(session) || f.started || maxBytes <= 0 || maxBytes > captureArchiveBytes {
+	if evidence.IsNil(session) || f.started || maxBytes <= 0 || maxBytes > captureArchiveBytes {
 		f.t.Errorf("ceph finalization: CaptureWithFile %q has an invalid source, limit or registration phase", name)
 		return
 	}

@@ -71,11 +71,11 @@ func TestDiscardRGWConflictRetainsFailedCleanupAndNewOwner(t *testing.T) {
 	cleanupFailure := errors.New("temporary Docker removal failure")
 	failed := &rgwTestContainer{id: "conflicted", terminateErr: cleanupFailure}
 	c := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{"rgw": failed})
-	if err := discardAttempt(t.Context(), c, failed); !errors.Is(err, cleanupFailure) || servicehook.Service(c, "rgw") != failed {
+	if err := discardNamedAttempt(t.Context(), c, "rgw", failed); !errors.Is(err, cleanupFailure) || servicehook.Service(c, "rgw") != failed {
 		t.Fatal("failed cleanup lost the partial RGW service")
 	}
 	failed.terminateErr = nil
-	if err := discardAttempt(t.Context(), c, failed); err != nil {
+	if err := discardNamedAttempt(t.Context(), c, "rgw", failed); err != nil {
 		t.Fatal(err)
 	}
 	if exists := servicehook.Service(c, "rgw") != nil; exists {
@@ -83,7 +83,7 @@ func TestDiscardRGWConflictRetainsFailedCleanupAndNewOwner(t *testing.T) {
 	}
 	replacement := &rgwTestContainer{id: "replacement"}
 	servicehook.SetService(c, "rgw", replacement)
-	if err := discardAttempt(t.Context(), c, failed); err != nil || servicehook.Service(c, "rgw") != replacement {
+	if err := discardNamedAttempt(t.Context(), c, "rgw", failed); err != nil || servicehook.Service(c, "rgw") != replacement {
 		t.Fatal("old-attempt cleanup removed a different RGW owner")
 	}
 }
@@ -102,7 +102,7 @@ func TestDiscardRGWConflictAcceptsOnlyMissingResources(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctr := &rgwTestContainer{id: "conflicted", terminateErr: tc.err}
 			c := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{"rgw": ctr})
-			err := discardAttempt(t.Context(), c, ctr)
+			err := discardNamedAttempt(t.Context(), c, "rgw", ctr)
 			retained := servicehook.Service(c, "rgw") != nil
 			if (err == nil) != tc.safe || retained == tc.safe {
 				t.Fatalf("RGW removal lost ownership or rejected an absent resource: retained=%t error=%v", retained, err)

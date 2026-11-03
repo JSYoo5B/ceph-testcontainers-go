@@ -47,6 +47,9 @@ snapshots, err := lease.Snapshots(ctx)
 - Keep a non-nil lease returned with an error and restore it: the schedule may
   have been added before a reply was lost. `Restore` reads the directory back
   on every call and resumes where an earlier call stopped.
+- A lease is bound to the filesystem it was added on: after that filesystem
+  is removed or replaced, even by one of the same name, every lease operation
+  is refused. Restore the lease before removing the filesystem.
 - `Snapshots` runs libcephfs in the client container, which needs the Python
   `cephfs` binding.
 

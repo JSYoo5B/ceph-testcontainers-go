@@ -435,7 +435,7 @@ func parseMonSessions(data []byte) (map[string][]monSession, error) {
 	return managers, nil
 }
 
-// authSources is what a collection reads; harness.WithSockets provides it. Each
+// authSources is what a collection reads; withSockets provides it. Each
 // method waits at most until its context ends.
 type authSources interface {
 	AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
@@ -760,7 +760,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		Binding: authExcerptBinding{Daemon: "client.admin", Generation: "container " + client.GetContainerID() + " started " + clientState.StartedAt,
 			Capture: authRejectionOperation(rejection) + "/stderr/" + attempted.Format(time.RFC3339Nano)},
 		Start: attempted, End: ended, Stderr: tested.Stderr, StderrComplete: tested.Complete(),
-	}, newAuthExcerptRedactor(ctx, harness.WithSockets(t, cluster), authExcerptRedactionBudget), authFailureExcerptLimit)
+	}, newAuthExcerptRedactor(ctx, withSockets(t, cluster), authExcerptRedactionBudget), authFailureExcerptLimit)
 	excerpts := newAuthExcerptLedger()
 	if first, err := excerpts.record(firstExcerpt); err != nil || !first {
 		t.Fatalf("first excerpt not recorded: %v", err)
@@ -783,7 +783,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
-		collected := collectAuthFirstFailureBundle(ctx, harness.WithSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+		collected := collectAuthFirstFailureBundle(ctx, withSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
 		attached, caused := firstRecord, cause
 		collected.FirstExcerpt, collected.Cause = &attached, &caused
 		return collected

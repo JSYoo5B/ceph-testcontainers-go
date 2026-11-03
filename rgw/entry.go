@@ -12,7 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-var errNilCluster = errors.New("ceph cluster is unavailable")
+var errNilCluster = servicehook.Invalid(errors.New("ceph cluster is unavailable"))
 
 // Start starts an independently owned, named gateway on an existing
 // cluster. A zero config starts the default gateway and creates its test user.

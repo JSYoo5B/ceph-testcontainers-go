@@ -99,7 +99,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
       - name: Prepare the explicitly admitted disposable kernel
         if: inputs.prepare_kernel
         run: |
@@ -131,6 +133,7 @@ jobs:
         with:
           phase: snapshot
           directory: artifacts/blockio/cleanup
+          artifact_name: blockio-cleanup-${{ matrix.release }}
       - name: Compile the source-owned public API batch
         run: >-
           python3 .github/scripts/tag_scenarios.py compile --category optional

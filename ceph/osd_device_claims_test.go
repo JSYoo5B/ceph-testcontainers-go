@@ -306,9 +306,8 @@ func TestTerminateReleasesDeviceClaimsByContainerEvidence(t *testing.T) {
 // receiver included, ignoring message construction. None takes a lock or calls
 // into Container.
 var osdDeviceClaimMethods = map[string][]string{
-	"claim":   {"creation.Load()", "device.validate()", "osdDeviceLease.MatchString(lease)", "other.device.number()", "device.number()", "device.number()", "s.osds()"},
-	"claimOf": {"r.creation.Load()"},
-	"count":   nil,
+	"claim": {"creation.Load()", "device.validate()", "osdDeviceLease.MatchString(lease)", "other.device.number()", "device.number()", "device.number()", "s.osds()"},
+	"count": nil,
 	// exclusionOf is the read-only receipt of the chain-release gate
 	// (osd_device_release_gate.go); its caller table is osdChainReleaseCallers.
 	"exclusionOf": {"s.osds()", "other.device.number()", "device.number()"},
@@ -480,4 +479,21 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 	if len(problems) != 0 {
 		t.Fatalf("device claim release order changed: %v", problems)
 	}
+}
+
+// osdDeviceClaimInfo is a copy of a claim for the tests; it shares nothing.
+type osdDeviceClaimInfo struct {
+	osd       int
+	lease     string
+	device    osdBlockDevice
+	attempted bool
+}
+
+// claimOf returns a copy of the claim of osd, for the tests to compare.
+func (s *osdDeviceClaims) claimOf(osd int) (osdDeviceClaimInfo, bool) {
+	r := s.records[osd]
+	if r == nil {
+		return osdDeviceClaimInfo{}, false
+	}
+	return osdDeviceClaimInfo{osd: r.osd, lease: r.lease, device: r.device, attempted: r.creation.Load()}, true
 }

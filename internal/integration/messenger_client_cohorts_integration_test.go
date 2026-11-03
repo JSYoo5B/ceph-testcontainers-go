@@ -44,5 +44,5 @@ func TestMessengerClientProfileAddressFamilies(t *testing.T) {
 // ceph-authtool has no --key-type.
 func TestMessengerClientProfileWithoutKeyTypes(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	testMessengerClientWithoutKeyTypes(t, harness.TentacleWithoutKeyTypes)
+	testMessengerClientWithoutKeyTypes(t, tentacleWithoutKeyTypes)
 }

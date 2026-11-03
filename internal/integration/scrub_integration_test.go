@@ -104,15 +104,15 @@ func TestScrubInconsistency(t *testing.T) {
 				t.Fatal("deep scrub", err)
 			}
 			expectScrub(t, "scrubbed", true)
-			harness.WaitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", true)
-			harness.WaitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", true)
+			waitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", true)
+			waitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", true)
 			probe(t, "damaged")
 
 			if err := cluster.RepairPG(ctx, mapping.PGID); err != nil {
 				t.Fatal("repair", err)
 			}
-			harness.WaitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", false)
-			harness.WaitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", false)
+			waitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", false)
+			waitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", false)
 			// Repair rewrote the replica, so the injected error is gone too.
 			if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {
 				t.Fatal("deep scrub after repair", err)

@@ -44,7 +44,7 @@ type messengerDaemon struct {
 
 // messengerDaemons lists the cluster's MONs, MGRs, OSDs and the filesystem's
 // MDSs, in that order.
-func messengerDaemons(t *testing.T, m *harness.CephFSSingleMDS) []messengerDaemon {
+func messengerDaemons(t *testing.T, m *cephFSSingleMDS) []messengerDaemon {
 	t.Helper()
 	var daemons []messengerDaemon
 	for _, mon := range clusteraccess.Monitors(t, m.Cluster) {
@@ -170,7 +170,7 @@ type v2SessionsDaemon struct {
 func testCephFSMessengerV2Sessions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithConfigFile(debugMSConfig(t)))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithConfigFile(debugMSConfig(t)))
 	helper := harness.ToolkitContainer(t, m.Cluster)
 	dump := harness.CapabilitySupported(t, ctx, m.Cluster, harness.CapabilityMessengerDump)
 	receipt := map[string]any{"native_version": m.Version, "messenger_dump": dump}
@@ -267,7 +267,7 @@ func testCephFSMessengerV2Sessions(t *testing.T) {
 }
 
 // mdsContainer returns the owned container of the active MDS.
-func mdsContainer(t *testing.T, m *harness.CephFSSingleMDS) *cephfs.MDS {
+func mdsContainer(t *testing.T, m *cephFSSingleMDS) *cephfs.MDS {
 	t.Helper()
 	for _, member := range m.FS.MDSs() {
 		if member.ID == m.MDS.Name {
@@ -377,7 +377,7 @@ func injectedFailures(stderr []byte) (lossless, lossy int) {
 func testCephFSMessengerReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithConfigFile(debugMSConfig(t)))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithConfigFile(debugMSConfig(t)))
 	helper := harness.ToolkitContainer(t, m.Cluster)
 	dump := harness.CapabilitySupported(t, ctx, m.Cluster, harness.CapabilityMessengerDump)
 	mds := mdsContainer(t, m)
@@ -399,14 +399,14 @@ func testCephFSMessengerReconnect(t *testing.T) {
 		t.Logf("MESSENGER_RECONNECT_RECEIPT %s", data)
 	}()
 
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSReconnectActor, m.FS.FilesystemName, "/tmp/messenger-reconnect", path, rate)
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSReconnectActor, m.FS.FilesystemName, "/tmp/messenger-reconnect", path, rate)
 	first := actor.Receipt(t, ctx, 1)
 	client := first.Client
 	receipt["client"] = client
 	if client == 0 {
 		t.Fatalf("actor identity: %+v", first)
 	}
-	if state := string(harness.CephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client)["state"]); state != `"open"` {
+	if state := string(cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client)["state"]); state != `"open"` {
 		t.Fatalf("client.%d session before the window: %s", client, state)
 	}
 	var mdsBefore []harness.MessengerConnection
@@ -437,8 +437,8 @@ func testCephFSMessengerReconnect(t *testing.T) {
 			osdAfter[fmt.Sprintf("osd.%d", osd.ID)], _ = tellMessengers(t, ctx, m.Cluster, fmt.Sprintf("osd.%d", osd.ID))
 		}
 	}
-	session := harness.CephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client)
-	receipt["session_after"] = harness.CephFSRawSessionSummary(session)
+	session := cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client)
+	receipt["session_after"] = cephFSRawSessionSummary(session)
 	status, err := m.FS.MDSStatus(ctx)
 	if err != nil || len(status.Active) != 1 || status.Active[0].GID != m.MDS.GID {
 		t.Fatalf("MDS status after the window: %+v, %v", status, err)
@@ -447,11 +447,11 @@ func testCephFSMessengerReconnect(t *testing.T) {
 		t.Fatalf("client.%d session after the window: %s", client, state)
 	}
 
-	split := func(ctr testcontainers.Container, mark int) (before, window []harness.ReadySession) {
+	split := func(ctr testcontainers.Container, mark int) (before, window []readySession) {
 		lines := harness.ContainerLogLines(t, ctx, ctr)
 		var unusable []string
-		before, unusable = harness.ParseReadySessions(lines[:mark])
-		window, more := harness.ParseReadySessions(lines[mark:])
+		before, unusable = parseReadySessions(lines[:mark])
+		window, more := parseReadySessions(lines[mark:])
 		for _, line := range append(unusable, more...) {
 			if strings.Contains(line, "entity=client."+strconv.FormatUint(client, 10)+" ") {
 				t.Fatalf("an unusable READY line of the client: %s", line)
@@ -460,7 +460,7 @@ func testCephFSMessengerReconnect(t *testing.T) {
 		return before, window
 	}
 	mdsBase, mdsWindow := split(mds, mdsMark)
-	var osdBase, osdWindow []harness.ReadySession
+	var osdBase, osdWindow []readySession
 	for i, osd := range osds {
 		before, window := split(osd, osdMarks[i])
 		osdBase, osdWindow = append(osdBase, before...), append(osdWindow, window...)

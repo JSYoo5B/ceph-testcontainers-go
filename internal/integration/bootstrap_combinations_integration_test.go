@@ -109,7 +109,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 				test.check(t, ctx, cluster)
 			}
 			harness.ExecOutput(t, ctx, client, "sh", "-c", `printf combination > /tmp/in && rados --pool "$1" put probe /tmp/in && rados --pool "$1" get probe /tmp/out`, "sh", test.pool)
-			harness.AssertContainerFilesEqual(t, ctx, client, "/tmp/in", "/tmp/out")
+			assertContainerFilesEqual(t, ctx, client, "/tmp/in", "/tmp/out")
 			if test.pool == "rbd" {
 				harness.ExecOutput(t, ctx, client, "rbd", "create", "rbd/disk", "--size", "16M")
 				if info := harness.ExecOutput(t, ctx, client, "rbd", "info", "rbd/disk"); !strings.Contains(info, "size 16 MiB") {

@@ -21,5 +21,5 @@ import (
 // or lock is adopted: the MDS supports RESET only.
 func TestCephFSReclaimReset(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSReclaimReset(t)
+	runCephFSReclaimReset(t)
 }

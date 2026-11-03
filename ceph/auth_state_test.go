@@ -231,6 +231,7 @@ func isAuthStateReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) ==
 // function without receiver. The value is where the contract is written.
 var authOwnerHeld = map[string]string{
 	"Container.authLedger":                "auth_state.go: authLedger, whose ledger the caller uses while it holds c.mu",
+	"Container.addAuthStray":              "auth_state.go: addAuthStray, reached as osdFleet.addStray from registerOSD, whose callers hold c.mu",
 	"authLedger.settleClient":             "client_key.go: settleClient",
 	"authLedger.changeClient":             "client_key.go: changeClient",
 	"Container.ownedClientRecord":         "client_key.go: ownedClientRecord",

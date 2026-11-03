@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // This file is the address half of the MON replacement. The monmap pins the
@@ -121,13 +123,13 @@ func (s *Volume) holdAddress(ctx context.Context, g Generations) error {
 	hold, err := g.Hold(ctx, s.Endpoint.clone())
 	// A hold returned together with an error may own reserved ports, so it is
 	// kept before the error is handled and released like any other.
-	if !isNilPort(hold) {
+	if !evidence.IsNil(hold) {
 		s.hold = hold
 	}
 	if err != nil {
 		return errors.Join(fmt.Errorf("hold the address of MON %s: %w", s.mon, err), s.releaseAddressHold(ctx))
 	}
-	if isNilPort(hold) {
+	if evidence.IsNil(hold) {
 		return fmt.Errorf("hold the address of MON %s: the container side returned no hold", s.mon)
 	}
 	return nil

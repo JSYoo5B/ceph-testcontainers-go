@@ -179,22 +179,22 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 	mds := status.Active[0].Name
 	const dir, moved = "leased", "leased-moved"
 
-	holder := harness.StartCephFSActor(t, ctx, cluster, client, cephFSLeaseHolder, fs.FilesystemName, "/tmp/lease-holder", "/"+dir, "/"+moved)
+	holder := startCephFSActor(t, ctx, cluster, client, cephFSLeaseHolder, fs.FilesystemName, "/tmp/lease-holder", "/"+dir, "/"+moved)
 	holderID := holder.Receipt(t, ctx, 1).Client
-	session := harness.CephFSRetainedSession(t, ctx, fs, holderID, 0)
-	renamer := harness.StartCephFSActor(t, ctx, cluster, harness.ToolkitContainer(t, cluster), cephFSLeaseRenamer, fs.FilesystemName, "/tmp/lease-renamer", "/"+dir, "/"+moved)
+	session := cephFSRetainedSession(t, ctx, fs, holderID, 0)
+	renamer := startCephFSActor(t, ctx, cluster, harness.ToolkitContainer(t, cluster), cephFSLeaseRenamer, fs.FilesystemName, "/tmp/lease-renamer", "/"+dir, "/"+moved)
 	created := renamer.Receipt(t, ctx, 1)
 	if created.Client == holderID {
 		t.Fatalf("holder and renamer share client.%d", holderID)
 	}
-	rootCaps, _ := harness.CephFSInodeCaps(t, ctx, cluster, mds, 1)
+	rootCaps, _ := cephFSInodeCaps(t, ctx, cluster, mds, 1)
 	holderRoot := ""
 	for _, caps := range rootCaps {
 		if caps.ClientID == holderID {
 			holderRoot = caps.Issued
 		}
 	}
-	if holderRoot == "" || harness.CapsOf(holderRoot, 'F') != "" {
+	if holderRoot == "" || capsOf(holderRoot, 'F') != "" {
 		t.Fatalf("holder client.%d root capabilities %q, want some without Fs: %+v", holderID, holderRoot, rootCaps)
 	}
 	holder.Open(t, ctx, "lookup")
@@ -236,7 +236,7 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 		t.Fatalf("holder after the rmdir: %+v, want ENOENT", gone)
 	}
 
-	if retained := harness.CephFSRetainedSession(t, ctx, fs, holderID, 0); retained.Address != session.Address || retained.PID != session.PID {
+	if retained := cephFSRetainedSession(t, ctx, fs, holderID, 0); retained.Address != session.Address || retained.PID != session.PID {
 		t.Fatalf("holder session %+v, before %+v", retained, session)
 	}
 	entries, err := harness.ObserveCluster(cluster).BlocklistEntries(ctx)
@@ -246,7 +246,7 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 	if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
 		t.Fatalf("holder %s was blocklisted: %+v", session.Address, entries)
 	}
-	for actor, phase := range map[*harness.CephFSActorRun]int{renamer: 4, holder: 5} {
+	for actor, phase := range map[*cephFSActorRun]int{renamer: 4, holder: 5} {
 		actor.Open(t, ctx, "finish")
 		if closed := actor.Receipt(t, ctx, phase); !closed.Closed || closed.CloseErrno != 0 {
 			t.Fatalf("closing receipt = %+v", closed)

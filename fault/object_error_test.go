@@ -47,7 +47,7 @@ func tellCommands(ctr *clustertest.CannedCommandContainer) []string {
 
 func requireNoRegistryEntry(t *testing.T, c *ceph.Container) {
 	t.Helper()
-	for _, kind := range []faulthook.Kind{faulthook.NetworkDelay, faulthook.NetworkInterruption, faulthook.ContainerPause, faulthook.Blocklist, faulthook.FullRatios} {
+	for _, kind := range []faulthook.Kind{faulthook.BlockIO, faulthook.NetworkDelay, faulthook.NetworkInterruption, faulthook.ContainerPause} {
 		if faults := testhelper.TestFaults(c, kind); len(faults) != 0 {
 			t.Fatalf("a one-shot injection registered a %s fault: %v", kind, faults)
 		}
@@ -65,19 +65,19 @@ func TestInjectObjectDataErrorValidatesTargetBeforeNativeCommands(t *testing.T) 
 		"unowned OSD":  func(c *ceph.Container) error { return InjectObjectDataError(t.Context(), c, "fixture", "victim", 9) },
 	} {
 		ctr := injectFixture()
-		if err := call(injectCluster(ctr, testhelper.TestConfig{})); err == nil || len(ctr.Calls) != 0 {
+		if err := call(injectCluster(ctr, testhelper.TestConfig{})); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.Calls) != 0 {
 			t.Fatalf("%s: invalid target reached native CLI: %v %v", name, err, ctr.Calls)
 		}
 	}
 	ctr := injectFixture()
 	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
-		t.Fatal("EC pool accepted a replica data error")
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); !errors.Is(err, ceph.ErrInvalidRequest) || len(tellCommands(ctr)) != 0 {
+		t.Fatalf("EC pool accepted a replica data error: %v", err)
 	}
 	ctr = injectFixture()
 	ctr.Output[mapCommand] = strings.Replace(ctr.Output[mapCommand], `"acting":[1,0]`, `"acting":[1]`, 1)
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
-		t.Fatal("OSD outside the acting set received an injection")
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); !errors.Is(err, ceph.ErrInvalidRequest) || len(tellCommands(ctr)) != 0 {
+		t.Fatalf("OSD outside the acting set received an injection: %v", err)
 	}
 	ctr = injectFixture()
 	ctr.Output[mapCommand] = strings.Replace(ctr.Output[mapCommand], `"pool_id":7`, `"pool_id":8`, 1)
@@ -100,7 +100,7 @@ func TestInjectObjectDataErrorEnablesOnlyTheTargetDaemon(t *testing.T) {
 
 func TestInjectObjectDataErrorNeedsBlueStore(t *testing.T) {
 	ctr := injectFixture()
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{MemStore: true}), "fixture", "victim", 0); err == nil || len(ctr.Calls) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{MemStore: true}), "fixture", "victim", 0); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.Calls) != 0 {
 		t.Fatalf("BlueStore read-error injection ran on MemStore: %v %v", err, ctr.Calls)
 	}
 }

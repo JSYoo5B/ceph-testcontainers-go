@@ -225,7 +225,7 @@ func readLogAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container
 	leader, epoch := "", 0
 	listings := map[string][]byte{}
 	for _, m := range mons {
-		raw, err := harness.AdminSocket(t, ctx, cluster, "mon."+m.DaemonName, "mon_status")
+		raw, err := adminSocket(t, ctx, cluster, "mon."+m.DaemonName, "mon_status")
 		if err != nil {
 			return "", 0, nil, err
 		}
@@ -240,7 +240,7 @@ func readLogAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container
 		if s.State == "leader" {
 			leader = s.Name
 		}
-		if listings[m.DaemonName], err = harness.AdminSocket(t, ctx, cluster, "mon."+m.DaemonName, "sessions"); err != nil {
+		if listings[m.DaemonName], err = adminSocket(t, ctx, cluster, "mon."+m.DaemonName, "sessions"); err != nil {
 			return "", 0, nil, err
 		}
 	}
@@ -275,7 +275,7 @@ func logAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container, mo
 
 func logAckSocket(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon string, args ...string) {
 	t.Helper()
-	if out, err := harness.AdminSocket(t, ctx, cluster, daemon, args...); err != nil {
+	if out, err := adminSocket(t, ctx, cluster, daemon, args...); err != nil {
 		t.Fatalf("%s %v: %v: %s", daemon, args, err, out)
 	}
 }

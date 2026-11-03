@@ -46,7 +46,7 @@ func TestStoppedMDSDecodeAcceptsTheSettledBaseline(t *testing.T) {
 
 // TestStoppedMDSDecodeKeepsEveryGuardAndItsClassification pins, for the
 // stopped-MDS global-map decoder, the exact refusal text of each guard group.
-// It characterizes the decoder as it is: the decode-versus-survivor split must
+// It characterizes the decoder: the decode and the survivor verification must
 // keep every guard on the same side of the final scope return, and an
 // unsupported state such as up:oneshot-replay stays refused. The "no complete
 // active survivor set" guard is not listed: the earlier policy and membership
@@ -199,7 +199,7 @@ func calleeName(call *ast.CallExpr) string {
 }
 
 // TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification pins the
-// caller table of the split: the decoder and the survivor verification are
+// caller table of the scope read: the decoder and the survivor verification are
 // called only by decodeStoppedMDSScope, decoding comes first and the verified
 // scope is what it returns, and Docker inspection appears only in the pinned
 // functions (the stopped target proof, the replacement observation and the
@@ -223,7 +223,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 					return true
 				}
 				switch name := calleeName(call); name {
-				case "decodeStoppedMDSMap", "verifyStoppedMDSSurvivors", "decodeStoppedMDSScope":
+				case "DecodeStopped", "verifyStoppedMDSSurvivors", "decodeStoppedMDSScope":
 					callers[name] = append(callers[name], fn.Name.Name)
 				case "Inspect":
 					inspectIn[fn.Name.Name]++
@@ -233,7 +233,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 		}
 	}
 	want := map[string][]string{
-		"decodeStoppedMDSMap":       {"decodeStoppedMDSScope"},
+		"DecodeStopped":             {"decodeStoppedMDSScope"},
 		"verifyStoppedMDSSurvivors": {"decodeStoppedMDSScope"},
 		"decodeStoppedMDSScope":     {"readStoppedMDSScope"},
 	}
@@ -251,7 +251,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 	ast.Inspect(scopeFn.Body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
-			if name := calleeName(node); name == "decodeStoppedMDSMap" || name == "verifyStoppedMDSSurvivors" {
+			if name := calleeName(node); name == "DecodeStopped" || name == "verifyStoppedMDSSurvivors" {
 				order = append(order, name)
 			}
 		case *ast.ReturnStmt:
@@ -263,7 +263,7 @@ func TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification(t *testing.T
 		}
 		return true
 	})
-	if !slices.Equal(order, []string{"decodeStoppedMDSMap", "verifyStoppedMDSSurvivors"}) || !returned {
+	if !slices.Equal(order, []string{"DecodeStopped", "verifyStoppedMDSSurvivors"}) || !returned {
 		t.Errorf("decode must come first and the verified scope must be returned: %v returned=%v", order, returned)
 	}
 }

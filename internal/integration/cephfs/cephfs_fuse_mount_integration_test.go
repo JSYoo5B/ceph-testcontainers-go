@@ -172,7 +172,7 @@ func admitFuse(t *testing.T, ctx context.Context, ctr testcontainers.Container) 
 // from the client role) ships ceph-fuse, otherwise the official image of the
 // cluster's release, which does. The official role images keep their scope
 // and do not ship ceph-fuse.
-func fuseClientImage(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS) (string, *fuseRefusal) {
+func fuseClientImage(t *testing.T, ctx context.Context, m *cephFSSingleMDS) (string, *fuseRefusal) {
 	t.Helper()
 	clientImage := harness.StaticFacts(m.Cluster).Images.Client
 	if code, _, err := harness.SessionExec(ctx, m.Client, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
@@ -191,7 +191,7 @@ func fuseClientImage(t *testing.T, ctx context.Context, m *harness.CephFSSingleM
 // startFuseClient starts an idle client container of identity with
 // settings. An engine that cannot map /dev/fuse fails the creation, and the
 // result is a fuseRefusal.
-func startFuseClient(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, image string, identity *ceph.ClientConfig, settings fuseSettings) (testcontainers.Container, error) {
+func startFuseClient(t *testing.T, ctx context.Context, m *cephFSSingleMDS, image string, identity *ceph.ClientConfig, settings fuseSettings) (testcontainers.Container, error) {
 	t.Helper()
 	ctr, err := testcontainers.Run(ctx, image, identity.WithIdentity(), ceph.WithIdleEntrypoint(), settings.customizer())
 	testcontainers.CleanupContainer(t, ctr)
@@ -221,7 +221,7 @@ type fuseMount struct {
 
 // startFuseMount starts ceph-fuse for identity's root on point in ctr and
 // registers its cancellation and confirmed stop before anything can fail.
-func startFuseMount(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, ctr testcontainers.Container, identity *ceph.ClientConfig, root, point string) *fuseMount {
+func startFuseMount(t *testing.T, ctx context.Context, m *cephFSSingleMDS, ctr testcontainers.Container, identity *ceph.ClientConfig, root, point string) *fuseMount {
 	t.Helper()
 	harness.ExecOutput(t, ctx, ctr, "mkdir", "-p", point)
 	mountCtx, cancel := context.WithCancel(ctx)
@@ -424,19 +424,19 @@ publish(len(operations) + 2, closed=True, **closing)
 
 // fcntlActor is one fcntlLockActor with its operations.
 type fcntlActor struct {
-	*harness.CephFSActorRun
+	*cephFSActorRun
 	inode uint64
 	ops   []string
 }
 
-func startFcntlActor(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, in testcontainers.Container, workdir, path string, ops ...string) *fcntlActor {
+func startFcntlActor(t *testing.T, ctx context.Context, m *cephFSSingleMDS, in testcontainers.Container, workdir, path string, ops ...string) *fcntlActor {
 	t.Helper()
-	run := harness.StartCephFSActor(t, ctx, m.Cluster, in, fcntlLockActor, m.FS.FilesystemName, workdir, path, strings.Join(ops, ","))
+	run := startCephFSActor(t, ctx, m.Cluster, in, fcntlLockActor, m.FS.FilesystemName, workdir, path, strings.Join(ops, ","))
 	opened := run.Receipt(t, ctx, 1)
 	if opened.Inode == 0 {
 		t.Fatalf("fcntl actor receipt 1 = %+v", opened)
 	}
-	return &fcntlActor{CephFSActorRun: run, inode: opened.Inode, ops: ops}
+	return &fcntlActor{cephFSActorRun: run, inode: opened.Inode, ops: ops}
 }
 
 func (a *fcntlActor) start(t *testing.T, ctx context.Context, index int) {
@@ -444,7 +444,7 @@ func (a *fcntlActor) start(t *testing.T, ctx context.Context, index int) {
 	a.Open(t, ctx, fmt.Sprintf("op-%d", index))
 }
 
-func (a *fcntlActor) run(t *testing.T, ctx context.Context, index int) harness.CephFSActorReceipt {
+func (a *fcntlActor) run(t *testing.T, ctx context.Context, index int) cephFSActorReceipt {
 	t.Helper()
 	a.start(t, ctx, index)
 	return a.Receipt(t, ctx, index+2)
@@ -452,7 +452,7 @@ func (a *fcntlActor) run(t *testing.T, ctx context.Context, index int) harness.C
 
 // close lets the actor close its fd and waits for it; it returns the
 // closing receipt.
-func (a *fcntlActor) close(t *testing.T, ctx context.Context) harness.CephFSActorReceipt {
+func (a *fcntlActor) close(t *testing.T, ctx context.Context) cephFSActorReceipt {
 	t.Helper()
 	a.Open(t, ctx, "finish")
 	closed := a.Receipt(t, ctx, len(a.ops)+2)
@@ -509,7 +509,7 @@ type fuseRead struct {
 }
 
 // cephFSAdminMkdir creates path through libcephfs in the control container.
-func cephFSAdminMkdir(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, path string) {
+func cephFSAdminMkdir(t *testing.T, ctx context.Context, m *cephFSSingleMDS, path string) {
 	t.Helper()
 	var made struct {
 		Inode uint64 `json:"inode"`
@@ -560,7 +560,7 @@ func (f *fuseMount) staleState(t *testing.T, ctx context.Context, fs *cephfs.Fil
 // what a fixture must do after a killed or cancelled ceph-fuse, and waits
 // until both are gone. It returns whether the evicted address was
 // blocklisted.
-func (f *fuseMount) cleanStale(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, session cephfssession.Session) bool {
+func (f *fuseMount) cleanStale(t *testing.T, ctx context.Context, m *cephFSSingleMDS, session cephfssession.Session) bool {
 	t.Helper()
 	harness.ExecOutput(t, ctx, f.ctr, "umount", f.point)
 	if _, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "client", "evict", "id="+strconv.FormatUint(session.ID, 10)); err != nil {
@@ -583,7 +583,7 @@ func (f *fuseMount) cleanStale(t *testing.T, ctx context.Context, m *harness.Cep
 func testCephFSFuseMount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	image, controlRefusal := fuseClientImage(t, ctx, m)
 	if controlRefusal != nil {
 		t.Logf("%v; the FUSE client containers use %s", controlRefusal, image)

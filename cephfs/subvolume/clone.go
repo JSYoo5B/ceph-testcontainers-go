@@ -205,7 +205,7 @@ func (clone *Clone) RemovePartial(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
+	if !clone.identity.submitted {
 		return errors.New("partial clone must have been submitted by this filesystem")
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
@@ -261,38 +261,29 @@ func (clone *Clone) RemovePartial(ctx context.Context) error {
 	return nil
 }
 
-const cloneIdentityScript = `import cephfs, configparser, json, os, stat, sys, threading
-filesystem, base = sys.argv[1:]
-deadline = threading.Timer(30, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id='admin')
-fs.conf_set('client_mount_timeout', '15')
-fs.conf_set('rados_osd_op_timeout', '10')
+// cloneIdentityScript prints the native incarnation of the clone under the
+// directory named by its second argument.
+var cloneIdentityScript = fsbase.LibCephFSScript(`import configparser, json, stat
+base = args[0]
+fd = fs.open(base + '/.meta', os.O_RDONLY)
 try:
-    fs.mount(filesystem_name=filesystem.encode())
-    fd = fs.open(base + '/.meta', os.O_RDONLY)
-    try:
-        content, offset = [], 0
-        while True:
-            part = fs.read(fd, offset, 4096)
-            if not part: break
-            content.append(part)
-            offset += len(part)
-            if offset > 1048576: raise ValueError('clone metadata too large')
-    finally:
-        fs.close(fd)
-    metadata = configparser.ConfigParser()
-    metadata.read_string(b''.join(content).decode('utf-8'))
-    target = metadata['GLOBAL']['path']
-    if os.path.dirname(target) != base: raise ValueError('clone path outside expected target')
-    status = fs.statx(target, cephfs.CEPH_STATX_BTIME | cephfs.CEPH_STATX_INO | cephfs.CEPH_STATX_MODE, cephfs.AT_SYMLINK_NOFOLLOW)
-    if not stat.S_ISDIR(status['mode']): raise ValueError('clone path is not a directory')
-    print(json.dumps({'version':int(metadata['GLOBAL']['version']), 'type':metadata['GLOBAL']['type'],
-        'state':metadata['GLOBAL']['state'], 'path':target, 'inode':status['ino'],
-        'birth_time':status['btime'].isoformat(),
-        'source':dict(metadata['source']) if metadata.has_section('source') else {}}))
+    content, offset = [], 0
+    while True:
+        part = fs.read(fd, offset, 4096)
+        if not part: break
+        content.append(part)
+        offset += len(part)
+        if offset > 1048576: raise ValueError('clone metadata too large')
 finally:
-    fs.shutdown()
-    deadline.cancel()
-`
+    fs.close(fd)
+metadata = configparser.ConfigParser()
+metadata.read_string(b''.join(content).decode('utf-8'))
+target = metadata['GLOBAL']['path']
+if os.path.dirname(target) != base: raise ValueError('clone path outside expected target')
+status = fs.statx(target, cephfs.CEPH_STATX_BTIME | cephfs.CEPH_STATX_INO | cephfs.CEPH_STATX_MODE, cephfs.AT_SYMLINK_NOFOLLOW)
+if not stat.S_ISDIR(status['mode']): raise ValueError('clone path is not a directory')
+print(json.dumps({'version':int(metadata['GLOBAL']['version']), 'type':metadata['GLOBAL']['type'],
+    'state':metadata['GLOBAL']['state'], 'path':target, 'inode':status['ino'],
+    'birth_time':status['btime'].isoformat(),
+    'source':dict(metadata['source']) if metadata.has_section('source') else {}}))
+`)

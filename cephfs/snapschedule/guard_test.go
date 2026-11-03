@@ -12,17 +12,17 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 )
 
-// TestLeaseLocksAreTheTwoLeafMutexes pins the locks that moved here from
-// package cephfs (whose TestMDSRosterAddsNoMutex counted them): the lease
-// set's mutex and each lease's mutex are the only sync primitives; the set's
-// is taken only by reserve and release, which run no command; and the
-// package takes no admission, setup gate or init, as before.
+// TestLeaseLocksAreTheTwoLeafMutexes pins the package's locks: the lease set's
+// mutex and each lease's mutex are the only sync primitives; the set's is
+// taken only by reserve and release, which run no command; the filesystem
+// admission is taken only by begin, which add and every lease operation call;
+// and the package declares no init.
 func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var mutexes, setLockers []string
+	var mutexes, setLockers, admitted []string
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {
 			continue
@@ -60,18 +60,31 @@ func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 				if decl.Body == nil {
 					continue
 				}
+				name := decl.Name.Name
+				if decl.Recv != nil {
+					name = "Lease." + name
+				}
 				ast.Inspect(decl.Body, func(n ast.Node) bool {
 					call, ok := n.(*ast.CallExpr)
 					if !ok {
 						return true
+					}
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "begin" {
+						admitted = append(admitted, name)
 					}
 					sel, ok := call.Fun.(*ast.SelectorExpr)
 					if !ok {
 						return true
 					}
 					switch sel.Sel.Name {
-					case "Admit", "WithSetupGate", "LockTopology":
-						t.Errorf("%s calls %s; snapshot schedules take no admission", decl.Name.Name, sel.Sel.Name)
+					case "begin":
+						admitted = append(admitted, name)
+					case "Admit":
+						if name != "begin" {
+							t.Errorf("%s calls Admit; only begin admits", name)
+						}
+					case "WithSetupGate", "LockTopology":
+						t.Errorf("%s calls %s; operations take the admission through begin", name, sel.Sel.Name)
 					case "Ceph", "Command":
 						if decl.Name.Name == "reserve" || decl.Name.Name == "release" {
 							t.Errorf("%s runs a command while it holds the lease set", decl.Name.Name)
@@ -91,6 +104,10 @@ func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 	slices.Sort(mutexes)
 	if !slices.Equal(mutexes, []string{"Lease.mu", "leaseSet.mu"}) {
 		t.Errorf("sync primitives changed: %v", mutexes)
+	}
+	slices.Sort(admitted)
+	if !slices.Equal(admitted, []string{"Lease.Restore", "Lease.Snapshots", "Lease.Status", "Lease.begin", "add"}) {
+		t.Errorf("the filesystem admission is taken by %v", admitted)
 	}
 	slices.Sort(setLockers)
 	if !slices.Equal(setLockers, []string{"release", "reserve"}) {

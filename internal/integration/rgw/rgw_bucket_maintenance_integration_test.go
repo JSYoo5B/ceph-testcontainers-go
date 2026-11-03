@@ -76,9 +76,9 @@ func TestRGWBucketMaintenance(t *testing.T) {
 			for _, bucket := range []string{limited, outside} {
 				client.Request(t, ctx, http.MethodPut, "/"+bucket, nil, http.StatusOK)
 			}
-			readBucket := func(bucket string) harness.RGWMaintenanceBucket {
+			readBucket := func(bucket string) rgwMaintenanceBucket {
 				t.Helper()
-				var state harness.RGWMaintenanceBucket
+				var state rgwMaintenanceBucket
 				data := admin("bucket", "stats", "--bucket", bucket)
 				if err := json.Unmarshal(data, &state); err != nil || state.ID == "" || state.Owner != user.ID() || state.Bucket != bucket {
 					t.Fatalf("native owned bucket identity: %s %v", data, err)
@@ -100,10 +100,10 @@ func TestRGWBucketMaintenance(t *testing.T) {
 			}
 			payload := bytes.Repeat([]byte("bucket maintenance durable bytes\n"), 2048)
 			client.Request(t, ctx, http.MethodPut, "/"+limited+"/kept", payload, http.StatusOK)
-			harness.RGWSyncStats(t, ctx, cluster, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
+			rgwSyncStats(t, ctx, cluster, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
 			deadline := time.Now().Add(2 * time.Minute)
 			for {
-				code, body, _ := harness.RGWMaintenanceRequest(t, ctx, client, http.MethodPut, "/"+limited+"/rejected", []byte("over quota"))
+				code, body, _ := rgwMaintenanceRequest(t, ctx, client, http.MethodPut, "/"+limited+"/rejected", []byte("over quota"))
 				if code == http.StatusForbidden {
 					if !bytes.Contains(body, []byte("<Code>QuotaExceeded</Code>")) {
 						t.Fatalf("quota rejected for unrelated reason: %s", body)

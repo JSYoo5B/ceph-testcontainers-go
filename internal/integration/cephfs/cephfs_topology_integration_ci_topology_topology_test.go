@@ -38,7 +38,7 @@ func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 	// receives different bytes, proving filesystem selection and isolation.
 	cephFSTopologyIO(t, ctx, client, alpha.FilesystemName, "alpha-data", "seed", 1, "")
 	cephFSTopologyIO(t, ctx, client, beta.FilesystemName, "beta-data", "seed", 0, "")
-	harness.CephFSWaitForPinnedSubtree(t, ctx, cluster, alpha, "/pinned", 1)
+	cephFSWaitForPinnedSubtree(t, ctx, cluster, alpha, "/pinned", 1)
 	cephFSTopologyIO(t, ctx, client, alpha.FilesystemName, "alpha-data", "verify", 1, "")
 	cephFSTopologyIO(t, ctx, client, beta.FilesystemName, "beta-data", "verify", 0, "")
 
@@ -52,7 +52,7 @@ func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 		t.Fatal(err)
 	}
 	cephFSWaitForReplacement(t, ctx, alpha, old, standby)
-	harness.CephFSWaitForPinnedSubtree(t, ctx, cluster, alpha, "/pinned", 1)
+	cephFSWaitForPinnedSubtree(t, ctx, cluster, alpha, "/pinned", 1)
 	cephFSTopologyIO(t, ctx, client, alpha.FilesystemName, "alpha-data", "after-failure", 1, "")
 	cephFSTopologyIO(t, ctx, client, beta.FilesystemName, "beta-data", "verify", 0, "")
 	betaAfter := cephFSTopologyStatus(t, ctx, beta)

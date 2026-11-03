@@ -104,7 +104,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		})
 	}
 	if harness.RBDNamespaceMappingUnsupported(t, ctx, source) {
-		harness.RequireRBDNamespaceMappingRefused(t, err, source, mappings[0])
+		requireRBDNamespaceMappingRefused(t, err, source, mappings[0])
 		return
 	}
 	if err != nil {
@@ -129,7 +129,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			command          func(context.Context, ...string) ([]byte, error)
 			ns, remote, site string
 		}{{owner.SourceRBD, mapping[0], mapping[1], "source"}, {owner.DestinationRBD, mapping[1], mapping[0], "destination"}} {
-			if _, err := site.command(ctx, "mirror", "pool", "enable", "--site-name", site.site, harness.RBDReceiverNativeScope(pool, site.ns), scope, "--remote-namespace", site.remote); err != nil {
+			if _, err := site.command(ctx, "mirror", "pool", "enable", "--site-name", site.site, rbdReceiverNativeScope(pool, site.ns), scope, "--remote-namespace", site.remote); err != nil {
 				t.Fatal(err)
 			}
 		}

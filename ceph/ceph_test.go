@@ -89,7 +89,7 @@ func TestCleanupRetainsFailuresAndAcceptsMissingDaemons(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err == nil || cluster.members.roster.initialManager() != manager {
 		t.Fatal("failed manager cleanup lost ownership")
 	}
-	if !cluster.members.monitorTerminated || cluster.fleet.osdHandles.count() != 0 || cluster.members.roster.serviceCount() != 0 {
+	if !cluster.members.monitorTerminated || cluster.fleet.osdHandles.count() != 0 || len(cluster.members.roster.services) != 0 {
 		t.Fatal("missing daemons remained owned after cleanup")
 	}
 	if err := cluster.Terminate(t.Context()); err != nil || cluster.members.roster.initialManager() != nil {

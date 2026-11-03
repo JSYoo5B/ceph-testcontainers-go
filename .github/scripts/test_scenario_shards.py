@@ -673,13 +673,61 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     def test_every_go_setup_installs_the_latest_patch(self):
         # A cached older patch, such as go1.26.8, fails the vulnerability check
         # on standard-library advisories that the latest patch fixes.
+        # setup-go's own cache stays off: the explicit module and build
+        # cache steps are the only ones (see docs/contributing/ci.md).
+        setups = 0
         for name, workflow in self.workflows.items():
-            for match in re.finditer(r"(?m)^( +)go-version: .+\n", workflow):
-                following = workflow[match.end():].splitlines()[0] if workflow[match.end():] else ""
-                self.assertEqual(following, match.group(1) + "check-latest: true", name)
+            lines = workflow.splitlines()
+            for index, line in enumerate(lines):
+                found = re.match(r"^( *)(- )?uses: actions/setup-go@", line)
+                if not found:
+                    continue
+                setups += 1
+                # The column of the step's "- ", whether "uses" opens the
+                # step or follows its "name".
+                step = len(found.group(1)) if found.group(2) else len(found.group(1)) - 2
+                block = []
+                for following in lines[index + 1:]:
+                    indent = len(following) - len(following.lstrip(" "))
+                    if following.strip() and indent <= step:
+                        break
+                    block.append(following.strip())
+                with self.subTest(workflow=name, line=index + 1):
+                    self.assertIn("check-latest: true", block)
+                    self.assertIn("cache: false", block)
+                    self.assertTrue(any(entry.startswith("go-version: ") for entry in block), block)
+        self.assertGreater(setups, 10)
         toolchain = re.search(r"(?m)^toolchain go(\d+)\.(\d+)\.(\d+)$", (ROOT / "go.mod").read_text())
         self.assertIsNotNone(toolchain)
         self.assertGreaterEqual(tuple(map(int, toolchain.groups())), (1, 26, 9))
+
+    def test_workflow_release_literals_follow_the_supported_releases(self):
+        # A workflow input or matrix cannot import run_image_matrix, so each
+        # literal copy of the release table is checked against it.
+        supported = "[" + ", ".join("'" + release + "'" for release, _, _ in runner.SUPPORTED_RELEASES) + "]"
+        default = "'" + runner.RELEASE + "'"
+        periodic = self.workflows["ceph-periodic.yml"]
+        release_input = periodic.split("      release:\n", 1)[1].split("\n      ref:\n", 1)[0]
+        self.assertEqual(scalar(release_input, "options"), supported)
+        self.assertEqual(scalar(release_input, "default"), default)
+        self.assertIn("CAMPAIGN_RELEASE: ${{ inputs.release || " + default + " }}", periodic)
+        self.assertRegex(self.workflows["block-fault-probe.yml"], r"(?m)^        release: " + re.escape(supported) + "$")
+        runtime_input = self.workflows["tagged-runtime.yml"].split("\n      release:\n", 1)[1].split("\n      changed_since:", 1)[0]
+        self.assertEqual(scalar(runtime_input, "default"), default)
+        literals = re.findall(r"'(\d+\.\d+\.\d+)'", "\n".join(self.workflows.values()))
+        self.assertLessEqual(set(literals), set(runner.RELEASES))
+
+    def test_every_runtime_cleanup_call_names_its_artifact(self):
+        # The default name is shared, so two jobs of one run, such as the
+        # releases of one matrix, would collide on their upload.
+        calls = 0
+        for name, workflow in self.workflows.items():
+            for block in re.split(r"(?m)^ *- ", workflow):
+                if "uses: ./.github/actions/runtime-cleanup" in block:
+                    calls += 1
+                    with self.subTest(workflow=name):
+                        self.assertRegex(block, r"(?m)^ +artifact_name: \S*\$\{\{")
+        self.assertGreater(calls, 1)
 
     def test_code_workflow_has_visible_unit_race_static_and_coverage_jobs(self):
         workflow = self.workflows["code.yml"]
@@ -960,12 +1008,28 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertLess(plan_steps.index(restore), plan_steps.index(warm))
         self.assertLess(plan_steps.index(warm), plan_steps.index(save))
         # Only a successful warm compile on a miss is saved, and its failure
-        # never fails the plan: the cache is only an acceleration.
-        self.assertEqual(scalar(warm, "if"),
+        # never fails the plan: the cache is only an acceleration. A caller
+        # that may not save caches skips the warm compile and both saves.
+        self.assertEqual(scalar(warm, "if"), "inputs.save_caches && "
                          "steps.build_cache.outputs.cache-hit != 'true' && steps.plan.outputs.count != '0'")
         self.assertEqual(scalar(warm, "continue-on-error"), "true")
         self.assertEqual(scalar(warm, "GOPROXY"), "'off'")
-        self.assertEqual(scalar(save, "if"), "steps.warm_build.outcome == 'success'")
+        self.assertEqual(scalar(save, "if"), "inputs.save_caches && steps.warm_build.outcome == 'success'")
+        self.assertEqual(scalar(named(plan_steps, "Save the Go module cache"), "if"),
+                         "inputs.save_caches && steps.modules_cache.outputs.cache-hit != 'true'")
+        save_input = self.workflows["tagged-runtime.yml"].split("\n      save_caches:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual((scalar(save_input, "default"), scalar(save_input, "type")), ("true", "boolean"))
+        # An issue_comment run belongs to the default branch, so its caches
+        # would reach every later run although it checks out an unmerged head.
+        for name, workflow in self.workflows.items():
+            calls = workflow.count("uses: ./.github/workflows/tagged-runtime.yml")
+            refusals = workflow.count("      save_caches: false\n")
+            with self.subTest(workflow=name):
+                if re.search(r"(?m)^  issue_comment:", workflow):
+                    self.assertGreater(calls, 0)
+                    self.assertEqual(refusals, calls)
+                else:
+                    self.assertEqual(refusals, 0)
         restored = named(runtime_steps, "Restore the Go build cache")
         self.assertEqual(scalar(restored, "key"), key)
         self.assertIn("actions/cache/restore", restored)
@@ -1145,8 +1209,8 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
     """Ceph short narrows a pull request to the declaration selection only
-    when the pull request carries the opt-in label. Every other event,
-    and every push to main, runs every batch."""
+    when the pull request carries the opt-in label outside a release phase.
+    Every other event, and every push to main, runs every batch."""
 
     LABEL = SourceDrivenWorkflowTests.OPT_IN["ceph-short.yml"]
     BASE = "0123456789abcdef0123456789abcdef01234567"
@@ -1160,7 +1224,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         cls.plan_step = engine_step(steps(plan), "plan")
         cls.reusable_inputs = reusable.split("\npermissions:", 1)[0]
 
-    def context(self, event, action=None, labels=(), label=None):
+    def context(self, event, action=None, labels=(), label=None, release_phase=""):
         github = {"workflow": "Ceph short", "event_name": event, "run_id": 99,
                   "ref": "refs/heads/main" if event == "push" else "refs/pull/7/merge", "event": {}}
         if event == "pull_request":
@@ -1168,7 +1232,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                 "number": 7, "base": {"sha": self.BASE}, "labels": [{"name": name} for name in labels]}}
             if label is not None:
                 github["event"]["label"] = {"name": label}
-        return {"github": github}
+        return {"github": github, "vars": {"CI_RELEASE_PHASE": release_phase}}
 
     def outcome(self, context):
         """(runs, select_declarations, concurrency group) for one event."""
@@ -1198,6 +1262,14 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                          (True, self.BASE, "Ceph short-pull_request-7"))
         self.assertEqual(self.outcome(self.context("pull_request", "unlabeled", labels=(), label=self.LABEL)),
                          (True, "", "Ceph short-pull_request-7"))
+
+    def test_a_release_phase_runs_every_batch_of_a_labelled_pull_request(self):
+        for action in ("opened", "synchronize", "labeled"):
+            with self.subTest(action=action):
+                label = self.LABEL if action == "labeled" else None
+                self.assertEqual(self.outcome(self.context("pull_request", action, labels=(self.LABEL,), label=label,
+                                                           release_phase="true")),
+                                 (True, "", "Ceph short-pull_request-7"))
 
     def test_another_label_starts_nothing_and_cancels_nothing(self):
         for action, labels in (("labeled", (self.LABEL, "docs")), ("unlabeled", (self.LABEL,)), ("labeled", ("docs",))):

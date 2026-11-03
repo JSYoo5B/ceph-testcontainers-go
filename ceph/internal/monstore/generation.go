@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
-// This file is the replacement path of a MON that has its own store volume: the
-// old container is stopped and removed, and a new container, possibly from
-// another image, mounts the same volume and starts on it. The volume is the
-// only thing that carries the MON's data across the replacement.
-//
-// Nothing calls it. There is no public name, no option, no Docker container
-// call (the container work is behind monStoreGenerations, which only tests
-// implement) and no native run, so what is checked is the order of the steps
-// and the refusals, against a fake. It adds no lock: every method runs under
-// Container.mu like the rest of monStoreVolume, and calls no method that takes
-// a lock (see docs/internals/mon-volume-storage.md).
+// This file is the generation path of a MON that has its own store volume:
+// the first container formats the store, and a replacement stops and removes
+// the old container and starts a new one, possibly from another image, on the
+// same volume. The volume is the only thing that carries the MON's data across
+// the replacement. Package ceph starts and replaces the generations of an
+// added MON through Generations, which its monitorGenerations implements.
+// It adds no lock: every method runs under Container.mu like the rest of
+// Volume, and calls no method that takes a lock (see
+// docs/internals/mon-volume-storage.md).
 
 // Generations is the container side of one MON generation.
 type Generations interface {
@@ -41,7 +41,7 @@ type Generations interface {
 }
 
 func checkMonStoreGenerations(g Generations, image string) error {
-	if isNilPort(g) {
+	if evidence.IsNil(g) {
 		return errors.New("the MON store has no container side")
 	}
 	if image == "" {
@@ -64,7 +64,7 @@ func (s *Volume) StartGeneration(ctx context.Context, g Generations, image strin
 	if err := checkMonStoreGenerations(g, image); err != nil {
 		return "", err
 	}
-	later := s.Phase == Bound || s.Phase == Detached
+	later := s.Phase == Bound
 	if later && s.Endpoint == nil {
 		return "", fmt.Errorf("MON %s store has no recorded address for the next generation", s.mon)
 	}
@@ -119,11 +119,13 @@ func (s *Volume) StartGeneration(ctx context.Context, g Generations, image strin
 }
 
 // StopGeneration removes the attached container and confirms that nothing uses
-// the volume any more. The attachment is cleared only by that confirmation. An
-// attachment whose creation outcome is unknown has no ID to remove and is
-// settled only by Terminate.
+// the volume any more. The attachment is cleared only by that confirmation; it
+// records the removal request before Remove is called, so a caller can tell a
+// container that may be gone from one that was never touched. An attachment
+// whose creation outcome is unknown has no ID to remove and is settled only by
+// Terminate.
 func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
-	if isNilPort(g) {
+	if evidence.IsNil(g) {
 		return errors.New("the MON store has no container side")
 	}
 	if s.Attachment == nil {
@@ -132,6 +134,7 @@ func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 	if s.Attachment.pending {
 		return fmt.Errorf("MON %s store creation outcome is unknown; only the labeled-container scan of Terminate settles it", s.mon)
 	}
+	s.Attachment.RemoveRequested = true
 	if err := g.Remove(ctx, s.Attachment.ID); err != nil {
 		return fmt.Errorf("remove MON %s generation %d: %w", s.mon, s.Attachment.generation, err)
 	}
@@ -143,16 +146,15 @@ func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 // generation needs run before the old container is touched, so a store that
 // the next generation would refuse, or that has no address to give it, is found while the old MON still runs. If
 // the new container then fails, the volume and its attachment record stay, and
-// the store is neither formatted nor released.
+// the store is neither formatted nor released. When the old container was
+// touched, the attachment that remains has RemoveRequested set, or it is the
+// next generation's.
 func (s *Volume) ReplaceGeneration(ctx context.Context, g Generations, image string) (string, error) {
 	if err := checkMonStoreGenerations(g, image); err != nil {
 		return "", err
 	}
 	if s.Phase != Bound || s.Attachment == nil {
 		return "", fmt.Errorf("MON %s store is %s without a ready generation to replace", s.mon, s.Phase)
-	}
-	if s.identity != nil && !s.verified {
-		return "", fmt.Errorf("MON %s store identity was not verified for the next generation", s.mon)
 	}
 	if s.Endpoint == nil {
 		return "", fmt.Errorf("MON %s store has no recorded address for the next generation", s.mon)

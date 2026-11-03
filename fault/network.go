@@ -11,6 +11,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -64,8 +65,12 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 		if factsErr != nil {
 			return factsErr
 		}
-		if faulthook.Closed(c) || facts.UsesHostNetwork || ctr == nil || ctr.GetContainerID() == "" {
-			return errors.New("network interruption requires a live bridge cluster and an attached container")
+		if faulthook.Closed(c) {
+			_, terminated := faulthook.Terminated()
+			return terminated
+		}
+		if facts.UsesHostNetwork || ctr == nil || ctr.GetContainerID() == "" {
+			return nshelper.InvalidRequest("network interruption requires a live bridge cluster and an attached container")
 		}
 		var name string
 		switch plane {
@@ -74,10 +79,10 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 		case ceph.ClusterNetworkPlane:
 			name = facts.ClusterNetworkName
 		default:
-			return errors.New("invalid Ceph network plane")
+			return nshelper.InvalidRequest("invalid Ceph network plane")
 		}
 		if name == "" {
-			return errors.New("Ceph bridge is not initialized") //nolint:staticcheck // Preserve the existing refusal text; Ceph is a proper name.
+			return nshelper.InvalidRequest("Ceph bridge is not initialized")
 		}
 		token, previous, reserveErr := faulthook.Reserve(ctx, c, faulthook.NetworkInterruption, name+"/"+ctr.GetContainerID())
 		if reserveErr != nil {
@@ -105,7 +110,7 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 //purpose:condition
 func InterruptLink(ctx context.Context, ctr testcontainers.Container, name string) (*NetworkInterruption, error) {
 	if ctr == nil || ctr.GetContainerID() == "" || name == "" || name == "host" || name == "none" || name == "bridge" {
-		return nil, errors.New("network interruption requires a container and a named bridge")
+		return nil, nshelper.InvalidRequest("network interruption requires a container and a named bridge")
 	}
 	id := ctr.GetContainerID()
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
@@ -121,7 +126,7 @@ func InterruptLink(ctx context.Context, ctr testcontainers.Container, name strin
 		endpoint = inspection.Container.NetworkSettings.Networks[name]
 	}
 	if endpoint == nil || !endpoint.IPAddress.IsValid() || !endpoint.IPAddress.Is4() {
-		return nil, errors.Join(fmt.Errorf("container is not attached to Ceph network %s with IPv4", name), docker.Close())
+		return nil, errors.Join(nshelper.InvalidRequest("container is not attached to Ceph network %s with IPv4", name), docker.Close())
 	}
 	link := &NetworkInterruption{ContainerID: id, NetworkName: name, OriginalAddress: endpoint.IPAddress, docker: docker, endpoint: dockerbridge.RestoreEndpoint(endpoint)}
 	// Return ownership even after uncertain transport outcomes.

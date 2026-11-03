@@ -11,8 +11,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -52,31 +50,9 @@ func rbdReceiverQuery(ctx context.Context, operation string, native error) error
 	return &rbdReceiverObservationError{message: operation + " failed", cause: clusterutil.Quiet(errors.Join(causes...), native)}
 }
 
-func rbdReceiverJSON(data []byte) error {
-	switch err := strictjson.Check(data, strictjson.Options{MaxBytes: 4 << 20}); {
-	case err == nil:
-		return nil
-	case errors.Is(err, strictjson.ErrSize):
-		return rbdReceiverGuard("RBD receiver native JSON size is invalid")
-	case errors.Is(err, strictjson.ErrTrailing):
-		return rbdReceiverGuard("decode RBD receiver native JSON: trailing data")
-	default:
-		return rbdReceiverGuard("decode RBD receiver native JSON: malformed or duplicate fields")
-	}
-}
-
-func rbdReceiverExec(ctx context.Context, client testcontainers.Container, operation string, args ...string) ([]byte, error) {
-	data, err := multicluster.Exec(ctx, client, args...)
-	if err != nil {
-		return nil, rbdReceiverQuery(ctx, operation, err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, rbdReceiverQuery(ctx, operation, err)
-	}
-	return data, nil
-}
-
-func rbdReceiverUUID(value string) bool {
+// canonicalRBDUUID reports whether value is a non-nil UUID in its canonical
+// lower-case form.
+func canonicalRBDUUID(value string) bool {
 	u, err := uuid.Parse(value)
 	return err == nil && u != uuid.Nil && u.String() == value
 }
@@ -117,7 +93,7 @@ func rbdReceiverBootstrapFSID(config []byte) (string, error) {
 		if len(value) >= 2 && (value[0] == '\'' || value[0] == '"') && value[len(value)-1] == value[0] {
 			value = value[1 : len(value)-1]
 		}
-		if !rbdReceiverUUID(value) {
+		if !canonicalRBDUUID(value) {
 			return "", rbdReceiverGuard("RBD bootstrap cluster identity is invalid")
 		}
 		fsid = value
@@ -162,12 +138,12 @@ func captureRBDReceiverClusters(ctx context.Context, config Config) (*rbdReceive
 }
 
 func readRBDReceiverFSID(ctx context.Context, client testcontainers.Container, expected string) error {
-	data, err := rbdReceiverExec(ctx, client, "read RBD original cluster identity", "ceph", "--connect-timeout", "5", "fsid")
+	data, err := rbdReceiverRead.exec(ctx, client, "read RBD original cluster identity", "ceph", "--connect-timeout", "5", "fsid")
 	if err != nil {
 		return err
 	}
 	actual := strings.TrimSpace(string(data))
-	if !rbdReceiverUUID(actual) || actual != expected {
+	if !canonicalRBDUUID(actual) || actual != expected {
 		return rbdReceiverGuard("RBD original cluster identity changed")
 	}
 	return nil
@@ -175,7 +151,7 @@ func readRBDReceiverFSID(ctx context.Context, client testcontainers.Container, e
 
 func (r *rbdReceiverPeer) checkClusterFSIDs(ctx context.Context, pair *rbdMirrorPair) error {
 	ids := r.clusters
-	if ids == nil || ids.sourceCluster != pair.config.Source || ids.destinationCluster != pair.config.Destination || !rbdReceiverUUID(ids.source) || !rbdReceiverUUID(ids.destination) || ids.source == ids.destination {
+	if ids == nil || ids.sourceCluster != pair.config.Source || ids.destinationCluster != pair.config.Destination || !canonicalRBDUUID(ids.source) || !canonicalRBDUUID(ids.destination) || ids.source == ids.destination {
 		return rbdReceiverGuard("RBD original cluster identities are not confirmed")
 	}
 	for _, site := range []struct {
@@ -192,108 +168,35 @@ func (r *rbdReceiverPeer) checkClusterFSIDs(ctx context.Context, pair *rbdMirror
 	return nil
 }
 
-func readRBDReceiverPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, []rbdMirrorPeer, error) {
-	var policy nativeRBDMirrorPolicy
-	data, err := rbdReceiverExec(ctx, client, "read RBD receiver namespace policy", "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
-	if err != nil {
-		return policy, nil, err
+// decodeRBDReceiverPeers reads the peers of a mirrored pool policy: each
+// with a distinct canonical UUID, a site, a direction, a client unless it only
+// transmits, and a canonical mirror UUID when it has one.
+func decodeRBDReceiverPeers(raw json.RawMessage) ([]rbdMirrorPeer, error) {
+	var nativePeers []struct {
+		UUID      *string `json:"uuid"`
+		Direction *string `json:"direction"`
+		Site      *string `json:"site_name"`
+		Mirror    *string `json:"mirror_uuid"`
+		Client    *string `json:"client_name"`
 	}
-	if err := rbdReceiverJSON(data); err != nil {
-		return policy, nil, err
-	}
-	var fields struct {
-		Mode   *string         `json:"mode"`
-		UUID   *string         `json:"mirror_uuid"`
-		Remote *string         `json:"remote_namespace"`
-		Site   *string         `json:"site_name"`
-		Peers  json.RawMessage `json:"peers"`
-	}
-	if json.Unmarshal(data, &fields) != nil || fields.Mode == nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, *fields.Mode) {
-		return policy, nil, rbdReceiverGuard("decode RBD receiver namespace policy")
-	}
-	if legacy {
-		fields.Remote = legacyRBDRemoteNamespace(*fields.Mode, fields.Remote, namespace)
-		if *fields.Mode != "disabled" && fields.UUID == nil {
-			value, err := readLegacyRBDMirrorUUID(ctx, client, pool, namespace)
-			if err != nil {
-				return policy, nil, err
-			}
-			fields.UUID = &value
-		}
-	}
-	policy.Mode, policy.RemoteNamespace = *fields.Mode, fields.Remote
-	if fields.UUID != nil {
-		policy.MirrorUUID = *fields.UUID
-	}
-	if fields.Site != nil {
-		policy.SiteName = *fields.Site
-	}
-	if policy.Mode != "disabled" && (!rbdReceiverUUID(policy.MirrorUUID) || fields.Remote == nil) || namespace != "" && policy.Mode == "init-only" {
-		return policy, nil, rbdReceiverGuard("decode RBD receiver namespace identity")
+	if len(raw) == 0 || json.Unmarshal(raw, &nativePeers) != nil || nativePeers == nil {
+		return nil, rbdReceiverGuard("decode RBD receiver pool peers")
 	}
 	var peers []rbdMirrorPeer
-	if namespace == "" && policy.Mode != "disabled" {
-		var nativePeers []struct {
-			UUID      *string `json:"uuid"`
-			Direction *string `json:"direction"`
-			Site      *string `json:"site_name"`
-			Mirror    *string `json:"mirror_uuid"`
-			Client    *string `json:"client_name"`
+	for _, peer := range nativePeers {
+		if peer.UUID == nil || peer.Direction == nil || peer.Site == nil || peer.Mirror == nil || peer.Client == nil {
+			return nil, rbdReceiverGuard("decode RBD receiver peer identity fields")
 		}
-		if len(fields.Peers) == 0 || json.Unmarshal(fields.Peers, &nativePeers) != nil || nativePeers == nil {
-			return policy, nil, rbdReceiverGuard("decode RBD receiver pool peers")
+		peers = append(peers, rbdMirrorPeer{UUID: *peer.UUID, Direction: *peer.Direction, SiteName: *peer.Site, MirrorUUID: *peer.Mirror, ClientName: *peer.Client})
+	}
+	seen := make(map[string]bool)
+	for _, peer := range peers {
+		if !canonicalRBDUUID(peer.UUID) || seen[peer.UUID] || peer.SiteName == "" || peer.ClientName == "" && peer.Direction != "tx-only" || !slices.Contains([]string{"tx-only", "rx-only", "rx-tx"}, peer.Direction) || peer.MirrorUUID != "" && !canonicalRBDUUID(peer.MirrorUUID) {
+			return nil, rbdReceiverGuard("decode RBD receiver peer identity")
 		}
-		for _, peer := range nativePeers {
-			if peer.UUID == nil || peer.Direction == nil || peer.Site == nil || peer.Mirror == nil || peer.Client == nil {
-				return policy, nil, rbdReceiverGuard("decode RBD receiver peer identity fields")
-			}
-			peers = append(peers, rbdMirrorPeer{UUID: *peer.UUID, Direction: *peer.Direction, SiteName: *peer.Site, MirrorUUID: *peer.Mirror, ClientName: *peer.Client})
-		}
-		seen := make(map[string]bool)
-		for _, peer := range peers {
-			if !rbdReceiverUUID(peer.UUID) || seen[peer.UUID] || peer.SiteName == "" || peer.ClientName == "" && peer.Direction != "tx-only" || !slices.Contains([]string{"tx-only", "rx-only", "rx-tx"}, peer.Direction) || peer.MirrorUUID != "" && !rbdReceiverUUID(peer.MirrorUUID) {
-				return policy, nil, rbdReceiverGuard("decode RBD receiver peer identity")
-			}
-			seen[peer.UUID] = true
-		}
+		seen[peer.UUID] = true
 	}
-	return policy, peers, nil
-}
-
-func readRBDReceiverPool(ctx context.Context, client testcontainers.Container, name string, expected int64) error {
-	data, err := rbdReceiverExec(ctx, client, "read RBD receiver pool identity", "ceph", "--connect-timeout", "5", "osd", "pool", "ls", "detail", "--format", "json")
-	if err != nil {
-		return err
-	}
-	if err := rbdReceiverJSON(data); err != nil {
-		return err
-	}
-	var pools []struct {
-		ID   *int64  `json:"pool_id"`
-		Name *string `json:"pool_name"`
-		Type *int    `json:"type"`
-	}
-	if json.Unmarshal(data, &pools) != nil || pools == nil {
-		return rbdReceiverGuard("decode RBD receiver pool identity")
-	}
-	ids, names := make(map[int64]bool), make(map[string]bool)
-	found := false
-	for _, pool := range pools {
-		if pool.ID == nil || *pool.ID < 0 || pool.Name == nil || *pool.Name == "" || pool.Type == nil || (*pool.Type != 1 && *pool.Type != 3) || ids[*pool.ID] || names[*pool.Name] {
-			return rbdReceiverGuard("decode RBD receiver pool identity")
-		}
-		ids[*pool.ID], names[*pool.Name] = true, true
-		if *pool.Name == name {
-			if *pool.ID != expected || *pool.Type != 1 {
-				return rbdReceiverGuard("RBD original receiver pool identity changed")
-			}
-			found = true
-		}
-	}
-	if !found {
-		return rbdReceiverGuard("RBD original receiver pool is missing")
-	}
-	return nil
+	return peers, nil
 }
 
 // The receiving peer is a pool-level identity, even for named namespaces.
@@ -301,39 +204,22 @@ func (p *rbdMirrorPair) checkReceiverPolicies(ctx context.Context) ([]rbdMirrorP
 	if p.poolIdentities == nil || p.policyIdentities == nil {
 		return nil, rbdReceiverGuard("RBD original receiver pool and policies are not confirmed")
 	}
+	sites := p.setupSites()
+	rawPeers, err := rbdReceiverRead.checkSites(ctx, p.config.Pool, sites, "RBD original receiver namespace policy changed")
+	if err != nil {
+		return nil, err
+	}
 	var destinationPeers []rbdMirrorPeer
-	for _, site := range []struct {
-		client      testcontainers.Container
-		id          int64
-		namespace   string
-		identity    rbdMirrorSitePolicyIdentity
-		destination bool
-	}{
-		{p.sourceClient, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source, false},
-		{p.destinationClient, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination, true},
-	} {
-		if err := readRBDReceiverPool(ctx, site.client, p.config.Pool, site.id); err != nil {
-			return nil, err
+	for i, site := range sites {
+		if site.identity.base.Mode == "disabled" {
+			continue
 		}
-		base, peers, err := readRBDReceiverPolicy(ctx, site.client, p.config.Pool, "", p.legacyClient(site.client))
+		peers, err := decodeRBDReceiverPeers(rawPeers[i])
 		if err != nil {
 			return nil, err
 		}
-		selected := base
-		if site.namespace != "" {
-			selected, _, err = readRBDReceiverPolicy(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
-			if err != nil {
-				return nil, err
-			}
-		}
-		if !sameRBDMirrorPolicy(base, site.identity.base) || !sameRBDMirrorPolicy(selected, site.identity.selected) {
-			return nil, rbdReceiverGuard("RBD original receiver namespace policy changed")
-		}
-		if site.destination {
+		if site.client == p.destinationClient {
 			destinationPeers = peers
-		}
-		if err := readRBDReceiverPool(ctx, site.client, p.config.Pool, site.id); err != nil {
-			return nil, err
 		}
 	}
 	return destinationPeers, nil

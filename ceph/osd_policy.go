@@ -29,7 +29,9 @@ type OSDState struct {
 
 // osdStates implements Observer.OSDStates.
 func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err

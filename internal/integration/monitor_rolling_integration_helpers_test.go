@@ -62,7 +62,7 @@ func monitorRollingQuorum(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err := harness.ObserveCluster(cluster).WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyWait(t, ctx, func() bool {
+	topologyWait(t, ctx, func() bool {
 		quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		return err == nil && len(quorum.QuorumNames) == count && len(quorum.MonMap.Mons) == count && len(clusteraccess.Monitors(t, cluster)) == count
 	})

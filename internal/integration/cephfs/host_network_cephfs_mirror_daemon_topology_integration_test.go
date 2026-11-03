@@ -6,10 +6,8 @@ package cephfs_test
 
 import (
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestHostNetworkCephFSMirrorDaemonTopology(t *testing.T) {
-	harness.RunCephFSMirrorDaemonTopology(t, true)
+	runCephFSMirrorDaemonTopology(t, true)
 }

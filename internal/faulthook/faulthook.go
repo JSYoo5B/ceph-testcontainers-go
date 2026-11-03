@@ -4,14 +4,13 @@
 // initialized.
 //
 // The registry is the only way to make a fault known to Terminate. Each kind
-// has a phase that package ceph fixes: network delays are undone first with
-// the cluster mutex released, interruptions second under it (a failure keeps
-// the network), pauses third under it, and the blocklist, full ratios,
-// configuration, OSD flag and MGR module overrides are only tracked for
-// overlap and identity. Callers cannot add a
-// phase, change the order or register another cleanup.
+// has a phase that package ceph fixes: network delays are undone first and
+// block I/O tables second, both with the cluster mutex released, then
+// interruptions under it (a failure keeps the network) and pauses last under
+// it. Callers cannot add a phase, change the order or register another
+// cleanup.
 //
-// Lock rules: Reserve, Settle, Release, Tracks, Closed, Owns, OwnedOSD,
+// Lock rules: Reserve, Settle, Release, Closed, Owns, OwnedOSD,
 // PoolPolicyReady and PoolState need the cluster mutex, held through
 // WithTopology or WithTopologyNoContext. A function passed to them must not
 // lock a handle's mutex that is itself held while the cluster mutex is
@@ -45,14 +44,10 @@ const (
 	// ContainerPause holds a frozen container per ID; Terminate resumes it
 	// under the mutex before native commands stop.
 	ContainerPause Kind = "ContainerPause"
-	// Blocklist tracks a blocklist override per client session.
-	Blocklist Kind = "Blocklist"
-	// FullRatios tracks the one full ratios override, with an empty key.
-	FullRatios Kind = "FullRatios"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
-// settles, releases or is tracked, so a stale handle cannot release its
+// settles or releases, so a stale handle cannot release its
 // successor.
 type Token struct{ entry any }
 
@@ -74,7 +69,6 @@ type hooks interface {
 	Reserve(ctx context.Context, c *ceph.Container, kind, key string) (any, any, error)
 	Settle(c *ceph.Container, token any, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) (bool, error)
 	Release(c *ceph.Container, token any) bool
-	Tracks(c *ceph.Container, token any) bool
 	WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error
 	WithTopologyNoContext(c *ceph.Container, fn func())
 	Closed(c *ceph.Container) bool
@@ -82,7 +76,6 @@ type hooks interface {
 	OwnedLabel(c *ceph.Container) testcontainers.CustomizeRequestOption
 	Control(ctx context.Context, c *ceph.Container) (testcontainers.Container, error)
 	CLI(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
-	ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error)
 	PoolPolicyReady(c *ceph.Container) error
 	PoolState(ctx context.Context, c *ceph.Container, name string) (ceph.PoolState, error)
 	CheckPoolID(ctx context.Context, c *ceph.Container, expected ceph.PoolState) error
@@ -130,10 +123,6 @@ func Settle(c *ceph.Container, token Token, held Held) (bool, error) {
 // caller holds the mutex.
 func Release(c *ceph.Container, token Token) bool { return get().Release(c, token.entry) }
 
-// Tracks reports whether token is still the fault of its key. The caller
-// holds the mutex.
-func Tracks(c *ceph.Container, token Token) bool { return get().Tracks(c, token.entry) }
-
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.
 func WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error {
 	return get().WithTopology(ctx, c, fn)
@@ -163,12 +152,6 @@ func Control(ctx context.Context, c *ceph.Container) (testcontainers.Container, 
 // CLI runs a Ceph CLI command with the admin identity.
 func CLI(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error) {
 	return get().CLI(ctx, c, args...)
-}
-
-// ClusterIdentity returns the bootstrap FSID and whether the configuration
-// and admin keyring were confirmed. The error is only ctx's.
-func ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error) {
-	return get().ClusterIdentity(ctx, c)
 }
 
 // PoolPolicyReady refuses a terminated cluster or one without a control

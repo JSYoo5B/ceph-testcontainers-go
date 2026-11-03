@@ -161,6 +161,13 @@ type authLedgerState struct {
 	daemonExecs daemonExecutor
 }
 
+// addAuthStray records a control-container file with a key that a caller
+// outside the ledger could not remove for sure, so that later auth calls
+// remove it; see authState.addStray. The caller holds c.mu.
+func (c *Container) addAuthStray(path string, copying bool) {
+	c.authLedger().authRecords.addStray(path, copying)
+}
+
 // authLedger returns the ledger of the cluster's auth records. The caller
 // holds c.mu while it uses the ledger.
 func (c *Container) authLedger() authLedger {

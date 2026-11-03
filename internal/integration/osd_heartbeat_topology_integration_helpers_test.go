@@ -80,7 +80,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "seed")
+	topologyRados(t, ctx, client, "seed")
 	osds := clusteraccess.OSDs(t, cluster)
 	if len(osds) != 3 {
 		t.Fatalf("want three OSDs, have %d", len(osds))
@@ -137,7 +137,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if receipt.Down.UUID != receipt.Before.UUID || receipt.DownEpoch <= receipt.Before.UpFrom {
 		t.Fatalf("osd.%d down %+v, before %+v", target.ID, receipt.Down, receipt.Before)
 	}
-	harness.TopologyRados(t, ctx, client, "osd-marked-down")
+	topologyRados(t, ctx, client, "osd-marked-down")
 
 	// The marked OSD exits on its own; nothing in the test stops it.
 	deadline := time.Now().Add(2 * time.Minute)
@@ -215,7 +215,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "osd-restarted")
+	topologyRados(t, ctx, client, "osd-restarted")
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)

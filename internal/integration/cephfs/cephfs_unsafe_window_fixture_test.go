@@ -7,8 +7,6 @@ package cephfs_test
 import (
 	"strings"
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // MDS and client dumps saved from TestCephFSUnsafeRequestWindow runs on
@@ -29,24 +27,24 @@ const (
 )
 
 func TestRequestSafety(t *testing.T) {
-	inFlight, err := harness.ParseMDSRequestOps([]byte(unsafeInFlightSample))
+	inFlight, err := parseMDSRequestOps([]byte(unsafeInFlightSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	historic, err := harness.ParseMDSRequestOps([]byte(unsafeHistoricSample))
+	historic, err := parseMDSRequestOps([]byte(unsafeHistoricSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, found := harness.FindMDSRequest(inFlight, 4239, "rename", 0)
-	if !found || held.TypeData.ReqID.TID != 4 || harness.RequestSafety(held) != "unsafe" {
-		t.Fatalf("held rename %+v found=%t safety=%s", held, found, harness.RequestSafety(held))
+	held, found := findMDSRequest(inFlight, 4239, "rename", 0)
+	if !found || held.TypeData.ReqID.TID != 4 || requestSafety(held) != "unsafe" {
+		t.Fatalf("held rename %+v found=%t safety=%s", held, found, requestSafety(held))
 	}
-	committed, found := harness.FindMDSRequest(historic, 4239, "rename", 4)
-	if !found || committed.TypeData.ReqID.TID != 4 || harness.RequestSafety(committed) != "safe" || committed.Duration != 7.2515 {
-		t.Fatalf("committed rename %+v found=%t safety=%s", committed, found, harness.RequestSafety(committed))
+	committed, found := findMDSRequest(historic, 4239, "rename", 4)
+	if !found || committed.TypeData.ReqID.TID != 4 || requestSafety(committed) != "safe" || committed.Duration != 7.2515 {
+		t.Fatalf("committed rename %+v found=%t safety=%s", committed, found, requestSafety(committed))
 	}
-	if mkdir, found := harness.FindMDSRequest(historic, 4239, "mkdir", 0); !found || harness.RequestSafety(mkdir) != "no-early-reply" {
-		t.Fatalf("mkdir %+v found=%t safety=%s", mkdir, found, harness.RequestSafety(mkdir))
+	if mkdir, found := findMDSRequest(historic, 4239, "mkdir", 0); !found || requestSafety(mkdir) != "no-early-reply" {
+		t.Fatalf("mkdir %+v found=%t safety=%s", mkdir, found, requestSafety(mkdir))
 	}
 	// Another client, or a description that only starts like the operation,
 	// is not the request.
@@ -54,7 +52,7 @@ func TestRequestSafety(t *testing.T) {
 		client uint64
 		op     string
 	}{{4240, "rename"}, {4239, "renam"}, {4239, "create"}} {
-		if op, found := harness.FindMDSRequest(inFlight, miss.client, miss.op, 0); found {
+		if op, found := findMDSRequest(inFlight, miss.client, miss.op, 0); found {
 			t.Errorf("client.%d %s matched %q", miss.client, miss.op, op.Description)
 		}
 	}
@@ -64,11 +62,11 @@ func TestRequestSafety(t *testing.T) {
 	out.TypeData.Events = append(append(out.TypeData.Events[:0:0], held.TypeData.Events...), struct {
 		Event string `json:"event"`
 	}{"journal_committed: "})
-	if safety := harness.RequestSafety(out); safety != "inconsistent" {
+	if safety := requestSafety(out); safety != "inconsistent" {
 		t.Errorf("a commit without its reply is %s", safety)
 	}
 	for _, malformed := range []string{`{}`, `{"ops": 1}`, `[]`} {
-		if _, err := harness.ParseMDSRequestOps([]byte(malformed)); err == nil {
+		if _, err := parseMDSRequestOps([]byte(malformed)); err == nil {
 			t.Errorf("%s parsed", malformed)
 		}
 	}
@@ -76,7 +74,7 @@ func TestRequestSafety(t *testing.T) {
 
 func TestParseClientMDSRequests(t *testing.T) {
 	for name, sample := range map[string]string{"tentacle": tentacleClientRequestsSample, "squid": squidClientRequestsSample} {
-		requests, err := harness.ParseClientMDSRequests([]byte(sample))
+		requests, err := parseClientMDSRequests([]byte(sample))
 		if err != nil || len(requests) != 1 {
 			t.Fatalf("%s: %+v, %v", name, requests, err)
 		}
@@ -86,16 +84,16 @@ func TestParseClientMDSRequests(t *testing.T) {
 	}
 	// Squid repeats the key for each pending request.
 	repeated := `{"request": {"tid": 4, "op": "rename", "got_unsafe": 1}, "request": {"tid": 5, "op": "unlink", "got_unsafe": false}}`
-	if requests, err := harness.ParseClientMDSRequests([]byte(repeated)); err != nil || len(requests) != 2 || requests[1].TID != 5 || bool(requests[1].GotUnsafe) {
+	if requests, err := parseClientMDSRequests([]byte(repeated)); err != nil || len(requests) != 2 || requests[1].TID != 5 || bool(requests[1].GotUnsafe) {
 		t.Errorf("repeated keys: %+v, %v", requests, err)
 	}
 	for _, empty := range []string{`{}`, `{"requests": []}`} {
-		if requests, err := harness.ParseClientMDSRequests([]byte(empty)); err != nil || len(requests) != 0 {
+		if requests, err := parseClientMDSRequests([]byte(empty)); err != nil || len(requests) != 0 {
 			t.Errorf("%s: %+v, %v", empty, requests, err)
 		}
 	}
 	for _, malformed := range []string{`[]`, `{"other": 1}`, `{"request": {"got_unsafe": 2}}`, `{"requests": []} {}`, `{"request": {}`} {
-		if _, err := harness.ParseClientMDSRequests([]byte(malformed)); err == nil {
+		if _, err := parseClientMDSRequests([]byte(malformed)); err == nil {
 			t.Errorf("%s parsed", malformed)
 		}
 	}
@@ -105,17 +103,17 @@ func TestParseClientMDSRequests(t *testing.T) {
 // that still holds the TID, or an MDS that still has it in flight, keeps it
 // unfinished, whatever the other side shows.
 func TestRenameSafe(t *testing.T) {
-	parseOps := func(data string) []harness.MDSRequestOp {
+	parseOps := func(data string) []mdsRequestOp {
 		t.Helper()
-		ops, err := harness.ParseMDSRequestOps([]byte(data))
+		ops, err := parseMDSRequestOps([]byte(data))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return ops
 	}
-	parseRequests := func(data string) []harness.ClientMDSRequest {
+	parseRequests := func(data string) []clientMDSRequest {
 		t.Helper()
-		requests, err := harness.ParseClientMDSRequests([]byte(data))
+		requests, err := parseClientMDSRequests([]byte(data))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,16 +123,16 @@ func TestRenameSafe(t *testing.T) {
 	held, otherPending, none := parseRequests(tentacleClientRequestsSample),
 		parseRequests(strings.Replace(tentacleClientRequestsSample, `"tid": 4`, `"tid": 5`, 1)), parseRequests(`{"requests": []}`)
 	// The first look names the TID from the MDS and finds it on both sides.
-	if state := harness.JoinUnsafeRename(inFlight, held, 4239, 0); state.Tid != 4 || !state.InFlight || !state.Pending || !bool(state.Request.GotUnsafe) {
+	if state := joinUnsafeRename(inFlight, held, 4239, 0); state.Tid != 4 || !state.InFlight || !state.Pending || !bool(state.Request.GotUnsafe) {
 		t.Fatalf("held: %+v", state)
 	}
-	if state := harness.JoinUnsafeRename(cleared, held, 4239, 0); state.Tid != 0 || state.Pending {
+	if state := joinUnsafeRename(cleared, held, 4239, 0); state.Tid != 0 || state.Pending {
 		t.Fatalf("no MDS request names no TID: %+v", state)
 	}
 	for name, test := range map[string]struct {
-		ops      []harness.MDSRequestOp
-		requests []harness.ClientMDSRequest
-		history  []harness.MDSRequestOp
+		ops      []mdsRequestOp
+		requests []clientMDSRequest
+		history  []mdsRequestOp
 		safe     bool
 	}{
 		// The MDS finished, but the client still holds TID 4 as unsafe.
@@ -145,8 +143,8 @@ func TestRenameSafe(t *testing.T) {
 		"not in the history":   {cleared, none, parseOps(`{"ops": []}`), false},
 		"history unsafe":       {cleared, none, inFlight, false},
 	} {
-		state := harness.JoinUnsafeRename(test.ops, test.requests, 4239, 4)
-		if got := harness.RenameSafe(state, test.history, 4239); got != test.safe {
+		state := joinUnsafeRename(test.ops, test.requests, 4239, 4)
+		if got := renameSafe(state, test.history, 4239); got != test.safe {
 			t.Errorf("%s: safe %t, want %t (%+v)", name, got, test.safe, state)
 		}
 	}
@@ -162,23 +160,23 @@ const replayedHistoricSample = `{"ops": [{"description": "client_request(client.
 // generation: the REPLAY flag, no early reply, and a journal commit before
 // the reply.
 func TestReplayedRequest(t *testing.T) {
-	ops, err := harness.ParseMDSRequestOps([]byte(replayedHistoricSample))
+	ops, err := parseMDSRequestOps([]byte(replayedHistoricSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, found := harness.FindMDSRequest(ops, 4245, "rename", 4)
-	if !found || !harness.ReplayedRequest(replayed) {
+	replayed, found := findMDSRequest(ops, 4245, "rename", 4)
+	if !found || !replayedRequest(replayed) {
 		t.Fatalf("native replay %q %v found=%t", replayed.Description, replayed.Events(), found)
 	}
 	// The first generation's own commit after its early reply is no replay.
-	historic, err := harness.ParseMDSRequestOps([]byte(unsafeHistoricSample))
+	historic, err := parseMDSRequestOps([]byte(unsafeHistoricSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if committed, _ := harness.FindMDSRequest(historic, 4239, "rename", 4); harness.ReplayedRequest(committed) {
+	if committed, _ := findMDSRequest(historic, 4239, "rename", 4); replayedRequest(committed) {
 		t.Errorf("an early-replied commit counts as a replay: %q", committed.Description)
 	}
-	withEvents := func(op harness.MDSRequestOp, drop string, add ...string) harness.MDSRequestOp {
+	withEvents := func(op mdsRequestOp, drop string, add ...string) mdsRequestOp {
 		op.TypeData.Events = op.TypeData.Events[:0:0]
 		for _, event := range append(replayed.Events(), add...) {
 			if event != drop {
@@ -189,8 +187,8 @@ func TestReplayedRequest(t *testing.T) {
 		}
 		return op
 	}
-	for name, op := range map[string]harness.MDSRequestOp{
-		"queued only": func() harness.MDSRequestOp {
+	for name, op := range map[string]mdsRequestOp{
+		"queued only": func() mdsRequestOp {
 			op := replayed
 			op.Description = strings.Replace(op.Description, " REPLAY ", " ", 1)
 			return op
@@ -200,7 +198,7 @@ func TestReplayedRequest(t *testing.T) {
 		"early reply":         withEvents(replayed, "", "early_replied"),
 		"reply before commit": withEvents(replayed, "journal_committed: ", "journal_committed: "),
 	} {
-		if harness.ReplayedRequest(op) {
+		if replayedRequest(op) {
 			t.Errorf("%s: counted as a replay: %q %v", name, op.Description, op.Events())
 		}
 	}
@@ -218,17 +216,17 @@ const (
 
 func TestParseClientCache(t *testing.T) {
 	const inode = 0x10000000001
-	held, found, err := harness.ParseClientCache([]byte(clientCacheFlushingSample), inode)
+	held, found, err := parseClientCache([]byte(clientCacheFlushingSample), inode)
 	if err != nil || !found || !held.Flushing() || held.Size != 20497 || held.FlushingCaps != "Fw" || held.FlushingTIDs["Fw"] != 3 {
 		t.Fatalf("held flush: %+v found=%t err=%v", held, found, err)
 	}
-	acked, found, err := harness.ParseClientCache([]byte(clientCacheFlushedSample), inode)
+	acked, found, err := parseClientCache([]byte(clientCacheFlushedSample), inode)
 	if err != nil || !found || acked.Flushing() || acked.Size != 20497 {
 		t.Fatalf("acknowledged flush: %+v found=%t err=%v", acked, found, err)
 	}
 	// The same entries as a bare array.
 	bare := strings.TrimSuffix(strings.TrimPrefix(clientCacheFlushingSample, `{"cache": `), `}`)
-	if caps, found, err := harness.ParseClientCache([]byte(bare), inode); err != nil || !found || !caps.Flushing() {
+	if caps, found, err := parseClientCache([]byte(bare), inode); err != nil || !found || !caps.Flushing() {
 		t.Fatalf("bare array: %+v found=%t err=%v", caps, found, err)
 	}
 	// Only a dentry names the inode, the head is another snapshot, or the
@@ -239,16 +237,16 @@ func TestParseClientCache(t *testing.T) {
 		"another inode": `{"cache": [{"ino": "0x10000000000", "snapid": "head", "size": 0, "dirty_caps": "-"}]}`,
 		"empty":         `{"cache": []}`,
 	} {
-		if caps, found, err := harness.ParseClientCache([]byte(sample), inode); err != nil || found {
+		if caps, found, err := parseClientCache([]byte(sample), inode); err != nil || found {
 			t.Errorf("%s: %+v found=%t err=%v", name, caps, found, err)
 		}
 	}
 	// A flushing cap without a flush TID is no pending flush.
-	if caps, _, _ := harness.ParseClientCache([]byte(`{"cache": [{"ino": "0x10000000001", "snapid": "head", "flushings_caps": "Fw"}]}`), inode); caps.Flushing() {
+	if caps, _, _ := parseClientCache([]byte(`{"cache": [{"ino": "0x10000000001", "snapid": "head", "flushings_caps": "Fw"}]}`), inode); caps.Flushing() {
 		t.Errorf("flushing caps without a TID: %+v", caps)
 	}
 	for _, malformed := range []string{`{}`, `{"other": []}`, `"cache"`, `{"cache": [1]}`, `{"cache": [{"ino": 1}]}`} {
-		if _, _, err := harness.ParseClientCache([]byte(malformed), inode); err == nil {
+		if _, _, err := parseClientCache([]byte(malformed), inode); err == nil {
 			t.Errorf("%s parsed", malformed)
 		}
 	}

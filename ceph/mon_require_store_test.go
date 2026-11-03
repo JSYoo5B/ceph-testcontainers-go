@@ -537,43 +537,60 @@ func TestMonRequireStoreNegativeControls(t *testing.T) {
 	}
 }
 
-// TestMonRequireStoreBlocksAreIdentical keeps the two scripts' copies of the
-// shared function from drifting apart.
-func TestMonRequireStoreBlocksAreIdentical(t *testing.T) {
-	blocks := map[string]string{}
-	for _, name := range requireStoreScripts {
-		data, err := scripts.ReadFile("internal/scripts/" + name + ".sh")
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(data)
-		start := strings.Index(text, "# BEGIN mon-store-mode")
-		end := strings.Index(text, "# END mon-store-mode")
-		if start < 0 || end < start || strings.Count(text, "# BEGIN mon-store-mode") != 1 {
-			t.Fatalf("%s.sh: missing or repeated mon-store-mode block", name)
-		}
-		blocks[name] = text[start:end]
+// monSharedBlocks are the marked blocks that mon.sh and mon-join.sh both
+// carry, because each script runs alone in its container.
+var monSharedBlocks = []string{"mon-store-mode", "mon-address"}
+
+// monSharedBlock returns the text of the marked block in script, or ok false
+// when it is missing or repeated.
+func monSharedBlock(script, marker string) (string, bool) {
+	begin, end := "# BEGIN "+marker+" ", "# END "+marker+"\n"
+	start, stop := strings.Index(script, begin), strings.Index(script, end)
+	if start < 0 || stop < start || strings.Count(script, begin) != 1 || strings.Count(script, end) != 1 {
+		return "", false
 	}
-	if blocks["mon"] != blocks["mon-join"] {
-		t.Fatal("mon.sh and mon-join.sh carry different require_store blocks")
+	return script[start:stop], true
+}
+
+// TestMonSharedBlocksAreIdentical keeps the two scripts' copies of each
+// shared block from drifting apart.
+func TestMonSharedBlocksAreIdentical(t *testing.T) {
+	for _, marker := range monSharedBlocks {
+		blocks := map[string]string{}
+		for _, name := range requireStoreScripts {
+			data, err := scripts.ReadFile("internal/scripts/" + name + ".sh")
+			if err != nil {
+				t.Fatal(err)
+			}
+			block, ok := monSharedBlock(string(data), marker)
+			if !ok {
+				t.Fatalf("%s.sh: missing or repeated %s block", name, marker)
+			}
+			blocks[name] = block
+		}
+		if blocks["mon"] != blocks["mon-join"] {
+			t.Fatalf("mon.sh and mon-join.sh carry different %s blocks", marker)
+		}
 	}
 }
 
-// TestMonRequireStoreBlockDriftControl proves the identity check can fail.
-func TestMonRequireStoreBlockDriftControl(t *testing.T) {
+// TestMonSharedBlockDriftControl proves the identity check can fail for every
+// block.
+func TestMonSharedBlockDriftControl(t *testing.T) {
 	data, err := scripts.ReadFile("internal/scripts/mon.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := string(data)
-	b := strings.Replace(a, "exit 3", "exit 4", 1)
-	if a == b {
-		t.Fatal("control did not change the block")
-	}
-	extract := func(s string) string {
-		return s[strings.Index(s, "# BEGIN mon-store-mode"):strings.Index(s, "# END mon-store-mode")]
-	}
-	if extract(a) == extract(b) {
-		t.Fatal("drift between the copies would go unnoticed")
+	for marker, edit := range map[string][2]string{
+		"mon-store-mode": {"exit 3", "exit 4"},
+		"mon-address":    {"${mon_v1}", "${mon_v2}"},
+	} {
+		b := strings.Replace(a, edit[0], edit[1], 1)
+		before, _ := monSharedBlock(a, marker)
+		after, _ := monSharedBlock(b, marker)
+		if a == b || before == after {
+			t.Fatalf("drift in the %s block would go unnoticed", marker)
+		}
 	}
 }

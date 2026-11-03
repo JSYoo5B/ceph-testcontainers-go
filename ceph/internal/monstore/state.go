@@ -11,10 +11,10 @@ import (
 // ownership primitive of docs/internals/mon-volume-storage.md. It sits beside
 // osdStorageState and is shaped like it.
 //
-// In this slice nothing publishes a record: no option, no AddMonitor or Run
-// path calls begin, so a cluster holds none and every method that Terminate
-// calls returns without a Docker call. The primitive, its tests and its guards
-// exist ahead of the first caller.
+// Package ceph publishes a record through Begin for each MON that gets its own
+// store volume, before the volume exists; a cluster without such a MON holds
+// none, and every method that Terminate calls then returns without a Docker
+// call.
 //
 // The type has no mutex. Container.mu guards every field, at the position
 // osdStorageState has in the lock order: callers hold it, no method takes a

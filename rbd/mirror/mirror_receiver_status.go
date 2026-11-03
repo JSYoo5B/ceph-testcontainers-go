@@ -299,12 +299,12 @@ func (m *Mirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, m
 		return result, nil
 	}
 	result.report.Running, result.report.StartedAt = true, before.StartedAt
-	data, err := rbdReceiverExec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	data, err := rbdReceiverRead.exec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 	if err != nil {
 		result.problem = "receiver-status-query-failed"
 		return result, err
 	}
-	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiver.peer, multicluster.CephBefore(m.pair.config.Destination, 20))
+	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiver.peer)
 	if err != nil {
 		result.problem = "receiver-status-invalid"
 		return result, err
@@ -349,9 +349,14 @@ type rbdReceiverDiscovery struct {
 	namespaces                      []rbdReceiverNamespace
 }
 
-func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerIdentity, legacy bool) (rbdReceiverDiscovery, bool, error) {
+// decodeRBDReceiverDiscovery reads the selected pool and peer row of an
+// rbd-mirror status report. The report's shape, not a cluster's release,
+// selects the decoder: the status comes from the daemon image, which can run
+// another release than the cluster's client toolkit. Ceph 19 rows have
+// namespaces and no namespace_replayers; one report never mixes the shapes.
+func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerIdentity) (rbdReceiverDiscovery, bool, error) {
 	var selected rbdReceiverDiscovery
-	if err := rbdReceiverJSON(data); err != nil {
+	if err := rbdReceiverRead.json(data); err != nil {
 		return selected, false, err
 	}
 	var native struct {
@@ -369,6 +374,10 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 	// Every row is validated, not only the selected one, so a malformed
 	// sibling refuses the whole report.
 	for _, row := range rows {
+		legacy := row.legacyShape()
+		if legacy != rows[0].legacyShape() {
+			return selected, false, rbdReceiverGuard("RBD receiver discovery mixes release shapes")
+		}
 		entry, err := row.decode(legacy)
 		if err != nil {
 			return selected, false, err
@@ -396,6 +405,12 @@ type rbdReceiverPoolRow struct {
 	Namespaces     json.RawMessage `json:"namespace_replayers"`
 	LegacyImages   json.RawMessage `json:"image_replayers"`
 	LegacyNames    json.RawMessage `json:"namespaces"`
+}
+
+// legacyShape reports whether the row has the Ceph 19 shape: namespaces
+// without namespace_replayers.
+func (row rbdReceiverPoolRow) legacyShape() bool {
+	return len(row.Namespaces) == 0 && len(row.LegacyNames) != 0
 }
 
 // decode validates the row's identity, state, namespaces and election fields;

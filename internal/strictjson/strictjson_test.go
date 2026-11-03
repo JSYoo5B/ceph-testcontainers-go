@@ -75,6 +75,48 @@ func TestDecodeRefusesAliasesAndNullsOfKnownFields(t *testing.T) {
 	}
 }
 
+type embeddedBase struct {
+	State *string `json:"state"`
+	Rank  *int64  `json:"rank"`
+}
+
+type embeddedOuter struct {
+	embeddedBase
+	*target
+	Rank *string `json:"rank"`
+	Note *string `json:"note"`
+}
+
+func TestDecodeChecksPromotedFieldsOfEmbeddedStructs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		data string
+		opts Options
+		want error
+	}{
+		"alias of promoted":         {`{"STATE":"up"}`, Options{}, ErrNoncanonicalKey},
+		"alias through pointer":     {`{"NAME":"x"}`, Options{}, ErrNoncanonicalKey},
+		"null promoted":             {`{"state":null}`, Options{RejectNull: true}, ErrNull},
+		"null through pointer":      {`{"count":null}`, Options{RejectNull: true}, ErrNull},
+		"alias nested in promoted":  {`{"items":[{"Count":1}]}`, Options{}, ErrNoncanonicalKey},
+		"outer field hides promote": {`{"rank":1}`, Options{}, ErrMalformed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var v embeddedOuter
+			if err := Decode([]byte(tc.data), &v, tc.opts); !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+		})
+	}
+	// encoding/json cannot allocate an embedded pointer to an unexported type.
+	v := embeddedOuter{target: &target{}}
+	if err := Decode([]byte(`{"state":"up","rank":"r","name":"x","note":"n"}`), &v, Options{RejectNull: true}); err != nil {
+		t.Fatal(err)
+	}
+	if *v.State != "up" || *v.Rank != "r" || *v.Name != "x" || *v.Note != "n" {
+		t.Fatalf("decoded %+v", v)
+	}
+}
+
 func TestDecodeAllowsWhatEncodingJSONMayDecide(t *testing.T) {
 	var v target
 	data := `{"name":"x","count":9007199254740993,"codes":{"a":{},"A":{}},"loose":1,` +

@@ -8,9 +8,9 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -165,7 +165,8 @@ func (f mdsFleet) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) error {
 	if err != nil {
 		return err
 	}
-	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: f.core.Name(), reservedName: f.mds.roster.nextID(f.core.Name()), native: cap.identity, dataPools: cap.dataPools}); err != nil {
+	if err := mdsmap.DecodeCold(data, mdsmap.ColdExpectation{Filesystem: f.core.Name(), ReservedName: f.mds.roster.nextID(f.core.Name()),
+		Native: mdsMapNative(cap.identity), DataPools: cap.dataPools}); err != nil {
 		return err
 	}
 	_, err = readColdFSID(ctx, f.core.Volumes(), cap)
@@ -177,36 +178,14 @@ func (f mdsFleet) checkColdMDSAuth(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var auth struct {
-		Entities *[]struct {
-			Entity *string `json:"entity"`
-		} `json:"auth_dump"`
+	present, err := mdsmap.IdentityPresent(data, "mds."+f.mds.roster.nextID(f.core.Name()))
+	if err != nil {
+		return err
 	}
-	if coldMDSJSON(data, &auth) != nil || auth.Entities == nil {
-		return errors.New("decode initial MDS identity names")
-	}
-	seen := map[string]bool{}
-	reserved := "mds." + f.mds.roster.nextID(f.core.Name())
-	for _, entry := range *auth.Entities {
-		if entry.Entity == nil || *entry.Entity == "" || strings.TrimSpace(*entry.Entity) != *entry.Entity || seen[*entry.Entity] {
-			return errors.New("initial MDS identity names are incomplete or duplicated")
-		}
-		seen[*entry.Entity] = true
-		if *entry.Entity == reserved {
-			return servicehook.Invalid(errors.New("initial MDS identity already exists"))
-		}
+	if present {
+		return servicehook.Invalid(errors.New("initial MDS identity already exists"))
 	}
 	return ctx.Err()
-}
-
-// New cold absence guards reject duplicate fields, aliases of known fields and
-// trailing documents. Never return raw decode errors: native auth input can
-// contain credentials.
-func coldMDSJSON(data []byte, value any) error {
-	if strictjson.Decode(data, value, strictjson.Options{MaxBytes: 4 << 20}) != nil {
-		return errors.New("invalid cold native JSON")
-	}
-	return nil
 }
 
 // MON's canonical cluster UUID may stay stable when the owned control CLI changes.

@@ -164,7 +164,7 @@ func rbdFanoutAssertImageIdentity(t *testing.T, ctx context.Context, clients []t
 	t.Helper()
 	var globalID string
 	for i, client := range clients {
-		harness.RBDMultiClusterAssertPrimary(t, ctx, client, image, i == 0)
+		rbdMultiClusterAssertPrimary(t, ctx, client, image, i == 0)
 		var info struct {
 			Mirroring struct {
 				GlobalID string `json:"global_id"`

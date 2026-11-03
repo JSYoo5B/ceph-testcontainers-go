@@ -516,8 +516,7 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
-	closed := c.closed
-	if closed {
+	if c.closed {
 		c.mu.Unlock()
 		return errClusterTerminated
 	}
@@ -535,10 +534,7 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 			return err
 		}
 	}
-	switch {
-	case closed:
-		return errClusterTerminated
-	case owned:
+	if owned {
 		return nil
 	}
 	attached, err := target.Networks(ctx)

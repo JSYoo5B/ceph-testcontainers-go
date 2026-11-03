@@ -13,7 +13,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-var errNilCluster = errors.New("ceph cluster is unavailable")
+var errNilCluster = servicehook.Invalid(errors.New("ceph cluster is unavailable"))
 
 // Start creates one filesystem with dedicated pools and its
 // ActiveMDS+StandbyMDS daemons on an existing cluster. A zero config selects

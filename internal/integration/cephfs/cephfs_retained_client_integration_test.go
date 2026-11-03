@@ -19,7 +19,7 @@ func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
 		if mode.Host {
 			opts = append(opts, ceph.WithHostNetwork())
 		}
-		t.Run(mode.Name, func(t *testing.T) { harness.RunCephFSRetainedClient(t, harness.CephFSRestart, opts...) })
+		t.Run(mode.Name, func(t *testing.T) { runCephFSRetainedClient(t, cephFSRestart, opts...) })
 	}
 }
 
@@ -27,22 +27,22 @@ func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
 // mount, session and open file.
 func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	t.Run("standby", func(t *testing.T) { harness.RunCephFSRetainedClient(t, harness.CephFSStandbyTakeover) })
-	t.Run("standby-replay", func(t *testing.T) { harness.RunCephFSRetainedClient(t, harness.CephFSReplayTakeover) })
+	t.Run("standby", func(t *testing.T) { runCephFSRetainedClient(t, cephFSStandbyTakeover) })
+	t.Run("standby-replay", func(t *testing.T) { runCephFSRetainedClient(t, cephFSReplayTakeover) })
 }
 
 // With two active ranks, the standby takes over rank 1, where the client's
 // file lives in a pinned directory, while rank 0 keeps its daemon.
 func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSRetainedClient(t, harness.CephFSRankOneTakeover)
+	runCephFSRetainedClient(t, cephFSRankOneTakeover)
 }
 
 // A second client writes a file that a live client holds; the MDS revokes the
 // holder's capabilities without evicting it.
 func TestCephFSCapabilityHandoff(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSCapabilityHandoff(t)
+	runCephFSCapabilityHandoff(t)
 }
 
 // A client looks up a directory that a second, mounted client created; the
@@ -72,35 +72,35 @@ func TestCephFSSessionAdmission(t *testing.T) {
 // and is evicted.
 func TestCephFSLateReconnect(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSLateReconnect(t)
+	runCephFSLateReconnect(t)
 }
 
 // With two active ranks, a directory moves from rank 0 to rank 1 and back
 // while a client streams fsynced records into a file in it.
 func TestCephFSLiveRankMigration(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSLiveRankMigration(t)
+	runCephFSLiveRankMigration(t)
 }
 
 // One rename is held between its unsafe and safe replies, and observed from
 // the MDS and from the client.
 func TestCephFSUnsafeRequestWindow(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSUnsafeRequestWindow(t)
+	runCephFSUnsafeRequestWindow(t)
 }
 
 // The MDS is killed while one rename is held unsafe; after its restart the
 // client replays the request and it becomes safe.
 func TestCephFSUnsafeRequestReplay(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSUnsafeRequestReplay(t)
+	runCephFSUnsafeRequestReplay(t)
 }
 
 // The MDS is killed while one cap flush waits for its ack; after its restart
 // the client's flush is acknowledged and its size and bytes survive.
 func TestCephFSFlushingCapReplay(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSFlushingCapReplay(t)
+	runCephFSFlushingCapReplay(t)
 }
 
 // The client is killed while one rename is held unsafe; after the journal is
@@ -117,7 +117,7 @@ func TestCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 // barrier and reads only the fsynced bytes.
 func TestCephFSBlocklistEpochBarrier(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSBlocklistEpochBarrier(t)
+	runCephFSBlocklistEpochBarrier(t)
 }
 
 // The OSDs of a live client's file fill up: its write fails with ENOSPC
@@ -125,7 +125,7 @@ func TestCephFSBlocklistEpochBarrier(t *testing.T) {
 // same fd writes again and another client reads every byte.
 func TestCephFSOSDFullRetainedClient(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunCephFSOSDFullRetainedClient(t)
+	runCephFSOSDFullRetainedClient(t)
 }
 
 // Two live clients contend for one flock: the second gets EWOULDBLOCK while

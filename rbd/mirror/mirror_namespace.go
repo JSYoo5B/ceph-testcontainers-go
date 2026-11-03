@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"regexp"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 	"slices"
 	"strings"
 
@@ -65,11 +66,11 @@ func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
 	if err := m.pair.checkPools(ctx); err != nil {
 		return status, err
 	}
-	source, err := readRBDMirrorNamespacePolicy(ctx, m.pair.sourceClient, m.pair.config.Pool, m.pair.config.SourceNamespace, m.pair.legacyClient(m.pair.sourceClient))
+	source, _, err := rbdSetupRead.policy(ctx, m.pair.sourceClient, m.pair.config.Pool, m.pair.config.SourceNamespace, m.pair.legacyClient(m.pair.sourceClient))
 	if err != nil {
 		return status, err
 	}
-	destination, err := readRBDMirrorNamespacePolicy(ctx, m.pair.destinationClient, m.pair.config.Pool, m.pair.config.DestinationNamespace, m.pair.legacyClient(m.pair.destinationClient))
+	destination, _, err := rbdSetupRead.policy(ctx, m.pair.destinationClient, m.pair.config.Pool, m.pair.config.DestinationNamespace, m.pair.legacyClient(m.pair.destinationClient))
 	if err != nil {
 		return status, err
 	}
@@ -89,8 +90,6 @@ func namespacePolicyState(pool, namespace string, native nativeRBDMirrorPolicy) 
 	return NamespaceState{Pool: pool, Namespace: namespace, RemoteNamespace: remote, Mode: native.Mode, MirrorUUID: native.MirrorUUID}
 }
 
-var rbdMirrorNamespaceName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-
 func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 	if config.Scope == "" {
 		config.Scope = ScopeImage
@@ -99,7 +98,7 @@ func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 		return config, servicehook.Invalid(errors.New("RBD mirror scope must be image or pool"))
 	}
 	for _, namespace := range []string{config.SourceNamespace, config.DestinationNamespace} {
-		if namespace != "" && !rbdMirrorNamespaceName.MatchString(namespace) {
+		if namespace != "" && resourcename.Check("namespace", namespace) != nil {
 			return config, servicehook.Invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
 		}
 	}
@@ -204,30 +203,223 @@ type nativeRBDMirrorPolicy struct {
 	SiteName        string  `json:"site_name"`
 }
 
-func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, error) {
-	var policy nativeRBDMirrorPolicy
-	data, err := multicluster.Exec(ctx, client, "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
-	if err != nil {
-		return policy, err
+// rbdNativeRead classifies the failures of the package's native readbacks for
+// one caller: query wraps a command that failed, guard reports output that is
+// malformed or shows identity drift. Setup, image observation and receiver
+// observation keep their own classifications; the parsing is shared.
+type rbdNativeRead struct {
+	query func(ctx context.Context, operation string, err error) error
+	guard func(message string) error
+}
+
+var (
+	// rbdSetupRead classifies the reads of setup and of the policy readers.
+	rbdSetupRead = rbdNativeRead{
+		query: func(_ context.Context, operation string, err error) error {
+			return fmt.Errorf("%s: %w", operation, err)
+		},
+		guard: func(message string) error { return errors.New(message) },
 	}
-	if json.Unmarshal(data, &policy) != nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, policy.Mode) {
-		return policy, errors.New("decode RBD mirror namespace policy: invalid native mode")
+	// rbdObservedRead classifies the reads of an image status observation.
+	rbdObservedRead = rbdNativeRead{
+		query: func(_ context.Context, operation string, err error) error { return rbdImageQueryError(operation, err) },
+		guard: rbdImageGuardError,
+	}
+	// rbdReceiverRead classifies the reads of a receiver observation, which
+	// never retain native output.
+	rbdReceiverRead = rbdNativeRead{query: rbdReceiverQuery, guard: rbdReceiverGuard}
+)
+
+// exec runs args in client. A call whose ctx ended while the command ran
+// fails even when the command succeeded.
+func (r rbdNativeRead) exec(ctx context.Context, client testcontainers.Container, operation string, args ...string) ([]byte, error) {
+	data, err := multicluster.Exec(ctx, client, args...)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return nil, r.query(ctx, operation, err)
+	}
+	return data, nil
+}
+
+// json refuses a native JSON document that is oversized, has trailing data,
+// duplicate fields or is malformed.
+func (r rbdNativeRead) json(data []byte) error {
+	switch err := strictjson.Check(data, strictjson.Options{MaxBytes: 4 << 20}); {
+	case err == nil:
+		return nil
+	case errors.Is(err, strictjson.ErrSize):
+		return r.guard("RBD native JSON size is invalid")
+	case errors.Is(err, strictjson.ErrTrailing):
+		return r.guard("decode RBD native JSON: trailing data")
+	default:
+		return r.guard("decode RBD native JSON: malformed or duplicate fields")
+	}
+}
+
+// policy reads the mirror policy of pool, or of its named namespace, with
+// rbd mirror pool info. A mirrored policy needs a canonical non-nil mirror
+// UUID and a remote namespace; legacy fills what Ceph 19 omits. It also
+// returns the native peers, undecoded.
+func (r rbdNativeRead) policy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, json.RawMessage, error) {
+	var policy nativeRBDMirrorPolicy
+	data, err := r.exec(ctx, client, "read RBD mirror namespace policy", "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
+	if err != nil {
+		return policy, nil, err
+	}
+	if err := r.json(data); err != nil {
+		return policy, nil, err
+	}
+	var fields struct {
+		Mode   *string         `json:"mode"`
+		UUID   *string         `json:"mirror_uuid"`
+		Remote *string         `json:"remote_namespace"`
+		Site   *string         `json:"site_name"`
+		Peers  json.RawMessage `json:"peers"`
+	}
+	if json.Unmarshal(data, &fields) != nil || fields.Mode == nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, *fields.Mode) {
+		return policy, nil, r.guard("decode RBD mirror namespace policy: invalid native mode")
 	}
 	if legacy {
-		policy.RemoteNamespace = legacyRBDRemoteNamespace(policy.Mode, policy.RemoteNamespace, namespace)
-		if policy.Mode != "disabled" && policy.MirrorUUID == "" {
-			if policy.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, client, pool, namespace); err != nil {
-				return policy, err
+		fields.Remote = legacyRBDRemoteNamespace(*fields.Mode, fields.Remote, namespace)
+		if *fields.Mode != "disabled" && (fields.UUID == nil || *fields.UUID == "") {
+			value, err := readLegacyRBDMirrorUUID(ctx, client, pool, namespace)
+			if err != nil {
+				return policy, nil, r.query(ctx, "read RBD mirror namespace policy", err)
 			}
+			fields.UUID = &value
 		}
 	}
-	if policy.Mode != "disabled" && (policy.MirrorUUID == "" || policy.RemoteNamespace == nil) {
-		return policy, errors.New("decode RBD mirror namespace policy: missing UUID or remote namespace")
+	policy.Mode, policy.RemoteNamespace = *fields.Mode, fields.Remote
+	if fields.UUID != nil {
+		policy.MirrorUUID = *fields.UUID
+	}
+	if fields.Site != nil {
+		policy.SiteName = *fields.Site
+	}
+	if policy.Mode != "disabled" && (!canonicalRBDUUID(policy.MirrorUUID) || policy.RemoteNamespace == nil) {
+		return policy, nil, r.guard("decode RBD mirror namespace policy: missing or non-canonical UUID, or missing remote namespace")
 	}
 	if namespace != "" && policy.Mode == "init-only" {
-		return policy, errors.New("native init-only mode is invalid on a named namespace")
+		return policy, nil, r.guard("native init-only mode is invalid on a named namespace")
 	}
-	return policy, nil
+	return policy, fields.Peers, nil
+}
+
+// sitePolicies reads the base policy of pool and the selected policy of
+// namespace, the base itself for the default namespace, and the base's peers.
+func (r rbdNativeRead) sitePolicies(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (rbdMirrorSitePolicyIdentity, json.RawMessage, error) {
+	base, peers, err := r.policy(ctx, client, pool, "", legacy)
+	if err != nil {
+		return rbdMirrorSitePolicyIdentity{}, nil, err
+	}
+	selected := base
+	if namespace != "" {
+		if selected, _, err = r.policy(ctx, client, pool, namespace, legacy); err != nil {
+			return rbdMirrorSitePolicyIdentity{}, nil, err
+		}
+	}
+	return rbdMirrorSitePolicyIdentity{base: base, selected: selected}, peers, nil
+}
+
+// pool requires the replicated pool name to still have the expected ID in
+// osd pool ls detail, every listed pool to be well formed and unique.
+func (r rbdNativeRead) pool(ctx context.Context, client testcontainers.Container, name string, expected int64) error {
+	data, err := r.exec(ctx, client, "read RBD mirror pool identity", "ceph", "--connect-timeout", "5", "osd", "pool", "ls", "detail", "--format", "json")
+	if err != nil {
+		return err
+	}
+	if err := r.json(data); err != nil {
+		return err
+	}
+	var pools []struct {
+		ID   *int64  `json:"pool_id"`
+		Name *string `json:"pool_name"`
+		Type *int    `json:"type"`
+	}
+	if json.Unmarshal(data, &pools) != nil || pools == nil {
+		return r.guard("decode RBD mirror pool identity")
+	}
+	found := false
+	seenIDs, seenNames := make(map[int64]bool), make(map[string]bool)
+	for _, pool := range pools {
+		if pool.ID == nil || *pool.ID < 0 || pool.Name == nil || *pool.Name == "" || pool.Type == nil ||
+			seenIDs[*pool.ID] || seenNames[*pool.Name] || (*pool.Type != 1 && *pool.Type != 3) {
+			return r.guard("decode RBD mirror pool identity: missing, malformed or duplicate fields")
+		}
+		seenIDs[*pool.ID], seenNames[*pool.Name] = true, true
+		if *pool.Name == name {
+			if *pool.ID != expected || *pool.Type != 1 {
+				return r.guard("RBD mirror pool identity or type changed during observation")
+			}
+			found = true
+		}
+	}
+	if !found {
+		return r.guard("RBD mirror pool no longer exists")
+	}
+	return nil
+}
+
+// daemonStatus reads the rbd-mirror status of daemon through its admin
+// socket.
+func (r rbdNativeRead) daemonStatus(ctx context.Context, daemon testcontainers.Container, operation string) (*DaemonStatus, error) {
+	data, err := r.exec(ctx, daemon, operation, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	if err != nil {
+		return nil, err
+	}
+	if err := r.json(data); err != nil {
+		return nil, err
+	}
+	var status DaemonStatus
+	if json.Unmarshal(data, &status) != nil || status.PoolReplayers == nil {
+		return nil, r.guard("decode RBD receiving process status: missing or malformed pool replayers")
+	}
+	return &status, nil
+}
+
+// rbdMirrorPolicySite is one site whose recorded pool and policy identity a
+// check rereads: through client, with legacy decoding.
+type rbdMirrorPolicySite struct {
+	client    testcontainers.Container
+	legacy    bool
+	poolID    int64
+	namespace string
+	identity  rbdMirrorSitePolicyIdentity
+}
+
+// checkSites rereads each site's pool identity, base and selected policy and
+// pool identity again, and refuses a policy that differs from the recorded
+// identity with changed. It returns the base peers of each site, undecoded.
+func (r rbdNativeRead) checkSites(ctx context.Context, pool string, sites []rbdMirrorPolicySite, changed string) ([]json.RawMessage, error) {
+	peers := make([]json.RawMessage, len(sites))
+	for i, site := range sites {
+		if err := r.pool(ctx, site.client, pool, site.poolID); err != nil {
+			return nil, err
+		}
+		current, sitePeers, err := r.sitePolicies(ctx, site.client, pool, site.namespace, site.legacy)
+		if err != nil {
+			return nil, err
+		}
+		if !sameRBDMirrorPolicy(current.base, site.identity.base) || !sameRBDMirrorPolicy(current.selected, site.identity.selected) {
+			return nil, r.guard(changed)
+		}
+		if err := r.pool(ctx, site.client, pool, site.poolID); err != nil {
+			return nil, err
+		}
+		peers[i] = sitePeers
+	}
+	return peers, ctx.Err()
+}
+
+// setupSites returns both sites of the pair, read through their setup
+// clients.
+func (p *rbdMirrorPair) setupSites() []rbdMirrorPolicySite {
+	return []rbdMirrorPolicySite{
+		{p.sourceClient, p.legacyClient(p.sourceClient), p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source},
+		{p.destinationClient, p.legacyClient(p.destinationClient), p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination},
+	}
 }
 
 // legacyClient reports whether client is a setup client of this link that
@@ -425,18 +617,11 @@ func (p *rbdMirrorPair) planPolicies(ctx context.Context) ([]rbdMirrorPolicyStep
 			return nil, nil, servicehook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 		}
 		configuredSites[site.name] = configuredSite
-		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, "", legacy)
+		current, _, err := rbdSetupRead.sitePolicies(ctx, site.client, p.config.Pool, site.namespace, legacy)
 		if err != nil {
 			return nil, nil, err
 		}
-		selected := base
-		if site.namespace != "" {
-			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, site.namespace, legacy)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		planned, err := planRBDMirrorSite(site.client, site.namespace, site.remote, site.name, p.config.Scope, base, selected, legacy)
+		planned, err := planRBDMirrorSite(site.client, site.namespace, site.remote, site.name, p.config.Scope, current.base, current.selected, legacy)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -459,7 +644,7 @@ func (p *rbdMirrorPair) applyPolicyStep(ctx context.Context, step rbdMirrorPolic
 	if configuredSite != configuredSites[step.site] {
 		return errors.New("cluster-wide RBD mirror site name changed during setup; refusing mutation")
 	}
-	current, err := readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
+	current, _, err := rbdSetupRead.policy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
 	if err != nil {
 		return err
 	}
@@ -475,7 +660,7 @@ func (p *rbdMirrorPair) applyPolicyStep(ctx context.Context, step rbdMirrorPolic
 	if _, err := multicluster.Exec(ctx, step.client, args...); err != nil {
 		return fmt.Errorf("enable RBD mirror %s policy (earlier steps may have persisted): %w", step.mode, err)
 	}
-	current, err = readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
+	current, _, err = rbdSetupRead.policy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
 	if err != nil {
 		return err
 	}
@@ -532,18 +717,11 @@ func (p *rbdMirrorPair) readPolicyIdentities(ctx context.Context) (*rbdMirrorPol
 		{p.sourceClient, p.config.SourceNamespace, &identities.source},
 		{p.destinationClient, p.config.DestinationNamespace, &identities.destination},
 	} {
-		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, "", p.legacyClient(site.client))
+		current, _, err := rbdSetupRead.sitePolicies(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
-		selected := base
-		if site.namespace != "" {
-			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
-			if err != nil {
-				return nil, err
-			}
-		}
-		site.identity.base, site.identity.selected = base, selected
+		*site.identity = current
 	}
 	return identities, p.checkPools(ctx)
 }

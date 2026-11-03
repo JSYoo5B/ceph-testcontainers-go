@@ -6,13 +6,11 @@ package cephfs_test
 
 import (
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Tentacle describes multiple mirror instances but still labels that deployment
 // untested. This PoC checks native MGR assignment and userspace CephFS snapshot
 // bytes instead of treating two running containers as proof of native HA.
 func TestMultiClusterCephFSMirrorDaemonTopology(t *testing.T) {
-	harness.RunCephFSMirrorDaemonTopology(t, false)
+	runCephFSMirrorDaemonTopology(t, false)
 }

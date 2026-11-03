@@ -34,11 +34,11 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	if len(monitors) != 5 {
 		t.Fatal("fixture did not construct five monitors")
 	}
-	rec := newMonReplacementRecorder("majority-loss", harness.WithSockets(t, cluster), monReplacementBounds{
+	rec := newMonReplacementRecorder("majority-loss", withSockets(t, cluster), monReplacementBounds{
 		Operation: 4 * time.Minute, Quorum: 90 * time.Second, QuorumInterval: 500 * time.Millisecond,
 		Query: 8 * time.Second, Snapshot: 30 * time.Second, Bundle: 3 * time.Minute,
 	})
-	baseline, err := captureMajorityBaseline(ctx, rec, harness.WithSockets(t, cluster), 5)
+	baseline, err := captureMajorityBaseline(ctx, rec, withSockets(t, cluster), 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	}
 	wait := func(step string, want []string, w majorityWait) []majorityRound {
 		t.Helper()
-		rounds, err := waitMajorityState(ctx, rec, harness.WithSockets(t, cluster), baseline, want, w, func(format string, args ...any) {
+		rounds, err := waitMajorityState(ctx, rec, withSockets(t, cluster), baseline, want, w, func(format string, args ...any) {
 			t.Logf("MON_MAJORITY_"+step+" "+format, args...)
 		})
 		if err != nil {
@@ -101,9 +101,9 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	// none of which can reach three of five.
 	cut(baseline.Members[2])
 	rounds := wait("MAJORITY_LOSS", nil, outageWait)
-	management := probeMajorityManagement(ctx, harness.WithSockets(t, cluster), 30*time.Second)
+	management := probeMajorityManagement(ctx, withSockets(t, cluster), 30*time.Second)
 	t.Logf("MON_MAJORITY_LOSS_MANAGEMENT quorum_query_duration=%v quorum=%v error=%q (evidence only)", management.Duration.Round(time.Millisecond), management.Quorum, management.Error)
-	if after := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline); len(evaluateMajorityRound(baseline, after, nil)) > 0 {
+	if after := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline); len(evaluateMajorityRound(baseline, after, nil)) > 0 {
 		t.Fatalf("the outage did not persist through the management query: %s", after.summary())
 	}
 	for _, mon := range monitors {
@@ -141,7 +141,7 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 			t.Fatalf("process continuity stayed undecided after %d observations: %v", attempt, undecided)
 		}
 		t.Logf("MON_MAJORITY_CONTINUITY attempt %d undecided, observing again: %v", attempt, undecided)
-		last = observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
+		last = observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
 		if reasons := evaluateMajorityRound(baseline, last, baseline.Members); len(reasons) > 0 {
 			t.Fatalf("the recovered quorum changed while continuity was re-observed: %v", reasons)
 		}

@@ -127,9 +127,6 @@ func (r *memberRoster) hasService(name string) bool {
 	return exists
 }
 
-// serviceCount is the number of services.
-func (r *memberRoster) serviceCount() int { return len(r.services) }
-
 // eachService iterates the services in map order. The loop body may call
 // dropService on the key it is visiting, as Terminate does.
 func (r *memberRoster) eachService() iter.Seq2[string, testcontainers.Container] {

@@ -17,8 +17,9 @@ same markers:
   created once its needs are met, so this is queue time, not plan time;
 - critical-path wall time: the first run's creation to the last job's
   completion;
-- per phase (setup, compile, Docker baseline, role images, native, cleanup,
-  reporting) runner seconds of the runtime jobs;
+- per phase (setup, compile, runner storage, Docker baseline, role images,
+  Ryuk and test images, native, cleanup, reporting) runner seconds of the
+  runtime jobs;
 - the two Plan-job cache preparation phases (plan_modules, plan_build_cache),
   which only a Plan job's steps feed and which stay zero for runtime jobs;
 - per profile and release, the distribution of job and native durations;
@@ -31,9 +32,9 @@ count, so a rerun does not double an execution.
 
 The packing estimate answers what running several runtime profiles in one
 job would save: per member after the first, the phases that a shared job
-runs once (setup, Docker baseline, role images, reporting) and the
-acquisition delay, against the serialized compile, native and cleanup time
-that the shared job adds to the wall time.
+runs once (setup, runner storage, Docker baseline, role images, Ryuk and
+test images, reporting) and the acquisition delay, against the serialized
+compile, native and cleanup time that the shared job adds to the wall time.
 """
 
 import argparse
@@ -48,6 +49,7 @@ import re
 import subprocess
 import sys
 
+import run_image_matrix
 import scenario_history
 import tag_scenarios
 
@@ -68,8 +70,11 @@ PHASES = (
     ("setup", ("Set up job", "Run actions/checkout", "Run actions/setup-go", "Restore the Go module cache",
                "Restore the Go build cache", "Prepare Go modules")),
     ("compile", ("Compile selected tagged suite",)),
+    ("storage", ("Prepare runner storage", "Record runner storage", "Verify post-image runner headroom",
+                 "Release the qualification pressure file")),
     ("docker", ("Docker baseline",)),
-    ("images", ("Resolve native published Ceph roles", "Resolve published Ceph roles")),
+    ("images", ("Resolve native published Ceph roles",)),
+    ("test_images", ("Prepare Ryuk and the test images",)),
     ("native", ("Native assertions",)),
     ("cleanup", ("Verify owned Docker resource cleanup",)),
     ("plan_modules", ("Download every Go module",)),
@@ -77,12 +82,12 @@ PHASES = (
 )
 PHASE_NAMES = tuple(name for name, _ in PHASES) + ("reporting",)
 # The phases that one shared job of several profiles would run once.
-SHARED_PHASES = ("setup", "docker", "images", "reporting")
+SHARED_PHASES = ("setup", "storage", "docker", "images", "test_images", "reporting")
 # Each member of a shared job still compiles its own tag set, runs as its
 # own process and proves its own cleanup.
 MEMBER_PHASES = ("compile", "native", "cleanup")
-RELEASE_CODENAMES = ("squid", "tentacle")
-CURRENT_CODENAME = "tentacle"
+RELEASE_CODENAMES = tuple(sorted(run_image_matrix.CODENAMES.values()))
+CURRENT_CODENAME = run_image_matrix.CODENAMES[run_image_matrix.RELEASE]
 RUNTIME_STEP = "Native assertions"
 
 

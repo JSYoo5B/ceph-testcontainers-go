@@ -908,11 +908,6 @@ def changed_comparison(base, root=ROOT, requested_head=""):
                      "comparison_range": comparison_range}
 
 
-def changed_paths(base, root=ROOT):
-    """Legacy manual comparison, retained without an inferred PR identity."""
-    return changed_comparison(base, root)[0]
-
-
 def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTEGRATION_ROOT):
     """Run internal/tools/batchselect for batches of one integration package,
     with the shared harness in the same graph.

@@ -1,7 +1,6 @@
 package finalize
 
 import (
-	"reflect"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
@@ -59,7 +58,7 @@ func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter) {
 		f.t.Errorf("ceph finalization: a debug level window was registered after finalization started")
 		return
 	}
-	if isNilReceipter(handle) {
+	if evidence.IsNil(handle) {
 		handle = nil
 	}
 	f.debugWindows = append(f.debugWindows, handle)
@@ -135,7 +134,7 @@ func (f *Finalization) snapshotDebugWindows(m *finalizationManifest, phase strin
 
 func (f *Finalization) debugSnapshot(handle DebugLevelReceipter, phase string) finalizationDebugSnapshot {
 	snapshot := finalizationDebugSnapshot{Phase: phase}
-	if isNilReceipter(handle) {
+	if evidence.IsNil(handle) {
 		return snapshot
 	}
 	receipt := handle.Receipt()
@@ -171,18 +170,4 @@ func (f *Finalization) debugField(s string, limit int) string {
 		s += " [truncated]"
 	}
 	return s
-}
-
-// isNilReceipter reports a nil interface or a typed nil: a dynamic value of
-// a nilable kind that is nil. Receipt is never called on such a value.
-func isNilReceipter(r DebugLevelReceipter) bool {
-	if r == nil {
-		return true
-	}
-	v := reflect.ValueOf(r)
-	switch v.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface, reflect.UnsafePointer:
-		return v.IsNil()
-	}
-	return false
 }

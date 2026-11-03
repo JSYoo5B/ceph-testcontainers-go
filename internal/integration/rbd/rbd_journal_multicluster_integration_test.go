@@ -23,7 +23,7 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			harness.RunMultiClusterRBDJournalMirrorFailback(t, opts...)
+			runMultiClusterRBDJournalMirrorFailback(t, opts...)
 		})
 	}
 }

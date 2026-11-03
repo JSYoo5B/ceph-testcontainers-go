@@ -245,7 +245,7 @@ func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdOb
 		if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
 			return nil
 		}
-		native, err := readRBDMirrorObservedDaemon(ctx, daemon.Container)
+		native, err := rbdObservedRead.daemonStatus(ctx, daemon.Container, "read RBD receiving process status")
 		if err != nil {
 			return err
 		}
@@ -534,107 +534,6 @@ func validRBDMirrorObservedState(state string) bool {
 // read proving identity drift. Setup clients avoid taking a cluster mutation
 // mutex that could outlive this observation's caller deadline.
 func (p *rbdMirrorPair) checkObservedIdentities(ctx context.Context) error {
-	for _, site := range []struct {
-		client    testcontainers.Container
-		poolID    int64
-		namespace string
-		identity  rbdMirrorSitePolicyIdentity
-	}{
-		{p.sourceClient, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source},
-		{p.destinationClient, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination},
-	} {
-		if err := readRBDMirrorObservedPool(ctx, site.client, p.config.Pool, site.poolID); err != nil {
-			return err
-		}
-		base, err := readRBDMirrorObservedPolicy(ctx, site.client, p.config.Pool, "", p.legacyClient(site.client))
-		if err != nil {
-			return err
-		}
-		selected := base
-		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
-			if err != nil {
-				return err
-			}
-		}
-		if !sameRBDMirrorPolicy(base, site.identity.base) || !sameRBDMirrorPolicy(selected, site.identity.selected) {
-			return rbdImageGuardError("RBD mirror UUID, scope, remote mapping or site identity changed during observation")
-		}
-		if err := readRBDMirrorObservedPool(ctx, site.client, p.config.Pool, site.poolID); err != nil {
-			return err
-		}
-	}
-	return ctx.Err()
-}
-
-func readRBDMirrorObservedPool(ctx context.Context, client testcontainers.Container, name string, expectedID int64) error {
-	data, err := multicluster.Exec(ctx, client, "ceph", "--connect-timeout", "5", "osd", "pool", "ls", "detail", "--format", "json")
-	if err != nil {
-		return rbdImageQueryError("read RBD mirror pool identity", err)
-	}
-	var pools []struct {
-		ID   *int64  `json:"pool_id"`
-		Name *string `json:"pool_name"`
-		Type *int    `json:"type"`
-	}
-	if json.Unmarshal(data, &pools) != nil || pools == nil {
-		return rbdImageGuardError("decode RBD mirror pool identity")
-	}
-	found := false
-	seenIDs, seenNames := make(map[int64]bool), make(map[string]bool)
-	for _, pool := range pools {
-		if pool.ID == nil || *pool.ID < 0 || pool.Name == nil || *pool.Name == "" || pool.Type == nil ||
-			seenIDs[*pool.ID] || seenNames[*pool.Name] || (*pool.Type != 1 && *pool.Type != 3) {
-			return rbdImageGuardError("decode RBD mirror pool identity: missing, malformed or duplicate fields")
-		}
-		seenIDs[*pool.ID], seenNames[*pool.Name] = true, true
-		if *pool.Name == name {
-			if *pool.ID != expectedID || *pool.Type != 1 {
-				return rbdImageGuardError("RBD mirror pool identity or type changed during observation")
-			}
-			found = true
-		}
-	}
-	if !found {
-		return rbdImageGuardError("RBD mirror pool no longer exists")
-	}
-	return nil
-}
-
-func readRBDMirrorObservedPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, error) {
-	var policy nativeRBDMirrorPolicy
-	data, err := multicluster.Exec(ctx, client, "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
-	if err != nil {
-		return policy, rbdImageQueryError("read RBD mirror namespace policy", err)
-	}
-	if json.Unmarshal(data, &policy) != nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, policy.Mode) {
-		return policy, rbdImageGuardError("decode RBD mirror namespace policy: invalid native mode")
-	}
-	if legacy {
-		policy.RemoteNamespace = legacyRBDRemoteNamespace(policy.Mode, policy.RemoteNamespace, namespace)
-		if policy.Mode != "disabled" && policy.MirrorUUID == "" {
-			if policy.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, client, pool, namespace); err != nil {
-				return policy, rbdImageQueryError("read RBD mirror namespace policy", err)
-			}
-		}
-	}
-	if policy.Mode != "disabled" && (policy.MirrorUUID == "" || policy.RemoteNamespace == nil) {
-		return policy, rbdImageGuardError("decode RBD mirror namespace policy: missing UUID or remote namespace")
-	}
-	if namespace != "" && policy.Mode == "init-only" {
-		return policy, rbdImageGuardError("native init-only mode is invalid on a named namespace")
-	}
-	return policy, nil
-}
-
-func readRBDMirrorObservedDaemon(ctx context.Context, daemon testcontainers.Container) (*DaemonStatus, error) {
-	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
-	if err != nil {
-		return nil, rbdImageQueryError("read RBD receiving process status", err)
-	}
-	var status DaemonStatus
-	if json.Unmarshal(data, &status) != nil || status.PoolReplayers == nil {
-		return nil, rbdImageGuardError("decode RBD receiving process status: missing or malformed pool replayers")
-	}
-	return &status, nil
+	_, err := rbdObservedRead.checkSites(ctx, p.config.Pool, p.setupSites(), "RBD mirror UUID, scope, remote mapping or site identity changed during observation")
+	return err
 }

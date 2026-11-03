@@ -13,12 +13,12 @@ import (
 func TestAuthCiphersAndTicketLifetimes(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	image, imageOpts := harness.IntegrationImages(t)
-	harness.RunAuthCiphers(t, image, imageOpts)
+	runAuthCiphers(t, image, imageOpts)
 }
 
 // TestAuthCiphersWithoutKeyTypeOption runs the official Tentacle 20.2.3 image
 // for every role, independently of the release under test.
 func TestAuthCiphersWithoutKeyTypeOption(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
-	harness.RunAuthCiphers(t, harness.TentacleWithoutKeyTypes, nil)
+	runAuthCiphers(t, tentacleWithoutKeyTypes, nil)
 }

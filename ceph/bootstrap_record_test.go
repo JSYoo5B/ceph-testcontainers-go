@@ -26,7 +26,7 @@ func newBootstrapRecord() *bootstrapRecord {
 
 func TestBootstrapRecordWithoutARecordIsInert(t *testing.T) {
 	var r bootstrapRecord
-	if r.hasConfig() || r.isComplete() || r.rawVersion() != "" || len(r.rawConfig()) != 0 || len(r.rawKeyring()) != 0 {
+	if r.hasConfig() || r.isComplete() || r.rawVersion() != "" || len(r.rawConfig()) != 0 || len(r.keyring) != 0 {
 		t.Fatal("an empty record reports bootstrap data")
 	}
 	if config, keyring := r.clones(); len(config) != 0 || len(keyring) != 0 {
@@ -82,7 +82,7 @@ func TestBootstrapRecordLockedReadersReturnCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	diag[0] = 'X'
-	if !confirmed || string(r.rawConfig()) != bootstrapRecordConfig || r.rawKeyring()[0] != '[' {
+	if !confirmed || string(r.rawConfig()) != bootstrapRecordConfig || r.keyring[0] != '[' {
 		t.Fatal("a returned copy changed the stored record")
 	}
 	launchConfig, launchAdmin := r.launchStrings()
@@ -206,7 +206,6 @@ var bootstrapRecordMethods = map[string][]string{
 	"recordKeyring":         nil,
 	"recordVersion":         nil,
 	"rawConfig":             nil,
-	"rawKeyring":            nil,
 	"rawVersion":            nil,
 	"hasConfig":             {"len(r.config)"},
 	"isComplete":            {"len(r.config)", "len(r.keyring)"},

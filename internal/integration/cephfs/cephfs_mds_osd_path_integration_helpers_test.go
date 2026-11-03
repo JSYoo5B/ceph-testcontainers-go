@@ -77,10 +77,10 @@ publish(4, closed=True, **closing)
 type mdsOSDPathState struct {
 	journal     []harness.ObjecterOp
 	clientData  []harness.ObjecterOp
-	mkdir       harness.MDSRequestAge
+	mkdir       mdsRequestAge
 	hasMkdir    bool
-	pending     []harness.ClientMDSRequest
-	caps        harness.ClientInodeCaps
+	pending     []clientMDSRequest
+	caps        clientInodeCaps
 	hasCaps     bool
 	mdsSize     uint64
 	raw         string
@@ -111,7 +111,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	netem := harness.NetemImage(t)
-	m := harness.StartCephFSSingleMDS(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(osdCount)))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(osdCount)))
 	const path, directory = "/mds-osd-path", "/journaled"
 	const writerDir, waiterDir = "/tmp/mds-osd-writer", "/tmp/mds-osd-waiter"
 	writerAsok, waiterAsok := writerDir+"/client.asok", waiterDir+"/client.asok"
@@ -119,18 +119,18 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	tail := append([]byte("\x00written while only the MDS was cut\xff"), bytes.Repeat([]byte{0x5c, 0xc5}, 512)...)
 	whole := append(append([]byte{}, base...), tail...)
 
-	writer := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMDSOSDPathWriter, m.FS.FilesystemName, writerDir, writerAsok, path, directory, hex.EncodeToString(base), hex.EncodeToString(tail))
+	writer := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMDSOSDPathWriter, m.FS.FilesystemName, writerDir, writerAsok, path, directory, hex.EncodeToString(base), hex.EncodeToString(tail))
 	opened := writer.Receipt(t, ctx, 1)
 	if opened.Client == 0 || opened.Inode == 0 || opened.Size != int64(len(base)) {
 		t.Fatalf("writer receipt 1 = %+v", opened)
 	}
-	waiter := harness.StartCephFSActor(t, ctx, m.Cluster, harness.ToolkitContainer(t, m.Cluster), harness.CephFSJournalWaiter, m.FS.FilesystemName, waiterDir, waiterAsok, directory)
+	waiter := startCephFSActor(t, ctx, m.Cluster, harness.ToolkitContainer(t, m.Cluster), cephFSJournalWaiter, m.FS.FilesystemName, waiterDir, waiterAsok, directory)
 	waiting := waiter.Receipt(t, ctx, 1)
 	if waiting.Client == 0 || waiting.Client == opened.Client {
 		t.Fatalf("waiter receipt 1 = %+v, writer %+v", waiting, opened)
 	}
-	writerSession := harness.CephFSRetainedSession(t, ctx, m.FS, opened.Client, 0)
-	waiterSession := harness.CephFSRetainedSession(t, ctx, m.FS, waiting.Client, 0)
+	writerSession := cephFSRetainedSession(t, ctx, m.FS, opened.Client, 0)
+	waiterSession := cephFSRetainedSession(t, ctx, m.FS, waiting.Client, 0)
 
 	// The tuples: each OSD's public address from the OSDMap, the MDS's v2
 	// address from the FSMap, and the containers' endpoints.
@@ -208,8 +208,8 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	}
 
 	object := fmt.Sprintf("%x.00000000", opened.Inode)
-	placed := harness.CephOSDMapObject(t, ctx, m.Cluster, m.FS.DataPool, object)
-	journal := harness.CephOSDMapObject(t, ctx, m.Cluster, m.FS.MetadataPool, "200.00000000")
+	placed := cephOSDMapObject(t, ctx, m.Cluster, m.FS.DataPool, object)
+	journal := cephOSDMapObject(t, ctx, m.Cluster, m.FS.MetadataPool, "200.00000000")
 	// Every OSD is cut, so every copy is behind the cut; one OSD holds them
 	// alone, more hold a copy each.
 	if replicas := min(osdCount, 2); len(placed.Acting) != replicas || len(journal.Acting) != replicas ||
@@ -217,7 +217,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		!slices.ContainsFunc(cutIDs, func(id int) bool { return id == journal.Acting[0] }) {
 		t.Fatalf("the file (acting %v) and the journal (acting %v) are not on %d of osds %v", placed.Acting, journal.Acting, replicas, cutIDs)
 	}
-	if ops, raw, err := harness.ObjecterRequests(ctx, m.Cluster, m.Client, writerAsok, ""); err != nil || len(harness.ObjecterOpsOn(ops, placed.PoolID, "")) != 0 {
+	if ops, raw, err := objecterRequests(ctx, m.Cluster, m.Client, writerAsok, ""); err != nil || len(harness.ObjecterOpsOn(ops, placed.PoolID, "")) != 0 {
 		t.Fatalf("writer has data ops in flight before the cut: %v: %s", err, raw)
 	}
 
@@ -264,13 +264,13 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	const held = 5.0
 	seen, err := harness.Observe(ctx, 2*time.Minute, 40*time.Second, time.Second, func(probeCtx context.Context) (mdsOSDPathState, bool, error) {
 		var state mdsOSDPathState
-		mdsObjecter, mdsRaw, err := harness.ObjecterRequests(probeCtx, m.Cluster, nil, "", m.MDS.Name)
+		mdsObjecter, mdsRaw, err := objecterRequests(probeCtx, m.Cluster, nil, "", m.MDS.Name)
 		if err != nil {
 			return state, false, err
 		}
 		state.journal = harness.ObjecterOpsOn(mdsObjecter, journal.PoolID, "200.")
 		state.journalAged = slices.ContainsFunc(state.journal, func(op harness.ObjecterOp) bool { return op.Age >= held })
-		clientOps, _, err := harness.ObjecterRequests(probeCtx, m.Cluster, m.Client, writerAsok, "")
+		clientOps, _, err := objecterRequests(probeCtx, m.Cluster, m.Client, writerAsok, "")
 		if err != nil {
 			return state, false, err
 		}
@@ -280,13 +280,13 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 			return state, false, err
 		}
 		var dump struct {
-			Ops []harness.MDSRequestAge `json:"ops"`
+			Ops []mdsRequestAge `json:"ops"`
 		}
 		if err := json.Unmarshal(inFlight, &dump); err != nil {
 			return state, false, fmt.Errorf("dump_ops_in_flight: %v: %.512s", err, inFlight)
 		}
 		for _, op := range dump.Ops {
-			if _, found := harness.FindMDSRequest([]harness.MDSRequestOp{op.MDSRequestOp}, waiting.Client, "mkdir", 0); found {
+			if _, found := findMDSRequest([]mdsRequestOp{op.mdsRequestOp}, waiting.Client, "mkdir", 0); found {
 				state.mkdir, state.hasMkdir = op, true
 			}
 		}
@@ -300,10 +300,10 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		if err != nil || cache.ExitCode != 0 || !cache.Complete() {
 			return state, false, fmt.Errorf("writer dump_cache: exit=%d err=%v stderr=%.512s", cache.ExitCode, err, cache.Stderr)
 		}
-		if state.caps, state.hasCaps, err = harness.ParseClientCache(cache.Stdout, opened.Inode); err != nil {
+		if state.caps, state.hasCaps, err = parseClientCache(cache.Stdout, opened.Inode); err != nil {
 			return state, false, err
 		}
-		if state.mdsSize, err = harness.MDSInodeSizeOf(probeCtx, m.Cluster, m.MDS.Name, opened.Inode); err != nil {
+		if state.mdsSize, err = mdsInodeSizeOf(probeCtx, m.Cluster, m.MDS.Name, opened.Inode); err != nil {
 			return state, false, err
 		}
 		state.raw = fmt.Sprintf("mds objecter %.2048s; mds mkdir %q at %q age %.1f events %v; waiter requests %+v; writer data ops %d, caps size=%d flushing=%q tids=%v; mds size %d",
@@ -322,10 +322,10 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	}
 	if events := state.mkdir.Events(); slices.ContainsFunc(events, func(event string) bool {
 		return event == "replying" || strings.HasPrefix(event, "journal_committed")
-	}) || harness.RequestSafety(state.mkdir.MDSRequestOp) != "no-early-reply" {
+	}) || requestSafety(state.mkdir.mdsRequestOp) != "no-early-reply" {
 		t.Fatalf("the MDS answered the held mkdir: %s", state.raw)
 	}
-	if !slices.ContainsFunc(state.pending, func(request harness.ClientMDSRequest) bool {
+	if !slices.ContainsFunc(state.pending, func(request clientMDSRequest) bool {
 		return request.TID == state.mkdir.TypeData.ReqID.TID && request.Op == "mkdir" && !bool(request.GotUnsafe)
 	}) {
 		t.Fatalf("the waiter does not hold its mkdir: %s", state.raw)
@@ -337,7 +337,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		t.Fatalf("a held call returned during the cut: %s", state.raw)
 	}
 	for _, session := range []cephfssession.Session{writerSession, waiterSession} {
-		if during := harness.CephFSRetainedSession(t, ctx, m.FS, session.ID, 0); during.Address != session.Address {
+		if during := cephFSRetainedSession(t, ctx, m.FS, session.ID, 0); during.Address != session.Address {
 			t.Fatalf("client.%d session during the cut %+v, before %+v", session.ID, during, session)
 		}
 	}
@@ -362,19 +362,19 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	}
 	returned := time.Since(restored).Round(time.Millisecond)
 	tid := state.mkdir.TypeData.ReqID.TID
-	historic, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (harness.MDSRequestOp, bool, error) {
+	historic, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (mdsRequestOp, bool, error) {
 		out, err := m.Cluster.Ceph(probeCtx, "tell", "mds."+m.MDS.Name, "dump_historic_ops")
 		if err != nil {
-			return harness.MDSRequestOp{}, false, err
+			return mdsRequestOp{}, false, err
 		}
-		ops, err := harness.ParseMDSRequestOps(out)
+		ops, err := parseMDSRequestOps(out)
 		if err != nil {
-			return harness.MDSRequestOp{}, false, fmt.Errorf("dump_historic_ops: %v: %.1024s", err, out)
+			return mdsRequestOp{}, false, fmt.Errorf("dump_historic_ops: %v: %.1024s", err, out)
 		}
-		op, found := harness.FindMDSRequest(ops, waiting.Client, "mkdir", tid)
+		op, found := findMDSRequest(ops, waiting.Client, "mkdir", tid)
 		return op, found, nil
 	})
-	if err != nil || harness.RequestSafety(historic.Value) != "no-early-reply" || !harness.JournaledThenReplied(historic.Value.Events()) {
+	if err != nil || requestSafety(historic.Value) != "no-early-reply" || !journaledThenReplied(historic.Value.Events()) {
 		t.Fatalf("the MDS's history lacks the committed mkdir tid %d: %+v: %v", tid, historic.Value, err)
 	}
 	if size := m.MDSInodeSize(t, ctx, m.MDS.Name, opened.Inode); size != uint64(len(whole)) {
@@ -427,12 +427,12 @@ type cephFSIndependentRead struct {
 
 // readCephFSIndependently reads path through a new mount in the control
 // container.
-func readCephFSIndependently(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, path string) cephFSIndependentRead {
+func readCephFSIndependently(t *testing.T, ctx context.Context, m *cephFSSingleMDS, path string) cephFSIndependentRead {
 	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
 	read, err := m.Cluster.RunNativeCommand(readCtx, harness.ToolkitContainer(t, m.Cluster), ceph.NativeCommand{
-		Argv: []string{"python3", "-c", harness.CephFSIndependentReader, m.FS.FilesystemName, path}, Timeout: 2 * time.Minute,
+		Argv: []string{"python3", "-c", cephFSIndependentReader, m.FS.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
 	var independent cephFSIndependentRead

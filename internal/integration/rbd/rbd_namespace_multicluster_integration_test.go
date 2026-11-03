@@ -119,7 +119,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 						})
 					}
 					if tc.sourceNamespace != tc.destinationNamespace && harness.RBDNamespaceMappingUnsupported(t, ctx, source) {
-						harness.RequireRBDNamespaceMappingRefused(t, err, source, [2]string{tc.sourceNamespace, tc.destinationNamespace})
+						requireRBDNamespaceMappingRefused(t, err, source, [2]string{tc.sourceNamespace, tc.destinationNamespace})
 						return
 					}
 					if err != nil {

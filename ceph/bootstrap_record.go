@@ -21,7 +21,7 @@ import (
 //
 // Each reader and writer keeps the guard it always had. The locked methods
 // take mu and return clones, so a caller never aliases the stored bytes. The
-// raw methods (rawConfig, rawKeyring, rawVersion, hasConfig, isComplete) and
+// raw methods (rawConfig, rawVersion, hasConfig, isComplete) and
 // the record methods take no lock: their callers hold Container.mu or run
 // during Run, before the cluster value is shared, . cephVersion has no lock of its own; it is written once during Run
 // and only read afterwards. The guards in bootstrap_record_test.go enforce that
@@ -51,9 +51,6 @@ func (r *bootstrapRecord) recordVersion(version string) { r.cephVersion = versio
 // rawConfig returns the stored configuration without a lock and without a
 // copy. The caller holds Container.mu or runs before the cluster is shared.
 func (r *bootstrapRecord) rawConfig() []byte { return r.config }
-
-// rawKeyring returns the stored keyring under the same contract as rawConfig.
-func (r *bootstrapRecord) rawKeyring() []byte { return r.keyring }
 
 // rawVersion returns the recorded Ceph version without a lock; it is written
 // only during Run.

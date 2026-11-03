@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -119,7 +120,7 @@ func TestDockerBackendTargetReadsGenerationAndEndpointDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := targetState{running: true, networkMode: "bridge", sandboxID: "sandbox", startedAt: "2026-10-30T01:02:03.000000004Z", driver: "bridge", mac: "02:42:ac:11:00:02"}
+	want := nshelper.Target{Running: true, NetworkMode: "bridge", SandboxID: "sandbox", StartedAt: "2026-10-30T01:02:03.000000004Z", Driver: "bridge", MAC: "02:42:ac:11:00:02"}
 	if state != want {
 		t.Fatalf("got %+v, want %+v", state, want)
 	}
@@ -129,7 +130,7 @@ func TestDockerBackendTargetReadsGenerationAndEndpointDriver(t *testing.T) {
 	engine.json("GET /containers/target/json", http.StatusOK, strings.Replace(engineRunningTarget, `"Restarting":false`, `"Restarting":true`, 1))
 	engine.reset()
 	state, err = dockerBackend{}.target(t.Context(), "target", "other")
-	if err != nil || state.running || state.mac != "" || state.driver != "" || engine.called("GET /networks/") {
+	if err != nil || state.Running || state.MAC != "" || state.Driver != "" || engine.called("GET /networks/") {
 		t.Fatalf("restarting off-network target: %+v %v", state, err)
 	}
 

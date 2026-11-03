@@ -70,9 +70,12 @@ type authorizationRecord struct {
 // provides no layout, snapshot or root-squash administration capabilities.
 //
 // A non-nil result with an error may contain an owned partial creation. It is
-// never silently adopted by a second Authorize call; inspect through Ceph or
-// explicitly Authorization.Deauthorize when its Client creation was confirmed.
-// External auth/layout edits must not race these operations.
+// never silently adopted by a second Authorize call. When the native grant was
+// attempted, clean it up with Authorization.Deauthorize. When only the Client
+// was created and the grant was never attempted, Deauthorize refuses the
+// result with ceph.ErrInvalidRequest because the principal holds no file-data
+// rights: remove it with grant.Client.Delete. External auth/layout edits must
+// not race these operations.
 //
 //purpose:construction,handoff
 func (volume *Subvolume) Authorize(ctx context.Context, config AuthorizationConfig) (*Authorization, error) {
@@ -85,10 +88,7 @@ func (volume *Subvolume) Authorize(ctx context.Context, config AuthorizationConf
 		return nil, err
 	}
 	if config.Access != "r" && config.Access != "rw" {
-		return nil, errors.New("subvolume access must be r or rw")
-	}
-	if volume == nil {
-		return nil, errors.New("subvolume is required")
+		return nil, servicehook.Invalid(errors.New("subvolume access must be r or rw"))
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
@@ -538,7 +538,7 @@ func (grant *Authorization) EvictClients(ctx context.Context) error {
 func clientEntity(name string) (string, error) {
 	id := strings.TrimPrefix(name, "client.")
 	if !naming.ClientID.MatchString(id) {
-		return "", errors.New("client name must be an ID or client.ID using letters, digits, dots, underscores or hyphens")
+		return "", servicehook.Invalid(errors.New("client name must be an ID or client.ID using letters, digits, dots, underscores or hyphens"))
 	}
 	return "client." + id, nil
 }

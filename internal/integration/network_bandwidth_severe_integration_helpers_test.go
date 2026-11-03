@@ -74,7 +74,7 @@ type severeRead struct {
 
 func readSevere(t *testing.T, ctx context.Context, ctr testcontainers.Container, name string, size, timeout int) severeRead {
 	t.Helper()
-	out := harness.DelayExec(t, ctx, ctr, "python3", "-c", severeReadScript, harness.BandwidthPool, name, fmt.Sprint(size), fmt.Sprint(timeout))
+	out := delayExec(t, ctx, ctr, "python3", "-c", severeReadScript, harness.BandwidthPool, name, fmt.Sprint(size), fmt.Sprint(timeout))
 	var read severeRead
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &read); err != nil {
 		t.Fatalf("parse the read %q: %v", out, err)
@@ -93,7 +93,7 @@ func (r severeRead) complete(t *testing.T, what string, size int, sha256 string)
 // underLimit applies limit to the limited OSD, runs during, reads the
 // lease's status before and after it, and restores the lease, checking that
 // the root qdisc and the helpers are gone.
-func underLimit(f harness.BandwidthFixture, t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
+func underLimit(f bandwidthFixture, t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
 	t.Helper()
 	lease, err := fault.ApplyNetworkProfile(ctx, f.Cluster, f.Limited.Container, limit)
 	if lease != nil {
@@ -114,10 +114,10 @@ func underLimit(f harness.BandwidthFixture, t *testing.T, ctx context.Context, l
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if root := harness.RootQdisc(t, ctx, f.Image, f.Limited.Container, lease.Interface); root != "noqueue 0:" {
+	if root := rootQdisc(t, ctx, f.Image, f.Limited.Container, lease.Interface); root != "noqueue 0:" {
 		t.Fatalf("root qdisc after Restore: %s", root)
 	}
-	if helpers := harness.NetemHelpers(t, ctx); helpers != 0 {
+	if helpers := netemHelpers(t, ctx); helpers != 0 {
 		t.Fatalf("%d netem helpers after Restore", helpers)
 	}
 	return before, after
@@ -131,7 +131,7 @@ func transferSeconds(size int, rate fault.NetworkRate) float64 {
 func testNetworkBandwidthSevere(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	f := harness.NewBandwidthFixture(t, ctx)
+	f := newBandwidthFixture(t, ctx)
 	address, err := f.Client.ContainerIP(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -139,8 +139,8 @@ func testNetworkBandwidthSevere(t *testing.T) {
 	peer := netip.MustParseAddr(address)
 	// Every object is written before any limit; under a limit there are
 	// only reads, which are idempotent.
-	timeoutName, timeoutSHA := harness.PutBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "timeout", timeoutObject)
-	slowName, slowSHA := harness.PutBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "slow", slowObject)
+	timeoutName, timeoutSHA := putBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "timeout", timeoutObject)
+	slowName, slowSHA := putBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "slow", slowObject)
 	severe := fault.NetworkProfile{HelperImage: f.Image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
 
 	t.Run("op timeout", func(t *testing.T) {

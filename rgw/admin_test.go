@@ -40,6 +40,9 @@ type rgwAdminTestContainer struct {
 	// stopped makes State report an exited container; paused and restarting
 	// report a container whose Running flag stays true but refuses Exec.
 	stopped, paused, restarting bool
+	// onExec, when set, runs in each radosgw-admin invocation before it
+	// answers.
+	onExec func()
 }
 
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
@@ -57,6 +60,9 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 		ctr.limits = append(ctr.limits, args[5])
 	}
 	args = gwtest.Argv(args)
+	if ctr.onExec != nil {
+		ctr.onExec()
+	}
 	ctr.calls = append(ctr.calls, slices.Clone(args))
 	if len(ctr.responses) == 0 {
 		return 1, nil, errors.New("unexpected radosgw-admin invocation")
@@ -93,8 +99,9 @@ func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
 	if _, err := gateway.Admin(t.Context(), "zone", "get"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--format", "json",
-		"--rgw-realm", "realm-a", "--rgw-zonegroup", "group-a", "--rgw-zone", "zone-a", "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0", "zone", "get"}
+	want := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
+		"--rgw-realm", "realm-a", "--rgw-zonegroup", "group-a", "--rgw-zone", "zone-a", "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0",
+		"--format", "json", "zone", "get"}
 	if !slices.Equal(ctr.calls[0], want) {
 		t.Fatalf("gateway CLI scope changed: %v", ctr.calls[0])
 	}
@@ -108,6 +115,44 @@ func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
 	}
 	if _, err := gateway.Admin(t.Context(), "user", "list", "bad\nargument"); err == nil {
 		t.Fatal("control character accepted")
+	}
+}
+
+func TestRGWAdminRunsWithoutTheClusterMutex(t *testing.T) {
+	gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `{}`})
+	cluster := gwbase.Of(gateway).Cluster()
+	ctr.onExec = func() {
+		if !servicehook.TryLock(cluster) {
+			t.Error("Admin held the cluster mutex while radosgw-admin ran")
+			return
+		}
+		servicehook.Unlock(cluster)
+	}
+	if _, err := gateway.Admin(t.Context(), "zone", "get"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ctr.calls) != 1 {
+		t.Fatalf("calls = %v", ctr.calls)
+	}
+}
+
+func TestRGWAdminAfterConcurrentRemovalFailsClassified(t *testing.T) {
+	gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{err: errors.New("container is gone")})
+	cluster := gwbase.Of(gateway).Cluster()
+	// Remove replaces the service between admission and the command; the
+	// command then reaches a container that is gone.
+	ctr.onExec = func() {
+		servicehook.Lock(cluster)
+		servicehook.DeleteService(cluster, "rgw")
+		servicehook.Unlock(cluster)
+	}
+	_, err := gateway.Admin(t.Context(), "zone", "get")
+	var operation *ceph.OperationError
+	if err == nil || !errors.As(err, &operation) {
+		t.Fatalf("Admin after removal = %v, want a classified error", err)
+	}
+	if _, err := gateway.Admin(t.Context(), "zone", "get"); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 1 {
+		t.Fatalf("Admin of a removed gateway = %v (calls %d), want ErrInvalidRequest before the CLI", err, len(ctr.calls))
 	}
 }
 

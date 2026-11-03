@@ -17,10 +17,10 @@ func TestNoInitialOSDTopology(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		if !t.Run(name, func(t *testing.T) {
-			if !t.Run("bootstrap-and-storage", func(t *testing.T) { harness.RunNoInitialOSDStorage(t, host) }) {
+			if !t.Run("bootstrap-and-storage", func(t *testing.T) { runNoInitialOSDStorage(t, host) }) {
 				return
 			}
-			t.Run("partial-first-add-cleanup", func(t *testing.T) { harness.RunNoInitialOSDPartial(t, host) })
+			t.Run("partial-first-add-cleanup", func(t *testing.T) { runNoInitialOSDPartial(t, host) })
 		}) {
 			return
 		}

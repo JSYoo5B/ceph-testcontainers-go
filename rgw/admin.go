@@ -163,44 +163,23 @@ type UserInfo struct {
 //
 //purpose:native
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
-	if err := validateRGWAdminArgs(args); err != nil {
+	if err := gwbase.ValidateAdminArgs(args); err != nil {
 		return nil, err
 	}
 	core := g.base()
 	if core.Cluster() == nil {
 		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
+	// The cluster mutex covers only the admission: the command runs for as
+	// long as the caller's ctx allows, and holding the mutex for it would
+	// block every other operation of the cluster.
 	servicehook.Lock(core.Cluster())
-	defer servicehook.Unlock(core.Cluster())
-	if err := core.ValidateAdmin(); err != nil {
+	target, err := core.AdmitAdmin()
+	servicehook.Unlock(core.Cluster())
+	if err != nil {
 		return nil, err
 	}
-	return core.AdminCommand(ctx, args...)
-}
-
-func validateRGWAdminArgs(args []string) error {
-	if len(args) == 0 {
-		return servicehook.Invalid(errors.New("radosgw-admin operation is required"))
-	}
-	for _, arg := range args {
-		if strings.IndexFunc(arg, unicode.IsControl) != -1 {
-			return servicehook.Invalid(errors.New("radosgw-admin arguments must not contain control characters"))
-		}
-		flag, _, _ := strings.Cut(strings.ReplaceAll(arg, "_", "-"), "=")
-		switch flag {
-		case "--rgw-realm", "--rgw-realm-id", "--realm-id", "--realm-name",
-			"--rgw-zonegroup", "--rgw-zonegroup-id", "--zonegroup-id", "--zonegroup-name",
-			"--rgw-zone", "--rgw-zone-id", "--zone-id", "--zone-name",
-			"--conf", "--cluster", "--keyring", "--keyfile", "--key-file", "--key", "--id", "--name", "--client-id", "--mon-host", "--monmap", "--no-config-file":
-			return servicehook.Invalid(errors.New("radosgw-admin cannot override the gateway scope or Ceph connection"))
-		}
-		for _, short := range []string{"-c", "-m", "-n", "-k"} {
-			if strings.HasPrefix(arg, short) && !strings.HasPrefix(arg, "--") {
-				return servicehook.Invalid(errors.New("radosgw-admin cannot override the gateway Ceph connection"))
-			}
-		}
-	}
-	return nil
+	return core.AdminCommandIn(ctx, target, args...)
 }
 
 var rgwCapTypePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)

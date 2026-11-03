@@ -188,7 +188,7 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 	}
 	payload := []byte("one ordinary user, two buckets, aggregate admission")
 	client.Request(t, ctx, http.MethodPut, first+"/kept", payload, http.StatusOK)
-	harness.RGWSyncStats(t, ctx, nil, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
+	rgwSyncStats(t, ctx, nil, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
 	// The second bucket is empty, and its bucket quota remains disabled. Only
 	// this ordinary user's aggregate quota can reject its first object.
 	rgwFixtureUserQuotaWrite(t, ctx, client, second+"/rejected", payload, false)

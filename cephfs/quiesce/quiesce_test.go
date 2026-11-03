@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
@@ -155,7 +156,7 @@ func TestCephFSQuiesceUncertainRepliesRetainRecoveryHandle(t *testing.T) {
 func TestCephFSQuiesceValidationAndDecoder(t *testing.T) {
 	fs, control, volume := quiesceFixture(t)
 	for _, config := range []Config{{}, {Timeout: time.Second}, {Expiration: time.Second}} {
-		if _, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, config); err == nil || control.mutations != 0 {
+		if _, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, config); !errors.Is(err, ceph.ErrInvalidRequest) || control.mutations != 0 {
 			t.Fatal("unbounded quiesce accepted")
 		}
 	}
@@ -165,7 +166,12 @@ func TestCephFSQuiesceValidationAndDecoder(t *testing.T) {
 	unconfirmed.Ready = false
 	removed := *volume
 	removed.Removed = true
-	for _, volumes := range [][]*volbase.Volume{nil, {nil}, {&foreign}, {&unconfirmed}, {&removed}, {volume, volume}} {
+	for _, volumes := range [][]*volbase.Volume{nil, {nil}, {&foreign}, {volume, volume}} {
+		if _, err := start(t.Context(), fs.Core, volumes, Config{Timeout: time.Second, Expiration: time.Second}); !errors.Is(err, ceph.ErrInvalidRequest) || control.mutations != 0 {
+			t.Fatalf("invalid quiesce members %v: %v", volumes, err)
+		}
+	}
+	for _, volumes := range [][]*volbase.Volume{{&unconfirmed}, {&removed}} {
 		if _, err := start(t.Context(), fs.Core, volumes, Config{Timeout: time.Second, Expiration: time.Second}); err == nil || control.mutations != 0 {
 			t.Fatal("invalid quiesce member accepted")
 		}

@@ -2,7 +2,9 @@ package evidence
 
 import (
 	"slices"
+	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -17,6 +19,58 @@ func TestRedactorDoesNotRewriteItsOutput(t *testing.T) {
 	redact = Redactor([]string{"secret", "secret-longer", ""})
 	if got := redact("secret-longer secret"); got != "[REDACTED] [REDACTED]" {
 		t.Fatalf("redacted %q", got)
+	}
+}
+
+// Redacting text that is already redacted changes nothing, so a report
+// redacted on several paths keeps one "[REDACTED]" per secret.
+func TestRedactorIsIdempotent(t *testing.T) {
+	redact := Redactor([]string{"AQBvalue==", "known-prefix"})
+	for _, input := range []string{
+		"key = AQBvalue==",
+		"key = plain",
+		`{"secret_key": "abc", "token":"def"}`,
+		"Authorization: Bearer abc.def",
+		"password=hunter2; key=[x]",
+		`password="[review-secret]"`,
+		`password="prefix[review-secret]"`,
+		"token=a[b]c[d",
+		`password="[REDACTED]review-secret"`,
+		`token="[REDACTED-review-secret]"`,
+		`password="known-prefix-review-secret"`,
+		"private_key: [REDACTED PRIVATE KEY]",
+		"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+	} {
+		once := redact(input)
+		if twice := redact(once); twice != once {
+			t.Fatalf("redacting %q again changed %q to %q", input, once, twice)
+		}
+		if strings.Contains(once, "]]") || strings.Contains(once, "review-secret") || strings.Contains(once, "hunter2") {
+			t.Fatalf("redacted %q to %q", input, once)
+		}
+	}
+}
+
+// IsNil finds a typed nil of every nilable kind and keeps a non-nil value or
+// a value of a kind that cannot be nil.
+func TestIsNil(t *testing.T) {
+	var (
+		pointer *selectTestContainer
+		fn      func()
+		ch      chan int
+		m       map[string]int
+		s       []int
+		iface   error
+	)
+	for _, v := range []any{nil, pointer, fn, ch, m, s, iface, unsafe.Pointer(nil)} {
+		if !IsNil(v) {
+			t.Errorf("IsNil(%T) = false", v)
+		}
+	}
+	for _, v := range []any{&selectTestContainer{}, 0, "", struct{}{}, []int{}} {
+		if IsNil(v) {
+			t.Errorf("IsNil(%T) = true", v)
+		}
 	}
 }
 

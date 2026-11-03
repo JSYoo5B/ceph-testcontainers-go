@@ -222,55 +222,30 @@ func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContain
 		}
 		return err
 	}
-	attempts := 1
-	if c.settings.hostNetwork {
-		attempts = hostPortAttempts
-	}
-	for attempt := range attempts {
-		var lease *hostPortLease
-		var err error
-		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.startup.ownedLabel())
-			// c.mu is already held, so register ownership without re-locking it.
-			c.portLeases.track(lease)
-			if err != nil {
-				return err
-			}
-		}
+	// The admin socket is cleared before every creation, so that a socket a
+	// MON that lost its host ports left cannot pass the next one's ready check.
+	create := func(ctx context.Context, ports []int) (testcontainers.Container, error) {
 		if err := c.clearAdminSocket(ctx, "mon."+join.name); err != nil {
-			return err
+			return nil, err
 		}
-		var ports []int
-		if lease != nil {
-			ports = lease.Ports
-		}
-		mon.Container, err = c.runDaemon(ctx, mon.image, c.monitorJoinOptions(join, ports)...)
-		if lease != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			releaseErr := lease.Release(cleanupCtx)
-			cancel()
-			if err != nil || releaseErr != nil {
-				return errors.Join(err, releaseErr)
-			}
-			err = mon.Start(ctx)
-		}
-		if err == nil {
-			return nil
-		}
-		if lease == nil || attempt+1 == attempts || ctx.Err() != nil {
-			return err
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		conflict := isPortConflict(cleanupCtx, mon.Container)
-		if conflict {
-			err = mon.Terminate(cleanupCtx)
-		}
-		cancel()
-		if !conflict || !onlyMissingHostResource(err) {
-			return err
-		}
+		return c.runDaemon(ctx, mon.image, c.monitorJoinOptions(join, ports)...)
 	}
-	return nil
+	ctr, err := c.startMonitorRetryingPorts(ctx, monitorPortStart{
+		host: c.settings.hostNetwork,
+		attempt: func(ctx context.Context) (testcontainers.Container, bool, error) {
+			if !c.settings.hostNetwork {
+				ctr, err := create(ctx, nil)
+				return ctr, false, err
+			}
+			ctr, _, started, err := c.startOnLeasedPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, create)
+			return ctr, started, err
+		},
+		discard: terminateLostPortsMonitor,
+	})
+	if ctr != nil {
+		mon.Container = ctr
+	}
+	return err
 }
 
 // monitorSocketReady is the ready check of a joining MON: its admin socket.

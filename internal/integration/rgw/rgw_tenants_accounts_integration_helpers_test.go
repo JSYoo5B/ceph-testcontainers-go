@@ -186,7 +186,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	if xml.Unmarshal(rootClients[1].Request(t, ctx, http.MethodGet, accountBucketA+"?acl", nil, http.StatusOK), &acl) != nil || acl.Owner.ID != owned.ID() {
 		t.Fatal("S3 bucket owner is not the native account ID")
 	}
-	harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
+	rgwSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
 	// The two roots have different user IDs. Only root 0 wrote an object, but
 	// native user stats for either root aggregate the same account owner.
 	for _, root := range roots {
@@ -284,7 +284,7 @@ func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, ga
 		}
 		client.Request(t, ctx, http.MethodDelete, path, nil, http.StatusNoContent)
 		if attempt%4 == 0 {
-			harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
+			rgwSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
 		}
 		select {
 		case <-ctx.Done():

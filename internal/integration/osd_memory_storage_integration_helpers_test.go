@@ -183,7 +183,7 @@ func osdMemoryBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, 
 func osdMemoryIdentities(t *testing.T, ctx context.Context, cluster *ceph.Container) map[int]string {
 	t.Helper()
 	result := map[int]string{}
-	for _, item := range harness.NoInitialOSDNativeDump(t, ctx, cluster) {
+	for _, item := range noInitialOSDNativeDump(t, ctx, cluster) {
 		if _, exists := result[item.ID]; exists {
 			t.Fatal("duplicate native OSD ID")
 		}

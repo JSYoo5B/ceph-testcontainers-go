@@ -299,7 +299,7 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 		t.Fatalf("the destination did not catch up: %v, last %s", err, caught.Value)
 	}
 	catchUp := time.Since(restored)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, image, after)
+	verifyRBDBytes(t, ctx, destinationClient, image, after)
 	reported, err := harness.Observe(ctx, 2*time.Minute, 30*time.Second, 2*time.Second, func(probeCtx context.Context) (rbdMirrorSyncStatus, bool, error) {
 		status, err := rbdMirrorSyncState(probeCtx, mirror, "rate")
 		return status, err == nil && status.Remote == last.status.Remote && status.Local == status.Remote, err

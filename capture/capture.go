@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/pcapfile"
 	"github.com/containerd/errdefs"
 	"github.com/testcontainers/testcontainers-go"
@@ -52,30 +53,18 @@ var (
 	// capture contract: a missing sh, sleep, tcpdump or python3, a tcpdump
 	// that does not run or compile a filter, or a helper that runs as root.
 	// It belongs to ceph.ErrImageCapability.
-	ErrImageUnsupported error = &categoryError{text: "the capture helper image does not meet the capture contract", kind: ceph.ErrImageCapability}
+	ErrImageUnsupported error = nshelper.Category("the capture helper image does not meet the capture contract", ceph.ErrImageCapability)
 	// ErrPermissionDenied reports an engine that did not let the helper's
 	// tcpdump run or open its device with NET_RAW. It belongs to
 	// ceph.ErrEnvironmentUnavailable.
-	ErrPermissionDenied error = &categoryError{text: "the capture helper was not permitted to capture packets", kind: ceph.ErrEnvironmentUnavailable}
+	ErrPermissionDenied error = nshelper.Category("the capture helper was not permitted to capture packets", ceph.ErrEnvironmentUnavailable)
 	// ErrFailed reports a capture that did not start, end or deliver as the
 	// contract says: tcpdump exited before readiness or with a nonzero
 	// status, did not end within the stop grace, the target's network
 	// namespace changed, or the helper's file could not be copied or is not
 	// a valid classic pcap. It belongs to ceph.ErrNativeFailure.
-	ErrFailed error = &categoryError{text: "the packet capture failed", kind: ceph.ErrNativeFailure}
+	ErrFailed error = nshelper.Category("the packet capture failed", ceph.ErrNativeFailure)
 )
-
-type categoryError struct {
-	text string
-	kind error
-}
-
-func (e *categoryError) Error() string        { return e.text }
-func (e *categoryError) Is(target error) bool { return target == e.kind }
-
-func invalidRequest(format string, args ...any) error {
-	return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: fmt.Errorf(format, args...)}
-}
 
 // Request selects one capture. Every field except the two timeouts is
 // required: the package chooses no image, interface, filter or bound.
@@ -125,33 +114,33 @@ func (r Request) validate() error {
 	}
 	switch r.Network {
 	case "":
-		return invalidRequest("capture needs Request.Network")
+		return nshelper.InvalidRequest("capture needs Request.Network")
 	case "host", "none", "bridge":
-		return invalidRequest("capture needs a user-defined bridge network, not %q", r.Network)
+		return nshelper.InvalidRequest("capture needs a user-defined bridge network, not %q", r.Network)
 	}
 	switch {
 	case !interfaceName.MatchString(r.Interface):
-		return invalidRequest("capture needs Request.Interface, an interface name of at most 15 characters")
+		return nshelper.InvalidRequest("capture needs Request.Interface, an interface name of at most 15 characters")
 	case r.Interface == "any" || r.Interface == "lo":
-		return invalidRequest("capture needs the target's interface on %s, not %q", r.Network, r.Interface)
+		return nshelper.InvalidRequest("capture needs the target's interface on %s, not %q", r.Network, r.Interface)
 	case strings.TrimSpace(r.Filter) == "":
-		return invalidRequest("capture needs an explicit Request.Filter")
+		return nshelper.InvalidRequest("capture needs an explicit Request.Filter")
 	case len(r.Filter) > MaxFilterBytes:
-		return invalidRequest("the capture filter is longer than %d bytes", MaxFilterBytes)
+		return nshelper.InvalidRequest("the capture filter is longer than %d bytes", MaxFilterBytes)
 	case strings.ContainsRune(r.Filter, 0):
-		return invalidRequest("the capture filter contains a NUL byte")
+		return nshelper.InvalidRequest("the capture filter contains a NUL byte")
 	case r.SnapLen < 1 || r.SnapLen > MaxSnapLen:
-		return invalidRequest("capture SnapLen must be 1 to %d", MaxSnapLen)
+		return nshelper.InvalidRequest("capture SnapLen must be 1 to %d", MaxSnapLen)
 	// Compared before multiplying, so that a large MaxPackets cannot wrap
 	// the file bound.
 	case r.MaxPackets < 1 || int64(r.MaxPackets) > (MaxFileBytes-24)/(16+int64(r.SnapLen)):
-		return invalidRequest("capture MaxPackets must be positive, with a file bound of at most %d bytes", MaxFileBytes)
+		return nshelper.InvalidRequest("capture MaxPackets must be positive, with a file bound of at most %d bytes", MaxFileBytes)
 	case r.Output == "":
-		return invalidRequest("capture needs Request.Output")
+		return nshelper.InvalidRequest("capture needs Request.Output")
 	case r.ReadyTimeout < 0 || r.ReadyTimeout > MaxTimeout:
-		return invalidRequest("capture ReadyTimeout must be 0 to %s", MaxTimeout)
+		return nshelper.InvalidRequest("capture ReadyTimeout must be 0 to %s", MaxTimeout)
 	case r.StopGrace < 0 || r.StopGrace > MaxTimeout:
-		return invalidRequest("capture StopGrace must be 0 to %s", MaxTimeout)
+		return nshelper.InvalidRequest("capture StopGrace must be 0 to %s", MaxTimeout)
 	}
 	return nil
 }
@@ -327,7 +316,7 @@ type Session struct {
 	mu      sync.Mutex
 	backend backend
 	request Request
-	target  targetState
+	target  nshelper.Target
 	helper  string
 	// probe is a probe container that could not be removed; Stop retries.
 	probe     string
@@ -393,7 +382,7 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 		return nil, err
 	}
 	if target == nil || target.GetContainerID() == "" {
-		return nil, invalidRequest("capture requires a container")
+		return nil, nshelper.InvalidRequest("capture requires a container")
 	}
 	id := target.GetContainerID()
 	state, err := b.target(ctx, id, req.Network)
@@ -405,15 +394,15 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 	}
 	output, err := os.OpenFile(req.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, invalidRequest("create the capture output: %w", err)
+		return nil, nshelper.InvalidRequest("create the capture output: %w", err)
 	}
 	if err := output.Close(); err != nil {
 		return nil, errors.Join(fmt.Errorf("create the capture output: %w", err), os.Remove(req.Output))
 	}
 	s := &Session{backend: b, request: req, target: state}
 	s.report = Report{
-		ContainerID: id, Network: req.Network, Interface: req.Interface, MACAddress: state.mac,
-		SandboxID: state.sandboxID, TargetStartedAt: state.startedAt, HelperImage: req.HelperImage,
+		ContainerID: id, Network: req.Network, Interface: req.Interface, MACAddress: state.MAC,
+		SandboxID: state.SandboxID, TargetStartedAt: state.StartedAt, HelperImage: req.HelperImage,
 		Filter: req.Filter, SnapLen: req.SnapLen, MaxPackets: req.MaxPackets, MaxBytes: req.maxBytes(),
 		Output: req.Output, End: EndUnknown, Target: TargetUnknown,
 	}
@@ -438,20 +427,13 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 }
 
 // admitTarget refuses targets whose endpoint a helper cannot join.
-func admitTarget(state targetState, network string) error {
-	switch {
-	case !state.running || state.paused:
-		return invalidRequest("capture requires a running, unpaused container")
-	case state.networkMode.IsHost() || state.networkMode.IsNone() || state.networkMode.IsContainer():
-		return invalidRequest("capture cannot join a container in network mode %s", state.networkMode)
-	case state.sandboxID == "":
-		return invalidRequest("the capture target has no network sandbox")
-	case state.mac == "":
-		return invalidRequest("the capture target is not attached to %s", network)
-	case state.driver != "bridge":
-		return invalidRequest("capture requires a bridge network, not a %q one", state.driver)
-	}
-	return nil
+func admitTarget(state nshelper.Target, network string) error {
+	return nshelper.Admit(state, "capture", "the capture target", func(state nshelper.Target) error {
+		if state.MAC == "" {
+			return nshelper.InvalidRequest("the capture target is not attached to %s", network)
+		}
+		return nil
+	})
 }
 
 // preflight runs the probe in the target's namespace and records the image.
@@ -473,7 +455,7 @@ func (s *Session) preflight(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := report.check(s.request, s.target.mac); err != nil {
+	if err := report.check(s.request, s.target.MAC); err != nil {
 		return err
 	}
 	s.report.HelperImageID, s.report.Namespace, s.report.ToolVersion = result.imageID, report.Namespace, report.toolVersion()
@@ -546,7 +528,7 @@ func (s *Session) startHelper(ctx context.Context, id string) error {
 	if err != nil {
 		return classifyDocker(ctx, fmt.Errorf("inspect the capture target: %w", err))
 	}
-	if !s.target.sameGeneration(current) {
+	if !sameGeneration(s.target, current) {
 		return fmt.Errorf("%w: the target's network namespace changed while the capture started", ErrFailed)
 	}
 	return nil
@@ -763,7 +745,7 @@ func (s *Session) compareTarget(ctx context.Context) TargetState {
 		return TargetGone
 	case err != nil:
 		return TargetUnknown
-	case s.target.sameGeneration(current):
+	case sameGeneration(s.target, current):
 		return TargetUnchanged
 	}
 	return TargetChanged

@@ -72,8 +72,10 @@ type Container struct {
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
 	// monStores is the owned MON store volumes, by MON name; see
-	// monstore.State. It has no lock of its own: mu guards it. Nothing publishes
-	// a record yet.
+	// monstore.State. It has no lock of its own: mu guards it. A MON started
+	// with a store volume (WithMonitorStorage) publishes its record
+	// before the volume is created, and the record stays until its store is
+	// retired or Terminate releases it.
 	//testdouble:nil-default-hook
 	monStores monstore.State
 	// runDir is the shared admin-socket run directory; see runDirState for
@@ -417,7 +419,14 @@ func runContainer(ctx context.Context, image string, opts ...testcontainers.Cont
 	return created, err
 }
 
+// runMonitor starts the first MON. It holds c.mu throughout, as every MON
+// start does, so that its host-port leases and store record are published
+// under the lock that Terminate takes.
 func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
+	defer c.mu.Unlock()
 	if c.settings.monitorVolume {
 		// The first generation of the store starts the MON.
 		gens := c.monitorGenerations("a", func(ports []int) []testcontainers.ContainerCustomizer {
@@ -436,60 +445,37 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		return mon, nil
 	}
-	attempts := 1
-	if c.settings.hostNetwork {
-		attempts = hostPortAttempts
+	create := func(ctx context.Context, ports []int) (testcontainers.Container, error) {
+		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.startup.ownedLabel())...)
 	}
-	for attempt := range attempts {
-		var lease *hostPortLease
-		var err error
-		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.startup.ownedLabel())
-			c.trackHostPortLease(lease)
-			if err != nil {
-				return nil, err
+	return c.startMonitorRetryingPorts(ctx, monitorPortStart{
+		host: c.settings.hostNetwork,
+		attempt: func(ctx context.Context) (testcontainers.Container, bool, error) {
+			if !c.settings.hostNetwork {
+				mon, err := create(ctx, nil)
+				if err != nil {
+					if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
+						return mon, false, refusal.with(ctx, err)
+					}
+				}
+				return mon, false, err
 			}
-		}
-		var ports []int
-		if lease != nil {
-			ports = lease.Ports
-		}
-		moduleOpts := c.firstMonitorOptions(fsid, ports, opts)
-		mon, err := runContainer(ctx, image, append(moduleOpts, c.startup.ownedLabel())...)
-		if lease != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			releaseErr := lease.Release(cleanupCtx)
-			cancel()
-			if err != nil || releaseErr != nil {
-				return mon, errors.Join(err, releaseErr)
+			mon, ports, started, err := c.startOnLeasedPorts(ctx, image, c.settings.publicAddress, create)
+			if !started {
+				return mon, false, err
 			}
-			if err = mon.Start(ctx); err == nil {
-				// Validate the environment before MGR/OSD creation. A probe failure
-				// is not a port conflict, so it bypasses the retry below.
-				return mon, verifyHostMonitor(ctx, c.settings.publicAddress, lease.Ports[0])
+			if err == nil {
+				// Validate the environment before MGR/OSD creation. A probe
+				// failure is not a port conflict, so it is not retried.
+				return mon, false, verifyHostMonitor(ctx, c.settings.publicAddress, ports[0])
 			}
-		}
-		if err == nil {
-			return mon, nil
-		}
-		if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
-			return mon, refusal.with(ctx, err)
-		}
-		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
-			return mon, err
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		if !isPortConflict(cleanupCtx, mon) {
-			cancel()
-			return mon, err
-		}
-		cleanupErr := mon.Terminate(cleanupCtx)
-		cancel()
-		if !onlyMissingHostResource(cleanupErr) {
-			return mon, errors.Join(err, cleanupErr)
-		}
-	}
-	return nil, classify(ErrEnvironmentUnavailable, errors.New("monitor port attempts exhausted"))
+			if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
+				return mon, false, refusal.with(ctx, err)
+			}
+			return mon, true, err
+		},
+		discard: terminateLostPortsMonitor,
+	})
 }
 
 // firstMonitorReady is the ready check of the first MON.
@@ -551,15 +537,6 @@ func (o options) monitorJoinEnvironment(name string) map[string]string {
 	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: o.addressFamily.String()}
 	maps.Copy(env, o.messengerEnvironment())
 	return env
-}
-
-func (c *Container) trackHostPortLease(lease *hostPortLease) {
-	if lease == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.portLeases.track(lease)
 }
 
 // WithClient connects another container to Ceph and copies its admin credentials.
@@ -687,6 +664,26 @@ type osdLaunch struct {
 	recipe *osdLaunchRecipe
 }
 
+// newOSDIdentity registers osdUUID with osd new from a key file in control
+// that holds the cephx secret in keys, and returns what osd new printed. The
+// file is removed once osd new returns; one whose removal fails, or whose copy
+// Docker may still complete, is left to the auth ledger's stray removal.
+func (f osdFleet) newOSDIdentity(ctx context.Context, control testcontainers.Container, osdUUID string, keys []byte) ([]byte, error) {
+	keyPath := "/tmp/osd-" + osdUUID + ".json"
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+		defer cancel()
+		if _, err := command(cleanupCtx, control, "rm", "-f", keyPath); err != nil {
+			f.addStray(keyPath, false)
+		}
+	}()
+	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
+		f.addStray(keyPath, true)
+		return nil, fmt.Errorf("copy osd registration key: %w", err)
+	}
+	return f.conn.ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
+}
+
 // registerOSD allocates the next OSD ID with a new key and records the OSD in
 // c.osdHandles before its container exists, so that Terminate owns it from then on.
 // The caller holds c.mu and has normalized config. A nonnil buckets is the
@@ -727,11 +724,7 @@ func (f osdFleet) registerOSD(ctx context.Context, config OSDConfig, image strin
 	if err != nil {
 		return osdLaunch{}, err
 	}
-	keyPath := "/tmp/osd-" + osdUUID + ".json"
-	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
-		return osdLaunch{}, fmt.Errorf("copy osd registration key: %w", err)
-	}
-	result, err := f.conn.ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
+	result, err := f.newOSDIdentity(ctx, control, osdUUID, keys)
 	if err != nil {
 		return osdLaunch{}, err
 	}

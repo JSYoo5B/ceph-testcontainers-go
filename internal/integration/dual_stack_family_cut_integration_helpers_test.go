@@ -462,7 +462,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		if err := lease.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if root := harness.RootQdisc(t, ctx, netem, client, lease.Interface); root != "noqueue 0:" {
+		if root := rootQdisc(t, ctx, netem, client, lease.Interface); root != "noqueue 0:" {
 			t.Fatalf("root qdisc after Restore: %s", root)
 		}
 		filters, _ := json.Marshal(status.Filters)

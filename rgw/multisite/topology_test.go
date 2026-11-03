@@ -39,7 +39,15 @@ func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 		RealmID: "realm-id", SourceZoneID: "source-id", DestinationZoneID: "destination-id",
 		realm: rgwRealmAccess{config: Config{Zonegroup: "us-east-1", SourceZone: "primary", DestinationZone: "secondary"}, sourceURL: "http://127.0.0.1:42345", destinationURL: "http://127.0.0.1:42346"}}
 	const committed = `{"realm_id":"realm-id","master_zone":"source-id","period_map":{"zonegroups":[{"name":"us-east-1","master_zone":"source-id","endpoints":["http://127.0.0.1:42345"],"zones":[{"id":"source-id","name":"primary","endpoints":["http://127.0.0.1:42345"]},{"id":"destination-id","name":"secondary","endpoints":["http://127.0.0.1:42346"]}]}]}}`
-	if err := fixture.validatePeriodEndpoints([]byte(committed)); err != nil {
+	check := func(data string) error {
+		period, err := decodeRGWTopologyPeriod([]byte(data))
+		if err != nil {
+			return err
+		}
+		states := fixture.zoneStates()
+		return fixture.checkZonePeriod(period, states[0], states)
+	}
+	if err := check(committed); err != nil {
 		t.Fatal(err)
 	}
 	for _, invalid := range []string{
@@ -50,7 +58,7 @@ func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 		strings.Replace(committed, `http://127.0.0.1:42346`, `http://127.0.0.1:7480`, 1),
 		strings.Replace(committed, `"id":"destination-id"`, `"id":"source-id"`, 1),
 	} {
-		if err := fixture.validatePeriodEndpoints([]byte(invalid)); err == nil {
+		if err := check(invalid); err == nil {
 			t.Fatal("bootstrap, stale or mismatched committed endpoints were accepted")
 		}
 	}

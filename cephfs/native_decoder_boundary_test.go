@@ -26,7 +26,7 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if call, ok := n.(*ast.CallExpr); ok {
 					switch name := calleeName(call); name {
-					case "decodeColdMDSMap", "decodeMDSReplacementMap", "readMDSReplacementScope":
+					case "DecodeCold", "DecodeReplacement", "readMDSReplacementScope":
 						callers[name] = append(callers[name], fn.Name.Name)
 					}
 				}
@@ -38,8 +38,8 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 		slices.Sort(list)
 	}
 	want := map[string][]string{
-		"decodeColdMDSMap":        {"verifyColdMDS"},
-		"decodeMDSReplacementMap": {"readMDSReplacementScope"},
+		"DecodeCold":              {"verifyColdMDS"},
+		"DecodeReplacement":       {"readMDSReplacementScope"},
 		"readMDSReplacementScope": {"addMDSReplacement", "admitMDSReplacement", "observeMDSReplacement"},
 	}
 	if !reflect.DeepEqual(callers, want) {
@@ -52,13 +52,13 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 	ast.Inspect(reader.Body, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
 			switch name := calleeName(call); name {
-			case "ReadNativePools", "Ceph", "decodeMDSReplacementMap":
+			case "ReadNativePools", "Ceph", "DecodeReplacement":
 				order = append(order, name)
 			}
 		}
 		return true
 	})
-	if !slices.Equal(order, []string{"ReadNativePools", "Ceph", "decodeMDSReplacementMap"}) {
+	if !slices.Equal(order, []string{"ReadNativePools", "Ceph", "DecodeReplacement"}) {
 		t.Errorf("reader order changed: %v", order)
 	}
 	last, ok := reader.Body.List[len(reader.Body.List)-1].(*ast.ReturnStmt)

@@ -29,7 +29,7 @@ import (
 // members across an unlock. The guards in mds_roster_test.go enforce that the
 // fields are reached only through these methods, that only the pinned writers
 // call the mutating ones, that every caller holds the lock it needs, and that
-// the split adds no mutex.
+// the roster adds no mutex.
 //
 // The roster lives in the filesystem's mdsState, which only the MDS fleet
 // reaches (mds_fleet_test.go). The embedded Filesystem.Container is not part of

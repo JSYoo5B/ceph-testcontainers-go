@@ -80,8 +80,11 @@ cache keyed by `go.sum`, and the runtime jobs share one build cache keyed by
 the installed Go version and `go.sum`. Each runtime `Plan` job fills a missing
 module cache with `tag_scenarios.py modules` and a missing build cache with
 `tag_scenarios.py buildcache` (one batch per package); runtime jobs and Code
-checks only restore them. `setup-go`'s own cache is off. A cache only speeds
-up a build: each job still compiles, records and verifies its own binary.
+checks only restore them. A [comment run](#running-chosen-batches-from-a-comment)
+passes `save_caches: false` and saves neither: it belongs to the default
+branch, whose caches every later run restores, but checks out an unmerged
+head. `setup-go`'s own cache is off. A cache only speeds up a build: each job
+still compiles, records and verifies its own binary.
 
 ### Documentation-only changes
 
@@ -306,7 +309,8 @@ tool failure selects every profile.
 #### Opting in to declaration selection
 
 Ceph short is the only workflow that narrows by declarations, and only for a
-pull request with the `ci:selected-batches` label. The caller then passes the
+pull request with the `ci:selected-batches` label outside a
+[release phase](#release-phase). The caller then passes the
 base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 `Plan` runs `plan --select-declarations BASE --apply-declarations --summary
 "$GITHUB_STEP_SUMMARY"`. The `Plan` summary lists every batch with `yes` or
@@ -603,12 +607,15 @@ release of the scope exactly once, and `test_scenario_shards.py` checks the
 same offline.
 
 To add a release, add its row once ceph-testcontainers-images publishes its
-role images, run the CI tooling tests, and for a new major release add it to
+role images, add it to the `release` options of `ceph-periodic.yml` and the
+`public-api` matrix of `block-fault-probe.yml`, which cannot read the table
+(`test_scenario_shards.py` fails until they match), run the CI tooling tests,
+and for a new major release add it to
 every release-limited row of the test expectation table (see
 [Release differences](testing.md#release-differences)). A release that is not
 a row is refused. The default release (`RELEASE`, the `release` defaults of
-`tagged-runtime.yml` and the scenario-images action, and `ceph.DefaultImage`)
-changes only with the current release.
+`tagged-runtime.yml`, `ceph-periodic.yml` and the scenario-images action, and
+`ceph.DefaultImage`) changes only with the current release.
 
 ### Release phase
 

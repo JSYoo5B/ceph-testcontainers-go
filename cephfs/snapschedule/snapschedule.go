@@ -81,6 +81,9 @@ type Lease struct {
 	Retention    map[string]int
 
 	filesystem *fsbase.Core
+	// filesystemID is the native FSMap ID of the filesystem when the lease
+	// was added; an operation on a filesystem with another ID is refused.
+	filesystemID int64
 	// leases is the cluster's lease set that reserved the directory.
 	leases *leaseSet
 	mu     sync.Mutex
@@ -140,6 +143,11 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 	if err := validate(schedule); err != nil {
 		return nil, err
 	}
+	ctx, fsID, done, err := begin(ctx, fs)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	observer, err := ceph.Observe(fs.Cluster())
 	if err != nil {
 		return nil, err
@@ -167,7 +175,7 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 		}
 	}
 	lease := &Lease{Path: schedule.Path, Repeat: schedule.Repeat, Start: schedule.Start.UTC(), Retention: maps.Clone(schedule.Retention),
-		filesystem: fs, leases: leasesOf(fs.Cluster()), rules: map[string]int{}, cleared: map[string]bool{}}
+		filesystem: fs, filesystemID: fsID, leases: leasesOf(fs.Cluster()), rules: map[string]int{}, cleared: map[string]bool{}}
 	// Two leases of one directory would each take the other's schedule for
 	// their own.
 	if !lease.leases.reserve(lease) {
@@ -207,7 +215,7 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 			return lease, fmt.Errorf("add the snapshot retention %s of %s: %w", period, schedule.Path, err)
 		}
 	}
-	status, err := lease.Status(ctx)
+	status, err := lease.status(ctx)
 	if err != nil {
 		return lease, err
 	}
@@ -215,6 +223,44 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 		return lease, fmt.Errorf("the module reports schedule %q active=%t retention %v instead of the request", status.Schedule, status.Active, status.Retention)
 	}
 	return lease, nil
+}
+
+// begin admits one operation on the schedules of fs and holds its setup gate
+// until done. It refuses a filesystem that is no longer the registered one of
+// its cluster, whose exported descriptor name was edited or whose native
+// identity was not captured, then reads the FSMap, which refuses a replaced
+// filesystem or original pool, and returns the filesystem's native ID.
+func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
+	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
+		RecheckCanceled: true,
+		Refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
+		Check: func(context.Context) (bool, error) {
+			return fs.Registered() && fs.DescriptorIntact() && fs.Native() != nil, nil
+		},
+	})
+	if err != nil {
+		return ctx, 0, func() {}, err
+	}
+	state, err := fs.ReadNativePools(ctx)
+	if err != nil {
+		done()
+		return ctx, 0, func() {}, err
+	}
+	return ctx, state.ID, done, nil
+}
+
+// begin admits one operation of the lease and refuses a filesystem whose
+// native ID is not the one the lease was added on.
+func (l *Lease) begin(ctx context.Context) (context.Context, func(), error) {
+	ctx, fsID, done, err := begin(ctx, l.filesystem)
+	if err != nil {
+		return ctx, func() {}, err
+	}
+	if fsID != l.filesystemID {
+		done()
+		return ctx, func() {}, fmt.Errorf("CephFS filesystem ID is %d, not the lease's %d: the filesystem was replaced", fsID, l.filesystemID)
+	}
+	return ctx, done, nil
 }
 
 func nonNil(m map[string]int) map[string]int {
@@ -380,10 +426,21 @@ func (l *Lease) match(statuses []Status) (*Status, error) {
 	return nil, servicehook.Invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.Path, len(candidates), l.Repeat))
 }
 
-// Status reads the schedule's state from the snap_schedule module.
+// Status reads the schedule's state from the snap_schedule module. It
+// refuses a lease whose filesystem was removed or replaced.
 //
 //purpose:observation
 func (l *Lease) Status(ctx context.Context) (Status, error) {
+	ctx, done, err := l.begin(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	defer done()
+	return l.status(ctx)
+}
+
+// status reads the lease's schedule; the caller holds the admission.
+func (l *Lease) status(ctx context.Context) (Status, error) {
 	status, err := l.find(ctx)
 	if err != nil {
 		return Status{}, err
@@ -396,10 +453,15 @@ func (l *Lease) Status(ctx context.Context) (Status, error) {
 
 // Snapshots lists the snapshots in the directory's .snap that the module
 // took, named "scheduled-…", oldest first, through libcephfs in the client
-// container.
+// container. It refuses a lease whose filesystem was removed or replaced.
 //
 //purpose:observation
 func (l *Lease) Snapshots(ctx context.Context) ([]string, error) {
+	ctx, done, err := l.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	control, err := l.filesystem.Cluster().ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select the CephFS CLI container: %w", err)
@@ -422,30 +484,21 @@ func (l *Lease) Snapshots(ctx context.Context) ([]string, error) {
 	return scheduled, nil
 }
 
-const snapshotListScript = `import cephfs, json, os, sys, threading
-filesystem, directory = sys.argv[1:]
-deadline = threading.Timer(30, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
-fs.conf_set("client_mount_timeout", "30")
-fs.mount(filesystem_name=filesystem.encode())
-try:
-    snap = directory.rstrip("/") + "/.snap"
-    handle = fs.opendir(snap.encode())
-    names = []
+// snapshotListScript prints the entries of the .snap directory of the
+// directory named by its second argument.
+var snapshotListScript = fsbase.LibCephFSScript(`import json
+snap = args[0].rstrip("/") + "/.snap"
+handle = fs.opendir(snap.encode())
+names = []
+entry = fs.readdir(handle)
+while entry:
+    name = entry.d_name.decode()
+    if name not in (".", ".."):
+        names.append(name)
     entry = fs.readdir(handle)
-    while entry:
-        name = entry.d_name.decode()
-        if name not in (".", ".."):
-            names.append(name)
-        entry = fs.readdir(handle)
-    fs.closedir(handle)
-    print(json.dumps(names))
-finally:
-    fs.unmount()
-    fs.shutdown()
-`
+fs.closedir(handle)
+print(json.dumps(names))
+`)
 
 // Restore removes the retention rules that the lease added, then its
 // schedule; the snapshots stay. The module keeps retention per directory:
@@ -461,6 +514,9 @@ finally:
 //     with the lease's repeat that is not the lease's. The lease stays
 //     retryable, for example after the other schedule's owner removed it.
 //
+// Restore refuses a lease whose filesystem was removed or replaced, even by
+// one of the same name.
+//
 //purpose:construction,lifetime
 func (l *Lease) Restore(ctx context.Context) error {
 	if l == nil {
@@ -471,6 +527,11 @@ func (l *Lease) Restore(ctx context.Context) error {
 	if l.restored {
 		return nil
 	}
+	ctx, done, err := l.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	listed, err := statuses(ctx, l.filesystem.Volumes(), l.Path)
 	if err != nil {
 		return err

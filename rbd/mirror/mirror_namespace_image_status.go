@@ -136,11 +136,11 @@ func readRBDMirrorImageInfoForScope(ctx context.Context, client testcontainers.C
 	if !scoped {
 		return readRBDMirrorObservedInfo(ctx, client, spec, name, mode)
 	}
-	data, err := rbdReceiverExec(ctx, client, "read RBD namespace image info", "rbd", "info", spec, "--format", "json")
+	data, err := rbdReceiverRead.exec(ctx, client, "read RBD namespace image info", "rbd", "info", spec, "--format", "json")
 	if err != nil {
 		return rbdObservedInfo{}, err
 	}
-	if err := rbdReceiverJSON(data); err != nil {
+	if err := rbdReceiverRead.json(data); err != nil {
 		return rbdObservedInfo{}, err
 	}
 	return decodeRBDMirrorObservedInfo(data, name, mode)
@@ -150,11 +150,11 @@ func readRBDMirrorImageStatusForScope(ctx context.Context, client testcontainers
 	if !scoped {
 		return readRBDMirrorObservedStatus(ctx, client, spec, name, globalID)
 	}
-	data, err := rbdReceiverExec(ctx, client, "read RBD namespace image status", "rbd", "mirror", "image", "status", spec, "--format", "json")
+	data, err := rbdReceiverRead.exec(ctx, client, "read RBD namespace image status", "rbd", "mirror", "image", "status", spec, "--format", "json")
 	if err != nil {
 		return rbdObservedStatus{}, err
 	}
-	if err := rbdReceiverJSON(data); err != nil {
+	if err := rbdReceiverRead.json(data); err != nil {
 		return rbdObservedStatus{}, err
 	}
 	var fields map[string]json.RawMessage

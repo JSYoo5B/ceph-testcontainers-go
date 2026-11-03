@@ -83,7 +83,7 @@ type transportObserver struct {
 
 func (o transportObserver) snapshot(t *testing.T, ctx context.Context) transportSnapshot {
 	t.Helper()
-	out := harness.DelayExec(t, ctx, o.ctr, "python3", "-c", transportScript, o.iface)
+	out := delayExec(t, ctx, o.ctr, "python3", "-c", transportScript, o.iface)
 	var snapshot transportSnapshot
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &snapshot); err != nil || len(snapshot.Counters) == 0 {
 		t.Fatalf("parse %s's transport counters %q: %v", o.name, out, err)
@@ -176,7 +176,7 @@ const (
 // from the client and the control container, and observes the three
 // namespaces.
 type packetFaultFixture struct {
-	harness.BandwidthFixture
+	bandwidthFixture
 	name, sha256 string
 	peer         netip.Addr
 	observers    map[string]transportObserver
@@ -247,10 +247,10 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if root := harness.RootQdisc(t, ctx, p.Image, p.Limited.Container, lease.Interface); root != "noqueue 0:" {
+	if root := rootQdisc(t, ctx, p.Image, p.Limited.Container, lease.Interface); root != "noqueue 0:" {
 		t.Fatalf("root qdisc after Restore: %s", root)
 	}
-	if helpers := harness.NetemHelpers(t, ctx); helpers != 0 {
+	if helpers := netemHelpers(t, ctx); helpers != 0 {
 		t.Fatalf("%d netem helpers after Restore", helpers)
 	}
 	var effects []string
@@ -295,8 +295,8 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 	if ipv6 {
 		customizers, family = append(customizers, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6))), "ipv6"
 	}
-	p := packetFaultFixture{BandwidthFixture: harness.NewBandwidthFixture(t, ctx, customizers...), observers: map[string]transportObserver{}}
-	p.name, p.sha256 = harness.PutBandwidthObject(t, ctx, p.Cluster, p.Client, p.Limited.ID, "faults", packetFaultObject)
+	p := packetFaultFixture{bandwidthFixture: newBandwidthFixture(t, ctx, customizers...), observers: map[string]transportObserver{}}
+	p.name, p.sha256 = putBandwidthObject(t, ctx, p.Cluster, p.Client, p.Limited.ID, "faults", packetFaultObject)
 	inspection, err := p.Client.Inspect(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 		p.peer = endpoint.GlobalIPv6Address
 	}
 	for name, ctr := range map[string]testcontainers.Container{"client": p.Client, "control": p.Control, "sender": p.Limited.Container} {
-		observer := harness.StartNetemObserver(t, ctx, p.Image, ctr, false)
+		observer := startNetemObserver(t, ctx, p.Image, ctr, false)
 		defer func() { _ = observer.Terminate(context.WithoutCancel(ctx)) }()
 		p.observers[name] = transportObserver{name: name, iface: "eth0", ctr: observer}
 	}

@@ -212,8 +212,8 @@ func TestMonStoreFirstGenerationFormatsAndIsReadyWithoutAnIdentity(t *testing.T)
 	if want := []string{"create gen1 old format", "start ctr-1", "ready ctr-1", "observe ctr-1"}; !slices.Equal(g.events, want) {
 		t.Fatalf("events %v, want %v", g.events, want)
 	}
-	if g.launches[0].Volume != r.name || r.Phase != Bound || r.identity != nil || r.Attachment == nil || r.Attachment.pending || r.Attachment.ID != "ctr-1" {
-		t.Fatalf("state after the first generation: phase %s identity %v attachment %+v", r.Phase, r.identity, r.Attachment)
+	if g.launches[0].Volume != r.name || r.Phase != Bound || r.Attachment == nil || r.Attachment.pending || r.Attachment.ID != "ctr-1" {
+		t.Fatalf("state after the first generation: phase %s attachment %+v", r.Phase, r.Attachment)
 	}
 	if d.creates != 1 {
 		t.Fatalf("volume creates %d", d.creates)
@@ -265,6 +265,11 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 			if len(g.launches) != 1 || r.generation != 1 || r.Attachment == nil {
 				t.Fatalf("a second container was dispatched: launches %d generation %d attachment %+v", len(g.launches), r.generation, r.Attachment)
 			}
+			// The old container was touched: the remaining attachment says so,
+			// so the caller does not take it for an untouched one.
+			if r.Attachment.ID != "ctr-1" || !r.Attachment.RemoveRequested {
+				t.Fatalf("the removal request was not recorded: %+v", r.Attachment)
+			}
 		})
 	}
 	// Control: with none of those the same call succeeds.
@@ -276,10 +281,9 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 
 func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testing.T) {
 	cases := map[string]func(r *Volume, d *monStoreDockerFake){
-		"volume missing":        func(_ *Volume, d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
-		"volume foreign":        func(_ *Volume, d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
-		"volume changed":        func(_ *Volume, d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
-		"identity not verified": func(r *Volume, _ *monStoreDockerFake) { r.identity = &monStoreIdentity{} },
+		"volume missing": func(_ *Volume, d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
+		"volume foreign": func(_ *Volume, d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
+		"volume changed": func(_ *Volume, d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -288,7 +292,7 @@ func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testi
 			if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil {
 				t.Fatal("the replacement went on")
 			}
-			if g.removeCalls != 0 || len(g.launches) != 1 || r.Attachment == nil || d.creates != 1 {
+			if g.removeCalls != 0 || len(g.launches) != 1 || r.Attachment == nil || r.Attachment.RemoveRequested || d.creates != 1 {
 				t.Fatalf("the old generation was touched: removes %d launches %d creates %d", g.removeCalls, len(g.launches), d.creates)
 			}
 		})
@@ -379,35 +383,6 @@ func TestMonStoreGenerationsRefuseABadImageAndANilContainerSide(t *testing.T) {
 	}
 }
 
-// A store bound with an identity (the verified path of the inspector slices)
-// keeps its refusal: a generation needs the verification.
-func TestMonStoreIdentityBoundStoreStillNeedsItsVerification(t *testing.T) {
-	_, r, d := monStoreBoundFixture(t)
-	g := &monStoreGenerationsFake{docker: d}
-	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || g.removeCalls != 0 {
-		t.Fatalf("an unverified identity-bound store was replaced: %v", err)
-	}
-	if err := r.verify(monStoreIdentityFixture()); err == nil {
-		// verify needs no attachment; the live attachment keeps it unverified.
-		t.Fatal("verify accepted a store with a live attachment")
-	}
-	// With the old container gone the store is still bound with its identity,
-	// and a dispatch without a verification is refused; with one it is admitted.
-	delete(d.existing, "ctr-1")
-	if err := r.confirmGone(t.Context(), false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.dispatch(t.Context()); err == nil || r.Attachment != nil {
-		t.Fatalf("an unverified identity-bound store was dispatched: %v", err)
-	}
-	if err := r.verify(monStoreIdentityFixture()); err != nil {
-		t.Fatal(err)
-	}
-	if launch, err := r.dispatch(t.Context()); err != nil || launch.Mode != Require {
-		t.Fatalf("a verified store: %+v %v", launch, err)
-	}
-}
-
 func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 	_, r, _ := newMonStoreFixture()
 	if err := r.ready(); err == nil {
@@ -428,7 +403,7 @@ func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 	if err := r.recordContainer("ctr-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ready(); err != nil || r.Phase != Bound || r.identity != nil {
+	if err := r.ready(); err != nil || r.Phase != Bound {
 		t.Fatalf("ready: %v phase %s", err, r.Phase)
 	}
 }
@@ -563,7 +538,8 @@ func TestMonStoreFailedCreationReleasesTheHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Endpoint = &Endpoint{IP: "192.0.2.10", Ports: []int{3300}}
-	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != 1 {
+	d.inspectErr = errdefs.ErrNotFound // the volume is gone, so dispatch refuses
+	if _, err := r.StartGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != 1 || len(g.launches) != 0 {
 		t.Fatalf("%v hold %v held %v holds %d", err, r.hold, g.held, g.holdCalls)
 	}
 }

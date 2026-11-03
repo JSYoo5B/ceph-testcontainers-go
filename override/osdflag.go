@@ -75,6 +75,8 @@ func notAppliedOSDFlag(flag ceph.OSDFlag, cause error) (*OSDFlagHandle, error) {
 //   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
 //     override.SetOSDFlag.
 //   - Unsupported flag: not applied handle; plain error.
+//   - Context already ended, or ended while waiting for the topology lock: not
+//     applied handle; the context error.
 //   - Terminated cluster or no control container: not applied handle; the
 //     cluster's own error.
 //   - This flag is already held by another handle: not applied handle; plain
@@ -98,9 +100,12 @@ func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabl
 		handle   *OSDFlagHandle
 		applyErr error
 	)
-	overridehook.WithTopologyNoContext(c, func() {
+	if err := overridehook.WithTopology(ctx, c, func() error {
 		handle, applyErr = setOSDFlagLocked(ctx, c, flag, enabled)
-	})
+		return nil
+	}); err != nil {
+		return notAppliedOSDFlag(flag, err)
+	}
 	return handle, applyErr
 }
 
@@ -145,7 +150,9 @@ func setOSDFlagLocked(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag,
 // indistinguishable from applied/prior boolean states cannot be detected.
 // A handle of a call that was not applied returns nil without taking a lock.
 // A cluster that has been terminated refuses the restore with the error of an
-// operation on a terminated cluster, and the flag stays registered.
+// operation on a terminated cluster, and the flag stays registered. A context
+// that ends before the topology lock is free returns the context error, and the
+// flag stays registered.
 //
 //purpose:condition,lifetime
 func (change *OSDFlagHandle) Restore(ctx context.Context) error {
@@ -159,9 +166,7 @@ func (change *OSDFlagHandle) Restore(ctx context.Context) error {
 		return errors.New("OSD flag override is unavailable")
 	}
 	c := change.owner
-	var err error
-	overridehook.WithTopologyNoContext(c, func() { err = change.restoreLocked(ctx, c) })
-	return err
+	return overridehook.WithTopology(ctx, c, func() error { return change.restoreLocked(ctx, c) })
 }
 
 func (change *OSDFlagHandle) restoreLocked(ctx context.Context, c *ceph.Container) error {

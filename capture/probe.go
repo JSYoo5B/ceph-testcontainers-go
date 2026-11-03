@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 )
 
 // probeScript runs in a short-lived helper in the target's namespace, as the
@@ -109,7 +111,7 @@ func (r probeReport) check(req Request, endpointMAC string) error {
 		return fmt.Errorf("%w: the capture probe did not compile the filter", ErrImageUnsupported)
 	case code == 0:
 	case strings.Contains(text, "can't parse filter expression") || strings.Contains(text, "syntax error"):
-		return invalidRequest("the capture filter does not compile: %s", text)
+		return nshelper.InvalidRequest("the capture filter does not compile: %s", text)
 	case code == -1 || permissionDenied(text):
 		return fmt.Errorf("%w: compile the filter: %s", ErrPermissionDenied, text)
 	default:
@@ -117,9 +119,9 @@ func (r probeReport) check(req Request, endpointMAC string) error {
 	}
 	switch {
 	case r.MACError != "" || r.MAC == "":
-		return invalidRequest("interface %s is not in the target's network namespace: %s", req.Interface, r.MACError)
+		return nshelper.InvalidRequest("interface %s is not in the target's network namespace: %s", req.Interface, r.MACError)
 	case !strings.EqualFold(r.MAC, endpointMAC):
-		return invalidRequest("interface %s has MAC address %s, not that of the target's endpoint on %s (%s)", req.Interface, r.MAC, req.Network, endpointMAC)
+		return nshelper.InvalidRequest("interface %s has MAC address %s, not that of the target's endpoint on %s (%s)", req.Interface, r.MAC, req.Network, endpointMAC)
 	}
 	return nil
 }

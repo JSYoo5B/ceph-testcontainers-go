@@ -68,7 +68,7 @@ type monitorGenerationDocker interface {
 }
 
 // monitorGenerations builds the container side of MON name. The caller holds
-// c.mu, or the cluster is not shared yet (Run).
+// c.mu.
 func (c *Container) monitorGenerations(name string, recipe func(ports []int) []testcontainers.ContainerCustomizer, ready []string) *monitorGenerations {
 	g := &monitorGenerations{c: c, name: name, recipe: recipe, ready: ready, host: c.settings.hostNetwork,
 		created: map[string]testcontainers.Container{}, ports: map[string][]int{},
@@ -296,33 +296,41 @@ func (g *monitorGenerations) Remove(ctx context.Context, id string) error {
 // started again on a new volume and new ports, as many times as a MON without a
 // volume retries (hostPortAttempts). The caller holds c.mu.
 func (c *Container) startMonitorStore(ctx context.Context, name, image string, gens *monitorGenerations) (testcontainers.Container, error) {
-	for attempt := 1; ; attempt++ {
-		store, err := c.monStores.Begin(name)
-		if err != nil {
-			return nil, err
-		}
-		if err := store.Create(ctx); err != nil {
-			return nil, err
-		}
-		id, err := store.StartGeneration(ctx, gens, image)
-		ctr := gens.created[id]
-		if err == nil {
-			return ctr, nil
-		}
-		if ctr == nil && id == "" {
-			return nil, errors.Join(err, c.monStores.DiscardFresh(ctx, name))
-		}
-		if !gens.host || attempt == hostPortAttempts || ctx.Err() != nil || store.Phase != monstore.Fresh || !c.lostMonitorPorts(ctx, ctr) {
-			return ctr, err
-		}
-		if stopErr := store.StopGeneration(ctx, gens); stopErr != nil {
-			return ctr, errors.Join(err, stopErr)
-		}
-		if discardErr := c.monStores.DiscardFresh(ctx, name); discardErr != nil {
-			// The container is gone; the record keeps the volume for Terminate.
-			return nil, errors.Join(err, discardErr)
-		}
-	}
+	var store *monstore.Volume
+	return c.startMonitorRetryingPorts(ctx, monitorPortStart{
+		host: gens.host,
+		attempt: func(ctx context.Context) (testcontainers.Container, bool, error) {
+			var err error
+			store, err = c.monStores.Begin(name)
+			if err != nil {
+				return nil, false, err
+			}
+			if err := store.Create(ctx); err != nil {
+				return nil, false, err
+			}
+			id, err := store.StartGeneration(ctx, gens, image)
+			ctr := gens.created[id]
+			if err == nil {
+				return ctr, false, nil
+			}
+			if ctr == nil && id == "" {
+				return nil, false, errors.Join(err, c.monStores.DiscardFresh(ctx, name))
+			}
+			// Only a first generation reserves fresh ports; a later one
+			// listens on the recorded ports and is not retried.
+			return ctr, store.Phase == monstore.Fresh, err
+		},
+		discard: func(ctx context.Context, ctr testcontainers.Container) (testcontainers.Container, error) {
+			if err := store.StopGeneration(ctx, gens); err != nil {
+				return ctr, err
+			}
+			if err := c.monStores.DiscardFresh(ctx, name); err != nil {
+				// The container is gone; the record keeps the volume for Terminate.
+				return nil, err
+			}
+			return nil, nil
+		},
+	})
 }
 
 // lostMonitorPorts reports whether the MON of ctr exited because a port it was

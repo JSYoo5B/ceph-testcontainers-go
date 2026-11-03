@@ -86,7 +86,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal("overlapping pause was admitted", err)
 				}
 				probe(t, "blocked")
-				harness.WaitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
+				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
 				status, err := harness.ObserveCluster(cluster).Status(ctx)
 				if err != nil || status.OSDMap.NumUpOSDs != 2 {
 					t.Fatalf("nodown did not keep the frozen OSD up: %+v %v", status.OSDMap, err)
@@ -104,7 +104,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal(err)
 				}
 				probe(t, "thawed")
-				harness.WaitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", false)
+				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", false)
 			})
 
 			t.Run("frozen_down", func(t *testing.T) {

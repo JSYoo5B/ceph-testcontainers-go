@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
@@ -174,7 +175,7 @@ func TestCephFSAuthorizationContextCanceledAfterClientCreationReturnsClient(t *t
 	assertAdmissionReleased(t, fs)
 	// An unattempted grant cannot be adopted for native deauthorization.
 	before := len(native.Calls)
-	if err := grant.Deauthorize(t.Context()); err == nil || len(native.Calls) != before {
+	if err := grant.Deauthorize(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || len(native.Calls) != before {
 		t.Fatal("unattempted grant was adopted by native cleanup")
 	}
 	entry.Caps["mgr"] = "allow r"

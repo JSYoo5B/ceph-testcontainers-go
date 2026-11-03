@@ -127,12 +127,10 @@ func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 }
 
 // The queries below take the topology lock before they read, so they run the
-// locked read of the resolved cluster instead of the bare cliQuery. Each keeps
-// its own acquisition: Configuration, BlocklistEntries,
-// MGRModules, OSDFlags and OSDStates take the topology mutex without a context,
-// and ManagerServices waits for it under the caller's context. All of them
-// refuse a terminated cluster or one without a control container before they
-// run a command.
+// locked read of the resolved cluster instead of the bare cliQuery. Each waits
+// for the topology mutex under the caller's context and returns the context's
+// error when it ends first. All of them refuse a terminated cluster or one
+// without a control container before they run a command.
 
 // Configuration lists exact central database entries, including masked entries.
 // Use native config show/daemon config get to inspect a running daemon's effective
@@ -146,7 +144,9 @@ func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -167,7 +167,9 @@ func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, erro
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -185,7 +187,9 @@ func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -203,7 +207,9 @@ func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
@@ -471,7 +477,9 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 	if err := validateRADOSArgument("object", object, false); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err

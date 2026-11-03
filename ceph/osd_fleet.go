@@ -35,6 +35,9 @@ type osdFleet struct {
 	keyArgs      func(CephxCipher) ([]string, error)
 	launchRecipe func(osd *OSDContainer, keyring []byte) *osdLaunchRecipe
 	clearSocket  func(ctx context.Context, daemon string) error
+	// addStray records a control-container key file that registerOSD could
+	// not remove for sure, for the auth ledger to remove later.
+	addStray func(path string, copying bool)
 }
 
 // osdFleetState is the OSD state that osdFleet owns: the handle registry,
@@ -51,7 +54,8 @@ type osdFleetState struct {
 	//testdouble:nil-default-hook
 	stores osdStorageState
 	// deviceClaims is the cluster-wide claim table of the host block devices
-	// of OSDs; see osdDeviceClaims. Nothing publishes a claim yet.
+	// of OSDs; see osdDeviceClaims. registerBlockDeviceOSD publishes the claim
+	// of an OSD on a host block device.
 	deviceClaims osdDeviceClaims
 }
 
@@ -62,6 +66,7 @@ func (c *Container) osdFleet() osdFleet {
 		osdFleetState: &c.fleet, conn: c.conn(),
 		runDir: &c.runDir, startup: &c.startup, settings: c.settings,
 		owner: c, facts: c.staticFacts, keyArgs: c.generateKeyArgs, launchRecipe: c.newOSDLaunchRecipe, clearSocket: c.clearAdminSocket,
+		addStray: c.addAuthStray,
 	}
 }
 

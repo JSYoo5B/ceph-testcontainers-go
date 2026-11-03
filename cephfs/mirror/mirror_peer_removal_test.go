@@ -438,6 +438,15 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 	}
 }
 
+// waitCephFSPeerDrain runs the drain wait of WaitDrained over observe, with
+// every observation admitted.
+func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, error)) (PeerRemovalStatus, error) {
+	return waitCephFSPeerDrainWithAdmission(ctx, interval, func(attempt context.Context) (PeerRemovalStatus, bool, error) {
+		status, err := observe(attempt)
+		return status, true, err
+	})
+}
+
 func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLast(t *testing.T) {
 	r, _, _, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)

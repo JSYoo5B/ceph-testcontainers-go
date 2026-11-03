@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -17,19 +18,10 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// targetState is the Docker state of a capture target and its endpoint.
-type targetState struct {
-	running, paused bool
-	networkMode     container.NetworkMode
-	sandboxID       string
-	startedAt       string
-	driver          string
-	mac             string
-}
-
-// sameGeneration reports the same running instance in the same sandbox.
-func (t targetState) sameGeneration(current targetState) bool {
-	return current.running && !current.paused && current.sandboxID == t.sandboxID && current.startedAt == t.startedAt && current.mac == t.mac
+// sameGeneration reports that current is the same running instance as t, in
+// the same sandbox.
+func sameGeneration(t, current nshelper.Target) bool {
+	return current.Running && !current.Paused && current.SandboxID == t.SandboxID && current.StartedAt == t.StartedAt && current.MAC == t.MAC
 }
 
 // helperState is the Docker state of a helper container.
@@ -45,7 +37,7 @@ type helperState struct {
 type backend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.
-	target(ctx context.Context, id, network string) (targetState, error)
+	target(ctx context.Context, id, network string) (nshelper.Target, error)
 	// probe runs argv in a helper from image in networkMode until it exits.
 	// It returns the probe container's ID, also with an error, and does not
 	// remove it: a non-empty ID must be removed.
@@ -85,32 +77,9 @@ func withDocker[T any](ctx context.Context, do func(*testcontainers.DockerClient
 	return result, errors.Join(err, docker.Close())
 }
 
-func (dockerBackend) target(ctx context.Context, id, network string) (targetState, error) {
-	return withDocker(ctx, func(docker *testcontainers.DockerClient) (targetState, error) {
-		inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
-		if err != nil {
-			return targetState{}, err
-		}
-		var state targetState
-		if current := inspection.Container.State; current != nil {
-			state.running, state.paused = current.Running && !current.Restarting, current.Paused
-			state.startedAt = current.StartedAt
-		}
-		if inspection.Container.HostConfig != nil {
-			state.networkMode = inspection.Container.HostConfig.NetworkMode
-		}
-		if settings := inspection.Container.NetworkSettings; settings != nil {
-			state.sandboxID = settings.SandboxID
-			if endpoint := settings.Networks[network]; endpoint != nil {
-				state.mac = endpoint.MacAddress.String()
-				network, err := docker.NetworkInspect(ctx, network, mobycl.NetworkInspectOptions{})
-				if err != nil {
-					return targetState{}, fmt.Errorf("inspect network: %w", err)
-				}
-				state.driver = network.Network.Driver
-			}
-		}
-		return state, nil
+func (dockerBackend) target(ctx context.Context, id, network string) (nshelper.Target, error) {
+	return withDocker(ctx, func(docker *testcontainers.DockerClient) (nshelper.Target, error) {
+		return nshelper.Inspect(ctx, docker, id, network)
 	})
 }
 
@@ -118,16 +87,10 @@ func (dockerBackend) target(ctx context.Context, id, network string) (targetStat
 // image's own user, with NET_RAW as its only capability and without
 // no-new-privileges, which would discard tcpdump's file capability.
 func helperOptions(networkMode string, argv []string) []testcontainers.ContainerCustomizer {
-	return []testcontainers.ContainerCustomizer{
+	return append([]testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint(argv[0]),
 		testcontainers.WithCmd(argv[1:]...),
-		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
-			host.NetworkMode = container.NetworkMode(networkMode)
-			host.CapDrop = []string{"ALL"}
-			host.CapAdd = []string{"NET_RAW"}
-		}),
-		testcontainers.WithLabels(map[string]string{"org.testcontainers.ceph.role": "capture-helper"}),
-	}
+	}, nshelper.Confine(container.NetworkMode(networkMode), "NET_RAW", "capture-helper")...)
 }
 
 func (dockerBackend) run(ctx context.Context, image, networkMode string, argv []string) (string, error) {

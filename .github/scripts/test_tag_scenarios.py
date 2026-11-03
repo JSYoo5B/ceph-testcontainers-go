@@ -2064,7 +2064,7 @@ class ChangedComparisonGitTests(unittest.TestCase):
         return engine.select_changed_plan({"include": [{"sources": [path]} for path in self.INCOMING_PATHS]}, paths)
 
     def test_advanced_base_does_not_attribute_incoming_main_wrappers_to_pr(self):
-        legacy = engine.changed_paths(self.base, self.root)
+        legacy, _ = engine.changed_comparison(self.base, self.root)
         self.assertEqual(set(legacy), set(self.PR_PATHS + self.INCOMING_PATHS))
         self.assertEqual(self.plan(legacy)["selected_profiles"], 2)
         paths, source = engine.changed_comparison(self.base, self.root, self.head)
@@ -2118,7 +2118,7 @@ class ChangedComparisonGitTests(unittest.TestCase):
             engine.changed_comparison(second, self.root, first)
         # No requested head retains the historical Git three-dot behavior.
         expected = self.git("diff", "--name-only", "--no-renames", second + "...HEAD").splitlines()
-        self.assertEqual(engine.changed_paths(second, self.root), expected)
+        self.assertEqual(engine.changed_comparison(second, self.root)[0], expected)
 
     def test_unrelated_supplied_base_is_refused(self):
         self.git("checkout", "--orphan", "unrelated")

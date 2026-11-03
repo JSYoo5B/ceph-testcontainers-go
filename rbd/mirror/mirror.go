@@ -205,18 +205,11 @@ func (d *Daemon) Status(ctx context.Context) (*DaemonStatus, error) {
 	if d == nil || d.Container == nil {
 		return nil, errors.New("RBD mirror daemon is unavailable")
 	}
-	data, err := multicluster.Exec(ctx, d.Container, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	status, err := rbdSetupRead.daemonStatus(ctx, d.Container, "read status")
 	if err != nil {
-		return nil, fmt.Errorf("read RBD mirror daemon %s status: %w", d.DaemonName, err)
+		return nil, fmt.Errorf("RBD mirror daemon %s: %w", d.DaemonName, err)
 	}
-	var status DaemonStatus
-	if err := json.Unmarshal(data, &status); err != nil {
-		return nil, fmt.Errorf("decode RBD mirror daemon %s status: %w", d.DaemonName, err)
-	}
-	if status.PoolReplayers == nil {
-		return nil, fmt.Errorf("RBD mirror daemon %s returned no pool_replayers status array", d.DaemonName)
-	}
-	return &status, nil
+	return status, nil
 }
 
 // Terminate removes this daemon's container. Successful removals are remembered

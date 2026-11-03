@@ -59,7 +59,7 @@ publish(3, closed=True, **closing)
 func testCephFSLiveSnapRealmGate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	toolkit := harness.ToolkitContainer(t, m.Cluster)
 	fsName := m.FS.FilesystemName
 	// Snapshots are an explicit server setting, not assumed from a default.
@@ -76,7 +76,7 @@ func testCephFSLiveSnapRealmGate(t *testing.T) {
 		snapName  = "live-realm-gate"
 	)
 	asok := workdir + "/client.asok"
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRealmActor, fsName, workdir,
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSRealmActor, fsName, workdir,
 		directory, directory+"/"+leaf, hex.EncodeToString(base), hex.EncodeToString(updated), asok)
 	baseline := actor.Receipt(t, ctx, 1)
 	if baseline.Client == 0 || baseline.Inode == 0 || baseline.DirInode == 0 || baseline.Size != int64(len(base)) {

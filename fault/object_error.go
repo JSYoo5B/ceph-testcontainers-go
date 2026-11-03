@@ -13,24 +13,23 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 )
 
 var pgIDPattern = regexp.MustCompile(`^[0-9]+\.[0-9a-f]+$`)
 
 func validatePGID(pgid string) error {
 	if !pgIDPattern.MatchString(pgid) {
-		return invalid(errors.New("invalid native PG ID"))
+		return nshelper.InvalidRequest("invalid native PG ID")
 	}
 	return nil
 }
-
-func invalid(err error) error { return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: err} }
 
 // RADOS accepts arbitrary object names, but the fixture passes them as CLI
 // arguments; reject names that the CLI would parse as options or truncate.
 func validateObjectName(name string) error {
 	if name == "" || len(name) > 4096 || strings.HasPrefix(name, "-") || strings.ContainsRune(name, 0) {
-		return invalid(errors.New("object name must be non-empty, at most 4096 bytes, without NUL and not start with a dash"))
+		return nshelper.InvalidRequest("object name must be non-empty, at most 4096 bytes, without NUL and not start with a dash")
 	}
 	return nil
 }
@@ -46,7 +45,7 @@ func validateInjectObjectName(name string) error {
 		return err
 	}
 	if strings.ContainsRune(name, '/') {
-		return invalid(errors.New("object name must not contain a slash: injectdataerr would read the part before it as a namespace"))
+		return nshelper.InvalidRequest("object name must not contain a slash: injectdataerr would read the part before it as a namespace")
 	}
 	return nil
 }
@@ -83,10 +82,10 @@ func validateInjectObjectName(name string) error {
 //purpose:condition,native
 func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object string, osdID int) error {
 	if !faulthook.BlueStore(c) {
-		return errors.New("InjectObjectDataError needs BlueStore OSDs")
+		return nshelper.InvalidRequest("InjectObjectDataError needs BlueStore OSDs")
 	}
 	if !naming.ExistingPool.MatchString(pool) {
-		return invalid(errors.New("invalid native pool name"))
+		return nshelper.InvalidRequest("invalid native pool name")
 	}
 	if err := validateInjectObjectName(object); err != nil {
 		return err
@@ -96,7 +95,7 @@ func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object 
 			return err
 		}
 		if !faulthook.OwnedOSD(c, osdID) {
-			return invalid(fmt.Errorf("OSD %d is not owned by this cluster", osdID))
+			return nshelper.InvalidRequest("OSD %d is not owned by this cluster", osdID)
 		}
 		ctx, cancel := context.WithTimeout(ctx, faulthook.StartupTimeout(c))
 		defer cancel()
@@ -105,7 +104,7 @@ func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object 
 			return err
 		}
 		if state.Type != "replicated" {
-			return errors.New("data error injection supports replicated pools")
+			return nshelper.InvalidRequest("data error injection supports replicated pools")
 		}
 		data, err := faulthook.CLI(ctx, c, "osd", "map", pool, object, "--format", "json")
 		if err != nil {
@@ -120,7 +119,7 @@ func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object 
 			return errors.New("decode native object mapping")
 		}
 		if !slices.Contains(mapping.Acting, osdID) {
-			return fmt.Errorf("OSD %d is not in the acting set %v of PG %s", osdID, mapping.Acting, mapping.PGID)
+			return nshelper.InvalidRequest("OSD %d is not in the acting set %v of PG %s", osdID, mapping.Acting, mapping.PGID)
 		}
 		daemon := "osd." + strconv.Itoa(osdID)
 		if _, err := faulthook.CLI(ctx, c, "tell", daemon, "config", "set", "bluestore_debug_inject_read_err", "true"); err != nil {

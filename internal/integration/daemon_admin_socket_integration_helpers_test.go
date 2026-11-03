@@ -29,7 +29,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 
 	for _, daemon := range []string{"mon.a", "mgr.a", "osd.0"} {
-		out, err := harness.AdminSocket(t, ctx, cluster, daemon, "version")
+		out, err := adminSocket(t, ctx, cluster, daemon, "version")
 		var version struct {
 			Version string `json:"version"`
 		}
@@ -100,7 +100,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status"); err == nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status"); err == nil {
 		t.Fatal("a stopped OSD answered its admin socket")
 	}
 	if err := osd.Start(ctx); err != nil {
@@ -133,7 +133,7 @@ func waitAdminSocketOSDEpoch(t *testing.T, ctx context.Context, cluster *ceph.Co
 	defer cancel()
 	var last string
 	for {
-		out, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status")
+		out, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status")
 		var status struct {
 			State     string `json:"state"`
 			NewestMap string `json:"newest_map"`
@@ -176,7 +176,7 @@ func startAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	t.Cleanup(cancel)
 	call := &adminSocketCall{cancel: cancel, done: make(chan error, 1)}
 	// Resolve the handle in the test goroutine, before the call can be canceled.
-	osd := harness.OSDHandle(t, ctx, cluster, 0)
+	osd := osdHandle(t, ctx, cluster, 0)
 	go func() {
 		_, err := osd.AdminSocket(callCtx, "status")
 		call.done <- err
@@ -237,7 +237,7 @@ func cancelAdminSocketCallAfter(t *testing.T, ctx context.Context, cluster *ceph
 	defer cancel()
 	// Resolve the handle with the parent context: callCtx may be canceled
 	// before the goroutine runs, and a fatal helper must not run in it.
-	osd := harness.OSDHandle(t, ctx, cluster, 0)
+	osd := osdHandle(t, ctx, cluster, 0)
 	done := make(chan error, 1)
 	go func() {
 		_, err := osd.AdminSocket(callCtx, "status")

@@ -14,6 +14,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
@@ -465,11 +466,21 @@ func (f *Fixture) issueS3Credentials(ctx context.Context, suffix string) error {
 	if err := json.Unmarshal(user, &credentials); err != nil || len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
 		return fmt.Errorf("invalid RGW S3 test credentials")
 	}
-	for _, gateway := range []*rgw.Gateway{f.Source, f.Destination} {
-		gateway.AccessKey = credentials.Keys[0].AccessKey
-		gateway.SecretKey = credentials.Keys[0].SecretKey
-	}
+	setGatewayCredentials(f.realm.config.Source, f.Source, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
+	setGatewayCredentials(f.realm.config.Destination, f.Destination, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
 	return nil
+}
+
+// setGatewayCredentials gives gateway, which cluster already publishes, the
+// fixture's S3 test key. It holds the cluster mutex, under which the cluster
+// reads its gateways' credentials for diagnostic redaction. A nil cluster is
+// a descriptor that no cluster publishes.
+func setGatewayCredentials(cluster *ceph.Container, gateway *rgw.Gateway, access, secret string) {
+	if cluster != nil {
+		servicehook.Lock(cluster)
+		defer servicehook.Unlock(cluster)
+	}
+	gateway.AccessKey, gateway.SecretKey = access, secret
 }
 
 // zoneJoin is a fresh zone joining the realm through its CLI client: it pulls
@@ -568,67 +579,12 @@ func rgwEndpointArgs(args []string, endpoint string) []string {
 	return args
 }
 
-func (f *Fixture) validatePeriodEndpoints(data []byte) error {
-	var period struct {
-		RealmID    string `json:"realm_id"`
-		MasterZone string `json:"master_zone"`
-		PeriodMap  struct {
-			Zonegroups []struct {
-				Name       string   `json:"name"`
-				MasterZone string   `json:"master_zone"`
-				Endpoints  []string `json:"endpoints"`
-				Zones      []struct {
-					ID        string   `json:"id"`
-					Name      string   `json:"name"`
-					Endpoints []string `json:"endpoints"`
-				} `json:"zones"`
-			} `json:"zonegroups"`
-		} `json:"period_map"`
-	}
-	if err := json.Unmarshal(data, &period); err != nil {
-		return fmt.Errorf("decode committed RGW period: %w", err)
-	}
-	if period.RealmID != f.RealmID || period.MasterZone != f.SourceZoneID {
-		return fmt.Errorf("committed RGW period has unexpected realm or metadata master")
-	}
-	for _, group := range period.PeriodMap.Zonegroups {
-		if group.Name != f.realm.config.Zonegroup {
-			continue
-		}
-		if group.MasterZone != f.SourceZoneID || !slices.Equal(group.Endpoints, []string{f.realm.sourceURL}) {
-			return fmt.Errorf("committed zonegroup %s has unexpected master/endpoints: %v", group.Name, group.Endpoints)
-		}
-		found := 0
-		for _, zone := range group.Zones {
-			var expectedID, expectedURL string
-			switch zone.Name {
-			case f.realm.config.SourceZone:
-				expectedID, expectedURL = f.SourceZoneID, f.realm.sourceURL
-			case f.realm.config.DestinationZone:
-				expectedID, expectedURL = f.DestinationZoneID, f.realm.destinationURL
-			default:
-				continue
-			}
-			if zone.ID != expectedID || !slices.Equal(zone.Endpoints, []string{expectedURL}) {
-				return fmt.Errorf("committed zone %s has unexpected ID/endpoints: %v; expected endpoint %s", zone.Name, zone.Endpoints, expectedURL)
-			}
-			found++
-		}
-		if found != 2 {
-			return fmt.Errorf("committed zonegroup contains %d expected zones, want 2", found)
-		}
-		return nil
-	}
-	return fmt.Errorf("committed period has no zonegroup %s", f.realm.config.Zonegroup)
-}
-
 func (r *rgwRealmAccess) admin(ctx context.Context, client testcontainers.Container, zone string, args ...string) ([]byte, error) {
 	return r.adminInGroup(ctx, client, r.zoneGroupName(zone), zone, args...)
 }
 
 func (r *rgwRealmAccess) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
-	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", r.config.Realm, "--rgw-zonegroup", group, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
-	return multicluster.Exec(ctx, client, append(command, args...)...)
+	return multicluster.Exec(ctx, client, gwbase.AdminArgv(gwbase.Scope{Realm: r.config.Realm, Zonegroup: group, Zone: zone}, args...)...)
 }
 
 func (r *rgwRealmAccess) zoneGroupName(zone string) string {
@@ -670,13 +626,13 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 // and restart its gateway afterwards. This does not promote a zone or restart
 // a gateway automatically.
 //
+// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
+// other topology operations, and a terminated fixture refuses it with
+// ceph.ErrInvalidRequest.
+//
 //purpose:condition
 func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || f.realm.destinationURL == "" {
-		return fmt.Errorf("RGW multisite system credentials are unavailable")
-	}
-	_, err := f.realm.admin(ctx, f.realm.sourceClient, f.realm.config.SourceZone, "realm", "pull", "--url", f.realm.destinationURL, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
-	return err
+	return f.pullPeriod(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL)
 }
 
 // PullDestinationPeriod imports the source's realm and current committed
@@ -684,12 +640,30 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 // and reflected zonegroups. Use it to recover a fenced destination after a
 // planned failback; promotion and gateway restart remain caller decisions.
 //
+// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
+// other topology operations, and a terminated fixture refuses it with
+// ceph.ErrInvalidRequest.
+//
 //purpose:condition
 func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || f.realm.sourceURL == "" {
+	return f.pullPeriod(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL)
+}
+
+// pullPeriod runs realm pull from url in zone through client. It holds
+// topologyMu, like the other operations that change the period, and refuses a
+// terminated fixture.
+func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Container, zone, url string) error {
+	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
+	defer f.topologyMu.Unlock()
+	if f.closed {
+		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
+	}
+	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.realm.admin(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, "realm", "pull", "--url", f.realm.sourceURL, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
+	_, err := f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
 	return err
 }
 

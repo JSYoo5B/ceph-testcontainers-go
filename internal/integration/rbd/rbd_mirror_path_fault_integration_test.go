@@ -124,8 +124,8 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 		}
 		samples++
 	}
-	harness.VerifyRBDBytes(t, ctx, destinationClient, image, before)
-	harness.VerifyRBDBytes(t, ctx, sourceClient, image, after)
+	verifyRBDBytes(t, ctx, destinationClient, image, before)
+	verifyRBDBytes(t, ctx, sourceClient, image, after)
 	cut, err := lease.Status(ctx)
 	if err != nil || !cut.Applied || cut.Drops == 0 {
 		t.Fatalf("netem status during the cut: %+v, %v", cut, err)

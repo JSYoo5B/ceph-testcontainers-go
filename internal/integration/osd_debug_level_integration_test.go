@@ -45,7 +45,7 @@ func TestOSDDebugLevel(t *testing.T) {
 	}
 	get := func(name string) string {
 		t.Helper()
-		out, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "get", name)
+		out, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "get", name)
 		var value map[string]string
 		if err != nil || json.Unmarshal(out, &value) != nil || value[name] == "" {
 			t.Fatalf("osd.0 config get %s: %q %v", name, out, err)
@@ -89,14 +89,14 @@ func TestOSDDebugLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", "3/3"); err != nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", "3/3"); err != nil {
 		t.Fatal(err)
 	}
 	if err := edited.Restore(ctx); err == nil || edited.Receipt().State != override.DebugLevelConflict || get("debug_ms") != "3/3" {
 		t.Fatalf("restore over an outside edit: %v %+v", err, edited.Receipt())
 	}
 	logReceipt(edited)
-	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", priorMS); err != nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", priorMS); err != nil {
 		t.Fatal(err)
 	}
 

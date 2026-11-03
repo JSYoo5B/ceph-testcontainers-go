@@ -51,8 +51,8 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	patch := harness.RBDMultiClusterPayload(1<<20, 61)
 	copy(after[2<<20:], patch)
 	harness.RBDMultiClusterWriteRange(t, ctx, sourceClient, original, imageSize, 2<<20, patch)
-	harness.VerifyRBDBytes(t, ctx, sourceClient, original, after)
-	harness.VerifyRBDBytes(t, ctx, sourceClient, original+"@baseline", before)
+	verifyRBDBytes(t, ctx, sourceClient, original, after)
+	verifyRBDBytes(t, ctx, sourceClient, original+"@baseline", before)
 	harness.ExecCommand(t, ctx, sourceClient, "rbd", "snap", "create", original+"@next")
 	var deltaArchive bytes.Buffer
 	if err := rbd.ExportIncremental(ctx, sourceClient, original+"@next", "baseline", &deltaArchive); err != nil {
@@ -75,25 +75,25 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	if err := rbd.RestoreBackup(ctx, destinationClient, restored, bytes.NewReader(full)); err != nil {
 		t.Fatal(err)
 	}
-	harness.VerifyRBDInfo(t, ctx, destinationClient, restored, imageSize)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored, before)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
+	verifyRBDInfo(t, ctx, destinationClient, restored, imageSize)
+	verifyRBDBytes(t, ctx, destinationClient, restored, before)
+	verifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
 	if got := strings.TrimSpace(string(harness.RBDOutput(t, ctx, destinationClient, "image-meta", "get", restored, "backup-fixture"))); got != "format-2" {
 		t.Fatalf("full backup lost image metadata: %q", got)
 	}
 	if err := rbd.RestoreIncremental(ctx, destinationClient, restored, bytes.NewReader(delta)); err != nil {
 		t.Fatal(err)
 	}
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored, after)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
+	verifyRBDBytes(t, ctx, destinationClient, restored, after)
+	verifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
+	verifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
 
 	// Destination-only writes must preserve the restored historical snapshots.
 	writable := bytes.Clone(after)
 	copy(writable[:256<<10], harness.RBDMultiClusterPayload(256<<10, 97))
 	harness.RBDMultiClusterWriteRange(t, ctx, destinationClient, restored, imageSize, 0, writable[:256<<10])
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored, writable)
-	harness.VerifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
+	verifyRBDBytes(t, ctx, destinationClient, restored, writable)
+	verifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
 	if err := harness.ObserveCluster(destination).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +103,5 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 // TestMultiClusterRBDSnapshotMirror uses a real rbd-mirror daemon and rx-only
 // peer. Snapshot mirroring is asynchronous and needs explicit checkpoints.
 func TestMultiClusterRBDSnapshotMirror(t *testing.T) {
-	harness.RunMultiClusterRBDSnapshotMirror(t)
+	runMultiClusterRBDSnapshotMirror(t)
 }

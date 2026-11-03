@@ -93,7 +93,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	}
 	verifySnapshot := func(snapshot string) {
 		t.Helper()
-		harness.CephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, snapshot, true)
+		cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, snapshot, true)
 		fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/"+snapshot, "/tmp/"+snapshot+".json")
 	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")

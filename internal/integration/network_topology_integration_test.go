@@ -141,7 +141,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "seed")
+	topologyRados(t, ctx, client, "seed")
 	// Disconnect only the caller-owned client's public endpoint. Docker Exec
 	// remains available, while a fresh native MON authentication is bounded.
 	cut, err := fault.InterruptNetwork(ctx, cluster, client, ceph.PublicNetworkPlane)
@@ -157,11 +157,11 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyFreshConnection(t, ctx, client, true)
+	topologyFreshConnection(t, ctx, client, true)
 	if err := cut.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "public-endpoint-restored")
+	topologyRados(t, ctx, client, "public-endpoint-restored")
 	// Interrupt an OSD's backend without stopping its process/public listener.
 	osd := clusteraccess.OSDs(t, cluster)[0]
 	backend, err := fault.InterruptNetwork(ctx, cluster, osd, ceph.ClusterNetworkPlane)
@@ -189,18 +189,18 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err != nil || netip.MustParseAddr(host).Is4() != (family == ceph.AddressIPv4) {
 		t.Fatalf("invalid native front address %s: %v", address, err)
 	}
-	receipt := harness.HeldReplicationReceipt{Family: family.String()}
-	receipt.Images.Monitor, receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, osd), harness.ImageID(t, ctx, client)
+	receipt := heldReplicationReceipt{Family: family.String()}
+	receipt.Images.Monitor, receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, cluster.Container), imageID(t, ctx, osd), imageID(t, ctx, client)
 	receipt.Interrupted.OSD, receipt.Interrupted.CID = osd.ID, osd.GetContainerID()
 	receipt.Interrupted.Public, receipt.Interrupted.Cluster = before[osd.ID].Public, before[osd.ID].Cluster
 	// Both OSDs hold the PG and neither can be marked down by a single
 	// reporter, so a write waits for its replica while the backend is cut.
-	held := harness.StartHeldReplicationWrite(t, ctx, cluster, client, &receipt)
-	harness.CheckHeldControls(t, ctx, cluster, client, &receipt, held)
+	held := startHeldReplicationWrite(t, ctx, cluster, client, &receipt)
+	checkHeldControls(t, ctx, cluster, client, &receipt, held)
 	if err := backend.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.FinishHeldReplicationWrite(t, ctx, cluster, &receipt, held)
+	finishHeldReplicationWrite(t, ctx, cluster, &receipt, held)
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.MappingAfter, err = harness.ParseHeldMapping(out, "tc-topology", "held"); err != nil || !receipt.MappingAfter.SamePlacement(receipt.Mapping) {
+	if receipt.MappingAfter, err = parseHeldMapping(out, "tc-topology", "held"); err != nil || !receipt.MappingAfter.SamePlacement(receipt.Mapping) {
 		t.Fatalf("placement after the restore %+v, held in %+v: %v", receipt.MappingAfter, receipt.Mapping, err)
 	}
 	if encoded, err := json.Marshal(receipt); err != nil {
@@ -220,7 +220,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if after := checkAddresses(); !reflect.DeepEqual(after, before) {
 		t.Fatalf("OSD addresses changed across the backend interruption: %+v, before %+v", after, before)
 	}
-	harness.TopologyRados(t, ctx, client, "replication-endpoint-restored")
+	topologyRados(t, ctx, client, "replication-endpoint-restored")
 	added, err := cluster.AddOSD(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err := added.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "dual-network-OSD-add-remove")
+	topologyRados(t, ctx, client, "dual-network-OSD-add-remove")
 	t.Logf("%s public=%s cluster=%s: native advertised addresses, public-only clients, endpoint cuts/restoration without daemon restart, held replication, OSD 2→3→2 verified", family, publicSubnet, clusterSubnet)
 }
 
@@ -279,7 +279,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	harness.TopologyRados(t, ctx, client, "seed")
+	topologyRados(t, ctx, client, "seed")
 	var cuts []*fault.NetworkInterruption
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -298,7 +298,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		harness.TopologyWait(t, ctx, func() bool {
+		topologyWait(t, ctx, func() bool {
 			q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 			return err == nil && len(q.QuorumNames) == 4-i
 		})
@@ -306,17 +306,17 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 			t.Fatal("network cut stopped the monitor process")
 		}
 	}
-	harness.TopologyRados(t, ctx, client, "three-of-five-quorum")
+	topologyRados(t, ctx, client, "three-of-five-quorum")
 	for _, cut := range cuts {
 		if err := cut.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	harness.TopologyWait(t, ctx, func() bool {
+	topologyWait(t, ctx, func() bool {
 		q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		return err == nil && len(q.QuorumNames) == 5
 	})
-	harness.TopologyRados(t, ctx, client, "five-monitor-network-recovery")
+	topologyRados(t, ctx, client, "five-monitor-network-recovery")
 	t.Log("five MONs: network-isolated two running members, 3/5 quorum retained, restored original endpoint IPs and 5/5 membership")
 }
 

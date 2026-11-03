@@ -68,6 +68,46 @@ func TestAdminSocketRefusesBeforeRunningCommands(t *testing.T) {
 	}
 }
 
+// TestOSDDaemonAccessSharesOneOwnershipRule pins that AdminSocket, RotateKey
+// and the debug-level target refuse the same OSD states before any command:
+// an OSD whose purge was issued or that Detach fenced is still registered,
+// but none of them reaches its daemon.
+func TestOSDDaemonAccessSharesOneOwnershipRule(t *testing.T) {
+	for name, mark := range map[string]func(*OSDContainer){
+		"purged":       func(o *OSDContainer) { o.purged = true },
+		"purge issued": func(o *OSDContainer) { o.purgeIssued = true },
+		"detaching":    func(o *OSDContainer) { o.detaching = true },
+		"no container": func(o *OSDContainer) { o.Container = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, control := adminSocketCluster()
+			osd := osdHandle(t, t.Context(), c, 0)
+			mark(osd)
+			if _, err := osd.AdminSocket(t.Context(), "status"); err == nil || !strings.Contains(err.Error(), "not owned") {
+				t.Errorf("AdminSocket = %v", err)
+			}
+			if err := osd.RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "not owned") {
+				t.Errorf("RotateKey = %v", err)
+			}
+			if _, err := c.openDebugTarget(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "not a running-capable OSD") {
+				t.Errorf("openDebugTarget = %v", err)
+			}
+			if len(control.Calls) != 0 {
+				t.Fatalf("a refused OSD ran commands: %v", control.Calls)
+			}
+		})
+	}
+	c, _ := adminSocketCluster()
+	target, err := c.openDebugTarget(t.Context(), "osd.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.fleet.osdHandles.get(0).detaching = true
+	if gen, err := target.generation(t.Context()); err != nil || gen.owned {
+		t.Fatalf("debug generation of a detaching OSD = %+v, %v", gen, err)
+	}
+}
+
 func TestAdminSocketBusyClusterHonorsDeadline(t *testing.T) {
 	c, control := adminSocketCluster()
 	c.mu.Lock()

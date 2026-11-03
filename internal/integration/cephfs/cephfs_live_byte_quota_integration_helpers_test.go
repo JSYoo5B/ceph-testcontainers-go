@@ -177,16 +177,16 @@ func runCephFSByteQuotaAdmin(ctx context.Context, cluster *ceph.Container, toolk
 func testCephFSLiveByteQuota(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	m := harness.StartCephFSSingleMDS(t, ctx)
+	m := startCephFSSingleMDS(t, ctx)
 	toolkit := harness.ToolkitContainer(t, m.Cluster)
 	const directory, path = "/live-byte-quota", "/live-byte-quota/data"
-	actor := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSByteQuotaActor, m.FS.FilesystemName, "/tmp/live-byte-quota-actor",
+	actor := startCephFSActor(t, ctx, m.Cluster, m.Client, cephFSByteQuotaActor, m.FS.FilesystemName, "/tmp/live-byte-quota-actor",
 		directory, path, strconv.Itoa(byteQuotaLimit), strconv.Itoa(byteQuotaChunk), strconv.Itoa(byteQuotaOvershoot))
 	first := actor.Receipt(t, ctx, 1)
 	if first.Client == 0 || first.Inode == 0 || first.DirInode == 0 || first.Size != 0 {
 		t.Fatalf("byte quota baseline: %+v", first)
 	}
-	harness.CephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
+	cephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
 	admin := func(mode string, limit uint64) cephFSByteQuotaAdminResult {
 		t.Helper()
 		out, err := runCephFSByteQuotaAdmin(ctx, m.Cluster, toolkit, mode, m.FS.FilesystemName, directory, path, limit)
@@ -243,7 +243,7 @@ func testCephFSLiveByteQuota(t *testing.T) {
 	if denied.Size != *series.Acked || denied.SHA256 != byteQuotaDigest(*series.Acked) {
 		t.Fatalf("independent read after EDQUOT: %+v, want %d acknowledged bytes", denied, *series.Acked)
 	}
-	harness.CephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
+	cephFSRetainedSession(t, ctx, m.FS, first.Client, m.MDS.Rank)
 
 	relaxedBy := admin("set", 0)
 	if relaxedBy.Present {

@@ -105,12 +105,6 @@ def changed_entries(base, head="HEAD"):
         return None
 
 
-def changed_files(base, head="HEAD"):
-    """Paths that differ between base and head, or None on any error."""
-    entries = changed_entries(base, head)
-    return None if entries is None else [path for path, _, _ in entries]
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--event", default="")

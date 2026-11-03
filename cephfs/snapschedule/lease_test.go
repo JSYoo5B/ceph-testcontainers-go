@@ -44,10 +44,15 @@ type fakeSnapSchedule struct {
 	// lost applies the command whose words start with the key and then
 	// fails its reply; refused fails it without applying. Each fires once.
 	lost, refused map[string]bool
+	// fsID is the FSMap ID of "tc"; unregistered drops it from the registry.
+	fsID         int
+	unregistered bool
+	// commands counts the commands the fake answered.
+	commands int
 }
 
 func newFakeSnapSchedule() *fakeSnapSchedule {
-	return &fakeSnapSchedule{retention: map[string]map[string]int{}, known: map[string]bool{}, clock: time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC),
+	return &fakeSnapSchedule{fsID: 41, retention: map[string]map[string]int{}, known: map[string]bool{}, clock: time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC),
 		lost: map[string]bool{}, refused: map[string]bool{}}
 }
 
@@ -59,6 +64,7 @@ func (f *fakeSnapSchedule) Exec(_ context.Context, argv []string, _ ...tcexec.Pr
 		args = slices.Delete(slices.Clone(args), i, i+2)
 	}
 	command := strings.Join(args, " ")
+	f.commands++
 	for key := range f.refused {
 		if strings.HasPrefix(command, key) {
 			delete(f.refused, key)
@@ -78,6 +84,10 @@ func (f *fakeSnapSchedule) Exec(_ context.Context, argv []string, _ ...tcexec.Pr
 func (f *fakeSnapSchedule) apply(args []string) (int, string) {
 	command := strings.Join(args, " ")
 	switch {
+	case command == "fs dump --format json":
+		return 0, fmt.Sprintf(`{"filesystems":[{"id":%d,"mdsmap":{"fs_name":"tc","max_mds":1,"metadata_pool":1,"data_pools":[2],"info":{}}}],"standbys":[]}`, f.fsID)
+	case command == "osd pool ls detail --format json":
+		return 0, `[{"pool_id":1,"pool_name":"metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"data","type":1,"size":2,"min_size":1,"pg_num":8}]`
 	case command == "mgr module ls --format json":
 		return 0, `{"always_on_modules": [], "enabled_modules": ["snap_schedule"], "disabled_modules": []}`
 	case command == "mgr dump --format json":
@@ -172,11 +182,23 @@ func (f *fakeSnapSchedule) state() string {
 	return strings.Join(parts, "; ")
 }
 
-// snapScheduleFilesystem returns the core of the filesystem "tc" over a
-// synthetic cluster whose control container is fake. Schedules take no
-// admission, so the core needs no registry state.
+// snapScheduleFilesystem returns the registered core of the filesystem "tc"
+// over a synthetic cluster whose control container is fake, with its native
+// identity captured as FSMap ID 41 and pools 1 and 2. fake.unregistered
+// removes it from the registry and fake.fsID replaces it natively.
 func snapScheduleFilesystem(fake *fakeSnapSchedule) *fsbase.Core {
-	return fsbase.NewCore(fsbase.Params{Cluster: testhelper.TestCluster(fake, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 1}), Name: "tc"})
+	descriptor := "tc"
+	core := fsbase.NewCore(fsbase.Params{
+		Cluster: testhelper.TestCluster(fake, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 1}), Name: "tc",
+		DescriptorName: &descriptor, MetadataPool: "metadata", DataPool: "data", SetupMu: &sync.Mutex{},
+		Live: func(*fsbase.Core) bool {
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			return !fake.unregistered
+		},
+	})
+	core.ReplaceNative(&fsbase.NativeIdentity{ID: 41, MetadataPool: 1, DefaultPool: 2, Attachments: map[string]*fsbase.PoolAttachment{}})
+	return core
 }
 
 var leaseSchedule = Config{Path: "/", Repeat: "2h", Start: time.Date(2030, 3, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"d": 1, "n": 2}}
@@ -429,4 +451,62 @@ func TestLeaseRefusals(t *testing.T) {
 			t.Fatalf("Restore changed the inherited retention: %s", state)
 		}
 	})
+}
+
+// Add and every lease operation take the filesystem admission: a filesystem
+// that left the registry is refused before any command, and a lease refuses a
+// filesystem whose native ID is not the one it was added on.
+func TestLeaseAdmission(t *testing.T) {
+	fake := newFakeSnapSchedule()
+	fs := snapScheduleFilesystem(fake)
+	lease, err := add(t.Context(), fs, leaseSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := fake.state()
+	fake.mu.Lock()
+	fake.unregistered = true
+	commands := fake.commands
+	fake.mu.Unlock()
+	if _, err := add(t.Context(), fs, Config{Path: "/data", Repeat: "1h"}); err == nil {
+		t.Fatal("Add on an unregistered filesystem")
+	}
+	if _, err := lease.Status(t.Context()); err == nil {
+		t.Fatal("Status on an unregistered filesystem")
+	}
+	if _, err := lease.Snapshots(t.Context()); err == nil {
+		t.Fatal("Snapshots on an unregistered filesystem")
+	}
+	if err := lease.Restore(t.Context()); err == nil {
+		t.Fatal("Restore on an unregistered filesystem")
+	}
+	fake.mu.Lock()
+	fake.unregistered = false
+	ran := fake.commands - commands
+	fake.mu.Unlock()
+	if ran != 0 || fake.state() != before {
+		t.Fatalf("refused operations ran %d commands: %s", ran, fake.state())
+	}
+	// The filesystem was replaced natively under its name.
+	fake.mu.Lock()
+	fake.fsID = 42
+	fake.mu.Unlock()
+	if err := lease.Restore(t.Context()); err == nil || fake.state() != before {
+		t.Fatalf("Restore on a replaced filesystem: %v, %s", err, fake.state())
+	}
+	fake.mu.Lock()
+	fake.fsID = 41
+	fake.mu.Unlock()
+	// A lease added on another FSMap ID of the filesystem is not this one's.
+	lease.filesystemID = 40
+	if _, err := lease.Status(t.Context()); err == nil || !strings.Contains(err.Error(), "replaced") {
+		t.Fatalf("Status of a lease of another filesystem ID: %v", err)
+	}
+	if err := lease.Restore(t.Context()); err == nil || fake.state() != before {
+		t.Fatalf("Restore of a lease of another filesystem ID: %v, %s", err, fake.state())
+	}
+	lease.filesystemID = 41
+	if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+		t.Fatalf("Restore: %v, %s", err, fake.state())
+	}
 }

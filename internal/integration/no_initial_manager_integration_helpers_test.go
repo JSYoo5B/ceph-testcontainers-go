@@ -72,7 +72,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if noStorage {
 		wantOSDs = 0
 	}
-	if err != nil || len(states) != wantOSDs || len(clusteraccess.OSDs(t, cluster)) != wantOSDs || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
+	if err != nil || len(states) != wantOSDs || len(clusteraccess.OSDs(t, cluster)) != wantOSDs || len(noInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
 		t.Fatal("cold constructor changed selected storage inventory", err)
 	}
 	for _, state := range states {
@@ -86,7 +86,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, nil, "cold")
 	noInitialManagerHealth(t, ctx, cluster, "cold", false)
-	harness.IntegrationHealthDetails(t, ctx, cluster, fsid, "cold-manager")
+	integrationHealthDetails(t, ctx, cluster, fsid, "cold-manager")
 	var restoreHealthCondition, restoreHealthMute func()
 	if !noStorage {
 		restoreHealthCondition, restoreHealthMute = noInitialManagerHealthMutes(t, ctx, cluster, fsid)
@@ -152,7 +152,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	noInitialManagerAuth(t, ctx, cluster, []string{"mgr.a"})
 	managerLifecycleRBDReady(t, ctx, cluster)
 	if noStorage {
-		if len(clusteraccess.OSDs(t, cluster)) != 0 || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+		if len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 			t.Fatal("first manager implicitly provisioned storage")
 		}
 		noInitialManagerResources(t, ctx, oracle, cluster, client, "manager-before-storage")
@@ -193,8 +193,8 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		})
 		restoreHealthMute()
 	}
-	harness.TopologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
-	health := harness.IntegrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
+	topologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
+	health := integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
 	if health.Status != "HEALTH_OK" || len(health.Checks) != 0 || len(health.Mutes) != 0 {
 		t.Fatal("recovered health did not retain strict closure and mute restoration")
 	}
@@ -329,8 +329,8 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 
 func noInitialManagerAwaitHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, phase string, ready func(ceph.HealthSnapshot) bool) {
 	t.Helper()
-	harness.TopologyWait(t, ctx, func() bool {
-		snapshot := harness.IntegrationHealthDetails(t, ctx, cluster, fsid, phase)
+	topologyWait(t, ctx, func() bool {
+		snapshot := integrationHealthDetails(t, ctx, cluster, fsid, phase)
 		for code := range snapshot.Checks {
 			if code != "OSDMAP_FLAGS" && code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
 				t.Fatal("unexpected native health check during mute fixture", code)
@@ -412,7 +412,7 @@ func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Con
 		t.Fatalf("native health schema/severity unavailable: %v", err)
 	}
 	for code, check := range health.Checks {
-		if code == "POOL_APP_NOT_ENABLED" && harness.PoolApplicationHealthLags(t, ctx, cluster, check) {
+		if code == "POOL_APP_NOT_ENABLED" && poolApplicationHealthLags(t, ctx, cluster, check) {
 			continue
 		}
 		if code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
@@ -436,7 +436,7 @@ func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Con
 
 func noInitialManagerBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid, pool, nonce, phase, stage string, poolID int64) {
 	t.Helper()
-	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", harness.NoInitialOSDBytesProbe, fsid, pool, nonce, phase)
+	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", noInitialOSDBytesProbe, fsid, pool, nonce, phase)
 	var result struct {
 		FSID, SHA256 string
 		Bytes        int

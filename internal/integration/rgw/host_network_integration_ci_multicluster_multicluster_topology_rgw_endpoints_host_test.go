@@ -78,14 +78,14 @@ time.sleep(1200)
 			t.Fatal(err)
 		}
 		clients[i] = client
-		harness.HostNetworkS3Request(t, ctx, client, gateways[i], http.MethodPut, bucket, nil, http.StatusOK)
-		harness.HostNetworkS3Request(t, ctx, client, gateways[i], http.MethodPut, bucket+"/same-object", payloads[i], http.StatusOK)
+		hostNetworkS3Request(t, ctx, client, gateways[i], http.MethodPut, bucket, nil, http.StatusOK)
+		hostNetworkS3Request(t, ctx, client, gateways[i], http.MethodPut, bucket+"/same-object", payloads[i], http.StatusOK)
 	}
 	if gateways[0].Endpoint == gateways[1].Endpoint {
 		t.Fatalf("independent RGWs share endpoint %s", gateways[0].Endpoint)
 	}
 	for i, gateway := range gateways {
-		actual := harness.HostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodGet, bucket+"/same-object", nil, http.StatusOK)
+		actual := hostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodGet, bucket+"/same-object", nil, http.StatusOK)
 		if !bytes.Equal(actual, payloads[i]) {
 			t.Fatalf("VM host namespace RGW %d returned another cluster's payload", i)
 		}
@@ -124,7 +124,7 @@ time.sleep(1200)
 		t.Logf("test runner Go HTTP signed S3 read/write passed: cluster %d endpoint=%s", i, gateway.Endpoint)
 	}
 	for i, gateway := range gateways {
-		harness.HostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodDelete, bucket+"/same-object", nil, http.StatusNoContent)
-		harness.HostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodDelete, bucket, nil, http.StatusNoContent)
+		hostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodDelete, bucket+"/same-object", nil, http.StatusNoContent)
+		hostNetworkS3Request(t, ctx, clients[i], gateway, http.MethodDelete, bucket, nil, http.StatusNoContent)
 	}
 }

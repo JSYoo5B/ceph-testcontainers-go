@@ -3,6 +3,8 @@ package cephfs
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 )
 
 // coldMDSDecode runs the real cold-start decoder over the constructed
@@ -17,7 +19,7 @@ func coldMDSDecode(t *testing.T, edit func(native map[string]any, m map[string]a
 	if edit != nil {
 		edit(native, native["filesystems"].([]any)[0].(map[string]any)["mdsmap"].(map[string]any))
 	}
-	return decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools})
+	return mdsmap.DecodeCold([]byte(coldMDSTestJSON(native)), mdsmap.ColdExpectation{Filesystem: fs.config.Name, ReservedName: "cold-target-0", Native: mdsMapNative(fs.mds.coldMDS.identity), DataPools: fs.mds.coldMDS.dataPools})
 }
 
 func TestColdMDSDecodeAcceptsTheSettledBaseline(t *testing.T) {
@@ -106,6 +108,21 @@ func TestColdMDSDecodeKeepsEveryGuardAndItsClassification(t *testing.T) {
 		{"foreign-row-duplicate-name", sibling(func(m map[string]any) {
 			m["info"] = map[string]any{"gid_44": coldMDSTestRow("sibling-0", "up:active", 44, 0, 9), "gid_45": coldMDSTestRow("sibling-0", "up:active", 45, 1, 9)}
 		}), foreign},
+		{"foreign-row-key-not-its-gid", sibling(func(m map[string]any) {
+			m["info"] = map[string]any{"gid_45": coldMDSTestRow("sibling-0", "up:active", 44, 0, 9)}
+			m["up"] = map[string]any{"mds_0": uint64(44)}
+		}), foreign},
+		{"foreign-up-null", sibling(func(m map[string]any) { m["up"] = nil }), foreign},
+		{"foreign-row-without-up-slot", siblingRow("sibling-0", "up:active", 44, 0), foreign},
+		{"foreign-up-slot-without-row", sibling(func(m map[string]any) { m["up"] = map[string]any{"mds_0": uint64(44)} }), foreign},
+		{"foreign-up-slot-other-rank", sibling(func(m map[string]any) {
+			m["info"] = map[string]any{"gid_44": coldMDSTestRow("sibling-0", "up:active", 44, 0, 9)}
+			m["up"] = map[string]any{"mds_1": uint64(44)}
+		}), foreign},
+		{"foreign-up-slot-standby-replay", sibling(func(m map[string]any) {
+			m["info"] = map[string]any{"gid_44": coldMDSTestRow("sibling-0", "up:standby-replay", 44, 0, 9)}
+			m["up"] = map[string]any{"mds_0": uint64(44)}
+		}), foreign},
 		{"foreign-row-duplicate-gid", sibling(func(m map[string]any) {
 			m["info"] = map[string]any{"gid_44": coldMDSTestRow("sibling-0", "up:active", 44, 0, 9), "gid_45": coldMDSTestRow("sibling-1", "up:active", 44, 1, 9)}
 		}), foreign},
@@ -178,6 +195,7 @@ func TestColdMDSDecodeAcceptsIndependentSiblingsAndTheirStandbys(t *testing.T) {
 	err := coldMDSDecode(t, func(native, _ map[string]any) {
 		sibling := coldMDSTestMap("sibling", 5, 6)
 		sibling["info"] = map[string]any{"gid_44": coldMDSTestRow("sibling-0", "up:active", 44, 0, 9), "gid_45": coldMDSTestRow("sibling-1", "up:standby-replay", 45, 0, 9)}
+		sibling["up"] = map[string]any{"mds_0": uint64(44)}
 		native["filesystems"] = append(native["filesystems"].([]any), map[string]any{"id": 9, "mdsmap": sibling})
 		native["standbys"] = []any{coldMDSTestRow("sibling-2", "up:standby", 46, -1, 9)}
 	})

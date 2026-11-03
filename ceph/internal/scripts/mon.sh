@@ -4,7 +4,7 @@ set -eu
 # require_store implements CEPH_MON_STORE_MODE=require for the data directory
 # $1: an existing store must be reused, and a missing or non-store directory is
 # a hard failure instead of the mkfs below. It runs before any write. Unset
-# keeps the historical behavior; any other value, also an empty one, is
+# runs mkfs when store.db is absent; any other value, also an empty one, is
 # refused so that a misspelled mode cannot fall back to formatting a store.
 # The shape checks mirror what ceph-mon itself needs: store.db is the RocksDB
 # directory, kv_backend (absent in stores of old monitors, which are read as
@@ -46,6 +46,7 @@ require_store() {
 require_store /var/lib/ceph/mon/ceph-a
 
 mkdir -p /etc/ceph /var/lib/ceph/mon/ceph-a /var/run/ceph
+# BEGIN mon-address (identical in mon.sh and mon-join.sh)
 # messenger_address prints this container's address of the address family,
 # $1 or CEPH_ADDRESS_FAMILY: IPv4, global IPv6, or IPv4 as an IPv4-mapped
 # IPv6 address in the hexadecimal form that Ceph parses.
@@ -92,6 +93,7 @@ mon_entries() {
         echo "v2:$1:${mon_v2},v1:$1:${mon_v1}"
     fi
 }
+# END mon-address
 bind_ipv4=true
 bind_ipv6=false
 bind_prefer_config=
