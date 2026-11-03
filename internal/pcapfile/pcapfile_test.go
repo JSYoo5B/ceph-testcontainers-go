@@ -8,8 +8,6 @@ import (
 	"errors"
 	"io"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -226,20 +224,6 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	n := copy(p, r.data)
 	r.data = r.data[n:]
 	return n, nil
-}
-
-func TestValidateFileReadsFromDisk(t *testing.T) {
-	data := newCapture(binary.LittleEndian, magicMicro).add([]byte("hello"), 5).bytes()
-	path := filepath.Join(t.TempDir(), "capture.pcap")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if report, err := ValidateFile(path, Limits{}); err != nil || report.Status != Valid || report.SHA256 != digest(data) {
-		t.Fatalf("file %+v %v", report, err)
-	}
-	if _, err := ValidateFile(filepath.Join(t.TempDir(), "missing.pcap"), Limits{}); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
-	}
 }
 
 // Any input yields a verdict within its bound without panicking.

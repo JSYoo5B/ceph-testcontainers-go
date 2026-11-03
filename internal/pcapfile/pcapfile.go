@@ -13,7 +13,6 @@ import (
 	"hash"
 	"io"
 	"math"
-	"os"
 )
 
 // Status is the structural verdict on one file.
@@ -83,17 +82,6 @@ const (
 	magicNano         = 0xa1b23c4d
 	magicPCAPNG       = 0x0a0d0d0a
 )
-
-// ValidateFile checks the file at path. The error reports only a failure to
-// open or read it; structural findings are in the report.
-func ValidateFile(path string, limits Limits) (Report, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return Report{}, err
-	}
-	defer func() { _ = f.Close() }()
-	return Validate(f, limits)
-}
 
 // Validate checks a classic pcap stream. It reads at most
 // limits.MaxFileBytes+1 bytes and never allocates a record's declared size.
