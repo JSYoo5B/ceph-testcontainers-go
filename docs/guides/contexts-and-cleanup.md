@@ -364,6 +364,7 @@ result:
 | `Run` (all service `Run`s) | Partially created cluster | `Terminate` it (`CleanupContainer` does) |
 | `AddMonitor`, `AddManager`, `AddOSD`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
+| `rgw.Gateway.CreateRole` | Role whose creation or permission policies failed or are unknown | `Role.Remove`, or discard the cluster; do not create the same name again |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](ceph-operations.md#clientconfigreplacekey)) |
 | `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |

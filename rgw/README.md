@@ -4,7 +4,8 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/rgw` to give an application
 that uses S3 (or Swift) a disposable Ceph cluster with one or more gateways and
 the server-side state its integration test needs: an S3 endpoint the test can
 reach (optionally native HTTPS), users with explicit Admin Ops capabilities,
-tenants, quotas and suspension, rate limits, and storage counters. Accounts
+tenants, quotas and suspension, STS roles with their policies, rate limits,
+and storage counters. Accounts
 and their root users are in [`rgw/account`](account/README.md), placement targets with
 storage classes in [`rgw/placement`](placement/README.md), and the persistent
 queues of bucket notification topics in
@@ -29,7 +30,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
 2. **Prepare the identities** the scenario needs on a `*rgw.Gateway` (from
    `Gateways` or `Start`): `CreateUser` (with tenant, Admin Ops caps, bucket
    limit), `User.SetQuota` / `SetBucketQuota`, `User.Suspend`, and
-   `User.CreateS3Key` / `S3Key.Revoke` for credential rotation. For an account,
+   `User.CreateS3Key` / `S3Key.Revoke` for credential rotation, and
+   `CreateRole` for a role that the SUT assumes with STS. For an account,
    create it with `account.Create(ctx, gateway, cfg)` and its root user with
    `CreateUser` and `UserConfig.Account`; for a placement target, use
    `placement.Create(ctx, gateway, cfg)`, then `Placement.Apply` and
@@ -38,7 +40,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    client on the test host, `DaemonEndpoint` for a client in the cluster
    network, with `User.CreationKey().Credentials()` or the credentials of a
    key from `CreateS3Key` (or the gateway's own `AccessKey` / `SecretKey`)
-   and `Gateway.Region`, path-style addressing.
+   and `Gateway.Region`, path-style addressing. For STS, hand off
+   `Role.ARN()` as well: the SUT calls AssumeRole on the same endpoint.
 4. **Throttle the SUT** when the scenario tests its reaction to 503
    SlowDown: `User.OverrideRateLimit` applies a `rgw.RateLimit` to the user
    (`rgw.RateLimitScope{}`) or to one bucket it owns (`RateLimitScope{Bucket:
@@ -48,7 +51,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.
 6. **Clean up**: terminate the cluster; gateways, users and data go with it.
-   `Gateway.Remove` and `User.Remove` are for tests of those steps.
+   `Gateway.Remove`, `User.Remove` and `Role.Remove` are for tests of those
+   steps.
 
 The smallest S3 fixture keeps one daemon of each kind and single-copy pools:
 
@@ -113,6 +117,21 @@ recovery need the default two OSDs or more.
   configuration, and assert with requests the SUT makes afterwards. RGW
   refuses a revoked key once its metadata caches see the removal, so poll
   with new requests.
+- A role is created with its trust policy and inline permission policies,
+  in the empty tenant and outside any account, and the fixture hands off its
+  ARN only; AssumeRole, temporary credentials and their use belong to the
+  SUT, and the package adds no STS client. STS needs `rgw_sts_key` (a
+  session-token key, such as the output of `ceph-authtool --gen-print-key`)
+  and `rgw_s3_auth_use_sts=true`, set with `override.SetConfig` before
+  `rgw.Start`; without them the role exists but AssumeRole fails. An existing
+  role of the same name is refused, never adopted, and `Role.Remove` deletes
+  only the fixture's policies and role: it refuses a role that was replaced,
+  whose trust policy, tags or metadata changed, or that holds a policy the
+  fixture did not put, and leaves it as it is. A failed `CreateRole` is never
+  retried: a returned role whose outcome is unknown is only removable, and
+  a role whose policy RGW refused is returned with the error so that its
+  `Remove` cleans it up. Policy and trust edits reach RGW through metadata
+  caches, so poll with new requests.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
   the ones done by `Placement.Apply`, `Placement.Reload` and multisite changes.
