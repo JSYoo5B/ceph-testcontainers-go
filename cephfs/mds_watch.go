@@ -21,6 +21,12 @@ const mdsWatchDefaultInterval = 2 * time.Second
 // mdsWatchOperation names the watch in its errors.
 const mdsWatchOperation = "watch MDSs"
 
+// mdsWatchInvalid is a refusal of the watch: an invalid request that names
+// the operation.
+func mdsWatchInvalid(format string, args ...any) error {
+	return servicehook.Invalid(fmt.Errorf(mdsWatchOperation+": "+format, args...))
+}
+
 // MDSWatchEvent is one event of an MDSWatch.
 //
 // Sequence starts at 1 with the baseline and increases by one for each event,
@@ -84,7 +90,7 @@ func (w *MDSWatch) Events() <-chan MDSWatchEvent {
 //purpose:observation,lifetime
 func (w *MDSWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(fmt.Errorf("%s: the watch is not started by its Watch call", mdsWatchOperation))
+		return mdsWatchInvalid("the watch is not started by its Watch call")
 	}
 	return w.stream.Stop()
 }
@@ -132,11 +138,11 @@ type mdsWatchRead func(context.Context) (owner mdsOwnerSample, data []byte, err 
 //purpose:observation
 func (fs *Filesystem) WatchMDSs(ctx context.Context, cfg ceph.WatchConfig) (*MDSWatch, error) {
 	if fs == nil || fs.base().Cluster() == nil {
-		return nil, servicehook.Invalid(fmt.Errorf("%s: cephfs cluster is unavailable", mdsWatchOperation))
+		return nil, mdsWatchInvalid("cephfs cluster is unavailable")
 	}
 	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, mdsWatchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf("%s: %v", mdsWatchOperation, err))
+		return nil, mdsWatchInvalid("%v", err)
 	}
 	f := fs.fleet()
 	return startMDSWatch(ctx, settings, f.core.Name(), f.watchSample)
@@ -195,23 +201,23 @@ func startMDSWatch(ctx context.Context, settings watch.Settings, name string, re
 func resolveWatchedMDSs(name string, owner mdsOwnerSample, data []byte) (mdsSample, error) {
 	switch {
 	case !owner.open:
-		return mdsSample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: the cluster is terminated", mdsWatchOperation)))
+		return mdsSample{}, watch.Fatal(mdsWatchInvalid("the cluster is terminated"))
 	case !owner.registered:
-		return mdsSample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: cephfs %q was removed or this handle no longer owns it", mdsWatchOperation, name)))
+		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q was removed or this handle no longer owns it", name))
 	case owner.native == nil:
-		return mdsSample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: cephfs %q has no confirmed creation identity", mdsWatchOperation, name)))
+		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q has no confirmed creation identity", name))
 	}
 	native := owner.native
 	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
 	if errors.Is(err, errFilesystemAbsent) {
-		return mdsSample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: cephfs %q (FSMap ID %d) is absent from the FSMap: the filesystem was removed", mdsWatchOperation, name, native.ID)))
+		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q (FSMap ID %d) is absent from the FSMap: the filesystem was removed", name, native.ID))
 	}
 	if err != nil {
 		return mdsSample{}, err
 	}
 	if topology.status.FilesystemID != native.ID || topology.metadataPool != native.MetadataPool || topology.defaultPool != native.DefaultPool {
-		return mdsSample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: cephfs %q now has FSMap ID %d with metadata pool %d and default data pool %d instead of %d, %d and %d: recreated under the same name",
-			mdsWatchOperation, name, topology.status.FilesystemID, topology.metadataPool, topology.defaultPool, native.ID, native.MetadataPool, native.DefaultPool)))
+		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q now has FSMap ID %d with metadata pool %d and default data pool %d instead of %d, %d and %d: recreated under the same name",
+			name, topology.status.FilesystemID, topology.metadataPool, topology.defaultPool, native.ID, native.MetadataPool, native.DefaultPool))
 	}
 	return mdsSample{epoch: topology.epoch, mdsMapEpoch: topology.mdsMapEpoch, status: *topology.status}, nil
 }
