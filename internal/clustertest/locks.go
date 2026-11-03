@@ -76,6 +76,7 @@ func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(con
 	}
 	if mutex.TryLock() {
 		mutex.Unlock()
+		locked = false
 		t.Fatal("caller stole or unlocked the busy fixture gate")
 	}
 	mutex.Unlock()
