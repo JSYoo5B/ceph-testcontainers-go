@@ -235,7 +235,11 @@ func (f mdsFleet) completedMDSReplacementCohort() error {
 	return nil
 }
 
-// Owner held; reuse Q's creation/registry/embed guard, not its survivor gate.
+// checkMDSReplacementOwner checks, with the owner lock held, that the stopped
+// daemon is still this filesystem's created, registered and embedded MDS, as
+// checkStoppedMDSOwner does, and that the filesystem has the one-active,
+// zero-standby policy a replacement requires. It does not run the stopped-MDS
+// survivor checks.
 func (f mdsFleet) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentity, r *cephFSMDSReplacement) error {
 	if err := f.checkStoppedMDSOwner(stopped, i); err != nil {
 		return err

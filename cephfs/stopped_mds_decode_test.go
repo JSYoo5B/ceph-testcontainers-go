@@ -46,7 +46,7 @@ func TestStoppedMDSDecodeAcceptsTheSettledBaseline(t *testing.T) {
 
 // TestStoppedMDSDecodeKeepsEveryGuardAndItsClassification pins, for the
 // stopped-MDS global-map decoder, the exact refusal text of each guard group.
-// It characterizes the decoder as it is: the decode-versus-survivor split must
+// It characterizes the decoder: the decode and the survivor verification must
 // keep every guard on the same side of the final scope return, and an
 // unsupported state such as up:oneshot-replay stays refused. The "no complete
 // active survivor set" guard is not listed: the earlier policy and membership
@@ -199,7 +199,7 @@ func calleeName(call *ast.CallExpr) string {
 }
 
 // TestStoppedMDSScopeReadHasOneDecodeThenOneSurvivorVerification pins the
-// caller table of the split: the decoder and the survivor verification are
+// caller table of the scope read: the decoder and the survivor verification are
 // called only by decodeStoppedMDSScope, decoding comes first and the verified
 // scope is what it returns, and Docker inspection appears only in the pinned
 // functions (the stopped target proof, the replacement observation and the

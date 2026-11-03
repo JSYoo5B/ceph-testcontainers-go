@@ -266,7 +266,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 	})
 }
 
-// TestStartMDSWithAdmissionHasThreePhasesInOrder pins the split: the three
+// TestStartMDSWithAdmissionHasThreePhasesInOrder pins the phases: the three
 // phases are called only by startMDSWithAdmission (itself called only by
 // startMDSWithService and addMDSReplacement), in the order admission,
 // credentials, service start, publication; the admission phase takes the
@@ -395,7 +395,7 @@ func TestStartMDSWithAdmissionHasThreePhasesInOrder(t *testing.T) {
 			return true
 		})
 		if count(funcs[name], "LockMutex") != 0 {
-			t.Errorf("%s takes setupMu: the caller holds it (cephfs/entry.go:100-102)", name)
+			t.Errorf("%s takes setupMu: the caller holds it (see filesystemRegistry.setupMu)", name)
 		}
 	}
 }
