@@ -86,7 +86,7 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	oldID := cur.GetContainerID()
 	id, err := store.ReplaceGeneration(ctx, gens, image)
-	if store.Attachment != nil && store.Attachment.ID == oldID {
+	if store.Attachment != nil && store.Attachment.ID == oldID && !store.Attachment.RemoveRequested {
 		// Refused before the old container was touched: nothing changed.
 		return nil, err
 	}
