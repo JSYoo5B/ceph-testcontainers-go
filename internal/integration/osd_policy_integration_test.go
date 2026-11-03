@@ -41,15 +41,17 @@ func TestOSDPolicies(t *testing.T) {
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=True)`, osdPolicyProbe, phase)
 			}
 			probe("seed")
-			original := clusteraccess.OSDs(t, cluster)[0]
+			osds := clusteraccess.OSDs(t, cluster)
+			original := osds[0]
 			containerID := original.GetContainerID()
-			states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
-			if err != nil || len(states) != 4 {
-				t.Fatalf("initial native OSD states unavailable: %+v %v", states, err)
+			if len(osds) != 4 {
+				t.Fatalf("owned OSDs: %d", len(osds))
 			}
-			initial := states[0]
-			if initial.ID != original.ID || !initial.Up || !initial.In || initial.UUID == "" {
-				t.Fatalf("invalid initial OSD identity: %+v", initial)
+			states := requireOSDs(t, ctx, cluster, "initial OSDs", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+			initial := states[slices.IndexFunc(states, func(s ceph.OSDState) bool { return s.ID == original.ID })]
+			// Pinning the initial UUID refuses a re-registration of the same ID.
+			expect := func(up, in bool) ceph.OSDExpectation {
+				return ceph.OSDExpectation{Select: []ceph.OSDState{initial}, Up: up, In: in}
 			}
 			if err := original.SetIn(ctx, false); err != nil {
 				t.Fatal(err)
@@ -57,8 +59,8 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
 				t.Fatal("recover PGs while owned OSD remains out", err)
 			}
-			state := waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && !state.In })
-			if state.UUID != initial.UUID || state.Weight != 0 || original.GetContainerID() != containerID {
+			state := waitOSDPolicyState(t, ctx, cluster, expect(true, false))
+			if state.Weight != 0 || original.GetContainerID() != containerID {
 				t.Fatalf("out changed identity or container: %+v", state)
 			}
 			probe("out")
@@ -68,8 +70,8 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && state.In })
-			if state.UUID != initial.UUID || state.Weight != initial.Weight || original.GetContainerID() != containerID {
+			state = waitOSDPolicyState(t, ctx, cluster, expect(true, true))
+			if state.Weight != initial.Weight || original.GetContainerID() != containerID {
 				t.Fatalf("in changed identity or native map reweight: %+v", state)
 			}
 			probe("in")
@@ -117,24 +119,21 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := original.Stop(ctx, &grace); err != nil {
 				t.Fatal(err)
 			}
-			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return !state.Up })
+			waitOSDPolicyState(t, ctx, cluster, expect(false, true))
 			select {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			case <-time.After(6 * time.Second):
 			}
-			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return !state.Up && state.In })
-			if state.UUID != initial.UUID || !state.In {
-				t.Fatalf("noout did not retain down OSD membership: %+v", state)
-			}
+			requireOSDs(t, ctx, cluster, "noout retains the stopped OSD in", expect(false, true))
 			probe("down-noout")
 			if err := noout.Restore(ctx); err != nil {
 				t.Fatal(err)
 			}
 			// With only noout changed, the monitor must now automatically mark
 			// this same stopped OSD out; do not manually force the observation.
-			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return !state.Up && !state.In })
-			if state.UUID != initial.UUID || state.Weight != 0 || original.GetContainerID() != containerID {
+			state = waitOSDPolicyState(t, ctx, cluster, expect(false, false))
+			if state.Weight != 0 || original.GetContainerID() != containerID {
 				t.Fatalf("native auto-out changed identity/container: %+v", state)
 			}
 			if err := harness.ObserveCluster(cluster).WaitForPGClean(ctx); err != nil {
@@ -150,8 +149,8 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			state = waitOSDPolicyState(t, ctx, cluster, original.ID, func(state ceph.OSDState) bool { return state.Up && state.In })
-			if state.UUID != initial.UUID || original.GetContainerID() != containerID {
+			state = waitOSDPolicyState(t, ctx, cluster, expect(true, true))
+			if original.GetContainerID() != containerID {
 				t.Fatal("OSD restart replaced owned identity/container")
 			}
 			if err := interval.Restore(ctx); err != nil {

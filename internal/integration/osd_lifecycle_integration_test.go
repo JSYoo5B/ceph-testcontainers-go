@@ -164,7 +164,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := foreignTarget.Stop(ctx, &grace); err != nil {
 				t.Fatal(err)
 			}
-			waitOSDPolicyState(t, ctx, cluster, foreignTarget.ID, func(state ceph.OSDState) bool { return !state.Up })
+			waitOSDPolicyState(t, ctx, cluster, ceph.OSDExpectation{Select: []ceph.OSDState{{ID: foreignTarget.ID}}, Up: false, In: false})
 			harness.CephCommand(t, ctx, cluster, "osd", "purge", strconv.Itoa(foreignTarget.ID), "--yes-i-really-mean-it")
 			foreignUUID := uuid.NewString()
 			harness.CephCommand(t, ctx, cluster, "osd", "create", foreignUUID, strconv.Itoa(foreignTarget.ID))
