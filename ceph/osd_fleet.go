@@ -54,7 +54,8 @@ type osdFleetState struct {
 	//testdouble:nil-default-hook
 	stores osdStorageState
 	// deviceClaims is the cluster-wide claim table of the host block devices
-	// of OSDs; see osdDeviceClaims. Nothing publishes a claim yet.
+	// of OSDs; see osdDeviceClaims. registerBlockDeviceOSD publishes the claim
+	// of an OSD on a host block device.
 	deviceClaims osdDeviceClaims
 }
 

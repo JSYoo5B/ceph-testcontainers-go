@@ -72,8 +72,10 @@ type Container struct {
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
 	// monStores is the owned MON store volumes, by MON name; see
-	// monstore.State. It has no lock of its own: mu guards it. Nothing publishes
-	// a record yet.
+	// monstore.State. It has no lock of its own: mu guards it. A MON started
+	// with a store volume (WithMonitorStorage) publishes its record
+	// before the volume is created, and the record stays until its store is
+	// retired or Terminate releases it.
 	//testdouble:nil-default-hook
 	monStores monstore.State
 	// runDir is the shared admin-socket run directory; see runDirState for
