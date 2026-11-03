@@ -91,7 +91,7 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 // fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that Admit
 // takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	begins := []string{"OverrideTiming", "beginDataPoolOperation"}
+	begins := []string{"OverrideTiming", "beginDataPoolOperation", "beginMaxFileSizeOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
 	files := parseCephFSProductionFiles(t)

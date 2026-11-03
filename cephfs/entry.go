@@ -104,13 +104,19 @@ type filesystemRegistry struct {
 	setupMu sync.Mutex
 	// byName holds the owned filesystems. The cluster mutex guards it.
 	byName map[string]*Filesystem
+	// maxFileSizes holds the max_file_size override of each filesystem that
+	// is not restored yet. setupMu guards it. A removed
+	// filesystem's entry stays but is inert: no operation admits that core
+	// again, and a filesystem created later under the same name is a new
+	// descriptor.
+	maxFileSizes map[*Filesystem]*maxFileSizeState
 }
 
 // filesystems returns the cluster's filesystem registry, creating it on first
 // use.
 func filesystems(c *ceph.Container) *filesystemRegistry {
 	return servicehook.Extension(c, bootstrapKind, func() any {
-		return &filesystemRegistry{byName: make(map[string]*Filesystem)}
+		return &filesystemRegistry{byName: make(map[string]*Filesystem), maxFileSizes: make(map[*Filesystem]*maxFileSizeState)}
 	}).(*filesystemRegistry)
 }
 
