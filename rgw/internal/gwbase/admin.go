@@ -96,38 +96,53 @@ func (c *Core) AdmitAdmin() (testcontainers.Container, error) {
 // command when Terminate starts, and a target removed meanwhile fails the
 // command with a classified error.
 func (c *Core) AdminCommandIn(ctx context.Context, target testcontainers.Container, args ...string) ([]byte, error) {
-	return c.supervised(ctx, target, AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...))
+	data, _, err := c.AdminPrefixIn(ctx, target, 0, args...)
+	return data, err
 }
 
-// supervised runs the radosgw-admin command line argv in target under the
-// gateway's shell supervisor, as AdminCommandIn describes.
+// AdminPrefixIn runs radosgw-admin as AdminCommandIn does and keeps at most
+// the first maxBytes bytes of its output (0 for all); truncated reports that
+// the command wrote more, which was discarded as it arrived. A failed command
+// is reported as by AdminCommandIn, from what was kept.
+func (c *Core) AdminPrefixIn(ctx context.Context, target testcontainers.Container, maxBytes int, args ...string) (data []byte, truncated bool, err error) {
+	argv := AdminArgv(c.scope, append([]string{"--format", "json"}, args...)...)
+	return c.supervisedPrefix(ctx, target, maxBytes, argv)
+}
+
+// supervised runs the already scoped command line argv without limiting stdout.
 func (c *Core) supervised(ctx context.Context, target testcontainers.Container, argv []string) ([]byte, error) {
+	data, _, err := c.supervisedPrefix(ctx, target, 0, argv)
+	return data, err
+}
+
+// supervisedPrefix preserves supervisor tracking while retaining a bounded stdout prefix.
+func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Container, maxBytes int, argv []string) ([]byte, bool, error) {
 	if servicehook.DiagnosticHandle(target) == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
+		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	report, err := servicehook.RunOwnedShell(ctx, c.cluster, target, "radosgw-admin", limit, argv...)
+	report, err := servicehook.RunOwnedShell(ctx, c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
 	case errors.As(err, &unstopped):
 		// Its Stop, or Terminate, confirms the stop later.
-		return nil, err
+		return nil, false, err
 	case err != nil && ctx.Err() != nil:
-		return nil, fmt.Errorf("radosgw-admin: the call ended before the command, which was stopped: %w", ctx.Err())
+		return nil, false, fmt.Errorf("radosgw-admin: the call ended before the command, which was stopped: %w", ctx.Err())
 	case err != nil:
 		// The command may have run: its outcome is unknown.
-		return nil, servicehook.ClassifyExec(ctx, err)
+		return nil, false, servicehook.ClassifyExec(ctx, err)
 	case report.Stopped:
-		return nil, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin",
+		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin",
 			Err: fmt.Errorf("radosgw-admin still ran after %ds and was stopped", limit)}
 	case report.ExitCode == 127:
 		// The gateway's sh found no radosgw-admin, which never exits 127 itself.
-		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
+		return nil, false, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
 			Err: errors.New("the gateway image has no radosgw-admin")}
 	case report.ExitCode != 0:
-		return nil, RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr))
+		return nil, false, RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr))
 	}
-	return report.Stdout, nil
+	return report.Stdout, report.StdoutTruncated, nil
 }
 
 // adminLimit is how long radosgw-admin may run before the gateway's

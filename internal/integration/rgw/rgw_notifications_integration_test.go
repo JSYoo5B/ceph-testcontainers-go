@@ -5,9 +5,13 @@
 package rgw_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -19,12 +23,15 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/notification"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 // RGW pushes bucket notifications to an HTTP endpoint that the test owns. The
 // receiver runs in the WithClient container so it shares the cluster network,
-// or the host network in host mode.
+// or the host network in host mode. While the receiver is down, the persistent
+// topic's queue, read with notification.Queue, holds the known events, and the
+// events leave it once the receiver has logged them.
 func TestRGWBucketNotifications(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		host, name := mode.Host, mode.Name
@@ -80,6 +87,9 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 	}{
 		{"tc-direct", [][2]string{{"push-endpoint", pushEndpoint}}},
 		{"tc-persistent", [][2]string{{"push-endpoint", pushEndpoint}, {"persistent", "true"}, {"retry_sleep_duration", "1"}}},
+		// No rule publishes to tc-unrelated: its queue must stay apart from
+		// tc-persistent's.
+		{"tc-unrelated", [][2]string{{"push-endpoint", pushEndpoint}, {"persistent", "true"}, {"retry_sleep_duration", "1"}}},
 	} {
 		topics[topic.name] = createNotificationTopic(t, ctx, s3, topic.name, topic.attributes)
 	}
@@ -107,20 +117,102 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 	})
 
 	t.Run("persistent", func(t *testing.T) {
+		selected := notification.Topic{Name: "tc-persistent"}
+		sample := notification.Sample{MaxEntries: 10}
+		queued := []string{"queued/c", "queued/d"}
+		received := []string{"ObjectCreated:Put queued/c", "ObjectCreated:Put queued/d"}
+		native := map[string][]byte{}
+		for _, name := range []string{"tc-persistent", "tc-unrelated", "tc-direct"} {
+			native[name] = nativeTopic(t, ctx, gateway, name)
+		}
+		if empty := observeQueue(t, ctx, gateway, selected, sample); empty.Stats.Entries != 0 || !empty.Sampled || len(empty.Pending) != 0 || empty.Topic.ARN != topics["tc-persistent"] {
+			t.Fatalf("persistent queue is not empty before its events: %+v", empty)
+		}
+
 		stopNotificationReceiver(t, ctx, client)
 		started := time.Now()
-		harness.S3FeatureRequest(t, ctx, s3, http.MethodPut, bucket+"/queued/c", []byte("queued while down"), nil, http.StatusOK)
+		for _, key := range queued {
+			harness.S3FeatureRequest(t, ctx, s3, http.MethodPut, bucket+"/"+key, []byte("queued while down"), nil, http.StatusOK)
+		}
 		if elapsed := time.Since(started); elapsed > 10*time.Second {
 			t.Fatalf("persistent notification blocked the S3 write for %s", elapsed)
 		}
-		time.Sleep(3 * time.Second)
+		pending := waitQueue(t, ctx, gateway, selected, sample, func(s notification.QueueSnapshot) bool {
+			return s.Stats.Entries >= uint64(len(queued)) && len(missingPending(s, queued)) == 0
+		})
+		for _, entry := range pending.Pending {
+			if entry.EventName != "ObjectCreated:Put" || entry.Bucket != strings.TrimPrefix(bucket, "/") || entry.ConfigurationID != "queued" || !strings.HasPrefix(entry.Key, "queued/") {
+				t.Fatalf("pending entry is not one of the selected rule's events: %+v", entry)
+			}
+		}
+		if text := fmt.Sprintf("%+v", pending); strings.Contains(text, pushEndpoint) || strings.Contains(text, access) || strings.Contains(text, secret) {
+			t.Fatal("queue snapshot exposes the push endpoint or S3 credentials")
+		}
 		if events, err := harness.ReadNotificationEvents(ctx, client); err != nil {
 			t.Fatal(err)
-		} else if slices.Contains(events, "ObjectCreated:Put queued/c") {
-			t.Fatal("event was recorded while the receiver was stopped")
+		} else if len(harness.MissingNotificationEvents(received, events)) != len(received) {
+			t.Fatalf("event was recorded while the receiver was stopped: %v", events)
 		}
+		// Observing neither drains nor delivers: the entries stay pending.
+		again := observeQueue(t, ctx, gateway, selected, sample)
+		if again.Stats.Entries < uint64(len(queued)) || len(missingPending(again, queued)) != 0 {
+			t.Fatalf("queue observation changed the pending entries: %+v", again)
+		}
+		// topic dump writes every queued entry; the sample is the first one.
+		if one := observeQueue(t, ctx, gateway, selected, notification.Sample{MaxEntries: 1}); len(one.Pending) != 1 || one.Pending[0] != again.Pending[0] || one.Stats.Entries < uint64(len(queued)) {
+			t.Fatalf("sample is not the first entry of the queue: %+v", one)
+		}
+		if snapshot, err := notification.Queue(ctx, gateway, selected, notification.Sample{MaxEntries: len(queued), MaxBytes: 64}); err == nil || snapshot.Sampled {
+			t.Fatalf("sample over its byte limit was accepted: %+v", snapshot)
+		} else if strings.Contains(err.Error(), pushEndpoint) {
+			t.Fatal("refused sample error exposes the push endpoint")
+		}
+		t.Logf("RGW_NOTIFY pending stats=%+v sampled=%d", pending.Stats, len(pending.Pending))
+
+		unrelated := observeQueue(t, ctx, gateway, notification.Topic{Name: "tc-unrelated"}, sample)
+		if unrelated.Stats.Entries != 0 || len(unrelated.Pending) != 0 || unrelated.Topic.ARN != topics["tc-unrelated"] {
+			t.Fatalf("unrelated topic shares the selected queue: %+v", unrelated)
+		}
+		// A refused or denied radosgw-admin read and a release without the
+		// topic commands cannot be produced on the supported images; the unit
+		// tests of rgw/notification cover them.
+		for name, c := range map[string]struct {
+			topic notification.Topic
+			is    error
+		}{
+			"nonpersistent": {notification.Topic{Name: "tc-direct"}, notification.ErrNotPersistent},
+			"missing":       {notification.Topic{Name: "tc-missing"}, fs.ErrNotExist},
+			"other tenant":  {notification.Topic{Tenant: "tc_other", Name: "tc-persistent"}, fs.ErrNotExist},
+			"invalid":       {notification.Topic{Name: "tc:persistent"}, ceph.ErrInvalidRequest},
+		} {
+			if snapshot, err := notification.Queue(ctx, gateway, c.topic, sample); !errors.Is(err, c.is) || snapshot.Sampled || snapshot.Stats != (notification.Stats{}) {
+				t.Fatalf("%s topic observation: %+v %v", name, snapshot, err)
+			} else if strings.Contains(err.Error(), pushEndpoint) {
+				t.Fatalf("%s topic error exposes the push endpoint", name)
+			}
+		}
+		canceled, cancelObservation := context.WithCancel(ctx)
+		cancelObservation()
+		if snapshot, err := notification.Queue(canceled, gateway, selected, sample); !errors.Is(err, context.Canceled) || snapshot.Sampled {
+			t.Fatalf("canceled observation: %+v %v", snapshot, err)
+		}
+		for name, before := range native {
+			if after := nativeTopic(t, ctx, gateway, name); !bytes.Equal(before, after) {
+				t.Fatalf("queue observations changed topic %s", name)
+			}
+		}
+		if after, _ := harness.S3FeatureRequest(t, ctx, s3, http.MethodGet, bucket+"?notification", nil, nil, http.StatusOK); !bytes.Equal(after, stored) {
+			t.Fatal("queue observations changed the bucket notification configuration")
+		}
+
 		startNotificationReceiver(t, ctx, client, port)
-		waitNotificationEvents(t, ctx, client, []string{"ObjectCreated:Put queued/c"})
+		waitNotificationEvents(t, ctx, client, received)
+		// The receiver has logged the events; only now must they leave the
+		// queue. An empty queue alone would not prove the receipt.
+		drained := waitQueue(t, ctx, gateway, selected, sample, func(s notification.QueueSnapshot) bool {
+			return s.Stats.Entries == 0 && len(missingPending(s, queued)) == len(queued)
+		})
+		t.Logf("RGW_NOTIFY drained stats=%+v", drained.Stats)
 	})
 
 	harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket+"?notification", nil, nil, http.StatusOK)
@@ -133,7 +225,52 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 	}
 	harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket+"/out/b", nil, nil, http.StatusNoContent)
 	harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket+"/queued/c", nil, nil, http.StatusNoContent)
+	harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket+"/queued/d", nil, nil, http.StatusNoContent)
 	harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket, nil, nil, http.StatusNoContent)
+}
+
+// nativeTopic returns radosgw-admin topic get of name, which holds the push
+// endpoint: compare it, never log it.
+func nativeTopic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, name string) []byte {
+	t.Helper()
+	data, err := gateway.Admin(ctx, "topic", "get", "--topic", name)
+	if err != nil {
+		t.Fatalf("native topic %s: %v", name, err)
+	}
+	return data
+}
+
+func observeQueue(t *testing.T, ctx context.Context, gateway *rgw.Gateway, topic notification.Topic, sample notification.Sample) notification.QueueSnapshot {
+	t.Helper()
+	snapshot, err := notification.Queue(ctx, gateway, topic, sample)
+	if err != nil {
+		t.Fatalf("queue of topic %s: %v", topic.Name, err)
+	}
+	return snapshot
+}
+
+// waitQueue polls the topic's queue for at most two minutes until ready
+// accepts a snapshot, and returns that snapshot.
+func waitQueue(t *testing.T, ctx context.Context, gateway *rgw.Gateway, topic notification.Topic, sample notification.Sample, ready func(notification.QueueSnapshot) bool) notification.QueueSnapshot {
+	t.Helper()
+	seen, err := harness.Observe(ctx, 2*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (notification.QueueSnapshot, bool, error) {
+		snapshot, err := notification.Queue(probeCtx, gateway, topic, sample)
+		return snapshot, err == nil && ready(snapshot), err
+	})
+	if err != nil {
+		t.Fatalf("queue of topic %s not reached: %v; last %+v", topic.Name, err, seen.Value)
+	}
+	return seen.Value
+}
+
+// missingPending returns the keys of want for which the snapshot's sample has
+// no ObjectCreated:Put entry.
+func missingPending(snapshot notification.QueueSnapshot, want []string) []string {
+	return slices.DeleteFunc(slices.Clone(want), func(key string) bool {
+		return slices.ContainsFunc(snapshot.Pending, func(entry notification.PendingEntry) bool {
+			return entry.Key == key && entry.EventName == "ObjectCreated:Put"
+		})
+	})
 }
 
 func notificationRule(id, topic, prefix string) string {

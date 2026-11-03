@@ -657,6 +657,11 @@ _, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume
   runs the essential image, which has no `radosgw-admin` when the cluster uses
   split role images (`ImageSet`). The default aggregate image happens to have
   it, but that is not part of the fixture's contract.
+- For the persistent queue of a bucket notification topic, prefer
+  `notification.Queue` of [`rgw/notification`](../../rgw/notification/README.md)
+  to `topic stats` and `topic dump` through Admin: it checks the topic's tenant,
+  name and ARN, bounds the sample and leaves out push endpoints and their
+  arguments, which can carry credentials.
 - Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
   endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
   (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the
@@ -718,6 +723,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | `cephfs/subvolume` handles, which check native identity | The `cephfs/subvolume` functions and handles |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `account.Account` and `placement.Placement` methods such as `Placement.Apply`, which verify keys and identity | The typed RGW helpers of `rgw`, `rgw/account` and `rgw/placement` |
 | `radosgw-admin key create`/`key rm` on keys that `User.CreateS3Key` or `CreateUser` created | Every owned-user operation, which refuses a changed or reappeared fixture key | `User.CreateS3Key`, `S3Key.Revoke`; keys added natively are left alone |
+| `radosgw-admin ratelimit set`/`enable`/`disable` on a user or bucket scope held by a rate-limit handle | `User.OverrideRateLimit`, whose `Restore` refuses an outside edit | `User.OverrideRateLimit` |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `NetworkConfig.WithMessengerMode` at `Run` |

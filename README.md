@@ -49,6 +49,8 @@ Documentation for a published release is available at its Git tag.
     users.
   - [`rgw/placement`](rgw/placement/README.md): placement targets, storage
     classes and user default placement.
+  - [`rgw/notification`](rgw/notification/README.md): persistent bucket
+    notification queues of SUT-created topics.
   - [`rgw/multisite`](rgw/multisite/README.md): realms, zonegroups and zones,
     period transfer, sync status and sync policy.
 - [`fault`](fault/README.md): container pause, network delay, loss, rate,

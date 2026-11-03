@@ -1,0 +1,75 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/notification",
+  "count": 11,
+  "entries": [
+    {
+      "current": "rgw/notification.DefaultSampleBytes",
+      "kind": "const",
+      "proposed": "rgw/notification.DefaultSampleBytes",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.ErrNotPersistent",
+      "kind": "var",
+      "proposed": "rgw/notification.ErrNotPersistent",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.MaxSampleBytes",
+      "kind": "const",
+      "proposed": "rgw/notification.MaxSampleBytes",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.MaxSampleEntries",
+      "kind": "const",
+      "proposed": "rgw/notification.MaxSampleEntries",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.Metadata",
+      "kind": "type",
+      "proposed": "rgw/notification.Metadata",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.PendingEntry",
+      "kind": "type",
+      "proposed": "rgw/notification.PendingEntry",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.Queue",
+      "kind": "function",
+      "signature": "func(ctx context.Context, g *rgw.Gateway, topic Topic, sample Sample) (QueueSnapshot, error)",
+      "proposed": "rgw/notification.Queue",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.QueueSnapshot",
+      "kind": "type",
+      "proposed": "rgw/notification.QueueSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.Sample",
+      "kind": "type",
+      "proposed": "rgw/notification.Sample",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.Stats",
+      "kind": "type",
+      "proposed": "rgw/notification.Stats",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/notification.Topic",
+      "kind": "type",
+      "proposed": "rgw/notification.Topic",
+      "decision": "baseline"
+    }
+  ]
+}

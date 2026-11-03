@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw",
-  "count": 57,
+  "count": 63,
   "types": {
     "rgw.AdminCapability": [
       "AdminCapability.Permission field string `json:\"perm\"`",
@@ -32,6 +32,16 @@
       "Quota.Enabled field bool",
       "Quota.MaxObjects field int64",
       "Quota.MaxSizeBytes field int64"
+    ],
+    "rgw.RateLimit": [
+      "RateLimit.Enabled field bool",
+      "RateLimit.MaxReadBytes field int64",
+      "RateLimit.MaxReadOps field int64",
+      "RateLimit.MaxWriteBytes field int64",
+      "RateLimit.MaxWriteOps field int64"
+    ],
+    "rgw.RateLimitScope": [
+      "RateLimitScope.Bucket field string"
     ],
     "rgw.RootAccount": [
       "RootAccount embed accountOwner"
