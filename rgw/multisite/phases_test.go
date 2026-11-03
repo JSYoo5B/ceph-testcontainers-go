@@ -503,6 +503,27 @@ func TestRGWZoneAdminRunsOnlyInAnOwnedRunningZone(t *testing.T) {
 	}
 }
 
+func TestRGWPeriodPullRefusesATerminatedFixture(t *testing.T) {
+	cli := &rgwScriptCLI{}
+	f := newPhaseFixture(cli, cli)
+	f.realm.sourceURL, f.realm.destinationURL = "http://a:7480", "http://b:7480"
+	if err := f.PullSourcePeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PullDestinationPeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.closed = true
+	for name, pull := range map[string]func(context.Context) error{"source": f.PullSourcePeriod, "destination": f.PullDestinationPeriod} {
+		if err := pull(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("%s pull on a terminated fixture = %v", name, err)
+		}
+	}
+	if len(cli.ops) != 2 {
+		t.Fatalf("pulls = %q, want two before termination", cli.ops)
+	}
+}
+
 func TestRGWZoneAdminRefusesScopeOverridesAndRedactsFailures(t *testing.T) {
 	cli := &rgwScriptCLI{fail: map[string]bool{"user info --uid u": true}}
 	f := newPhaseFixture(cli, cli)

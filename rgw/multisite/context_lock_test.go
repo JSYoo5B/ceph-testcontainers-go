@@ -36,7 +36,9 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 			_, err := f.ApplyZoneLinkProfile(ctx, "queued", "peer", fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100})
 			return err
 		},
-		"Terminate": func(ctx context.Context) error { return f.Terminate(ctx) },
+		"PullSourcePeriod":      func(ctx context.Context) error { return f.PullSourcePeriod(ctx) },
+		"PullDestinationPeriod": func(ctx context.Context) error { return f.PullDestinationPeriod(ctx) },
+		"Terminate":             func(ctx context.Context) error { return f.Terminate(ctx) },
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {

@@ -626,13 +626,13 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 // and restart its gateway afterwards. This does not promote a zone or restart
 // a gateway automatically.
 //
+// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
+// other topology operations, and a terminated fixture refuses it with
+// ceph.ErrInvalidRequest.
+//
 //purpose:condition
 func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || f.realm.destinationURL == "" {
-		return fmt.Errorf("RGW multisite system credentials are unavailable")
-	}
-	_, err := f.realm.admin(ctx, f.realm.sourceClient, f.realm.config.SourceZone, "realm", "pull", "--url", f.realm.destinationURL, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
-	return err
+	return f.pullPeriod(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL)
 }
 
 // PullDestinationPeriod imports the source's realm and current committed
@@ -640,12 +640,30 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 // and reflected zonegroups. Use it to recover a fenced destination after a
 // planned failback; promotion and gateway restart remain caller decisions.
 //
+// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
+// other topology operations, and a terminated fixture refuses it with
+// ceph.ErrInvalidRequest.
+//
 //purpose:condition
 func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || f.realm.sourceURL == "" {
+	return f.pullPeriod(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL)
+}
+
+// pullPeriod runs realm pull from url in zone through client. It holds
+// topologyMu, like the other operations that change the period, and refuses a
+// terminated fixture.
+func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Container, zone, url string) error {
+	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
+	defer f.topologyMu.Unlock()
+	if f.closed {
+		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
+	}
+	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.realm.admin(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, "realm", "pull", "--url", f.realm.sourceURL, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
+	_, err := f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
 	return err
 }
 
