@@ -169,7 +169,9 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*Placement, err
 	if g.Cluster() == nil {
 		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.Cluster())
+	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+		return nil, err
+	}
 	defer servicehook.Unlock(g.Cluster())
 	if err := g.ValidateAdmin(); err != nil {
 		return nil, err
@@ -316,7 +318,9 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 	if origin.Cluster() == nil {
 		return State{}, servicehook.Invalid(errors.New("RGW placement is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(origin.Cluster())
+	if err := servicehook.LockTopology(ctx, origin.Cluster()); err != nil {
+		return State{}, err
+	}
 	defer servicehook.Unlock(origin.Cluster())
 	g, err := origin.ScopeGateway(ctx)
 	if err != nil {
@@ -352,7 +356,9 @@ func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	if g.Cluster() == nil {
 		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.Cluster())
+	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(g.Cluster())
 	if err := validateHandle(g, p); err != nil {
 		return err
@@ -516,7 +522,9 @@ func reload(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	if g.Cluster() == nil {
 		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.Cluster())
+	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+		return err
+	}
 	defer servicehook.Unlock(g.Cluster())
 	if err := validateHandle(g, p); err != nil {
 		return err
