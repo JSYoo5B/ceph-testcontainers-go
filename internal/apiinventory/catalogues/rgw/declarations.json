@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 38,
+  "count": 43,
   "entries": [
     {
       "current": "rgw.AdminCapability",
@@ -114,6 +114,32 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.RateLimit",
+      "kind": "type",
+      "proposed": "rgw.RateLimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.RateLimitOverrideHandle",
+      "kind": "type",
+      "proposed": "rgw.RateLimitOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.RateLimitOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*RateLimitOverrideHandle",
+      "proposed": "rgw.RateLimitOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.RateLimitScope",
+      "kind": "type",
+      "proposed": "rgw.RateLimitScope",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.RootAccount",
       "kind": "type",
       "proposed": "rgw.RootAccount",
@@ -207,6 +233,14 @@
       "signature": "func(ctx context.Context) (UserInfo, error)",
       "receiver": "*User",
       "proposed": "rgw.User.Info",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.OverrideRateLimit",
+      "kind": "method",
+      "signature": "func(ctx context.Context, scope RateLimitScope, limit RateLimit) (*RateLimitOverrideHandle, error)",
+      "receiver": "*User",
+      "proposed": "rgw.User.OverrideRateLimit",
       "decision": "baseline"
     },
     {
