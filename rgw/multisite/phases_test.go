@@ -13,6 +13,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -248,6 +249,7 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 		"closed":          {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.closed = true }, want: "initialized and running"},
 		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.realm.systemSecret = "" }, want: "initialized and running"},
 		"already owned":   {config: ZoneConfig{Name: "a"}, want: "already owned"},
+		"essential image": {config: ZoneConfig{Name: "d", Cluster: splitRoleCluster("image")}, want: "not its rgw image"},
 	}
 	for name, tc := range cases {
 		f, cli, _, _, _ := rgwRemovalFixture()
@@ -263,6 +265,12 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 			t.Fatalf("%s: a refused addition ran commands or registered a zone", name)
 		}
 	}
+}
+
+// splitRoleCluster is a cluster whose essential image is essential and whose
+// RGW role has an image of its own.
+func splitRoleCluster(essential string) *ceph.Container {
+	return testhelper.TestCluster(nil, testhelper.TestConfig{Images: &ceph.ImageSet{Essential: essential, Client: essential, RGW: "rgw-role:test"}})
 }
 
 func TestRGWAdditionMasterRefusesANameInTheCommittedPeriod(t *testing.T) {

@@ -435,8 +435,9 @@ type zoneAddition struct {
 
 // admitZoneAddition refuses an addition before anything is created: invalid
 // names, detached or pending removals, a zonegroup that does not match
-// createGroup, an uninitialized or closed fixture, a duplicate or incompatible
-// zone and a cluster that is not fresh. The caller holds topologyMu.
+// createGroup, an uninitialized or closed fixture, a gateway image that the
+// cluster selects for another role, a duplicate or incompatible zone and a
+// cluster that is not fresh. The caller holds topologyMu.
 func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config ZoneConfig, createGroup bool) (zoneAddition, error) {
 	if config.Zonegroup == "" {
 		config.Zonegroup = f.realm.config.Zonegroup
@@ -460,6 +461,9 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 	}
 	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess == "" || f.realm.systemSecret == "" {
 		return zoneAddition{}, errors.New("RGW multisite must be initialized and running")
+	}
+	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Cluster); err != nil {
+		return zoneAddition{}, fmt.Errorf("RGW zone %s gateway image: %w", config.Name, err)
 	}
 	for _, zone := range f.zoneStates() {
 		if zone.Name == config.Name {
