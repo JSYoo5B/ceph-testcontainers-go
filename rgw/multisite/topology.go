@@ -421,7 +421,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err := f.topology.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state }); err != nil {
 		return &state.Zone, err
 	}
-	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
+	setGatewayCredentials(config.Cluster, state.Gateway, f.Source.AccessKey, f.Source.SecretKey)
 	return &state.Zone, nil
 }
 

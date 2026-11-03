@@ -466,11 +466,21 @@ func (f *Fixture) issueS3Credentials(ctx context.Context, suffix string) error {
 	if err := json.Unmarshal(user, &credentials); err != nil || len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
 		return fmt.Errorf("invalid RGW S3 test credentials")
 	}
-	for _, gateway := range []*rgw.Gateway{f.Source, f.Destination} {
-		gateway.AccessKey = credentials.Keys[0].AccessKey
-		gateway.SecretKey = credentials.Keys[0].SecretKey
-	}
+	setGatewayCredentials(f.realm.config.Source, f.Source, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
+	setGatewayCredentials(f.realm.config.Destination, f.Destination, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
 	return nil
+}
+
+// setGatewayCredentials gives gateway, which cluster already publishes, the
+// fixture's S3 test key. It holds the cluster mutex, under which the cluster
+// reads its gateways' credentials for diagnostic redaction. A nil cluster is
+// a descriptor that no cluster publishes.
+func setGatewayCredentials(cluster *ceph.Container, gateway *rgw.Gateway, access, secret string) {
+	if cluster != nil {
+		servicehook.Lock(cluster)
+		defer servicehook.Unlock(cluster)
+	}
+	gateway.AccessKey, gateway.SecretKey = access, secret
 }
 
 // zoneJoin is a fresh zone joining the realm through its CLI client: it pulls

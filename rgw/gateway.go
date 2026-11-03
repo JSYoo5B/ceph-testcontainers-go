@@ -122,8 +122,10 @@ func startGatewayOn(ctx context.Context, c *ceph.Container, config Config, reser
 	if ctr != nil {
 		rgw = newGateway(c, ctr, config, port, tlsPort, facts.PublicAddress, facts.NetworkName)
 		// Publish after credential initialization, including partial error
-		// returns. Gateways readers then see an immutable descriptor. The
-		// generic service already owns the container during initialization.
+		// returns. After publication the credentials change only under the
+		// cluster mutex: a multisite fixture gives the gateways of its zones
+		// the shared S3 key once they have started. The generic service
+		// already owns the container during initialization.
 		defer func() {
 			servicehook.Lock(c)
 			defer servicehook.Unlock(c)
