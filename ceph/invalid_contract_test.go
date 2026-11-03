@@ -31,10 +31,10 @@ import (
 // across rgw and its packages in the same way, with one more in rgw: the
 // refusal of a root user's account from another cluster or gateway scope.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 24, "rgw": 27,
+	"rbd": 28, "cephfs": 24, "rgw": 24,
 	"cephfs/subvolume": 29, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
-	"rgw/account": 11, "rgw/placement": 20, "rgw/internal/gwbase": 7,
+	"rgw/account": 11, "rgw/placement": 20, "rgw/internal/gwbase": 12,
 	"rbd/mirror": 29, "cephfs/mirror": 15,
 }
 

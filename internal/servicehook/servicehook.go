@@ -222,11 +222,12 @@ func ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig {
 	return get().ResolvePool(c, config)
 }
 
-// RunOwnedShell runs argv in target, a container of c that the caller holds
-// the cluster mutex for, under the shell supervisor with limit seconds (0
-// for none), and tracks it until it is known to have ended: when ctx ends
-// first the command is stopped before RunOwnedShell returns, and a stop that
-// cannot be confirmed returns a *ceph.NativeCommandUnstoppedError.
+// RunOwnedShell runs argv in target, a container of c that the caller
+// admitted while it held the cluster mutex, under the shell supervisor with
+// limit seconds (0 for none), and tracks it until it is known to have ended:
+// when ctx ends first the command is stopped before RunOwnedShell returns,
+// and a stop that cannot be confirmed returns a
+// *ceph.NativeCommandUnstoppedError.
 func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
 	return get().RunOwnedShell(ctx, c, target, label, limit, argv...)
 }
