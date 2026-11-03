@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rbd/mirror",
-  "count": 76,
+  "count": 88,
   "types": {
     "rbd/mirror.Config": [
       "Config.DaemonCount field int",
@@ -45,6 +45,14 @@
       "ImageStatus.SourceNamespace field string",
       "ImageStatus.SourcePrimary field bool",
       "ImageStatus.State field string"
+    ],
+    "rbd/mirror.ImageWatchEvent": [
+      "ImageWatchEvent.Err field error",
+      "ImageWatchEvent.Finished field time.Time",
+      "ImageWatchEvent.Kind field ceph.WatchEventKind",
+      "ImageWatchEvent.Sequence field uint64",
+      "ImageWatchEvent.Started field time.Time",
+      "ImageWatchEvent.Status field ImageStatus"
     ],
     "rbd/mirror.Mirror": [
       "Mirror embed testcontainers.Container"
@@ -98,6 +106,14 @@
       "ReceiverStatus.SourceFSID field string",
       "ReceiverStatus.SourceNamespace field string",
       "ReceiverStatus.SourcePoolID field int64"
+    ],
+    "rbd/mirror.ReceiverWatchEvent": [
+      "ReceiverWatchEvent.Err field error",
+      "ReceiverWatchEvent.Finished field time.Time",
+      "ReceiverWatchEvent.Kind field ceph.WatchEventKind",
+      "ReceiverWatchEvent.Sequence field uint64",
+      "ReceiverWatchEvent.Started field time.Time",
+      "ReceiverWatchEvent.Status field ReceiverStatus"
     ],
     "rbd/mirror.TimingProfile": [
       "TimingProfile.JournalPolling field bool"
