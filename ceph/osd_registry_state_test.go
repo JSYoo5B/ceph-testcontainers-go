@@ -192,7 +192,7 @@ var osdRegistryCallers = map[string]stateCaller{
 	"nativePoolDomains":                {"holds", []string{"get"}},
 	"ownsNativeTarget":                 {"holds", []string{"each"}},
 	"monitorConfigTargets":             {"holds", []string{"each"}},
-	"osdStates":                        {"takes", []string{"count", "each"}},
+	"ownedOSDSample":                   {"takes", []string{"count", "each"}},
 	"waitForClean":                     {"takes", []string{"count"}},
 	"OSDs":                             {"takes", []string{"sorted"}},
 	"CreatePool":                       {"takes", []string{"placementDomains"}},

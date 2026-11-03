@@ -155,9 +155,11 @@ type s3Probe struct {
 
 // s3ProbeResult is the one JSON line that the probe prints.
 type s3ProbeResult struct {
-	Operation string `json:"operation"`
-	Outcome   string `json:"outcome"`
-	SHA256    string `json:"sha256"`
+	Operation  string `json:"operation"`
+	Role       string `json:"role"`
+	AssumedARN string `json:"assumed_arn"`
+	Outcome    string `json:"outcome"`
+	SHA256     string `json:"sha256"`
 }
 
 // buildS3Probe builds the probe module, outside this module and its
@@ -184,13 +186,21 @@ func buildS3Probe(t *testing.T, ctx context.Context, endpoint, region string) s3
 // environment and one operation on bucket/object.
 func (p s3Probe) run(t *testing.T, ctx context.Context, key *rgw.S3Key, operation, bucket, object, data string) s3ProbeResult {
 	t.Helper()
+	return p.runAs(t, ctx, key, "", operation, bucket, object, data)
+}
+
+// runAs runs the probe as run does; with a non-empty roleARN, the probe first
+// assumes that role with STS and performs the operation with its temporary
+// credentials.
+func (p s3Probe) runAs(t *testing.T, ctx context.Context, key *rgw.S3Key, roleARN, operation, bucket, object, data string) s3ProbeResult {
+	t.Helper()
 	access, secret, err := key.Credentials()
 	if err != nil {
 		t.Fatal(err)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, p.path, "-endpoint", p.endpoint, "-region", p.region, "-bucket", bucket, "-object", object, "-operation", operation, "-data", data)
+	cmd := exec.CommandContext(runCtx, p.path, "-endpoint", p.endpoint, "-region", p.region, "-bucket", bucket, "-object", object, "-operation", operation, "-data", data, "-role-arn", roleARN)
 	cmd.Env = []string{"AWS_ACCESS_KEY_ID=" + access, "AWS_SECRET_ACCESS_KEY=" + secret, "HOME=" + t.TempDir()}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

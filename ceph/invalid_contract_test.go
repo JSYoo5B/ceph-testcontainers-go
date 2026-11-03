@@ -32,9 +32,11 @@ import (
 // refusal of a root user's account from another cluster or gateway scope.
 // S3 key handles add two refusals in rgw and three in rgw/internal/gwbase.
 // rgw has eight more for the input, ownership, replaced-target and
-// outside-edit refusals of its rate-limit overrides.
+// outside-edit refusals of its rate-limit overrides, and thirteen more for the
+// input, existing-role, tracked-name, ownership, replaced-role and
+// outside-edit refusals of its roles.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 25, "rgw": 34,
+	"rbd": 28, "cephfs": 25, "rgw": 47,
 	"cephfs/subvolume": 29, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,

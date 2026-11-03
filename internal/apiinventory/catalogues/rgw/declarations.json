@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 50,
+  "count": 60,
   "entries": [
     {
       "current": "rgw.AdminCapability",
@@ -34,6 +34,14 @@
       "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
       "receiver": "*Gateway",
       "proposed": "rgw.Gateway.Admin",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.CreateRole",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config RoleConfig) (*Role, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.CreateRole",
       "decision": "baseline"
     },
     {
@@ -137,6 +145,72 @@
       "current": "rgw.RateLimitScope",
       "kind": "type",
       "proposed": "rgw.RateLimitScope",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role",
+      "kind": "type",
+      "proposed": "rgw.Role",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.ARN",
+      "kind": "method",
+      "signature": "func() (string, error)",
+      "receiver": "*Role",
+      "proposed": "rgw.Role.ARN",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Role",
+      "proposed": "rgw.Role.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Role",
+      "proposed": "rgw.Role.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.Name",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Role",
+      "proposed": "rgw.Role.Name",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Role",
+      "proposed": "rgw.Role.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Role.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Role",
+      "proposed": "rgw.Role.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.RoleConfig",
+      "kind": "type",
+      "proposed": "rgw.RoleConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.RolePolicy",
+      "kind": "type",
+      "proposed": "rgw.RolePolicy",
       "decision": "baseline"
     },
     {

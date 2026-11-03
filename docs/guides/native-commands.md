@@ -633,7 +633,9 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
 - Successful output may contain credentials. A failure's output is redacted
   from the error, which carries a `*ceph.NativeFailure` without a reason.
 - Do not modify users that the fixture created with `CreateUser` while it
-  uses them.
+  uses them. A role created with `CreateRole` may be edited natively, for
+  example to revoke a permission, but `Role.Remove` refuses it until the
+  role is back as the fixture created it.
 - The call is bounded by `ctx` alone, not by the cluster's startup timeout.
   Give a slow maintenance command, such as `user stats --sync-stats` or
   `reshard process`, a deadline that fits it. When the deadline is near, the
@@ -648,7 +650,7 @@ _, err = gateway.Admin(ctx, "lc", "process", "--bucket", "logs")
 _, err = gateway.Admin(ctx, "reshard", "add", "--bucket", "big", "--num-shards", "17")
 _, err = gateway.Admin(ctx, "quota", "set", "--quota-scope", "bucket", "--bucket", "big", "--max-objects", "100")
 _, err = gateway.Admin(ctx, "caps", "add", "--uid", user.ID(), "--caps", "usage=write")
-_, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume-role-policy-doc", trust)
+_, err = gateway.Admin(ctx, "role-policy", "put", "--role-name", role.Name(), "--policy-name", "deny", "--policy-doc", deny)
 ```
 
 - To see a failure's native text, run the same `radosgw-admin` command with
@@ -725,6 +727,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | `cephfs/subvolume` handles, which check native identity | The `cephfs/subvolume` functions and handles |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `account.Account` and `placement.Placement` methods such as `Placement.Apply`, which verify keys and identity | The typed RGW helpers of `rgw`, `rgw/account` and `rgw/placement` |
 | `radosgw-admin key create`/`key rm` on keys that `User.CreateS3Key` or `CreateUser` created | Every owned-user operation, which refuses a changed or reappeared fixture key | `User.CreateS3Key`, `S3Key.Revoke`; keys added natively are left alone |
+| `radosgw-admin role`, `role-policy` or `role-trust-policy` changes to a role that `CreateRole` created | `Role.Remove`, which refuses a replaced or edited role and leaves it as it is | `Gateway.CreateRole`, `Role.Remove`; put the role back as created before `Remove` |
 | `radosgw-admin ratelimit set`/`enable`/`disable` on a user or bucket scope held by a rate-limit handle | `User.OverrideRateLimit`, whose `Restore` refuses an outside edit | `User.OverrideRateLimit` |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |

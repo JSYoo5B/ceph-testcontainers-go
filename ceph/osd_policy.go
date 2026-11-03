@@ -29,18 +29,34 @@ type OSDState struct {
 
 // osdStates implements Observer.OSDStates.
 func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
-	if err := c.lockTopology(ctx); err != nil {
+	dump, owned, err := c.ownedOSDSample(ctx)
+	if err != nil {
 		return nil, err
+	}
+	return resolveOwnedOSDStates(dump, owned)
+}
+
+// ownedOSDSample runs one osd dump under the topology lock and copies the
+// owned registrations that the same lock protects, so the dump and the
+// registry describe one serialized observation. The lock is released before it
+// returns; the caller resolves the copies without it.
+func (c *Container) ownedOSDSample(ctx context.Context) (osdPolicySnapshot, map[int]*osdRegistration, error) {
+	if err := c.lockTopology(ctx); err != nil {
+		return osdPolicySnapshot{}, nil, err
 	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
+		return osdPolicySnapshot{}, nil, err
 	}
 	owned := make(map[int]*osdRegistration, c.fleet.osdHandles.count())
 	for id, osd := range c.fleet.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
-	return readOwnedOSDStates(ctx, c.conn().ceph, owned)
+	dump, err := readOSDPolicyDump(ctx, c.conn().ceph)
+	if err != nil {
+		return osdPolicySnapshot{}, nil, err
+	}
+	return dump, owned, nil
 }
 
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name
@@ -79,6 +95,8 @@ func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error 
 }
 
 type osdPolicySnapshot struct {
+	// epoch is the native OSDMap epoch of the dump, 0 when the dump omits it.
+	epoch uint64
 	flags []string
 	osds  map[int]OSDState
 }
@@ -91,6 +109,7 @@ func (om osdMap) policyDump(ctx context.Context) (osdPolicySnapshot, error) {
 func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 	result := osdPolicySnapshot{osds: make(map[int]OSDState)}
 	var dump struct {
+		Epoch uint64  `json:"epoch"`
 		Flags *string `json:"flags"`
 		OSDs  []struct {
 			ID     *int   `json:"osd"`
@@ -102,6 +121,7 @@ func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 	if err := json.Unmarshal(data, &dump); err != nil || dump.Flags == nil || dump.OSDs == nil {
 		return result, errors.New("decode native OSDMap state")
 	}
+	result.epoch = dump.Epoch
 	if *dump.Flags != "" {
 		result.flags = strings.Split(*dump.Flags, ",")
 		for _, flag := range result.flags {

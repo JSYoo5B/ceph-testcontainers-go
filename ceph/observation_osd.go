@@ -60,6 +60,12 @@ func readOwnedOSDStates(ctx context.Context, run cliQuery, owned map[int]*osdReg
 	if err != nil {
 		return nil, err
 	}
+	return resolveOwnedOSDStates(dump, owned)
+}
+
+// resolveOwnedOSDStates resolves every owned ID against one dump, sorted by
+// native ID. The first unresolved ID fails the whole observation.
+func resolveOwnedOSDStates(dump osdPolicySnapshot, owned map[int]*osdRegistration) ([]OSDState, error) {
 	states := make([]OSDState, 0, len(owned))
 	for id, reg := range owned {
 		state, err := resolveOwnedOSDState(dump, id, reg)

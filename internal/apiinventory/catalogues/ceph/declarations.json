@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 279,
+  "count": 291,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -676,6 +676,12 @@
       "current": "ceph.ErrUnsupported",
       "kind": "var",
       "proposed": "ceph.ErrUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrWatchOverflow",
+      "kind": "var",
+      "proposed": "ceph.ErrWatchOverflow",
       "decision": "baseline"
     },
     {
@@ -1491,6 +1497,70 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDWatch",
+      "kind": "type",
+      "proposed": "ceph.OSDWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan OSDWatchEvent",
+      "receiver": "*OSDWatch",
+      "proposed": "ceph.OSDWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*OSDWatch",
+      "proposed": "ceph.OSDWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchBaseline",
+      "kind": "const",
+      "proposed": "ceph.OSDWatchBaseline",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchChanged",
+      "kind": "const",
+      "proposed": "ceph.OSDWatchChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchConfig",
+      "kind": "type",
+      "proposed": "ceph.OSDWatchConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.OSDWatchEvent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchEventKind",
+      "kind": "type",
+      "proposed": "ceph.OSDWatchEventKind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchGap",
+      "kind": "const",
+      "proposed": "ceph.OSDWatchGap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDWatchResumed",
+      "kind": "const",
+      "proposed": "ceph.OSDWatchResumed",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ObjectWatcher",
       "kind": "type",
       "proposed": "ceph.ObjectWatcher",
@@ -1683,6 +1753,14 @@
       "signature": "func(ctx context.Context, name string) error",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.WaitMGRModuleReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WatchOSDs",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg OSDWatchConfig) (*OSDWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchOSDs",
       "decision": "baseline"
     },
     {

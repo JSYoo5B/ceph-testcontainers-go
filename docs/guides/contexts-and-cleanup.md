@@ -176,6 +176,60 @@ if result.err != nil {
   observe on their first read; after `AddDaemon`, `Daemon.Remove` or a
   replacement, start a new wait.
 
+### Watching owned OSD state
+
+A wait returns once. To observe owned OSD state repeatedly while the SUT runs,
+use `Observer.WatchOSDs`: one goroutine polls the OSDMap and sends events on
+one receive-only channel. Fan-out to several consumers is yours to build.
+
+```golang
+watch, err := observer.WatchOSDs(ctx, ceph.OSDWatchConfig{Interval: time.Second})
+if err != nil {
+	t.Fatal(err) // the baseline read failed; nothing runs
+}
+// Registered after the fixture cleanups, so it runs before them.
+t.Cleanup(func() { _ = watch.Stop() })
+baseline := <-watch.Events() // already buffered
+
+// ... stop an owned OSD and run the SUT ...
+
+for event := range watch.Events() {
+	if event.Kind == ceph.OSDWatchGap {
+		continue // a failed read: event.Err says why
+	}
+	if slices.ContainsFunc(event.States, func(s ceph.OSDState) bool { return s.ID == osd.ID && !s.Up }) {
+		break // the MON reported it down at event.Epoch
+	}
+}
+if err := watch.Stop(); err != nil {
+	t.Fatal(err)
+}
+```
+
+- The baseline is the first event and the read that `WatchOSDs` made before
+  returning. It fixes the watched OSDs by ID and native UUID. OSDs added later
+  are not watched, and removing, detaching or replacing a watched OSD ends the
+  watch with an error.
+- An event is sent only when the compared fields (ID, UUID, up, in, weight)
+  differ from the previous successful read. A failed read is an
+  `OSDWatchGap`, and the next success is `OSDWatchResumed` even when nothing
+  changed. Two states either side of a gap or of one interval do not show what
+  happened between them: a transition shorter than the interval can be
+  missed.
+- `Sequence` increases by one per event and no event is dropped. A consumer
+  that leaves the buffer full for one interval ends the watch with
+  `ErrWatchOverflow`, which names the first undelivered event.
+- `Started` and `Finished` are the local clock around the read, not when Ceph
+  changed the state. `Epoch` is the native OSDMap epoch of that read.
+- Each read holds the topology lock only for its `osd dump` and is bounded by
+  `QueryTimeout`, so the consumer can call any fixture operation between
+  events. A read that waits too long for the lock is a gap.
+- `Stop` cancels the watch, waits for its goroutine and returns the cause:
+  nil for `Stop` itself, the context's error, `ErrWatchOverflow`, or the read
+  error that ended it. Cancelling the context alone does not wait.
+- Up and down are what the OSDMap reports, not proof that the daemon process
+  runs or that clients reach it. Check the SUT's own results as well.
+
 ## Ownership
 
 ### What the cluster owns
@@ -364,6 +418,7 @@ result:
 | `Run` (all service `Run`s) | Partially created cluster | `Terminate` it (`CleanupContainer` does) |
 | `AddMonitor`, `AddManager`, `AddOSD`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
+| `rgw.Gateway.CreateRole` | Role whose creation or permission policies failed or are unknown | `Role.Remove`, or discard the cluster; do not create the same name again |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](ceph-operations.md#clientconfigreplacekey)) |
 | `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
