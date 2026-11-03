@@ -282,7 +282,7 @@ func TestQueueRefusesMalformedNativeReplies(t *testing.T) {
 		cases[name] = map[string][]reply{"get": {{data: doc}, {data: doc}}, "stats": {{data: stats}}}
 	}
 	for name, dump := range map[string]string{
-		"dump object": `{"entries":[]}`, "dump null": `null`, "dump scalar element": `[1]`, "dump too many": "[" + entry("a") + "," + entry("b") + "]",
+		"dump object": `{"entries":[]}`, "dump null": `null`, "dump scalar element": `[1]`, "dump trailing": `[]{}`, "dump unterminated": `[`,
 		"dump no key":       `[{"event":{"eventName":"ObjectCreated:Put","s3":{"bucket":{"name":"b"},"object":{}}}}]`,
 		"dump numeric id":   `[{"event":{"eventName":"ObjectCreated:Put","eventId":7,"s3":{"bucket":{"name":"b"},"object":{"key":"k"}}}}]`,
 		"dump no event":     `[{"pushEndpoint":"PRIVATE-ARGS"}]`,
@@ -319,6 +319,41 @@ func TestQueueRefusesSampleReplyOverByteLimit(t *testing.T) {
 		t.Fatalf("oversized sample: %+v %v %v", snapshot, err, subcommands(f.calls))
 	}
 	assertNoPrivate(t, err)
+}
+
+// topic dump pages through the whole queue, so its reply holds more entries
+// than --max-entries; the sample is its first entries in queue order, read
+// from a prefix of at most MaxBytes.
+func TestQueueSamplesTheFirstEntriesOfAPagedDump(t *testing.T) {
+	keys := func(pending []PendingEntry) []string {
+		var out []string
+		for _, entry := range pending {
+			out = append(out, entry.Key)
+		}
+		return out
+	}
+	for entries, want := range map[int][]string{1: {"queued/a"}, 2: {"queued/a", "queued/b"}, 5: {"queued/a", "queued/b", "queued/c"}} {
+		g, f := newFixture(persistentReplies("", entry("a"), entry("b"), entry("c")))
+		snapshot, err := queue(t.Context(), g.Core, Topic{Name: "tc-persistent"}, Sample{MaxEntries: entries})
+		if err != nil || !snapshot.Sampled || !slices.Equal(keys(snapshot.Pending), want) {
+			t.Fatalf("MaxEntries %d: %v %v", entries, keys(snapshot.Pending), err)
+		}
+		if got := subcommands(f.calls); !slices.Equal(got, []string{"get", "stats", "dump", "get"}) {
+			t.Fatalf("MaxEntries %d ran %v", entries, got)
+		}
+	}
+	// The byte limit holds the first entry and part of the second.
+	limit := len("["+entry("a")+",") + len(entry("b"))/2
+	g, _ := newFixture(persistentReplies("", entry("a"), entry("b"), entry("c")))
+	snapshot, err := queue(t.Context(), g.Core, Topic{Name: "tc-persistent"}, Sample{MaxEntries: 1, MaxBytes: limit})
+	if err != nil || !slices.Equal(keys(snapshot.Pending), []string{"queued/a"}) {
+		t.Fatalf("a sample inside the byte limit: %v %v", keys(snapshot.Pending), err)
+	}
+	g, _ = newFixture(persistentReplies("", entry("a"), entry("b"), entry("c")))
+	snapshot, err = queue(t.Context(), g.Core, Topic{Name: "tc-persistent"}, Sample{MaxEntries: 2, MaxBytes: limit})
+	if !errors.Is(err, errSampleBytes) || !reflectZero(snapshot) {
+		t.Fatalf("a sample cut by the byte limit: %+v %v", snapshot, err)
+	}
 }
 
 func TestQueueRefusesClustersBeforeSquid(t *testing.T) {

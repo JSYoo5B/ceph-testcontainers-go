@@ -1,10 +1,12 @@
 package notification
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,7 +22,8 @@ import (
 const (
 	// MaxSampleEntries is the largest Sample.MaxEntries.
 	MaxSampleEntries = 100
-	// DefaultSampleBytes is the reply limit of a sample whose MaxBytes is zero.
+	// DefaultSampleBytes is the reply prefix kept for a sample whose MaxBytes
+	// is zero.
 	DefaultSampleBytes = 64 << 10
 	// MaxSampleBytes is the largest Sample.MaxBytes.
 	MaxSampleBytes = 1 << 20
@@ -39,11 +42,15 @@ type Topic struct {
 	Tenant, Name string
 }
 
-// Sample asks Queue for a bounded sample of the pending entries. MaxEntries
-// zero takes no sample; otherwise it is 1 to MaxSampleEntries and is passed to
-// radosgw-admin as --max-entries. MaxBytes limits the native reply, zero
-// selecting DefaultSampleBytes and at most MaxSampleBytes: a larger reply is
-// refused, never truncated into a shorter sample.
+// Sample asks Queue for a bounded sample of the pending entries: the first
+// MaxEntries entries in queue order. MaxEntries zero takes no sample;
+// otherwise it is 1 to MaxSampleEntries. radosgw-admin topic dump writes the
+// whole queue whatever its --max-entries, which only sizes its pages, so Queue
+// keeps the first MaxBytes bytes of the reply and discards the rest as it
+// arrives; zero selects DefaultSampleBytes, and MaxBytes is at most
+// MaxSampleBytes. The command still runs to the end of the queue, within the
+// call's context. A sample whose entries do not fit in MaxBytes is refused,
+// never shortened.
 type Sample struct {
 	MaxEntries, MaxBytes int
 }
@@ -205,13 +212,18 @@ func queue(ctx context.Context, g *gwbase.Core, topic Topic, sample Sample) (Que
 		return QueueSnapshot{}, err
 	}
 	if sample.MaxEntries > 0 {
-		if data, err = read("dump", "topic", "dump", "--max-entries", strconv.Itoa(sample.MaxEntries)); err != nil {
-			return QueueSnapshot{}, err
+		// topic dump pages through the whole queue, --max-entries only sizing
+		// each page, so the sample is the first entries of a reply kept up to
+		// MaxBytes.
+		args := append([]string{"topic", "dump", "--max-entries", strconv.Itoa(sample.MaxEntries)}, selector...)
+		data, truncated, err := g.AdminPrefixIn(ctx, target, sample.MaxBytes, args...)
+		if err == nil {
+			err = ctx.Err()
 		}
-		if len(data) > sample.MaxBytes {
-			return QueueSnapshot{}, errors.New("RGW topic dump reply exceeds the sample's byte limit; native output is discarded")
+		if err != nil {
+			return QueueSnapshot{}, fmt.Errorf("RGW topic dump: %w", err)
 		}
-		if snapshot.Pending, err = decodePending(data, sample.MaxEntries); err != nil {
+		if snapshot.Pending, err = decodePending(data, truncated, sample.MaxEntries); err != nil {
 			return QueueSnapshot{}, err
 		}
 		snapshot.Sampled = true
@@ -329,18 +341,27 @@ func decodeStats(data []byte) (Stats, error) {
 
 var errMalformedPending = errors.New("decode RGW topic pending entries; native output is redacted")
 
-// decodePending decodes radosgw-admin topic dump, an array of queue entries,
-// each either the entry object or an object whose only member entry holds it.
-// Only the identity fields of PendingEntry are kept.
-func decodePending(data []byte, limit int) ([]PendingEntry, error) {
-	var root []any
-	if strictjson.Decode(data, &root, strictjson.Options{UseNumber: true}) != nil || root == nil || len(root) > limit {
+var errSampleBytes = errors.New("RGW topic dump reply reached the sample's byte limit before its entries ended; native output is discarded")
+
+// decodePending decodes the first limit entries of radosgw-admin topic dump,
+// an array of queue entries, each either the entry object or an object whose
+// only member entry holds it. data is the reply's prefix, truncated when the
+// reply was longer: entries after the first limit are not read, and a prefix
+// that ends before limit entries or the array's end is refused rather than
+// returned as a shorter sample. Only the identity fields of PendingEntry are
+// kept.
+func decodePending(data []byte, truncated bool, limit int) ([]PendingEntry, error) {
+	elements, err := decodeArrayPrefix(data, limit)
+	if err != nil {
+		if truncated {
+			return nil, errSampleBytes
+		}
 		return nil, errMalformedPending
 	}
-	pending := make([]PendingEntry, 0, len(root))
-	for _, element := range root {
-		entry, ok := element.(map[string]any)
-		if !ok {
+	pending := make([]PendingEntry, 0, len(elements))
+	for _, raw := range elements {
+		var entry map[string]any
+		if strictjson.Decode(raw, &entry, strictjson.Options{UseNumber: true}) != nil || entry == nil {
 			return nil, errMalformedPending
 		}
 		if inner, ok := entry["entry"].(map[string]any); ok && len(entry) == 1 {
@@ -378,4 +399,32 @@ func decodePending(data []byte, limit int) ([]PendingEntry, error) {
 		pending = append(pending, item)
 	}
 	return pending, nil
+}
+
+// decodeArrayPrefix returns the first limit elements of the JSON array that
+// data starts with, or all of them when the array ends first. What follows
+// the limit-th element is not read.
+func decodeArrayPrefix(data []byte, limit int) ([]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if open, err := dec.Token(); err != nil || open != json.Delim('[') {
+		return nil, errMalformedPending
+	}
+	var elements []json.RawMessage
+	for len(elements) < limit {
+		if !dec.More() {
+			if end, err := dec.Token(); err != nil || end != json.Delim(']') {
+				return nil, errMalformedPending
+			}
+			if _, err := dec.Token(); err != io.EOF {
+				return nil, errMalformedPending
+			}
+			return elements, nil
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, errMalformedPending
+		}
+		elements = append(elements, raw)
+	}
+	return elements, nil
 }

@@ -20,8 +20,9 @@ starts no container and adds no client or receiver. See
    endpoint the topic pushes to.
 3. **Observe** with `notification.Queue(ctx, gateway, topic, sample)`:
    `notification.Topic{Tenant, Name}` selects the topic, and
-   `notification.Sample{MaxEntries, MaxBytes}` asks for up to `MaxEntries`
-   pending entries; the zero `Sample` reads only the statistics.
+   `notification.Sample{MaxEntries, MaxBytes}` asks for the first
+   `MaxEntries` pending entries in queue order; the zero `Sample` reads only
+   the statistics.
 4. **Correlate** the snapshot with what the consumer received, by the object
    keys and event names the test wrote. Poll: delivery is asynchronous.
 5. **Clean up**: the topic stays the SUT's. Delete it with the client that
@@ -66,10 +67,13 @@ if snapshot.Stats.Entries == 0 || !slices.ContainsFunc(snapshot.Pending, func(e 
   without a persistent queue is `notification.ErrNotPersistent`; a cluster
   before Ceph 19 is `ceph.ErrUnsupported`; an unexpected native reply is an
   unclassified error.
-- Bounds: at most `MaxSampleEntries` entries, passed to radosgw-admin as
-  `--max-entries`, and a native reply of at most `MaxBytes` (default
-  `DefaultSampleBytes`); a larger reply is refused, not truncated. The call is
-  bounded by its context and the cluster's startup timeout.
+- Bounds: at most `MaxSampleEntries` entries. `topic dump` writes the whole
+  queue (its `--max-entries` only sizes its pages), so `Queue` keeps the first
+  `MaxBytes` bytes of the reply (default `DefaultSampleBytes`), discards the
+  rest as it arrives and decodes the sample from that prefix. A sample whose
+  entries do not fit is refused, not shortened. The command still reads the
+  whole queue; the call is bounded by its context and the cluster's startup
+  timeout.
 - Redaction: `PendingEntry` keeps the event ID, name and time, the
   configuration ID, bucket, key, version, sequencer and entry creation time.
   Push endpoints and their arguments, user and request identities, source

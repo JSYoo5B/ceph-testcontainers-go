@@ -154,11 +154,13 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 			t.Fatalf("event was recorded while the receiver was stopped: %v", events)
 		}
 		// Observing neither drains nor delivers: the entries stay pending.
-		if again := observeQueue(t, ctx, gateway, selected, sample); again.Stats.Entries < uint64(len(queued)) || len(missingPending(again, queued)) != 0 {
+		again := observeQueue(t, ctx, gateway, selected, sample)
+		if again.Stats.Entries < uint64(len(queued)) || len(missingPending(again, queued)) != 0 {
 			t.Fatalf("queue observation changed the pending entries: %+v", again)
 		}
-		if one := observeQueue(t, ctx, gateway, selected, notification.Sample{MaxEntries: 1}); len(one.Pending) != 1 || one.Stats.Entries < uint64(len(queued)) {
-			t.Fatalf("sample is not bounded by its entry limit: %+v", one)
+		// topic dump writes every queued entry; the sample is the first one.
+		if one := observeQueue(t, ctx, gateway, selected, notification.Sample{MaxEntries: 1}); len(one.Pending) != 1 || one.Pending[0] != again.Pending[0] || one.Stats.Entries < uint64(len(queued)) {
+			t.Fatalf("sample is not the first entry of the queue: %+v", one)
 		}
 		if snapshot, err := notification.Queue(ctx, gateway, selected, notification.Sample{MaxEntries: len(queued), MaxBytes: 64}); err == nil || snapshot.Sampled {
 			t.Fatalf("sample over its byte limit was accepted: %+v", snapshot)
