@@ -133,6 +133,10 @@ type ShellReport struct {
 	// Stopped means that the limit passed and the supervisor stopped the
 	// command.
 	Stopped bool
+	// StdoutTruncated means that the command wrote more than the stdout limit
+	// of RunShellLimited: Stdout holds only its first bytes, and the rest was
+	// discarded as it arrived.
+	StdoutTruncated bool
 }
 
 // RunShell runs argv in ctr under ShellScript with a limit in seconds (0 for
@@ -142,6 +146,15 @@ type ShellReport struct {
 // fails, the error holds a NotStoppedError, and a later CancelShell with its
 // marker can confirm the stop. label names the command in errors.
 func RunShell(ctx context.Context, ctr testcontainers.Container, label string, limit int, argv ...string) (ShellReport, error) {
+	return RunShellLimited(ctx, ctr, label, limit, 0, argv...)
+}
+
+// RunShellLimited runs argv as RunShell does and keeps at most stdoutLimit
+// bytes of its standard output (0 for all). Later output is still read from
+// the exec stream, so that the supervisor's report arrives, but it is
+// discarded and the report is marked StdoutTruncated; it bounds what the
+// caller holds, not how long the command runs.
+func RunShellLimited(ctx context.Context, ctr testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (ShellReport, error) {
 	if err := ctx.Err(); err != nil {
 		return ShellReport{}, err
 	}
@@ -151,11 +164,12 @@ func RunShell(ctx context.Context, ctr testcontainers.Container, label string, l
 	marker := ShellMarkerDir + "/" + uuid.NewString()
 	command := append([]string{"sh", "-c", ShellScript, "sh", marker, strconv.Itoa(max(limit, 0)), strconv.Itoa(ShellStopGrace)}, argv...)
 	code, reader, err := ctr.Exec(ctx, command)
-	var stdout, stderr bytes.Buffer
+	var stderr bytes.Buffer
+	stdout := &prefixBuffer{limit: max(stdoutLimit, 0)}
 	if err != nil {
 		err = &BackendError{Op: "exec " + label + " supervisor", Err: err}
 	} else if reader != nil {
-		if _, copyErr := stdcopy.StdCopy(&stdout, &stderr, reader); copyErr != nil {
+		if _, copyErr := stdcopy.StdCopy(stdout, &stderr, reader); copyErr != nil {
 			err = &BackendError{Op: "read " + label + " supervisor", Err: copyErr}
 		}
 	}
@@ -164,7 +178,7 @@ func RunShell(ctx context.Context, ctr testcontainers.Container, label string, l
 		end = shellEnd(&stderr)
 	}
 	if err == nil && ctx.Err() == nil && end == code {
-		report := ShellReport{Stdout: stdout.Bytes(), ExitCode: code}
+		report := ShellReport{Stdout: stdout.Bytes(), ExitCode: code, StdoutTruncated: stdout.truncated}
 		report.Stderr, report.Stopped = bytes.CutSuffix(stderr.Bytes(), []byte(ShellDeadlineLine+"\n"))
 		return report, nil
 	}
@@ -180,6 +194,25 @@ func RunShell(ctx context.Context, ctr testcontainers.Container, label string, l
 		return ShellReport{}, &NotStoppedError{Marker: marker, Err: errors.Join(err, cancelErr)}
 	}
 	return ShellReport{}, err
+}
+
+// prefixBuffer keeps the first limit bytes written to it (all when limit is
+// 0) and records whether it discarded any.
+type prefixBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *prefixBuffer) Write(p []byte) (int, error) {
+	if b.limit > 0 {
+		if room := b.limit - b.Len(); len(p) > room {
+			b.truncated = true
+			b.Buffer.Write(p[:max(room, 0)])
+			return len(p), nil
+		}
+	}
+	return b.Buffer.Write(p)
 }
 
 // shellEnd removes the end line from stderr and returns its status, or -1

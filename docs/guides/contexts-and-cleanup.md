@@ -81,7 +81,7 @@ The same holds for the methods that serialize with topology operations
 without changing topology themselves. Examples are the override functions and
 their `Restore` methods, the `Pool` methods, the RBD pool, namespace and image
 client helpers, the RGW user helpers, the `rgw/account` and `rgw/placement`
-helpers and the admission of `rgw.Gateway.Admin`. A queued call that your
+helpers, `notification.Queue` and the admission of `rgw.Gateway.Admin`. A queued call that your
 context cancels sends no native command, and its handle keeps everything it
 owns: a cancelled `User.Remove`, `Account.Remove` or override `Restore` leaves
 the handle as it was, so retry it with a fresh context.

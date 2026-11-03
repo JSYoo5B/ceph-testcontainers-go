@@ -61,7 +61,7 @@ type hooks interface {
 	RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error
 	ReserveHostPorts(ctx context.Context, c *ceph.Container, count int) ([]int, func(context.Context) error, error)
 	ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig
-	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error)
+	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error)
 	ScriptFile(name string) testcontainers.ContainerFile
 	Service(c *ceph.Container, name string) testcontainers.Container
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
@@ -224,12 +224,13 @@ func ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig {
 
 // RunOwnedShell runs argv in target, a container of c that the caller
 // admitted while it held the cluster mutex, under the shell supervisor with
-// limit seconds (0 for none), and tracks it until it is known to have ended:
-// when ctx ends first the command is stopped before RunOwnedShell returns,
-// and a stop that cannot be confirmed returns a
-// *ceph.NativeCommandUnstoppedError.
-func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
-	return get().RunOwnedShell(ctx, c, target, label, limit, argv...)
+// limit seconds (0 for none), keeping at most stdoutLimit bytes of its
+// standard output (0 for all) as supervised.RunShellLimited does, and tracks
+// it until it is known to have ended: when ctx ends first the command is
+// stopped before RunOwnedShell returns, and a stop that cannot be confirmed
+// returns a *ceph.NativeCommandUnstoppedError.
+func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error) {
+	return get().RunOwnedShell(ctx, c, target, label, limit, stdoutLimit, argv...)
 }
 
 // ScriptFile returns an embedded bootstrap script as a container file.
