@@ -134,7 +134,10 @@ func KeyringSecrets(keyring []byte) []string {
 	return secrets
 }
 
-var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)([^"'\s,;}\]]+)`)
+// secretPattern takes the value after a secret-looking name. The value never
+// contains a bracket, so an already masked "[REDACTED]" is not matched again
+// and redaction is idempotent.
+var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)([^"'\s,;}\[\]]+)`)
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 

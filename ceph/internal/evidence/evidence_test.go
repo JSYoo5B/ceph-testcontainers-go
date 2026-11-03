@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -17,6 +18,28 @@ func TestRedactorDoesNotRewriteItsOutput(t *testing.T) {
 	redact = Redactor([]string{"secret", "secret-longer", ""})
 	if got := redact("secret-longer secret"); got != "[REDACTED] [REDACTED]" {
 		t.Fatalf("redacted %q", got)
+	}
+}
+
+// Redacting text that is already redacted changes nothing, so a report
+// redacted on several paths keeps one "[REDACTED]" per secret.
+func TestRedactorIsIdempotent(t *testing.T) {
+	redact := Redactor([]string{"AQBvalue=="})
+	for _, input := range []string{
+		"key = AQBvalue==",
+		"key = plain",
+		`{"secret_key": "abc", "token":"def"}`,
+		"Authorization: Bearer abc.def",
+		"password=hunter2; key=[x]",
+		"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+	} {
+		once := redact(input)
+		if twice := redact(once); twice != once {
+			t.Fatalf("redacting %q again changed %q to %q", input, once, twice)
+		}
+		if strings.Contains(once, "]]") {
+			t.Fatalf("redacted %q to %q", input, once)
+		}
 	}
 }
 
