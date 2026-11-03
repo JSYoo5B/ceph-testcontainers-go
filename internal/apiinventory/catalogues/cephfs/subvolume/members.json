@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/subvolume",
-  "count": 82,
+  "count": 88,
   "types": {
     "cephfs/subvolume.Authorization": [
       "Authorization.Access field string",
@@ -42,6 +42,14 @@
       "CloneStatus.SourceSnapshot field string",
       "CloneStatus.SourceSubvolume field string",
       "CloneStatus.State field string"
+    ],
+    "cephfs/subvolume.CloneWatchEvent": [
+      "CloneWatchEvent.Err field error",
+      "CloneWatchEvent.Finished field time.Time",
+      "CloneWatchEvent.Kind field ceph.WatchEventKind",
+      "CloneWatchEvent.Sequence field uint64",
+      "CloneWatchEvent.Started field time.Time",
+      "CloneWatchEvent.Status field *CloneStatus"
     ],
     "cephfs/subvolume.Config": [
       "Config.DataPool field string",

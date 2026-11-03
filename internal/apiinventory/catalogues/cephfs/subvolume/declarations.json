@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/subvolume",
-  "count": 50,
+  "count": 55,
   "entries": [
     {
       "current": "cephfs/subvolume.Authorization",
@@ -84,6 +84,14 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs/subvolume.Clone.Watch",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig) (*CloneWatch, error)",
+      "receiver": "*Clone",
+      "proposed": "cephfs/subvolume.Clone.Watch",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs/subvolume.CloneConfig",
       "kind": "type",
       "proposed": "cephfs/subvolume.CloneConfig",
@@ -93,6 +101,34 @@
       "current": "cephfs/subvolume.CloneStatus",
       "kind": "type",
       "proposed": "cephfs/subvolume.CloneStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/subvolume.CloneWatch",
+      "kind": "type",
+      "proposed": "cephfs/subvolume.CloneWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/subvolume.CloneWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan CloneWatchEvent",
+      "receiver": "*CloneWatch",
+      "proposed": "cephfs/subvolume.CloneWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/subvolume.CloneWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*CloneWatch",
+      "proposed": "cephfs/subvolume.CloneWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/subvolume.CloneWatchEvent",
+      "kind": "type",
+      "proposed": "cephfs/subvolume.CloneWatchEvent",
       "decision": "baseline"
     },
     {
