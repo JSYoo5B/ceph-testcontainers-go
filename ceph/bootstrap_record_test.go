@@ -264,6 +264,7 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"Usage":                            {"free", []string{"identity"}},
 	"ClusterIdentity":                  {"free", []string{"identity"}},
 	"ConnectionConfig":                 {"free", []string{"connection"}},
+	"watchOriginalFSID":                {"free", []string{"identity"}},
 	"UnitState":                        {"identity", []string{"mutex"}},
 }
 
