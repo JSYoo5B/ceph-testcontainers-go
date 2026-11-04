@@ -47,7 +47,7 @@ def archive(receipt_changes=None, extra=None, summary="Safe report", status="una
 class EvidenceTests(unittest.TestCase):
     def test_complete_and_unavailable_are_distinct_valid_states(self):
         for status in ("complete", "unavailable", "not_requested"):
-            receipt, text = reporter.evidence(archive(status=status), RUN, LINKED)
+            receipt, text, _ = reporter.evidence(archive(status=status), RUN, LINKED)
             self.assertEqual(receipt["status"], status)
             self.assertEqual(text, "Safe report")
 
@@ -84,7 +84,7 @@ class EvidenceTests(unittest.TestCase):
             reporter.evidence(raw, RUN, LINKED)
 
     def test_comment_renders_markdown_without_an_outer_code_block(self):
-        receipt, _ = reporter.evidence(archive(), RUN, LINKED)
+        receipt, _, _ = reporter.evidence(archive(), RUN, LINKED)
         text = "### Owners\n\n| Owner | Fields |\n| --- | --- |\n| ceph.Container | 21 |\n\nHead `abc`.\n"
         body = reporter.comment_body(REPO, RUN, receipt, text)
         self.assertIn(text, body)
@@ -106,8 +106,17 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("\u202e", clean)
         self.assertNotIn("&#x202e;", clean)
 
+    def test_details_are_collapsed_by_the_publisher_and_escaped(self):
+        receipt, _, _ = reporter.evidence(archive(), RUN, LINKED)
+        body = reporter.comment_body(REPO, RUN, receipt, "Visible\n", "Hidden <b>x</b> @user\n")
+        self.assertIn("<details><summary>Collection details</summary>", body)
+        self.assertIn("Hidden &lt;b&gt;x&lt;/b&gt;", body)
+        self.assertNotIn("@user", body)
+        self.assertLess(body.index("Visible"), body.index("<details>"))
+        self.assertEqual(body.count("<details>"), 1)
+
     def test_comment_truncates_after_escaping_at_a_complete_line(self):
-        receipt, _ = reporter.evidence(archive(), RUN, LINKED)
+        receipt, _, _ = reporter.evidence(archive(), RUN, LINKED)
         with mock.patch.object(reporter, "MAX_SUMMARY", 8):
             body = reporter.comment_body(REPO, RUN, receipt, "ok\n<<<<")
         self.assertIn("ok\n", body)
@@ -119,10 +128,13 @@ class AssociationTests(unittest.TestCase):
     def test_github_association_is_the_only_destination(self):
         self.assertEqual(reporter.association(RUN, REPO)["number"], 7)
         for edit in ({"event": "push"}, {"path": ".github/workflows/other.yml"}, {"status": "in_progress"},
-                     {"conclusion": "cancelled"}, {"pull_requests": []}, {"pull_requests": [LINKED, LINKED]},
+                     {"conclusion": "cancelled"}, {"pull_requests": [LINKED, LINKED]},
                      {"head_sha": BASE}, {"head_repository": {"id": 3}}):
             with self.subTest(edit=edit), self.assertRaises(reporter.Refusal):
                 reporter.association({**RUN, **edit}, REPO)
+        # GitHub drops the association of a merged or closed PR: nothing to
+        # publish, not a refusal that fails the publisher.
+        self.assertIsNone(reporter.association({**RUN, "pull_requests": []}, REPO))
 
     def test_closed_moved_head_and_changed_repo_are_stale(self):
         self.assertTrue(reporter.current(PULL, LINKED, REPO))
@@ -147,11 +159,48 @@ class PublishTests(unittest.TestCase):
             suffix = path.removeprefix("repos/"+REPO)
             calls.append((suffix, method, body))
             if method != "GET":
-                self.assertIn((suffix, method), (("/issues/7/comments", "POST"), ("/issues/comments/30", "PATCH")))
+                self.assertIn((suffix, method), (("/issues/7/comments", "POST"), ("/issues/comments/30", "PATCH"),
+                                                 ("/issues/comments/30", "DELETE")))
                 return {"id": 30}
             self.assertIn(suffix, reads)
             return copy.deepcopy(reads[suffix])
         return api, calls, reads
+
+    def test_a_merged_pr_run_publishes_nothing_and_does_not_fail(self):
+        api, calls, reads = self.api_fixture()
+        reads["/actions/runs/10"] = {**RUN, "pull_requests": []}
+        with mock.patch.object(reporter, "api", side_effect=api):
+            self.assertIn("no open PR", reporter.publish(REPO, 10, 2))
+        self.assertTrue(all(c[1] == "GET" for c in calls))
+
+    def test_an_unmeasured_head_withdraws_only_an_older_bot_report(self):
+        def stamped(run, attempt, login="github-actions[bot]"):
+            return {"id": 30, "user": {"login": login},
+                    "body": reporter.MARKER + "\n<!-- structural-review-run:%d:%d -->\nold head" % (run, attempt)}
+        for comments, want, deleted in (([], "nothing published", False), ([stamped(9, 1)], "withdrawn", True),
+                                        ([stamped(10, 2)], "newer report is kept", False),
+                                        ([stamped(11, 1)], "newer report is kept", False),
+                                        ([stamped(9, 1, "someone")], "nothing published", False)):
+            with self.subTest(comments=comments):
+                api, calls, reads = self.api_fixture(comments)
+                reads["/actions/runs/10/artifacts?per_page=100&page=1"] = {"artifacts": []}
+                with mock.patch.object(reporter, "api", side_effect=api):
+                    self.assertIn(want, reporter.publish(REPO, 10, 2))
+                self.assertEqual([c[:2] for c in calls if c[1] != "GET"], [("/issues/comments/30", "DELETE")] if deleted else [])
+        # A head that moved during the run withdraws nothing.
+        api, calls, reads = self.api_fixture([stamped(9, 1)])
+        reads["/actions/runs/10/artifacts?per_page=100&page=1"] = {"artifacts": []}
+        first = True
+        def moving(path, method="GET", body=None, binary=False):
+            nonlocal first
+            if path.endswith("/pulls/7") and not first:
+                return {**PULL, "head": {"sha": BASE, "repo": PULL["head"]["repo"]}}
+            if path.endswith("/pulls/7"):
+                first = False
+            return api(path, method, body, binary)
+        with mock.patch.object(reporter, "api", side_effect=moving):
+            self.assertIn("nothing withdrawn", reporter.publish(REPO, 10, 2))
+        self.assertTrue(all(c[1] == "GET" for c in calls))
 
     def test_initial_post_and_update_do_not_append_duplicate_comments(self):
         api, calls, _ = self.api_fixture()

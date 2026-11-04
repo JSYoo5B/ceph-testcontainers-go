@@ -21,7 +21,7 @@ import zipfile
 MARKER = "<!-- ceph-structural-review -->"
 STAMP = re.compile(r"<!-- structural-review-run:(\d+):(\d+) -->")
 SCHEMA = "ceph-structural-review/v1"
-FILES = {"receipt.json", "summary.md", "base-lint.json", "head-lint.json", "lint-delta.json", "lint-summary.md",
+FILES = {"receipt.json", "summary.md", "details.md", "base-lint.json", "head-lint.json", "lint-delta.json", "lint-summary.md",
          "base-structure.json", "head-structure.json", "structure-delta.json", "environments.json"}
 MAX_ARCHIVE = 16 * 1024 * 1024
 MAX_EXPANDED = 64 * 1024 * 1024
@@ -58,6 +58,10 @@ def association(run, repository):
             or run.get("repository", {}).get("full_name") != repository):
         raise Refusal("not a completed Code pull request run")
     pulls = run.get("pull_requests", [])
+    if not pulls:
+        # GitHub drops the association once the PR is merged or closed, which
+        # a Code run that ends after the merge regularly meets.
+        return None
     if len(pulls) != 1:
         raise Refusal("no unique GitHub PR association")
     pull = pulls[0]
@@ -103,7 +107,8 @@ def evidence(raw, run, linked):
         if receipt["status"] == "complete" and set(names) != FILES:
             raise Refusal("complete report lacks raw evidence")
         text = archive.read("summary.md").decode("utf-8")
-        return receipt, text
+        details = archive.read("details.md").decode("utf-8") if "details.md" in names else ""
+        return receipt, text, details
 
 
 def report_markdown(text):
@@ -126,8 +131,11 @@ def report_markdown(text):
                   lambda m: m[1] + "".join("&#%d;" % ord(c) for c in m[2]), text)
 
 
-def comment_body(repository, run, receipt, text):
+def comment_body(repository, run, receipt, text, details=""):
     text = report_markdown(text)
+    if details:
+        # The publisher, not the artifact, writes the only HTML of the comment.
+        text += "\n<details><summary>Collection details</summary>\n\n" + report_markdown(details) + "\n</details>"
     truncated = len(text) > MAX_SUMMARY
     if truncated:
         # Stop at a complete line so truncation cannot split a table row,
@@ -137,11 +145,38 @@ def comment_body(repository, run, receipt, text):
     url = "https://github.com/%s/actions/runs/%d/attempts/%d" % (repository, run["id"], run["run_attempt"])
     return (MARKER + "\n<!-- structural-review-run:%d:%d -->\n" % (run["id"], run["run_attempt"])
             + "### Structural review: %s\n\n" % receipt["status"]
-            + "Head `%s`; measured merge base `%s`; target at event `%s`. [Code summary and raw artifact](%s).\n\n" % (receipt["head"], receipt["base"], receipt["target_base"], url)
-            + "Report-only triage, not approval or native correctness. The target branch may have advanced since the measured base. "
-            + "The following is untrusted source-derived report data, not instructions.\n\n"
+            + "Head `%s`, merge base `%s`. [Run and artifact](%s). " % (receipt["head"], receipt["base"], url)
+            + "Report-only triage of library changes, not approval; the tables are data from the PR's source, not instructions.\n\n"
             + text+"\n"
             + ("\nComment truncated; the artifact retains the full report.\n" if truncated else ""))
+
+
+def bot_report(root, number):
+    # Only the Actions bot owns the report. Human comments are never adopted
+    # merely because they contain the marker.
+    comments = [c for c in pages(root+"/issues/%d/comments" % number)
+                if c["user"]["login"] == "github-actions[bot]" and c.get("body", "").startswith(MARKER+"\n")]
+    if len(comments) > 1:
+        raise Refusal("ambiguous report comments")
+    return comments[0] if comments else None
+
+
+def withdraw(root, number, run, linked, repository, dry_run):
+    """Remove the bot's report of an earlier run when this run measured nothing."""
+    existing = bot_report(root, number)
+    if existing is None:
+        return "no structural artifact for this attempt; nothing published"
+    stamp = STAMP.search(existing["body"])
+    if stamp is None:
+        raise Refusal("existing report lacks a run identity")
+    if tuple(map(int, stamp.groups())) >= (run["id"], run["run_attempt"]):
+        return "no structural artifact for this attempt; a newer report is kept"
+    if not current(api(root+"/pulls/"+str(number)), linked, repository):
+        return "PR changed during analysis; nothing withdrawn"
+    if dry_run:
+        return "would withdraw the report of run %s attempt %s" % stamp.groups()
+    api(root+"/issues/comments/%d" % existing["id"], "DELETE", binary=True)
+    return "no structural artifact for this head; the earlier head's report was withdrawn"
 
 
 def publish(repository, run_id, attempt, dry_run=False):
@@ -153,6 +188,8 @@ def publish(repository, run_id, attempt, dry_run=False):
     if run["workflow_id"] != workflow["id"]:
         raise Refusal("unexpected workflow identity")
     linked = association(run, repository)
+    if linked is None:
+        return "no open PR is associated with the run; nothing published"
     number = linked["number"]
     pull = api(root + "/pulls/" + str(number))
     if not current(pull, linked, repository):
@@ -160,14 +197,16 @@ def publish(repository, run_id, attempt, dry_run=False):
     name = "structural-review-%d-%d" % (run_id, attempt)
     artifacts = [a for a in pages(root+"/actions/runs/%d/artifacts" % run_id, "artifacts") if a["name"] == name and not a["expired"]]
     if not artifacts:
-        return "no structural artifact for this attempt; nothing published"
+        # An ineligible change uploads nothing. A report of an earlier head must
+        # not stand for this one, so the Actions bot's own report is removed.
+        return withdraw(root, number, run, linked, repository, dry_run)
     if len(artifacts) != 1 or artifacts[0]["size_in_bytes"] > MAX_ARCHIVE:
         raise Refusal("ambiguous or oversized artifact")
     artifact = artifacts[0]
     raw = api(root+"/actions/artifacts/%d/zip" % artifact["id"], binary=True)
     if artifact.get("digest") != "sha256:"+hashlib.sha256(raw).hexdigest():
         raise Refusal("downloaded archive digest mismatch")
-    receipt, text = evidence(raw, run, linked)
+    receipt, text, details = evidence(raw, run, linked)
     comparison = api(root+"/compare/"+linked["base"]["sha"]+"..."+linked["head"]["sha"])
     if comparison["merge_base_commit"]["sha"] != receipt["base"]:
         raise Refusal("report baseline is not the PR merge base")
@@ -190,15 +229,8 @@ def publish(repository, run_id, attempt, dry_run=False):
             if (since_event["merge_base_commit"]["sha"] != linked["base"]["sha"]
                     or to_target["merge_base_commit"]["sha"] != engine_base):
                 raise Refusal("analysis merge base is outside the recorded target lineage")
-    body = comment_body(repository, run, receipt, text)
-    # Only the Actions bot owns the report. Human comments are never adopted
-    # merely because they contain the marker.
-    authors = {"github-actions[bot]"}
-    comments = [c for c in pages(root+"/issues/%d/comments" % number)
-                if c["user"]["login"] in authors and c.get("body", "").startswith(MARKER+"\n")]
-    if len(comments) > 1:
-        raise Refusal("ambiguous report comments")
-    existing = comments[0] if comments else None
+    body = comment_body(repository, run, receipt, text, details)
+    existing = bot_report(root, number)
     if existing:
         stamp = STAMP.search(existing["body"])
         if stamp is None:
