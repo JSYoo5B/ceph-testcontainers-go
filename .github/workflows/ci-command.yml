@@ -22,11 +22,11 @@ on:
   workflow_dispatch:
     inputs:
       structural_report_run:
-        description: 'Completed PR Code run whose structural report should be republished'
+        description: 'Completed PR structural evidence run whose report should be republished'
         required: true
         type: string
       structural_report_attempt:
-        description: 'Source Code run attempt'
+        description: 'Source structural evidence run attempt'
         type: string
         default: '1'
 

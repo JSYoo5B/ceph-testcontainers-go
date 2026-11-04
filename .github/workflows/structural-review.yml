@@ -4,10 +4,10 @@ name: Structural review comment
 # the publisher never checks out, imports or executes pull-request code.
 on:
   workflow_run:
-    workflows: [Code checks]
+    workflows: [Structural review evidence]
     types: [completed]
-    # Filter the source run before GitHub creates a publisher run for main CI.
-    # This matches the source branch, not the branch holding this trusted file.
+    # The source workflow runs only for pull requests; this also leaves out a
+    # pull request whose source branch is named main, as it always has.
     branches-ignore: [main]
 
 permissions: {}

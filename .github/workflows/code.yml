@@ -127,44 +127,6 @@ jobs:
         with:
           version: v2.15.0
           args: --timeout=15m
-      # Only a change to library code is measured: tests, repository-only
-      # helpers, documentation and tools alone skip the tool builds, both
-      # collections and the upload. A skip publishes nothing new.
-      - name: Classify structural review eligibility
-        id: structural-scope
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        timeout-minutes: 2
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          MERGE_BASE=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq .merge_base_commit.sha)
-          echo "merge_base=$MERGE_BASE" >> "$GITHUB_OUTPUT"
-          git fetch --no-tags --depth=1 origin "$BASE" "$HEAD" "$MERGE_BASE"
-          python3 .github/scripts/structural_review.py --classify --base "$MERGE_BASE" --head "$HEAD"
-      # Reuse this job's installed linter and warm module/build caches. Metric
-      # values and collection failures never become a required quality gate.
-      - name: Collect report-only structural review evidence
-        id: structural
-        if: github.event_name == 'pull_request' && steps.structural-scope.outputs.eligible == 'true'
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-          MERGE_BASE: ${{ steps.structural-scope.outputs.merge_base }}
-        run: python3 .github/scripts/structural_review.py --base "$MERGE_BASE" --head "$HEAD" --target-base "$BASE" --output "$RUNNER_TEMP/structural-review"
-      - name: Save structural review evidence
-        if: ${{ always() && github.event_name == 'pull_request' && steps.structural.outcome != 'skipped' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: structural-review-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/structural-review/
-          retention-days: 7
-          if-no-files-found: warn
       - name: Compile all and explicit optional tags without Docker
         run: make tag-compile
       - name: Check CI selection, image, cleanup and completion tooling without Docker

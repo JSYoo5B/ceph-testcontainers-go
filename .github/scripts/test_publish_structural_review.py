@@ -21,7 +21,7 @@ BASE, HEAD = "a"*40, "b"*40
 LINKED = {"number": 7, "base": {"sha": BASE, "ref": "main", "repo": {"id": 1}},
           "head": {"sha": HEAD, "repo": {"id": 2}}}
 RUN = {"id": 10, "run_attempt": 2, "workflow_id": 3, "event": "pull_request", "status": "completed", "conclusion": "success",
-       "path": ".github/workflows/code.yml", "repository": {"id": 1, "full_name": REPO},
+       "path": ".github/workflows/structural-collect.yml", "repository": {"id": 1, "full_name": REPO},
        "head_repository": {"id": 2}, "head_sha": HEAD, "pull_requests": [LINKED]}
 PULL = {"state": "open", "head": {"sha": HEAD, "repo": {"id": 2}},
         "base": {"ref": "main", "repo": {"full_name": REPO}}}
@@ -151,7 +151,7 @@ class PublishTests(unittest.TestCase):
         raw = raw or archive()
         artifact = {"id": 20, "name": "structural-review-10-2", "expired": False,
                     "size_in_bytes": len(raw), "digest": "sha256:"+hashlib.sha256(raw).hexdigest()}
-        reads = {"/actions/runs/10": RUN, "/actions/workflows/code.yml": {"id": 3},
+        reads = {"/actions/runs/10": RUN, "/actions/workflows/structural-collect.yml": {"id": 3},
                  "/pulls/7": pull or PULL, "/compare/"+BASE+"..."+HEAD: {"merge_base_commit": {"sha": BASE}}, "/actions/runs/10/artifacts?per_page=100&page=1": {"artifacts": [artifact]},
                  "/actions/artifacts/20/zip": raw, "/issues/7/comments?per_page=100&page=1": list(comments)}
         calls = []
@@ -299,7 +299,7 @@ class PublishTests(unittest.TestCase):
         with mock.patch.object(reporter, "api", side_effect=api):
             reporter.publish(REPO, 10, 2)
         self.assertEqual(calls[-1][1], "POST")
-        for key, value in (("/actions/workflows/code.yml", {"id": 4}),
+        for key, value in (("/actions/workflows/structural-collect.yml", {"id": 4}),
                            ("/actions/runs/10/artifacts?per_page=100&page=1", {"artifacts": []})):
             api, calls, reads = self.api_fixture()
             reads[key] = value
@@ -392,13 +392,25 @@ class CommandFailureTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_producer_reuses_code_job_and_publisher_runs_trusted_code_without_cache(self):
+    def test_producer_is_its_own_read_only_workflow_and_publisher_runs_trusted_code_without_cache(self):
         root = Path(__file__).resolve().parents[2]
         code = (root/".github/workflows/code.yml").read_text()
+        producer = (root/".github/workflows/structural-collect.yml").read_text()
         workflow = (root/".github/workflows/structural-review.yml").read_text()
-        self.assertIn("Collect report-only structural review evidence", code)
-        self.assertIn("continue-on-error: true", code)
-        self.assertNotIn("pull-requests: write", code)
+        # The evidence starts with the pull request event, not after Code checks.
+        self.assertNotIn("structural", code.lower())
+        self.assertIn("name: Structural review evidence", producer)
+        self.assertIn("on:\n  pull_request:\n\npermissions:\n  contents: read\n", producer)
+        self.assertNotIn("write", producer)
+        self.assertNotIn("pull_request_target", producer)
+        self.assertIn("continue-on-error: true", producer)
+        steps = producer.split("\n      - ")
+        self.assertIn("name: Classify structural review eligibility", steps[2])
+        for step in steps[3:-1]:
+            self.assertIn("if: steps.scope.outputs.eligible == 'true'", step)
+        self.assertIn("steps.structural.outcome != 'skipped'", steps[-1])
+        self.assertIn(reporter.SOURCE_WORKFLOW, str(root/reporter.SOURCE_WORKFLOW))
+        self.assertTrue((root/reporter.SOURCE_WORKFLOW).is_file())
         command = (root/".github/workflows/ci-command.yml").read_text()
         manual = command.split("\n  structural-report:\n", 1)[1]
         self.assertIn("if: github.event_name == 'workflow_dispatch'", manual)
@@ -408,7 +420,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("group: structural-report-${{ needs.structural-source.outputs.sha }}", manual)
         self.assertIn("group: structural-report-${{ github.event.workflow_run.head_sha }}", workflow)
         self.assertIn("workflow_run:", workflow)
-        self.assertIn("workflows: [Code checks]", workflow)
+        self.assertIn("workflows: [Structural review evidence]", workflow)
         self.assertIn("    types: [completed]\n", workflow)
         self.assertIn("    branches-ignore: [main]\n", workflow)
         self.assertIn("if: github.event.workflow_run.event == 'pull_request'", workflow)

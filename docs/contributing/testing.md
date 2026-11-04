@@ -740,7 +740,7 @@ it writes nothing and names the rows, and `regenerate` followed by a separate
 
 ## Structural metric triage
 
-Code checks publishes a combined type/lint report and updates one PR comment;
+The Structural review evidence workflow publishes a combined type/lint report and updates one PR comment;
 see [Structural review](structural-review.md) for scope, exclusions and delivery.
 For a local report-only comparison, use `internal/tools/lintcalibration` with the
 Code workflow's pinned golangci-lint executable. Build the command once, collect

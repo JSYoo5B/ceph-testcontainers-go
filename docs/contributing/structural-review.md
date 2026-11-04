@@ -1,7 +1,9 @@
 # Structural review
 
-The Code job **Vet, compile and CI tooling** attaches a structural report to
-pull requests that change library code. The report shows how the PR changes
+The **Structural review evidence** workflow (`structural-collect.yml`)
+attaches a structural report to pull requests that change library code. It
+runs on its own, starting with the pull request event, so the report does not
+wait for Code checks. The report shows how the PR changes
 the size and concentration of the library: which packages grow, which owners
 gain methods or fields, and which complexity, length and duplication findings
 change. Start with its job summary or the single **Structural review** PR
@@ -27,8 +29,8 @@ responsibility boundaries, lock order, lifecycle and behavioral changes.
 | Repeated blocks | golangci-lint `dupl` | Candidates for inspection, not mandatory abstraction. Lock tests for `Mutex` and `RWMutex`, for example, can look alike while checking different contracts. Column zero is unspecified. Blocks have no function identity and remain unmatched. |
 | Package boundaries | Existing import/source checks and Go compilation | Compilation already rejects cycles; no additional cycle checker is needed. An architectural gate needs a specific forbidden dependency, not a generic quality score. |
 
-These reuse the existing Go parsers and the Code job's pinned golangci-lint
-binary. No extra lint framework or dependency is installed. All four lint
+These reuse the existing Go parsers and the golangci-lint version pinned in
+Code checks. No extra lint framework or dependency is installed. All four lint
 signals remain report-only calibration, with the collection thresholds in
 `internal/tools/lintcalibration/golangci.yml`; none is enabled as an additional
 ordinary lint gate. In particular, overlapping complexity checks are not two
@@ -56,7 +58,7 @@ A unit test of `structural_review.py` compares the repository-only directories
 with `go list -deps` of the public packages, so a directory that becomes a
 library dependency, or a new internal directory nobody classified, fails it.
 
-Before any tool is built, the Code job classifies both sides of every changed
+Before any tool is built, the workflow's first step classifies both sides of every changed
 path, renames included. A change to library code, `go.mod` or `go.sum` is
 measured; so is any path the classifier does not recognize, which is never
 assumed to be test-only. A change to tests, helpers, fixtures, documentation or
@@ -71,7 +73,7 @@ analysis tools and one embedded lint configuration for both. GitHub's compare
 API names the merge base; the target SHA at the PR event is recorded separately.
 Advances on the target branch therefore do not appear as removals by the PR. It does not
 substitute the synthetic merge tree for the PR head. The root module is
-collected with `./...` on Linux amd64, using Code's Go toolchain and the tag set
+collected with `./...` on Linux amd64, using the Go toolchain of Code checks and the tag set
 in the embedded calibration configuration. Test diagnostics are explicitly
 labeled; generated files follow golangci-lint's exclusion policy. Nested Go
 modules, fixtures, other platforms and other tag combinations are not measured.
@@ -115,8 +117,11 @@ lint triage, including test diagnostics.
 
 ## Delivery and cost
 
-Analysis reuses the existing Code job's installed linter and caches. It starts
-no Docker or native jobs and adds no required check. Metric collection and
+The workflow has one job. Its first step classifies the change and, when the
+change is not eligible, every later step is skipped, so no Go toolchain,
+linter or cache is installed. An eligible change installs the pinned linter
+and collects with a cold build cache. It starts no Docker or native jobs and
+adds no required check. A new commit cancels the PR's run in progress. Metric collection and
 upload are advisory steps: collection failure reports **unavailable**, never
 "clean", and cannot turn a metric value into a failing quality gate. A change
 that is not eligible is not measured and publishes nothing new. Normal Code tests, source checks and native selection
@@ -131,13 +136,14 @@ and both collections, and maximum child-process RSS on Linux (checkout/fetch and
 the measurement timer). Cache state and
 scope affect those numbers; neither is a token, billing or review-time saving.
 
-After Code checks completes on a branch other than `main`,
-`structural-review.yml` runs a trusted publisher from the default branch.
-The source-branch filter prevents main CI completions from creating publisher
-runs; the job also requires a pull-request source event. GitHub can still
+When a Structural review evidence run completes,
+`structural-review.yml` runs a trusted publisher from the default branch, so
+the comment is updated as soon as the evidence exists. The source workflow
+runs only for pull requests, and the publisher also requires a pull-request
+source event. GitHub can still
 show main as the publisher's branch because it executes trusted default-branch
 code. The filter also excludes PRs whose source branch is named `main`,
-including fork branches with that name; their reports remain in Code artifacts
+including fork branches with that name; their reports remain in the evidence artifacts
 and can be published with the manual delivery inputs below.
 
 The publisher verifies GitHub's run/PR association,

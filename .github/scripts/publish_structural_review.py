@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a read-only Code run's report as one replaceable PR comment.
+"""Publish a read-only structural evidence run's report as one replaceable PR comment.
 
 Runs only from trusted source. The artifact is bounded data, never extracted,
 imported, sourced or executed. GitHub's run/PR association, current head, attempt
@@ -21,6 +21,8 @@ import zipfile
 MARKER = "<!-- ceph-structural-review -->"
 STAMP = re.compile(r"<!-- structural-review-run:(\d+):(\d+) -->")
 SCHEMA = "ceph-structural-review/v1"
+# The read-only workflow that collects the evidence; only its runs are sources.
+SOURCE_WORKFLOW = ".github/workflows/structural-collect.yml"
 FILES = {"receipt.json", "summary.md", "details.md", "base-lint.json", "head-lint.json", "lint-delta.json", "lint-summary.md",
          "base-structure.json", "head-structure.json", "structure-delta.json", "environments.json"}
 MAX_ARCHIVE = 16 * 1024 * 1024
@@ -54,13 +56,13 @@ def pages(path, key=None):
 def association(run, repository):
     if (run.get("event") != "pull_request" or run.get("status") != "completed"
             or run.get("conclusion") in ("cancelled", "skipped", "stale")
-            or run.get("path") != ".github/workflows/code.yml"
+            or run.get("path") != SOURCE_WORKFLOW
             or run.get("repository", {}).get("full_name") != repository):
-        raise Refusal("not a completed Code pull request run")
+        raise Refusal("not a completed structural evidence pull request run")
     pulls = run.get("pull_requests", [])
     if not pulls:
         # GitHub drops the association once the PR is merged or closed, which
-        # a Code run that ends after the merge regularly meets.
+        # a run that ends after the merge regularly meets.
         return None
     if len(pulls) != 1:
         raise Refusal("no unique GitHub PR association")
@@ -184,7 +186,7 @@ def publish(repository, run_id, attempt, dry_run=False):
     run = api(root + "/actions/runs/" + str(run_id))
     if run["run_attempt"] != attempt:
         return "superseded attempt; nothing published"
-    workflow = api(root + "/actions/workflows/code.yml")
+    workflow = api(root + "/actions/workflows/" + SOURCE_WORKFLOW.rsplit("/", 1)[1])
     if run["workflow_id"] != workflow["id"]:
         raise Refusal("unexpected workflow identity")
     linked = association(run, repository)
