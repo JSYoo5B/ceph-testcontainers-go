@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -18,11 +19,12 @@ import (
 
 const healthWatchPool = "tc-health-watch"
 
-// awaitHealthWatchEvent reads events until match accepts one, and fails on a
-// closed watch, a sequence hole, another FSID or after limit. Gaps are
-// counted, not fatal: a read can fail while an OSD stops. Only check codes
-// are logged; messages can carry application data.
-func awaitHealthWatchEvent(t *testing.T, w *ceph.HealthWatch, fsid string, last *uint64, gaps *int, limit time.Duration, what string, match func(ceph.HealthWatchEvent) bool) ceph.HealthWatchEvent {
+// awaitHealthWatchEvent reads events until one matches want, and fails on a
+// closed watch, a sequence hole, another FSID, a malformed sample or after
+// limit. Gaps are counted, not fatal: a read can fail while an OSD stops.
+// Only evaluations are logged, which name codes but no messages; messages
+// can carry application data.
+func awaitHealthWatchEvent(t *testing.T, w *ceph.HealthWatch, fsid string, last *uint64, gaps *int, limit time.Duration, what string, want expect.Health) ceph.HealthWatchEvent {
 	t.Helper()
 	timeout := time.After(limit)
 	for {
@@ -43,10 +45,14 @@ func awaitHealthWatchEvent(t *testing.T, w *ceph.HealthWatch, fsid string, last 
 			if event.Health.FSID != fsid {
 				t.Fatalf("%s: event %d reports another FSID", what, event.Sequence)
 			}
-			if match(event) {
+			result, err := want.Evaluate(event.Health)
+			if err != nil {
+				t.Fatalf("%s: event %d: %v", what, event.Sequence, err)
+			}
+			if result.Matched {
 				return event
 			}
-			t.Logf("%s: event %d %s %s codes=%v mutes=%v", what, event.Sequence, event.Kind, event.Health.Status, healthWatchCodes(event), healthWatchMutes(event))
+			t.Logf("%s: event %d %s: %v", what, event.Sequence, event.Kind, result)
 		case <-timeout:
 			t.Fatalf("%s: no matching event within %v", what, limit)
 		}
@@ -122,8 +128,8 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	if first.Kind != ceph.WatchBaseline || first.Sequence != 1 || first.Health.FSID != fsid {
 		t.Fatalf("baseline = %s %+v", first.Kind, healthWatchCodes(first))
 	}
-	if _, down := first.Health.Checks["OSD_DOWN"]; down || healthWatchMuted(first, "OSD_DOWN") {
-		t.Fatalf("baseline already reports OSD_DOWN: %v %v", healthWatchCodes(first), healthWatchMutes(first))
+	if result, err := (expect.Health{Forbid: []string{"OSD_DOWN"}, NoMutes: []string{"OSD_DOWN"}}).Evaluate(first.Health); err != nil || !result.Matched {
+		t.Fatalf("baseline already reports OSD_DOWN: %v %v", result, err)
 	}
 	t.Logf("baseline: %s codes=%v, read %v", first.Health.Status, healthWatchCodes(first), first.Finished.Sub(first.Started))
 
@@ -133,9 +139,8 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 		t.Fatal(err)
 	}
 	stopped := time.Now()
-	down := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, 3*time.Minute, "down", func(e ceph.HealthWatchEvent) bool {
-		check, ok := e.Health.Checks["OSD_DOWN"]
-		return ok && !check.Muted && check.Severity == "HEALTH_WARN" && check.Count == 1
+	down := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, 3*time.Minute, "down", expect.Health{
+		Require: []expect.HealthCheck{{Code: "OSD_DOWN", Severity: "HEALTH_WARN", Muted: expect.HealthUnmuted, Count: 1}},
 	})
 	if down.Health.Status == "HEALTH_OK" {
 		t.Fatalf("an unmuted warning with status %s", down.Health.Status)
@@ -159,9 +164,8 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 		defer done()
 		_, _ = cluster.Ceph(cleanup, "health", "unmute", "OSD_DOWN")
 	})
-	muted := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, time.Minute, "muted", func(e ceph.HealthWatchEvent) bool {
-		check, ok := e.Health.Checks["OSD_DOWN"]
-		return ok && check.Muted && healthWatchMuted(e, "OSD_DOWN")
+	muted := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, time.Minute, "muted", expect.Health{
+		Require: []expect.HealthCheck{{Code: "OSD_DOWN", Muted: expect.HealthMuted}}, Mutes: []string{"OSD_DOWN"},
 	})
 	t.Logf("muted: event %d %s %s codes=%v", muted.Sequence, muted.Kind, muted.Health.Status, healthWatchCodes(muted))
 
@@ -169,16 +173,11 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 		t.Fatal(err)
 	}
 	restarted := time.Now()
-	cleared := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, 3*time.Minute, "cleared", func(e ceph.HealthWatchEvent) bool {
-		_, ok := e.Health.Checks["OSD_DOWN"]
-		return !ok
-	})
+	cleared := awaitHealthWatchEvent(t, w, fsid, &last, &gaps, 3*time.Minute, "cleared", expect.Health{Forbid: []string{"OSD_DOWN"}})
 	t.Logf("cleared: event %d %s, observed %v after the start returned, mutes=%v", cleared.Sequence, cleared.Kind, cleared.Finished.Sub(restarted), healthWatchMutes(cleared))
 	// A nonsticky mute ends with its check, at the next monitor tick.
 	if healthWatchMuted(cleared, "OSD_DOWN") {
-		awaitHealthWatchEvent(t, w, fsid, &last, &gaps, time.Minute, "unmuted", func(e ceph.HealthWatchEvent) bool {
-			return !healthWatchMuted(e, "OSD_DOWN")
-		})
+		awaitHealthWatchEvent(t, w, fsid, &last, &gaps, time.Minute, "unmuted", expect.Health{NoMutes: []string{"OSD_DOWN"}})
 	}
 
 	// Independent outcomes: the OSDMap reports the OSD up, the fixture's own

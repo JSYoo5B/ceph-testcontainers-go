@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -195,8 +196,8 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	topologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
 	health := integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
-	if health.Status != "HEALTH_OK" || len(health.Checks) != 0 || len(health.Mutes) != 0 {
-		t.Fatal("recovered health did not retain strict closure and mute restoration")
+	if result, err := (expect.Health{Status: "HEALTH_OK", Exact: true}).Evaluate(health); err != nil || !result.Matched {
+		t.Fatal("recovered health did not retain strict closure and mute restoration:", result, err)
 	}
 	if noStorage {
 		noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "seed", "after-provision", originalPoolID)
