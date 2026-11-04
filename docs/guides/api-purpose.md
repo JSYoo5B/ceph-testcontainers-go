@@ -100,6 +100,18 @@ particular API is kept belongs in that API's own doc comment, not here.
   needs.
 - Two near-identical waits or reads may both exist only when their acceptance
   conditions differ, and each one's doc comment states the difference.
+- A pure evaluation of a captured observation against a condition the test
+  states, with an explanation of each mismatch, goes in the `expect` package
+  of the service that owns the observation type: `ceph/expect` for
+  `ceph.OSDState`, `cephfs/expect` for `cephfs.FilesystemStatus`. The
+  dependency runs from `<service>/expect` to its service, never back, and no
+  central package imports every service. The observation type, its query,
+  its readiness wait and its Watch stay with the service. An evaluation has
+  one `Evaluate` that does no I/O, wait or retry and needs no `testing.T`. An
+  invalid expectation is `ErrInvalidRequest`, and a malformed observation is
+  an error, not a mismatch. A new evaluation needs a repeated condition in
+  real tests that it states exactly; polling, retries and assertion helpers
+  stay with the test.
 
 ## Tagging an API
 
