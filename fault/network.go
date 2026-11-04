@@ -149,7 +149,8 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 // dual-stack bridge, the IPv6 address advertised by Ceph. Removed containers
 // need no restoration. An externally reattached endpoint with a different
 // address is refused rather than overwritten, and the handle stays
-// retryable.
+// retryable. Docker publishes the container's ports again on reattachment, so
+// a port mapped to a random host port can move: resolve it again afterwards.
 //
 //purpose:condition,lifetime
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
