@@ -2,7 +2,7 @@
 
 //ci: timeout=7m job-timeout=15 image-roles=essential,client
 
-package integration_test
+package rbd_schedule_remove_test
 
 import (
 	"context"
