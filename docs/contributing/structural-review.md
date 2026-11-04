@@ -89,8 +89,16 @@ and both collections, and maximum child-process RSS on Linux (checkout/fetch and
 the measurement timer). Cache state and
 scope affect those numbers; neither is a token, billing or review-time saving.
 
-After Code checks completes, `structural-review.yml` runs a trusted
-publisher from the default branch. It verifies GitHub's run/PR association,
+After Code checks completes on a branch other than `main`,
+`structural-review.yml` runs a trusted publisher from the default branch.
+The source-branch filter prevents main CI completions from creating publisher
+runs; the job also requires a pull-request source event. GitHub can still
+show main as the publisher's branch because it executes trusted default-branch
+code. The filter also excludes PRs whose source branch is named `main`,
+including fork branches with that name; their reports remain in Code artifacts
+and can be published with the manual delivery inputs below.
+
+The publisher verifies GitHub's run/PR association,
 workflow identity, latest attempt, exact head/base, artifact digests and the
 analysis source. A CI synthetic merge may use a newer target than the event:
 its other parent must descend from the event target and belong to the current
