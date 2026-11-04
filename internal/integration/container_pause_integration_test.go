@@ -6,6 +6,8 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,9 +20,10 @@ import (
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown
-// it stays in the map, so clients wait for their own timeouts and the live
-// primary reports slow operations. Without nodown its peer marks it down and
-// degraded I/O resumes. Both phases end with the same OSD rejoining.
+// it stays in the map, so clients wait for their own timeouts, and the live
+// OSD reports slow operations for the writes it leads and cannot replicate.
+// Without nodown its peer marks it down and degraded I/O resumes. Both phases
+// end with the same OSD rejoining.
 func TestPausedOSDFaults(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
@@ -56,20 +59,23 @@ func TestPausedOSDFaults(t *testing.T) {
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			probe := func(t *testing.T, phase string) {
+			probe := func(t *testing.T, phase string, objects ...string) {
 				t.Helper()
-				t.Logf("CONTAINER_PAUSE_CLIENT %s", harness.ExecOutput(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
+				args := append([]string{"python3", "-c", pausedOSDRADOSProbe, poolName, phase}, objects...)
+				t.Logf("CONTAINER_PAUSE_CLIENT %s", harness.ExecOutput(t, ctx, client, args...))
 			}
 			probe(t, "seed")
 			target := clusteraccess.OSDs(t, cluster)[1]
 			if target == nil || target.Container == nil {
 				t.Fatal("second owned OSD unavailable")
 			}
+			live := clusteraccess.OSDs(t, cluster)[0].ID
 			if pause, err := fault.Pause(ctx, cluster, clusteraccess.ControlContainer(t, cluster)); err == nil || pause != nil {
 				t.Fatal("control CLI container was paused")
 			}
 
 			t.Run("frozen_up", func(t *testing.T) {
+				blocked := pausedOSDBlockedObjects(t, ctx, cluster, poolName, live, target.ID)
 				hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
 				t.Cleanup(func() { restoreFlag(t, hold) })
 				if err != nil {
@@ -85,7 +91,7 @@ func TestPausedOSDFaults(t *testing.T) {
 				if again, err := fault.Pause(ctx, cluster, target.Container); err == nil || again != pause {
 					t.Fatal("overlapping pause was admitted", err)
 				}
-				probe(t, "blocked")
+				probe(t, "blocked", blocked...)
 				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
 				status, err := harness.ObserveCluster(cluster).Status(ctx)
 				if err != nil || status.OSDMap.NumUpOSDs != 2 {
@@ -131,6 +137,40 @@ func TestPausedOSDFaults(t *testing.T) {
 	}
 }
 
+// pausedOSDBlockedObjects returns names for the blocked writes: two led by the
+// live OSD, which holds them waiting for the frozen replica and so reports
+// SLOW_OPS, and two led by the frozen OSD, which no live OSD ever receives.
+// Placement follows from the name, so it is read before any write.
+func pausedOSDBlockedObjects(t *testing.T, ctx context.Context, cluster *ceph.Container, pool string, live, frozen int) []string {
+	t.Helper()
+	var liveLed, frozenLed []string
+	for i := 0; i < 64 && (len(liveLed) < 2 || len(frozenLed) < 2); i++ {
+		name := fmt.Sprintf("blocked-%d", i)
+		out, err := cluster.Ceph(ctx, "osd", "map", pool, name, "--format", "json")
+		if err != nil {
+			t.Fatal("osd map", name, err)
+		}
+		mapping, err := parseHeldMapping(out, pool, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(mapping.Acting, live) || !slices.Contains(mapping.Acting, frozen) {
+			t.Fatalf("%s acting %v lacks osd.%d or osd.%d", name, mapping.Acting, live, frozen)
+		}
+		t.Logf("CONTAINER_PAUSE placement object=%s pg=%s acting=%v primary=%d", name, mapping.PGID, mapping.Acting, mapping.ActingPrimary)
+		switch {
+		case mapping.ActingPrimary == live && len(liveLed) < 2:
+			liveLed = append(liveLed, name)
+		case mapping.ActingPrimary == frozen && len(frozenLed) < 2:
+			frozenLed = append(frozenLed, name)
+		}
+	}
+	if len(liveLed) < 2 || len(frozenLed) < 2 {
+		t.Fatalf("no two names led by each of osd.%d and osd.%d", live, frozen)
+	}
+	return append(liveLed, frozenLed...)
+}
+
 func restoreFlag(t *testing.T, hold *override.OSDFlagHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -166,10 +206,10 @@ func waitOSDsUp(t *testing.T, ctx context.Context, cluster *ceph.Container, up i
 	}
 }
 
-// blocked: every PG includes the frozen OSD, so each write must end with the
-// client's own ETIMEDOUT. Other phases must complete and preserve all data.
+// blocked: every PG includes the frozen OSD, so each named write must end with
+// the client's own ETIMEDOUT. Other phases must complete and preserve all data.
 const pausedOSDRADOSProbe = `import rados,sys,json,hashlib,time
-pool,phase=sys.argv[1:]
+pool,phase=sys.argv[1:3]; blocked=sys.argv[3:]
 timeout='5' if phase=='blocked' else '120'
 client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_osd_op_timeout':timeout,'rados_mon_op_timeout':'30'})
 client.connect(); io=client.open_ioctx(pool)
@@ -181,8 +221,8 @@ try:
         print(json.dumps({'phase':phase,'written':len(names)})); sys.exit(0)
     if phase=='blocked':
         timed_out=0; started=time.time()
-        for index in range(4):
-            name='blocked-%d'%index
+        assert len(blocked)==4,blocked
+        for name in blocked:
             try: io.write_full(name,payload(name))
             except rados.Error as error:
                 assert error.errno==110,repr(error); timed_out+=1
