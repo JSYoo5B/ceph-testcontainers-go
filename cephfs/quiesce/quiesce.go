@@ -167,16 +167,29 @@ func (q *Set) Status(ctx context.Context) (*State, error) {
 	if q == nil || q.filesystem == nil || q.state == nil {
 		return nil, errors.New("quiesce handle is unavailable")
 	}
-	ctx, fsID, done, err := volbase.Begin(ctx, q.filesystem)
+	return q.status(ctx, volbase.Begin)
+}
+
+// status is one admitted read of the set through begin: volbase.Begin for
+// Status, volbase.BeginObservation for a watch.
+func (q *Set) status(ctx context.Context, begin func(context.Context, *fsbase.Core) (context.Context, int64, func(), error)) (*State, error) {
+	ctx, fsID, done, err := begin(ctx, q.filesystem)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
 	if fsID != q.state.filesystemID {
-		return nil, errors.New("quiesce filesystem was replaced")
+		return nil, ownershipError("quiesce filesystem was replaced")
 	}
 	return q.read(ctx)
 }
+
+// ownershipError is a read that shows the set is no longer the one this
+// handle created: a replaced filesystem, an absent set or changed members. No
+// later read can undo it.
+type ownershipError string
+
+func (e ownershipError) Error() string { return string(e) }
 
 // Release resumes this set's I/O only at its captured QUIESCED version, using
 // native optimistic concurrency. Expired/timed-out/canceled sets are reported as
@@ -196,7 +209,7 @@ func (q *Set) Release(ctx context.Context) error {
 	}
 	defer done()
 	if fsID != q.state.filesystemID {
-		return errors.New("quiesce filesystem was replaced")
+		return ownershipError("quiesce filesystem was replaced")
 	}
 	if q.state.released {
 		return nil
@@ -241,7 +254,7 @@ func (q *Set) read(ctx context.Context) (*State, error) {
 		return nil, err
 	}
 	if !slices.Equal(state.Members, q.state.members) {
-		return nil, errors.New("native quiesce members changed; refusing ownership")
+		return nil, ownershipError("native quiesce members changed; refusing ownership")
 	}
 	return state, nil
 }
@@ -264,7 +277,10 @@ func decodeSet(data []byte, id string) (*State, error) {
 		return nil, errors.New("decode native quiesce database")
 	}
 	set, exists := database.Sets[id]
-	if !exists || len(database.Sets) != 1 || set.Version == 0 || len(set.Members) == 0 || set.Timeout < 0 || set.Expiration < 0 {
+	if !exists {
+		return nil, ownershipError("native quiesce set is absent")
+	}
+	if len(database.Sets) != 1 || set.Version == 0 || len(set.Members) == 0 || set.Timeout < 0 || set.Expiration < 0 {
 		return nil, errors.New("native quiesce set is absent or incomplete")
 	}
 	if !slices.Contains([]string{"QUIESCING", "QUIESCED", "RELEASING", "RELEASED", "EXPIRED", "TIMEDOUT", "CANCELED", "FAILED"}, set.State.Name) {
@@ -273,7 +289,7 @@ func decodeSet(data []byte, id string) (*State, error) {
 	members := make([]string, 0, len(set.Members))
 	for path, member := range set.Members {
 		if member.Excluded || len(path) < 7 || path[:6] != "file:/" {
-			return nil, errors.New("native quiesce has excluded or unsupported members")
+			return nil, ownershipError("native quiesce has excluded or unsupported members")
 		}
 		members = append(members, path)
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,16 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The watch polls the set through the whole pause; its reads must not
+	// renew the expiration, and the expiry must reach it as the last event.
+	expiryWatch, err := expires.Watch(ctx, ceph.WatchConfig{Interval: 500 * time.Millisecond, Buffer: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = expiryWatch.Stop() })
+	if baseline := <-expiryWatch.Events(); baseline.Kind != ceph.WatchBaseline || baseline.State.State != "QUIESCED" {
+		t.Fatalf("quiesce watch baseline %+v", baseline)
+	}
 	quiescePhase(t, ctx, client, "expire")
 	blocked = quiesceWait(t, ctx, client, "expiring")
 	if blocked.Completed != 0 || !blocked.OutsideOK {
@@ -107,6 +118,11 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	if err != nil || native.State != "EXPIRED" {
 		t.Fatalf("native expiration %+v: %v", native, err)
 	}
+	expiry := quiesceWatchUntilEnd(t, ctx, expiryWatch)
+	if last := expiry[len(expiry)-1]; last.State == nil || last.State.State != "EXPIRED" || last.State.Version <= 0 {
+		t.Fatalf("the quiesce watch did not end on the expiry: %+v", expiry)
+	}
+	t.Logf("CEPHFS_QUIESCE_WATCH expiry observed after %d events: %s", len(expiry), quiesceWatchTrace(expiry))
 	if err := expires.Release(ctx); err == nil {
 		t.Fatal("expired checkpoint reported consistent release")
 	}
@@ -116,6 +132,12 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	editWatch, err := changed.Watch(ctx, ceph.WatchConfig{Interval: 500 * time.Millisecond, Buffer: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = editWatch.Stop() })
+	editBaseline := <-editWatch.Events()
 	harness.CephCommand(t, ctx, cluster, "fs", "quiesce", filesystem, "--set-id", changed.ID(), "--expiration", "40")
 	native, err = changed.Status(ctx)
 	if err != nil {
@@ -125,6 +147,16 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 		t.Fatal("outside version edit was adopted by release")
 	}
 	harness.CephCommand(t, ctx, cluster, "fs", "quiesce", filesystem, "--set-id", changed.ID(), "--release", "--if-version", strconv.FormatUint(native.Version, 10), "--await-for", "20")
+	// The outside edit is a new version of the same set, and the raw release
+	// ends the watch.
+	edits := quiesceWatchUntilEnd(t, ctx, editWatch)
+	if last := edits[len(edits)-1]; last.State == nil || last.State.State != "RELEASED" || last.State.Version <= editBaseline.State.Version {
+		t.Fatalf("the quiesce watch did not end on the release: %+v", edits)
+	}
+	if !slices.ContainsFunc(edits, func(e quiesce.SetWatchEvent) bool { return e.State != nil && e.State.Expiration == 40 }) {
+		t.Fatalf("the quiesce watch missed the outside expiration edit: %s", quiesceWatchTrace(edits))
+	}
+	t.Logf("CEPHFS_QUIESCE_WATCH outside edit and raw release: %s", quiesceWatchTrace(append([]quiesce.SetWatchEvent{editBaseline}, edits...)))
 	// Acquisition timeout is distinct from EXPIRED TTL. This process keeps an
 	// owned RW file descriptor mounted, then stops itself before native cap
 	// revocation. MDS and all other client processes remain live.
@@ -398,3 +430,42 @@ original=bytes(range(256))*256; changed=bytes(x^0x5a for x in range(256))*256
 assert read(root)==changed,'resumed head bytes differ'; assert read(snapshot)==original,'quiesced snapshot bytes differ'
 print('native frozen checkpoint SHA256',hashlib.sha256(original).hexdigest()); fs.shutdown()
 `
+
+// quiesceWatchUntilEnd receives the events after the baseline until the watch
+// ends, and fails unless it ended on a terminal state with a nil cause.
+func quiesceWatchUntilEnd(t *testing.T, ctx context.Context, w *quiesce.SetWatch) []quiesce.SetWatchEvent {
+	t.Helper()
+	var events []quiesce.SetWatchEvent
+	timeout := time.After(time.Minute)
+	for {
+		select {
+		case event, ok := <-w.Events():
+			if !ok {
+				if err := w.Stop(); err != nil {
+					t.Fatalf("quiesce watch ended with %v after %s", err, quiesceWatchTrace(events))
+				}
+				if len(events) == 0 {
+					t.Fatal("quiesce watch ended without an event after its baseline")
+				}
+				return events
+			}
+			events = append(events, event)
+		case <-timeout:
+			t.Fatalf("quiesce watch still running after %s", quiesceWatchTrace(events))
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func quiesceWatchTrace(events []quiesce.SetWatchEvent) string {
+	var trace []string
+	for _, event := range events {
+		if event.State == nil {
+			trace = append(trace, fmt.Sprintf("%d:%s(%v)", event.Sequence, event.Kind, event.Err))
+			continue
+		}
+		trace = append(trace, fmt.Sprintf("%d:%s %s/v%d exp=%g", event.Sequence, event.Kind, event.State.State, event.State.Version, event.State.Expiration))
+	}
+	return strings.Join(trace, ", ")
+}
