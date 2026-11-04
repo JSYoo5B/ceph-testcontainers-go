@@ -32,7 +32,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 | Release | Status | Tested image |
 | --- | --- | --- |
 | Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate pinned by `ceph.DefaultImage` |
-| Umbrella 21.2.x | Periodic CI on 21.2.0; the default remains Tentacle | Published official role images, pinned in `.github/ceph-role-images.json`; official amd64 requires x86-64-v3 |
+| Umbrella 21.2.x | Periodic CI on 21.2.0, with the differences listed below; the default remains Tentacle | Published official role images, pinned in `.github/ceph-role-images.json`; official amd64 requires x86-64-v3 |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
@@ -118,13 +118,13 @@ These affect commands or client libraries you run yourself, not the typed API:
 | `rbd mirror pool info` | No `mirror_uuid` or `remote_namespace` fields; no `--remote-namespace` option. |
 | `radosgw-admin bucket sync status` | Text output only. |
 
-## Known release-specific issues
+## Behaviour that differs on Umbrella
 
-- **Umbrella 21.2.0, unset RGW user rate limits.** Native `ratelimit get`
-  for a user without an explicit policy returns `ENOENT`. The rate-limit
-  integration contract currently fails at this initial read. An explicitly
-  stored user policy supports throttling and restoration; that does not
-  establish correct restoration of an originally absent policy.
+| Area | Tentacle 20.2.x and Squid 19.2.x | Umbrella 21.2.x | Effect on your test |
+| --- | --- | --- | --- |
+| RGW user without a rate-limit policy | `radosgw-admin ratelimit get --ratelimit-scope user` reports the native default policy, every budget zero and disabled, for a user that stores no policy, and also for a missing user. | The same command exits 254 with `ENOENT`, for an existing user that stores no policy and for a missing user alike. `radosgw-admin metadata get user:<uid>` tells them apart: an existing user without a policy lists no `user.rgw.ratelimit` attribute. A stored policy also has `max_list_ops` and `max_delete_ops`. | `rgw.User.OverrideRateLimit` takes the `ENOENT` as an unset policy only when the user's metadata, read in the same call, lists no policy attribute and the user is still the identity it created; a missing or replaced user is an error. `radosgw-admin` cannot delete a stored policy, so `Restore` stores the native default: the user is throttled as before the override, and your own `ratelimit get` then reports that default instead of `ENOENT`. |
+
+## Known release-specific issues
 
 - **Squid 19.2.6, RGW multisite.** On a secondary zone, `radosgw-admin realm
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
