@@ -110,13 +110,18 @@ type filesystemRegistry struct {
 	// again, and a filesystem created later under the same name is a new
 	// descriptor.
 	maxFileSizes map[*Filesystem]*maxFileSizeState
+	// readOnlyFaults holds the MDS process of each filesystem that
+	// MDS.ForceReadOnly sent force_readonly to, by GID. setupMu guards
+	// it. Entries stay: a GID is never reused, so an entry of a replaced
+	// process is inert.
+	readOnlyFaults map[mdsReadOnlyKey]*mdsReadOnlyState
 }
 
 // filesystems returns the cluster's filesystem registry, creating it on first
 // use.
 func filesystems(c *ceph.Container) *filesystemRegistry {
 	return servicehook.Extension(c, bootstrapKind, func() any {
-		return &filesystemRegistry{byName: make(map[string]*Filesystem), maxFileSizes: make(map[*Filesystem]*maxFileSizeState)}
+		return &filesystemRegistry{byName: make(map[string]*Filesystem), maxFileSizes: make(map[*Filesystem]*maxFileSizeState), readOnlyFaults: make(map[mdsReadOnlyKey]*mdsReadOnlyState)}
 	}).(*filesystemRegistry)
 }
 
