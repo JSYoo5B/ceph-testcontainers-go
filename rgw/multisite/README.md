@@ -29,8 +29,9 @@ quotas) stays in [`rgw`](../README.md), accounts in
    carry a planned master change.
 5. **Observe and verify**: `WaitSyncReady` (metadata and data catch-up),
    `SyncGroup.WaitBucketPolicyReady`, `SyncGroup.WaitBucketSyncReady`, then read
-   the objects through the other zone's endpoint. `ZoneAdmin` runs
-   `radosgw-admin` in any zone.
+   the objects through the other zone's endpoint. `WatchSync` and
+   `SyncGroup.WatchBucketSync` report lag and catch-up while a fault runs.
+   `ZoneAdmin` runs `radosgw-admin` in any zone.
 6. **Clean up**: terminate the fixture before the clusters; a non-nil
    `*Fixture` returned with an error must still be terminated.
 
@@ -58,6 +59,39 @@ if err != nil {
 // Write through east, then wait for metadata in west before writing objects
 // into a new bucket, and poll west for the objects.
 ```
+
+## Watching sync
+
+To see a zone fall behind and catch up while a fault runs,
+`ms.WatchSync(ctx, cfg, "west", "east")` polls the same observation as
+`SyncStatus`, and `group.WatchBucketSync(ctx, cfg, "pipe", "east", "west")`
+the same as `BucketSyncStatus`. Each sends changes on one channel, 5 seconds
+apart by default; one read takes over a second. The baseline is buffered
+before the call returns. Wait for it before you stop a gateway or cut the
+zone link. A zone event's `Ready` is what `WaitSyncReady` waits for, for the
+selected sources only; a bucket event's `Status.CaughtUp` is what
+`WaitBucketSyncReady` waits for.
+
+Each read takes the fixture's topology lock and releases it before the event
+is sent, so the test can stop gateways, fault the link or read other status
+while the watch runs. A failed read, a gateway that cannot be reached and a
+zone that has not imported the current period are `WatchGap` events that
+keep the partial report, and the next success is `WatchResumed`.
+
+The baseline pins what the watch observes, and these end it instead of
+reading as progress:
+
+- a new committed period or realm epoch, which any sync policy or topology
+  commit makes; start a new watch for the new period;
+- for a bucket watch, a bucket recreated under the same name, and the group
+  changed through the fixture or outside it.
+
+A full buffer ends the watch with `ceph.ErrWatchOverflow`, and `Terminate`
+ends it with `ceph.ErrInvalidRequest`. Neither watch proves that a
+particular object arrived: compare the objects through the other zone. Call
+`Stop` before `Terminate`: it joins the watch and returns why it ended. See
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
+the lifecycle that every Watch shares.
 
 ## Incremental sync timing
 

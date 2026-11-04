@@ -195,6 +195,8 @@ Watch takes a `ceph.WatchConfig` and has the same lifecycle:
 | `mirror.Mirror.WatchReceivers` and `Namespace.WatchReceivers` (RBD) | receiver membership, instances and leader agreement | the receiver cohort, peer and policies | 5s |
 | `mirror.Mirror.WatchImage` and `Namespace.WatchImage` (RBD) | replay state and receiver assignment of one image pair | source image ID, global ID and the destination once enrolled | 5s |
 | `mirror.Mirror.WatchDirectory` (CephFS) | assignment, sync state and last synced snapshot of one directory | filesystems, peer and the directory policy | 5s |
+| `multisite.Fixture.WatchSync` (RGW) | metadata sync and the selected sources' data sync of one zone | realm, zonegroup and zone IDs and the committed period | 5s |
+| `multisite.SyncGroup.WatchBucketSync` (RGW) | the bucket checkpoint of one pipe between two zones | the group's policy, both bucket instances and the committed period | 5s |
 
 The default interval follows the cost of one read: an OSD watch read is one
 `osd dump`, while a mirror read runs about a dozen commands on both clusters.

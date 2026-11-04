@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 58,
+  "count": 68,
   "entries": [
     {
       "current": "rgw/multisite.BucketSyncPolicyStatus",
@@ -14,6 +14,34 @@
       "current": "rgw/multisite.BucketSyncStatus",
       "kind": "type",
       "proposed": "rgw/multisite.BucketSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketSyncWatch",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketSyncWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketSyncWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan BucketSyncWatchEvent",
+      "receiver": "*BucketSyncWatch",
+      "proposed": "rgw/multisite.BucketSyncWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketSyncWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*BucketSyncWatch",
+      "proposed": "rgw/multisite.BucketSyncWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketSyncWatchEvent",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketSyncWatchEvent",
       "decision": "baseline"
     },
     {
@@ -120,6 +148,14 @@
       "signature": "func(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error)",
       "receiver": "*Fixture",
       "proposed": "rgw/multisite.Fixture.WaitSyncReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.WatchSync",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, zoneName string, sourceZones ...string) (*SyncWatch, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.WatchSync",
       "decision": "baseline"
     },
     {
@@ -328,6 +364,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw/multisite.SyncGroup.WatchBucketSync",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, pipeID, sourceZone, destinationZone string) (*BucketSyncWatch, error)",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.WatchBucketSync",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw/multisite.SyncGroupConfig",
       "kind": "type",
       "proposed": "rgw/multisite.SyncGroupConfig",
@@ -361,6 +405,34 @@
       "current": "rgw/multisite.SyncStatus",
       "kind": "type",
       "proposed": "rgw/multisite.SyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncWatch",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan SyncWatchEvent",
+      "receiver": "*SyncWatch",
+      "proposed": "rgw/multisite.SyncWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*SyncWatch",
+      "proposed": "rgw/multisite.SyncWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncWatchEvent",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncWatchEvent",
       "decision": "baseline"
     },
     {
