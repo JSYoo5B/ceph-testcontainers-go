@@ -140,6 +140,30 @@ These affect commands or client libraries you run yourself, not the typed API:
   user is throttled as before the override, and your own `ratelimit get`
   then reports that default instead of `ENOENT`.
 
+- **Tentacle 20.2.4, SigV4 headers left out of the signature.** RGW refuses
+  with 403 `AccessDenied` a request that sends `Content-Type` or
+  `x-amz-content-sha256` without listing it in `SignedHeaders`, with header
+  and with query (presigned URL) authentication alike; its level-5 log names
+  the header (`Signature rejected: 'content-type' supplied but not in
+  CanonicalHeaders`). Clients whose signer leaves `Content-Type` unsigned,
+  and presigned URLs used with a `Content-Type` header, therefore fail on
+  this release only. Umbrella 21.2.0 accepts both headers unsigned, Squid
+  19.2.5 checks no header at all, and all three accept signed requests. Every
+  other unsigned `x-amz-*` header is refused on Tentacle and Umbrella and
+  accepted on Squid. The module itself sends no S3 requests.
+- **Squid 19.2.5 and Tentacle 20.2.4, conditional writes on a
+  versioning-suspended bucket.** For a key written while versioning was
+  enabled, `If-Match` with the current ETag answers 412, and after a
+  delete marker `If-None-Match: *` answers 412 although no current version
+  exists. Umbrella 21.2.0 accepts both. The other outcomes agree on all
+  three releases: `If-None-Match: *` on an existing object and a wrong
+  `If-Match` answer 412, keys first written after suspension and buckets
+  that were never versioned behave correctly.
+- **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
+  than 100 roles the command never ends: it repeats the same roles and its
+  output grows without bound (more than 13 GB in 60 seconds with 105 roles).
+  99 roles list correctly, and Squid 19.2.5 and Umbrella 21.2.0 list 105.
+  Read a known role with `role get` instead; the fixture never lists roles.
 - **Squid 19.2.6, RGW multisite.** On a secondary zone, `radosgw-admin realm
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the
