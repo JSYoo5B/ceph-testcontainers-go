@@ -1,0 +1,49 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rbd/mirror/expect",
+  "count": 27,
+  "types": {
+    "rbd/mirror/expect.Image": [
+      "Image.Daemon field string",
+      "Image.NewInstance field bool",
+      "Image.Replaying field bool",
+      "Image.Select field mirror.ImageStatus"
+    ],
+    "rbd/mirror/expect.ImageEvaluation": [
+      "ImageEvaluation.Expectation field Image",
+      "ImageEvaluation.Matched field bool",
+      "ImageEvaluation.Mismatches field []ImageMismatch",
+      "ImageEvaluation.Observed field mirror.ImageStatus"
+    ],
+    "rbd/mirror/expect.ImageMismatch": [
+      "ImageMismatch.Observed field string",
+      "ImageMismatch.Reason field ImageMismatchReason",
+      "ImageMismatch.Want field string"
+    ],
+    "rbd/mirror/expect.ReceiverDaemon": [
+      "ReceiverDaemon.Baseline field mirror.ReceiverDaemonStatus",
+      "ReceiverDaemon.Name field string",
+      "ReceiverDaemon.NewInstance field bool",
+      "ReceiverDaemon.Running field bool"
+    ],
+    "rbd/mirror/expect.ReceiverMismatch": [
+      "ReceiverMismatch.Daemon field string",
+      "ReceiverMismatch.Observed field string",
+      "ReceiverMismatch.Reason field ReceiverMismatchReason",
+      "ReceiverMismatch.Want field string"
+    ],
+    "rbd/mirror/expect.Receivers": [
+      "Receivers.Exact field bool",
+      "Receivers.Leader field string",
+      "Receivers.Ready field bool",
+      "Receivers.Select field []ReceiverDaemon"
+    ],
+    "rbd/mirror/expect.ReceiversEvaluation": [
+      "ReceiversEvaluation.Expectation field Receivers",
+      "ReceiversEvaluation.Matched field bool",
+      "ReceiversEvaluation.Mismatches field []ReceiverMismatch",
+      "ReceiversEvaluation.Observed field mirror.ReceiverStatus"
+    ]
+  }
+}
