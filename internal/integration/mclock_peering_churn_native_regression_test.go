@@ -282,6 +282,16 @@ func runMClockPeeringChurn(t *testing.T, cutoff string) {
 		t.Errorf("the target PG became active again (%s -> %s): its interval changed, so the scrub was restarted, not starved", activeBefore, after)
 	}
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
+		for _, args := range [][]string{{"-s"}, {"health", "detail"}, {"pg", "dump_stuck", "inactive", "unclean"}, {"osd", "pool", "ls", "detail"}} {
+			out, cerr := cluster.Ceph(ctx, args...)
+			t.Logf("CHURN diag ceph %v (%v):\n%s", args, cerr, out)
+		}
+		for _, o := range osds {
+			out, aerr := o.AdminSocket(ctx, "dump_ops_in_flight")
+			t.Logf("CHURN diag osd.%d dump_ops_in_flight (%v): %.4000s", o.ID, aerr, out)
+			out, aerr = o.AdminSocket(ctx, "dump_op_pq_state")
+			t.Logf("CHURN diag osd.%d dump_op_pq_state (%v): %.3000s", o.ID, aerr, out)
+		}
 		t.Fatal(err)
 	}
 	if read := harness.LastLine(harness.ExecOutput(t, ctx, client, "python3", "-c", churnSeedScript, churnTargetPool, fmt.Sprint(churnSeeds), "read")); read != seeded {
