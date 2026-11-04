@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/containerd/errdefs"
@@ -81,8 +82,11 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal("ordinary sibling setup failed", err)
 	}
 	report := cephFSTopologyStatus(t, ctx, target)
-	if report.MaxMDS != 1 || len(report.Active) != 1 || len(report.Standby) != 1 || len(report.StandbyReplay) != 0 || !report.Active[0].Owned || !report.Standby[0].Owned {
-		t.Fatal("original target active/ordinary standby unavailable")
+	if result, err := (expect.MDSs{
+		MaxMDS: 1, Ranks: []expect.MDSRank{{Rank: 0}}, Owned: true, Exact: true,
+		Standby: &expect.MDSStandbys{Count: 1}, StandbyReplay: &expect.MDSStandbys{},
+	}).Evaluate(*report); err != nil || !result.Matched {
+		t.Fatal("original target active/ordinary standby unavailable:", result, err)
 	}
 	old, takeover := report.Active[0], report.Standby[0]
 	failed := cephFSOwnedMDS(t, target, old.Name)

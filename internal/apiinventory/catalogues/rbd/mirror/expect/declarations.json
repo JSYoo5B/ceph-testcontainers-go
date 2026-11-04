@@ -1,0 +1,236 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rbd/mirror/expect",
+  "count": 36,
+  "entries": [
+    {
+      "current": "rbd/mirror/expect.Image",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.Image",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.Image.Evaluate",
+      "kind": "method",
+      "signature": "func(observed mirror.ImageStatus) (ImageEvaluation, error)",
+      "receiver": "Image",
+      "proposed": "rbd/mirror/expect.Image.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageEvaluation",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ImageEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ImageEvaluation",
+      "proposed": "rbd/mirror/expect.ImageEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatch",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ImageMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ImageMismatch",
+      "proposed": "rbd/mirror/expect.ImageMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchDaemon",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchDestinationImage",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchDestinationImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchGlobalID",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchGlobalID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchInstance",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchInstance",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchMirrorState",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchMirrorState",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchMode",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchPrimary",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchPrimary",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchReason",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ImageMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchReplay",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchReplay",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchScope",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchScope",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchSourceImage",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchSourceImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ImageMismatchState",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ImageMismatchState",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverDaemon",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ReceiverDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatch",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ReceiverMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ReceiverMismatch",
+      "proposed": "rbd/mirror/expect.ReceiverMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchAbsent",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchDiscovered",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchDiscovered",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchForeign",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchForeign",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchInstance",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchInstance",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchLeader",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchLeader",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchProblem",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchProblem",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchReady",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchReason",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchReplaced",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchReplaced",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchRunning",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchRunning",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiverMismatchUnselected",
+      "kind": "const",
+      "proposed": "rbd/mirror/expect.ReceiverMismatchUnselected",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.Receivers",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.Receivers",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.Receivers.Evaluate",
+      "kind": "method",
+      "signature": "func(observed mirror.ReceiverStatus) (ReceiversEvaluation, error)",
+      "receiver": "Receivers",
+      "proposed": "rbd/mirror/expect.Receivers.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiversEvaluation",
+      "kind": "type",
+      "proposed": "rbd/mirror/expect.ReceiversEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror/expect.ReceiversEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ReceiversEvaluation",
+      "proposed": "rbd/mirror/expect.ReceiversEvaluation.String",
+      "decision": "baseline"
+    }
+  ]
+}

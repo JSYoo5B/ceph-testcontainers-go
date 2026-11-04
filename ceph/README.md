@@ -171,13 +171,10 @@ metadata and read-only command probes. These waits retain the cluster's
 startup timeout and release observation locks between polls. An observer can
 be acquired for a partial cluster without reading or changing its state.
 
-To assert the up/in state of particular OSDs, evaluate an `OSDStates`
-observation with an `OSDExpectation`. Select the OSDs from an earlier
-`OSDStates` baseline to pin their native UUIDs, so a re-registered ID does not
-pass, and set `Exact` when no other owned OSD may exist. `Evaluate` performs no
-query or retry: the test polls with its own loop or assertion helper, a failed
-query stays an error, and `OSDEvaluation` lists each absent, replaced, down,
-out or unselected OSD from the observation it evaluated.
+To assert the up/in state of particular OSDs in an `OSDStates` observation,
+use the optional [`ceph/expect`](expect/README.md) package: it evaluates a
+captured observation against the condition the test states and explains each
+mismatch, without querying again.
 
 To react to owned OSD state while the SUT runs, `observer.WatchOSDs(ctx, cfg)`
 polls the OSDMap in one goroutine and sends changes on one channel. The
@@ -197,14 +194,17 @@ the watch instead of being followed by name. Only PG states, ordered up and
 acting sets, primaries, the PG set, `PGReady` and pool policy are compared.
 Epochs, reported sequences and statistics travel with each event but cause
 none. A reported active+clean PG proves no write visibility or durability, so
-check those with the workload.
+check those with the workload. To check one `Pool.PGs` observation for the PG
+states and placement a test states, use [`expect.PGs`](expect/README.md#pool-placement-groups).
 
 To observe a fault-specific health check appear, change its mute state and
 clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
 contract with the original FSID pinned. It compares status, check codes,
 severities, counts and muted flags and the stored mutes, never message text,
 so countdowns cause no events. It never mutes or clears a check, and
-messages can contain application data, so do not print events unfiltered.
+messages can contain application data, so do not print events unfiltered. To
+check one `HealthDetails` observation by check code and mute, use
+[`expect.Health`](expect/README.md#health-checks-and-mutes).
 
 To follow the control plane in the same way, `observer.WatchMonitors(ctx,
 cfg)` reports the monmap members with their advertised addresses, the quorum
@@ -218,3 +218,7 @@ empty quorum. A map without an active manager is a successful observation,
 and an advertised URL is not proof that its listener answers. Neither watch
 takes the topology lock, so the test can stop or replace daemons while it
 runs.
+
+To check one `observer.QuorumStatus` or `observer.ManagerStatus` reading
+against the members, quorum, active MGR or standbys a test requires, use
+`expect.Monitors` and `expect.Managers` from [`ceph/expect`](expect/README.md).

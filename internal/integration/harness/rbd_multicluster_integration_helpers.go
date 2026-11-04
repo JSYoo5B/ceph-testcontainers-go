@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
+	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -22,9 +23,14 @@ import (
 func RBDMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
-	if err != nil || !status.ReplayReady || status.State != "up+replaying" || status.Mode != mode || !status.SourcePrimary || status.DestinationPrimary || status.SourceNamespace != sourceNamespace || status.DestinationNamespace != destinationNamespace || status.SourceImageID == "" || status.DestinationImageID == "" || status.GlobalID == "" || status.DaemonName == "" || status.InstanceID == "" {
+	var result rbdmirrorexpect.ImageEvaluation
+	if err == nil {
+		want := rbdmirror.ImageStatus{Name: name, Mode: mode, SourceNamespace: sourceNamespace, DestinationNamespace: destinationNamespace}
+		result, err = rbdmirrorexpect.Image{Select: want, Replaying: true}.Evaluate(status)
+	}
+	if err != nil || !result.Matched {
 		logRBDMirrorImageState(t, ctx, link, status.Pool, sourceNamespace, destinationNamespace, name)
-		t.Fatalf("public RBD replay readiness differs: %+v error=%v", status, err)
+		t.Fatalf("public RBD replay readiness differs: %v error=%v status=%+v", result, err, status)
 	}
 	t.Logf("public RBD replay-ready mode=%s source=%q destination=%q image=%s daemon=%s instance=%s", status.Mode, sourceNamespace, destinationNamespace, name, status.DaemonName, status.InstanceID)
 	return status

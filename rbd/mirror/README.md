@@ -35,8 +35,10 @@ import rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
    agree on a leader), `WaitReplayReady` / `ImageStatus` (an owned receiver
    replays the image), then compare the destination data; readiness never
    proves that a write arrived. `WatchReceivers` and `WatchImage` report the
-   changes of the same observations while a fault runs. `BindNamespace`
-   observes extra namespace pairs.
+   changes of the same observations while a fault runs.
+   [`rbd/mirror/expect`](expect/README.md) evaluates one captured observation
+   against a stated cohort or replay. `BindNamespace` observes extra namespace
+   pairs.
    `Daemon.Remove`, `AddDaemon`, `Daemon.InterruptPeerLink` and `Rebootstrap`
    change the receiving side for HA and recovery scenarios.
 6. **Clean up**: register the clusters' cleanup first and the mirror's after,

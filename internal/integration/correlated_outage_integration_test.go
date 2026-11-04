@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -74,8 +75,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
-	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
-	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := expect.OSDs{Select: states, Up: true, In: true, Exact: true}
 	acting := func(object string) []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -106,6 +107,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		t.Fatalf("initial MON/MGR identities: %+v %+v %v", quorum, managerBefore, err)
 	}
 	standbyName := managerBefore.Standbys[0].Name
+	promoted := expect.Managers{Available: true, Active: standbyName, FormerGID: managerBefore.ActiveGID}
 	owned := map[string]bool{}
 	var members []outageMember
 	monitors, managers := clusteraccess.Monitors(t, cluster), clusteraccess.Managers(t, cluster)
@@ -189,7 +191,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	}
 	osdAID, _ := strconv.Atoi(osdA.Name)
 	// The stopped OSD is reported down but stays in, under its own registration.
-	stoppedOSD := ceph.OSDExpectation{Up: false, In: true}
+	stoppedOSD := expect.OSDs{Up: false, In: true}
 	for _, state := range states {
 		if state.ID == osdAID {
 			stoppedOSD.Select = []ceph.OSDState{state}
@@ -298,9 +300,11 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 			}
 		}
 		if !observed["mgr"] {
-			if m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
-				observed["mgr"], managerDuring = true, m
-				plan.Observe("mgr", mgrA.Name)
+			if m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil {
+				if r, err := promoted.Evaluate(m); err == nil && r.Matched {
+					observed["mgr"], managerDuring = true, m
+					plan.Observe("mgr", mgrA.Name)
+				}
 			}
 		}
 		if !observed["osd"] {
@@ -340,8 +344,16 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		if len(q.QuorumNames) != 3 || !m.Available || len(m.Standbys) != 1 {
-			return false, fmt.Errorf("quorum %v, manager available=%t standbys=%d", q.QuorumNames, m.Available, len(m.Standbys))
+		quorumEval, err := expect.Monitors{QuorumSize: 3}.Evaluate(q)
+		if err != nil {
+			return false, err
+		}
+		managerEval, err := expect.Managers{Available: true, StandbyCount: 1}.Evaluate(m)
+		if err != nil {
+			return false, err
+		}
+		if !quorumEval.Matched || !managerEval.Matched {
+			return false, fmt.Errorf("%v; %v", quorumEval, managerEval)
 		}
 		s, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {

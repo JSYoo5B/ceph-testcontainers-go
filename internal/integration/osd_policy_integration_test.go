@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -47,11 +48,11 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if len(osds) != 4 {
 				t.Fatalf("owned OSDs: %d", len(osds))
 			}
-			states := requireOSDs(t, ctx, cluster, "initial OSDs", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+			states := requireOSDs(t, ctx, cluster, "initial OSDs", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
 			initial := states[slices.IndexFunc(states, func(s ceph.OSDState) bool { return s.ID == original.ID })]
 			// Pinning the initial UUID refuses a re-registration of the same ID.
-			expect := func(up, in bool) ceph.OSDExpectation {
-				return ceph.OSDExpectation{Select: []ceph.OSDState{initial}, Up: up, In: in}
+			expect := func(up, in bool) expect.OSDs {
+				return expect.OSDs{Select: []ceph.OSDState{initial}, Up: up, In: in}
 			}
 			if err := original.SetIn(ctx, false); err != nil {
 				t.Fatal(err)

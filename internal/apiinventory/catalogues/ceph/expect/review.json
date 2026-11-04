@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "ceph/expect",
+  "declarations_sha256": "8b864d866aee6aa7f11a0d976231b2a26725f75f65626db226c2a70d93a91b64",
+  "members_sha256": "e27b1fbe1da4964e54833523faf10a5ecf51fc56c9989919d0104b590a526fdc",
+  "declarations": 85,
+  "members": 87,
+  "review": "api-naming.md",
+  "page": "ceph/expect/README.md"
+}

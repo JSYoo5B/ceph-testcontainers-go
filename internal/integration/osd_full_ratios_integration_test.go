@@ -142,15 +142,18 @@ func waitFullRatioHealth(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	t.Helper()
 	phaseCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	want := healthCodeExpectation(code, present)
 	for {
-		state := integrationHealthDetails(t, phaseCtx, cluster, fsid, code)
-		_, found := state.Checks[code]
-		if found == present {
+		result, err := want.Evaluate(integrationHealthDetails(t, phaseCtx, cluster, fsid, code))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Matched {
 			return
 		}
 		select {
 		case <-phaseCtx.Done():
-			t.Fatalf("native %s present=%v not observed: %v", code, present, phaseCtx.Err())
+			t.Fatalf("native %s present=%v not observed: %v; last %v", code, present, phaseCtx.Err(), result)
 		case <-time.After(time.Second):
 		}
 	}

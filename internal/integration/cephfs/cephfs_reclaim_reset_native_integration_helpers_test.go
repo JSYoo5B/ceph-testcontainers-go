@@ -293,8 +293,8 @@ func runCephFSReclaimReset(t *testing.T) {
 	seq.B, seq.ReadByClientID, seq.ReadSize, seq.ReadSHA256, seq.ReadFromNewFd = read.Client, read.Client, read.Size, read.SHA256, read.NewFd
 
 	status, statusErr := m.FS.MDSStatus(ctx)
-	if statusErr != nil || len(status.Active) != 1 || status.Active[0].GID != m.MDS.GID {
-		t.Fatalf("the active MDS changed during the recipe: %+v %v", status, statusErr)
+	if result, err := evaluateMDSs(status, statusErr, sameMDSRank(m.MDS)); err != nil || !result.Matched {
+		t.Fatalf("the active MDS changed during the recipe: %v %v", result, err)
 	}
 
 	outcome = harness.JudgeResetSequence(seq)

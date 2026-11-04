@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
@@ -98,8 +99,11 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := pool.PGs(ctx)
-	if err != nil || len(snapshot.PGs) != 1 || snapshot.PGs[0].State != "active+clean" || len(snapshot.PGs[0].Acting) != 3 {
-		t.Fatalf("placement before any mutation: %+v: %v", snapshot, err)
+	if err != nil {
+		t.Fatal("placement before any mutation:", err)
+	}
+	if placed, err := (expect.PGs{Count: 1, State: "active+clean", ActingSize: 3}).Evaluate(snapshot); err != nil || !placed.Matched {
+		t.Fatalf("placement before any mutation: %v: %v", placed, err)
 	}
 	pg := snapshot.PGs[0]
 	var osd *ceph.OSDContainer

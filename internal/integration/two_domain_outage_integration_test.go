@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -74,8 +75,8 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
-	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
-	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := expect.OSDs{Select: states, Up: true, In: true, Exact: true}
 	acting := func() []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -97,8 +98,11 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	// Map 2: outage membership, which also places MONs and MGRs. Nothing in
 	// Ceph says where they live; this manifest is the simulation's claim.
 	managerBefore, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-	if err != nil || !managerBefore.Available || len(managerBefore.Standbys) != 1 {
-		t.Fatalf("initial MGR identities: %+v %v", managerBefore, err)
+	if err != nil {
+		t.Fatalf("initial MGR identities: %v", err)
+	}
+	if result, err := (expect.Managers{Available: true, StandbyCount: 1}).Evaluate(managerBefore); err != nil || !result.Matched {
+		t.Fatalf("initial MGR identities: %v %v", result, err)
 	}
 	managerHost := map[string]string{managerBefore.ActiveName: hosts[0], managerBefore.Standbys[0].Name: hosts[1]}
 	owned := map[string]bool{}
@@ -311,19 +315,27 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer recoverCancel()
 	for {
+		var quorumEval expect.MonitorEvaluation
 		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(recoverCtx)
+		if qerr == nil {
+			quorumEval, qerr = expect.Monitors{QuorumSize: 3}.Evaluate(q)
+		}
+		var managerEval expect.ManagerEvaluation
 		m, merr := harness.ObserveCluster(cluster).ManagerStatus(recoverCtx)
-		var osdEval ceph.OSDEvaluation
+		if merr == nil {
+			managerEval, merr = expect.Managers{Available: true, StandbyCount: 1}.Evaluate(m)
+		}
+		var osdEval expect.OSDEvaluation
 		s, serr := harness.ObserveCluster(cluster).OSDStates(recoverCtx)
 		if serr == nil {
 			osdEval, serr = restored.Evaluate(s)
 		}
-		if qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 && osdEval.Matched {
+		if qerr == nil && merr == nil && serr == nil && quorumEval.Matched && managerEval.Matched && osdEval.Matched {
 			break
 		}
 		select {
 		case <-recoverCtx.Done():
-			t.Fatalf("no recovery: quorum %v/%v manager %v/%v osds %v/%v", q.QuorumNames, qerr, m, merr, osdEval, serr)
+			t.Fatalf("no recovery: quorum %v/%v manager %v/%v osds %v/%v", quorumEval, qerr, managerEval, merr, osdEval, serr)
 		case <-time.After(time.Second):
 		}
 	}

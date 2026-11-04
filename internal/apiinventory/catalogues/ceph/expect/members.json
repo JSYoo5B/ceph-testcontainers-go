@@ -1,0 +1,127 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "ceph/expect",
+  "count": 87,
+  "types": {
+    "ceph/expect.Health": [
+      "Health.Exact field bool",
+      "Health.FSID field string",
+      "Health.Forbid field []string",
+      "Health.Mutes field []string",
+      "Health.NoMutes field []string",
+      "Health.Require field []HealthCheck",
+      "Health.Status field string"
+    ],
+    "ceph/expect.HealthCheck": [
+      "HealthCheck.Code field string",
+      "HealthCheck.Count field int64",
+      "HealthCheck.Muted field HealthMuteState",
+      "HealthCheck.Severity field string"
+    ],
+    "ceph/expect.HealthEvaluation": [
+      "HealthEvaluation.Expectation field Health",
+      "HealthEvaluation.Matched field bool",
+      "HealthEvaluation.Mismatches field []HealthMismatch",
+      "HealthEvaluation.Observed field ceph.HealthSnapshot"
+    ],
+    "ceph/expect.HealthMismatch": [
+      "HealthMismatch.Code field string",
+      "HealthMismatch.Observed field string",
+      "HealthMismatch.Reason field HealthMismatchReason",
+      "HealthMismatch.Want field string"
+    ],
+    "ceph/expect.ManagerEvaluation": [
+      "ManagerEvaluation.Expectation field Managers",
+      "ManagerEvaluation.Matched field bool",
+      "ManagerEvaluation.Mismatches field []ManagerMismatch",
+      "ManagerEvaluation.Observed field ceph.ManagerStatus"
+    ],
+    "ceph/expect.ManagerMismatch": [
+      "ManagerMismatch.Count field int",
+      "ManagerMismatch.GID field uint64",
+      "ManagerMismatch.Name field string",
+      "ManagerMismatch.ObservedAvailable field bool",
+      "ManagerMismatch.ObservedCount field int",
+      "ManagerMismatch.ObservedGID field uint64",
+      "ManagerMismatch.ObservedName field string",
+      "ManagerMismatch.Reason field ManagerMismatchReason"
+    ],
+    "ceph/expect.Managers": [
+      "Managers.Active field string",
+      "Managers.ActiveGID field uint64",
+      "Managers.Available field bool",
+      "Managers.FormerGID field uint64",
+      "Managers.StandbyCount field int",
+      "Managers.Standbys field []string"
+    ],
+    "ceph/expect.MonitorEvaluation": [
+      "MonitorEvaluation.Expectation field Monitors",
+      "MonitorEvaluation.Matched field bool",
+      "MonitorEvaluation.Mismatches field []MonitorMismatch",
+      "MonitorEvaluation.Observed field ceph.QuorumStatus"
+    ],
+    "ceph/expect.MonitorMismatch": [
+      "MonitorMismatch.Count field int",
+      "MonitorMismatch.FSID field string",
+      "MonitorMismatch.Name field string",
+      "MonitorMismatch.ObservedCount field int",
+      "MonitorMismatch.ObservedFSID field string",
+      "MonitorMismatch.Reason field MonitorMismatchReason"
+    ],
+    "ceph/expect.Monitors": [
+      "Monitors.FSID field string",
+      "Monitors.MemberCount field int",
+      "Monitors.Members field []string",
+      "Monitors.Quorum field []string",
+      "Monitors.QuorumSize field int"
+    ],
+    "ceph/expect.OSDEvaluation": [
+      "OSDEvaluation.Expectation field OSDs",
+      "OSDEvaluation.Matched field bool",
+      "OSDEvaluation.Mismatches field []OSDMismatch",
+      "OSDEvaluation.Observed field []ceph.OSDState"
+    ],
+    "ceph/expect.OSDMismatch": [
+      "OSDMismatch.ID field int",
+      "OSDMismatch.Observed field ceph.OSDState",
+      "OSDMismatch.Reason field OSDMismatchReason",
+      "OSDMismatch.UUID field string"
+    ],
+    "ceph/expect.OSDs": [
+      "OSDs.Exact field bool",
+      "OSDs.In field bool",
+      "OSDs.Select field []ceph.OSDState",
+      "OSDs.Up field bool"
+    ],
+    "ceph/expect.PGEvaluation": [
+      "PGEvaluation.Expectation field PGs",
+      "PGEvaluation.Matched field bool",
+      "PGEvaluation.Mismatches field []PGMismatch",
+      "PGEvaluation.Observed field ceph.PoolPGSnapshot"
+    ],
+    "ceph/expect.PGMismatch": [
+      "PGMismatch.Observed field string",
+      "PGMismatch.PGID field ceph.PGID",
+      "PGMismatch.Reason field PGMismatchReason",
+      "PGMismatch.Want field string"
+    ],
+    "ceph/expect.PGs": [
+      "PGs.Acting field []int",
+      "PGs.ActingPrimary field []int",
+      "PGs.ActingSize field int",
+      "PGs.Count field int",
+      "PGs.FSID field string",
+      "PGs.Forbid field []string",
+      "PGs.InActing field []int",
+      "PGs.InUp field []int",
+      "PGs.NotInActing field []int",
+      "PGs.NotInUp field []int",
+      "PGs.Pool field ceph.PoolState",
+      "PGs.Require field []string",
+      "PGs.Select field []ceph.PGID",
+      "PGs.State field string",
+      "PGs.Up field []int"
+    ]
+  }
+}

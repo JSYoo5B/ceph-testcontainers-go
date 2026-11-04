@@ -619,8 +619,8 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		t.Fatalf("client.%d (%s) is blocklisted", baseline.Client, address)
 	}
 	after, err := m.FS.MDSStatus(ctx)
-	if err != nil || len(after.Active) != 1 || after.Active[0].GID != m.MDS.GID {
-		t.Fatalf("rank 0 changed: %+v, %v", after, err)
+	if result, err := evaluateMDSs(after, err, sameMDSRank(m.MDS)); err != nil || !result.Matched {
+		t.Fatalf("rank 0 changed: %v, %v", result, err)
 	}
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)

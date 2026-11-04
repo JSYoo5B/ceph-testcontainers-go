@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -269,7 +270,7 @@ func testECRecoveredContribution(t *testing.T) {
 	for i, id := range clean.Acting {
 		holders[i].ID = id
 	}
-	requireOSDs(t, ctx, cluster, "holders up and in before the second outage", ceph.OSDExpectation{Select: holders, Up: true, In: true})
+	requireOSDs(t, ctx, cluster, "holders up and in before the second outage", expect.OSDs{Select: holders, Up: true, In: true})
 	// Admission: the same running instances as before. The restored holder is
 	// the incarnation that Start created, and neither the primary nor the second
 	// holder may have restarted, crashed or been killed for memory.

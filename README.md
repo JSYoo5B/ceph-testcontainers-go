@@ -26,6 +26,9 @@ Documentation for a published release is available at its Git tag.
   Cephx identities, configuration and health.
   - [`ceph/diagnostics`](ceph/diagnostics/README.md): read-only diagnostics
     reports, crash metadata and secret redaction for a cluster.
+  - [`ceph/expect`](ceph/expect/README.md): pure evaluations of captured
+    observations against a test's stated conditions, with mismatch
+    explanations.
   - [`ceph/finalize`](ceph/finalize/README.md): one ordered cleanup path with
     post-test checks, log and crash verification, a failure archive and
     `Terminate`.
@@ -33,7 +36,12 @@ Documentation for a published release is available at its Git tag.
   backup and restore.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
+    - [`rbd/mirror/expect`](rbd/mirror/expect/README.md): pure evaluations of
+      captured receiver and image replay observations, with mismatch
+      explanations.
 - [`cephfs`](cephfs/README.md): filesystems, MDS topology and data pools.
+  - [`cephfs/expect`](cephfs/expect/README.md): pure evaluations of captured
+    MDS rank and standby observations, with mismatch explanations.
   - [`cephfs/subvolume`](cephfs/subvolume/README.md): subvolume groups and
     subvolumes, snapshots and clones, subvolume principals and pins.
   - [`cephfs/quiesce`](cephfs/quiesce/README.md): quiesce sets over owned

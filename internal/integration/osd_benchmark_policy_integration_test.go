@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -293,7 +294,7 @@ func policyOSDWaitDown(t *testing.T, parent context.Context, cluster *ceph.Conta
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()
-	want := ceph.OSDExpectation{Select: []ceph.OSDState{{ID: id}}, Up: false, In: true}
+	want := expect.OSDs{Select: []ceph.OSDState{{ID: id}}, Up: false, In: true}
 	for {
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {

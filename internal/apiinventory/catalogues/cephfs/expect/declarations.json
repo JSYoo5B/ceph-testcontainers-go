@@ -1,0 +1,158 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs/expect",
+  "count": 24,
+  "entries": [
+    {
+      "current": "cephfs/expect.MDSDaemon",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSEvaluation",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MDSEvaluation",
+      "proposed": "cephfs/expect.MDSEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSList",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSList",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSListActive",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSListActive",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSListStandby",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSListStandby",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSListStandbyReplay",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSListStandbyReplay",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatch",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MDSMismatch",
+      "proposed": "cephfs/expect.MDSMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchAbsent",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchCount",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchFilesystem",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchFilesystem",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchGID",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchGID",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchInactive",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchInactive",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchMaxMDS",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchMaxMDS",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchName",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchName",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchReason",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchUnchanged",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchUnchanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchUnowned",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchUnowned",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSMismatchUnselected",
+      "kind": "const",
+      "proposed": "cephfs/expect.MDSMismatchUnselected",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSRank",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSRank",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSStandbys",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSStandbys",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSs",
+      "kind": "type",
+      "proposed": "cephfs/expect.MDSs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/expect.MDSs.Evaluate",
+      "kind": "method",
+      "signature": "func(observed cephfs.FilesystemStatus) (MDSEvaluation, error)",
+      "receiver": "MDSs",
+      "proposed": "cephfs/expect.MDSs.Evaluate",
+      "decision": "baseline"
+    }
+  ]
+}

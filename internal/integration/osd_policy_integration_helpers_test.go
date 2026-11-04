@@ -8,16 +8,17 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // waitOSDPolicyState polls OSDStates until want, which selects one OSD,
 // matches, and returns that OSD's state from the matching observation.
-func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, want ceph.OSDExpectation) ceph.OSDState {
+func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, want expect.OSDs) ceph.OSDState {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	var last ceph.OSDEvaluation
+	var last expect.OSDEvaluation
 	for {
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {

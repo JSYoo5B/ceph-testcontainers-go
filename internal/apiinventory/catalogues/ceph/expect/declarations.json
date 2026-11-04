@@ -1,0 +1,548 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "ceph/expect",
+  "count": 85,
+  "entries": [
+    {
+      "current": "ceph/expect.Health",
+      "kind": "type",
+      "proposed": "ceph/expect.Health",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.Health.Evaluate",
+      "kind": "method",
+      "signature": "func(observed ceph.HealthSnapshot) (HealthEvaluation, error)",
+      "receiver": "Health",
+      "proposed": "ceph/expect.Health.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthCheck",
+      "kind": "type",
+      "proposed": "ceph/expect.HealthCheck",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.HealthEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "HealthEvaluation",
+      "proposed": "ceph/expect.HealthEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.HealthMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "HealthMismatch",
+      "proposed": "ceph/expect.HealthMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchCount",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchFSID",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchFSID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchMuteAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchMuteAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchMutePresent",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchMutePresent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchMuteUnexpected",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchMuteUnexpected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchMuted",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchMuted",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchPresent",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchPresent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.HealthMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchSeverity",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchSeverity",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchStatus",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMismatchUnexpected",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMismatchUnexpected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMuteAny",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMuteAny",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMuteState",
+      "kind": "type",
+      "proposed": "ceph/expect.HealthMuteState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthMuted",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthMuted",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.HealthUnmuted",
+      "kind": "const",
+      "proposed": "ceph/expect.HealthUnmuted",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.ManagerEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ManagerEvaluation",
+      "proposed": "ceph/expect.ManagerEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.ManagerMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ManagerMismatch",
+      "proposed": "ceph/expect.ManagerMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchActive",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchActive",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchActiveGID",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchActiveGID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchAvailable",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchAvailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchFormerGID",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchFormerGID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.ManagerMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchStandbyAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchStandbyAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchStandbyCount",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchStandbyCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.ManagerMismatchStandbyUnexpected",
+      "kind": "const",
+      "proposed": "ceph/expect.ManagerMismatchStandbyUnexpected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.Managers",
+      "kind": "type",
+      "proposed": "ceph/expect.Managers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.Managers.Evaluate",
+      "kind": "method",
+      "signature": "func(observed ceph.ManagerStatus) (ManagerEvaluation, error)",
+      "receiver": "Managers",
+      "proposed": "ceph/expect.Managers.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.MonitorEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MonitorEvaluation",
+      "proposed": "ceph/expect.MonitorEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.MonitorMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MonitorMismatch",
+      "proposed": "ceph/expect.MonitorMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchFSID",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchFSID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchInQuorum",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchInQuorum",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchMemberCount",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchMemberCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchOutOfQuorum",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchOutOfQuorum",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchQuorumSize",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchQuorumSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.MonitorMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.MonitorMismatchUnexpected",
+      "kind": "const",
+      "proposed": "ceph/expect.MonitorMismatchUnexpected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.Monitors",
+      "kind": "type",
+      "proposed": "ceph/expect.Monitors",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.Monitors.Evaluate",
+      "kind": "method",
+      "signature": "func(observed ceph.QuorumStatus) (MonitorEvaluation, error)",
+      "receiver": "Monitors",
+      "proposed": "ceph/expect.Monitors.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDEvaluation",
+      "proposed": "ceph/expect.OSDEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDMismatch",
+      "proposed": "ceph/expect.OSDMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchIn",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchReplaced",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchReplaced",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchUnselected",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchUnselected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchUp",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDs",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDs.Evaluate",
+      "kind": "method",
+      "signature": "func(observed []ceph.OSDState) (OSDEvaluation, error)",
+      "receiver": "OSDs",
+      "proposed": "ceph/expect.OSDs.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.PGEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "PGEvaluation",
+      "proposed": "ceph/expect.PGEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.PGMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "PGMismatch",
+      "proposed": "ceph/expect.PGMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchActing",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchActing",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchActingMissing",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchActingMissing",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchActingPresent",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchActingPresent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchActingSize",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchActingSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchCount",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchFSID",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchFSID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchForbidden",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchForbidden",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchPool",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchPrimary",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchPrimary",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.PGMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchRequired",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchRequired",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchState",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchUp",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchUpMissing",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchUpMissing",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGMismatchUpPresent",
+      "kind": "const",
+      "proposed": "ceph/expect.PGMismatchUpPresent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGs",
+      "kind": "type",
+      "proposed": "ceph/expect.PGs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.PGs.Evaluate",
+      "kind": "method",
+      "signature": "func(observed ceph.PoolPGSnapshot) (PGEvaluation, error)",
+      "receiver": "PGs",
+      "proposed": "ceph/expect.PGs.Evaluate",
+      "decision": "baseline"
+    }
+  ]
+}

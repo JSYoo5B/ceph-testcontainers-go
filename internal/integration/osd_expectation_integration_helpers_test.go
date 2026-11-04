@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -23,7 +24,7 @@ func osdSelection(osds []*ceph.OSDContainer) []ceph.OSDState {
 // requireOSDs takes one OSDStates observation and fails the test unless want
 // matches it, keeping a failed query apart from a mismatch. It returns the
 // evaluated observation.
-func requireOSDs(t *testing.T, ctx context.Context, cluster *ceph.Container, what string, want ceph.OSDExpectation) []ceph.OSDState {
+func requireOSDs(t *testing.T, ctx context.Context, cluster *ceph.Container, what string, want expect.OSDs) []ceph.OSDState {
 	t.Helper()
 	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil {

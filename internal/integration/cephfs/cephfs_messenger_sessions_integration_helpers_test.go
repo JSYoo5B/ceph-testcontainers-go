@@ -440,8 +440,8 @@ func testCephFSMessengerReconnect(t *testing.T) {
 	session := cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client)
 	receipt["session_after"] = cephFSRawSessionSummary(session)
 	status, err := m.FS.MDSStatus(ctx)
-	if err != nil || len(status.Active) != 1 || status.Active[0].GID != m.MDS.GID {
-		t.Fatalf("MDS status after the window: %+v, %v", status, err)
+	if result, err := evaluateMDSs(status, err, sameMDSRank(m.MDS)); err != nil || !result.Matched {
+		t.Fatalf("MDS status after the window: %v, %v", result, err)
 	}
 	if state := string(session["state"]); state != `"open"` {
 		t.Fatalf("client.%d session after the window: %s", client, state)

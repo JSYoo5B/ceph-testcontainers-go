@@ -116,6 +116,10 @@ the watch and returns why it ended. See
 [watching state](../docs/guides/contexts-and-cleanup.md#watching-state) for the
 lifecycle that every Watch shares.
 
+To assert the rank holders and standbys of one `MDSStatus` read or watch
+event, such as a takeover by another GID, use the optional
+[`cephfs/expect`](expect/README.md) package.
+
 ## File size limit
 
 `fs.OverrideMaxFileSize(ctx, bytes)` lowers the filesystem's `max_file_size`,

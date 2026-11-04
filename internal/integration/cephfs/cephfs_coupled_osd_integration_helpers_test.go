@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -609,8 +610,8 @@ func runCephFSOSDFullRetainedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := health.Checks["OSD_FULL"]; !ok {
-		t.Fatalf("pool %d is full in e%d without OSD_FULL: %+v", pool, full, health.Checks)
+	if result, err := (expect.Health{Require: []expect.HealthCheck{{Code: "OSD_FULL"}}}).Evaluate(health); err != nil || !result.Matched {
+		t.Fatalf("pool %d is full in e%d without OSD_FULL: %v %v", pool, full, result, err)
 	}
 	unprompted, err := clientAdminStatus(ctx, m.Cluster, m.Client, asok)
 	if err != nil {

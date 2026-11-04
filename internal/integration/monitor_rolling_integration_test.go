@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -204,12 +205,14 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			})
 			topologyWait(t, ctx, func() bool {
 				status, err := filesystem.MDSStatus(ctx)
-				if err != nil || status.FilesystemID != initialMDS.FilesystemID || len(status.Active) != 1 {
+				if err != nil {
 					return false
 				}
-				active := status.Active[0]
-				return active.Name == mds.ID && active.Rank == 0 && active.State == "up:active" &&
-					active.Owned && active.GID != 0 && active.GID != initialMDS.Active[0].GID
+				restarted, err := expect.MDSs{
+					FilesystemID: initialMDS.FilesystemID, Owned: true, Exact: true,
+					Ranks: []expect.MDSRank{{Rank: 0, Name: mds.ID, NotGID: initialMDS.Active[0].GID}},
+				}.Evaluate(*status)
+				return err == nil && restarted.Matched
 			})
 			// Re-read the published endpoint: Docker can remap an ephemeral
 			// host port when the same stopped gateway is started again.

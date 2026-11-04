@@ -9,6 +9,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -96,10 +97,13 @@ func testCephFSMDSWatch(t *testing.T) {
 	var last uint64
 	gaps := 0
 	baseline := awaitMDSWatchEvent(t, w, &last, &gaps, time.Second, "baseline", func(e cephfs.MDSWatchEvent) bool { return e.Kind == ceph.WatchBaseline })
-	old, ok := mdsWatchRankHolder(baseline)
-	if !ok || old != m.MDS || len(baseline.Status.Active) != 1 || len(baseline.Status.Standby) != 1 || baseline.Status.Standby[0] != m.standby ||
-		baseline.Status.MaxMDS != 1 || baseline.Status.FilesystemName != m.FS.FilesystemName {
-		t.Fatalf("baseline = %+v, want mds.%s active and mds.%s standby", baseline, m.MDS.Name, m.standby.Name)
+	old, _ := mdsWatchRankHolder(baseline)
+	initial, err := expect.MDSs{
+		MaxMDS: 1, Ranks: []expect.MDSRank{{Rank: 0, Name: m.MDS.Name, GID: m.MDS.GID}}, Owned: true, Exact: true,
+		Standby: &expect.MDSStandbys{Count: 1, Daemons: []expect.MDSDaemon{{Name: m.standby.Name, GID: m.standby.GID}}},
+	}.Evaluate(baseline.Status)
+	if err != nil || !initial.Matched || baseline.Status.FilesystemName != m.FS.FilesystemName {
+		t.Fatalf("baseline %d %s = %v, %v, want mds.%s active and mds.%s standby", baseline.Sequence, baseline.Kind, initial, err, m.MDS.Name, m.standby.Name)
 	}
 	t.Logf("baseline: FSMap epoch %d MDSMap epoch %d, rank 0 mds.%s/%d, standby mds.%s/%d, read %v",
 		baseline.Epoch, baseline.MDSMapEpoch, old.Name, old.GID, m.standby.Name, m.standby.GID, baseline.Finished.Sub(baseline.Started))
@@ -144,9 +148,13 @@ func testCephFSMDSWatch(t *testing.T) {
 		}
 		return false
 	})
-	if current, ok := mdsWatchRankHolder(restored); !ok || current != holder || len(restored.Status.Standby) != 1 ||
-		!restored.Status.Standby[0].Owned || restored.Status.Standby[0].GID == old.GID || restored.Epoch <= took.Epoch || daemon.GetContainerID() != cid {
-		t.Fatalf("restored event = %+v, want rank 0 still on mds.%s/%d and mds.%s back as a standby under a new GID in container %s", restored, holder.Name, holder.GID, old.Name, cid)
+	back, err := expect.MDSs{
+		Ranks: []expect.MDSRank{{Rank: 0, Name: holder.Name, GID: holder.GID}}, Owned: true,
+		Standby: &expect.MDSStandbys{Count: 1, Daemons: []expect.MDSDaemon{{Name: old.Name, NotGID: old.GID}}},
+	}.Evaluate(restored.Status)
+	if err != nil || !back.Matched || restored.Epoch <= took.Epoch || daemon.GetContainerID() != cid {
+		t.Fatalf("restored event %d %s epoch %d = %v, %v, want rank 0 still on mds.%s/%d and mds.%s back as a standby under a new GID in container %s",
+			restored.Sequence, restored.Kind, restored.Epoch, back, err, holder.Name, holder.GID, old.Name, cid)
 	}
 	t.Logf("restored: event %d %s FSMap epoch %d, mds.%s/%d standby %v after the start returned",
 		restored.Sequence, restored.Kind, restored.Epoch, old.Name, restored.Status.Standby[0].GID, restored.Finished.Sub(restarted))
