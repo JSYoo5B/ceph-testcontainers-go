@@ -17,9 +17,11 @@ import (
 // restricted to /dir1 that deletes a child still reads the child's bytes
 // through an earlier /dir1 snapshot. Same-named namespace-isolated subvolumes
 // in two groups get distinct RADOS namespaces, and each one's reader is
-// refused the other's objects. Removing iso-a leaves iso-b with its FSMap ID,
-// active and standby-replay GIDs and their affinity when Remove returns, and a
-// fresh client reads iso-b's bytes.
+// refused the other's objects. When Remove of iso-a returns, iso-b's daemons
+// carry its FSMap ID as affinity again; its active and standby-replay GIDs are
+// unchanged unless the monitor cleared that affinity during the removal, in
+// which case iso-b settles to the same topology; a fresh client reads its
+// bytes.
 func TestCephFSMultiFilesystemIsolation(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	testCephFSMultiFilesystemIsolation(t)

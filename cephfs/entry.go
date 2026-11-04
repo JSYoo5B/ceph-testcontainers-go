@@ -67,7 +67,10 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 // It requests fs set <name> down true and requires the filesystem's native up
 // map to be empty before fs rm, so a rank that is still stopping or
 // reconnecting blocks removal, and health warnings never authorize a forced fs
-// fail.
+// fail. After fs rm it waits until every owned daemon of the other owned
+// filesystems carries its own filesystem's ID as join_fscid in the FSMap
+// again, since some monitors clear it on every remaining daemon until that
+// daemon's next beacon.
 //
 //purpose:lifetime
 func (fs *Filesystem) Remove(ctx context.Context) error {

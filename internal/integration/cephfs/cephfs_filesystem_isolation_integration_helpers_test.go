@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -218,9 +219,16 @@ func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cep
 	}
 }
 
-// testIsolationSurvivor removes iso-a and checks iso-b in the first reads
-// after Remove returns: the same FSMap ID, active GID and standby-replay GID
-// in MDSStatus, the native join_fscid of both daemons, and its bytes.
+// testIsolationSurvivor removes iso-a and checks iso-b right after Remove
+// returns: its FSMap ID, one active and one standby-replay owned daemon, the
+// native join_fscid of both, and its bytes. Some monitors clear the
+// join_fscid of every remaining daemon when a filesystem is removed, until
+// each daemon's next beacon; if the standby-replay daemon's beacon comes
+// first, the monitor fails the active over to it for its better affinity. The
+// FSMap epochs written by the removal show whether this monitor cleared the
+// affinity. Without the clear, the active and standby-replay GIDs must be the
+// ones before the removal; with it, the failover is native, and iso-b must
+// come back ready with the same topology.
 func testIsolationSurvivor(t *testing.T, ctx context.Context, cluster *ceph.Container, admin testcontainers.Container, fsA, fsB *cephfs.Filesystem) {
 	if err := fsB.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -229,39 +237,47 @@ func testIsolationSurvivor(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if err != nil || len(before.Active) != 1 || len(before.StandbyReplay) != 1 {
 		t.Fatalf("%s before removal: %+v error=%v", isolationFSB, before, err)
 	}
+	beforeMap := isolationFSMap(t, ctx, cluster, "")
 	if err := fsA.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	after, err := fsB.MDSStatus(ctx)
-	if err != nil || after.FilesystemID != before.FilesystemID || len(after.Active) != 1 || len(after.StandbyReplay) != 1 ||
-		after.Active[0].GID != before.Active[0].GID || after.StandbyReplay[0].GID != before.StandbyReplay[0].GID {
-		t.Fatalf("%s changed when %s was removed: before=%+v after=%+v error=%v", isolationFSB, isolationFSA, before, after, err)
-	}
-	data, err := cluster.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fsmap struct {
-		Filesystems []struct {
-			ID     int64 `json:"id"`
-			MDSMap struct {
-				Name string `json:"fs_name"`
-				Info map[string]struct {
-					Name      string `json:"name"`
-					JoinFSCID int64  `json:"join_fscid"`
-				} `json:"info"`
-			} `json:"mdsmap"`
-		} `json:"filesystems"`
+	removedMap := isolationFSMap(t, ctx, cluster, "")
+	if len(removedMap.Filesystems) != 1 || removedMap.Filesystems[0].MDSMap.Name != isolationFSB || removedMap.Filesystems[0].ID != before.FilesystemID {
+		t.Fatalf("FSMap after removal: %+v", removedMap)
 	}
-	if err := json.Unmarshal(data, &fsmap); err != nil {
-		t.Fatal(err)
+	for _, info := range removedMap.Filesystems[0].MDSMap.Info {
+		if info.JoinFSCID != before.FilesystemID {
+			t.Fatalf("Remove returned while %s daemon %s has join_fscid %d, want %d", isolationFSB, info.Name, info.JoinFSCID, before.FilesystemID)
+		}
 	}
-	if len(fsmap.Filesystems) != 1 || fsmap.Filesystems[0].MDSMap.Name != isolationFSB || len(fsmap.Filesystems[0].MDSMap.Info) != 2 {
-		t.Fatalf("FSMap after removal: %s", data)
+	cleared := uint64(0)
+	for epoch := beforeMap.Epoch + 1; epoch <= removedMap.Epoch && cleared == 0; epoch++ {
+		for _, fs := range isolationFSMap(t, ctx, cluster, strconv.FormatUint(epoch, 10)).Filesystems {
+			for _, info := range fs.MDSMap.Info {
+				if fs.MDSMap.Name == isolationFSB && info.JoinFSCID != before.FilesystemID {
+					cleared = epoch
+				}
+			}
+		}
 	}
-	for _, info := range fsmap.Filesystems[0].MDSMap.Info {
-		if info.JoinFSCID != after.FilesystemID {
-			t.Fatalf("%s daemon %s has join_fscid %d, want %d: %s", isolationFSB, info.Name, info.JoinFSCID, after.FilesystemID, data)
+	if cleared == 0 {
+		if after.FilesystemID != before.FilesystemID || len(after.Active) != 1 || len(after.StandbyReplay) != 1 ||
+			after.Active[0].GID != before.Active[0].GID || after.StandbyReplay[0].GID != before.StandbyReplay[0].GID {
+			t.Fatalf("%s changed when %s was removed: before=%+v after=%+v", isolationFSB, isolationFSA, before, after)
+		}
+	} else {
+		t.Logf("the monitor cleared the affinity of %s's daemons in FSMap epoch %d; status right after Remove: %+v", isolationFSB, cleared, after)
+		if err := fsB.WaitReady(ctx); err != nil {
+			t.Fatal(err)
+		}
+		settled, err := fsB.MDSStatus(ctx)
+		if err != nil || settled.FilesystemID != before.FilesystemID || len(settled.Active) != 1 || len(settled.StandbyReplay) != 1 ||
+			!settled.Active[0].Owned || !settled.StandbyReplay[0].Owned {
+			t.Fatalf("%s did not settle after the native failover: %+v error=%v", isolationFSB, settled, err)
 		}
 	}
 	if result := isolationJSON(t, ctx, admin, isolationSurvivorRead, isolationFSB); result["read"] != "seed-of-"+isolationFSB {
@@ -269,17 +285,55 @@ func testIsolationSurvivor(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	}
 }
 
-// isolationJSON runs a Python probe in client and decodes the JSON object it
-// prints last.
+// isolationFSMap reads the current FSMap, or the one of epoch.
+func isolationFSMap(t *testing.T, ctx context.Context, cluster *ceph.Container, epoch string) isolationMap {
+	t.Helper()
+	args := []string{"fs", "dump", "--format", "json"}
+	if epoch != "" {
+		args = []string{"fs", "dump", epoch, "--format", "json"}
+	}
+	data, err := cluster.Ceph(ctx, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fsmap isolationMap
+	if err := json.Unmarshal(data, &fsmap); err != nil {
+		t.Fatalf("decode FSMap %s: %v", data, err)
+	}
+	return fsmap
+}
+
+type isolationMap struct {
+	Epoch       uint64 `json:"epoch"`
+	Filesystems []struct {
+		ID     int64 `json:"id"`
+		MDSMap struct {
+			Name string `json:"fs_name"`
+			Info map[string]struct {
+				Name      string `json:"name"`
+				JoinFSCID int64  `json:"join_fscid"`
+			} `json:"info"`
+		} `json:"mdsmap"`
+	} `json:"filesystems"`
+}
+
+// isolationJSON runs a Python probe in client and decodes the last line that
+// is a JSON object. libcephfs writes a refused mount to stderr, which the exec
+// output interleaves.
 func isolationJSON(t *testing.T, ctx context.Context, client testcontainers.Container, script string, args ...string) map[string]any {
 	t.Helper()
 	out := cephFSSubvolumeExec(t, ctx, client, append([]string{"python3", "-c", script}, args...)...)
-	lines := bytes.Split(bytes.TrimSpace(out), []byte("\n"))
+	var last []byte
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		if line = bytes.TrimSpace(line); bytes.HasPrefix(line, []byte("{")) {
+			last = line
+		}
+	}
 	result := map[string]any{}
-	if err := json.Unmarshal(lines[len(lines)-1], &result); err != nil {
+	if err := json.Unmarshal(last, &result); err != nil {
 		t.Fatalf("probe output %s: %v", out, err)
 	}
-	t.Logf("native probe: %s", lines[len(lines)-1])
+	t.Logf("native probe: %s", last)
 	return result
 }
 
