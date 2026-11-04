@@ -22,6 +22,8 @@ after the cluster.
 1. **Start a cluster** with `ceph.Run` (and any service fixture the SUT needs).
 2. **Inject the fault** that the scenario needs:
    - `fault.Pause`: freeze every process of a daemon or client container.
+   - `fault.ApplyCPULimit`: lower the CPU bandwidth of a running daemon or
+     client container, so it answers late instead of not at all.
    - `fault.InterruptNetwork`: disconnect one endpoint from the public or
      cluster bridge.
    - `fault.ApplyNetworkProfile`: delay, drop, rate-limit, reorder, duplicate
@@ -33,7 +35,8 @@ after the cluster.
      test owns, outside the cluster's planes.
 3. **Run the SUT** under the fault.
 4. **Observe** the effect with the cluster's observation APIs
-   (`ceph.Observer`, `Pool.PGs`, `NetworkProfileLease.Status`, ...).
+   (`ceph.Observer`, `Pool.PGs`, `NetworkProfileLease.Status`,
+   `CPULimitLease.Status`, ...).
 5. **Restore** with the handle's `Resume` / `Restore` when the scenario needs
    recovery; `Terminate` restores what is still held. Keep a non-nil handle
    returned with an error: restoring it stays retryable.
@@ -61,7 +64,7 @@ if err != nil {
 ## Concepts and limits
 
 - Ownership: cluster-bound handles are restored by `Terminate` (shaping first,
-  then endpoints, then paused containers), also when the target is a
+  then endpoints, then paused containers, then CPU limits), also when the target is a
   caller-owned container; restore those before removing the container.
   Standalone link faults are the caller's: restore them before removing the
   bridge.
@@ -78,7 +81,15 @@ if err != nil {
   `NET_ADMIN`. The preflight refuses an unsuitable image, a missing capability
   or a kernel without the needed netem options before the target changes.
 - Host networking: `InterruptNetwork` and network profiles refuse host-network
-  clusters; `Pause` works there.
+  clusters; `Pause` and `ApplyCPULimit` work there.
+- CPU limits need cgroup v2 with the cpu controller enabled for the target and
+  a cgroup namespace of its own (Docker's default), and `cat` in its image:
+  the evidence is the kernel's `cpu.max` and `cpu.stat`, read inside the
+  target. Engines without that, such as cgroup v1 hosts or rootless engines
+  without CPU delegation, are refused before anything changes. `Restore` puts
+  back the baseline in its own encoding; an unset quota comes back as Docker's
+  unlimited value -1. See
+  [Limiting a container's CPU](../docs/guides/fault-injection.md#limiting-a-containers-cpu).
 - Ceph reacts to faults on its own schedule: a frozen or cut OSD is marked down
   only after its peers report it (heartbeat grace), and TCP hides reorder,
   duplicate and corrupt faults from Ceph. Hold `nodown` with
