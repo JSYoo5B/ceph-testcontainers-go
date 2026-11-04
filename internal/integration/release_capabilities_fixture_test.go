@@ -23,20 +23,20 @@ func TestReleaseCapabilityTable(t *testing.T) {
 		if (row.Detect == nil) == (row.Releases == nil) {
 			t.Fatalf("capability %q must be either detected or classified by release", id)
 		}
-		for _, major := range []int{19, 20} {
+		for _, major := range []int{19, 20, 21} {
 			if _, listed := row.Releases[major]; row.Releases != nil && !listed {
 				t.Fatalf("capability %q has no expectation for supported Ceph %d", id, major)
 			}
 		}
 	}
 	pipe := harness.ReleaseCapabilities[harness.CapabilityRGWAccountUserModePipe]
-	for version, want := range map[string]bool{"19.2.5": false, "19.2.9": false, "20.2.4": true, "20.2.0": true} {
+	for version, want := range map[string]bool{"19.2.5": false, "19.2.9": false, "20.2.4": true, "20.2.0": true, "21.2.0": true, "21.2.9": true} {
 		if got, err := harness.ClassifyRelease(pipe, version); err != nil || got != want {
 			t.Fatalf("classifyRelease(%q) = %v, %v; want %v", version, got, err, want)
 		}
 	}
 	for version, want := range map[string]string{
-		"21.2.0": "no expectation for Ceph 21.2.0", "18.2.7": "no expectation for Ceph 18.2.7",
+		"22.2.0": "no expectation for Ceph 22.2.0", "18.2.7": "no expectation for Ceph 18.2.7",
 		"": "unrecognized Ceph release", "20.2": "unrecognized Ceph release", "v20.2.4": "unrecognized Ceph release",
 	} {
 		if got, err := harness.ClassifyRelease(pipe, version); err == nil || !strings.Contains(err.Error(), want) {

@@ -74,14 +74,14 @@ var ReleaseCapabilities = map[capabilityID]releaseCapability{
 	CapabilityRGWAccountUserModePipe: {
 		ID: CapabilityRGWAccountUserModePipe,
 		// No tool reveals it: the pipe is accepted and replicates nothing.
-		Releases: map[int]bool{19: false, 20: true},
+		Releases: map[int]bool{19: false, 20: true, 21: true},
 		refusal:  "RGW user-mode sync with an account principal needs Ceph 20 or later",
 	},
 	CapabilityRGWUserRateLimit: {
 		ID: CapabilityRGWUserRateLimit,
 		// No tool reveals it: the policy is stored and read back, and
 		// requests the user signs are still admitted.
-		Releases: map[int]bool{19: false, 20: true},
+		Releases: map[int]bool{19: false, 20: true, 21: true},
 		refusal:  "RGW user-scope rate limits need Ceph 20 or later",
 	},
 }
