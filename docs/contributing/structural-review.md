@@ -95,8 +95,9 @@ workflow identity, latest attempt, exact head/base, artifact digests and the
 analysis source. A CI synthetic merge may use a newer target than the event:
 its other parent must descend from the event target and belong to the current
 target branch ancestry. An unrelated parent is refused. The privileged job executes no PR code and restores no PR
-cache. Report text is quoted as data in the comment; the job summary provides
-the formatted tables. A stale head, closed PR, duplicate artifact, invalid
+cache. Report headings, tables and inline code render as Markdown in the comment
+and job summary. Cell entities stay escaped; raw HTML, notification mentions,
+link/image syntax from report data and unexpected block-code fences are neutralized. A stale head, closed PR, duplicate artifact, invalid
 receipt or missing report is never posted as a fresh clean result. A newer
 report cannot be overwritten by an older run. Updating the one marker-owned
 comment avoids notification spam; API writes are not blindly retried. Human

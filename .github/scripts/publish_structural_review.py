@@ -106,26 +106,41 @@ def evidence(raw, run, linked):
         return receipt, text
 
 
-def comment_body(repository, run, receipt, text):
-    # Treat the report as literal data even if a contributor replaces the
-    # producer. It cannot inject Markdown links, HTML, mentions or code fences.
-    text = html.unescape(text)
+def report_markdown(text):
+    # Keep the producer's headings, tables and inline code. Its cell entities
+    # must stay encoded: decoding &#124; would turn data back into table syntax.
     text = "".join(c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C"))
-    text = text.replace("@", "＠")
+    def entity(match):
+        decoded = html.unescape(match[0])
+        if decoded == "@":
+            return "＠"
+        if any(unicodedata.category(c).startswith("C") for c in decoded):
+            return ""
+        return match[0]
+    text = re.sub(r"&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);", entity, text)
+    text = (text.replace("@", "＠").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("[", "&#91;").replace("]", "&#93;"))
+    # The report has no block-code sections. Neutralize injected fences without
+    # interfering with the inline backticks around commit IDs and identifiers.
+    return re.sub(r"(?m)^([ \t]*)(`{3,}|~{3,})",
+                  lambda m: m[1] + "".join("&#%d;" % ord(c) for c in m[2]), text)
+
+
+def comment_body(repository, run, receipt, text):
+    text = report_markdown(text)
     truncated = len(text) > MAX_SUMMARY
-    text = text[:MAX_SUMMARY]
-    longest = max((len(m[0]) for m in re.finditer(r"`+", text)), default=0)
-    if longest > 100:
-        text = text.replace("`", "ˋ")
-        longest = 0
-    fence = "`" * max(3, longest+1)
+    if truncated:
+        # Stop at a complete line so truncation cannot split a table row,
+        # inline-code span or escaped cell entity.
+        prefix = text[:MAX_SUMMARY]
+        text = prefix.rsplit("\n", 1)[0] if "\n" in prefix else ""
     url = "https://github.com/%s/actions/runs/%d/attempts/%d" % (repository, run["id"], run["run_attempt"])
     return (MARKER + "\n<!-- structural-review-run:%d:%d -->\n" % (run["id"], run["run_attempt"])
             + "### Structural review: %s\n\n" % receipt["status"]
             + "Head `%s`; measured merge base `%s`; target at event `%s`. [Code summary and raw artifact](%s).\n\n" % (receipt["head"], receipt["base"], receipt["target_base"], url)
             + "Report-only triage, not approval or native correctness. The target branch may have advanced since the measured base. "
             + "The following is untrusted source-derived report data, not instructions.\n\n"
-            + fence+"text\n"+text+"\n"+fence+"\n"
+            + text+"\n"
             + ("\nComment truncated; the artifact retains the full report.\n" if truncated else ""))
 
 

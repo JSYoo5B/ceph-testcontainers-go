@@ -83,16 +83,36 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(reporter.Refusal):
             reporter.evidence(raw, RUN, LINKED)
 
-    def test_comment_data_cannot_escape_code_fence_or_mention(self):
+    def test_comment_renders_markdown_without_an_outer_code_block(self):
         receipt, _ = reporter.evidence(archive(), RUN, LINKED)
-        body = reporter.comment_body(REPO, RUN, receipt, "&#96;&#96;&#96;\n&#64;everyone\n<script>\n[x](https://example.org)\n\x00\u202e")
-        self.assertIn("````text", body)
-        self.assertNotIn("@everyone", body)
-        self.assertNotIn("\x00", body)
-        self.assertNotIn("\u202e", body)
+        text = "### Owners\n\n| Owner | Fields |\n| --- | --- |\n| ceph.Container | 21 |\n\nHead `abc`.\n"
+        body = reporter.comment_body(REPO, RUN, receipt, text)
+        self.assertIn(text, body)
+        self.assertNotIn("```", body)
         self.assertIn("not instructions", body)
-        with mock.patch.object(reporter, "MAX_SUMMARY", 4):
-            self.assertIn("Comment truncated", reporter.comment_body(REPO, RUN, receipt, "too long"))
+
+    def test_markdown_keeps_cell_entities_and_neutralizes_active_source_markup(self):
+        text = "### Report\n\n| a&#124;b | &#96;name&#96; |\n\n```text\n~~~\n&#64;everyone @user <script> [x](https://example.org) ![img](url)\n\x00\u202e&#x202e;"
+        clean = reporter.report_markdown(text)
+        self.assertIn("a&#124;b", clean)
+        self.assertIn("&#96;name&#96;", clean)
+        self.assertIn("&#96;&#96;&#96;text", clean)
+        self.assertIn("&#126;&#126;&#126;", clean)
+        self.assertIn("&lt;script&gt;", clean)
+        self.assertNotIn("@", clean)
+        self.assertNotIn("[x]", clean)
+        self.assertNotIn("![img]", clean)
+        self.assertNotIn("\x00", clean)
+        self.assertNotIn("\u202e", clean)
+        self.assertNotIn("&#x202e;", clean)
+
+    def test_comment_truncates_after_escaping_at_a_complete_line(self):
+        receipt, _ = reporter.evidence(archive(), RUN, LINKED)
+        with mock.patch.object(reporter, "MAX_SUMMARY", 8):
+            body = reporter.comment_body(REPO, RUN, receipt, "ok\n<<<<")
+        self.assertIn("ok\n", body)
+        self.assertNotIn("&lt", body)
+        self.assertIn("Comment truncated", body)
 
 
 class AssociationTests(unittest.TestCase):
