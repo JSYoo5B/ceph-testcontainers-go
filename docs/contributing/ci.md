@@ -660,7 +660,8 @@ preparation/eligibility outcomes rather than native passes.
 Discovery does not add historical patches to `SUPPORTED_RELEASES` or change
 support policy. Add a newly published patch to the discovery inventory to make
 it eligible for random selection; use `targeted` for an immediate check.
-The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
+The optional `discovery_schedule` characterization on 19.2.2/19.2.3
+([`rbd_schedule_remove`](../../internal/integration/experiments/rbd_schedule_remove/README.md)) records
 malformed schedule removal with empty and populated schedules for both
 `rbd_support` schedule handlers, trash purge and mirror snapshot, which share
 one removal path. It asserts the refusal with a schedule present and preserves
@@ -775,45 +776,36 @@ Optional (`ci_optional`) batches are outside every required check. Run one
 with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or for
 two of them through `Native regressions`.
 
-`native_rgw_translation` holds strict RGW sync-policy cases (numeric pipe
-priority, ordinary-user source authorization) that unpatched Ceph 20.2.4 does
-not satisfy, so it is expected to fail on the published images. Use it to
-test a patched RGW image; an empty `rgw_image` uses the published role image,
-and the workflow never builds one:
+Three of these batches are [experiment cases](testing.md#experiment-cases)
+under `internal/integration/experiments`, each with a manual that gives its
+trigger, controls, command and the meaning of each outcome:
 
-```sh
-gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/ceph-rgw:patched
-```
+- `native_rgw_translation`
+  ([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md))
+  holds strict RGW sync-policy cases (numeric pipe priority, ordinary-user
+  source authorization) that unpatched Ceph 20.2.4 does not satisfy, so it is
+  expected to fail on the published images. Use it to test a patched RGW
+  image; an empty `rgw_image` uses the published role image, and the workflow
+  never builds one:
 
-`mon_log_ack` (`TestMONLogAckThroughPeon`) requires every OSD's cluster log
-entries to be acknowledged in a three-MON cluster, through the leader and
-through a peon. It arranges sessions on both before measuring, restarting a
-MON if needed. The window is rejected if the leader, the election epoch or any
-OSD's session (MON and `global_id`) changed, or if an OSD's MonClient log
-shows a reset, reopen or hunt in it, even one that returns to the same MON. A
-peon-connected OSD passes only if its peon forwarded its MLog and routed the
-covering MLogAck back under that tid. On 20.2.4 the peon discards the MLogAck the leader routes back
-("don't have routed request"), so the peon-connected OSDs are never
-acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
+  ```sh
+  gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/ceph-rgw:patched
+  ```
 
-```sh
-CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 go test -tags all,native_regression -run '^TestMONLogAckThroughPeon$' -v ./internal/integration
-```
-
-`rbd_demote_restart` (`TestRBDMirrorDemotionResumesAfterReceiverRestart`,
-bridge mode, netem helper) kills the RBD receiver with SIGKILL while it copies
-a planned demotion snapshot through a rate-limited source OSD path, then
-restarts the same container. It requires the same demotion copy to complete,
-the destination image whose demoted primary was removed meanwhile to be
-removed too, exact bytes, non-forced promotion and replication back. Squid
-19.2.3 never resumes the copy. 19.2.4, 19.2.5, 20.2.4 and
-21.2.0 resume and complete it, but the object numbered
-`last_copied_object_number` at the kill keeps the previous snapshot's bytes,
-so the test fails at the exact-bytes check on every published image:
-
-```sh
-CEPH_TEST_IMAGE=<aggregate> go test -tags all,native_regression -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' -v ./internal/integration/rbd
-```
+- `mon_log_ack`
+  ([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md),
+  `TestMONLogAckThroughPeon`) requires every OSD's cluster log entries to be
+  acknowledged in a three-MON cluster, through the leader and through a peon.
+  On 20.2.4 the peon discards the MLogAck the leader routes back, so the test
+  fails; on `quay.io/ceph/ceph:v19.2.2` it passes.
+- `rbd_demote_restart`
+  ([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md),
+  `TestRBDMirrorDemotionResumesAfterReceiverRestart`, bridge mode, netem
+  helper) kills the RBD receiver while it copies a planned demotion snapshot
+  and restarts the same container. Squid 19.2.3 never resumes the copy; every
+  later published image resumes it but leaves one object with the previous
+  snapshot's bytes, so the test fails at the exact-bytes check on every
+  published image.
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and

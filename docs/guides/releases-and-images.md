@@ -220,7 +220,8 @@ These affect commands or client libraries you run yourself, not the typed API:
   snapshot sync must compare the destination's data afterwards rather than
   trust the completed snapshot; see
   `TestRBDMirrorDemotionResumesAfterReceiverRestart` (optional
-  `native_regression` batch `rbd_demote_restart`).
+  `native_regression` batch `rbd_demote_restart`, experiment case
+  [`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)).
 - **Both releases, MON paused past the ticket lifetime.** A MON paused for
   longer than the MON ticket lifetime can strand a daemon whose MON session was
   on it: its reconnect is refused with `EACCES`, and it stops authenticating
