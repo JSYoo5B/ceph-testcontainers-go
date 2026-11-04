@@ -194,14 +194,17 @@ the watch instead of being followed by name. Only PG states, ordered up and
 acting sets, primaries, the PG set, `PGReady` and pool policy are compared.
 Epochs, reported sequences and statistics travel with each event but cause
 none. A reported active+clean PG proves no write visibility or durability, so
-check those with the workload.
+check those with the workload. To check one `Pool.PGs` observation for the PG
+states and placement a test states, use [`expect.PGs`](expect/README.md#pool-placement-groups).
 
 To observe a fault-specific health check appear, change its mute state and
 clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
 contract with the original FSID pinned. It compares status, check codes,
 severities, counts and muted flags and the stored mutes, never message text,
 so countdowns cause no events. It never mutes or clears a check, and
-messages can contain application data, so do not print events unfiltered.
+messages can contain application data, so do not print events unfiltered. To
+check one `HealthDetails` observation by check code and mute, use
+[`expect.Health`](expect/README.md#health-checks-and-mutes).
 
 To follow the control plane in the same way, `observer.WatchMonitors(ctx,
 cfg)` reports the monmap members with their advertised addresses, the quorum
