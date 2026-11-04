@@ -197,6 +197,25 @@ none. A reported active+clean PG proves no write visibility or durability, so
 check those with the workload. To check one `Pool.PGs` observation for the PG
 states and placement a test states, use [`expect.PGs`](expect/README.md#pool-placement-groups).
 
+To aim a fault at, or route SUT I/O through, a known serving OSD,
+`pool.OverridePGPrimary(ctx, ceph.PGPrimary{PG: pg, OSD: osd})` makes an owned
+OSD of the PG's acting set its acting primary through the native
+pg-upmap-primary entry of that one PG of a replicated pool. Replica placement
+does not change. The call returns when the OSDMap, the serving PG (`pg query`)
+and `Pool.PGs` all report that OSD as acting primary with the PG
+active+clean. That shows which OSD serves the PG then, not that the SUT's
+client already has the new map or that the condition lasts through later
+CRUSH, weight or balancer changes. A cluster whose
+`require_min_compat_client` is below the release the running MON requires
+for the command is refused with `ErrInvalidRequest`; set
+`RaiseMinCompatClient` to let the override raise it. `Restore` puts back the
+exact prior entry (removing one that did not exist), lowers a level that the
+override raised once no other PG primary override relies on it, never clears
+other PGs' entries and refuses values changed outside the handle. It reads
+the stored state back without waiting for the old primary to serve again, so
+it also works while that OSD is stopped; see
+[override handles](../docs/guides/contexts-and-cleanup.md#override-handles).
+
 To observe a fault-specific health check appear, change its mute state and
 clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
 contract with the original FSID pinned. It compares status, check codes,

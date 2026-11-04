@@ -448,7 +448,7 @@ result:
 | `rgw.Gateway.CreateRole` | Role whose creation or permission policies failed or are unknown | `Role.Remove`, or discard the cluster; do not create the same name again |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](ceph-operations.md#clientconfigreplacekey)) |
-| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
+| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit`, `Pool.OverridePGPrimary` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `quiesce.Start` | Quiesce set handle (the set may exist and hold I/O paused) | `Release`, or let its `Expiration` pass before terminating the cluster |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
@@ -477,6 +477,7 @@ back. Some wrap several native settings:
 | `cephfs.Filesystem.OverrideMaxFileSize` | A filesystem's `max_file_size` |
 | `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin` | One pin policy field of a subvolume or group |
 | `rgw.User.OverrideRateLimit` | The rate-limit policy of one owned user or of one bucket it owns; a refused call still returns a handle whose `Restore` does nothing |
+| `Pool.OverridePGPrimary` | The pg-upmap-primary entry of one PG of a replicated pool, and `require_min_compat_client` when the caller lets it raise the level; a refused call returns no handle |
 
 They share these rules:
 
@@ -531,6 +532,12 @@ Handle-specific details:
   command, so apply and restore are not atomic.
 - `session.TimeoutsOverrideHandle.Restore` refuses a filesystem that was recreated
   under the same name.
+- `Pool.OverridePGPrimary` overrides of different PGs share one raise of
+  `require_min_compat_client`: the level goes back to its prior release when
+  the last of them is restored. Ceph cancels an entry whose OSD left the PG's
+  placement or became its CRUSH primary, so `Restore` refuses an entry that
+  disappeared when a prior entry existed. A removed pool takes its entries
+  with it, which counts as restored.
 
 `fault.PauseLease.Resume` and `NetworkInterruption.Restore` follow the same
 pattern for Docker state, with one difference: the cluster resumes and

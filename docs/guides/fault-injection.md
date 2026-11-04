@@ -23,6 +23,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | One client session is fenced | `override.AddBlocklist` | The OSDs reject that session | Yes | `BlocklistHandle.Restore` |
 | A failed OSD stays up or in | `override.SetOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosHandle.Restore` |
+| A chosen OSD serves one PG, so a fault hits the serving target | `Pool.OverridePGPrimary`, then `OSDContainer.Stop` or `fault.Pause` of that OSD | The PG's acting primary is the chosen OSD; once that OSD is down, a survivor serves the PG | Yes | `PGPrimaryOverrideHandle.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
 | A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
