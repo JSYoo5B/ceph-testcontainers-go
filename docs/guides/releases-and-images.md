@@ -172,6 +172,22 @@ These affect commands or client libraries you run yourself, not the typed API:
   `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
+- **Every tested release, RBD snapshot copy resumed after a killed
+  receiver.** When an `rbd-mirror` daemon is killed while it copies a mirror
+  snapshot and the same daemon is started again, it resumes the copy and marks
+  the snapshot complete, but the object numbered
+  `last_copied_object_number` at the kill keeps the previous snapshot's bytes.
+  It happened in every demotion run on 19.2.4, 19.2.5, 20.2.4 and 21.2.0
+  (SIGKILL on all four, `Stop` without a grace period on 19.2.4 and 20.2.4),
+  and for an ordinary mirror snapshot on 19.2.5 and 20.2.4; a graceful stop
+  was not tried. Squid
+  19.2.3 does not resume an interrupted demotion copy at all (Tentacle 20.2.0
+  has the same code); the destination stays `up+unknown`
+  ("remote image is not primary"). A test that kills a receiver during a
+  snapshot sync must compare the destination's data afterwards rather than
+  trust the completed snapshot; see
+  `TestRBDMirrorDemotionResumesAfterReceiverRestart` (optional
+  `native_regression` batch `rbd_demote_restart`).
 - **Both releases, MON paused past the ticket lifetime.** A MON paused for
   longer than the MON ticket lifetime can strand a daemon whose MON session was
   on it: its reconnect is refused with `EACCES`, and it stops authenticating

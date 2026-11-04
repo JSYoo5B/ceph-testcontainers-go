@@ -800,6 +800,21 @@ acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 go test -tags all,native_regression -run '^TestMONLogAckThroughPeon$' -v ./internal/integration
 ```
 
+`rbd_demote_restart` (`TestRBDMirrorDemotionResumesAfterReceiverRestart`,
+bridge mode, netem helper) kills the RBD receiver with SIGKILL while it copies
+a planned demotion snapshot through a rate-limited source OSD path, then
+restarts the same container. It requires the same demotion copy to complete,
+the destination image whose demoted primary was removed meanwhile to be
+removed too, exact bytes, non-forced promotion and replication back. Squid
+19.2.3 never resumes the copy. 19.2.4, 19.2.5, 20.2.4 and
+21.2.0 resume and complete it, but the object numbered
+`last_copied_object_number` at the kill keeps the previous snapshot's bytes,
+so the test fails at the exact-bytes check on every published image:
+
+```sh
+CEPH_TEST_IMAGE=<aggregate> go test -tags all,native_regression -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' -v ./internal/integration/rbd
+```
+
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
 `apparmor=unconfined`. It needs a rootful engine whose kernel has FUSE: a
