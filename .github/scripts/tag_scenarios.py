@@ -719,8 +719,8 @@ RELEASE_SCOPES = ("all", "others")
 # at most the rest: its release callers, its environment caller and its
 # representative campaign together. Each release caller's runtime matrix
 # runs at most its category's number of jobs at once. The split follows each
-# category's measured runner time per release: short needs about twice the
-# runner minutes of the others.
+# category's workload: short receives the larger share while all supported
+# releases and the campaign together stay within the periodic budget.
 #
 # The full matrix and the representative campaign run in separate
 # concurrency groups (PERIODIC_GROUP_SUFFIX), so that neither replaces the
@@ -729,7 +729,7 @@ RELEASE_SCOPES = ("all", "others")
 # share, and periodic_runner_budget adds the groups up.
 RUNNER_LIMIT = 40
 PULL_REQUEST_RUNNERS = 16
-RELEASE_MAX_PARALLEL = {"short": 4, "topology": 2, "multicluster": 2, "recovery": 2}
+RELEASE_MAX_PARALLEL = {"short": 3, "topology": 1, "multicluster": 1, "recovery": 1}
 ENVIRONMENT_MAX_PARALLEL = 1
 CAMPAIGN_MAX_PARALLEL = 3
 # A storage qualification dispatch shares the full matrix's group: the full

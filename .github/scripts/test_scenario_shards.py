@@ -236,6 +236,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                                    for _, category in self.ENTRY_POINTS.values()])
         self.assertEqual(current, engine.required_cells(self.plan, [runner.RELEASE]))
 
+    def test_umbrella_runs_every_release_bound_category_in_both_scopes(self):
+        self.assertEqual(runner.CODENAMES["21.2.0"], "umbrella")
+        self.assertEqual(runner.RELEASE, "20.2.4")
+        categories = set(engine.RUNTIME_CATEGORIES) - {"environment"}
+        for scope in engine.RELEASE_SCOPES:
+            entries = [entry for entry in engine.release_matrix(scope, "Ceph periodic")
+                       if entry["release"] == "21.2.0"]
+            self.assertEqual({entry["category"] for entry in entries}, categories)
+            self.assertEqual(len(entries), len(categories))
+            self.assertTrue(all(entry["codename"] == "umbrella" for entry in entries))
+
     def test_coverage_difference_names_missing_duplicate_and_unknown_release_cells(self):
         required = engine.required_cells(self.plan, runner.RELEASES)
         callers = [(entry["release"], entry["category"]) for entry in engine.release_matrix("all", "Ceph periodic")]
@@ -255,7 +266,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             + environment))
         self.assertTrue(moved["missing"] and moved["extra"])
         # An unlisted patch or release is refused, never mapped to a row.
-        for release in ("20.2.5", "21.2.0", ""):
+        for release in ("20.2.5", "21.2.1", ""):
             with self.subTest(release=release), self.assertRaises(ValueError):
                 engine.runtime_cells(self.plan, [(release, "short")])
         with self.assertRaises(ValueError):
@@ -966,7 +977,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         overlapping = engine.periodic_runner_budget(entries, engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
         self.assertEqual(overlapping["runners"], full + engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
         self.assertFalse(overlapping["passed"])
-        with mock.patch.object(engine, "CAMPAIGN_MAX_PARALLEL", engine.CAMPAIGN_MAX_PARALLEL + 1):
+        with mock.patch.object(engine, "CAMPAIGN_MAX_PARALLEL",
+                               engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS - full + 1):
             report = engine.releases_report(self.plan, "all", "Ceph periodic")
         self.assertFalse(report["passed"])
         self.assertEqual((report["missing"], report["extra"]), ([], []))

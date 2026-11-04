@@ -32,13 +32,14 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 | Release | Status | Tested image |
 | --- | --- | --- |
 | Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate pinned by `ceph.DefaultImage` |
+| Umbrella 21.2.x | Periodic CI on 21.2.0; the default remains Tentacle | Published official role images, pinned in `.github/ceph-role-images.json`; official amd64 requires x86-64-v3 |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
 [Known release-specific issues](#known-release-specific-issues). Tentacle
 releases before 20.2.4 have no `aes256k` Cephx keys; see the same section. The
-repository's continuous integration runs its test suites on both releases; see
-[CI](../contributing/ci.md). Native limits that both releases share, such as a
+repository's continuous integration runs its test suites on all three releases; see
+[CI](../contributing/ci.md). Native limits shared across releases, such as a
 daemon stranded without a MON session after its ticket expired, are listed in
 [Known release-specific issues](#known-release-specific-issues).
 

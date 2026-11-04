@@ -278,7 +278,7 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
   --release 20.2.4 --prepare-only --output-dir artifacts/role-preparation
 ```
 
-Use `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
+Use `--release 21.2.0` for Umbrella or `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
 resolve only some roles. The script pulls only missing images, never builds,
 and refuses an existing `--output-dir`. `summary.json` lists the `CEPH_TEST_*`
 values under `prepared_environment`; export them for a test, the tag runner or
