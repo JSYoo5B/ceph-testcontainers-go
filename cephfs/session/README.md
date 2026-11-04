@@ -118,7 +118,8 @@ if err := required.Restore(ctx); err != nil {
   and proves only that its MDSMap requires the features. Which features a
   client advertises is the client's own state: the fixture neither reads nor
   changes it, so observe the client's mount and session outcome separately.
-  A feature name that the image does not list returns `ceph.ErrUnsupported`;
+  A feature name that the image does not list, and its placeholder
+  `reserved`, returns `ceph.ErrUnsupported`;
   an empty list, a blank or a repeated name returns `ceph.ErrInvalidRequest`,
   both before any change.
 - A feature that was already required is recorded as `AlreadyRequired`: the

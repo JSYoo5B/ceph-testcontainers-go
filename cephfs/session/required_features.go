@@ -108,7 +108,8 @@ func requiredFeatures(ctx context.Context, fs *fsbase.Core) ([]Feature, error) {
 // Clients that advertise every required feature are admitted as before.
 //
 // The names must be ones that "fs feature ls" of the cluster's own image
-// lists; a name it does not list returns ceph.ErrUnsupported, and an empty,
+// lists, other than its placeholder "reserved"; a name it does not list
+// returns ceph.ErrUnsupported, and an empty,
 // repeated or blank name ceph.ErrInvalidRequest, before any change. A feature
 // that the filesystem already requires is recorded as AlreadyRequired: the
 // handle owns nothing for it and its Restore leaves it required. Other bits,
@@ -305,8 +306,12 @@ func changeRequired(ctx context.Context, v fsbase.VolumeCommands, fsID int64, fe
 	return present, sendErr
 }
 
+// reservedFeature is the name "fs feature ls" gives the bits that have no
+// feature.
+const reservedFeature = "reserved"
+
 // readSupported reads the client features that the cluster's image names,
-// by name.
+// by name, without the reserved bits.
 func readSupported(ctx context.Context, v fsbase.VolumeCommands) (map[string]int, error) {
 	data, err := v.Cluster().Ceph(ctx, "fs", "feature", "ls", "--format", "json")
 	if err != nil {
@@ -325,7 +330,11 @@ func parseSupported(data []byte) (map[string]int, error) {
 		if feature.Index == nil || *feature.Index < 0 || feature.Name == "" {
 			return nil, errors.New("decode CephFS client features: an entry lacks its bit or name")
 		}
-		supported[feature.Name] = *feature.Index
+		// Bits without a feature share the placeholder name "reserved",
+		// which the native command does not accept.
+		if feature.Name != reservedFeature {
+			supported[feature.Name] = *feature.Index
+		}
 	}
 	return supported, nil
 }

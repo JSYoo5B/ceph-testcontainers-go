@@ -103,7 +103,7 @@ func featuresFilesystem(t *testing.T) (*sessionCore, *featuresFixture) {
 	fs, inner := sessionFilesystem(t)
 	ctr := &featuresFixture{
 		sessionFixture: inner,
-		supported:      map[string]int{"jewel": 5, "reply_encoding": 9, "metric_collect": 14, "alternate_name": 15, "op_getvxattr": 17},
+		supported:      map[string]int{"reserved": 0, "jewel": 5, "reply_encoding": 9, "metric_collect": 14, "alternate_name": 15, "op_getvxattr": 17},
 		required:       map[int]string{9: "reply_encoding", 40: "unknown"},
 	}
 	testhelper.TestSetControlPlane(fs.Cluster(), ctr)
@@ -196,7 +196,7 @@ func TestOverrideRequiredFeaturesRefusesInvalidOrUnsupportedRequestsBeforeChange
 		}
 	}
 	// A name the image does not list, also a bit number, is unsupported.
-	for _, name := range []string{"future_feature", "14"} {
+	for _, name := range []string{"future_feature", "14", "reserved"} {
 		fs, ctr := featuresFilesystem(t)
 		change, err := overrideRequiredFeatures(t.Context(), fs.Core, []string{"metric_collect", name})
 		var failure *ceph.OperationError
@@ -408,8 +408,8 @@ func TestParseRequiredFeatures(t *testing.T) {
 			t.Fatalf("%s: %v", bad, err)
 		}
 	}
-	supported, err := parseSupported([]byte(`[{"index":0,"name":"reserved"},{"index":14,"name":"metric_collect"}]`))
-	if err != nil || !maps.Equal(supported, map[string]int{"reserved": 0, "metric_collect": 14}) {
+	supported, err := parseSupported([]byte(`[{"index":0,"name":"reserved"},{"index":1,"name":"reserved"},{"index":14,"name":"metric_collect"}]`))
+	if err != nil || !maps.Equal(supported, map[string]int{"metric_collect": 14}) {
 		t.Fatalf("supported = %v, %v", supported, err)
 	}
 	for _, bad := range []string{`[]`, `{}`, `[{"name":"x"}]`, `[{"index":1,"name":""}]`, `[{"index":-1,"name":"x"}]`} {
