@@ -1091,3 +1091,14 @@ python3 .github/scripts/tag_scenarios.py run \
 
 Local runs are sequential unless `CEPH_TEST_PARALLEL` is set. To isolate one
 test, use `go test -tags=all -run` (see [Testing](testing.md#one-test)).
+
+## Structural review reports
+
+The existing Code static job collects report-only type and lint deltas for
+pull requests, reusing its installed lint binary and caches. Its job summary
+and `structural-review-RUN_ID-ATTEMPT` artifact retain named base/head evidence.
+A trusted `workflow_run` publisher updates one current-head PR comment after
+Code completes. Collection/upload are advisory and do not change required
+checks, documentation-only policy or native selection. See
+[Structural review](structural-review.md) for identity checks, limits, artifact
+contents, exclusions and local commands.

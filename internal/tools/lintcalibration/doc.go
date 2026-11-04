@@ -3,13 +3,13 @@
 // keeps every diagnostic, and prints them grouped by source location. Its pair
 // subcommand joins two such raw collections into a base-versus-head delta. It
 // is a reference measurement for triage: it defines no threshold, gate or
-// severity ranking, and nothing in CI runs it. Markdown output orders
+// severity ranking. Code CI collects it for report-only triage. Markdown orders
 // inspection candidates.
 //
 // # Usage
 //
 //	lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]
-//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N]
+//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N] [-changed-files JSON]
 //
 // Flags of report:
 //
@@ -27,6 +27,9 @@
 //   - -format: json (default), tsv or markdown.
 //   - -limit: maximum Markdown finding rows (default 20, positive). JSON and
 //     TSV retain every entry.
+//   - -changed-files: JSON array of module-relative paths; Markdown findings
+//     on either side are restricted to these paths, with exclusions counted.
+//     Full state counts and raw JSON/TSV are unchanged.
 //
 // A typical pairing:
 //
@@ -154,7 +157,8 @@
 // not specify a column. Missing, null and negative columns are rejected. A
 // dupl block never gains a function identity merely because it has a location.
 //
-// This command is opt-in and adds no CI job or gate. Run it on the packages a
+// Code CI uses this command for advisory triage, without a quality gate. Locally
+// run it on the packages a
 // change affects, retain output as uncommitted review evidence and follow the
 // reported source locations. Test files are labeled; generated files and tagged
 // configurations follow collection scope. Do not extrapolate to unmeasured code.
@@ -167,11 +171,12 @@
 //     skipped. Scenario code is not otherwise separated from implementation.
 //   - A diagnostic is a signal to read the code, not evidence of poor design
 //     or behavior, and a moved function is not an improvement.
-//   - No claim about analysis cost, CI time or agent usage.
+//   - This command itself makes no claim about CI time or agent usage.
 //   - pair cannot say a function became simpler, only that the collector no
 //     longer reported it. It does not follow moves across packages or renames,
 //     and it reads no git history: the caller supplies both collections,
-//     identifiers and source trees.
+//     identifiers and source trees. The structural_review.py wrapper records
+//     analysis wall time and maximum child-process RSS separately.
 //
 // # Tests
 //

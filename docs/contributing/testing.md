@@ -740,7 +740,9 @@ it writes nothing and names the rows, and `regenerate` followed by a separate
 
 ## Structural metric triage
 
-For a report-only comparison, use `internal/tools/lintcalibration` with the
+Code checks publishes a combined type/lint report and updates one PR comment;
+see [Structural review](structural-review.md) for scope, exclusions and delivery.
+For a local report-only comparison, use `internal/tools/lintcalibration` with the
 Code workflow's pinned golangci-lint executable. Build the command once, collect
 both snapshots with the same binary and package patterns, and keep the output
 outside the source tree:
@@ -767,4 +769,4 @@ column zero means unspecified. The command's package documentation describes
 identity, build constraints, exclusions and optional real-binary tests.
 
 Do not commit these reports, regenerate a shared baseline, or run native suites
-for structural measurement. No default CI check or quality threshold uses them.
+for structural measurement. Reports inform inspection; no quality threshold gates CI.
