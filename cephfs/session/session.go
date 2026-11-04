@@ -362,7 +362,8 @@ const overrideKind = "cephfs/session.overrides"
 
 // overrides are the session overrides of each filesystem of one cluster that
 // are not restored yet, keyed by the filesystem's core: at most one timeouts
-// override and one new-session refusal per filesystem. The setup gate of the
+// override, one new-session refusal and one required client features override
+// per filesystem. The setup gate of the
 // cluster's filesystem registry, which every session operation holds through
 // begin, guards them, so they have no lock of their own. A removed
 // filesystem's entries stay but are inert: no operation admits that core
@@ -371,12 +372,14 @@ const overrideKind = "cephfs/session.overrides"
 type overrides struct {
 	byCore   map[*fsbase.Core]*timeoutsState
 	refusals map[*fsbase.Core]*refusalState
+	features map[*fsbase.Core]*featuresState
 }
 
 // overridesOf returns the overrides of the cluster of core. The caller holds
 // the setup gate.
 func overridesOf(core *fsbase.Core) *overrides {
 	return servicehook.Extension(core.Cluster(), overrideKind, func() any {
-		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState)}
+		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState),
+			features: make(map[*fsbase.Core]*featuresState)}
 	}).(*overrides)
 }
