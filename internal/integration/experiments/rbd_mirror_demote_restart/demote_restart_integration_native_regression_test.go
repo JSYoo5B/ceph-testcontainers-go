@@ -2,7 +2,7 @@
 
 //ci: timeout=30m job-timeout=40 image-roles=essential,client,rbd-aux
 
-package rbd_test
+package rbd_mirror_demote_restart_test
 
 import (
 	"bytes"
@@ -101,8 +101,8 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	const resumed, removed = pool + "/resumed", pool + "/removed"
 	harness.RBDMultiClusterPool(t, ctx, source, sourceClient, pool)
 	harness.RBDMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	forward := rbdScenarioRunLink(t, ctx, source, destination, pool, "source", "destination")
-	reverse := rbdScenarioRunLink(t, ctx, destination, source, pool, "destination", "source")
+	forward := harness.RBDScenarioRunLink(t, ctx, source, destination, pool, "source", "destination")
+	reverse := harness.RBDScenarioRunLink(t, ctx, destination, source, pool, "destination", "source")
 	harness.RBDScenarioWaitTransmitPeer(t, ctx, forward.SourceRBD, pool, "destination")
 	harness.RBDScenarioWaitTransmitPeer(t, ctx, reverse.SourceRBD, pool, "source")
 
@@ -117,7 +117,7 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		harness.RBDScenarioCommand(t, ctx, forward.SourceRBD, "mirror", "image", "enable", image, "snapshot")
 	}
 	for _, image := range []string{resumed, removed} {
-		rbdScenarioWaitBytes(t, ctx, destinationClient, image, before[image])
+		harness.RBDScenarioWaitBytes(t, ctx, destinationClient, image, before[image])
 	}
 
 	daemon := forward.Daemons()[0]
@@ -158,7 +158,7 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		harness.RBDScenarioCommand(t, ctx, forward.SourceRBD, "mirror", "image", "demote", image)
 	}
 	for _, image := range []string{resumed, removed} {
-		verifyRBDBytes(t, ctx, sourceClient, image, after[image])
+		harness.VerifyRBDBytes(t, ctx, sourceClient, image, after[image])
 	}
 	for _, image := range []string{resumed, removed} {
 		observed, err := harness.Observe(ctx, 2*time.Minute, 20*time.Second, time.Second, func(probeCtx context.Context) (string, bool, error) {
@@ -246,15 +246,15 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 
 	// Planned failover completes: non-forced promotion, then the new
 	// primary's next write and checkpoint replicate back to the old source.
-	rbdMultiClusterPromote(t, ctx, destinationClient, resumed)
-	rbdMultiClusterAssertPrimary(t, ctx, destinationClient, resumed, true)
-	rbdMultiClusterAssertPrimary(t, ctx, sourceClient, resumed, false)
+	harness.RBDMultiClusterPromote(t, ctx, destinationClient, resumed)
+	harness.RBDMultiClusterAssertPrimary(t, ctx, destinationClient, resumed, true)
+	harness.RBDMultiClusterAssertPrimary(t, ctx, sourceClient, resumed, false)
 	final := bytes.Clone(after[resumed])
 	patch := harness.RBDMultiClusterPayload(1<<20, 89)
 	copy(final[2<<20:], patch)
 	harness.RBDMultiClusterWriteRange(t, ctx, destinationClient, resumed, rbdDemoteRestartImageSize, 2<<20, patch)
 	harness.RBDScenarioCommand(t, ctx, reverse.SourceRBD, "mirror", "image", "snapshot", resumed)
-	rbdScenarioWaitBytes(t, ctx, sourceClient, resumed, final)
+	harness.RBDScenarioWaitBytes(t, ctx, sourceClient, resumed, final)
 	t.Logf("demotion copy %d of %s completed after a restart of receiver %s; %s removed with its demoted primary; promoted destination replicated back", demotion[resumed].ID, resumed, daemon.DaemonName, removed)
 }
 
