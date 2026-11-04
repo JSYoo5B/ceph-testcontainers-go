@@ -50,6 +50,10 @@
 //     counts are a sum.
 //   - locations: file:line of each declaration, relative to the module root.
 //
+// Each package total adds lines, the physical lines of its measured files,
+// and exported_declarations, its exported package-level functions, types,
+// variables and constants. Methods are counted on their owners, not there.
+//
 // Pointer, value, generic (single and multiple type parameter) and
 // parenthesized receivers all reduce to the type name, the same normalization
 // as internal/apiinventory/catalogue with the parenthesized form added.
@@ -58,7 +62,8 @@
 //
 // The JSON measure report holds schema (ceph-structure-metrics/v1), scope,
 // source (kind, ref, commit), unmeasured_packages, packages (one total per
-// package: files, owners and the three counts) and owners. The JSON delta
+// package: files, lines, exported_declarations, owners and the three
+// counts) and owners. The JSON delta
 // report holds schema (ceph-structure-metrics-delta/v1), scope, base, head,
 // unmeasured_packages (package and side), summary, changed_packages and
 // changed_owners. The scope block is printed in every report.
@@ -69,8 +74,8 @@
 // and head.* for delta), every scope.measure, scope.exclusion and
 // scope.caveat line, and one unmeasured_package line per package without
 // production files (with the side for delta). Measure adds one
-// "# package: <dir> files=N owners=N exported_methods=N private_methods=N
-// fields=N" line per package; delta adds the summary line. Table columns:
+// "# package: <dir> files=N lines=N exported_declarations=N owners=N
+// exported_methods=N private_methods=N fields=N" line per package; delta adds the summary line. Table columns:
 //
 //   - measure: owner, exported_methods, private_methods, fields,
 //     declarations, locations.
