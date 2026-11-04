@@ -17,8 +17,10 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	cerrdefs "github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // fixtureIsolationProbe reads the same-name object of one cluster and checks
@@ -154,44 +156,62 @@ func TestFixtureIsolation(t *testing.T) {
 			if left := isolationOwnedContainers(t, ctx, docker, a.owner); len(left) != 0 {
 				t.Fatalf("A's owned containers remain after Terminate: %v", left)
 			}
-			if a.network != "" {
-				if _, err := docker.NetworkInspect(ctx, a.network, mobycl.NetworkInspectOptions{}); err == nil {
-					t.Fatal("A's network remains after Terminate")
-				}
-			}
+			requireNetworkRemoved(t, ctx, docker, "A", a.network)
 			checkB("A terminated")
 
-			// C's bootstrap fails after it created containers. It starts
-			// after A and B, so no image pull counts against its short
-			// startup timeout.
+			// C's bootstrap fails at a fixed point: its first MON container
+			// is created and started, then a wait strategy that never
+			// succeeds fails it, so Run returns a cluster that owns its
+			// bridge and that MON. The fallback cleanup is registered
+			// before anything else reads the returned cluster.
 			image, imageOpts := harness.IntegrationImages(t)
-			partial, err := ceph.Run(ctx, image, append(append(imageOpts, opts...), ceph.WithStartupTimeout(3*time.Second))...)
-			if partial == nil || err == nil {
-				if partial != nil {
-					_ = partial.Terminate(context.WithoutCancel(ctx))
-				}
-				t.Fatalf("a three second bootstrap returned %v, %v", partial, err)
+			failMON := testcontainers.WithWaitStrategy(wait.ForExec([]string{"sh", "-c", "exit 1"}).WithStartupTimeout(2 * time.Second))
+			partial, err := ceph.Run(ctx, image, append(append(imageOpts, opts...), failMON)...)
+			if partial != nil {
+				t.Cleanup(func() {
+					cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					defer cleanupCancel()
+					_ = partial.Terminate(cleanupCtx)
+				})
+			}
+			if partial == nil || partial.Container == nil || err == nil || !strings.Contains(err.Error(), "run ceph monitor") {
+				t.Fatalf("a failing first-MON wait returned %v, %v; want a cluster with its MON and a run ceph monitor error", partial, err)
 			}
 			owner := isolationOwner(t, ctx, docker, partial)
 			created := isolationOwnedContainers(t, ctx, docker, owner)
+			if !slices.Contains(created, partial.GetContainerID()) {
+				t.Fatalf("the failed bootstrap's MON %.12s is not among its owned containers %v", partial.GetContainerID(), created)
+			}
 			network := ""
 			if !host {
 				network = isolationNetworkID(t, ctx, docker, partial)
 			}
-			if err := partial.Terminate(context.WithoutCancel(ctx)); err != nil {
+			if err := partial.Terminate(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if left := isolationOwnedContainers(t, ctx, docker, owner); len(left) != 0 {
 				t.Fatalf("the failed bootstrap's containers remain after Terminate: %v", left)
 			}
-			if network != "" {
-				if _, err := docker.NetworkInspect(ctx, network, mobycl.NetworkInspectOptions{}); err == nil {
-					t.Fatal("the failed bootstrap's network remains after Terminate")
-				}
-			}
+			requireNetworkRemoved(t, ctx, docker, "C", network)
 			t.Logf("C: bootstrap failed (%v) with %d owned containers and network %q, all removed", err, len(created), network)
 			checkB("C failed and terminated")
 		})
+	}
+}
+
+// requireNetworkRemoved fails unless Docker reports the network as not found.
+// Any other inspection error is no evidence of removal.
+func requireNetworkRemoved(t *testing.T, ctx context.Context, docker *testcontainers.DockerClient, who, network string) {
+	t.Helper()
+	if network == "" {
+		return
+	}
+	_, err := docker.NetworkInspect(ctx, network, mobycl.NetworkInspectOptions{})
+	switch {
+	case err == nil:
+		t.Fatalf("%s's network %.12s remains after Terminate", who, network)
+	case !cerrdefs.IsNotFound(err):
+		t.Fatalf("%s's network %.12s: inspection failed, so its removal is unproven: %v", who, network, err)
 	}
 }
 
