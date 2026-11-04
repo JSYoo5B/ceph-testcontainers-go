@@ -49,6 +49,9 @@ type fakeSnapSchedule struct {
 	unregistered bool
 	// commands counts the commands the fake answered.
 	commands int
+	// progress replaces status fields of the schedule keyed by its path and
+	// repeat, as the module reports its runs.
+	progress map[string]map[string]any
 }
 
 func newFakeSnapSchedule() *fakeSnapSchedule {
@@ -98,8 +101,10 @@ func (f *fakeSnapSchedule) apply(args []string) (int, string) {
 		var entries []map[string]any
 		for _, s := range f.schedules {
 			if s.path == args[3] {
-				entries = append(entries, map[string]any{"fs": "tc", "path": s.path, "schedule": s.repeat, "retention": nonNil(f.retention[s.path]),
-					"start": s.start, "created": s.added, "first": nil, "last": nil, "created_count": 0, "pruned_count": 0, "active": true})
+				entry := map[string]any{"fs": "tc", "path": s.path, "schedule": s.repeat, "retention": nonNil(f.retention[s.path]),
+					"start": s.start, "created": s.added, "first": nil, "last": nil, "created_count": 0, "pruned_count": 0, "active": true}
+				maps.Copy(entry, f.progress[s.path+" "+s.repeat])
+				entries = append(entries, entry)
 			}
 		}
 		if entries == nil {
@@ -165,6 +170,20 @@ func (f *fakeSnapSchedule) native(t *testing.T, command string) {
 	if code, out := f.apply(strings.Fields(command)); code != 0 {
 		t.Fatalf("%s: %s", command, out)
 	}
+}
+
+// report sets status fields of the schedule with path and repeat.
+func (f *fakeSnapSchedule) report(path, repeat string, fields map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.progress == nil {
+		f.progress = map[string]map[string]any{}
+	}
+	key := path + " " + repeat
+	if f.progress[key] == nil {
+		f.progress[key] = map[string]any{}
+	}
+	maps.Copy(f.progress[key], fields)
 }
 
 func (f *fakeSnapSchedule) state() string {

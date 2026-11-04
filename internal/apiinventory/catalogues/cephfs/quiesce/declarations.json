@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/quiesce",
-  "count": 7,
+  "count": 12,
   "entries": [
     {
       "current": "cephfs/quiesce.Config",
@@ -38,6 +38,42 @@
       "signature": "func(ctx context.Context) (*State, error)",
       "receiver": "*Set",
       "proposed": "cephfs/quiesce.Set.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.Set.Watch",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig) (*SetWatch, error)",
+      "receiver": "*Set",
+      "proposed": "cephfs/quiesce.Set.Watch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.SetWatch",
+      "kind": "type",
+      "proposed": "cephfs/quiesce.SetWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.SetWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan SetWatchEvent",
+      "receiver": "*SetWatch",
+      "proposed": "cephfs/quiesce.SetWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.SetWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*SetWatch",
+      "proposed": "cephfs/quiesce.SetWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/quiesce.SetWatchEvent",
+      "kind": "type",
+      "proposed": "cephfs/quiesce.SetWatchEvent",
       "decision": "baseline"
     },
     {

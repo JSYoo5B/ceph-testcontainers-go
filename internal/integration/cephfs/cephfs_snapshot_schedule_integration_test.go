@@ -7,6 +7,7 @@ package cephfs_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -94,19 +95,53 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if second, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
 		t.Fatalf("a second schedule of the same directory: %v, %v", second, err)
 	}
+	// The watch reports the module's aggregate progress: every event differs
+	// from the one before it, and the counters only grow.
+	progress, err := lease.Watch(ctx, ceph.WatchConfig{Interval: 5 * time.Second, Buffer: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = progress.Stop() })
 	var status snapschedule.Status
-	deadline := time.Now().Add(6 * time.Minute)
-	for {
-		if status, err = lease.Status(ctx); err != nil {
-			t.Fatal(err)
+	var trace []string
+	deadline := time.After(6 * time.Minute)
+	for previous := (*snapschedule.Status)(nil); status.Created < 3 || status.Pruned < 1; {
+		var event snapschedule.LeaseWatchEvent
+		select {
+		case received, ok := <-progress.Events():
+			if !ok {
+				t.Fatalf("the schedule watch ended: %v after %v", progress.Stop(), trace)
+			}
+			event = received
+		case <-deadline:
+			t.Fatalf("the schedule took %d and pruned %d snapshots: %s; events %v", status.Created, status.Pruned, status.Raw, trace)
 		}
-		if status.Created >= 3 && status.Pruned >= 1 {
-			break
+		if event.Kind == ceph.WatchGap {
+			trace = append(trace, "gap: "+event.Err.Error())
+			continue
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the schedule took %d and pruned %d snapshots: %s", status.Created, status.Pruned, status.Raw)
+		current := event.Status
+		trace = append(trace, fmt.Sprintf("%d:%s active=%t %d/%d", event.Sequence, event.Kind, current.Active, current.Created, current.Pruned))
+		if !current.Active {
+			t.Fatalf("the module deactivated the schedule: %s; events %v", current.Raw, trace)
 		}
-		time.Sleep(10 * time.Second)
+		if previous != nil {
+			if current.Created < previous.Created || current.Pruned < previous.Pruned {
+				t.Fatalf("the schedule counters went back: %v", trace)
+			}
+			if event.Kind == ceph.WatchChanged && current.Created == previous.Created && current.Pruned == previous.Pruned &&
+				current.First.Equal(previous.First) && current.Last.Equal(previous.Last) {
+				t.Fatalf("an unchanged status was an event: %v", trace)
+			}
+		}
+		previous, status = current, *current
+	}
+	if err := progress.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("CEPHFS_SNAP_SCHEDULE_WATCH %v", trace)
+	if final, err := lease.Status(ctx); err != nil || final.Created < status.Created {
+		t.Fatalf("status after the watch: %+v, %v", final, err)
 	}
 	snapshots, err := lease.Snapshots(ctx)
 	if err != nil {
@@ -115,8 +150,19 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if len(snapshots) == 0 || len(snapshots) > 2 || status.First.IsZero() || !status.Last.After(status.First) {
 		t.Fatalf("snapshots %v with status %s", snapshots, status.Raw)
 	}
+	// Restore ends a running watch: the schedule is no longer the lease's.
+	restored, err := lease.Watch(ctx, ceph.WatchConfig{Interval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restored.Stop() })
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
+	}
+	for range restored.Events() {
+	}
+	if err := restored.Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("the watch of a restored lease ended with %v", err)
 	}
 	after, err := lease.Snapshots(ctx)
 	if err != nil || len(after) == 0 {

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/snapschedule",
-  "count": 7,
+  "count": 12,
   "entries": [
     {
       "current": "cephfs/snapschedule.Add",
@@ -45,6 +45,42 @@
       "signature": "func(ctx context.Context) (Status, error)",
       "receiver": "*Lease",
       "proposed": "cephfs/snapschedule.Lease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.Lease.Watch",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig) (*LeaseWatch, error)",
+      "receiver": "*Lease",
+      "proposed": "cephfs/snapschedule.Lease.Watch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.LeaseWatch",
+      "kind": "type",
+      "proposed": "cephfs/snapschedule.LeaseWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.LeaseWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan LeaseWatchEvent",
+      "receiver": "*LeaseWatch",
+      "proposed": "cephfs/snapschedule.LeaseWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.LeaseWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*LeaseWatch",
+      "proposed": "cephfs/snapschedule.LeaseWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/snapschedule.LeaseWatchEvent",
+      "kind": "type",
+      "proposed": "cephfs/snapschedule.LeaseWatchEvent",
       "decision": "baseline"
     },
     {

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/snapschedule",
-  "count": 19,
+  "count": 25,
   "types": {
     "cephfs/snapschedule.Config": [
       "Config.Path field string",
@@ -15,6 +15,14 @@
       "Lease.Repeat field string",
       "Lease.Retention field map[string]int",
       "Lease.Start field time.Time"
+    ],
+    "cephfs/snapschedule.LeaseWatchEvent": [
+      "LeaseWatchEvent.Err field error",
+      "LeaseWatchEvent.Finished field time.Time",
+      "LeaseWatchEvent.Kind field ceph.WatchEventKind",
+      "LeaseWatchEvent.Sequence field uint64",
+      "LeaseWatchEvent.Started field time.Time",
+      "LeaseWatchEvent.Status field *Status"
     ],
     "cephfs/snapschedule.Status": [
       "Status.Active field bool",
