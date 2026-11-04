@@ -622,3 +622,36 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	}
 	t.Log("OSD_OOM established for one OSD, one engine and one run: after one finite ceiling was admitted, one lower ceiling killed the frozen OSD process once by the cgroup OOM killer, the engine left it stopped, the OSD was marked down and the PG left active+clean, the writer was acknowledged again, the restored configuration and an explicit restart gave a new process generation that rejoined under the restored limit and every acknowledged object read back")
 }
+
+// errEngineUpdateStale refuses a dispatch before any engine call was made.
+var errEngineUpdateStale = errors.New("engine update refused: target is not the running captured generation")
+
+// guardedEngineUpdate inspects the target and dispatches a resource update
+// only when it is still the running captured generation (same ID and start
+// time, not paused, restarting or restarted). A refusal means zero update
+// calls were made. This stops dispatch to an already-stale target; it does
+// not make the engine's update atomic against a restart that happens after
+// the check, which the caller's post-update fences still have to catch.
+func guardedEngineUpdate(gen containerGeneration, inspectNow func() (container.InspectResponse, error), dispatch func() ([]string, error)) (warnings []string, err error) {
+	current, err := inspectNow()
+	if err != nil {
+		return nil, fmt.Errorf("%w: inspection failed: %v", errEngineUpdateStale, err)
+	}
+	state, err := cpuEngineStateFromInspect(current, cpuEngineChecks{})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errEngineUpdateStale, err)
+	}
+	if err := state.Check(gen, 0); err != nil {
+		return nil, fmt.Errorf("%w: %v", errEngineUpdateStale, err)
+	}
+	return dispatch()
+}
+
+// engineUpdateReply maps one update call result to the record fields. Any
+// error, including a failure while decoding the reply body, makes the
+// outcome uncertain: the caller settles it by inspecting the same generation
+// and never by replaying the request.
+func engineUpdateReply(warnings []string, err error) (replyReceived bool, copied []string) {
+	copied = append([]string(nil), warnings...)
+	return err == nil, copied
+}
