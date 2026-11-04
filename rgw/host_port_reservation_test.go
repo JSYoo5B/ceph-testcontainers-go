@@ -56,7 +56,7 @@ func TestRGWReservedPortStartRefusesBeforeCreatingAnything(t *testing.T) {
 		{"used", host, Config{Name: "z"}, true},
 	} {
 		reserved := &hostPortReservation{ports: []int{40003}, release: noRelease, used: tc.used}
-		ctr, _, _, err := startNamedDaemon(t.Context(), tc.cluster, testFacts(t, tc.cluster), tc.config, reserved)
+		ctr, _, _, err := startNamedDaemon(t.Context(), tc.cluster, testFacts(t, tc.cluster), tc.config, nil, reserved)
 		if ctr != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v %v", tc.name, ctr, err)
 		}

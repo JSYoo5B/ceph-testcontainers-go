@@ -10,7 +10,7 @@ import (
 // testGateway returns the descriptor of gateway container ctr of c, built as
 // Start builds it, without registering it.
 func testGateway(c *ceph.Container, ctr testcontainers.Container, config Config) *Gateway {
-	return newGateway(c, ctr, config, 0, 0, "", "")
+	return newGateway(c, ctr, config, 0, 0, nil, "", "")
 }
 
 // registerTestGateway records g in its cluster's gateway registry, where the

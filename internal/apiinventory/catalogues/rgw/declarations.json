@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 60,
+  "count": 61,
   "entries": [
     {
       "current": "rgw.AdminCapability",
@@ -82,6 +82,14 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Gateway",
       "proposed": "rgw.Gateway.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.ReplaceTLS",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config TLSConfig) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.ReplaceTLS",
       "decision": "baseline"
     },
     {
