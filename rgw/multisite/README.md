@@ -92,9 +92,10 @@ reading as progress:
 period, the group's policy and the referenced bucket instances imported into
 the zone, and `Status.Imported` once all three are. Start it after the policy
 change; it ends with a nil cause after it has sent the imported status, and an
-imported baseline is its only event. A bucket that the zone has not imported
-yet makes the native command fail, so that stage is a `WatchGap` with
-`BucketsImported` false. The watch keeps the committed period, the group's
+imported baseline is its only event. A zone that has not finished importing a
+bucket fails the native command, so the call retries its first read within
+`QueryTimeout`, and later that stage is a `WatchGap` with `BucketsImported`
+false. The watch keeps the committed period, the group's
 policy, the zone and the bucket instances it captured: a new committed period,
 a changed or removed group, a detached zone and a recreated bucket end it.
 

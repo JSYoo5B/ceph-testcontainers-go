@@ -1,6 +1,7 @@
 package multisite
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -404,9 +405,39 @@ func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {
 	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "source"); err == nil || w != nil || len(cli.calls) != before {
 		t.Fatalf("a zone outside the pipes' destinations started %v %v", w, err)
 	}
-	// A failed baseline starts nothing.
+	// A first read that never succeeds within QueryTimeout starts nothing.
 	cli.missingBuckets = map[string]bool{"bucket": true}
-	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); err == nil || w != nil {
+	cfg := syncWatchTestConfig
+	cfg.QueryTimeout = 1500 * time.Millisecond
+	if w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination"); !errors.Is(err, context.DeadlineExceeded) || w != nil || strings.Contains(err.Error(), "secret-marker") {
 		t.Fatalf("failed baseline started %v %v", w, err)
+	}
+	// A first read that would end the watch is not retried.
+	cli.missingBuckets, cli.bucketID = nil, "bucket-recreated"
+	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); !errors.Is(err, errSyncBucketRecreated) || w != nil {
+		t.Fatalf("recreated bucket baseline started %v %v", w, err)
+	}
+}
+
+func TestRGWWatchBucketPolicyRetriesAFailedFirstRead(t *testing.T) {
+	f, cli, g := newRGWPolicyImportFixture(t)
+	cli.missingBuckets = map[string]bool{"bucket": true}
+	retried := false
+	cli.onExec = func(_ context.Context, args []string) {
+		if !retried && syncTestFlag(args, "--zone-id") == "dest-id" && syncTestCommand(args, "bucket", "stats") {
+			// The lock is free between the attempts of the first read.
+			go underTopology(f, func() { cli.missingBuckets, retried = nil, true })
+		}
+	}
+	w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := nextSyncEvent(t, w.Events())
+	if baseline.Kind != ceph.WatchBaseline || !baseline.Status.Imported || !retried {
+		t.Fatalf("baseline %+v retried=%t", baseline, retried)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
 	}
 }

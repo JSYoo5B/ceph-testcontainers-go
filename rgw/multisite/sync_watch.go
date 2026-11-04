@@ -414,9 +414,9 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 // BucketSyncPolicyStatus of that read; its stages PeriodImported,
 // PolicyImported, BucketsImported and Imported are compared, and its
 // identities stay the baseline's. On a WatchGap it is the partial report of
-// the failed read, with Imported false. The destination answers a bucket it
-// has not imported yet with a failed command, so that stage reads as a
-// WatchGap with BucketsImported false rather than as a change. Two statuses
+// the failed read, with Imported false. A destination that has not finished
+// importing a bucket fails the native read, so that stage reads as a WatchGap
+// with BucketsImported false rather than as a change. Two statuses
 // separated by a gap, or by the polling interval, do not establish the stages
 // in between.
 type BucketPolicyWatchEvent struct {
@@ -466,10 +466,14 @@ func (w *BucketPolicyWatch) Stop() error {
 // referenced bucket instance imported, and all of them together as Imported.
 // The default WatchConfig.Interval is 2 seconds.
 //
-// Before it returns, WatchBucketPolicy makes one read under ctx and
-// QueryTimeout. A failed first read returns its error and starts nothing.
-// That read admits the request as WaitBucketPolicyReady does, and the watch
-// keeps what it captured for its lifetime: the master's committed period, the
+// Before it returns, WatchBucketPolicy makes one successful read under ctx
+// and QueryTimeout. The destination fails its native reads while it imports a
+// bucket that was just created, so a failed first read is retried once a
+// second until QueryTimeout passes, without holding the topology lock in
+// between. A refused request, a read that would end the watch and a first
+// read that never succeeds return their error and start nothing. That read
+// admits the request as WaitBucketPolicyReady does, and the watch keeps what
+// it captured for its lifetime: the master's committed period, the
 // group's policy as the fixture confirmed it, the destination zone and the
 // referenced source and destination bucket instances. Start the watch after
 // the policy change, as you would WaitBucketPolicyReady; a baseline that is
@@ -497,8 +501,7 @@ func (w *BucketPolicyWatch) Stop() error {
 //
 //purpose:observation
 func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig, destinationZone string) (*BucketPolicyWatch, error) {
-	f, err := g.fixture()
-	if err != nil {
+	if _, err := g.fixture(); err != nil {
 		return nil, err
 	}
 	settings, err := syncWatchSettings(bucketPolicyWatchOperation, cfg, bucketPolicyWatchDefaultInterval)
@@ -510,22 +513,12 @@ func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig,
 		Name:     bucketPolicyWatchOperation,
 		Settings: settings,
 		Read: func(ctx context.Context) (BucketSyncPolicyStatus, error) {
-			if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
-				return BucketSyncPolicyStatus{}, err
-			}
-			defer f.topologyMu.Unlock()
 			if target == nil {
-				admitted, status, err := g.admitPolicyImport(ctx, destinationZone)
-				if err != nil {
-					return status, err
-				}
-				status, _, err = admitted.sample(ctx)
-				if err == nil {
-					target = admitted
-				}
+				admitted, status, err := g.policyImportWatchBaseline(ctx, destinationZone)
+				target = admitted
 				return status, err
 			}
-			status, fatal, err := target.sample(ctx)
+			status, fatal, err := target.lockedSample(ctx)
 			if fatal {
 				return status, watch.Fatal(fmt.Errorf("%s: %w", bucketPolicyWatchOperation, err))
 			}
@@ -544,6 +537,48 @@ func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig,
 		return nil, err
 	}
 	return &BucketPolicyWatch{stream: stream}, nil
+}
+
+// policyImportWatchBaseline admits the watch and makes its first read. The
+// destination fails its native reads while it is still importing a bucket
+// that the change just created, which is the start of what the watch is for,
+// so a failed first read is retried once a second until ctx ends, releasing
+// the topology lock in between. Admission errors and fatal reads are not
+// retried.
+func (g *SyncGroup) policyImportWatchBaseline(ctx context.Context, destinationZone string) (*policyImportTarget, BucketSyncPolicyStatus, error) {
+	f := g.owner
+	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+		return nil, BucketSyncPolicyStatus{}, err
+	}
+	target, status, err := g.admitPolicyImport(ctx, destinationZone)
+	f.topologyMu.Unlock()
+	if err != nil {
+		return nil, status, err
+	}
+	for {
+		status, fatal, err := target.lockedSample(ctx)
+		if err == nil {
+			return target, status, nil
+		}
+		if fatal || ctx.Err() != nil {
+			return nil, status, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, status, fmt.Errorf("%s: no successful first read: %w; last read: %v", bucketPolicyWatchOperation, ctx.Err(), err)
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// lockedSample is one sample under the topology lock.
+func (t *policyImportTarget) lockedSample(ctx context.Context) (BucketSyncPolicyStatus, bool, error) {
+	f := t.group.owner
+	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+		return BucketSyncPolicyStatus{}, false, err
+	}
+	defer f.topologyMu.Unlock()
+	return t.sample(ctx)
 }
 
 // bucketPolicyWatchEqual compares the import stages; the identities are the
