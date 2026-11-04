@@ -230,13 +230,13 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 				_, _ = send()
 			}
 		} else {
-			_, guardErr = guardedCPUUpdate(gen, func() (container.InspectResponse, error) { return rawInspect(ctx) }, send)
+			_, guardErr = guardedEngineUpdate(gen, func() (container.InspectResponse, error) { return rawInspect(ctx) }, send)
 		}
 		if !dispatched {
 			return osdMemTransition{}, false, guardErr
 		}
 		at := time.Now()
-		received, warnings := cpuUpdateReply(replyWarnings, updateErr)
+		received, warnings := engineUpdateReply(replyWarnings, updateErr)
 		after, err := rawInspect(ctx)
 		if err != nil {
 			return osdMemTransition{}, true, err

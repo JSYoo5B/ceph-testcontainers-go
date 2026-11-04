@@ -107,6 +107,22 @@ func parseMemoryEventsLocal(data string) (memoryEvents, error) {
 // readMemoryWitness reads the files of one cgroup directory. The hierarchical
 // memory.events is never read as a substitute for memory.events.local: a
 // directory that only has the hierarchical file is unavailable.
+// parseCgroupControllers decodes cgroup.controllers: space separated names,
+// possibly empty. An empty list is a valid, ineligible reading.
+func parseCgroupControllers(data string) (map[string]bool, error) {
+	if data != "" && !strings.HasSuffix(data, "\n") {
+		return nil, fmt.Errorf("%w: controllers without a final newline", errMemoryWitnessMalformed)
+	}
+	out := map[string]bool{}
+	for _, name := range strings.Fields(data) {
+		if out[name] {
+			return nil, fmt.Errorf("%w: duplicate controller %q", errMemoryWitnessMalformed, name)
+		}
+		out[name] = true
+	}
+	return out, nil
+}
+
 func readMemoryWitness(gen containerGeneration, group string, now time.Time) (memoryWitness, error) {
 	if !gen.Valid() {
 		return memoryWitness{}, fmt.Errorf("%w: frozen generation is incomplete", errMemoryWitnessGeneration)

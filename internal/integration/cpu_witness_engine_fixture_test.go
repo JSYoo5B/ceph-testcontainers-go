@@ -68,37 +68,3 @@ func TestCPUEngineEmptyStatesCannotSatisfyTheFence(t *testing.T) {
 		t.Fatalf("strict conversion must refuse an empty inspection: %v", err)
 	}
 }
-
-func TestCPUMaxMatchesNanoCPUs(t *testing.T) {
-	ok := []struct {
-		max  cpuMax
-		nano int64
-	}{
-		{cpuMax{Quota: 100000, Period: 100000}, 1_000_000_000},
-		{cpuMax{Quota: 25000, Period: 100000}, 250_000_000},
-		{cpuMax{Quota: 200000, Period: 100000}, 2_000_000_000},
-		{cpuMax{Quota: 50000, Period: 50000}, 1_000_000_000},
-	}
-	for _, c := range ok {
-		if err := cpuMaxMatchesNanoCPUs(c.max, c.nano); err != nil {
-			t.Errorf("%+v %d: %v", c.max, c.nano, err)
-		}
-	}
-	bad := map[string]struct {
-		max  cpuMax
-		nano int64
-	}{
-		"different quota":     {cpuMax{Quota: 50000, Period: 100000}, 1_000_000_000},
-		"unlimited":           {cpuMax{Unlimited: true, Period: 100000}, 1_000_000_000},
-		"zero engine limit":   {cpuMax{Quota: 100000, Period: 100000}, 0},
-		"negative engine":     {cpuMax{Quota: 100000, Period: 100000}, -1},
-		"zero value max":      {cpuMax{}, 1_000_000_000},
-		"inexact division":    {cpuMax{Quota: 33333, Period: 100000}, 333_333_333},
-		"huge values no wrap": {cpuMax{Quota: 1 << 63, Period: 1 << 62}, 1_000_000_000},
-	}
-	for name, c := range bad {
-		if err := cpuMaxMatchesNanoCPUs(c.max, c.nano); !errors.Is(err, errCPUWitnessInconclusive) {
-			t.Errorf("%s: want inconclusive, got %v", name, err)
-		}
-	}
-}

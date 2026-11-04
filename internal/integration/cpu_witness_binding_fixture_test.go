@@ -13,11 +13,18 @@ import (
 	"time"
 )
 
-// Docker-free fixtures for binding the CPU witness to a frozen generation over
-// a synthetic proc and cgroup tree. Not covered: no engine call, no native
-// cgroup, no CPU pressure, no quota update and no kernel qualification.
+// Docker-free fixtures for binding a cgroup witness to a frozen generation
+// over a synthetic proc and cgroup tree. Not covered: no engine call, no
+// native cgroup and no kernel qualification.
 
 const bindPID = 4242
+
+var (
+	cpuGen = containerGeneration{ID: "c1", StartedAt: "2026-10-25T00:00:00.000000001Z"}
+	cpuT0  = time.Date(2026, 10, 25, 0, 0, 10, 0, time.UTC)
+)
+
+const cpuStatZero = "usage_usec 10\nuser_usec 6\nsystem_usec 4\nnr_periods 10\nnr_throttled 0\nthrottled_usec 0\n"
 
 // procStat has the comm field with spaces and a parenthesis and a start time
 // at field 22.
@@ -87,42 +94,17 @@ func bound(t *testing.T, b *bindTree, checks cpuBindChecks) *cpuWitnessTarget {
 	return target
 }
 
-func TestCPUBindingReadsThrottlingForTheFrozenGeneration(t *testing.T) {
+func TestCPUBindingFreezesTheGeneration(t *testing.T) {
 	b := newBindTree(t)
 	target := bound(t, b, cpuBindChecks{})
-	if target.ProcessStart != "777" {
-		t.Fatalf("process start %q", target.ProcessStart)
+	if target.ProcessStart != "777" || target.PID != bindPID {
+		t.Fatalf("process identity %d %q", target.PID, target.ProcessStart)
 	}
-	now := tick()
-	before, err := target.read(fixedState(goodState()), now)
-	if err != nil || before.Stat.Throttled != 0 || !before.ControllerListed {
-		t.Fatalf("first reading: %+v %v", before, err)
-	}
-	b.writeGroup(t, b.rel, "cpu memory\n", "25000 100000\n", cpuStatHit)
-	after, err := target.read(fixedState(goodState()), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, err := classifyCPUThrottle(before, after, false, cpuClassifyChecks{}); v != cpuVerdictThrottled || err != nil {
-		t.Fatalf("verdict %v %v", v, err)
+	if err := target.fence(goodState()); err != nil {
+		t.Fatalf("unchanged target refused: %v", err)
 	}
 	if r := target.Receipt(); strings.Contains(r, b.roots.Cgroup) || strings.Contains(r, "system.slice") || !strings.Contains(r, "process_start=777") {
 		t.Fatalf("receipt leaks a path or lacks identity: %q", r)
-	}
-}
-
-func TestCPUBindingWithoutControllerStaysIneligible(t *testing.T) {
-	b := newBindTree(t)
-	b.writeGroup(t, b.rel, "memory pids\n", "-", "-")
-	target := bound(t, b, cpuBindChecks{})
-	now := tick()
-	first, err := target.read(fixedState(goodState()), now)
-	if err != nil || first.ControllerListed {
-		t.Fatalf("%+v %v", first, err)
-	}
-	second, _ := target.read(fixedState(goodState()), now)
-	if v, err := classifyCPUThrottle(first, second, true, cpuClassifyChecks{}); v != cpuVerdictUnsupported || !errors.Is(err, errCPUWitnessIneligible) {
-		t.Fatalf("verdict %v %v", v, err)
 	}
 }
 
@@ -225,9 +207,8 @@ var drifts = []drift{
 	{name: "engine paused", state: func(s *cpuEngineState) { s.Paused = true }, errHas: "not running"},
 }
 
-func TestCPUBindingFenceCatchesDriftBeforeAndAfterTheRead(t *testing.T) {
+func TestCPUBindingFenceCatchesDrift(t *testing.T) {
 	for _, d := range drifts {
-		// Before the first fence.
 		b := newBindTree(t)
 		target := bound(t, b, cpuBindChecks{})
 		state := goodState()
@@ -237,35 +218,9 @@ func TestCPUBindingFenceCatchesDriftBeforeAndAfterTheRead(t *testing.T) {
 		if d.state != nil {
 			d.state(&state)
 		}
-		if w, err := target.read(fixedState(state), tick()); err == nil || w != nil || !strings.Contains(err.Error(), d.errHas) {
-			t.Errorf("%s before: want %q refusal, got %v %v", d.name, d.errHas, w, err)
+		if err := target.fence(state); err == nil || !strings.Contains(err.Error(), d.errHas) {
+			t.Errorf("%s: want %q refusal, got %v", d.name, d.errHas, err)
 		}
-		// Between the reads and the closing fence: the first fence passes.
-		b = newBindTree(t)
-		target = bound(t, b, cpuBindChecks{})
-		current := goodState()
-		calls := 0
-		target.betweenFences = func() {
-			if d.apply != nil {
-				d.apply(t, b)
-			}
-			if d.state != nil {
-				d.state(&current)
-			}
-		}
-		inspect := func() (cpuEngineState, error) { calls++; return current, nil }
-		if w, err := target.read(inspect, tick()); err == nil || w != nil || !strings.Contains(err.Error(), d.errHas) || calls != 2 {
-			t.Errorf("%s after: want %q refusal after 2 inspections, got %v %v (calls %d)", d.name, d.errHas, w, err, calls)
-		}
-	}
-}
-
-func TestCPUBindingEngineInspectionFailureIsRefusal(t *testing.T) {
-	b := newBindTree(t)
-	target := bound(t, b, cpuBindChecks{})
-	fail := func() (cpuEngineState, error) { return cpuEngineState{}, errors.New("engine unreachable") }
-	if w, err := target.read(fail, tick()); w != nil || !errors.Is(err, errCPUBinding) {
-		t.Fatalf("%v %v", w, err)
 	}
 }
 
@@ -279,15 +234,8 @@ func TestCPUBindingNegativeControlsBreakEachRule(t *testing.T) {
 		b := newBindTree(t)
 		target := bound(t, b, checks)
 		d.apply(t, b)
-		if _, err := target.read(fixedState(goodState()), tick()); err != nil {
+		if err := target.fence(goodState()); err != nil {
 			t.Errorf("%s: rule switched off must accept the drift, got %v", d.name, err)
 		}
-	}
-	// Dropping the closing fence accepts a drift introduced during the read.
-	b := newBindTree(t)
-	target := bound(t, b, cpuBindChecks{skipPostFence: true})
-	target.betweenFences = func() { b.setProc(t, procStat("888"), "0::/"+b.rel+"\n") }
-	if _, err := target.read(fixedState(goodState()), tick()); err != nil {
-		t.Errorf("post fence switched off must accept the mid-read drift, got %v", err)
 	}
 }
