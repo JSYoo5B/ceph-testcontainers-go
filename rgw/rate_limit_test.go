@@ -27,9 +27,14 @@ type rateLimitBucket struct{ id, marker, owner string }
 // OverrideRateLimit reads and changes: one user, its buckets and the stored
 // rate-limit policy of each scope. ratelimit set changes only the budgets it
 // is given and ignores negative ones, enable and disable change only the
-// flag, as radosgw-admin does. before, when set, runs first for every
-// command and may answer it instead (handled true); after runs once the model
-// applied a command and may replace its reply.
+// flag, as radosgw-admin does. With unsetENOENT the model is a Ceph 21
+// gateway: a user without a stored policy fails ratelimit get with exit 254
+// and ENOENT, and a stored policy also carries the list and delete budgets;
+// otherwise get reports the native default, as Ceph 20 does. metadata get of
+// the user lists the policy attribute while a policy is stored. A command
+// materializes the native default before it applies. before, when set, runs
+// first for every command and may answer it instead (handled true); after
+// runs once the model applied a command and may replace its reply.
 type rateLimitGateway struct {
 	testcontainers.Container
 	userDocument string
@@ -40,7 +45,8 @@ type rateLimitGateway struct {
 	after        func(args []string) error
 	// errnoLine, when set, is the error output of a command that before
 	// answers.
-	errnoLine string
+	errnoLine   string
+	unsetENOENT bool
 }
 
 func (f *rateLimitGateway) GetContainerID() string { return "gateway" }
@@ -93,10 +99,23 @@ func (f *rateLimitGateway) answer(args []string) (string, int) {
 		data, _ := json.Marshal(map[string]any{"bucket": rateLimitFlag(args, "--bucket"), "tenant": "", "id": bucket.id,
 			"marker": bucket.marker, "owner": bucket.owner, "usage": map[string]any{}})
 		return string(data), 0
+	case slices.Equal(command, []string{"metadata", "get"}):
+		key := args[slices.Index(args, "get")+1]
+		id := strings.TrimPrefix(key, "user:")
+		attrs := []map[string]string{{"key": "user.rgw.acl", "val": "AAAA"}}
+		if f.policies[key] != nil {
+			attrs = append(attrs, map[string]string{"key": "user.rgw.ratelimit", "val": "AAAA"})
+		}
+		data, _ := json.Marshal(map[string]any{"key": key, "ver": map[string]any{"tag": "tag", "ver": 1}, "mtime": "now",
+			"data": map[string]any{"user_id": id, "keys": []map[string]string{{"user": id, "secret_key": "PRIVATE-SECRET"}}, "attrs": attrs}})
+		return string(data), 0
 	case len(command) == 2 && command[0] == "ratelimit":
 		key, section := "user:"+rateLimitFlag(args, "--uid"), "user_ratelimit"
 		if rateLimitFlag(args, "--ratelimit-scope") == "bucket" {
 			key, section = "bucket:"+rateLimitFlag(args, "--bucket"), "bucket_ratelimit"
+		}
+		if command[1] == "get" && section == "user_ratelimit" && f.unsetENOENT && f.policies[key] == nil {
+			return "ERROR: failed to get a ratelimit for user id: '" + rateLimitFlag(args, "--uid") + "', errno: (2) No such file or directory", 254
 		}
 		policy := f.policy(key)
 		switch command[1] {
@@ -121,6 +140,9 @@ func (f *rateLimitGateway) answer(args []string) (string, int) {
 func (f *rateLimitGateway) policy(key string) map[string]any {
 	if f.policies[key] == nil {
 		f.policies[key] = rateLimitNative(false, 0, 0)
+		if f.unsetENOENT {
+			f.policies[key] = rateLimitNative21(false, 0, 0)
+		}
 	}
 	return f.policies[key]
 }
@@ -141,6 +163,14 @@ func (f *rateLimitGateway) mutations() []string {
 func rateLimitNative(enabled bool, readOps, writeOps int64) map[string]any {
 	return map[string]any{"max_read_ops": json.Number(itoa(readOps)), "max_write_ops": json.Number(itoa(writeOps)),
 		"max_read_bytes": json.Number("0"), "max_write_bytes": json.Number("0"), "enabled": enabled}
+}
+
+// rateLimitNative21 is a Ceph 21 policy object, which also carries the list
+// and delete budgets.
+func rateLimitNative21(enabled bool, readOps, writeOps int64) map[string]any {
+	policy := rateLimitNative(enabled, readOps, writeOps)
+	policy["max_list_ops"], policy["max_delete_ops"] = json.Number("0"), json.Number("0")
+	return policy
 }
 
 func itoa(v int64) string { data, _ := json.Marshal(v); return string(data) }
@@ -666,5 +696,294 @@ func TestRGWRateLimitTargetSelectsTheNativeScope(t *testing.T) {
 	replaced.bucketID = "zone.2"
 	if bucket.key() == replaced.key() || bucket.key() == user.key() {
 		t.Fatal("distinct targets share a registry key")
+	}
+}
+
+// newUnsetRateLimitFixture is newRateLimitFixture on a modelled Ceph 21
+// gateway, where the user stores no rate-limit policy.
+func newUnsetRateLimitFixture(t *testing.T) (*User, *rateLimitGateway) {
+	t.Helper()
+	user, f := newRateLimitFixture(t)
+	testhelper.TestSetCephVersion(user.base().Origin.Cluster(), "21.2.0")
+	f.unsetENOENT = true
+	return user, f
+}
+
+// countCommand counts the calls of one radosgw-admin operation.
+func (f *rateLimitGateway) countCommand(command ...string) int {
+	n := 0
+	for _, args := range f.calls {
+		if slices.Equal(rateLimitCommand(args), command) {
+			n++
+		}
+	}
+	return n
+}
+
+// A Ceph 21 user without a stored policy fails ratelimit get with ENOENT. The
+// override takes it as unset once the user's metadata shows the user without
+// the policy attribute and the user is still its creation identity, applies
+// the requested policy on the native default and restores the native
+// default, which radosgw-admin then reports.
+func TestRGWRateLimitOverrideUnsetUserPolicyRestoresTheNativeDefault(t *testing.T) {
+	user, f := newUnsetRateLimitFixture(t)
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.state.prior.unset {
+		t.Fatalf("prior policy = %+v, want unset", change.state.prior)
+	}
+	if got := f.policies["user:test-user"]; !maps.Equal(got, rateLimitNative21(true, 0, 1)) {
+		t.Fatalf("applied policy %v", got)
+	}
+	if got := f.mutations(); !slices.Equal(got, []string{"set user test-user", "enable user test-user"}) {
+		t.Fatalf("apply commands = %v", got)
+	}
+	// The metadata proves the absence and user info the identity, once
+	// before and once after the ENOENT.
+	if f.countCommand("metadata", "get") != 1 || f.countCommand("user", "info") != 2 {
+		t.Fatalf("unset policy was not confirmed natively: %v", f.calls)
+	}
+	copied := *change
+	if err := copied.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.policies["user:test-user"]; !maps.Equal(got, rateLimitNative21(false, 0, 0)) {
+		t.Fatalf("restored policy %v, want the native default", got)
+	}
+	if got := f.mutations(); !slices.Equal(got[2:], []string{"disable user test-user", "set user test-user"}) {
+		t.Fatalf("restore commands = %v", got)
+	}
+	calls := len(f.calls)
+	if err := change.Restore(t.Context()); err != nil || len(f.calls) != calls {
+		t.Fatalf("a restored copy ran native commands again: %v", err)
+	}
+	// The scope is free again; its prior policy is now the stored default.
+	again, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxReadOps: 2})
+	if err != nil || again.state.prior.unset || !maps.Equal(again.state.prior.fields, rateLimitNative21(false, 0, 0)) {
+		t.Fatalf("override after restoring an unset policy: %+v, %v", again.state.prior, err)
+	}
+	if err := again.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.policies) != 1 {
+		t.Fatalf("other scopes were touched: %v", f.policies)
+	}
+}
+
+// A disabled override of an unset user policy materializes the native
+// default; Restore finds the scope at that default and sends no command.
+func TestRGWRateLimitOverrideUnsetUserPolicyDisabledOverride(t *testing.T) {
+	user, f := newUnsetRateLimitFixture(t)
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.mutations(); !slices.Equal(got, []string{"disable user test-user"}) || !maps.Equal(f.policies["user:test-user"], rateLimitNative21(false, 0, 0)) {
+		t.Fatalf("apply commands %v, policy %v", got, f.policies["user:test-user"])
+	}
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.mutations(); len(got) != 1 {
+		t.Fatalf("Restore at the native default ran %v", got[1:])
+	}
+}
+
+// An explicitly stored user policy on Ceph 21, with the release's extra
+// budgets, is restored exactly, without the unset path.
+func TestRGWRateLimitOverrideStoredUserPolicyOnCeph21RestoresExactly(t *testing.T) {
+	user, f := newUnsetRateLimitFixture(t)
+	prior := rateLimitNative21(false, 4, 0)
+	prior["max_list_ops"] = json.Number("6")
+	f.policies["user:test-user"] = maps.Clone(prior)
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.state.prior.unset || f.countCommand("metadata", "get") != 0 {
+		t.Fatal("a stored policy took the unset path")
+	}
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(f.policies["user:test-user"], prior) {
+		t.Fatalf("restored policy %v, want %v", f.policies["user:test-user"], prior)
+	}
+}
+
+// Restore of an unset prior policy refuses an outside edit, accepts a scope
+// that an outside edit put back to the native default, and accepts a scope
+// that is still unset after an apply whose first command was lost before it
+// reached native state.
+func TestRGWRateLimitRestoreOfAnUnsetUserPolicy(t *testing.T) {
+	t.Run("outside edit", func(t *testing.T) {
+		user, f := newUnsetRateLimitFixture(t)
+		change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.policies["user:test-user"]["max_write_ops"] = json.Number("5")
+		mutations := len(f.mutations())
+		if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || len(f.mutations()) != mutations {
+			t.Fatalf("Restore after an outside edit: %v, %v", err, f.mutations())
+		}
+		// An outside edit back to the native default is the restored state.
+		f.policies["user:test-user"] = rateLimitNative21(false, 0, 0)
+		if err := change.Restore(t.Context()); err != nil || len(f.mutations()) != mutations {
+			t.Fatalf("Restore at the native default: %v, %v", err, f.mutations())
+		}
+	})
+	t.Run("outside edit of a budget this package does not know", func(t *testing.T) {
+		user, f := newUnsetRateLimitFixture(t)
+		change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.policies["user:test-user"]["max_list_ops"] = json.Number("3")
+		mutations := len(f.mutations())
+		if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || len(f.mutations()) != mutations {
+			t.Fatalf("Restore after an outside edit: %v, %v", err, f.mutations())
+		}
+	})
+	t.Run("lost first command", func(t *testing.T) {
+		user, f := newUnsetRateLimitFixture(t)
+		f.before = func(args []string) (int, error, bool) {
+			return 0, errors.New("connection to the engine broke"), slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
+		}
+		change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+		if err == nil || change == nil || change.state.refused != nil {
+			t.Fatalf("uncertain apply lost its handle: %v", err)
+		}
+		f.before = nil
+		if err := change.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if f.policies["user:test-user"] != nil || len(f.mutations()) != 1 {
+			t.Fatalf("Restore of a still unset scope changed it: %v, %v", f.policies, f.mutations())
+		}
+	})
+}
+
+// ENOENT from a user-scope ratelimit get is an unset policy only with native
+// proof. A user that vanished or was replaced after the ENOENT, a policy
+// attribute that get did not report, other failures of get and an ENOENT of
+// the bucket scope stay errors and change nothing.
+func TestRGWRateLimitUnsetUserPolicyNeedsNativeProof(t *testing.T) {
+	isGet := func(args []string) bool { return slices.Equal(rateLimitCommand(args), []string{"ratelimit", "get"}) }
+	enoent := "ERROR: PRIVATE-SECRET failed to get a ratelimit: errno: (2) No such file or directory"
+	for _, tc := range []struct {
+		name     string
+		scope    RateLimitScope
+		prepare  func(f *rateLimitGateway)
+		metadata int // metadata get calls expected
+		want     string
+	}{
+		{name: "user removed", prepare: func(f *rateLimitGateway) {
+			f.errnoLine = "ERROR: can't get key: (2) No such file or directory"
+			f.before = func(args []string) (int, error, bool) {
+				return 2, nil, slices.Equal(rateLimitCommand(args), []string{"metadata", "get"})
+			}
+		}, metadata: 1, want: "confirm the unset RGW user rate-limit policy (metadata get): radosgw-admin exited 2 (ENOENT); native output is redacted"},
+		{name: "user replaced", prepare: func(f *rateLimitGateway) {
+			f.after = func(args []string) error {
+				if isGet(args) {
+					f.userDocument = rgwAdminFixture("test-user", "PRIVATE-OTHER", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+				}
+				return nil
+			}
+		}, metadata: 1, want: "confirm the owned RGW user (user info): "},
+		{name: "stored policy not reported", prepare: func(f *rateLimitGateway) {
+			f.policies["user:test-user"] = rateLimitNative21(true, 1, 0)
+			f.errnoLine = enoent
+			f.before = func(args []string) (int, error, bool) { return 254, nil, isGet(args) }
+		}, metadata: 1, want: "RGW user stores a rate-limit policy that ratelimit get does not report"},
+		{name: "permission denied", prepare: func(f *rateLimitGateway) {
+			f.errnoLine = "ERROR: PRIVATE-SECRET failed to get a ratelimit: errno: (13) Permission denied"
+			f.before = func(args []string) (int, error, bool) { return 243, nil, isGet(args) }
+		}, want: "read RGW rate-limit policy (ratelimit get): radosgw-admin exited 243 (EACCES); native output is redacted"},
+		{name: "ENOENT with another exit code", prepare: func(f *rateLimitGateway) {
+			f.errnoLine = enoent
+			f.before = func(args []string) (int, error, bool) { return 2, nil, isGet(args) }
+		}, want: "read RGW rate-limit policy (ratelimit get): radosgw-admin exited 2 (ENOENT); native output is redacted"},
+		{name: "bucket scope ENOENT", scope: RateLimitScope{Bucket: "limited"}, prepare: func(f *rateLimitGateway) {
+			f.errnoLine = enoent
+			f.before = func(args []string) (int, error, bool) { return 254, nil, isGet(args) }
+		}, want: "read RGW rate-limit policy (ratelimit get): radosgw-admin exited 254 (ENOENT); native output is redacted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user, f := newUnsetRateLimitFixture(t)
+			tc.prepare(f)
+			change, err := user.OverrideRateLimit(t.Context(), tc.scope, RateLimit{Enabled: true, MaxWriteOps: 1})
+			requireNoSecret(t, err)
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) || change.state.refused == nil {
+				t.Fatalf("OverrideRateLimit = %v, want %q", err, tc.want)
+			}
+			if len(f.mutations()) != 0 || f.countCommand("metadata", "get") != tc.metadata {
+				t.Fatalf("refused call ran %v", f.calls)
+			}
+			if err := change.Restore(t.Context()); err != nil {
+				t.Fatalf("refused handle's Restore: %v", err)
+			}
+		})
+	}
+}
+
+// Restore of an unset prior policy keeps the override tracked when the user
+// vanished after the ENOENT, and finishes once the proof holds again.
+func TestRGWRateLimitRestoreOfAnUnsetUserPolicyNeedsNativeProof(t *testing.T) {
+	user, f := newUnsetRateLimitFixture(t)
+	f.before = func(args []string) (int, error, bool) {
+		return 0, errors.New("connection to the engine broke"), slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
+	}
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+	if err == nil {
+		t.Fatal("lost command was not reported")
+	}
+	f.errnoLine = "ERROR: can't get key: (2) No such file or directory"
+	f.before = func(args []string) (int, error, bool) {
+		return 2, nil, slices.Equal(rateLimitCommand(args), []string{"metadata", "get"})
+	}
+	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "metadata get") {
+		t.Fatalf("Restore without proof: %v", err)
+	}
+	f.before, f.errnoLine = nil, ""
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A policy materialized from the native default matches a native object only
+// with the same named fields and a zero in every other budget.
+func TestRGWRateLimitDefaultPolicyMatching(t *testing.T) {
+	pattern := defaultRateLimitPolicy().with(RateLimit{Enabled: true, MaxWriteOps: 1})
+	decode := func(fields map[string]any) rateLimitPolicy {
+		data, _ := json.Marshal(map[string]any{"user_ratelimit": fields})
+		policy, err := decodeRateLimitPolicy(data, "user_ratelimit")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return policy
+	}
+	if !decode(rateLimitNative21(true, 0, 1)).equal(pattern) || !pattern.equal(decode(rateLimitNative(true, 0, 1))) {
+		t.Fatal("native default with the change does not match")
+	}
+	for _, fields := range []map[string]any{
+		rateLimitNative21(true, 0, 2),
+		rateLimitNative21(false, 0, 1),
+		func() map[string]any {
+			p := rateLimitNative21(true, 0, 1)
+			p["max_list_ops"] = json.Number("1")
+			return p
+		}(),
+		func() map[string]any { p := rateLimitNative21(true, 0, 1); p["mode"] = "strict"; return p }(),
+	} {
+		if decode(fields).equal(pattern) {
+			t.Fatalf("matched %v", fields)
+		}
+	}
+	if (rateLimitPolicy{unset: true}).equal(defaultRateLimitPolicy()) || !(rateLimitPolicy{unset: true}).equal(rateLimitPolicy{unset: true}) {
+		t.Fatal("unset policy matching")
 	}
 }
