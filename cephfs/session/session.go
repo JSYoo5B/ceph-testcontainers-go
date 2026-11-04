@@ -233,17 +233,22 @@ func list(ctx context.Context, fs *fsbase.Core) ([]Session, error) {
 	}
 	var sessions []Session
 	for _, mds := range ranks.Active {
-		data, err := fs.Cluster().Ceph(ctx, "tell", "mds."+fs.Name()+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
-		if err != nil {
-			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.Name(), mds.Rank, err)
-		}
-		ranked, err := parseSessions(data, mds.Rank)
+		ranked, err := rankSessions(ctx, fs, mds.Rank)
 		if err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, ranked...)
 	}
 	return sessions, nil
+}
+
+// rankSessions reads the session list of one active rank of fs.
+func rankSessions(ctx context.Context, fs *fsbase.Core, rank int) ([]Session, error) {
+	data, err := fs.Cluster().Ceph(ctx, "tell", "mds."+fs.Name()+":"+strconv.Itoa(rank), "session", "ls", "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.Name(), rank, err)
+	}
+	return parseSessions(data, rank)
 }
 
 func parseSessions(data []byte, rank int) ([]Session, error) {

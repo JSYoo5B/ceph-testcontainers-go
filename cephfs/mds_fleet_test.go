@@ -199,7 +199,7 @@ func TestCoreActiveRanksReportRosterOwnershipAndNativeState(t *testing.T) {
 	native.Output["fs dump --format json"] = dump
 	fs.mds.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}}
 	ranks, err := fs.base().ActiveRanks(t.Context())
-	want := &fsbase.ActiveRanks{FilesystemID: 41, MaxMDS: 2, Active: []fsbase.ActiveRank{{Rank: 0, State: "up:active", Owned: true}, {Rank: 1, State: "up:active"}}}
+	want := &fsbase.ActiveRanks{FilesystemID: 41, MaxMDS: 2, Active: []fsbase.ActiveRank{{Rank: 0, Name: "a", GID: 101, State: "up:active", Owned: true}, {Rank: 1, Name: "b", GID: 102, State: "up:active"}}}
 	if err != nil || !reflect.DeepEqual(ranks, want) {
 		t.Fatalf("a daemon outside the roster: active ranks = %+v, %v; want %+v", ranks, err, want)
 	}

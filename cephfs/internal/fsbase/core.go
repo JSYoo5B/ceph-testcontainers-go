@@ -79,10 +79,12 @@ type ActiveRanks struct {
 	Active       []ActiveRank
 }
 
-// ActiveRank is one active rank: its native state and whether a daemon of
-// this filesystem holds it.
+// ActiveRank is one active rank: the name and GID of the daemon that holds
+// it, its native state and whether that daemon is one of this filesystem's.
 type ActiveRank struct {
 	Rank  int
+	Name  string
+	GID   uint64
 	State string
 	Owned bool
 }
