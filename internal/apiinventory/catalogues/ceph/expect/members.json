@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph/expect",
-  "count": 54,
+  "count": 87,
   "types": {
     "ceph/expect.Health": [
       "Health.Exact field bool",
@@ -30,6 +30,51 @@
       "HealthMismatch.Observed field string",
       "HealthMismatch.Reason field HealthMismatchReason",
       "HealthMismatch.Want field string"
+    ],
+    "ceph/expect.ManagerEvaluation": [
+      "ManagerEvaluation.Expectation field Managers",
+      "ManagerEvaluation.Matched field bool",
+      "ManagerEvaluation.Mismatches field []ManagerMismatch",
+      "ManagerEvaluation.Observed field ceph.ManagerStatus"
+    ],
+    "ceph/expect.ManagerMismatch": [
+      "ManagerMismatch.Count field int",
+      "ManagerMismatch.GID field uint64",
+      "ManagerMismatch.Name field string",
+      "ManagerMismatch.ObservedAvailable field bool",
+      "ManagerMismatch.ObservedCount field int",
+      "ManagerMismatch.ObservedGID field uint64",
+      "ManagerMismatch.ObservedName field string",
+      "ManagerMismatch.Reason field ManagerMismatchReason"
+    ],
+    "ceph/expect.Managers": [
+      "Managers.Active field string",
+      "Managers.ActiveGID field uint64",
+      "Managers.Available field bool",
+      "Managers.FormerGID field uint64",
+      "Managers.StandbyCount field int",
+      "Managers.Standbys field []string"
+    ],
+    "ceph/expect.MonitorEvaluation": [
+      "MonitorEvaluation.Expectation field Monitors",
+      "MonitorEvaluation.Matched field bool",
+      "MonitorEvaluation.Mismatches field []MonitorMismatch",
+      "MonitorEvaluation.Observed field ceph.QuorumStatus"
+    ],
+    "ceph/expect.MonitorMismatch": [
+      "MonitorMismatch.Count field int",
+      "MonitorMismatch.FSID field string",
+      "MonitorMismatch.Name field string",
+      "MonitorMismatch.ObservedCount field int",
+      "MonitorMismatch.ObservedFSID field string",
+      "MonitorMismatch.Reason field MonitorMismatchReason"
+    ],
+    "ceph/expect.Monitors": [
+      "Monitors.FSID field string",
+      "Monitors.MemberCount field int",
+      "Monitors.Members field []string",
+      "Monitors.Quorum field []string",
+      "Monitors.QuorumSize field int"
     ],
     "ceph/expect.OSDEvaluation": [
       "OSDEvaluation.Expectation field OSDs",
