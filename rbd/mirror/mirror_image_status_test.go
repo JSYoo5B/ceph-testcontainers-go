@@ -222,7 +222,7 @@ func TestRBDMirrorImageStatusSchemaFailsClosed(t *testing.T) {
 }
 
 func TestRBDMirrorImageStatusStaleNativeUpDoesNotImplyLiveReceiver(t *testing.T) {
-	for _, fault := range []string{"stopped", "missing-service", "foreign-service", "wrong-instance", "not-running", "destination-primary", "creating"} {
+	for _, fault := range []string{"stopped", "missing-service", "foreign-service", "wrong-instance", "not-running", "destination-primary", "creating", "unknown"} {
 		t.Run(fault, func(t *testing.T) {
 			link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			switch fault {
@@ -240,6 +240,9 @@ func TestRBDMirrorImageStatusStaleNativeUpDoesNotImplyLiveReceiver(t *testing.T)
 				destination.imageInfo = rbdImageStatusInfo("destination-local", "snapshot", "global-image", true)
 			case "creating":
 				destination.imageInfo = strings.Replace(destination.imageInfo, `"enabled"`, `"creating"`, 1)
+			case "unknown":
+				// Squid's rbd before 19.2.3 prints the creating state so.
+				destination.imageInfo = strings.Replace(destination.imageInfo, `"enabled"`, `"unknown"`, 1)
 			}
 			status, err := link.ImageStatus(t.Context(), "volume")
 			if err != nil || status.ReplayReady {
