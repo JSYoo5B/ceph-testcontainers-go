@@ -26,6 +26,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
 | A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
+| A CephFS MDS answers but refuses metadata mutations | `cephfs.MDS.ForceReadOnly` | EROFS for writes; reads of existing data work | Yes | None: replace the process, then `MDSReadOnlyFault.WaitReplaced` |
 | A CephFS client cannot open a new session | `session.OverrideRefusal` (`cephfs/session`) | The new mount fails with EPERM; open sessions keep working | Yes | `RefusalOverrideHandle.Restore` |
 | The MDS evicts a silent CephFS client quickly | `session.OverrideTimeouts` (`cephfs/session`) with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `TimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `override.AddBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
@@ -704,6 +705,24 @@ marks an OSD out while it keeps running. During that time wait with
 `WaitForPGClean`; `WaitForClean` also requires every owned OSD up and in. For
 an abrupt loss, `Stop` the OSD instead.
 
+## Making an MDS read-only
+
+[`cephfs.MDS.ForceReadOnly`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#MDS.ForceReadOnly)
+sends `force_readonly` to the current GID of an owned MDS that holds the only
+active rank of its filesystem. The daemon keeps its rank and its sessions; a new client reads
+existing files, and its writes and other metadata mutations fail with EROFS
+(errno 30). The MON health reports `MDS_READ_ONLY` for that daemon.
+
+- The state lives in the MDS process and has no inverse command. Only a new
+  process ends it: `MDS.Stop` and `ceph mds fail <gid>` hand the rank to a
+  standby, or `MDS.Stop` and `MDS.Start` restart the daemon under a new GID.
+  `MDSReadOnlyFault.WaitReplaced` confirms that another GID holds the rank;
+  it does not replace the process.
+- The fault reproduces the result of a metadata-pool write error, not the
+  error: no pool or OSD is touched, so a new process starts writable.
+- A client that held write capabilities or buffered data before the fault is
+  not covered. Use a new mount for each phase, also after the replacement.
+
 ## Evicting a silent CephFS client
 
 The MDS evicts a silent client after `session_timeout` (60 s) or
@@ -789,7 +808,7 @@ if err != nil {
 
 | Check | Use it for |
 | --- | --- |
-| `HealthDetails` | `SLOW_OPS`, `OSD_DOWN`, `OSD_FULL`, `OSD_SCRUB_ERRORS`, `PG_DAMAGED` |
+| `HealthDetails` | `SLOW_OPS`, `OSD_DOWN`, `OSD_FULL`, `OSD_SCRUB_ERRORS`, `PG_DAMAGED`, `MDS_READ_ONLY` |
 | `OSDStates`, `OSDFlags` | Up/in state and weight of owned OSDs, global flags |
 | `Pool.PGs` | PG states, up/acting sets and primaries |
 | `QuorumStatus`, `ManagerStatus` | MON quorum and the active MGR |

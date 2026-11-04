@@ -25,7 +25,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    `ceph.Run`, `rbd.Run` and `rgw.Run`), and `cephfs.Start` adds one to a
    running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
-   `ScaleMDS`, `AddDataPool`, `OverrideMaxFileSize`; `snapschedule.Add`,
+   `ScaleMDS`, `AddDataPool`, `OverrideMaxFileSize`, `MDS.ForceReadOnly`;
+   `snapschedule.Add`,
    `session.OverrideTimeouts`, `session.OverrideRefusal`;
    in [`cephfs/subvolume`](subvolume/README.md)
    `subvolume.CreateGroup` / `subvolume.Create` (quotas, data pools, RADOS
@@ -147,6 +148,50 @@ if err != nil {
 // The SUT's write past 64 KiB now fails with EFBIG; a 4 KiB file still works.
 ```
 
+## Read-only MDS
+
+`daemon.ForceReadOnly(ctx)` sends `force_readonly` to the current process of
+one owned MDS from `fs.MDSs()`, so the SUT meets a metadata server that still
+answers but refuses metadata mutations with EROFS. The daemon must hold the
+only active rank of its filesystem as up:active; its GID and rank come from the
+FSMap and must match the process that answers `ceph tell mds.<gid> status`. A
+standby, an edited or retired handle, a filesystem with more ranks and a daemon
+that already reports `MDS_READ_ONLY` are `ceph.ErrInvalidRequest` before any
+change; a daemon whose command list lacks `force_readonly` is
+`ceph.ErrUnsupported`. The command goes to the GID, and the call returns once
+the MON health reports that daemon read-only.
+
+This is a one-way fault, not an override: Ceph has no command that makes the
+process writable again, so `MDSReadOnlyFault` has no `Restore`. The fault ends
+only when the process is replaced. Stop the daemon and fail its GID so that a
+standby takes the rank, or restart it, and then call
+`MDSReadOnlyFault.WaitReplaced`. It returns the new holder once the faulted
+GID is gone from the FSMap, another owned GID holds the rank, that process
+answers as the rank and its health does not report read-only. It never replaces
+the process itself. Keep a fault returned with an error: the command may have
+reached the daemon.
+
+```golang
+// active is the *cephfs.MDS from fs.MDSs() whose ID MDSStatus reports on rank 0.
+fault, err := active.ForceReadOnly(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+// A new client reads existing files; its writes fail with EROFS.
+// Recovery: stop the daemon, run ceph mds fail <gid>, then
+holder, err := fault.WaitReplaced(ctx)
+// holder is the standby, under its own GID; mount a new client to write.
+```
+
+What it proves: the target process set its in-memory read-only state,
+reports it to the MONs and refuses new metadata mutations, while a fresh client
+still reads the data. What it does not prove: a metadata-pool failure (no OSD or
+pool is touched), that a client which already held write capabilities or
+buffered data lost them, how a single operation of a retained client ends,
+anything about other ranks, or that a client which had a session with the
+faulted process can write after the replacement. Mount a new client for each
+phase.
+
 ## Directory-pin timing
 
 For a fixture that prepares several directory-pin handoffs on two or more
@@ -193,6 +238,7 @@ runtime under [Ceph's option rules](https://github.com/ceph/ceph/blob/v20.2.4/sr
   or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/cephfs`.
 - [Native commands](../docs/guides/native-commands.md#cephfs-state-and-settings)
   for what has no typed API; [Fault injection](../docs/guides/fault-injection.md)
-  (MDS failover, frozen and evicted clients, an MDS that ignores clients);
+  (MDS failover, a read-only MDS, frozen and evicted clients, an MDS that
+  ignores clients);
   [Contexts and cleanup](../docs/guides/contexts-and-cleanup.md);
   [Errors](../docs/guides/errors.md).
