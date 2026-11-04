@@ -4,6 +4,7 @@ The fake API below substitutes only remote JSON/zip responses to exercise the
 write authorization and idempotence boundary. It does not model GitHub execution.
 """
 import copy
+import contextlib
 import hashlib
 import io
 import json
@@ -231,6 +232,20 @@ class PublishTests(unittest.TestCase):
         with mock.patch.object(reporter, "api", side_effect=failing_write), self.assertRaises(OSError):
             reporter.publish(REPO, 10, 2)
         self.assertEqual(sum(c[1] != "GET" for c in calls), 1)
+
+
+class CommandFailureTests(unittest.TestCase):
+    def test_lost_write_response_never_claims_no_comment_was_created(self):
+        output = io.StringIO()
+        # A lost response after a write can leave a committed comment. The CLI
+        # must preserve that uncertainty and must not expose transport details.
+        with mock.patch("sys.argv", ["publisher", "--repository", REPO, "--run", "10", "--attempt", "2"]), \
+                mock.patch.object(reporter, "publish", side_effect=OSError("private transport detail")), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(reporter.main(), 1)
+        self.assertIn("publication not confirmed", output.getvalue())
+        self.assertNotIn("not published", output.getvalue())
+        self.assertNotIn("private transport detail", output.getvalue())
 
 
 class WorkflowTests(unittest.TestCase):

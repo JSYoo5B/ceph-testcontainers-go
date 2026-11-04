@@ -205,7 +205,7 @@ def main():
         print(publish(args.repository, args.run, args.attempt, args.dry_run))
     except (Refusal, OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
         # Do not leak response bodies, tokens or arbitrary artifact content.
-        print("Structural report not published: evidence unavailable, invalid or stale.")
+        print("Structural report publication not confirmed; inspect the PR before retrying.")
         return 1
     return 0
 
