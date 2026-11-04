@@ -991,7 +991,7 @@ def declaration_summary(selection, category):
              + " batches selected since " + cell(selection.get("merge_base") or selection["base"]) + "."]
     if not selection.get("advisory", True):
         lines += ["", "Only the selected batches run here, by opt-in. The selection is advisory: "
-                      "pushes to main run every batch."]
+                      "Ceph periodic runs every batch on main."]
     if selection.get("error"):
         lines += ["", "Every batch runs: the analysis failed: " + cell(selection["error"])]
     for reason in selection["fallback"]:

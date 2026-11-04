@@ -646,7 +646,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertFalse(report["declaration_selection"]["advisory"])
         self.assertEqual(text, "earlier\n### Declaration selection: short\n\n1 of 2 batches selected since abc.\n\n"
                                "Only the selected batches run here, by opt-in. The selection is advisory: "
-                               "pushes to main run every batch.\n\n"
+                               "Ceph periodic runs every batch on main.\n\n"
                                "| Batch | Runs | Reason |\n| --- | --- | --- |\n"
                                "| " + one + " | yes | func TestOne reaches func helper |\n"
                                "| " + two + " | no | none of 1 roots reaches a changed declaration |\n")

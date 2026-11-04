@@ -55,8 +55,8 @@ import tag_scenarios
 
 
 SCHEMA = "ceph-ci-measurements/v1"
-# The workflows that a pull request or a push to main starts. Ceph periodic
-# and the optional regressions are measured as jobs (peak concurrency) only.
+# The PR workflow family; push events remain readable for comparison data.
+# Ceph periodic and optional regressions are measured as jobs (peak concurrency) only.
 FAMILY = ("Code checks", "Docker checks", "Ceph short", "Ceph topology", "Ceph multicluster",
           "Ceph recovery", "Ceph release matrix")
 EVENTS = ("pull_request", "push")
