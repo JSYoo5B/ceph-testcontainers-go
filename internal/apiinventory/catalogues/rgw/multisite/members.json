@@ -2,8 +2,16 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw/multisite",
-  "count": 129,
+  "count": 135,
   "types": {
+    "rgw/multisite.BucketPolicyWatchEvent": [
+      "BucketPolicyWatchEvent.Err field error",
+      "BucketPolicyWatchEvent.Finished field time.Time",
+      "BucketPolicyWatchEvent.Kind field ceph.WatchEventKind",
+      "BucketPolicyWatchEvent.Sequence field uint64",
+      "BucketPolicyWatchEvent.Started field time.Time",
+      "BucketPolicyWatchEvent.Status field BucketSyncPolicyStatus"
+    ],
     "rgw/multisite.BucketSyncPolicyStatus": [
       "BucketSyncPolicyStatus.Bucket field SyncBucketIdentity",
       "BucketSyncPolicyStatus.Buckets field []SyncBucketIdentity",

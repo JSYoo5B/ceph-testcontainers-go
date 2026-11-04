@@ -277,3 +277,136 @@ func TestRGWWatchBucketSyncEndsOnAPeriodThatDropsThePipe(t *testing.T) {
 		t.Fatalf("a period that dropped the pipe ended the watch with %v", err)
 	}
 }
+
+func TestRGWWatchBucketPolicyReportsStagesUntilImported(t *testing.T) {
+	f, cli, g := newRGWPolicyImportFixture(t)
+	cli.localPeriod = syncJSONClone(cli.current)
+	cli.localPeriod["epoch"] = json.Number("0")
+	before := len(cli.calls)
+	w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := nextSyncEvent(t, w.Events())
+	if baseline.Sequence != 1 || baseline.Kind != ceph.WatchBaseline || baseline.Status.PeriodImported || baseline.Status.Imported || baseline.Status.PeriodID != "period-original" || baseline.Status.ZoneID != "dest-id" || len(baseline.Status.Buckets) != 1 {
+		t.Fatalf("baseline %+v", baseline)
+	}
+	// The event owns its slice: changing it changes nothing the watch keeps.
+	baseline.Status.Buckets[0].ID = "caller-mutated"
+
+	underTopology(f, func() { cli.localPeriod, cli.policyLagReads = nil, 1000 })
+	period := nextSyncEvent(t, w.Events())
+	if period.Kind != ceph.WatchChanged || !period.Status.PeriodImported || period.Status.PolicyImported || !period.Status.BucketsImported || period.Status.Imported {
+		t.Fatalf("period stage %+v", period)
+	}
+	underTopology(f, func() { cli.missingBuckets = map[string]bool{"bucket": true} })
+	gap := nextSyncEvent(t, w.Events())
+	if gap.Kind != ceph.WatchGap || gap.Err == nil || !gap.Status.PeriodImported || gap.Status.BucketsImported || gap.Status.Imported || strings.Contains(gap.Err.Error(), "secret-marker") {
+		t.Fatalf("gap %+v", gap)
+	}
+	underTopology(f, func() { cli.missingBuckets, cli.policyLagReads = nil, 0 })
+	imported := nextSyncEvent(t, w.Events())
+	if imported.Kind != ceph.WatchResumed || !imported.Status.Imported || !imported.Status.PolicyImported || imported.Sequence != 4 || imported.Status.Buckets[0].ID != "bucket-original" {
+		t.Fatalf("imported %+v", imported)
+	}
+	if _, ok := <-w.Events(); ok {
+		t.Fatal("the watch continued after the imported status")
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("an imported watch ended with %v", err)
+	}
+	requirePolicyImportReadOnly(t, cli.calls[before:])
+}
+
+func TestRGWWatchBucketPolicyEndsAtAnImportedBaseline(t *testing.T) {
+	_, _, g := newRGWPolicyImportFixture(t)
+	w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []BucketPolicyWatchEvent
+	for e := range w.Events() {
+		events = append(events, e)
+	}
+	if len(events) != 1 || events[0].Kind != ceph.WatchBaseline || !events[0].Status.Imported {
+		t.Fatalf("events %+v", events)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRGWWatchBucketPolicyEndsOnPinnedChanges(t *testing.T) {
+	for _, change := range []string{"period", "recreated", "native-policy", "fixture-group", "detached", "terminated"} {
+		t.Run(change, func(t *testing.T) {
+			f, cli, g := newRGWPolicyImportFixture(t)
+			cli.policyLagReads = 1000
+			w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if baseline := nextSyncEvent(t, w.Events()); baseline.Status.Imported || baseline.Status.PolicyImported {
+				t.Fatalf("baseline %+v", baseline)
+			}
+			if change == "fixture-group" {
+				if err := g.SetStatus(t.Context(), SyncAllowed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			underTopology(f, func() {
+				switch change {
+				case "period":
+					nextPeriod(cli.rgwSyncCLI)
+				case "recreated":
+					cli.bucketID = "bucket-recreated"
+				case "native-policy":
+					syncNativeGroup(cli.bucketPolicy, g.ID())["status"] = "forbidden"
+				case "detached":
+					f.realm.destinationClient = nil
+				case "terminated":
+					f.closed = true
+				}
+			})
+			for e := range w.Events() {
+				t.Fatalf("event after the change %+v", e)
+			}
+			err = w.Stop()
+			switch change {
+			case "recreated":
+				if !errors.Is(err, errSyncBucketRecreated) {
+					t.Fatalf("recreated bucket ended with %v", err)
+				}
+			case "terminated":
+				if !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Fatalf("terminated fixture ended with %v", err)
+				}
+			default:
+				if err == nil || !strings.HasPrefix(err.Error(), bucketPolicyWatchOperation) {
+					t.Fatalf("%s ended with %v", change, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {
+	_, cli, g := newRGWPolicyImportFixture(t)
+	if _, err := g.WatchBucketPolicy(t.Context(), ceph.WatchConfig{Interval: time.Millisecond}, "destination"); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("short interval: %v", err)
+	}
+	if _, err := (*SyncGroup)(nil).WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("nil group: %v", err)
+	}
+	if err := (&BucketPolicyWatch{}).Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("unstarted Stop: %v", err)
+	}
+	before := len(cli.calls)
+	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "source"); err == nil || w != nil || len(cli.calls) != before {
+		t.Fatalf("a zone outside the pipes' destinations started %v %v", w, err)
+	}
+	// A failed baseline starts nothing.
+	cli.missingBuckets = map[string]bool{"bucket": true}
+	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); err == nil || w != nil {
+		t.Fatalf("failed baseline started %v %v", w, err)
+	}
+}

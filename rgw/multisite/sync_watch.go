@@ -414,8 +414,11 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 // BucketSyncPolicyStatus of that read; its stages PeriodImported,
 // PolicyImported, BucketsImported and Imported are compared, and its
 // identities stay the baseline's. On a WatchGap it is the partial report of
-// the failed read, with Imported false. Two statuses separated by a gap, or by
-// the polling interval, do not establish the stages in between.
+// the failed read, with Imported false. The destination answers a bucket it
+// has not imported yet with a failed command, so that stage reads as a
+// WatchGap with BucketsImported false rather than as a change. Two statuses
+// separated by a gap, or by the polling interval, do not establish the stages
+// in between.
 type BucketPolicyWatchEvent struct {
 	Sequence          uint64
 	Kind              ceph.WatchEventKind

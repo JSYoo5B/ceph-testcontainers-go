@@ -2,8 +2,36 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 68,
+  "count": 73,
   "entries": [
+    {
+      "current": "rgw/multisite.BucketPolicyWatch",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketPolicyWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketPolicyWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan BucketPolicyWatchEvent",
+      "receiver": "*BucketPolicyWatch",
+      "proposed": "rgw/multisite.BucketPolicyWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketPolicyWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*BucketPolicyWatch",
+      "proposed": "rgw/multisite.BucketPolicyWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketPolicyWatchEvent",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketPolicyWatchEvent",
+      "decision": "baseline"
+    },
     {
       "current": "rgw/multisite.BucketSyncPolicyStatus",
       "kind": "type",
@@ -361,6 +389,14 @@
       "signature": "func(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
       "receiver": "*SyncGroup",
       "proposed": "rgw/multisite.SyncGroup.WaitBucketSyncReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.WatchBucketPolicy",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, destinationZone string) (*BucketPolicyWatch, error)",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.WatchBucketPolicy",
       "decision": "baseline"
     },
     {
