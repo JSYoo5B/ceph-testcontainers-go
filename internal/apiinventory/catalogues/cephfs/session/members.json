@@ -2,11 +2,21 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/session",
-  "count": 11,
+  "count": 17,
   "types": {
+    "cephfs/session.Feature": [
+      "Feature.Bit field int",
+      "Feature.Name field string"
+    ],
     "cephfs/session.Limits": [
       "Limits.Autoclose field time.Duration",
       "Limits.Timeout field time.Duration"
+    ],
+    "cephfs/session.RequirementStep": [
+      "RequirementStep.AlreadyRequired field bool",
+      "RequirementStep.Confirmed field bool",
+      "RequirementStep.Feature field Feature",
+      "RequirementStep.Sent field bool"
     ],
     "cephfs/session.Session": [
       "Session.Address field string",

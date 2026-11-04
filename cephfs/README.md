@@ -26,7 +26,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
    `ScaleMDS`, `AddDataPool`, `OverrideMaxFileSize`; `snapschedule.Add`,
-   `session.OverrideTimeouts`, `session.OverrideRefusal`;
+   `session.OverrideTimeouts`, `session.OverrideRefusal`,
+   `session.OverrideRequiredFeatures`;
    in [`cephfs/subvolume`](subvolume/README.md)
    `subvolume.CreateGroup` / `subvolume.Create` (quotas, data pools, RADOS
    namespaces), `Subvolume.CreateSnapshot` and `Snapshot.Clone`,
