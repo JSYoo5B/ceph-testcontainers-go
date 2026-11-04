@@ -271,7 +271,7 @@ func runOSDReplicationPeerPathCut(t *testing.T) {
 		if written() {
 			return heldOp{}, false, fmt.Errorf("the write finished across the cut: %v", write.err)
 		}
-		data, err := adminSocket(t, ctx, cluster, primaryName, "dump_ops_in_flight")
+		data, err := harness.AdminSocket(ctx, cluster, primaryName, "dump_ops_in_flight")
 		if err != nil {
 			return heldOp{}, false, err
 		}
@@ -316,7 +316,7 @@ func runOSDReplicationPeerPathCut(t *testing.T) {
 			receipt.Window.FirstEpoch = epoch
 		}
 		receipt.FSID, receipt.Window.LastEpoch = fsid, epoch
-		data, err := adminSocket(t, ctx, cluster, primaryName, "dump_ops_in_flight")
+		data, err := harness.AdminSocket(ctx, cluster, primaryName, "dump_ops_in_flight")
 		if err != nil {
 			return epoch, false, err
 		}

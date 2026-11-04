@@ -149,7 +149,7 @@ func waitOSDOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	t.Helper()
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
+		out, err := harness.AdminSocket(ctx, cluster, daemon, "config", "get", option)
 		var value map[string]string
 		if err == nil && json.Unmarshal(out, &value) == nil && value[option] == want {
 			return

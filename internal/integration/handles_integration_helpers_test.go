@@ -27,39 +27,6 @@ func osdHandle(t testing.TB, ctx context.Context, c *ceph.Container, id int) *ce
 	return osd
 }
 
-// adminSocket runs args on the admin socket of the daemon that daemon names,
-// such as "mon.a", "mgr.a" or "osd.0". The daemon must be owned by the
-// cluster. A failed lookup is returned as an error, never a test failure, so
-// a canceled context or a goroutine can call it.
-func adminSocket(_ testing.TB, ctx context.Context, c *ceph.Container, daemon string, args ...string) ([]byte, error) {
-	kind, id, _ := strings.Cut(daemon, ".")
-	switch kind {
-	case "mon":
-		mon, err := harness.FindMonitor(ctx, c, id)
-		if err != nil {
-			return nil, err
-		}
-		return mon.AdminSocket(ctx, args...)
-	case "mgr":
-		mgr, err := harness.FindManager(ctx, c, id)
-		if err != nil {
-			return nil, err
-		}
-		return mgr.AdminSocket(ctx, args...)
-	case "osd":
-		n, err := strconv.Atoi(id)
-		if err != nil {
-			return nil, fmt.Errorf("daemon %q is not an osd.<id>", daemon)
-		}
-		osd, err := harness.FindOSD(ctx, c, n)
-		if err != nil {
-			return nil, err
-		}
-		return osd.AdminSocket(ctx, args...)
-	}
-	return nil, fmt.Errorf("daemon %q is not a mon.<name>, mgr.<name> or osd.<id>", daemon)
-}
-
 // rotateKey rotates the Cephx key of the MGR or OSD that daemon names, such as
 // "mgr.a" or "osd.0". A MON has no RotateKey. Lookup failures are errors.
 func rotateKey(_ testing.TB, ctx context.Context, c *ceph.Container, daemon string) error {
@@ -92,11 +59,11 @@ type socketCluster struct {
 	t testing.TB
 }
 
-// adminSocket runs args on the admin socket of the owned daemon that daemon
+// AdminSocket runs args on the admin socket of the owned daemon that daemon
 // names.
 func (s socketCluster) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
 	s.t.Helper()
-	return adminSocket(s.t, ctx, s.Container, daemon, args...)
+	return harness.AdminSocket(ctx, s.Container, daemon, args...)
 }
 
 // RemoveMonitor removes the owned monitor that name names.

@@ -29,7 +29,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 
 	for _, daemon := range []string{"mon.a", "mgr.a", "osd.0"} {
-		out, err := adminSocket(t, ctx, cluster, daemon, "version")
+		out, err := harness.AdminSocket(ctx, cluster, daemon, "version")
 		var version struct {
 			Version string `json:"version"`
 		}
