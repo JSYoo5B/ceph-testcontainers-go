@@ -62,14 +62,15 @@ func ValidateAdminArgs(args []string) error {
 
 // RedactAdminFailure hides the native output of a failed radosgw-admin
 // command, which can include secret keys, and keeps the classification of err,
-// including the *ceph.NativeFailure exit code and errno. Other errors are
-// returned unchanged.
+// including the *ceph.NativeFailure exit code and errno, which its text also
+// names. Other errors are returned unchanged.
 func RedactAdminFailure(err error) error {
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) {
 		return err
 	}
-	return clusterutil.Quiet(errors.New("radosgw-admin command failed; native output is redacted"), err)
+	exit := ceph.NativeFailure{Program: "radosgw-admin", ExitCode: failure.ExitCode, Errno: failure.Errno}
+	return clusterutil.Quiet(fmt.Errorf("%s; native output is redacted", exit.Error()), err)
 }
 
 // AdminCommand runs radosgw-admin in the gateway container, in the gateway's
