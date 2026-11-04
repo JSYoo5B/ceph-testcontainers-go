@@ -103,6 +103,10 @@ func rgwExternalKMS(t *testing.T) {
 		{Section: "client.admin", Name: "rgw_crypt_sse_s3_vault_verify_ssl", Value: "true"},
 		{Section: "client.admin", Name: "rgw_crypt_sse_s3_vault_ssl_cacert", Value: rgwKMSCAFile},
 		{Section: "client.admin", Name: "rgw_crypt_require_ssl", Value: "true"},
+		// A Vault request on a connection whose peer vanished waits until
+		// libcurl's low-speed limit aborts it, 5 minutes by default. Bound it
+		// so the KMS cut fails within the S3 client's timeout.
+		{Section: "client.admin", Name: "rgw_curl_low_speed_time", Value: "5"},
 	}
 	for _, setting := range settings {
 		change, err := override.SetConfig(ctx, cluster, setting)
@@ -277,13 +281,14 @@ func rgwExternalKMS(t *testing.T) {
 		if err != nil || slices.Contains(attached, harness.StaticFacts(cluster).NetworkName) {
 			t.Fatalf("Vault is still attached to the cluster bridge: %v %v", attached, err)
 		}
+		// Only the trusted gateway reaches Vault at all; its request rides the
+		// connection that RGW keeps to Vault, which libcurl's low-speed limit
+		// aborts. The other gateway shows that KMS-independent requests work.
+		started := time.Now()
+		failed := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
+		rgwBackendRequire(t, failed, http.StatusInternalServerError)
+		t.Logf("KMS unreachable: status=%d code=%s after %s", failed.code, rgwBackendErrorCode(failed.body), time.Since(started).Round(time.Millisecond))
 		for _, client := range clients {
-			started := time.Now()
-			failed := rgwBackendSigned(t, ctx, client, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
-			if failed.code == http.StatusOK {
-				t.Fatal("SSE-KMS read succeeded while Vault was disconnected")
-			}
-			t.Logf("KMS unreachable: status=%d code=%s after %s", failed.code, rgwBackendErrorCode(failed.body), time.Since(started).Round(time.Millisecond))
 			readPlain(client, "KMS disconnected")
 		}
 		if err := cut.Restore(ctx); err != nil {
@@ -293,6 +298,15 @@ func rgwExternalKMS(t *testing.T) {
 		if err != nil || address != cut.OriginalAddress.String() {
 			t.Fatalf("Vault reattached at %q, want %s: %v", address, cut.OriginalAddress, err)
 		}
+		// The first requests after reattachment can still fail while RGW opens
+		// a new connection; the same object must then read its exact bytes.
+		started = time.Now()
+		attempts := 0
+		rgwBackendWaitStatus(t, ctx, func(callCtx context.Context) rgwBackendResponse {
+			attempts++
+			return rgwBackendSigned(t, callCtx, trusted, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
+		}, http.StatusOK)
+		t.Logf("KMS reconnect: first exact read after %s, %d attempts", time.Since(started).Round(time.Millisecond), attempts)
 		readExact(trusted, "KMS reconnected")
 		// Docker publishes the ports again when the endpoint is reattached, so
 		// the host port can differ. vault.call resolves it on every request.
