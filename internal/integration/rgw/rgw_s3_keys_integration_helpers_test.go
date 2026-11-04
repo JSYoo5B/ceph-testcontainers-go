@@ -160,6 +160,7 @@ type s3ProbeResult struct {
 	AssumedARN string `json:"assumed_arn"`
 	Outcome    string `json:"outcome"`
 	SHA256     string `json:"sha256"`
+	SDK        string `json:"sdk"`
 }
 
 // buildS3Probe builds the probe module, outside this module and its
@@ -198,9 +199,23 @@ func (p s3Probe) runAs(t *testing.T, ctx context.Context, key *rgw.S3Key, roleAR
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p.exec(t, ctx, access, secret, "-endpoint", p.endpoint, "-region", p.region, "-bucket", bucket, "-object", object, "-operation", operation, "-data", data, "-role-arn", roleARN)
+}
+
+// exec starts a fresh probe process with the key pair access and secret in
+// its environment and args on its command line, and returns the line it
+// printed for its operation.
+func (p s3Probe) exec(t *testing.T, ctx context.Context, access, secret string, args ...string) s3ProbeResult {
+	t.Helper()
+	operation := ""
+	for i, arg := range args {
+		if arg == "-operation" && i+1 < len(args) {
+			operation = args[i+1]
+		}
+	}
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, p.path, "-endpoint", p.endpoint, "-region", p.region, "-bucket", bucket, "-object", object, "-operation", operation, "-data", data, "-role-arn", roleARN)
+	cmd := exec.CommandContext(runCtx, p.path, args...)
 	cmd.Env = []string{"AWS_ACCESS_KEY_ID=" + access, "AWS_SECRET_ACCESS_KEY=" + secret, "HOME=" + t.TempDir()}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
