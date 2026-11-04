@@ -82,3 +82,27 @@ func TestPairSockets(t *testing.T) {
 		t.Fatal("found a closed tuple")
 	}
 }
+
+func TestRequestDelivered(t *testing.T) {
+	idle := heldReplySample{Established: true}
+	for _, c := range []struct {
+		name        string
+		logged      bool
+		client, osd socketRow
+		want        bool
+	}{
+		{name: "delivered", logged: true, osd: socketRow{RX: 412}, want: true},
+		// The Messenger logged and queued the request, but its write handler
+		// has not run: both queues are still empty.
+		{name: "write delayed", logged: true},
+		{name: "partly acknowledged", logged: true, client: socketRow{TX: 100}, osd: socketRow{RX: 312}},
+		{name: "not logged", osd: socketRow{RX: 412}},
+	} {
+		if got := requestDelivered(c.logged, c.client, c.osd, idle); got != c.want {
+			t.Errorf("%s: %t, want %t", c.name, got, c.want)
+		}
+	}
+	if requestDelivered(true, socketRow{}, socketRow{RX: 8}, heldReplySample{RX: 8}) {
+		t.Error("bytes the idle session already held count as the request")
+	}
+}

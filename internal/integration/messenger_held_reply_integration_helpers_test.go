@@ -23,6 +23,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -220,6 +221,17 @@ func (p socketPair) findClient(rows []socketRow) (socketRow, bool) {
 	return findSocket(rows, p.Client, p.OSD)
 }
 
+// requestDelivered reports whether a request the client logged has reached
+// the frozen OSD's socket. The client logs a message when its Messenger
+// queues it, before a separate handler writes it, so an empty client send
+// queue alone also holds for a request still waiting to be written. Only
+// bytes waiting unread at the OSD's end, which held none while idle and whose
+// process reads nothing while frozen, show that the write happened; with the
+// client's send queue empty, the kernel has acknowledged all of it.
+func requestDelivered(logged bool, client, osd socketRow, idle heldReplySample) bool {
+	return logged && client.TX == 0 && osd.RX > idle.RX
+}
+
 func findSocket(rows []socketRow, local, remote netip.AddrPort) (socketRow, bool) {
 	for _, row := range rows {
 		if row.State == tcpEstablished && row.Local == local && row.Remote == remote {
@@ -260,12 +272,14 @@ type heldReplyReceipt struct {
 		OSD    string `json:"osd"`
 		Client string `json:"client"`
 	} `json:"images"`
-	OSD        string            `json:"osd"`
-	Client     string            `json:"client"`
-	Connection socketPair        `json:"connection"`
-	Seeded     heldReadback      `json:"seeded"`
-	Idle       heldReplySample   `json:"idle"`
-	Held       []heldReplySample `json:"held"`
+	OSD        string          `json:"osd"`
+	Client     string          `json:"client"`
+	Connection socketPair      `json:"connection"`
+	Seeded     heldReadback    `json:"seeded"`
+	Idle       heldReplySample `json:"idle"`
+	// Delivered is the OSD's end once the frozen OSD holds the request.
+	Delivered heldReplySample   `json:"delivered"`
+	Held      []heldReplySample `json:"held"`
 	// Control is the fixture's MON command and the OSD's answer to another
 	// session, both while the reply is held.
 	Control []string      `json:"control"`
@@ -322,8 +336,8 @@ func heldReplyMark(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 //
 // The order closes every race. The OSD is frozen first, so its kernel
 // acknowledges the request into the OSD's receive buffer but nothing answers.
-// Once the client's messenger has logged the request and its send queue is
-// empty, the consumer is frozen and the OSD thawed: the OSD reads the
+// Once the request waits unread at the OSD's end and nothing remains in the
+// client's send queue, the consumer is frozen and the OSD thawed: the OSD reads the
 // request and writes the reply into a connection whose receiver reads
 // nothing. If the reply does not stay queued, the condition is not
 // established and the test fails rather than passing on a reply that fitted
@@ -429,9 +443,24 @@ func testHeldReply(t *testing.T, abandon bool) {
 		t.Fatalf("consumer ready mark %v", ready)
 	}
 
+	// The OSD's network namespace is read through a container that joins it,
+	// so its socket table stays readable while the OSD is frozen.
+	osdNet, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image),
+		testcontainers.WithEntrypoint("sleep", "infinity"),
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.NetworkMode = container.NetworkMode("container:" + osd.GetContainerID())
+		}),
+	)
+	if osdNet != nil {
+		testcontainers.CleanupContainer(t, osdNet)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// The consumer's container runs nothing else, so the one connection both
 	// tables share is its session with the OSD.
-	osdRows := socketTable(t, ctx, osd)
+	osdRows := socketTable(t, ctx, osdNet)
 	pairs := pairSockets(osdRows, socketTable(t, ctx, consumer))
 	if len(pairs) != 1 {
 		t.Fatalf("want one consumer session with %s, got %+v", receipt.OSD, pairs)
@@ -471,13 +500,16 @@ func testHeldReply(t *testing.T, abandon bool) {
 			}
 		}
 		row, ok := receipt.Connection.findClient(socketTable(t, ctx, consumer))
-		if sent && ok && row.TX == 0 {
-			break
-		} else if !ok {
+		end, osdOK := receipt.Connection.find(socketTable(t, ctx, osdNet))
+		if !ok || !osdOK {
 			t.Fatalf("the consumer's session with %s closed while the OSD was frozen", receipt.OSD)
 		}
+		if requestDelivered(sent, row, end, receipt.Idle) {
+			receipt.Delivered = heldReplySample{Established: true, TX: end.TX, RX: end.RX}
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the consumer did not send its read to the frozen OSD: logged %t, send queue %d, operations %q", sent, row.TX, ops[max(0, len(ops)-4):])
+			t.Fatalf("the read did not reach the frozen OSD: logged %t, client send queue %d, OSD receive queue %d, operations %q", sent, row.TX, end.RX, ops[max(0, len(ops)-4):])
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -499,7 +531,7 @@ func testHeldReply(t *testing.T, abandon bool) {
 	// The OSD's send queue on that connection must fill and stay full while
 	// the consumer reads nothing.
 	for deadline := time.Now().Add(time.Minute); len(receipt.Held) < heldReplySamples; {
-		row, ok := receipt.Connection.find(socketTable(t, ctx, osd))
+		row, ok := receipt.Connection.find(socketTable(t, ctx, osdNet))
 		sample := heldReplySample{Established: ok, TX: row.TX, RX: row.RX}
 		switch {
 		case !ok:
@@ -521,7 +553,7 @@ func testHeldReply(t *testing.T, abandon bool) {
 		t.Fatalf("%s answered version %q while the reply is held", receipt.OSD, version)
 	}
 	receipt.Control = append(receipt.Control, "tell "+receipt.OSD+" version: answered")
-	if row, ok := receipt.Connection.find(socketTable(t, ctx, osd)); !ok || row.TX < heldReplyQueued || reader.finished() {
+	if row, ok := receipt.Connection.find(socketTable(t, ctx, osdNet)); !ok || row.TX < heldReplyQueued || reader.finished() {
 		t.Fatalf("the hold ended during the control commands: %+v %t, reader done %t", row, ok, reader.finished())
 	}
 
@@ -535,7 +567,7 @@ func testHeldReply(t *testing.T, abandon bool) {
 		consumerPause = nil
 		started := time.Now()
 		for deadline := started.Add(2 * time.Minute); ; {
-			if _, ok := receipt.Connection.find(socketTable(t, ctx, osd)); !ok {
+			if _, ok := receipt.Connection.find(socketTable(t, ctx, osdNet)); !ok {
 				break
 			}
 			if time.Now().After(deadline) {
