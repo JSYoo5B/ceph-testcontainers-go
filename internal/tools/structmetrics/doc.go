@@ -6,7 +6,8 @@
 // recounting a large type by reading it (issue #226).
 //
 // It is a reference measurement for triage, not an acceptance threshold.
-// Nothing in CI runs it or fails on its output, and a count cannot say whether
+// Code CI collects it for report-only PR triage; no check fails on its values.
+// A count cannot say whether
 // a responsibility boundary is good. It parses source lexically with the
 // standard library, never type-checks, builds, imports or executes the code it
 // inspects, needs no Docker and uses no network. Reading a git ref uses git

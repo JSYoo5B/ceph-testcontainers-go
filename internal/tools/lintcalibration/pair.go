@@ -73,7 +73,7 @@ const (
 )
 
 const (
-	deltaUsage          = "usage: lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N]"
+	deltaUsage          = "usage: lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N] [-changed-files JSON]"
 	snapshotCaveatLimit = "a snapshot directory must be the module root the matching collection ran in"
 )
 
@@ -729,12 +729,16 @@ func runPair(args []string, out io.Writer) error {
 	baseDir := fl.String("base-dir", "", "module root of the base snapshot; "+snapshotCaveatLimit)
 	headDir := fl.String("head-dir", "", "module root of the head snapshot; "+snapshotCaveatLimit)
 	format := fl.String("format", "json", "json, tsv or markdown")
+	changedFiles := fl.String("changed-files", "", "JSON array of module-relative paths to focus Markdown findings")
 	limit := fl.Int("limit", 20, "maximum Markdown finding rows (positive; other formats retain all entries)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
 	if *format != "json" && *format != "tsv" && *format != "markdown" {
 		return fmt.Errorf("unknown format %q", *format)
+	}
+	if *changedFiles != "" && *format != "markdown" {
+		return errors.New("changed-files requires markdown format")
 	}
 	if *limit < 1 {
 		return errors.New("limit must be positive")
@@ -755,6 +759,20 @@ func runPair(args []string, out io.Writer) error {
 		return err
 	}
 	if *format == "markdown" {
+		if *changedFiles != "" {
+			data, err := os.ReadFile(*changedFiles)
+			if err != nil {
+				return err
+			}
+			var files []string
+			if err := json.Unmarshal(data, &files); err != nil {
+				return err
+			}
+			if files == nil {
+				return errors.New("changed-files must be a JSON array")
+			}
+			return writeFocusedDeltaMarkdown(out, d, *limit, files)
+		}
 		return writeDeltaMarkdown(out, d, *limit)
 	}
 	if *format == "tsv" {

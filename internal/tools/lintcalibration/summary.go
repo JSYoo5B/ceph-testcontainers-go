@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"io"
+	"io/fs"
 	"slices"
 	"strings"
 )
@@ -72,6 +74,32 @@ func writeDeltaMarkdown(out io.Writer, d *delta, limit int) error {
 		fmt.Fprintf(&b, "- %s\n", markdownCell(s))
 	}
 	b.WriteString("\nRetain the full JSON/TSV delta and both raw collections beside this summary. Source indexing does not prove a tagged configuration was measured. Metrics do not establish behavioral correctness or agent-cost savings.\n")
+	_, err := io.WriteString(out, b.String())
+	return err
+}
+
+// Filtering never turns a missing finding into an improvement: full counts and
+// raw evidence stay attached, and rows outside the focus are counted explicitly.
+func writeFocusedDeltaMarkdown(out io.Writer, d *delta, limit int, files []string) error {
+	focus := map[string]bool{}
+	for _, file := range files {
+		if !fs.ValidPath(file) || strings.ContainsAny(file, "\\\r\n\x00") {
+			return errors.New("changed-files contains an invalid module-relative path")
+		}
+		focus[file] = true
+	}
+	filtered := *d
+	filtered.Entries = nil
+	for _, e := range d.Entries {
+		if e.Base != nil && focus[e.Base.File] || e.Head != nil && focus[e.Head.File] {
+			filtered.Entries = append(filtered.Entries, e)
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Findings focus: changed files on either side. %d entries outside focus omitted. State counts below describe the full comparison; JSON/TSV retain all findings.\n\n", len(d.Entries)-len(filtered.Entries))
+	if err := writeDeltaMarkdown(&b, &filtered, limit); err != nil {
+		return err
+	}
 	_, err := io.WriteString(out, b.String())
 	return err
 }
