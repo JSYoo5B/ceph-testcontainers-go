@@ -38,6 +38,9 @@ type rateLimitGateway struct {
 	calls        [][]string
 	before       func(args []string) (code int, err error, handled bool)
 	after        func(args []string) error
+	// errnoLine, when set, is the error output of a command that before
+	// answers.
+	errnoLine string
 }
 
 func (f *rateLimitGateway) GetContainerID() string { return "gateway" }
@@ -58,7 +61,11 @@ func (f *rateLimitGateway) Exec(_ context.Context, args []string, _ ...tcexec.Pr
 			if err != nil {
 				return 0, nil, err
 			}
-			return gwtest.Reply(original, code, gwtest.Stream(true, []byte("PRIVATE-SECRET native failure\n")))
+			output := "PRIVATE-SECRET native failure\n"
+			if f.errnoLine != "" {
+				output = f.errnoLine + "\n"
+			}
+			return gwtest.Reply(original, code, gwtest.Stream(true, []byte(output)))
 		}
 	}
 	data, code := f.answer(args)
@@ -298,6 +305,33 @@ func TestRGWRateLimitOverrideUserScopeOrdersEnforcement(t *testing.T) {
 	}
 }
 
+// On Ceph 19 the user scope is refused as unsupported before any native
+// command, naming the release; the bucket scope still applies there.
+func TestRGWRateLimitOverrideUserScopeNeedsCeph20(t *testing.T) {
+	user, f := newRateLimitFixture(t)
+	testhelper.TestSetCephVersion(user.base().Origin.Cluster(), "19.2.5")
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+	var refusal *ceph.OperationError
+	if !errors.Is(err, ceph.ErrUnsupported) || !errors.As(err, &refusal) || refusal.Version != "19.2.5" ||
+		refusal.Capability != "RGW user-scope rate limits" || !strings.Contains(err.Error(), "need Ceph 20 or later") {
+		t.Fatalf("user scope on Ceph 19: %v", err)
+	}
+	if len(f.mutations()) != 0 || len(f.policies) != 0 || slices.ContainsFunc(f.calls, func(args []string) bool { return slices.Contains(args, "ratelimit") }) {
+		t.Fatalf("refused user scope ran rate-limit commands: %v", f.calls)
+	}
+	calls := len(f.calls)
+	if err := change.Restore(t.Context()); err != nil || len(f.calls) != calls {
+		t.Fatalf("refused handle's Restore acted: %v", err)
+	}
+	bucket, err := user.OverrideRateLimit(t.Context(), RateLimitScope{Bucket: "limited"}, RateLimit{Enabled: true, MaxReadOps: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bucket.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Refused calls change nothing and return a handle whose Restore does
 // nothing.
 func TestRGWRateLimitOverrideRefusalsChangeNothing(t *testing.T) {
@@ -511,6 +545,45 @@ func TestRGWRateLimitOverrideUncertainOutcomesStayRestorable(t *testing.T) {
 }
 
 // A failed restoration keeps the original error and the override; a retry
+// A native failure during Restore names the step that failed, the exit
+// code and the errno, without native output, and keeps its classification;
+// the override stays restorable.
+func TestRGWRateLimitRestoreFailureNamesTheFailedStep(t *testing.T) {
+	for _, tc := range []struct {
+		command []string
+		want    string
+	}{
+		{[]string{"user", "info"}, "confirm the owned RGW user (user info): radosgw-admin exited 5 (EIO); native output is redacted"},
+		{[]string{"bucket", "stats"}, "read RGW bucket identity (bucket stats): radosgw-admin exited 5 (EIO); native output is redacted"},
+		{[]string{"ratelimit", "get"}, "read RGW rate-limit policy (ratelimit get): radosgw-admin exited 5 (EIO); native output is redacted"},
+		{[]string{"ratelimit", "disable"}, "change RGW rate-limit policy (ratelimit disable): radosgw-admin exited 5 (EIO); native output is redacted"},
+	} {
+		t.Run(strings.Join(tc.command, " "), func(t *testing.T) {
+			user, f := newRateLimitFixture(t)
+			change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{Bucket: "limited"}, RateLimit{Enabled: true, MaxReadOps: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The failed command prints its errno last, as radosgw-admin
+			// does, after text that must not reach the error.
+			f.errnoLine = "ERROR: PRIVATE-SECRET request failed: (5) Input/output error"
+			f.before = func(args []string) (int, error, bool) {
+				return 5, nil, slices.Equal(rateLimitCommand(args), tc.command)
+			}
+			err = change.Restore(t.Context())
+			requireNoSecret(t, err)
+			var failure *ceph.NativeFailure
+			if err == nil || err.Error() != tc.want || !errors.As(err, &failure) || failure.ExitCode != 5 || failure.Errno != "EIO" || failure.Reason != "" {
+				t.Fatalf("Restore error = %v, want %q", err, tc.want)
+			}
+			f.before, f.errnoLine = nil, ""
+			if err := change.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // with a fresh context finishes it.
 func TestRGWRateLimitRestoreFailureIsPreservedAndRetryable(t *testing.T) {
 	user, f := newRateLimitFixture(t)

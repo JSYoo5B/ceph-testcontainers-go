@@ -32,6 +32,10 @@ const (
 	// CapabilityRGWAccountUserModePipe is an RGW account principal in a
 	// user-mode sync pipe. Ceph 19 resolves no source for such a pipe.
 	CapabilityRGWAccountUserModePipe capabilityID = "RGW account principals in user-mode sync pipes"
+	// CapabilityRGWUserRateLimit is a user-scope RGW rate-limit policy that
+	// the gateway applies to requests the user's S3 keys sign. Ceph 19
+	// stores the policy and never applies it.
+	CapabilityRGWUserRateLimit capabilityID = "RGW user-scope rate limits"
 )
 
 // releaseCapability is one row of the shared expectation table. A contract
@@ -72,6 +76,13 @@ var ReleaseCapabilities = map[capabilityID]releaseCapability{
 		// No tool reveals it: the pipe is accepted and replicates nothing.
 		Releases: map[int]bool{19: false, 20: true},
 		refusal:  "RGW user-mode sync with an account principal needs Ceph 20 or later",
+	},
+	CapabilityRGWUserRateLimit: {
+		ID: CapabilityRGWUserRateLimit,
+		// No tool reveals it: the policy is stored and read back, and
+		// requests the user signs are still admitted.
+		Releases: map[int]bool{19: false, 20: true},
+		refusal:  "RGW user-scope rate limits need Ceph 20 or later",
 	},
 }
 
