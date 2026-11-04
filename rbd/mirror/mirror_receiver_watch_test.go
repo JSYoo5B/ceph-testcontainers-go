@@ -257,7 +257,11 @@ func TestRBDReceiverWatchStopAndCancelDuringQuery(t *testing.T) {
 	for _, cancelCtx := range []bool{false, true} {
 		h := newReceiverHarness(t, "", "", 1)
 		ctx, cancel := context.WithCancel(t.Context())
-		w, _ := startTestReceiverWatch(t, ctx, h, fastRBDWatch(1), nil)
+		// The blocked read must end only by Stop or the cancellation, not
+		// by its own timeout, which would overflow the one-slot buffer.
+		settings := fastRBDWatch(1)
+		settings.Timeout = time.Minute
+		w, _ := startTestReceiverWatch(t, ctx, h, settings, nil)
 		blocked := make(chan struct{})
 		var once sync.Once
 		h.change(func() {
