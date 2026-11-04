@@ -48,7 +48,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	expected := harness.CephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	const script = "/tmp/cephfs-mirror-daemons.py"
 	for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
-		if err := client.CopyToContainer(ctx, []byte(cephFSMirrorDaemonScript), script, 0o600); err != nil {
+		if err := client.CopyToContainer(ctx, []byte(harness.CephFSMirrorDaemonScript), script, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,14 +89,14 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	expected.PeerID = originalPeer
 	waitCheckpoints := func(name string, snapshots map[string]cephfsmirror.Snapshot) {
 		t.Helper()
-		owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, directories, 2)
+		owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, directories, 2)
 		for _, directory := range directories {
 			status := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, snapshots[directory])
 			if status.InstanceID != owners[directory] {
 				t.Fatal("public checkpoint disagrees with native watcher assignment")
 			}
 		}
-		cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, name)
+		harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, name)
 	}
 	waitCheckpoints("before-peer-removal", initial)
 	daemons := mirror.Daemons()
@@ -164,9 +164,9 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	if err != nil || len(currentPeers) != 0 {
 		t.Fatalf("drained peer still in MGR policy: %v %v", currentPeers, err)
 	}
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
+	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
 	pending := checkpoint("while-peer-removed")
-	cephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "while-peer-removed", 10*time.Second)
+	harness.CephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "while-peer-removed", 10*time.Second)
 	newPeer, err := mirror.RebootstrapPeer(ctx)
 	if err != nil || newPeer == "" || newPeer == originalPeer {
 		t.Fatalf("drained receipt did not release explicit import gate: %s %v", newPeer, err)
@@ -178,7 +178,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	waitCheckpoints("while-peer-removed", pending)
 	fresh := checkpoint("after-peer-rebootstrap")
 	waitCheckpoints("after-peer-rebootstrap", fresh)
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
+	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
 	t.Log("public strict two-daemon peer drain retained original process/watcher identities; a real lost removal reply was reconciled without another delete; old snapshot bytes survived and a fresh peer copied independent source checkpoints/new bytes")
 }
 

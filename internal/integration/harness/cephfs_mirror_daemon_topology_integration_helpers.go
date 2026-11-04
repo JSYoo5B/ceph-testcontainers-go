@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster)
 
-package cephfs_test
+package harness
 
 import (
 	"context"
@@ -18,13 +18,12 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ...bool) {
+func RunCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ...bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -32,7 +31,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
-	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t, opts...)
+	source, destination, sourceClient, destinationClient := NewMultiClusterPair(t, opts...)
 	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -42,29 +41,29 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		t.Fatal(err)
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
+		if err := ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	expected := harness.CephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
+	expected := CephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
-		if err := client.CopyToContainer(ctx, []byte(cephFSMirrorDaemonScript), "/tmp/cephfs-mirror-daemons.py", 0o600); err != nil {
+		if err := client.CopyToContainer(ctx, []byte(CephFSMirrorDaemonScript), "/tmp/cephfs-mirror-daemons.py", 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
 	checkpoint := func(name string) map[string]cephfsmirror.Snapshot {
 		t.Helper()
-		harness.MultiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
+		MultiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
 		checkpoints := make(map[string]cephfsmirror.Snapshot, len(directories))
 		for _, directory := range directories {
-			checkpoints[directory] = harness.CephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-mirror-daemons.py", directory, name)
+			checkpoints[directory] = CephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-mirror-daemons.py", directory, name)
 		}
 		return checkpoints
 	}
 	initial := checkpoint("initial")
-	image := harness.StaticFacts(source).Images.CephFS
-	mirror, err := cephfsmirror.Run(ctx, harness.NativeMirrorImage(t, "cephfs", image), cephfsmirror.WithConfig(cephfsmirror.Config{
+	image := StaticFacts(source).Images.CephFS
+	mirror, err := cephfsmirror.Run(ctx, NativeMirrorImage(t, "cephfs", image), cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,
@@ -74,11 +73,11 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 			if t.Failed() {
 				logCtx, logCancel := context.WithTimeout(context.Background(), 20*time.Second)
 				for _, daemon := range mirror.Daemons() {
-					harness.MultiClusterLogContainer(t, logCtx, daemon.Container)
+					MultiClusterLogContainer(t, logCtx, daemon.Container)
 				}
 				for _, manager := range clusteraccess.Managers(t, source) {
 					if manager != nil && manager.Container != nil {
-						harness.MultiClusterLogContainer(t, logCtx, manager.Container)
+						MultiClusterLogContainer(t, logCtx, manager.Container)
 					}
 				}
 				for _, args := range [][]string{
@@ -113,7 +112,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 	waitCheckpoints := func(checkpoints map[string]cephfsmirror.Snapshot, owners map[string]string, stoppedMember string) {
 		t.Helper()
 		for _, directory := range directories {
-			status := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-mirror-daemons.py", expected, directory, checkpoints[directory])
+			status := CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-mirror-daemons.py", expected, directory, checkpoints[directory])
 			if status.InstanceID != owners[directory] {
 				t.Fatalf("public CephFS directory owner disagrees with independent native dirmap: directory=%s status=%+v owners=%v", directory, status, owners)
 			}
@@ -125,24 +124,24 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 				if observationErr == nil || !observed.Ready || observed.DaemonProblems[stoppedMember] == "" || observed.DaemonName == stoppedMember || observed.InstanceID != owners[directory] {
 					t.Fatalf("CephFS partial member status did not retain live selected owner and stopped member problem: status=%+v error=%v", observed, observationErr)
 				}
-				harness.CephFSAssertObservedIdentity(t, observed, expected, directory)
+				CephFSAssertObservedIdentity(t, observed, expected, directory)
 			}
 		}
 	}
-	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
+	owners := CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
 	waitCheckpoints(initial, owners, "")
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
+	CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
 
 	// Cross-check admin peer status against the native directory map. The
 	// process selected for outage must own real directories before it is stopped.
-	fsDescription := harness.MultiClusterExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "fs", "get", sourceFS.FilesystemName, "--format", "json")
+	fsDescription := MultiClusterExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "fs", "get", sourceFS.FilesystemName, "--format", "json")
 	var filesystem struct {
 		ID int `json:"id"`
 	}
 	if err := json.Unmarshal(fsDescription, &filesystem); err != nil || filesystem.ID <= 0 {
 		t.Fatalf("source filesystem ID: data=%s error=%v", fsDescription, err)
 	}
-	admin := harness.MultiClusterExecOutput(t, ctx, daemons[0], "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", sourceFS.FilesystemName, filesystem.ID), peerID)
+	admin := MultiClusterExecOutput(t, ctx, daemons[0], "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", sourceFS.FilesystemName, filesystem.ID), peerID)
 	var ownedDirectories map[string]json.RawMessage
 	if err := json.Unmarshal(admin, &ownedDirectories); err != nil || len(ownedDirectories) == 0 {
 		t.Fatalf("first daemon owns no native directories: data=%s error=%v", admin, err)
@@ -159,7 +158,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 	if err := daemons[0].Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)
 	}
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+	owners = CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
 	for directory, owner := range owners {
 		if owner == stoppedID {
 			t.Fatalf("directory %s still belongs to stopped native daemon %s", directory, stoppedID)
@@ -167,7 +166,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 	}
 	ownerStopped := checkpoint("owner-stopped")
 	waitCheckpoints(ownerStopped, owners, "a")
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "owner-stopped")
+	CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "owner-stopped")
 	t.Logf("native CephFS mirror owner %s stopped: four directories reassigned to the surviving instance; new snapshots and exact bytes arrived", stoppedID)
 
 	if err := daemons[0].Remove(ctx); err != nil {
@@ -189,17 +188,17 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		}
 		t.Log("fixture-controlled CephFS directory rebalance after adding replacement: unregister/release/re-register owned policies while retaining peer and snapshot data")
 	}
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
+	owners = CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
 	replacementSnapshots := checkpoint("replacement")
 	waitCheckpoints(replacementSnapshots, owners, "")
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "replacement")
+	CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "replacement")
 
 	// Deliberately remove every process without removing its peer or directory
 	// configuration. A later AddDaemon resumes the same link and catches up.
 	if err := daemons[1].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+	CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
 	if err := replacement.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +206,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		t.Fatal("zero-daemon outage retained a process in the inventory")
 	}
 	allRemoved := checkpoint("all-removed")
-	cephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed", 10*time.Second)
+	CephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed", 10*time.Second)
 	currentPeers, err := mirror.PeerIDs(ctx)
 	if err != nil || !slices.Equal(currentPeers, peers) {
 		t.Fatalf("daemon replacement changed owned peer: peers=%v error=%v", currentPeers, err)
@@ -216,10 +215,10 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 	if err != nil {
 		t.Fatal(err)
 	}
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1, slices.Collect(maps.Values(owners))...)
+	owners = CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1, slices.Collect(maps.Values(owners))...)
 	waitCheckpoints(allRemoved, owners, "")
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed")
-	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
+	CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed")
+	CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
 	t.Log("CephFS mirror daemon topology 2→1→2→1→0→1: shared auth/peer retained, native assignments converged, zero-instance backlog caught up, initial snapshot bytes preserved")
 	if len(explicitRebalance) != 0 && explicitRebalance[0] && !host {
 		docker, err := testcontainers.NewDockerClientWithOpts(ctx)
@@ -235,12 +234,12 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		if err != nil {
 			t.Fatal(err)
 		}
-		local := before.Container.NetworkSettings.Networks[harness.StaticFacts(source).NetworkName]
-		peer := before.Container.NetworkSettings.Networks[harness.StaticFacts(destination).NetworkName]
+		local := before.Container.NetworkSettings.Networks[StaticFacts(source).NetworkName]
+		peer := before.Container.NetworkSettings.Networks[StaticFacts(destination).NetworkName]
 		if local == nil || peer == nil || !local.IPAddress.IsValid() || !peer.IPAddress.IsValid() || !before.Container.State.Running || before.Container.State.Pid <= 0 {
 			t.Fatal("resumed mirror process and both source/destination endpoints are not live")
 		}
-		beforeOwners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+		beforeOwners := CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
 		link, err := resumed.InterruptPeerLink(ctx)
 		if link != nil {
 			t.Cleanup(func() {
@@ -254,23 +253,23 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		if err != nil {
 			t.Fatal(err)
 		}
-		if link.NetworkName != harness.StaticFacts(destination).NetworkName || link.OriginalAddress != peer.IPAddress {
+		if link.NetworkName != StaticFacts(destination).NetworkName || link.OriginalAddress != peer.IPAddress {
 			t.Fatal("interruption did not identify the original destination-only endpoint")
 		}
 		isolated, err := docker.ContainerInspect(ctx, resumed.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		kept := isolated.Container.NetworkSettings.Networks[harness.StaticFacts(source).NetworkName]
-		if isolated.Container.NetworkSettings.Networks[harness.StaticFacts(destination).NetworkName] != nil || kept == nil || kept.IPAddress != local.IPAddress || !slices.Equal(kept.Aliases, local.Aliases) || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
+		kept := isolated.Container.NetworkSettings.Networks[StaticFacts(source).NetworkName]
+		if isolated.Container.NetworkSettings.Networks[StaticFacts(destination).NetworkName] != nil || kept == nil || kept.IPAddress != local.IPAddress || !slices.Equal(kept.Aliases, local.Aliases) || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer cut did not preserve the original source endpoint and same running process")
 		}
 		peerIsolated := checkpoint("peer-isolated")
-		cephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated", 10*time.Second)
+		CephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated", 10*time.Second)
 		if current, err := mirror.PeerIDs(ctx); err != nil || !slices.Equal(current, peers) {
 			t.Fatalf("peer-only isolation changed filesystem policy: peers=%v error=%v", current, err)
 		}
-		afterOwners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+		afterOwners := CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
 		for directory, owner := range beforeOwners {
 			if afterOwners[directory] != owner {
 				t.Fatalf("peer-only cut changed native assignment for %s: before=%s after=%s", directory, owner, afterOwners[directory])
@@ -286,13 +285,13 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 		if err != nil {
 			t.Fatal(err)
 		}
-		restoredPeer := restored.Container.NetworkSettings.Networks[harness.StaticFacts(destination).NetworkName]
-		restoredSource := restored.Container.NetworkSettings.Networks[harness.StaticFacts(source).NetworkName]
+		restoredPeer := restored.Container.NetworkSettings.Networks[StaticFacts(destination).NetworkName]
+		restoredSource := restored.Container.NetworkSettings.Networks[StaticFacts(source).NetworkName]
 		if restoredPeer == nil || restoredPeer.IPAddress != peer.IPAddress || !slices.Equal(restoredPeer.Aliases, peer.Aliases) || restoredPeer.GwPriority != peer.GwPriority || restoredSource == nil || restoredSource.IPAddress != local.IPAddress || !restored.Container.State.Running || restored.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer restoration changed endpoint IP/aliases/priority, source endpoint, or mirror PID")
 		}
 		waitCheckpoints(peerIsolated, beforeOwners, "")
-		cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated")
+		CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated")
 		t.Log("CephFS peer bridge interruption: process, source assignment and shared peer remained; remote snapshots stayed absent during isolation and exact bytes caught up after restoring the same endpoint")
 	}
 }
@@ -301,7 +300,7 @@ func runCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance ..
 // restarted. The manager can keep reporting such an instance until it notices
 // the loss, and a replacement can leave the instance count unchanged; without
 // this, a stale map with the expected count would satisfy the wait.
-func cephFSWaitForMirrorDaemonAssignments(t *testing.T, ctx context.Context, source *ceph.Container, filesystem, peerID string, directories []string, daemonCount int, retired ...string) map[string]string {
+func CephFSWaitForMirrorDaemonAssignments(t *testing.T, ctx context.Context, source *ceph.Container, filesystem, peerID string, directories []string, daemonCount int, retired ...string) map[string]string {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -404,7 +403,7 @@ func cephFSObserveMirrorDaemonAssignments(ctx context.Context, source *ceph.Cont
 	return owners, string(distributionData), nil
 }
 
-func cephFSWaitForDaemonSnapshots(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string) {
+func CephFSWaitForDaemonSnapshots(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -428,11 +427,11 @@ func cephFSWaitForDaemonSnapshots(t *testing.T, ctx context.Context, client test
 	}
 }
 
-func cephFSAssertDaemonSnapshotsAbsent(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string, duration time.Duration) {
+func CephFSAssertDaemonSnapshotsAbsent(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string, duration time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(duration)
 	for {
-		harness.MultiClusterExecOutput(t, ctx, client, "python3", "/tmp/cephfs-mirror-daemons.py", filesystem, "absent", snapshot)
+		MultiClusterExecOutput(t, ctx, client, "python3", "/tmp/cephfs-mirror-daemons.py", filesystem, "absent", snapshot)
 		if time.Now().After(deadline) {
 			return
 		}
@@ -444,7 +443,7 @@ func cephFSAssertDaemonSnapshotsAbsent(t *testing.T, ctx context.Context, client
 	}
 }
 
-const cephFSMirrorDaemonScript = `import cephfs
+const CephFSMirrorDaemonScript = `import cephfs
 import json
 import os
 import sys

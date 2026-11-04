@@ -122,7 +122,7 @@ func runCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		t.Fatalf("original owned peer: %v %v", peers, err)
 	}
 	expected.PeerID = peers[0]
-	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != owners[directory] {
 		t.Fatal("public checkpoint disagrees with independent mapped owner")
@@ -167,7 +167,7 @@ func runCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		t.Fatal("pre-Begin start on original binding", err)
 	}
 	original, session = cephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready = harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != session.Gid || owners[directory] != session.Gid || daemon.ProcessObserverBindingStatus() != binding || factoryCalls.Load() != 1 || customizerCalls.Load() != 1 {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")

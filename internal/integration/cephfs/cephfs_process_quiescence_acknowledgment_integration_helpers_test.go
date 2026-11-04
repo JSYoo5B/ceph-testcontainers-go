@@ -119,7 +119,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatalf("original owned peer: %v %v", peers, err)
 	}
 	expected.PeerID = peers[0]
-	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != owners[directory] {
 		t.Fatal("public checkpoint disagrees with independent mapped owner")
@@ -164,7 +164,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatal("pre-Begin start on original binding", err)
 	}
 	original, session = cephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	ready = harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != session.Gid || owners[directory] != session.Gid || daemon.ProcessObserverBindingStatus() != binding || factoryCalls.Load() != 1 || customizerCalls.Load() != 1 {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")
@@ -387,7 +387,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	}
 	policy.Expected = expected
 	_, newSession := cephFSWaitOriginalProcessFreshSession(t, ctx, newDaemon, oracle.Client, newBinding, policy, baseline.StartedAt, baseline.InstanceID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
 	if owners[directory] != newSession.Gid || newSession.Gid == baseline.InstanceID {
 		t.Fatal("recovery did not acquire a fresh native watcher/assignment")
 	}
