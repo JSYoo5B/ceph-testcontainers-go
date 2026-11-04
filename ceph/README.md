@@ -218,3 +218,7 @@ empty quorum. A map without an active manager is a successful observation,
 and an advertised URL is not proof that its listener answers. Neither watch
 takes the topology lock, so the test can stop or replace daemons while it
 runs.
+
+To check one `observer.QuorumStatus` or `observer.ManagerStatus` reading
+against the members, quorum, active MGR or standbys a test requires, use
+`expect.Monitors` and `expect.Managers` from [`ceph/expect`](expect/README.md).

@@ -73,6 +73,25 @@ if err != nil {
 	t.Fatal(err) // a failed query is never a mismatch
 }
 result, err := want.Evaluate(health)
+
+## MON quorum
+
+`expect.Monitors` states the monmap members and the quorum of one
+`ceph.Observer.QuorumStatus` observation. `Members` and `Quorum` are exact
+name sets; `MemberCount` and `QuorumSize` count them for a test whose MONs
+get new names, such as a rolling replacement. `FSID` pins the cluster, so a
+rebuilt cluster that reuses the MON names does not pass. Every set field is a
+condition and a zero field is not checked. `MonitorEvaluation` names each
+member that is absent, unexpected, out of the quorum or in it unexpectedly.
+
+```golang
+// ... stop mon.c while the SUT runs ...
+want := expect.Monitors{Members: []string{"a", "b", "c"}, Quorum: []string{"a", "b"}}
+status, err := observer.QuorumStatus(ctx)
+if err != nil {
+	t.Fatal(err) // a failed query is never a mismatch
+}
+result, err := want.Evaluate(status)
 if err != nil {
 	t.Fatal(err)
 }
@@ -110,6 +129,41 @@ if err != nil {
 	t.Fatal(err) // a failed query is never a mismatch
 }
 result, err := want.Evaluate(snapshot)
+
+	t.Fatal(result) // mons want members [a b c] quorum [a b] in monmap [a b c] quorum [a b c]: mon.c in quorum
+}
+```
+
+A quorum that is not a majority of the expected members is an invalid
+request, since a `QuorumStatus` answer always comes from a majority. A match
+does not say which MON leads or that a member out of the quorum has stopped.
+Unlike `ceph.Observer.WaitForQuorum`, which accepts any majority, an
+expectation names the members the test requires.
+
+## MGR registrations
+
+`expect.Managers` states the MGRMap of one `ceph.Observer.ManagerStatus`
+observation, or of the `Status` of a `ceph.ManagerWatchEvent`. `Available`
+is always compared. `Active` names the active MGR, `ActiveGID` pins its
+registration so a restart under the same name does not pass, and
+`FormerGID` requires an active MGR with any GID other than an earlier one,
+which states a failover. `Standbys` is the exact set of standby names, with
+an empty non-nil slice for none, and `StandbyCount` counts them.
+`ManagerEvaluation` names the field that differs and each absent or
+unexpected standby.
+
+```golang
+before, err := observer.ManagerStatus(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+// ... fail the active MGR while the SUT runs ...
+want := expect.Managers{Available: true, Active: before.Standbys[0].Name, FormerGID: before.ActiveGID}
+status, err := observer.ManagerStatus(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+result, err := want.Evaluate(status)
 if err != nil {
 	t.Fatal(err)
 }
@@ -122,3 +176,11 @@ Unlike `ceph.Observer.WaitForClean`, which waits for every PG of the cluster
 to report active+clean, an expectation checks one pool's PGs once. The PG
 reports arrive from the MGR asynchronously, so a match is no proof of write
 visibility or durability, and the native `PGReady` flag is not compared.
+
+	t.Fatal(result) // ...: active: want mgr.b, observed mgr.a; active gid: want other than 4100, observed 4100
+}
+```
+
+A match does not prove that a module serves requests or that a stopped MGR
+has exited. Unlike `ceph.Observer.WaitForClean`, which requires only an
+available MGR, an expectation names the registrations the test requires.
