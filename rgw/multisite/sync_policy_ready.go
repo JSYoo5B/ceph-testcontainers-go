@@ -29,8 +29,9 @@ type BucketSyncPolicyStatus struct {
 // into an explicit attached destination selected by its pipes. It checks the
 // exact committed period, source-scope group snapshot, and all referenced
 // source/destination bucket instances needed by that destination. Missing or
-// older local metadata waits; recreated instances and changed master policy
-// are refused. Allowed/forbidden policies can also be observed as imported.
+// older local metadata and a failed read wait; recreated instances and changed
+// master policy are refused. Allowed/forbidden policies can also be observed
+// as imported. WatchBucketPolicy reports the stages of the same read.
 //
 // This read-only prerequisite does not attest effective discovery hints, data
 // checkpoints, payloads or permissions, or replay objects written before the
@@ -52,43 +53,15 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 		return BucketSyncPolicyStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
-	if err := f.validateSyncGroup(g, false); err != nil {
-		return BucketSyncPolicyStatus{}, err
-	}
-	if g.scope.Bucket == "" || g.bucketID == "" || g.state.pending != nil {
-		return BucketSyncPolicyStatus{}, errors.New("RGW policy import requires an owned bucket-scoped group without pending mutations")
-	}
-	var destination *rgwZoneState
-	for _, zone := range f.zoneStates() {
-		if zone.Name == destinationZone && zone.Zonegroup == g.scope.Zonegroup && zone.ID != "" && zone.client != nil {
-			destination = zone
-		}
-	}
-	if destination == nil {
-		return BucketSyncPolicyStatus{}, errors.New("RGW policy import requires an explicit attached destination in the owned zonegroup")
-	}
-	buckets, err := syncPolicyReadyBuckets(g, destination.ID)
-	if err != nil {
-		return BucketSyncPolicyStatus{}, err
-	}
-	status := BucketSyncPolicyStatus{RealmID: g.realmID, ZonegroupID: g.groupID, GroupID: g.ID(), Zone: destination.Name, ZoneID: destination.ID, Bucket: SyncBucketIdentity{Name: g.scope.Bucket, Tenant: g.scope.Tenant, ID: g.bucketID}, Buckets: slices.Clone(buckets)}
 	attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-	master, period, err := f.syncPolicyMaster(attempt)
-	if err == nil {
-		status.PeriodID, status.RealmEpoch, err = syncCommittedPeriodIdentity(period)
-	}
-	if err == nil {
-		err = g.checkPolicyReadyMaster(attempt, period, buckets)
-	}
+	target, status, err := g.admitPolicyImport(attempt, destinationZone)
 	stop()
 	if err != nil {
 		return status, err
 	}
-	period = syncJSONClone(period)
-	wantGroup := syncJSONClone(g.state.group)
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-		last, fatal, readErr := g.policyReadyStatus(attempt, master, destination, period, wantGroup, status)
+		last, fatal, readErr := target.sample(attempt)
 		stop()
 		if err := ctx.Err(); err != nil {
 			return last, fmt.Errorf("wait RGW bucket policy import: %w", err)
@@ -99,13 +72,89 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 		if readErr == nil && last.Imported {
 			return last, nil
 		}
-		status = last
 		select {
 		case <-ctx.Done():
 			return last, fmt.Errorf("wait RGW bucket policy import: %w; period_imported=%t policy_imported=%t buckets_imported=%t", ctx.Err(), last.PeriodImported, last.PolicyImported, last.BucketsImported)
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// policyImportTarget is what one observation of a policy import keeps from
+// its admission: the handle, the master's committed period and the group
+// snapshot captured then, and the identities every result carries.
+type policyImportTarget struct {
+	group  *SyncGroup
+	period map[string]any
+	want   map[string]any
+	status BucketSyncPolicyStatus
+}
+
+// admitPolicyImport validates the handle and the destination and captures
+// the master's committed period, the group snapshot and the referenced bucket
+// instances. The caller holds topologyMu. On an error the status carries the
+// identities resolved so far.
+func (g *SyncGroup) admitPolicyImport(ctx context.Context, destinationZone string) (*policyImportTarget, BucketSyncPolicyStatus, error) {
+	f := g.owner
+	if err := f.validateSyncGroup(g, false); err != nil {
+		return nil, BucketSyncPolicyStatus{}, err
+	}
+	if g.scope.Bucket == "" || g.bucketID == "" || g.state.pending != nil {
+		return nil, BucketSyncPolicyStatus{}, errors.New("RGW policy import requires an owned bucket-scoped group without pending mutations")
+	}
+	destination := f.policyImportDestination(g, destinationZone)
+	if destination == nil {
+		return nil, BucketSyncPolicyStatus{}, errors.New("RGW policy import requires an explicit attached destination in the owned zonegroup")
+	}
+	buckets, err := syncPolicyReadyBuckets(g, destination.ID)
+	if err != nil {
+		return nil, BucketSyncPolicyStatus{}, err
+	}
+	status := BucketSyncPolicyStatus{RealmID: g.realmID, ZonegroupID: g.groupID, GroupID: g.ID(), Zone: destination.Name, ZoneID: destination.ID, Bucket: SyncBucketIdentity{Name: g.scope.Bucket, Tenant: g.scope.Tenant, ID: g.bucketID}, Buckets: slices.Clone(buckets)}
+	_, period, err := f.syncPolicyMaster(ctx)
+	if err == nil {
+		status.PeriodID, status.RealmEpoch, err = syncCommittedPeriodIdentity(period)
+	}
+	if err == nil {
+		_, _, err = g.checkPolicyReadyMaster(ctx, period, buckets)
+	}
+	if err != nil {
+		return nil, status, err
+	}
+	return &policyImportTarget{group: g, period: syncJSONClone(period), want: syncJSONClone(g.state.group), status: status}, status, nil
+}
+
+// policyImportDestination is the attached owned zone of g's zonegroup named
+// name, or nil.
+func (f *Fixture) policyImportDestination(g *SyncGroup, name string) *rgwZoneState {
+	for _, zone := range f.zoneStates() {
+		if zone.Name == name && zone.Zonegroup == g.scope.Zonegroup && zone.ID != "" && zone.client != nil {
+			return zone
+		}
+	}
+	return nil
+}
+
+// sample makes one read of the import with topologyMu held. It first checks
+// that the handle, its group snapshot and the destination are still the
+// admitted ones, because a watch releases the lock between reads. A true
+// fatal result means that no later read can succeed.
+func (t *policyImportTarget) sample(ctx context.Context) (BucketSyncPolicyStatus, bool, error) {
+	g := t.group
+	f := g.owner
+	status := t.status
+	status.Buckets = slices.Clone(status.Buckets)
+	if err := f.validateSyncGroup(g, false); err != nil {
+		return status, true, err
+	}
+	if g.state.pending != nil || !reflect.DeepEqual(g.state.group, t.want) {
+		return status, true, errors.New("RGW owned sync group changed since the policy import observation began")
+	}
+	destination := f.policyImportDestination(g, t.status.Zone)
+	if destination == nil || destination.ID != t.status.ZoneID {
+		return status, true, errors.New("RGW policy import destination is no longer the attached owned zone")
+	}
+	return g.policyReadyStatus(ctx, destination, t.period, t.want, status)
 }
 
 func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIdentity, error) {
@@ -156,36 +205,41 @@ func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIde
 	return buckets, nil
 }
 
-func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[string]any, buckets []SyncBucketIdentity) error {
+// checkPolicyReadyMaster checks that the master still has the captured
+// committed period, the owned group and the referenced bucket instances, and
+// returns the master. A failed read is not fatal; a different period, group or
+// recreated bucket is.
+func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[string]any, buckets []SyncBucketIdentity) (*rgwZoneState, bool, error) {
 	f := g.owner
 	master, current, err := f.syncPolicyMaster(ctx)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if !reflect.DeepEqual(current, period) {
-		return errors.New("RGW master committed period changed during policy import observation")
+		return nil, true, errors.New("RGW master committed period changed during policy import observation")
 	}
 	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if !reflect.DeepEqual(syncNativeGroup(policy, g.ID()), g.state.group) {
-		return errors.New("RGW owned master bucket policy changed during import observation")
+		return nil, true, errors.New("RGW owned master bucket policy changed during import observation")
 	}
 	for _, bucket := range buckets {
 		if err := g.checkBucketInstance(ctx, master, bucket); err != nil {
-			return err
+			return nil, errors.Is(err, errSyncBucketRecreated), err
 		}
 	}
-	return nil
+	return master, false, nil
 }
 
-func (g *SyncGroup) policyReadyStatus(ctx context.Context, master, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
+func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
 	f := g.owner
 	result.Buckets = slices.Clone(result.Buckets)
 	result.PeriodImported, result.PolicyImported, result.BucketsImported, result.Imported = false, false, false, false
-	if err := g.checkPolicyReadyMaster(ctx, period, result.Buckets); err != nil {
-		return result, true, err
+	master, fatal, err := g.checkPolicyReadyMaster(ctx, period, result.Buckets)
+	if err != nil {
+		return result, fatal, err
 	}
 	// Read the attached metadata master's own pointer as well, so an older
 	// first-zone import cannot substitute for the actual current master period.
