@@ -87,7 +87,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	}
 	location, targetName := target.LocationConstraint, target.Name
 	createBody := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + location + `</LocationConstraint></CreateBucketConfiguration>`)
-	requireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, "/tc-user-no-tag", createBody, http.StatusForbidden))
+	harness.RequireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, "/tc-user-no-tag", createBody, http.StatusForbidden))
 	if _, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "tc-user-no-tag"); err == nil {
 		t.Fatal("denied creation left a native bucket")
 	}
@@ -129,8 +129,8 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 			t.Fatalf("S3 object %q reports class %q", object.Key, object.StorageClass)
 		}
 	}
-	rgwPlacementPoolPayload(t, ctx, control, "tc-user-ia", "user-default STANDARD_IA", classPayload)
-	rgwPlacementPoolPayload(t, ctx, control, "tc-user-standard", "explicit STANDARD", standardPayload)
+	harness.RGWPlacementPoolPayload(t, ctx, control, "tc-user-ia", "user-default STANDARD_IA", classPayload)
+	harness.RGWPlacementPoolPayload(t, ctx, control, "tc-user-standard", "explicit STANDARD", standardPayload)
 	// Both previously created buckets retain their creation-time placement,
 	// even after the user's default class changes.
 	requireRGWUserBucketPlacement(t, ctx, gateway, original, "default-placement")
@@ -184,14 +184,6 @@ func requireRGWUserPlacementUnrelatedPolicy(t *testing.T, before, after rgw.User
 	}
 }
 
-func requireRGWUserPlacementDenied(t *testing.T, body []byte) {
-	t.Helper()
-	var result struct{ Code string }
-	if xml.Unmarshal(body, &result) != nil || result.Code != "AccessDenied" {
-		t.Fatalf("restricted placement denial has unexpected code %q", result.Code)
-	}
-}
-
 func rgwUserPlacementWaitCreationDenied(t *testing.T, parent context.Context, client harness.S3HTTPClient, location []byte) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
@@ -217,9 +209,9 @@ func rgwUserPlacementWaitCreationDenied(t *testing.T, parent context.Context, cl
 			t.Fatal(readErr)
 		}
 		if response.StatusCode == http.StatusForbidden {
-			requireRGWUserPlacementDenied(t, data)
+			harness.RequireRGWUserPlacementDenied(t, data)
 			for i, body := range [][]byte{nil, location} {
-				requireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, fmt.Sprintf("/tc-user-revoke-confirm-%d", i), body, http.StatusForbidden))
+				harness.RequireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, fmt.Sprintf("/tc-user-revoke-confirm-%d", i), body, http.StatusForbidden))
 			}
 			t.Logf("new bucket requests observed revoked placement permission after %d transient cache grants", attempt)
 			return

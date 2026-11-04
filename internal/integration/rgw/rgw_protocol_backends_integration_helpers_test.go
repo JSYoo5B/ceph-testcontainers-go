@@ -395,7 +395,7 @@ func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *rgw.Gateway, en
 	revoked := rgwBackendWaitStatus(t, ctx, func(callCtx context.Context) rgwBackendResponse {
 		return rgwBackendUnsigned(t, callCtx, http.MethodGet, endpoints[1]+storage.Path, nil, headers)
 	}, http.StatusUnauthorized)
-	if rgwBackendErrorCode(revoked.body) != "AccessDenied" {
+	if harness.RGWBackendErrorCode(revoked.body) != "AccessDenied" {
 		t.Fatal("Swift revoked token did not fail native authorization")
 	}
 	// Removing a Swift subuser must not revoke this user's independent S3 key.
@@ -551,7 +551,7 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*rgw.Gateway, endpoint
 		// and maps to S3 NoSuchKey. The object itself must still be listed
 		// under the same key, ETag and size; 404 alone is not dependency proof.
 		rgwBackendRequire(t, failed, http.StatusNotFound)
-		if rgwBackendErrorCode(failed.body) != "NoSuchKey" || readIdentity() != objectIdentity {
+		if harness.RGWBackendErrorCode(failed.body) != "NoSuchKey" || readIdentity() != objectIdentity {
 			t.Fatal("KMS missing backend key did not retain owned S3 object identity")
 		}
 	}
@@ -643,31 +643,10 @@ func rgwBackendDo(t *testing.T, client *http.Client, request *http.Request) rgwB
 	return rgwBackendResponse{code: response.StatusCode, body: body, headers: response.Header.Clone(), operation: request.Method + " " + request.URL.EscapedPath()}
 }
 
-func rgwBackendErrorCode(body []byte) string {
-	var failure struct {
-		Code  string `xml:"Code" json:"Code"`
-		Error struct {
-			Code string `xml:"Code" json:"Code"`
-		} `xml:"Error" json:"Error"`
-	}
-	if xml.Unmarshal(body, &failure) != nil {
-		_ = json.Unmarshal(body, &failure)
-	}
-	if failure.Code != "" {
-		return failure.Code
-	}
-	// Swift's default formatter is plain text. Only these known native codes
-	// may become diagnostics; arbitrary bodies can contain sensitive data.
-	if plain := strings.TrimSpace(string(body)); slices.Contains([]string{"AccessDenied", "NoSuchKey", "InvalidTenantName"}, plain) {
-		return plain
-	}
-	return failure.Error.Code
-}
-
 func rgwBackendRequire(t *testing.T, response rgwBackendResponse, allowed ...int) {
 	t.Helper()
 	if !slices.Contains(allowed, response.code) {
-		t.Fatalf("native protocol %s status=%d want=%v code=%s (body redacted)", response.operation, response.code, allowed, rgwBackendErrorCode(response.body))
+		t.Fatalf("native protocol %s status=%d want=%v code=%s (body redacted)", response.operation, response.code, allowed, harness.RGWBackendErrorCode(response.body))
 	}
 }
 

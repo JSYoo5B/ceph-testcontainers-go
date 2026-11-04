@@ -7,11 +7,13 @@ package rgw_test
 import (
 	"bytes"
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
 // Bucket metadata still replicates globally, but this policy enables object
@@ -71,10 +73,10 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	// A secondary object write is valid, but the directional flow excludes
 	// its return path. Test that independently from prefix/bucket selection.
 	destinationS3.Request(t, ctx, http.MethodPut, selected+"/published/reverse-excluded", payload, http.StatusOK)
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second,
-		rgwAbsentObject{destinationS3, selected + "/private/excluded"},
-		rgwAbsentObject{destinationS3, localOnly + "/published/excluded"},
-		rgwAbsentObject{sourceS3, selected + "/published/reverse-excluded"},
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second,
+		harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/private/excluded"},
+		harness.RGWAbsentObject{Client: destinationS3, Path: localOnly + "/published/excluded"},
+		harness.RGWAbsentObject{Client: sourceS3, Path: selected + "/published/reverse-excluded"},
 	)
 	t.Log("selective policy: enabled bucket/prefix replicated; another prefix, another bucket and the reverse direction stayed absent during a 35-second observation window")
 
@@ -88,7 +90,7 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/reports/after-policy-change", payload, http.StatusOK)
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/after-policy-change", payload, http.StatusOK)
 	waitMultisiteObject(t, ctx, destinationS3, selected+"/reports/after-policy-change", http.StatusOK, payload)
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/published/after-policy-change"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/published/after-policy-change"})
 	sourceS3.Request(t, ctx, http.MethodDelete, selected+"/reports/after-policy-change", nil, http.StatusNoContent)
 	waitMultisiteObject(t, ctx, destinationS3, selected+"/reports/after-policy-change", http.StatusNotFound, nil)
 	if got := destinationS3.Request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {

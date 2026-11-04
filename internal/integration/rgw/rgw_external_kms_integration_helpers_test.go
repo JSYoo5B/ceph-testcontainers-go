@@ -219,7 +219,7 @@ func rgwExternalKMS(t *testing.T) {
 			rgwBackendRequire(t, refused, http.StatusInternalServerError)
 			readPlain(wrongCA, "unrelated CA")
 			readExact(trusted, "sibling after refusal")
-			t.Logf("round %d: unrelated KMS CA status=%d code=%s; sibling exact bytes", round, refused.code, rgwBackendErrorCode(refused.body))
+			t.Logf("round %d: unrelated KMS CA status=%d code=%s; sibling exact bytes", round, refused.code, harness.RGWBackendErrorCode(refused.body))
 		}
 		denied := selected.Clone()
 		denied.Set("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id", "denied")
@@ -242,7 +242,7 @@ func rgwExternalKMS(t *testing.T) {
 		vault.call(t, ctx, http.MethodPost, "/v1/auth/token/lookup", map[string]string{"token": kmsToken}, http.StatusBadRequest, http.StatusForbidden)
 		revoked := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
 		rgwBackendRequire(t, revoked, http.StatusForbidden)
-		if rgwBackendErrorCode(revoked.body) != "AccessDenied" || identity(trusted) != object {
+		if harness.RGWBackendErrorCode(revoked.body) != "AccessDenied" || identity(trusted) != object {
 			t.Fatal("revoked KMS token did not fail with AccessDenied on the retained object")
 		}
 		// RGW reads the token file on every Vault request: replacing it at the
@@ -287,7 +287,7 @@ func rgwExternalKMS(t *testing.T) {
 		started := time.Now()
 		failed := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
 		rgwBackendRequire(t, failed, http.StatusInternalServerError)
-		t.Logf("KMS unreachable: status=%d code=%s after %s", failed.code, rgwBackendErrorCode(failed.body), time.Since(started).Round(time.Millisecond))
+		t.Logf("KMS unreachable: status=%d code=%s after %s", failed.code, harness.RGWBackendErrorCode(failed.body), time.Since(started).Round(time.Millisecond))
 		for _, client := range clients {
 			readPlain(client, "KMS disconnected")
 		}
@@ -324,7 +324,7 @@ func rgwExternalKMS(t *testing.T) {
 			rgwBackendRequire(t, rgwBackendSigned(t, ctx, trusted, "s3", http.MethodDelete, "/"+name, nil, nil), http.StatusNoContent)
 			gone := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, "/"+name+"?list-type=2", nil, nil)
 			rgwBackendRequire(t, gone, http.StatusNotFound)
-			if rgwBackendErrorCode(gone.body) != "NoSuchBucket" {
+			if harness.RGWBackendErrorCode(gone.body) != "NoSuchBucket" {
 				t.Fatal("deleted SSE-S3 bucket is still visible")
 			}
 		}

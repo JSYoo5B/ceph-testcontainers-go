@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"reflect"
@@ -20,6 +19,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -193,7 +193,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if err := xml.Unmarshal(clients[1].Request(t, ctx, http.MethodGet, bucket+"?list-type=2", nil, http.StatusOK), &replicaListing); err != nil || len(replicaListing.Contents) != 1 || replicaListing.Contents[0].Key != "replicated" || replicaListing.Contents[0].StorageClass != "STANDARD_IA" {
 		t.Fatalf("replica did not retain STANDARD_IA: %+v error=%v", replicaListing, err)
 	}
-	rgwPlacementPoolPayload(t, ctx, clusters[1], "tc-realm-ia", "replicated STANDARD_IA", payload)
+	harness.RGWPlacementPoolPayload(t, ctx, clusters[1], "tc-realm-ia", "replicated STANDARD_IA", payload)
 	for _, gateway := range []*rgw.Gateway{fixture.Source, fixture.Destination} {
 		state, err := (map[*rgw.Gateway]*placement.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway]).Status(ctx)
 		if err != nil || state.DefaultPlacement != "default-placement" {
