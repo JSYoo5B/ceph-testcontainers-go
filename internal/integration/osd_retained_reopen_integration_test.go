@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -79,6 +80,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := osdMemoryIdentities(t, ctx, cluster)
+	oldAddrs := osdMessengerAddrs(t, ctx, cluster, original.ID)
 	oldContainer := original.GetContainerID()
 	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	if err != nil {
@@ -227,6 +229,17 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The new instance must not reuse a messenger address of the old one,
+	// nonce included. A peer that still holds a lossless connection to the old
+	// address would otherwise treat the new instance's connection as a
+	// reconnect of the old one, a path whose handling differs between
+	// releases and can drop what the old connection still queued.
+	newAddrs := osdMessengerAddrs(t, ctx, cluster, reopened.ID)
+	for _, addr := range newAddrs {
+		if slices.Contains(oldAddrs, addr) {
+			t.Fatalf("reopened osd.%d reuses the address %s of its previous instance: %v", reopened.ID, addr, oldAddrs)
+		}
+	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "reopened")
 
 	newContainer := reopened.GetContainerID()
@@ -243,7 +256,47 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Error("owned volume remains", err)
 	}
 	t.Logf("OSD_RETAINED_REFUSALS osd=%d paused_detach=refused_unfenced store_change=refused containers_unchanged=true registration_unchanged=true store_unchanged=true restored=true remove_detached=refused second_reopen=refused", original.ID)
-	t.Logf("OSD_RETAINED_REOPEN osd=%d uuid=%s same_fsid=true container_changed=true single_replica=true bytes=1048583 remaining=0", original.ID, detached.UUID())
+	t.Logf("OSD_RETAINED_REOPEN osd=%d uuid=%s same_fsid=true container_changed=true addrs_before=%v addrs_after=%v single_replica=true bytes=1048583 remaining=0", original.ID, detached.UUID(), oldAddrs, newAddrs)
+}
+
+// osdMessengerAddrs returns the OSD's public and cluster address vectors from
+// the OSD map, each entry as type:addr/nonce.
+func osdMessengerAddrs(t *testing.T, ctx context.Context, cluster *ceph.Container, id int) []string {
+	t.Helper()
+	type vector struct {
+		Addrs []struct {
+			Type  string `json:"type"`
+			Addr  string `json:"addr"`
+			Nonce uint64 `json:"nonce"`
+		} `json:"addrvec"`
+	}
+	var dump struct {
+		OSDs []struct {
+			ID      int    `json:"osd"`
+			Public  vector `json:"public_addrs"`
+			Cluster vector `json:"cluster_addrs"`
+		} `json:"osds"`
+	}
+	if err := json.Unmarshal(harness.MustCeph(t, ctx, cluster, "osd", "dump", "--format", "json"), &dump); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range dump.OSDs {
+		if o.ID != id {
+			continue
+		}
+		var out []string
+		for _, v := range []vector{o.Public, o.Cluster} {
+			for _, a := range v.Addrs {
+				out = append(out, fmt.Sprintf("%s:%s/%d", a.Type, a.Addr, a.Nonce))
+			}
+		}
+		if len(out) == 0 {
+			t.Fatalf("osd.%d has no messenger addresses", id)
+		}
+		return out
+	}
+	t.Fatalf("osd.%d is not in the OSD map", id)
+	return nil
 }
 
 type retainedStoreFile struct {
