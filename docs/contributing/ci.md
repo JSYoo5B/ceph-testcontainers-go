@@ -653,7 +653,9 @@ sources, never proof that current main passed every version or network.
 
 Historical discovery uses a separate inventory in
 `.github/ceph-discovery-images.json`: official aggregate images for Squid
-19.2.0–19.2.7, Tentacle 20.2.0–20.2.4 and Umbrella 21.2.0. Each cell keeps one
+19.2.0–19.2.7, Tentacle 20.2.0–20.2.5 and Umbrella 21.2.0. The 20.2.5
+publication uses the separately pinned upstream aggregate until a role aggregate
+is published; other patches use the published official role aggregate. Each cell keeps one
 release for every role/client and pins index and native architecture children.
 Only linux/amd64 executes by default; arm64 manifest availability is not native
 arm64 validation. Umbrella's official amd64 images require x86-64-v3; a failed
@@ -662,8 +664,8 @@ artifacts, unresolved helpers and inapplicable extra-image contracts remain
 preparation/eligibility outcomes rather than native passes.
 
 A new patch receives a priority turn, alternating with oldest-attempt turns so
-new arrivals cannot permanently starve historical work. Fourteen patches at two
-slots per week imply roughly **seven weeks** for a fixed inventory. Discovery
+new arrivals cannot permanently starve historical work. Fifteen patches at two
+slots per week imply roughly **eight weeks** for a fixed inventory. Discovery
 does not add historical patches to `SUPPORTED_RELEASES` or change support policy.
 The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
 malformed trash-purge schedule removal with empty and populated schedules. It

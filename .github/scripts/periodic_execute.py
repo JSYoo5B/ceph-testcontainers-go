@@ -166,11 +166,11 @@ def prepare_images(plan, directory, deadline=None):
                      'import shutil,subprocess,sys\n'
                      'try:\n import rados,cephfs\n'
                      'except ImportError:\n sys.exit(17)\n'
-                     'tools=("ceph","ceph-mon","ceph-mgr","ceph-osd","rados","rbd","ceph-fuse","radosgw","radosgw-admin")\n'
+                     'tools=("ceph","ceph-mon","ceph-mgr","ceph-osd","rados","rbd","radosgw","radosgw-admin")\n'
                      'if not all(shutil.which(t) for t in tools): sys.exit(17)\n'
                      'print(subprocess.check_output(["ceph","--version"],text=True).strip())']
-        check = command(['docker', 'run', '--rm', '--name', name, '--network', 'none',
-                         environment['CEPH_TEST_ESSENTIAL_IMAGE'], *probe], directory / 'version.log', remaining(30))
+        check = command(['docker', 'run', '--rm', '--name', name, '--network', 'none', '--entrypoint', probe[0],
+                         environment['CEPH_TEST_ESSENTIAL_IMAGE'], *probe[1:]], directory / 'version.log', remaining(30))
         version = (directory / 'version.log').read_text().strip()
         if check['exit_code'] in (17, 127):
             raise RuntimeError('contract_inapplicable: discovery image lacks required core tools')

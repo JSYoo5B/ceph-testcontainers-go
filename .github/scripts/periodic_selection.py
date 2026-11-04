@@ -50,7 +50,7 @@ def patch_inventory():
         if not re.fullmatch(r'\d+\.\d+\.\d+', release):
             raise ValueError('invalid discovery release')
         if row['eligibility'] == 'available':
-            if (not re.fullmatch(re.escape(images.REGISTRY) + r'@sha256:[a-f0-9]{64}', row['reference'])
+            if (not re.fullmatch('(?:' + re.escape(images.REGISTRY) + r'|quay\.io/ceph/ceph)@sha256:[a-f0-9]{64}', row['reference'])
                     or set(row['platforms']) != {'linux/amd64', 'linux/arm64'}
                     or any(images.DIGEST.fullmatch(d) is None for d in row['platforms'].values())):
                 raise ValueError('invalid discovery image identity')

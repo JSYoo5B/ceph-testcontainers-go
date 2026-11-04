@@ -99,8 +99,10 @@ class SelectionTests(unittest.TestCase):
     def test_discovery_does_not_expand_ordinary_supported_releases(self):
         supported = tuple(sample.images.RELEASES)
         inventory = sample.patch_inventory()
-        self.assertEqual(len(inventory), 14)
+        self.assertEqual(len(inventory), 15)
         self.assertNotIn('19.2.2', supported)
+        self.assertNotIn('20.2.5', supported)
+        self.assertEqual(inventory['20.2.5']['variant'], 'upstream_aggregate')
         plan = self.plan('discovery')
         self.assertIn('reference', plan['images'])
         self.assertEqual(tuple(sample.images.RELEASES), supported)

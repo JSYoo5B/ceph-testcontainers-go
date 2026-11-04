@@ -158,6 +158,20 @@
         "amd64": "x86-64-v3"
       },
       "original": "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+    },
+    "20.2.5": {
+      "codename": "tentacle",
+      "eligibility": "available",
+      "variant": "upstream_aggregate",
+      "reference": "quay.io/ceph/ceph@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+      "platforms": {
+        "linux/amd64": "sha256:b2f0255d0e2626473e72f2ded7e67dfaf546272f1c6fa699e1aaffce288b6e57",
+        "linux/arm64": "sha256:049acd51a7a9a6e10051ed60ae3ee2d8d4b3988a90b62487eeea2897b5d90f0d"
+      },
+      "cpu_baseline": {},
+      "original": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+      "publication": "The official-20.2.5-all role aggregate is not published; this is the separately pinned upstream aggregate.",
+      "release_notes": "https://docs.ceph.com/en/latest/releases/tentacle/#v20-2-5-tentacle"
     }
   }
 }
