@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,64 @@ func TestMarkdownInspectionOrderAndAbsence(t *testing.T) {
 		if !strings.Contains(s, term) {
 			t.Fatalf("missing %s: %s", term, s)
 		}
+	}
+}
+
+func TestMarkdownFocusKeepsBothSidesAndReportsExclusions(t *testing.T) {
+	d := &delta{Counts: map[string]int{stateUnmatched: 3}, Entries: []deltaEntry{
+		{State: stateUnmatched, Reason: reasonAbsentInHead, Base: &site{File: "old/a.go", Message: "old"}},
+		{State: stateUnmatched, Reason: reasonAbsentInBase, Head: &site{File: "new/a.go", Message: "new"}},
+		{State: stateUnmatched, Base: &site{File: "other/a.go", Message: "unrelated"}},
+	}}
+	var out bytes.Buffer
+	if err := writeFocusedDeltaMarkdown(&out, d, 20, []string{"old/a.go", "new/a.go"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, term := range []string{"1 entries outside focus omitted", "moved_or_unmatched: 3", "old/a.go", "new/a.go", "State counts below describe the full comparison"} {
+		if !strings.Contains(out.String(), term) {
+			t.Fatalf("missing %s: %s", term, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "unrelated") {
+		t.Fatal("unfocused entry retained")
+	}
+	for _, file := range []string{"../a.go", "/a.go", "a\\b.go", "a\nb.go"} {
+		if err := writeFocusedDeltaMarkdown(&bytes.Buffer{}, d, 20, []string{file}); err == nil {
+			t.Errorf("accepted %q", file)
+		}
+	}
+	if err := writeFocusedDeltaMarkdown(failingSummaryWriter{}, d, 20, []string{"old/a.go"}); err == nil {
+		t.Fatal("writer failure lost")
+	}
+}
+
+func TestMarkdownFocusCommandValidation(t *testing.T) {
+	dir := t.TempDir()
+	rawPath := dir + "/raw.json"
+	if err := os.WriteFile(rawPath, raw(t, fd{"dupl", "a.go", 3, 0, "duplicate"}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"pair", "-base", rawPath, "-head", rawPath, "-base-ref", "b", "-head-ref", "h", "-format", "markdown", "-changed-files", dir + "/focus.json"}
+	for _, content := range []string{`null`, `{}`, `[3]`, `["../a.go"]`} {
+		if err := os.WriteFile(dir+"/focus.json", []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := run(args, &bytes.Buffer{}); err == nil {
+			t.Errorf("accepted %s", content)
+		}
+	}
+	if err := os.WriteFile(dir+"/focus.json", []byte(`["a.go"]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run(args, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Findings focus") {
+		t.Fatal(out.String())
+	}
+	args[len(args)-3] = "json"
+	if err := run(args, &bytes.Buffer{}); err == nil {
+		t.Fatal("focus silently accepted for JSON")
 	}
 }
