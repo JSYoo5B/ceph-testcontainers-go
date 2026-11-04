@@ -30,9 +30,11 @@ import (
 // osd_op_queue_cut_off says, and a MON-driven stream of new intervals produces
 // them independently of the OSDs' managed work.
 //
-// One MON and three OSDs start with debug_mclock 10. A size-3 one-PG pool
+// One MON and three OSDs start with debug_mclock 10; the MON proposes every
+// 0.1 s so that the churn commits several OSD maps a second. A size-3 one-PG pool
 // holds seeded objects and is the scrub target (PG seed 0, OSD shard 0). A
-// separate size-3 pool supplies the churn: a client toggles its min_size,
+// separate size-3 pool of 240 PGs (with the target and .mgr, just under the
+// per-OSD PG limit) supplies the churn: a client toggles its min_size,
 // which starts a new interval for each of its PGs and none for the target.
 // The target is deep-scrubbed once quiet and once during the churn; every
 // OSD's queue sizes are sampled per shard, the target's last_became_active
@@ -47,7 +49,7 @@ const (
 	churnSeconds    = 120
 	churnTargetPool = "tc-churn-scrub"
 	churnPool       = "tc-churn"
-	churnPGs        = 128
+	churnPGs        = 240
 	churnSeeds      = 600
 	churnScrubAfter = 15 * time.Second
 	churnForced     = "forcing a dequeue attempt"
@@ -87,7 +89,7 @@ func runMClockPeeringChurn(t *testing.T, cutoff string) {
 	defer cancel()
 	image, opts := harness.IntegrationImages(t)
 	config := filepath.Join(t.TempDir(), "mclock.conf")
-	if err := os.WriteFile(config, []byte("[osd]\nosd_op_queue = mclock_scheduler\nosd_op_queue_cut_off = "+cutoff+"\ndebug_mclock = 10\n"), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte("[mon]\npaxos_propose_interval = 0.1\n[osd]\nosd_op_queue = mclock_scheduler\nosd_op_queue_cut_off = "+cutoff+"\ndebug_mclock = 10\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts = append(opts, ceph.WithConfigFile(config),
