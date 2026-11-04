@@ -46,7 +46,13 @@ func startSessionWatchLog(t *testing.T, ctx context.Context, fs *cephfs.Filesyst
 			}
 		}
 	}()
-	t.Cleanup(func() { l.stop(t) })
+	t.Cleanup(func() {
+		// Stop is idempotent: after a checked stop this repeats its cause.
+		// A failed test already reports why the watch may have ended.
+		if err := l.stop(t); err != nil && !t.Failed() {
+			t.Errorf("stop session watch: %v", err)
+		}
+	})
 	if base := l.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool { return e.Kind == ceph.WatchBaseline }); base.Sequence != 1 {
 		t.Fatalf("session watch baseline = %+v", base)
 	}
