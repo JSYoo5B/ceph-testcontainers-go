@@ -67,7 +67,7 @@ func runMClockScrubUnderLoad(t *testing.T, cutoff string) {
 	t.Logf("MCLOCK ceph=%s cutoff=%s", harness.StaticFacts(cluster).CephVersion, cutoff)
 	osds := clusteraccess.OSDs(t, cluster)
 	for _, o := range osds {
-		for _, key := range []string{"osd_op_queue", "osd_op_queue_cut_off", "osd_mclock_profile", "osd_op_num_shards", "osd_op_num_threads_per_shard"} {
+		for _, key := range []string{"osd_op_queue", "osd_op_queue_cut_off", "osd_mclock_profile", "debug_mclock", "osd_mclock_max_starve_time_hdd", "osd_op_num_shards", "osd_op_num_threads_per_shard"} {
 			out, err := o.AdminSocket(ctx, "config", "get", key)
 			if err != nil {
 				t.Fatalf("osd.%d config get %s: %v", o.ID, key, err)
@@ -216,7 +216,13 @@ cd /tmp && sha256sum seed.* > /tmp/seed.sums`, mclockSeedObjects, mclockScrubPoo
 				}
 			}
 		}
-		t.Logf("MCLOCK osd.%d queues %v forced_dequeue_lines=%d first=%q", o.ID, v, forced, first)
+		profile := 0
+		for _, line := range lines {
+			if strings.Contains(line, "mClockScheduler: Setting ") {
+				profile++
+			}
+		}
+		t.Logf("MCLOCK osd.%d queues %v forced_dequeue_lines=%d first=%q debug10_profile_lines=%d", o.ID, v, forced, first, profile)
 	}
 	if err2 != nil {
 		t.Errorf("deep scrub under load did not finish within %s of the load end: %v", 5*time.Minute, err2)
