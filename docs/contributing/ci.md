@@ -667,8 +667,10 @@ slots per week imply roughly **seven weeks** for a fixed inventory. Discovery
 does not add historical patches to `SUPPORTED_RELEASES` or change support policy.
 The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
 malformed trash-purge schedule removal with empty and populated schedules. It
-preserves native exit codes and unchanged-state controls: characterizing an old
-success on invalid input is not claiming that behavior is correct.
+preserves native exit codes and unchanged-state controls in the durable receipt:
+characterizing an old success on invalid input is not claiming that behavior is
+correct. Discovery also samples the existing RGW multisite bootstrap contract on
+19.2.5/19.2.6/19.2.7, preserving the documented 19.2.6 failure as a control.
 
 Investigate meaningful differences with scoped issues. Preserve the first
 failure, then compare the same test at the recorded source with an adjacent

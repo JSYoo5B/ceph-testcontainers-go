@@ -6,6 +6,7 @@ remain different outcomes. A dirty cleanup stops admission of further cases.
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,28 @@ import tag_scenarios as tags
 ROOT = selection.ROOT
 CLEANUP_RESERVE = 120
 MIN_FREE_BYTES = 12 * (1 << 30)
+SCHEDULE_CASES = {'version', 'empty-before', 'empty-invalid-interval', 'empty-invalid-start', 'empty-after',
+                  'add', 'present-before', 'present-invalid-interval', 'present-invalid-start',
+                  'present-after', 'cleanup', 'restored'}
+
+
+def characterization(log):
+    """Persist bounded native case outcomes, never source-derived instructions."""
+    result = {}
+    for line in Path(log).read_text().splitlines():
+        if '{' not in line:
+            continue
+        try:
+            row = json.loads(line[line.index('{'):])
+        except ValueError:
+            continue
+        if (isinstance(row, dict) and row.get('case') in SCHEDULE_CASES
+                and type(row.get('code')) is int and isinstance(row.get('out'), str)):
+            result[row['case']] = {'exit_code': row['code'],
+                                  'stdout_sha256': hashlib.sha256(row['out'].encode()).hexdigest()}
+    if set(result) != SCHEDULE_CASES:
+        raise ValueError('characterization did not preserve every native control')
+    return result
 
 
 def stop(child):
@@ -311,6 +334,8 @@ def execute(plan_path, directory, trial=False, runner=command):
                 if record['classification'] == 'passed' and (not record['phases']['native']['passed']
                                                              or report.get('passed') is not True):
                     record['classification'] = 'native_failure'
+                if 'TestDiscoveryTrashScheduleBoundary' in item['tests'] and report.get('passed'):
+                    record['characterization'] = characterization(work / 'native/native.log')
             except InterruptedError:
                 raise
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

@@ -172,6 +172,12 @@ def make_plan(catalog, history, source_sha, mode, now, release='', profiles='', 
                 optional = tags.discover_optional(catalog)
                 profile = next(p for p in optional['include'] if p['batch'] == 'discovery_schedule')
                 entries.append(entry(profile, ['TestDiscoveryTrashScheduleBoundary'], ''))
+            if version in ('19.2.5', '19.2.6', '19.2.7'):
+                required = tags.discover(catalog)['include']
+                name = 'TestMultiClusterRGWMultisite'
+                profile = next(p for p in required if name in tags.selected_tests(catalog, p['package'], p['tags']))
+                network = (profile.get('networks') or [''])[0] if name in profile.get('network_tests', []) else ''
+                entries.append(entry(profile, [name], network))
             candidates.append({'id': version + '/patch-core', 'release': version, 'entries': entries})
     else:
         if release not in patch_inventory() or not profiles:
