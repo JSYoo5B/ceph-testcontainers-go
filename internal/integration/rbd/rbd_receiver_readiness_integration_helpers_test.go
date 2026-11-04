@@ -15,6 +15,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
+	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -156,13 +157,14 @@ func runRBDReceiverReadiness(t *testing.T, host bool) {
 				t.Fatalf("default cohort blessed stopped member: %+v %v", status, err)
 			}
 			check("survivor-only", survivor.DaemonName)
-			cid, instance := leader.GetContainerID(), initial.Daemons[leader.DaemonName].InstanceID
+			cid := leader.GetContainerID()
 			if err := leader.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
 			restarted := check("same-cid-restart")
-			if leader.GetContainerID() != cid || restarted.Daemons[leader.DaemonName].InstanceID == instance {
-				t.Fatal("same container restart did not preserve CID/change native instance")
+			restart := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: leader.DaemonName, Baseline: initial.Daemons[leader.DaemonName], Running: true, NewInstance: true}}}
+			if result, err := restart.Evaluate(restarted); leader.GetContainerID() != cid || err != nil || !result.Matched {
+				t.Fatalf("same container restart did not preserve CID/change native instance: %v %v", result, err)
 			}
 			removed := false
 			for _, daemon := range link.Daemons() {

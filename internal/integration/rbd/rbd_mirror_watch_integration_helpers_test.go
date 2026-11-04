@@ -12,6 +12,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
+	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -221,8 +222,13 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	stoppedAt := time.Now()
+	election := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: survivor, Running: true}, {Name: victim}}, Leader: survivor}
 	elected := receivers.await(t, 4*time.Minute, "survivor election", func(e rbdmirror.ReceiverWatchEvent) bool {
-		return e.Status.LeaderDaemonName == survivor && !e.Status.Daemons[victim].Running
+		result, err := election.Evaluate(e.Status)
+		if err != nil {
+			t.Fatalf("survivor election: %v", err)
+		}
+		return result.Matched
 	})
 	if !slices.Equal(elected.Status.ExpectedDaemons, receiverBaseline.Status.ExpectedDaemons) || elected.Status.Ready {
 		t.Fatalf("the stopped member left the pinned cohort or was reported ready: %+v", elected)
@@ -230,8 +236,12 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	t.Logf("survivor election: event %d %s, observed %v after the stop returned", elected.Sequence, elected.Kind, elected.Finished.Sub(stoppedAt))
 	// The existing wait with the explicit survivor cohort confirms the
 	// election independently of the stream.
-	if status, err := link.WaitReceiverReady(ctx, survivor); err != nil || status.LeaderDaemonName != survivor {
+	status, err := link.WaitReceiverReady(ctx, survivor)
+	if err != nil {
 		t.Fatalf("survivor readiness = %+v, %v", status, err)
+	}
+	if result, err := (rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: survivor, Running: true}}, Leader: survivor}).Evaluate(status); err != nil || !result.Matched {
+		t.Fatalf("survivor readiness: %v %v", result, err)
 	}
 
 	// The election advances the test: the SUT writes a new payload and a
@@ -245,8 +255,8 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 			return e.Status.ReplayReady && e.Status.DaemonName == survivor
 		})
 	}
-	if replaying.Status.GlobalID != imageBaseline.Status.GlobalID || replaying.Status.SourceImageID != imageBaseline.Status.SourceImageID || replaying.Status.DestinationImageID != imageBaseline.Status.DestinationImageID {
-		t.Fatalf("the replay event names another image pair: %+v", replaying)
+	if result, err := (rbdmirrorexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor}).Evaluate(replaying.Status); err != nil || !result.Matched {
+		t.Fatalf("the replay event names another image pair: %v %v", result, err)
 	}
 	t.Logf("survivor replay: event %d %s by %s (instance %s; baseline %s)", replaying.Sequence, replaying.Kind, replaying.Status.DaemonName, replaying.Status.InstanceID, imageBaseline.Status.DaemonName)
 	harness.RBDScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, rbdMirrorWatchPool, "", "volume", second)
@@ -256,9 +266,13 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	restartedAt := time.Now()
+	restart := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: victim, Baseline: victimBefore, Running: true, NewInstance: true}}, Ready: true}
 	restarted := receivers.await(t, 4*time.Minute, "same-container restart", func(e rbdmirror.ReceiverWatchEvent) bool {
-		d := e.Status.Daemons[victim]
-		return e.Status.Ready && d.Running && d.InstanceID != "" && d.InstanceID != victimBefore.InstanceID
+		result, err := restart.Evaluate(e.Status)
+		if err != nil {
+			t.Fatalf("same-container restart: %v", err)
+		}
+		return result.Matched
 	})
 	if d := restarted.Status.Daemons[victim]; d.ContainerID != victimBefore.ContainerID || stopped.GetContainerID() != victimBefore.ContainerID {
 		t.Fatalf("the restarted member is another container: %+v", restarted)
