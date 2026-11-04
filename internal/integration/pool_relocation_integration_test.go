@@ -6,14 +6,13 @@ package integration_test
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -71,6 +70,10 @@ func TestPoolPGRelocation(t *testing.T) {
 				t.Helper()
 				deadline, stop := context.WithTimeout(ctx, 3*time.Minute)
 				defer stop()
+				want := expect.PGs{Count: count, Up: []int{osd}, Acting: []int{osd}}
+				if clean {
+					want.State = "active+clean"
+				}
 				var last string
 				for {
 					snapshot, err := harness.PoolHandle(t, deadline, cluster, poolName).PGs(deadline)
@@ -79,17 +82,17 @@ func TestPoolPGRelocation(t *testing.T) {
 					}
 					// A held phase needs every PG remapped and some still waiting for
 					// recovery; a PG without objects has nothing to recover.
-					matched := err == nil && len(snapshot.PGs) == count
+					matched := false
+					if err == nil {
+						placed, evalErr := want.Evaluate(snapshot)
+						if evalErr != nil {
+							t.Fatal(phase, evalErr)
+						}
+						matched, last = placed.Matched, placed.String()
+					}
 					waiting := false
 					for _, pg := range snapshot.PGs {
-						if !matched {
-							break
-						}
-						settled := pg.State == "active+clean"
 						waiting = waiting || strings.Contains(pg.State, "recovery_wait") || strings.Contains(pg.State, "backfill_wait")
-						if !slices.Equal(pg.Up, []int{osd}) || !slices.Equal(pg.Acting, []int{osd}) || (clean && !settled) {
-							matched, last = false, fmt.Sprintf("PG %s up=%v acting=%v state=%s", pg.PGID, pg.Up, pg.Acting, pg.State)
-						}
 					}
 					if matched && !clean && !waiting {
 						matched, last = false, "no PG is waiting for recovery"
@@ -104,8 +107,6 @@ func TestPoolPGRelocation(t *testing.T) {
 					}
 					if err != nil {
 						last = err.Error()
-					} else if len(snapshot.PGs) != count {
-						last = fmt.Sprintf("%d reported PGs", len(snapshot.PGs))
 					}
 					select {
 					case <-deadline.Done():

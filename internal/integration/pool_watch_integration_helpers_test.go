@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -70,16 +71,13 @@ func poolPGWatchRow(event ceph.PoolPGWatchEvent, id ceph.PGID) (ceph.PGState, bo
 	return ceph.PGState{}, false
 }
 
-func poolPGWatchAllClean(event ceph.PoolPGWatchEvent, count int) bool {
-	if len(event.Snapshot.PGs) != count {
-		return false
+func poolPGWatchAllClean(t *testing.T, event ceph.PoolPGWatchEvent, count int) bool {
+	t.Helper()
+	result, err := expect.PGs{Count: count, State: "active+clean"}.Evaluate(event.Snapshot)
+	if err != nil {
+		t.Fatalf("event %d: %v", event.Sequence, err)
 	}
-	for _, pg := range event.Snapshot.PGs {
-		if pg.State != "active+clean" {
-			return false
-		}
-	}
-	return true
+	return result.Matched
 }
 
 // poolPGWatchRoundTrip plays the SUT: it writes one object through the
@@ -150,7 +148,7 @@ func testPoolPGWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	gaps := 0
 	first := <-w.Events()
 	last = first.Sequence
-	if first.Kind != ceph.WatchBaseline || first.Sequence != 1 || !poolPGWatchAllClean(first, pgCount) {
+	if first.Kind != ceph.WatchBaseline || first.Sequence != 1 || !poolPGWatchAllClean(t, first, pgCount) {
 		t.Fatalf("baseline = %+v", first)
 	}
 	poolID := first.Snapshot.PoolBefore.ID
@@ -194,7 +192,7 @@ func testPoolPGWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	restarted := time.Now()
 	clean := awaitPoolPGWatchEvent(t, w, poolID, &last, &gaps, 5*time.Minute, "clean", func(e ceph.PoolPGWatchEvent) bool {
 		pg, ok := poolPGWatchRow(e, watched.PGID)
-		return poolPGWatchAllClean(e, pgCount) && ok && slices.Equal(pg.Up, watched.Up) && slices.Contains(pg.Acting, target.ID)
+		return poolPGWatchAllClean(t, e, pgCount) && ok && slices.Equal(pg.Up, watched.Up) && slices.Contains(pg.Acting, target.ID)
 	})
 	t.Logf("clean: event %d %s, observed %v after the start returned", clean.Sequence, clean.Kind, clean.Finished.Sub(restarted))
 

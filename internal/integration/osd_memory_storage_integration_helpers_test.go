@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/containerd/errdefs"
@@ -236,14 +237,22 @@ func osdMemoryPlacement(t *testing.T, parent context.Context, cluster *ceph.Cont
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
+	// Every PG clean and, when an OSD is forbidden (-1 forbids none), off it.
+	want := expect.PGs{Count: 8, State: "active+clean"}
+	if forbidden >= 0 {
+		want.NotInUp, want.NotInActing = []int{forbidden}, []int{forbidden}
+	}
 	for {
 		snapshot, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil || snapshot.FSID != fsid || snapshot.PoolBefore.ID != poolID || snapshot.PoolAfter.ID != poolID {
 			t.Fatal("original pool placement identity changed", err)
 		}
-		ready, resident := snapshot.PGReady && len(snapshot.PGs) == 8, false
+		placed, err := want.Evaluate(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, resident := snapshot.PGReady && placed.Matched, false
 		for _, pg := range snapshot.PGs {
-			ready = ready && pg.State == "active+clean" && !slices.Contains(pg.Up, forbidden) && !slices.Contains(pg.Acting, forbidden)
 			resident = resident || slices.Contains(pg.Acting, wanted) && !pg.StatsInvalid && pg.Stats.Objects > 0 && pg.Stats.Bytes > 0
 		}
 		if ready && resident {
