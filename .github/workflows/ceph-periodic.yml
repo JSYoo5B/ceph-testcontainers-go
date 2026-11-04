@@ -1,35 +1,19 @@
 name: Ceph periodic
 
-# The full matrix on main: every runtime category on every supported release,
-# the rows of SUPPORTED_RELEASES in .github/scripts/run_image_matrix.py. The
-# Releases job expands them, so a new release needs no edit here. Pull requests run Code checks, Docker checks and Ceph short on
-# Tentacle, and only the changed batches of the other categories, so this is
-# where every batch runs on every supported release.
-#
-# The schedule fires every 3 hours; the Gate job (periodic_gate.py) lets the
-# matrix run only for a commit of main that no earlier run executed, for a
-# weekly repeat of an unchanged commit, or on every firing while the
-# repository variable CI_RELEASE_PHASE is "true". Repeated runs of one commit
-# show which profiles fail without a source change.
-#
-# The daily campaign firing (or a dispatch with mode "representative") runs
-# the representative campaign instead: the batches whose //ci: line declares
-# representative=<theme>, each repeated as separate jobs on one pinned commit
-# and pinned role image digests. Full coverage stays with the matrix above.
-#
-# The History job of every executing run stores its jobs' history rows on the
-# scenario-history branch and rewrites the same-config classification there.
+# One daily allocation: random supported-release batches on
+# five days; historical/new patch discovery on Tuesday and Friday (UTC).
+# Full matrices and repeated representative campaigns require manual dispatch.
+# Every sample publishes one frozen source/image/test plan before execution.
 on:
   schedule:
-    - cron: '41 */3 * * *'
-    - cron: '23 4 * * *'
+    - cron: '41 4 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: full runs the matrix; representative repeats batches; storage qualifies conditional runner preparation
+        description: rotate/discovery flaky samples; targeted reproduces selected tests; full/representative/storage are explicit investigations
         type: choice
-        options: [full, representative, storage]
-        default: full
+        options: [rotate, discovery, targeted, full, representative, storage]
+        default: rotate
       storage_policy:
         description: Storage qualification only; auto skips when safe, always is the control, pressure exercises reclamation; pressure-supplemental exhausts standard cleanup first
         type: choice
@@ -42,33 +26,43 @@ on:
       repetitions:
         description: Attempts of each representative batch (representative only, 1 to 10)
         type: number
-        default: 3
+        default: 1
       release:
         description: Ceph release of the role images (representative and storage only)
         type: choice
         options: ['20.2.4', '21.2.0', '19.2.5']
         default: '20.2.4'
       ref:
-        description: Commit the campaign pins or the storage run checks out (representative and storage only); empty uses the dispatched branch head
+        description: Source ref for sampled, representative and storage runs; full uses the dispatched commit; empty uses the dispatched commit
         type: string
         default: ''
+      patch:
+        description: Exact catalogued patch for targeted runs; historical patches are not support declarations
+        type: string
+        default: ''
+      profiles:
+        description: Comma-separated exact profile IDs (targeted only)
+        type: string
+        default: ''
+      tests:
+        description: Comma-separated exact parent tests within the selected profiles (targeted only); empty runs those complete profiles
+        type: string
+        default: ''
+      network:
+        description: Targeted network; default uses the profile's declared default
+        type: choice
+        options: [default, host, bridge]
+        default: default
 
 permissions:
   contents: read
   actions: read
 
-# A new run waits for the one in progress instead of cancelling it, so every
-# started run finishes and counts. A campaign has its own group, so that a
-# matrix firing never replaces a waiting campaign, or the reverse. A matrix
-# run and a campaign run can therefore run at once, and their runtime bounds
-# together stay within the runners that pull requests leave
-# (tag_scenarios.periodic_runner_budget). A storage dispatch shares the
-# matrix's group, because a group of its own would take pull request
-# runners. GitHub keeps one waiting run per group, so a storage dispatch
-# that waits behind a matrix run is replaced by the next matrix firing, and
-# replaces a waiting one; dispatch it again when it ends cancelled.
+# Bounded, full and storage runs share one group; none can overlap them.
+# Explicit representative investigations have a separate bounded group.
+# No daily firing starts a repeated representative campaign.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.event.schedule == '23 4 * * *' || inputs.mode == 'representative') && '-campaign' || '' }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.mode == 'representative' && '-campaign' || '' }}
   cancel-in-progress: false
 
 env:
@@ -77,8 +71,96 @@ env:
   GOPROXY: 'https://proxy.golang.org|direct'
 
 jobs:
+  sample-plan:
+    name: Sample plan
+    if: github.event_name == 'schedule' || inputs.mode == 'rotate' || inputs.mode == 'discovery' || inputs.mode == 'targeted'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Freeze source, images and selected contracts
+        id: plan
+        env:
+          SAMPLE_MODE: ${{ github.event_name == 'schedule' && 'auto' || inputs.mode }}
+          SAMPLE_RELEASE: ${{ inputs.patch || inputs.release }}
+          SAMPLE_PROFILES: ${{ inputs.profiles }}
+          SAMPLE_TESTS: ${{ inputs.tests }}
+          SAMPLE_NETWORK: ${{ inputs.network }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          python3 .github/scripts/tag_scenarios.py modules --directory artifacts/plan-modules
+          python3 .github/scripts/periodic_selection.py --mode "$SAMPLE_MODE" --source "$sha" --release "$SAMPLE_RELEASE" --profiles "$SAMPLE_PROFILES" --tests "$SAMPLE_TESTS" --network "$SAMPLE_NETWORK" --freeze-images --output artifacts/periodic-plan.json
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Publish the plan before native work
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: periodic-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/periodic-plan.json
+          if-no-files-found: warn
+          retention-days: 14
+  sample:
+    name: Sequential sample
+    needs: sample-plan
+    runs-on: ubuntu-24.04
+    # The executor admits work within 110 minutes, leaving upload/cleanup margin.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.sample-plan.outputs.sha }}
+      - uses: actions/setup-go@v7
+        id: go
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Restore the Go build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: periodic-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/plan
+      - name: Run independent contracts in this allocation
+        env:
+          CGO_ENABLED: '0'
+        run: python3 .github/scripts/periodic_execute.py execute --plan artifacts/plan/periodic-plan.json --directory artifacts/periodic
+      - name: Save per-case evidence and selection outcome
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: periodic-sample-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/periodic/
+            !artifacts/periodic/**/compile/*.test
+          retention-days: 14
+          if-no-files-found: warn
   gate:
-    if: inputs.mode != 'storage'
+    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -194,7 +276,7 @@ jobs:
       release: ${{ needs.pin.outputs.release }}
       # The dispatch input reaches the call as a string; the reusable
       # workflow's number input refuses it unless converted.
-      repetitions: ${{ fromJSON(inputs.repetitions || 3) }}
+      repetitions: ${{ fromJSON(inputs.repetitions || 1) }}
       ref: ${{ needs.pin.outputs.sha }}
       role_digests: ${{ needs.pin.outputs.digests }}
   # One bounded workload per explicitly requested run. Dispatch the same ref
@@ -219,8 +301,8 @@ jobs:
   # is a commit. The runtime jobs read summary.json for their failure notes.
   history:
     name: History
-    needs: [gate, environment, releases, runtime, pin, representative, storage]
-    if: always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true')
+    needs: [gate, environment, releases, runtime, pin, representative, storage, sample-plan, sample]
+    if: always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true' || needs.sample-plan.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -231,9 +313,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Download this run's history rows
+        if: needs.sample-plan.result != 'success'
         uses: actions/download-artifact@v8
         with:
           pattern: tag-scenario-*
+          path: artifacts/rows
+      - name: Download the packed periodic receipt
+        if: needs.sample-plan.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: periodic-sample-*
           path: artifacts/rows
       - name: Store the rows on the scenario-history branch
         env:

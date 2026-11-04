@@ -30,8 +30,8 @@ import registry_pull
 ROOT = Path(__file__).resolve().parents[2]
 # Releases that ceph-testcontainers-images checks and publishes, with their
 # codenames and unmodified official images. This table is the supported
-# release set of CI: Ceph periodic and Ceph release matrix run every category
-# on each row (tag_scenarios.py releases), so a new release is one row here
+# release set of CI: manual full periodic and Ceph release matrix run every
+# category on each row (tag_scenarios.py releases), so a new release is one row here
 # once ceph-testcontainers-images publishes its role images. A release or
 # patch that is not a row is refused, never mapped to a neighbouring one.
 # RELEASE is the default Ceph version; DEFAULT_IMAGE matches ceph.DefaultImage.

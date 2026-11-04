@@ -1392,6 +1392,30 @@ def parse_markers(values):
     return markers
 
 
+def periodic_samples(directory):
+    """Packed receipts alongside existing Actions job timing, without turning
+    sample passes into full-profile or current-main coverage claims."""
+    from periodic_selection import validate_receipt
+    samples = []
+    for path in sorted(Path(directory).rglob("periodic-run.json")):
+        row = validate_receipt(json.loads(path.read_text()))
+        phases = {name: sum(entry.get("phases", {}).get(name, {}).get("elapsed_seconds", 0)
+                            for entry in row["entries"]) for name in ("compile", "test_images", "native")}
+        samples.append({"execution": row["execution"], "source_sha": row["source_sha"],
+                        "source_provenance": row.get("source_provenance"), "release": row["release"],
+                        "cell": row["cell"], "classification": row.get("classification"),
+                        "complete": row["complete"], "advances": row["advances"],
+                        "executor_seconds": row.get("elapsed_seconds"),
+                        "preparation_seconds": row.get("preparation_seconds"), "phases": phases,
+                        "native_entries_started": sum(e["native_started"] for e in row["entries"]),
+                        "runner_allocations": None,
+                        "runner_seconds": None,
+                        "created_to_start_seconds": None,
+                        "runner_queue_seconds": None})
+    return {"schema": "ceph-ci-periodic-measurements/v1", "samples": samples,
+            "scope": "sampled execution only; runner acquisition is unknown without dependency-ready evidence"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1431,8 +1455,17 @@ def main(argv=None):
                               "default tag_scenarios.RELEASE_MAX_PARALLEL")
     command.add_argument("--reserve", type=int,
                          help="Runners left for pull requests; default tag_scenarios.PULL_REQUEST_RUNNERS")
+    command = commands.add_parser("periodic", help="Measure packed periodic receipts without full-profile acceptance claims")
+    command.add_argument("--receipts", type=Path, required=True)
+    command.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == "periodic":
+            result = periodic_samples(args.receipts)
+            if args.output:
+                args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
         if args.command == "caches":
             result = caches(load_runs(args.cache), load_jobs(args.cache), load_cache_logs(args.cache), args.repo)
             if args.output is not None:

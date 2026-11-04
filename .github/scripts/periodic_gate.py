@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""Decide whether a scheduled Ceph periodic run executes its matrix.
+"""Route explicit full-matrix and representative dispatches.
 
-The schedule fires every few hours. The matrix runs when:
-- the run was dispatched by hand;
-- the repository is in a release phase (CI_RELEASE_PHASE is "true"), so one
-  commit is run again and again to expose flaky profiles;
-- main has a commit that no earlier periodic run executed; or
-- no run executed main within REPEAT_AFTER, so even an unchanged main is
-  run again regularly.
-
-Otherwise the run ends after this gate.
-
-The campaign schedule, or a dispatch with mode "representative", runs the
-representative campaign instead of the matrix: the source-owned
-representative batches, repeated on one pinned commit and pinned role image
-digests. A campaign run is never an execution of the matrix.
-
-Writes run=true|false, reason and campaign=true|false to GITHUB_OUTPUT and
-prints the decision.
+The daily bounded rotate/discovery planner is periodic_selection.py. This
+helper retains its history-based matrix decision for explicit callers; it
+is not the scheduled default of ceph-periodic.yml.
 """
 
 import argparse
