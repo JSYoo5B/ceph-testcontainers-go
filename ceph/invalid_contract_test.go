@@ -50,11 +50,13 @@ import (
 // cephfs/session has nine more: the refused admission of a filesystem that
 // is no longer the cluster's active owned one, and the input, held-override,
 // unavailable-handle, untracked, replaced-filesystem and outside-edit
-// refusals of its required client features override.
+// refusals of its required client features override, and five more for its
+// session watch: the nil filesystem, the refused config, a zero client ID,
+// Stop of an unstarted watch and the ownership loss that ends one.
 var invalidCallSites = map[string]int{
 	"rbd": 28, "cephfs": 27, "rgw": 51,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 1,
-	"cephfs/session": 11, "cephfs/snapschedule": 16,
+	"cephfs/session": 16, "cephfs/snapschedule": 16,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
 	"rbd/mirror": 34, "cephfs/mirror": 21,
 }

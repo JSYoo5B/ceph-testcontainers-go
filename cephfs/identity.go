@@ -52,7 +52,7 @@ func (fs *Filesystem) activeRanks(ctx context.Context) (*fsbase.ActiveRanks, err
 	}
 	ranks := &fsbase.ActiveRanks{FilesystemID: status.FilesystemID, MaxMDS: status.MaxMDS}
 	for _, active := range status.Active {
-		ranks.Active = append(ranks.Active, fsbase.ActiveRank{Rank: active.Rank, State: active.State, Owned: active.Owned})
+		ranks.Active = append(ranks.Active, fsbase.ActiveRank{Rank: active.Rank, Name: active.Name, GID: active.GID, State: active.State, Owned: active.Owned})
 	}
 	return ranks, nil
 }

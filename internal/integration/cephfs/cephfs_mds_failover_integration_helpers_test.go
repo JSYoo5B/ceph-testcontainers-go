@@ -164,8 +164,29 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	}
 	before := m.historicFlock(t, ctx, contender.client)
 
+	// The session watch samples the takeover. Whatever it samples while the
+	// rank is not active, or across the change of its holder, is a gap, and
+	// the replacement's first coherent sample rebaselines rank 0 instead of
+	// removing the clients that have not reconnected.
+	watched := startSessionWatchLog(t, ctx, m.FS, 500*time.Millisecond, holder.client, contender.client)
 	old, took := m.failToStandby(t, ctx)
 	m.noEviction(t, ctx, sessions)
+	rebaselined := watched.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool {
+		return e.Kind != ceph.WatchGap && slices.Equal(e.After, []cephfssession.RankHolder{{Rank: 0, Name: m.MDS.Name, GID: m.MDS.GID}})
+	})
+	if !slices.Equal(rebaselined.Rebaselined, []int{0}) || rebaselined.Removed != nil || rebaselined.Added != nil {
+		t.Fatalf("the replacement's first session sample did not rebaseline rank 0: %+v", rebaselined)
+	}
+	for client := range sessions {
+		if !slices.Contains(sessionIDs(rebaselined.Sessions), client) {
+			t.Fatalf("client.%d is missing from the replacement's first session sample: %+v", client, rebaselined)
+		}
+	}
+	if err := watched.stop(t); err != nil {
+		t.Fatal("session watch:", err)
+	}
+	gaps := watched.checkNoRemoval(t, holder.client, contender.client)
+	t.Logf("CEPHFS_SESSION_WATCH failover: %d events, %d gaps, rank 0 rebaselined at event %d", len(watched.snapshot()), gaps, rebaselined.Sequence)
 	raw := map[uint64]string{}
 	for client := range sessions {
 		raw[client] = cephFSRawSessionSummary(cephFSRawSession(t, ctx, m.Cluster, m.MDS.Name, client))
