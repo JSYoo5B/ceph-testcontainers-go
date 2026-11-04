@@ -298,6 +298,33 @@ func TestRGWRateLimitOverrideUserScopeOrdersEnforcement(t *testing.T) {
 	}
 }
 
+// On Ceph 19 the user scope is refused as unsupported before any native
+// command, naming the release; the bucket scope still applies there.
+func TestRGWRateLimitOverrideUserScopeNeedsCeph20(t *testing.T) {
+	user, f := newRateLimitFixture(t)
+	testhelper.TestSetCephVersion(user.base().Origin.Cluster(), "19.2.5")
+	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
+	var refusal *ceph.OperationError
+	if !errors.Is(err, ceph.ErrUnsupported) || !errors.As(err, &refusal) || refusal.Version != "19.2.5" ||
+		refusal.Capability != "RGW user-scope rate limits" || !strings.Contains(err.Error(), "need Ceph 20 or later") {
+		t.Fatalf("user scope on Ceph 19: %v", err)
+	}
+	if len(f.mutations()) != 0 || len(f.policies) != 0 || slices.ContainsFunc(f.calls, func(args []string) bool { return slices.Contains(args, "ratelimit") }) {
+		t.Fatalf("refused user scope ran rate-limit commands: %v", f.calls)
+	}
+	calls := len(f.calls)
+	if err := change.Restore(t.Context()); err != nil || len(f.calls) != calls {
+		t.Fatalf("refused handle's Restore acted: %v", err)
+	}
+	bucket, err := user.OverrideRateLimit(t.Context(), RateLimitScope{Bucket: "limited"}, RateLimit{Enabled: true, MaxReadOps: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bucket.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Refused calls change nothing and return a handle whose Restore does
 // nothing.
 func TestRGWRateLimitOverrideRefusalsChangeNothing(t *testing.T) {

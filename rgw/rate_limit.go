@@ -35,6 +35,10 @@ type RateLimit struct {
 // names one existing bucket that the user natively owns, in the user's
 // tenant, and the policy throttles every request to that bucket, whoever
 // signs it; the user's other buckets are not affected.
+//
+// The user scope needs Ceph 20 or later. A Ceph 19 gateway stores and reports
+// a user's policy but never applies it to a request that the user's S3 keys
+// sign, so OverrideRateLimit refuses it there; the bucket scope works on both.
 type RateLimitScope struct {
 	Bucket string
 }
@@ -107,6 +111,8 @@ var rateLimitBucketName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$
 // Outcomes, as the handle it returns and the error:
 //   - Applied and read back: real handle; nil.
 //   - Invalid limit or bucket name: not applied handle; ceph.ErrInvalidRequest.
+//   - User scope on a Ceph 19 cluster: not applied handle; ceph.ErrUnsupported,
+//     a *ceph.OperationError that names the release.
 //   - Bucket not owned by this user: not applied handle; ceph.ErrInvalidRequest.
 //   - The user is no longer the identity it created, the bucket is missing, the
 //     scope is already overridden, the context ended, or a read failed: not
@@ -131,6 +137,9 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 	var handle *RateLimitOverrideHandle
 	var applyErr error
 	err := u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
+		if scope.Bucket == "" && servicehook.CephBefore(g.Cluster(), 20) {
+			return userRateLimitUnsupported(g.Cluster())
+		}
 		target, err := bindRateLimitTarget(ctx, g, user, native, scope.Bucket)
 		if err != nil {
 			return err
@@ -223,6 +232,22 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 		delete(overrides.byTarget, state.key)
 		return nil
 	})
+}
+
+// userRateLimitUnsupported refuses a user-scope override on cluster, which
+// runs Ceph 19. That is a documented limit of the release that no tool
+// reveals: its gateway authenticates a request signed with an S3 key into a
+// request user that carries the user's information but not the user's stored
+// attributes, where the policy lives, so the limiter sees no user policy
+// while the bucket's policy, read with the bucket, is applied.
+func userRateLimitUnsupported(cluster *ceph.Container) error {
+	facts, err := ceph.FactsOf(cluster)
+	if err != nil {
+		return err
+	}
+	return &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: "cluster", Version: facts.CephVersion,
+		Capability: "RGW user-scope rate limits",
+		Err:        errors.New("RGW user-scope rate limits need Ceph 20 or later; a Ceph 19 gateway does not apply a user's policy to requests its S3 keys sign")}
 }
 
 // owns reports whether policy is one that this override can have left.

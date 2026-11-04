@@ -46,7 +46,9 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    SlowDown: `User.OverrideRateLimit` applies a `rgw.RateLimit` to the user
    (`rgw.RateLimitScope{}`) or to one bucket it owns (`RateLimitScope{Bucket:
    ...}`, such as a bucket the SUT created), and the returned handle's
-   `Restore` puts the prior policy back.
+   `Restore` puts the prior policy back. The user scope needs Ceph 20: on
+   Squid it returns `ceph.ErrUnsupported`, because a Squid gateway never
+   applies a user's policy to requests its S3 keys sign.
 5. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.
