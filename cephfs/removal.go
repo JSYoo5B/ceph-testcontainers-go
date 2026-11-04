@@ -52,9 +52,12 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 		if _, err := c.Ceph(ctx, "fs", "rm", name, "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
-		if err := waitSurvivorAffinity(ctx, c, survivors); err != nil {
-			return fmt.Errorf("remove cephfs %q: %w", name, err)
-		}
+	}
+	// Checked even when the filesystem is already absent: a retry after a
+	// failed wait, or after an fs rm whose reply was lost, must still hold
+	// the survivors' affinity before the removal is reported as done.
+	if err := waitSurvivorAffinity(ctx, c, survivors); err != nil {
+		return fmt.Errorf("remove cephfs %q: %w", name, err)
 	}
 	if err := fs.fleet().removeAll(ctx); err != nil {
 		return err

@@ -3,10 +3,13 @@ package cephfs
 import (
 	"context"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -176,5 +179,44 @@ func TestSurvivorAffinityLost(t *testing.T) {
 	}
 	if _, err := survivorAffinityLost([]byte(`{"epoch":1}`), survivors); err == nil {
 		t.Fatal("an FSMap without filesystems was accepted")
+	}
+}
+
+// A removal whose survivor-affinity wait failed after fs rm is retried with
+// the filesystem already absent. The retry must check the survivors again,
+// not report success because nothing is left to remove natively.
+func TestRemoveRetryRechecksSurvivorAffinity(t *testing.T) {
+	cluster, f := cephFSRemovalCluster(t, true)
+	keepConfig, err := normalizeCephFSConfig(Config{Name: "keep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := newFilesystem(cluster, keepConfig, nil)
+	keep.base().ReplaceNative(&fsbase.NativeIdentity{ID: 2, MetadataPool: 1, DefaultPool: 2, Attachments: make(map[string]*fsbase.PoolAttachment)})
+	keep.mds.roster.daemons = append(keep.mds.roster.daemons, &MDS{ID: "keep-0", FilesystemName: "keep"})
+	filesystems(cluster).byName["keep"] = keep
+	dump := func(joinFSCID int) string {
+		return `{"epoch":20,"standbys":[],"filesystems":[{"id":2,"mdsmap":{"fs_name":"keep","info":{` +
+			`"gid_7":{"name":"keep-0","gid":7,"rank":0,"state":"up:active","join_fscid":` + strconv.Itoa(joinFSCID) + `}}}}]}`
+	}
+	f.Output["fs dump --format json"] = dump(-1)
+	app := ownedFilesystem(t, cluster, "app")
+	for attempt, present := range []bool{true, false} {
+		ctx, cancel := context.WithTimeout(t.Context(), 600*time.Millisecond)
+		err := app.Remove(ctx)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "affinity") {
+			t.Fatalf("attempt %d (filesystem present=%t) with unresolved survivor affinity: %v", attempt+1, present, err)
+		}
+		if len(f.Filesystems) != 0 || filesystems(cluster).byName["app"] == nil {
+			t.Fatalf("attempt %d: native removal or ownership is unexpected: %s", attempt+1, f)
+		}
+	}
+	f.Output["fs dump --format json"] = dump(2)
+	if err := app.Remove(t.Context()); err != nil {
+		t.Fatal("retry after the survivor's affinity returned:", err)
+	}
+	if filesystems(cluster).byName["app"] != nil || filesystems(cluster).byName["keep"] != keep {
+		t.Fatal("the retried removal did not finish, or touched the survivor")
 	}
 }
