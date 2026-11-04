@@ -60,6 +60,10 @@ type CPULimitLease struct {
 	generation  cpuGeneration
 	plan        cpuPlan
 	complete    bool
+	// restoring records that a Restore sent its update, so a later call
+	// recognizes the state that update can leave: the engine restored while
+	// the kernel still enforces the limit.
+	restoring bool
 }
 
 // ApplyCPULimit lowers the CPU bandwidth of an owned daemon or a caller-owned
@@ -287,7 +291,9 @@ func (lease *CPULimitLease) isComplete(ctx context.Context) (bool, error) {
 // stopped container whose limited run ended only gets its settings back,
 // which it runs with when started. Restore refuses, and stays retryable, for
 // a paused container, one that was restarted under the limit, and settings
-// that were changed outside the lease, which it does not overwrite.
+// that were changed outside the lease, which it does not overwrite. An
+// earlier Restore whose update reached the engine but not the kernel is
+// retried, not taken for an outside change.
 //
 //purpose:condition,lifetime
 func (lease *CPULimitLease) Restore(ctx context.Context) error {
@@ -325,10 +331,14 @@ func (lease *CPULimitLease) Restore(ctx context.Context) error {
 		return nil
 	}
 	// The limit must still be installed, possibly only in the configuration
-	// when its update did not reach the kernel.
-	if !now.matches(plan.applied, plan.appliedMax) && !now.matches(plan.applied, plan.restoredMax) {
+	// when its update did not reach the kernel, or an earlier Restore of this
+	// lease must have restored the configuration without reaching the
+	// kernel. Any other state is foreign.
+	partial := lease.restoring && (now.matches(plan.restored, plan.appliedMax) || now.matches(plan.baseline, plan.appliedMax))
+	if !partial && !now.matches(plan.applied, plan.appliedMax) && !now.matches(plan.applied, plan.restoredMax) {
 		return fmt.Errorf("the container's CPU settings changed outside the lease and are not overwritten: engine %s, kernel %s", now.settings, now.kernel)
 	}
+	lease.restoring = true
 	result, updateErr := docker.ContainerUpdate(ctx, lease.ContainerID, mobycl.ContainerUpdateOptions{Resources: plan.restore.resources()})
 	after, err := lease.observe(ctx, docker)
 	switch {

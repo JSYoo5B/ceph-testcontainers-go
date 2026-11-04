@@ -355,6 +355,41 @@ func TestCPULimitConfiguredOnlyIsNotApplied(t *testing.T) {
 	}
 }
 
+func TestCPULimitConfiguredOnlyRestoreIsRetried(t *testing.T) {
+	d := newFakeCPUDocker(cpuSettings{})
+	lease, err := limitWith(t.Context(), cpuCluster(), d, 5e8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.configuredOnly = true
+	if err := lease.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "not in effect") {
+		t.Fatalf("a configured-only restore was accepted: %v", err)
+	}
+	if d.settings != (cpuSettings{CPUQuota: -1}) || d.kernel.Unlimited {
+		t.Fatalf("the fake did not leave the partial restore: %s %s", d.settings, d.kernel)
+	}
+	d.configuredOnly = false
+	updates := len(d.updates)
+	if err := lease.Restore(t.Context()); err != nil || !d.kernel.Unlimited || len(d.updates) != updates+1 {
+		t.Fatalf("the partial restore was not retried: %v %s %s, %d updates", err, d.settings, d.kernel, len(d.updates)-updates)
+	}
+	if err := lease.Restore(t.Context()); err != nil || len(d.updates) != updates+1 {
+		t.Fatalf("a completed restore was repeated: %v", err)
+	}
+
+	// Without an earlier Restore the same state is an outside change.
+	d = newFakeCPUDocker(cpuSettings{})
+	lease, err = limitWith(t.Context(), cpuCluster(), d, 5e8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.settings = cpuSettings{CPUQuota: -1}
+	updates = len(d.updates)
+	if err := lease.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "outside the lease") || len(d.updates) != updates {
+		t.Fatalf("an outside restore of the configuration only was overwritten: %v", err)
+	}
+}
+
 func TestCPULimitRestoreRefusesForeignState(t *testing.T) {
 	for name, tc := range map[string]struct {
 		change   func(*fakeCPUDocker)
