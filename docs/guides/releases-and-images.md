@@ -117,6 +117,7 @@ These affect commands or client libraries you run yourself, not the typed API:
 | Python `rbd` group API | `Group.id()` and `get_snap_info()` do not exist. Read the group ID from the `rbd_group_directory` object and member snapshots from each image's group snapshot namespace. `list_snaps()` of a group that does not exist returns an empty list; Tentacle 20.2.5 and Umbrella raise `ObjectNotFound`, and 20.2.4 crashes (see [Known release-specific issues](#known-release-specific-issues)). |
 | `rbd mirror pool info` | No `mirror_uuid` or `remote_namespace` fields; no `--remote-namespace` option. |
 | `radosgw-admin bucket sync status` | Text output only. |
+| `ceph fs status --format json` | Up to 19.2.6, the `rank` of a standby-replay daemon is the integer rank it follows. 19.2.7, Tentacle and Umbrella print the string `<rank>-s`, as the plain output does. Classify daemons by `state`, or read `ceph fs dump`. |
 
 ## Known release-specific issues
 
@@ -226,6 +227,48 @@ These affect commands or client libraries you run yourself, not the typed API:
   until it is restarted. With 12-second tickets and a 25-second pause this
   happened to the active MGR in two of four native runs. See
   [Daemon controls](messenger-client-fixtures.md#daemon-controls).
+- **Squid 19.2.5 and 19.2.6, CephFS removal and the other filesystems' MDSs.**
+  `ceph fs rm` clears the `join_fscid` of every daemon of every remaining
+  filesystem, not only of the daemons that joined the removed one. Each
+  daemon's next beacon, which names its `mds_join_fs`, sets it back a few
+  seconds later. In that interval the remaining filesystems' standby and
+  standby-replay daemons are not bound to them, and when a standby-replay
+  daemon's beacon arrives before its active's, the monitor fails the active
+  over to it for its better affinity. `cephfs.Filesystem.Remove` returns only
+  after every owned daemon of the other owned filesystems carries its
+  affinity again, so `MDSStatus` and `WaitReady` count them at once; the
+  failover itself cannot be prevented. 19.2.7, Tentacle 20.2.4 and Umbrella
+  21.2.0 keep the affinity.
+- **Squid 19.2.5 and 19.2.6, snapshot schedules of a removed filesystem.** The
+  MGR `snap_schedule` module keeps the schedules of a removed filesystem. Their
+  timers keep running and log a `FS '<name>' not found` traceback every
+  period, and a filesystem created later under the same name inherits the
+  schedules, with their counts, and receives scheduled snapshots. Restore every
+  `snapschedule.Lease`, and remove the schedules the SUT added, before removing
+  a filesystem. 19.2.7, Tentacle 20.2.4 and Umbrella 21.2.0 drop them.
+- **Squid 19.2.5 and 19.2.6 and Tentacle 20.2.4, session RESET after MDS
+  journal replay.** An MDS that recreates a client session from its journal,
+  because the session map object in the metadata pool is older than the
+  journal, loses the session's Cephx entity name. A later `ceph_start_reclaim`
+  with `CEPH_RECLAIM_RESET` for that session's UUID by the same principal fails
+  with `EPERM`, although the MDS still evicts the target session. A session
+  that its live client reconnected after the replay keeps its name. 19.2.7,
+  Tentacle 20.2.5 and Umbrella 21.2.0 keep the name and accept the RESET.
+- **Squid 19.2.5 and 19.2.6, unbuffered nonblocking writes when a data pool
+  becomes full.** A libcephfs client with `client_oc=false` that has
+  `ceph_ll_nonblocking_readv_writev` writes in flight when the pool turns full
+  deadlocks: no write completes, later calls on the same client hang, also
+  after the pool has space again, while other clients keep working. Buffered
+  writes fail with `ENOSPC` instead. 19.2.7 and Tentacle 20.2.4 complete such
+  writes with `-ENOSPC` and recover when the pool has space again.
+- **Squid before 19.2.5, CephFS authorization.** These builds are not tested
+  by the repository, and their authorization is weaker than the tested
+  releases': MDS caps with one clause per filesystem (`allow r fsname=a, allow
+  rw fsname=b`) grant every clause on every filesystem before 19.2.5;
+  namespace-isolated subvolumes with the same name in two groups share one
+  RADOS namespace before 19.2.4, so each one's principal reads the other's file
+  data through RADOS; a path-restricted principal is refused reads of a
+  snapshot of a directory it deleted before 19.2.3. Use 19.2.5 or later.
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
   [CephFS limitations](../../cephfs/README.md#concepts-and-limits).

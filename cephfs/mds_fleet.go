@@ -80,6 +80,18 @@ func (f mdsFleet) removeAll(ctx context.Context) error {
 	return nil
 }
 
+// ownedNames returns the IDs of the owned daemons in creation order. Owner
+// held: removeFilesystem calls it with the cluster mutex held.
+func (f mdsFleet) ownedNames() []string {
+	var names []string
+	for _, mds := range f.mds.roster.members() {
+		if mds != nil {
+			names = append(names, mds.ID)
+		}
+	}
+	return names
+}
+
 // addConfigTargets adds the containers of the owned daemons that read the
 // cluster's ceph.conf to targets. Owner held: ceph.Container calls
 // ConfigTargets with its mutex held.
