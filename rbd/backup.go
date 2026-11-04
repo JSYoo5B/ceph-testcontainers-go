@@ -28,6 +28,12 @@ import (
 // between reads, so a reader or writer that can block indefinitely must
 // support its own cancellation.
 //
+// The export loads no encryption: an encrypted image is archived as its raw
+// LUKS header and ciphertext, and the restored image opens only with that
+// image's own secret. Flatten a clone formatted with its own secret, with
+// its whole chain loaded, before exporting it: the export reads the parent's
+// ciphertext raw, and the child secret cannot decrypt that.
+//
 //purpose:observation,native
 func ExportBackup(ctx context.Context, client testcontainers.Container, image string, destination io.Writer) error {
 	return exportRBDArchive(ctx, client, image, "", destination)
