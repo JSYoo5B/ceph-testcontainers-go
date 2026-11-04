@@ -210,6 +210,14 @@ def publish(repository, run_id, attempt, dry_run=False):
     # Re-read after artifact processing. No previous SHA is posted as current.
     if not current(api(root+"/pulls/"+str(number)), linked, repository):
         return "PR changed during analysis; nothing published"
+    # A Code rerun can start while artifacts are processed without changing
+    # the PR head. Revalidate its attempt and eligibility at the write boundary.
+    latest = api(root+"/actions/runs/"+str(run_id))
+    if latest["run_attempt"] != attempt:
+        return "source attempt superseded during analysis; nothing published"
+    if (latest["id"] != run_id or latest["workflow_id"] != run["workflow_id"]
+            or association(latest, repository) != linked):
+        raise Refusal("source run identity changed during analysis")
     if dry_run:
         return body
     if existing:

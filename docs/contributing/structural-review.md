@@ -99,7 +99,10 @@ cache. Report headings, tables and inline code render as Markdown in the comment
 and job summary. Cell entities stay escaped; raw HTML, notification mentions,
 link/image syntax from report data and unexpected block-code fences are neutralized. A stale head, closed PR, duplicate artifact, invalid
 receipt or missing report is never posted as a fresh clean result. A newer
-report cannot be overwritten by an older run. Updating the one marker-owned
+report cannot be overwritten by an older run. The source attempt, completed
+state and PR association are re-read immediately before creating or updating
+the comment; a rerun observed during artifact processing prevents the write.
+Updating the one marker-owned
 comment avoids notification spam; API writes are not blindly retried. Human
 comments are never adopted as bot reports, and the personal CLI can only
 preview with `--dry-run`, not publish.

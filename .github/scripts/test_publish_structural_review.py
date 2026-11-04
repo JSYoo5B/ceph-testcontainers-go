@@ -195,6 +195,55 @@ class PublishTests(unittest.TestCase):
             self.assertIn("changed during", reporter.publish(REPO, 10, 2))
         self.assertTrue(all(c[1] == "GET" for c in calls))
 
+    def test_late_rerun_and_ineligible_completion_prevent_post_and_patch(self):
+        old = {"id": 30, "user": {"login": "github-actions[bot]"},
+               "body": reporter.MARKER+"\n<!-- structural-review-run:9:1 -->\nOld report"}
+        late_states = [
+            {"run_attempt": 3, "status": "in_progress", "conclusion": None},
+            {"run_attempt": 3, "status": "completed", "conclusion": "success"},
+            {"status": "in_progress", "conclusion": None},
+            {"conclusion": "cancelled"},
+            {"conclusion": "skipped"},
+            {"workflow_id": 99},
+            {"head_sha": BASE},
+            {"pull_requests": [{**LINKED, "number": 8}]},
+        ]
+        for comments in ([], [old]):
+            for late in late_states:
+                with self.subTest(operation="PATCH" if comments else "POST", late=late):
+                    api, calls, reads = self.api_fixture(comments)
+                    pull_reads = 0
+                    def rerun(path, *args, **kwargs):
+                        nonlocal pull_reads
+                        if path.endswith("/pulls/7"):
+                            pull_reads += 1
+                            if pull_reads == 2:
+                                reads["/actions/runs/10"] = {**RUN, **late}
+                        return api(path, *args, **kwargs)
+                    with mock.patch.object(reporter, "api", side_effect=rerun):
+                        try:
+                            result = reporter.publish(REPO, 10, 2)
+                            self.assertIn("nothing published", result)
+                        except reporter.Refusal:
+                            pass
+                    self.assertEqual(sum(c[0] == "/actions/runs/10" for c in calls), 2)
+                    self.assertTrue(all(c[1] == "GET" for c in calls), calls)
+
+    def test_late_run_read_failure_does_not_write(self):
+        api, calls, _ = self.api_fixture()
+        reads = 0
+        def unavailable(path, *args, **kwargs):
+            nonlocal reads
+            if path.endswith("/actions/runs/10"):
+                reads += 1
+                if reads == 2:
+                    raise OSError("source run read unavailable")
+            return api(path, *args, **kwargs)
+        with mock.patch.object(reporter, "api", side_effect=unavailable), self.assertRaises(OSError):
+            reporter.publish(REPO, 10, 2)
+        self.assertEqual(reads, 2)
+        self.assertTrue(all(c[1] == "GET" for c in calls))
+
     def test_artifact_and_workflow_identity_and_human_comments(self):
         human = {"id": 99, "user": {"login": "owner"}, "body": reporter.MARKER+"\nnot a bot report"}
         api, calls, reads = self.api_fixture([human])
