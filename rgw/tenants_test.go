@@ -25,7 +25,7 @@ func newRGWAccountTestGateway() (*Gateway, *gwtest.AccountContainer) {
 	base := gwtest.NewPlacementContainer()
 	f := gwtest.NewAccountContainer(base)
 	owner := testCluster(base, testhelper.TestConfig{StartupTimeout: time.Minute}, map[string]testcontainers.Container{"rgw": f})
-	return registerTestGateway(newGateway(owner, f, Config{Name: "default"}, 7480, 0, "", "")), f
+	return registerTestGateway(newGateway(owner, f, Config{Name: "default"}, 7480, 0, nil, "", "")), f
 }
 
 // testRootAccount records the native account id with tenant in f and returns

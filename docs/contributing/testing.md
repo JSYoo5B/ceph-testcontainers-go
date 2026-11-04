@@ -367,11 +367,16 @@ make goceph-linux
 The harness compares the probe's linked go-ceph version with the probe
 module's `go.mod`, so rebuild the client image after a go-ceph update.
 
-`TestRGWS3KeyRotation` and `TestRGWOwnedRole` (`internal/integration/rgw`)
-play the S3 and STS SUT with the AWS SDK probe in
-`internal/integration/awssdk/probe`, a separate pure-Go module. The test builds it with the `go` command that runs the test, outside
-the workspace, so the runner needs that toolchain and access to the probe's
-module downloads; it needs no prepared image.
+`TestRGWS3KeyRotation`, `TestRGWOwnedRole`, `TestRGWPublicSDKConsumer` and
+`TestRGWStableEndpoint` (`internal/integration/rgw`) play the S3 and STS SUT
+with the AWS SDK probe in `internal/integration/awssdk/probe`, a separate
+pure-Go module. The test builds it with the `go` command that runs the test,
+outside the workspace, so the runner needs that toolchain and access to the
+probe's module downloads; it needs no prepared image. `-ca-file` makes the
+probe trust an HTTPS endpoint through that CA only, and it reports a
+certificate it cannot verify as `untrusted`, apart from an S3 refusal.
+`TestRGWPublicSDKConsumer` builds its fixture through public entry points
+only and logs the Ceph version, images and S3 SDK version it ran with.
 
 ## Writing a new integration test
 

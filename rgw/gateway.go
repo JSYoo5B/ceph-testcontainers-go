@@ -47,6 +47,7 @@ type Gateway struct {
 	Region        string
 	port          int
 	tlsPort       int
+	tls           *tlsListener
 	publicAddress string
 	networkName   string
 	config        Config
@@ -117,10 +118,11 @@ func startGatewayOn(ctx context.Context, c *ceph.Container, config Config, reser
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, reserved, opts...)
+	listener := newTLSListener(config.TLS)
+	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, listener, reserved, opts...)
 	var rgw *Gateway
 	if ctr != nil {
-		rgw = newGateway(c, ctr, config, port, tlsPort, facts.PublicAddress, facts.NetworkName)
+		rgw = newGateway(c, ctr, config, port, tlsPort, listener, facts.PublicAddress, facts.NetworkName)
 		// Publish after credential initialization, including partial error
 		// returns. After publication the credentials change only under the
 		// cluster mutex: a multisite fixture gives the gateways of its zones
@@ -197,7 +199,7 @@ func normalizeRGWConfig(config Config) (Config, error) {
 
 func rgwServiceName(config Config) string { return gwbase.ServiceName(config.Name) }
 
-func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPort int, config Config) []testcontainers.ContainerCustomizer {
+func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPort int, config Config, listener *tlsListener) []testcontainers.ContainerCustomizer {
 	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/rgw.sh"),
 		testcontainers.WithCmd(),
@@ -225,7 +227,7 @@ func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPor
 				WithStatusCodeMatcher(func(status int) bool { return status == http.StatusOK || status == http.StatusForbidden }).
 				WithStartupTimeout(servicehook.StartupTimeout(c))))
 		if config.TLS != nil {
-			opts = append(opts, testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, config.TLS)))
+			opts = append(opts, testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, listener)))
 		}
 		return opts
 	}
@@ -239,7 +241,7 @@ func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPor
 	)
 	if config.TLS != nil {
 		opts = append(opts, testcontainers.WithEnv(map[string]string{"CEPH_RGW_TLS_ENDPOINT": net.JoinHostPort(facts.PublicAddress, strconv.Itoa(tlsPort))}),
-			testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, config.TLS)))
+			testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, listener)))
 	}
 	return opts
 }
@@ -306,7 +308,7 @@ func hostReadiness(c *ceph.Container, port int, endpoint string) *wait.NopStrate
 	}).WithStartupTimeout(servicehook.StartupTimeout(c))
 }
 
-func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, reserved *hostPortReservation, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
+func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, listener *tlsListener, reserved *hostPortReservation, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
 	serviceName := rgwServiceName(config)
 	if !facts.UsesHostNetwork {
 		if reserved != nil {
@@ -316,7 +318,7 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 		if config.TLS != nil {
 			tlsPort = 7481
 		}
-		opts := append(namedDaemonOptions(c, facts, 7480, tlsPort, config), customizers...)
+		opts := append(namedDaemonOptions(c, facts, 7480, tlsPort, config, listener), customizers...)
 		ctr, err := servicehook.StartService(ctx, c, serviceName, servicehook.ServiceImage(c, "rgw"), opts...)
 		return ctr, 7480, tlsPort, err
 	}
@@ -328,7 +330,7 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		ctr, port, tlsPort, _, err := startHostAttempt(ctx, c, facts, config, ports, release, customizers...)
+		ctr, port, tlsPort, _, err := startHostAttempt(ctx, c, facts, config, listener, ports, release, customizers...)
 		return ctr, port, tlsPort, err
 	}
 	for attempt := 0; attempt < servicehook.HostPortAttempts(); attempt++ {
@@ -340,7 +342,7 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("reserve RGW host port: %w", err)
 		}
-		ctr, port, tlsPort, conflict, err := startHostAttempt(ctx, c, facts, config, ports, release, customizers...)
+		ctr, port, tlsPort, conflict, err := startHostAttempt(ctx, c, facts, config, listener, ports, release, customizers...)
 		if err == nil || !conflict || attempt+1 == servicehook.HostPortAttempts() || ctx.Err() != nil {
 			return ctr, port, tlsPort, err
 		}
@@ -358,13 +360,13 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.Cluster
 // still holds them, releases them immediately before Start, minimizing the
 // unavoidable bind race, and starts it. conflict reports a Start that failed
 // because another process took the port.
-func startHostAttempt(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, ports []int, release func(context.Context) error, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, bool, error) {
+func startHostAttempt(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, listener *tlsListener, ports []int, release func(context.Context) error, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, bool, error) {
 	port := ports[0]
 	tlsPort := 0
 	if config.TLS != nil {
 		tlsPort = ports[1]
 	}
-	opts := append(namedDaemonOptions(c, facts, port, tlsPort, config), customizers...)
+	opts := append(namedDaemonOptions(c, facts, port, tlsPort, config, listener), customizers...)
 	opts = append(opts, testcontainers.WithNoStart())
 	ctr, createErr := servicehook.StartService(ctx, c, rgwServiceName(config), servicehook.ServiceImage(c, "rgw"), opts...)
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

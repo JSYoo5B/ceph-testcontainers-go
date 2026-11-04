@@ -83,7 +83,7 @@ func TestRGWTLSOptionsKeepHTTPAndNativeListenerPorts(t *testing.T) {
 			port, secure = 41301, 41302
 		}
 		var req testcontainers.GenericContainerRequest
-		for _, customizer := range namedDaemonOptions(cluster, testFacts(t, cluster), port, secure, Config{Name: "tls", TLS: material}) {
+		for _, customizer := range namedDaemonOptions(cluster, testFacts(t, cluster), port, secure, Config{Name: "tls", TLS: material}, newTLSListener(material)) {
 			if err := customizer.Customize(&req); err != nil {
 				t.Fatal(err)
 			}

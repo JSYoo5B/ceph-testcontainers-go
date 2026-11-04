@@ -27,8 +27,8 @@ type RootAccount interface{ accountOwner }
 // newGateway returns the descriptor of a gateway container of c, bound to its
 // foundation core. The core reads the descriptor's Container field when an
 // operation runs and the cluster's registered gateways through the registry.
-func newGateway(c *ceph.Container, ctr testcontainers.Container, config Config, port, tlsPort int, publicAddress, networkName string) *Gateway {
-	g := &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort,
+func newGateway(c *ceph.Container, ctr testcontainers.Container, config Config, port, tlsPort int, listener *tlsListener, publicAddress, networkName string) *Gateway {
+	g := &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, tls: listener,
 		publicAddress: publicAddress, networkName: networkName, config: config}
 	g.gatewayHandle = gwbase.NewHandle(gwbase.NewCore(gwbase.Params{
 		Cluster: c, Name: config.Name, Scope: gwbase.Scope{Realm: config.Realm, Zonegroup: config.Zonegroup, Zone: config.Zone},

@@ -12,6 +12,7 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -31,6 +32,7 @@ import (
 // mode two free host ports are reserved. Startup verifies that the gateway
 // process owns the HTTPS socket and that the listener presents the configured
 // certificate. ceph.NetworkConfig.WithMessengerMode does not enable HTTPS.
+// Gateway.ReplaceTLS replaces the material of a running gateway.
 type TLSConfig struct {
 	CertificatePEM, PrivateKeyPEM []byte
 }
@@ -67,13 +69,155 @@ func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {
 	return &TLSConfig{CertificatePEM: slices.Clone(config.CertificatePEM), PrivateKeyPEM: slices.Clone(config.PrivateKeyPEM)}, nil
 }
 
-func rgwTLSOptions(port int, config *TLSConfig) []testcontainers.ContainerCustomizer {
+// rgwTLSFile is the combined certificate chain and private key that the
+// native Beast frontend loads when the gateway starts.
+const rgwTLSFile = "/tc/rgw-tls.pem"
+
+// rgwTLSFileContent is the content of rgwTLSFile for config.
+func rgwTLSFileContent(config *TLSConfig) []byte {
 	pem := append(slices.Clone(config.CertificatePEM), '\n')
-	pem = append(pem, config.PrivateKeyPEM...)
+	return append(pem, config.PrivateKeyPEM...)
+}
+
+func rgwTLSOptions(port int, config *TLSConfig) []testcontainers.ContainerCustomizer {
 	return []testcontainers.ContainerCustomizer{
 		testcontainers.WithEnv(map[string]string{"CEPH_RGW_TLS_PORT": strconv.Itoa(port)}),
-		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader(pem), ContainerFilePath: "/tc/rgw-tls.pem", FileMode: 0o600}),
+		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader(rgwTLSFileContent(config)), ContainerFilePath: rgwTLSFile, FileMode: 0o600}),
 	}
+}
+
+// tlsListener is the certificate material that one gateway's native HTTPS
+// listener is expected to serve. Copies of the Gateway share it, and the
+// readiness check of every start of the gateway container, including the
+// restarts of placement, multisite and the caller, reads it then.
+type tlsListener struct {
+	mu     sync.Mutex
+	config *TLSConfig
+}
+
+// newTLSListener returns the listener state of normalized config; nil for a
+// gateway without TLS.
+func newTLSListener(config *TLSConfig) *tlsListener {
+	if config == nil {
+		return nil
+	}
+	return &tlsListener{config: config}
+}
+
+func (l *tlsListener) material() *TLSConfig {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.config
+}
+
+func (l *tlsListener) set(config *TLSConfig) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.config = config
+}
+
+// fingerprint is the hex SHA-256 of the expected leaf certificate.
+func (l *tlsListener) fingerprint() string {
+	config := l.material()
+	pair, _ := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM)
+	digest := sha256.Sum256(pair.Certificate[0])
+	return hex.EncodeToString(digest[:])
+}
+
+// ReplaceTLS replaces the certificate chain and private key that this
+// gateway's native HTTPS listener serves, for a test of how the SUT meets a
+// renewed certificate or a changed CA. Beast loads them only when the gateway
+// starts, so ReplaceTLS installs them in the gateway container and restarts
+// it: the gateway refuses connections while it restarts, connections
+// established before are closed rather than moved to the new certificate,
+// and requests in flight can fail with an unknown outcome. Only connections
+// made afterwards see the new certificate. The restart completes when the
+// listener presents the new leaf certificate, and every later start of the
+// container expects it too.
+//
+// In bridge mode the restarted gateway can get new mapped host ports: call
+// S3SecureEndpoint and S3Endpoint again afterwards. In host mode it keeps its
+// selected ports. The gateway must be running, and config must hold a valid
+// PEM chain and its unencrypted private key; the bytes are copied. Trust is
+// the SUT's own: ReplaceTLS changes no client configuration, so a test
+// supplies the new CA to the SUT the way it reads its configuration. When the
+// gateway does not stop, the previous material is put back; when it stopped
+// and fails to start, the error is returned with the new material installed
+// and no rollback, which would need another restart. To return to the
+// previous certificate, call ReplaceTLS with it again; that restarts the
+// gateway once more.
+//
+//purpose:condition
+func (g *Gateway) ReplaceTLS(ctx context.Context, config TLSConfig) error {
+	cluster := g.base().Cluster()
+	if cluster == nil {
+		return errNilCluster
+	}
+	next, err := normalizeRGWTLSConfig(&config)
+	if err != nil {
+		return err
+	}
+	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+		return err
+	}
+	defer servicehook.Unlock(cluster)
+	if servicehook.Closed(cluster) {
+		return servicehook.Invalid(errors.New("ceph cluster is terminated"))
+	}
+	owned, ok := gateways(cluster).byName[g.GatewayName]
+	if !ok || owned == nil || owned.tls == nil || owned.tls != g.tls || owned.Container == nil {
+		if g.tls == nil {
+			return servicehook.Invalid(errors.New("RGW native TLS listener is not configured"))
+		}
+		return servicehook.Invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", g.GatewayName))
+	}
+	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(cluster))
+	defer cancel()
+	return replaceTLS(ctx, owned.Container, owned.tls, next)
+}
+
+// replaceTLS installs next in the running gateway container ctr, whose
+// expected material listener holds, and restarts it.
+func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tlsListener, next *TLSConfig) error {
+	state, err := ctr.State(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect RGW before replacing its TLS certificate: %w", err)
+	}
+	if state == nil || !state.Running || state.Paused || state.Restarting {
+		return servicehook.Invalid(errors.New("RGW gateway is not running; its TLS certificate is replaced only in a running gateway"))
+	}
+	previous := listener.material()
+	if err := installTLSFile(ctx, ctr, next); err != nil {
+		return err
+	}
+	listener.set(next)
+	grace := 3 * time.Second
+	if err := ctr.Stop(ctx, &grace); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		restoreErr := installTLSFile(cleanupCtx, ctr, previous)
+		if restoreErr == nil {
+			listener.set(previous)
+		}
+		return errors.Join(fmt.Errorf("stop RGW to replace its TLS certificate: %w", err), restoreErr)
+	}
+	if err := ctr.Start(ctx); err != nil {
+		return fmt.Errorf("restart RGW with the replaced TLS certificate, which stays installed: %w", err)
+	}
+	return nil
+}
+
+// installTLSFile writes the material of config beside rgwTLSFile with mode
+// 0600 and renames it over rgwTLSFile, so a start never reads a partial file.
+func installTLSFile(ctx context.Context, ctr testcontainers.Container, config *TLSConfig) error {
+	const staged = rgwTLSFile + ".next"
+	if err := ctr.CopyToContainer(ctx, rgwTLSFileContent(config), staged, 0o600); err != nil {
+		return fmt.Errorf("copy the RGW TLS certificate: %w", err)
+	}
+	if _, err := servicehook.Command(ctx, ctr, "mv", "-f", staged, rgwTLSFile); err != nil {
+		return fmt.Errorf("install the RGW TLS certificate: %w", err)
+	}
+	return nil
 }
 
 // S3SecureEndpoint returns the native HTTPS listener's mapped or selected host
@@ -94,11 +238,10 @@ func (g *Gateway) S3SecureEndpoint(ctx context.Context) (string, error) {
 // The startup probe verifies private socket ownership and the exact configured
 // certificate fingerprint. This is certificate pinning for readiness only;
 // application tests verify the CA and DNS/IP SAN using their ordinary TLS client.
-func tlsReadiness(c *ceph.Container, facts ceph.ClusterFacts, port int, config *TLSConfig) *wait.NopStrategy {
-	pair, _ := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM)
-	digest := sha256.Sum256(pair.Certificate[0])
-	probe := rgwTLSProbe{cluster: c, facts: facts, port: strconv.Itoa(port), fingerprint: hex.EncodeToString(digest[:])}
+// Each wait reads the fingerprint that listener expects at that start.
+func tlsReadiness(c *ceph.Container, facts ceph.ClusterFacts, port int, listener *tlsListener) *wait.NopStrategy {
 	return wait.ForNop(func(ctx context.Context, target wait.StrategyTarget) error {
+		probe := rgwTLSProbe{cluster: c, facts: facts, port: strconv.Itoa(port), fingerprint: listener.fingerprint()}
 		ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 		defer cancel()
 		ticker := time.NewTicker(150 * time.Millisecond)

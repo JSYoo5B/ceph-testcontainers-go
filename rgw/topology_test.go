@@ -73,7 +73,7 @@ func TestNamedRGWOptionsPreserveScopeAndHostListener(t *testing.T) {
 		cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: host, PublicAddress: "127.0.0.1"}, nil)
 		config := Config{Name: "gateway-b", Realm: "fixture-realm", Zonegroup: "fixture-zonegroup", Zone: "fixture-zone"}
 		var request testcontainers.GenericContainerRequest
-		for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), port, 0, config) {
+		for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), port, 0, config, nil) {
 			if err := option.Customize(&request); err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 		t.Fatal("ordinary Ceph client configuration acquired an RGW gateway policy")
 	}
 	request := clientRequest
-	for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), 7480, 0, Config{Name: "gateway"}) {
+	for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), 7480, 0, Config{Name: "gateway"}, nil) {
 		if err := option.Customize(&request); err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +143,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
 	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: true, PublicAddress: "127.0.0.1"}, nil)
 	var request testcontainers.GenericContainerRequest
-	for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), 42791, 0, Config{Name: "gateway"}) {
+	for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), 42791, 0, Config{Name: "gateway"}, nil) {
 		if err := option.Customize(&request); err != nil {
 			t.Fatal(err)
 		}
