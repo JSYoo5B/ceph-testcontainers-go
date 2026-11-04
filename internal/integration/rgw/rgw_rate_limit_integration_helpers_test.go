@@ -25,7 +25,9 @@ import (
 // unaffected control scope, refusal of an overlapping override, of an outside
 // policy edit and of a bucket the SUT replaced, exact restoration of the prior
 // native policy and access again after Restore. On Ceph 19 the user scope is
-// refused as unsupported and changes nothing.
+// refused as unsupported and changes nothing. A Ceph 21 user stores no policy
+// until one is set, and ratelimit get then fails with ENOENT: the user's
+// metadata proves the absence, and Restore leaves the native default stored.
 func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -64,9 +66,8 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		bucket.client.Request(t, ctx, http.MethodPut, "/"+bucket.name, nil, http.StatusOK)
 		bucket.client.Request(t, ctx, http.MethodPut, "/"+bucket.name+"/kept", payload, http.StatusOK)
 	}
-	readPolicy := func(args ...string) map[string]any {
+	decodePolicy := func(data []byte) map[string]any {
 		t.Helper()
-		data := rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "get"}, args...)...)
 		var native map[string]map[string]any
 		if json.Unmarshal(data, &native) != nil || len(native) != 1 {
 			t.Fatal("decode native rate-limit policy")
@@ -76,6 +77,10 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		}
 		return nil
 	}
+	readPolicy := func(args ...string) map[string]any {
+		t.Helper()
+		return decodePolicy(rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "get"}, args...)...))
+	}
 	bucketScope := func(bucket string) []string { return []string{"--ratelimit-scope", "bucket", "--bucket", bucket} }
 	userScope := []string{"--ratelimit-scope", "user", "--uid", users[0].ID()}
 	equalPolicy := func(a, b map[string]any) bool {
@@ -83,10 +88,55 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		right, _ := json.Marshal(b)
 		return bytes.Equal(left, right)
 	}
+	// storesUserPolicy reports whether the SUT user's native metadata lists
+	// the attribute that stores its rate-limit policy.
+	storesUserPolicy := func() bool {
+		t.Helper()
+		var metadata struct {
+			Data struct {
+				UserID string `json:"user_id"`
+				Attrs  []struct {
+					Key string `json:"key"`
+				} `json:"attrs"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(rgwBackendAdmin(t, ctx, gateway, "metadata", "get", "user:"+users[0].ID()), &metadata) != nil ||
+			metadata.Data.UserID != users[0].ID() || metadata.Data.Attrs == nil {
+			t.Fatal("decode native user metadata")
+		}
+		for _, attr := range metadata.Data.Attrs {
+			if attr.Key == "user.rgw.ratelimit" {
+				return true
+			}
+		}
+		return false
+	}
+	// readUserPolicy reads the SUT user's policy; unset is a Ceph 21 ENOENT
+	// (exit 254) for the user, which the metadata confirms as stored nowhere.
+	type userPolicy struct {
+		unset  bool
+		policy map[string]any
+	}
+	readUserPolicy := func() userPolicy {
+		t.Helper()
+		data, err := gateway.Admin(ctx, append([]string{"ratelimit", "get"}, userScope...)...)
+		if err != nil {
+			var failure *ceph.NativeFailure
+			if !errors.As(err, &failure) || failure.ExitCode != 254 || failure.Errno != "ENOENT" {
+				t.Fatalf("RGW backend native ratelimit get: %v", err)
+			}
+			if storesUserPolicy() {
+				t.Fatal("ratelimit get reports ENOENT for a user that stores a policy")
+			}
+			return userPolicy{unset: true}
+		}
+		return userPolicy{policy: decodePolicy(data)}
+	}
+	equalUserPolicy := func(a, b userPolicy) bool { return a.unset == b.unset && equalPolicy(a.policy, b.policy) }
 	// A disabled, non-default prior policy, so restoration must put back
 	// every field rather than merely disable the override's policy.
 	rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-write-ops", "1000", "--max-read-bytes", "1048576"}, bucketScope(limited)...)...)
-	limitedBefore, controlBefore, userBefore := readPolicy(bucketScope(limited)...), readPolicy(bucketScope(control)...), readPolicy(userScope...)
+	limitedBefore, controlBefore, userBefore := readPolicy(bucketScope(limited)...), readPolicy(bucketScope(control)...), readUserPolicy()
 	if limitedBefore["enabled"] != false || limitedBefore["max_write_ops"] != float64(1000) {
 		t.Fatalf("prior native bucket policy was not stored: %v", limitedBefore)
 	}
@@ -149,7 +199,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	}
 	applied := readPolicy(bucketScope(limited)...)
 	if applied["enabled"] != true || applied["max_read_ops"] != float64(1) || applied["max_write_ops"] != float64(0) || applied["max_read_bytes"] != float64(0) ||
-		!equalPolicy(readPolicy(bucketScope(control)...), controlBefore) || !equalPolicy(readPolicy(userScope...), userBefore) {
+		!equalPolicy(readPolicy(bucketScope(control)...), controlBefore) || !equalUserPolicy(readUserPolicy(), userBefore) {
 		t.Fatalf("native readback of the bucket override: %v", applied)
 	}
 	waitSlowDown("bucket read SlowDown", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
@@ -195,7 +245,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		if refusal := harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRGWUserRateLimit, "user-scope rate limit"); refusal.Target != "cluster" {
 			t.Fatalf("user-scope refusal names %q, want the cluster", refusal.Target)
 		}
-		if policy := readPolicy(userScope...); !equalPolicy(policy, userBefore) {
+		if policy := readUserPolicy(); !equalUserPolicy(policy, userBefore) {
 			t.Fatalf("a refused user override changed the user policy: %v, want %v", policy, userBefore)
 		}
 		if err := userChange.Restore(ctx); err != nil {
@@ -215,8 +265,20 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		if err := userChange.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if restored := readPolicy(userScope...); !equalPolicy(restored, userBefore) {
-			t.Fatalf("Restore did not put back the exact prior user policy: %v, want %v", restored, userBefore)
+		restored := readUserPolicy()
+		if userBefore.unset {
+			// radosgw-admin cannot delete a stored policy: Restore stores the
+			// native default, every budget zero and disabled.
+			if restored.unset || restored.policy["enabled"] != false || !storesUserPolicy() {
+				t.Fatalf("Restore of an unset user policy: %+v, want the stored native default", restored)
+			}
+			for name, value := range restored.policy {
+				if name != "enabled" && value != float64(0) {
+					t.Fatalf("Restore of an unset user policy left %s=%v, want the native default", name, value)
+				}
+			}
+		} else if !equalUserPolicy(restored, userBefore) {
+			t.Fatalf("Restore did not put back the exact prior user policy: %+v, want %+v", restored, userBefore)
 		}
 		waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
 	}
@@ -246,6 +308,9 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	}
 	waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
 	userResult := "503 SlowDown on the user scope"
+	if userBefore.unset {
+		userResult += " from an unset policy, restored to the stored native default"
+	}
 	if !userSupported {
 		userResult = "user scope refused as unsupported without a change"
 	}
