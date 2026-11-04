@@ -1,0 +1,48 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/expect",
+  "count": 28,
+  "types": {
+    "cephfs/expect.MDSDaemon": [
+      "MDSDaemon.GID field uint64",
+      "MDSDaemon.Name field string",
+      "MDSDaemon.NotGID field uint64"
+    ],
+    "cephfs/expect.MDSEvaluation": [
+      "MDSEvaluation.Expectation field MDSs",
+      "MDSEvaluation.Matched field bool",
+      "MDSEvaluation.Mismatches field []MDSMismatch",
+      "MDSEvaluation.Observed field cephfs.FilesystemStatus"
+    ],
+    "cephfs/expect.MDSMismatch": [
+      "MDSMismatch.List field MDSList",
+      "MDSMismatch.Observed field cephfs.MDSStatus",
+      "MDSMismatch.ObservedValue field int64",
+      "MDSMismatch.Rank field int",
+      "MDSMismatch.Reason field MDSMismatchReason",
+      "MDSMismatch.Want field MDSDaemon",
+      "MDSMismatch.WantValue field int64"
+    ],
+    "cephfs/expect.MDSRank": [
+      "MDSRank.GID field uint64",
+      "MDSRank.Name field string",
+      "MDSRank.NotGID field uint64",
+      "MDSRank.Rank field int"
+    ],
+    "cephfs/expect.MDSStandbys": [
+      "MDSStandbys.Count field int",
+      "MDSStandbys.Daemons field []MDSDaemon"
+    ],
+    "cephfs/expect.MDSs": [
+      "MDSs.AllRanksActive field bool",
+      "MDSs.Exact field bool",
+      "MDSs.FilesystemID field int64",
+      "MDSs.MaxMDS field int",
+      "MDSs.Owned field bool",
+      "MDSs.Ranks field []MDSRank",
+      "MDSs.Standby field *MDSStandbys",
+      "MDSs.StandbyReplay field *MDSStandbys"
+    ]
+  }
+}
