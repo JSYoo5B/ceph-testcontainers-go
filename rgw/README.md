@@ -53,7 +53,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    disabled, because `radosgw-admin` cannot delete a policy; on Umbrella,
    where `ratelimit get` reports such a user as `ENOENT`, it then reports the
    default (see
-   [Behaviour that differs on Umbrella](../docs/guides/releases-and-images.md#behaviour-that-differs-on-umbrella)).
+   [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
 5. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.

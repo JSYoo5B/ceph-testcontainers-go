@@ -546,6 +546,16 @@ func readRateLimitPolicy(ctx context.Context, g *gwbase.Core, user *gwbase.User,
 // radosgw-admin ratelimit get of Ceph 21 for a user that stores no policy: exit
 // 254 with ENOENT. Ceph 21 fails the same way for a missing user, and Ceph 20
 // and 19 report the native default instead, so it is never evidence alone.
+//
+// Nothing establishes this ENOENT as an intended interface. The Ceph 21
+// change that adds it documents only the new list and delete budgets and
+// claims backward compatibility, the bucket scope and the Admin REST user
+// ratelimit info still report the default for the same state, and no defect
+// record names it. It is handled as a release-specific issue, not as a
+// declared release difference: the metadata proof below decides, never the
+// error or the release. A release that reports the default again never takes
+// this path. A release that keeps the policy outside userRateLimitAttr would
+// break the proof and needs its own path.
 func unsetUserRateLimit(err error) bool {
 	var failure *ceph.NativeFailure
 	return errors.As(err, &failure) && failure.ExitCode == 254 && failure.Errno == "ENOENT"
