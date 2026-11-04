@@ -133,10 +133,25 @@ def prepare_images(plan, directory, deadline=None):
     # Record the actual native build string as well as the registry identities.
     name = 'ctg-periodic-version-' + uuid.uuid4().hex
     try:
+        probe = ['ceph', '--version']
+        if 'reference' in plan['images']:
+            # A historical aggregate must satisfy this compact core's tools;
+            # manifest availability alone is not artifact eligibility.
+            probe = ['python3', '-c',
+                     'import shutil,subprocess,sys\n'
+                     'try:\n import rados,cephfs\n'
+                     'except ImportError:\n sys.exit(17)\n'
+                     'tools=("ceph","ceph-mon","ceph-mgr","ceph-osd","rados","rbd","ceph-fuse","radosgw","radosgw-admin")\n'
+                     'if not all(shutil.which(t) for t in tools): sys.exit(17)\n'
+                     'print(subprocess.check_output(["ceph","--version"],text=True).strip())']
         check = command(['docker', 'run', '--rm', '--name', name, '--network', 'none',
-                         environment['CEPH_TEST_ESSENTIAL_IMAGE'], 'ceph', '--version'], directory / 'version.log', remaining(30))
+                         environment['CEPH_TEST_ESSENTIAL_IMAGE'], *probe], directory / 'version.log', remaining(30))
         version = (directory / 'version.log').read_text().strip()
-        if not check['passed'] or not re.search(r'^ceph version ' + re.escape(plan['release']) + r'(?:\s|$)', version):
+        if check['exit_code'] in (17, 127):
+            raise RuntimeError('contract_inapplicable: discovery image lacks required core tools')
+        if not check['passed']:
+            raise RuntimeError('artifact_preflight_failure: native build query failed')
+        if not re.search(r'^ceph version ' + re.escape(plan['release']) + r'(?:\s|$)', version):
             raise RuntimeError('artifact_version_mismatch: native build is not the selected release')
         result['native_build'] = version
         selection.write(directory / 'summary.json', result)
@@ -333,7 +348,8 @@ def execute(plan_path, directory, trial=False, runner=command):
         receipt['classification'] = 'preparation_failure'
         receipt['error'] = str(error)[:250]
         kind = str(error).split(':', 1)[0]
-        if kind in ('environment_ineligible', 'artifact_unavailable', 'artifact_version_mismatch', 'artifact_resolution_failure'):
+        if kind in ('environment_ineligible', 'artifact_unavailable', 'artifact_version_mismatch',
+                    'artifact_resolution_failure', 'artifact_preflight_failure', 'contract_inapplicable'):
             receipt['classification'] = kind
         receipt['advances'] = True
     finally:

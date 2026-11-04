@@ -91,7 +91,8 @@ def scope(catalog):
             if found & chosen:
                 raise ValueError('core test has multiple owners')
             found |= chosen
-            core.append(entry(profile, chosen, (profile.get('networks') or [''])[0], True))
+            network = (profile.get('networks') or [''])[0] if chosen & set(profile.get('network_tests', [])) else ''
+            core.append(entry(profile, chosen, network, True))
     if found != set(CORE):
         raise ValueError('core test inventory changed: ' + str(sorted(set(CORE) - found)))
     hints = json.loads((ROOT / '.github/periodic-costs.json').read_text())['native_seconds']
@@ -187,7 +188,10 @@ def make_plan(catalog, history, source_sha, mode, now, release='', profiles='', 
             chosen = [t for t in tests.split(',') if t in full] if tests else full
             if not chosen or (network and network not in profile.get('networks', [])):
                 raise ValueError('targeted tests or network do not belong to the profile')
-            entries.append(entry(profile, chosen, network or (profile.get('networks') or [''])[0]))
+            if network and not set(chosen) <= set(profile.get('network_tests', [])):
+                raise ValueError('an explicit network requires mode-declaring tests')
+            default = (profile.get('networks') or [''])[0] if set(chosen) & set(profile.get('network_tests', [])) else ''
+            entries.append(entry(profile, chosen, network or default))
         if tests and set(tests.split(',')) != {t for e in entries for t in e['tests']}:
             raise ValueError('targeted test selection contains unknown tests')
         candidates = [{'id': release + '/targeted-' + digest(entries)[:12], 'release': release, 'entries': entries}]
@@ -235,6 +239,11 @@ def validate_plan(plan, catalog):
             raise ValueError('planned selection violates the source contract')
         if item['network'] and item['network'] not in profile.get('networks', []):
             raise ValueError('planned network is not declared')
+        modes = set(profile.get('network_tests', []))
+        if (set(item['tests']) & modes and not item['network']
+                or item['network'] and item['network'] != (profile.get('networks') or [''])[0]
+                and not set(item['tests']) <= modes):
+            raise ValueError('planned selection changes the declared network scope')
     for reference, pinned in plan.get('test_images', {}).items():
         if (not reference or reference.startswith('-') or any(c.isspace() for c in reference)
                 or not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', pinned)):
