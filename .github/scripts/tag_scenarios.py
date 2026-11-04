@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Discover, compile-check and execute source-owned Go test tag profiles.
 
-Only build tags select runtime tests. Source metadata owns process and job
-budgets; command-line and workflow inputs cannot replace test selection.
+Build tags own the complete runtime inventory and source metadata owns its
+upper time bounds. An explicit sampled parent selection remains within that
+compiled inventory, records its partial scope and may lower the time bound.
 """
 
 import argparse
@@ -1409,7 +1410,7 @@ def matrix_tags(profile, tags):
 
 
 def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None,
-                profile_tags=None):
+                profile_tags=None, selected_tests_text="", timeout_seconds=None):
     """Run one profile, or with tests only those of its tests that declare
     network modes, as a matrix entry of a non-default mode does.
 
@@ -1424,10 +1425,21 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     expected = selected_tests(catalog, profile["package"], profile["tags"])
     if not expected:
         raise ValueError("requested runtime profile is empty")
+    if tests and selected_tests_text:
+        raise ValueError("network and explicit test selections cannot be combined")
     selection = tests.split(",") if tests else []
     if selection and (len(selection) != len(set(selection)) or not set(selection) <= set(profile.get("network_tests", ()))
                       or (profile["checker"] != "none" and set(selection) != set(expected))):
         raise ValueError("a test selection names only tests of the profile that declare network modes")
+    if selected_tests_text:
+        selection = selected_tests_text.split(",")
+        if (len(selection) != len(set(selection)) or not set(selection) <= set(expected)
+                or (profile["checker"] != "none" and set(selection) != set(expected))):
+            raise ValueError("explicit selection must name compiled tests and preserve complete checker contracts")
+    if timeout_seconds is not None and (not isinstance(timeout_seconds, int) or timeout_seconds <= 0
+                                        or timeout_seconds > duration_seconds(profile["timeout"])):
+        raise ValueError("native timeout must be positive and no larger than the source timeout")
+    timeout = str(timeout_seconds) + "s" if timeout_seconds is not None else profile["timeout"]
     # A checker validates one mode's run, so its batch runs in one mode: the
     # matrix entry's, or the default when no entry selected one.
     network = os.environ.get("CEPH_TEST_NETWORK", "")
@@ -1443,12 +1455,12 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         if actual != expected:
             raise ValueError("compiled profile differs from its AST source")
         command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-count=1", "-v",
-                   "-timeout=" + profile["timeout"], profile["package"]]
+                   "-timeout=" + timeout, profile["package"]]
     else:
         # go test runs a test binary in its package directory.
         execution, cwd = TEST_BINARY, Path(root) / profile["package"]
         path, receipt = verified_binary(binary, profile, expected, root)
-        command = [str(path), "-test.v", "-test.count=1", "-test.timeout=" + profile["timeout"]]
+        command = [str(path), "-test.v", "-test.count=1", "-test.timeout=" + timeout]
     directory.mkdir(parents=True, exist_ok=False)
     # Go's -artifacts keeps each test's ArtifactDir, where a ceph
     # Finalization writes its failure archive, under this directory, which
@@ -1476,6 +1488,16 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         child = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, encoding="utf-8", errors="replace",
                                  env=environment)
+        try:
+            (directory / "started.json").write_text(json.dumps({"started_at": time.time(), "tests": expected}) + "\n")
+        except BaseException:
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+            raise
         with child.stdout:
             for line in child.stdout:
                 log.write(line)
@@ -1497,6 +1519,8 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     result = {"schema": SCHEMA, "profile": profile, "command": command, "execution": execution,
               "network": network, "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
               "go_environment": dict(GO_EXECUTION_ENV),
+              "selection_scope": "explicit_sample" if selected_tests_text else "profile",
+              "source_tests": selected_tests(catalog, profile["package"], profile["tags"]),
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
               "classification": failure_kind(exit_code, completed, strict, transport),
               "registry_transport": transport["tests"],
@@ -1508,6 +1532,14 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     result["passed"] = result["classification"] == "passed"
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
+
+
+def duration_seconds(value):
+    """The integer seconds of a source-owned Go test timeout."""
+    parts = re.findall(r"(\d+)(h|m|s)", value)
+    if not parts or "".join(number + unit for number, unit in parts) != value:
+        raise ValueError("invalid source timeout")
+    return sum(int(number) * {"h": 3600, "m": 60, "s": 1}[unit] for number, unit in parts)
 
 
 def test_artifacts(directory):
@@ -1675,6 +1707,10 @@ def main(argv=None):
         if name == "run":
             command.add_argument("--tests", default="",
                                  help="Comma-separated tests that declare network modes; run only these")
+            command.add_argument("--selected-tests", default="",
+                                 help="Explicit sampled parent inventory; never complete profile coverage")
+            command.add_argument("--timeout-seconds", type=int,
+                                 help="Bound a sampled execution within its source-owned timeout")
             command.add_argument("--binary", type=Path,
                                  help="Compile directory; run its verified test binary instead of go test")
     command = commands.add_parser("releases")
@@ -1758,7 +1794,8 @@ def main(argv=None):
             return 0 if report["passed"] else 1
         if args.command == "run":
             report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory,
-                                 tests=args.tests, binary=args.binary, profile_tags=args.profile_tags)
+                                 tests=args.tests, binary=args.binary, profile_tags=args.profile_tags,
+                                 selected_tests_text=args.selected_tests, timeout_seconds=args.timeout_seconds)
         elif args.command == "compile":
             selected_plan = discover_optional(catalog, bugs) if args.category == "optional" else plan
             report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory,

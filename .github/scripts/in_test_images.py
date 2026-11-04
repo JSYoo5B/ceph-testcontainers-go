@@ -118,7 +118,7 @@ def published_role_digests():
     return digests
 
 
-def plan_images(uses, release, roles, roles_prepared):
+def plan_images(uses, release, roles, roles_prepared, discovery=False):
     """(planned, skipped): the references to prepare, each with the
     analysis entries that named it, and the entries that need none."""
     planned, skipped = {}, []
@@ -134,6 +134,8 @@ def plan_images(uses, release, roles, roles_prepared):
             entry["note"] = note
 
     for use in uses:
+        if discovery and (use["kind"] != "image" or use.get("role_fallback") is not True):
+            raise ValueError("discovery contract needs an image outside its pinned single-release aggregate")
         reference = use.get("reference", "")
         if use["kind"] == "image":
             repository, _, digest = reference.partition("@")
@@ -177,7 +179,12 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
 
     code = 1
     try:
-        if arguments.release not in matrix.RELEASES:
+        discovery = getattr(arguments, "discovery", False)
+        if discovery:
+            from periodic_selection import patch_inventory
+            if arguments.release not in patch_inventory():
+                raise ValueError("unknown discovery patch")
+        elif arguments.release not in matrix.RELEASES:
             raise ValueError("unsupported release " + arguments.release)
         roles = matrix.parse_roles(arguments.roles) if arguments.roles else ()
         roles_prepared = environ.get("SCENARIO_IMAGE_LAYOUT") == "roles"
@@ -188,7 +195,7 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
             raise ValueError("the image analysis failed: " + analysed.stderr.strip()[-500:])
         uses = validate_analysis(json.loads(analysed.stdout), package, tests)
         summary["analysis"] = uses
-        planned, summary["skipped"] = plan_images(uses, arguments.release, roles, roles_prepared)
+        planned, summary["skipped"] = plan_images(uses, arguments.release, roles, roles_prepared, discovery)
         listed = capture(["go", "list", "-m", "-f", "{{.Dir}}", TESTCONTAINERS])
         if listed.returncode:
             raise ValueError("go list cannot locate " + TESTCONTAINERS)
@@ -225,6 +232,8 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
             summary["registry_failure"] = error.failure
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         summary["error"] = str(error)
+        if isinstance(error, ValueError) and str(error).startswith("discovery contract needs"):
+            summary["classification"] = "contract_inapplicable"
     finally:
         summary["finished_at"] = timestamp()
         with (directory / "summary.json").open("x", encoding="utf-8") as output:
@@ -243,6 +252,7 @@ def main(argv=None):
     parser.add_argument("--compile", type=Path, required=True, help="The compile directory with compile-report.json")
     parser.add_argument("--tests", default="", help="The matrix entry's comma-separated test selection")
     parser.add_argument("--release", required=True)
+    parser.add_argument("--discovery", action="store_true", help="Use the separate pinned patch inventory; no extra test images")
     parser.add_argument("--roles", default="", help="The batch's declared role images, for the pinned role file")
     parser.add_argument("--directory", type=Path, required=True, help="New directory for the receipt and pull logs")
     return prepare(parser.parse_args(argv))
