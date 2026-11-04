@@ -46,6 +46,8 @@ def characterization(log):
             continue
         if (isinstance(row, dict) and row.get('case') in SCHEDULE_CASES
                 and type(row.get('code')) is int and isinstance(row.get('out'), str)):
+            if row['case'] in result:
+                raise ValueError('duplicate characterization case cannot overwrite its first result')
             result[row['case']] = {'exit_code': row['code'],
                                   'stdout_sha256': hashlib.sha256(row['out'].encode()).hexdigest()}
     if set(result) != SCHEDULE_CASES:
@@ -339,7 +341,9 @@ def execute(plan_path, directory, trial=False, runner=command):
             except InterruptedError:
                 raise
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                if record['classification'] == 'not_started':
+                if record.get('native_phase_finished'):
+                    record['classification'] = 'incomplete'
+                elif record['classification'] == 'not_started':
                     record['classification'] = 'preparation_failure'
                 record['error'] = type(error).__name__
                 receipt['advances'] = True
