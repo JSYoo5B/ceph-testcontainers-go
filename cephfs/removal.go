@@ -37,6 +37,12 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 	if err != nil {
 		return err
 	}
+	survivors := make(map[int64][]string)
+	for other, survivor := range filesystems(c).byName {
+		if native := survivor.base().Native(); other != name && native != nil {
+			survivors[native.ID] = survivor.fleet().ownedNames()
+		}
+	}
 	if present {
 		// Gracefully drain only this filesystem. Older monitors can refuse
 		// fs fail because an unrelated filesystem's MDS has a warning.
@@ -46,7 +52,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 		if _, err := c.Ceph(ctx, "fs", "rm", name, "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
-		if err := waitSurvivorAffinity(ctx, c, name); err != nil {
+		if err := waitSurvivorAffinity(ctx, c, survivors); err != nil {
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
 	}
@@ -62,22 +68,6 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 	return nil
 }
 
-// survivorDaemons maps the native FSMap ID of every other owned filesystem to
-// the names of its owned MDS daemons. The caller holds the topology mutex.
-func survivorDaemons(c *ceph.Container, removed string) map[int64][]string {
-	survivors := make(map[int64][]string)
-	for name, fs := range filesystems(c).byName {
-		native := fs.base().Native()
-		if name == removed || native == nil {
-			continue
-		}
-		for _, daemon := range fs.mds.roster.snapshot() {
-			survivors[native.ID] = append(survivors[native.ID], daemon.ID)
-		}
-	}
-	return survivors
-}
-
 // waitSurvivorAffinity returns once every owned MDS of the other owned
 // filesystems that the FSMap lists again carries the FSMap ID of its own
 // filesystem as join_fscid. Some monitors clear the join_fscid of every
@@ -85,10 +75,9 @@ func survivorDaemons(c *ceph.Container, removed string) map[int64][]string {
 // next beacon of each daemon, which names its mds_join_fs, sets it back.
 // Until then a standby or standby-replay daemon of a survivor is not bound
 // to it, so MDSStatus and readiness would not count it. A daemon the FSMap
-// does not list (stopped by the test) is not waited for. The caller holds the
-// topology mutex.
-func waitSurvivorAffinity(ctx context.Context, c *ceph.Container, removed string) error {
-	survivors := survivorDaemons(c, removed)
+// does not list (stopped by the test) is not waited for. survivors maps the
+// FSMap ID of each other owned filesystem to its owned daemon names.
+func waitSurvivorAffinity(ctx context.Context, c *ceph.Container, survivors map[int64][]string) error {
 	if len(survivors) == 0 {
 		return nil
 	}
