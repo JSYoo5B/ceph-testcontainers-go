@@ -6,11 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"io"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
@@ -70,8 +71,8 @@ func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 		if got := cephFSMDSScaleStorageIdentity(t, ctx, cluster, fs.FilesystemName); got != identity {
 			t.Fatalf("scaling recreated backing pools: got=%v initial=%v", got, identity)
 		}
-		if status := cephFSTopologyStatus(t, ctx, other); len(status.Active) != 1 || status.Active[0].GID != otherBefore.Active[0].GID || len(other.MDSs()) != 1 {
-			t.Fatalf("scaling touched another filesystem's MDS: %+v", status)
+		if result, err := sameMDSRank(otherBefore.Active[0]).Evaluate(*cephFSTopologyStatus(t, ctx, other)); err != nil || !result.Matched || len(other.MDSs()) != 1 {
+			t.Fatalf("scaling touched another filesystem's MDS: %v, %v, owned %d", result, err, len(other.MDSs()))
 		}
 		if len(clusteraccess.ServiceContainers(t, cluster)) != counts[0]+counts[1]+1 {
 			t.Fatal("cluster optional-service ownership retained removed MDS containers")

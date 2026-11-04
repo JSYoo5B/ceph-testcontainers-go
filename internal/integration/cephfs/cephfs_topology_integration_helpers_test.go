@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -80,21 +81,19 @@ func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *cephfs.F
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
-	var last *cephfs.FilesystemStatus
+	want := expect.MDSs{Ranks: []expect.MDSRank{{Rank: old.Rank, Name: standby.Name, GID: standby.GID, NotGID: old.GID}}, Owned: true, AllRanksActive: true}
+	var last expect.MDSEvaluation
 	var lastErr error
 	for {
-		last, lastErr = fs.MDSStatus(ctx)
-		if lastErr == nil && len(last.Active) == last.MaxMDS {
-			for _, current := range last.Active {
-				if current.Rank == old.Rank && current.Name == standby.Name && current.GID == standby.GID && current.Owned && current.GID != old.GID {
-					t.Logf("native MDS failover: rank=%d old=%s/%d new=%s/%d", old.Rank, old.Name, old.GID, current.Name, current.GID)
-					return
-				}
-			}
+		status, err := fs.MDSStatus(ctx)
+		last, lastErr = evaluateMDSs(status, err, want)
+		if lastErr == nil && last.Matched {
+			t.Logf("native MDS failover: rank=%d old=%s/%d new=%s/%d", old.Rank, old.Name, old.GID, standby.Name, standby.GID)
+			return
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("owned standby never replaced failed rank: error=%v status=%+v", lastErr, last)
+			t.Fatalf("owned standby never replaced failed rank: error=%v status=%v", lastErr, last)
 		case <-time.After(time.Second):
 		}
 	}

@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
@@ -352,12 +353,12 @@ func testCephFSReconnectRefusal(t *testing.T, ctx context.Context, cluster *ceph
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
 		status, err := fs.MDSStatus(ctx)
-		if err == nil && len(status.Active) == 1 && status.Active[0].GID != before.Active[0].GID && status.Active[0].State == "up:active" &&
-			findCephFSSession(t, ctx, fs, strconv.FormatUint(opened.Client, 10)) == nil {
+		took, err := evaluateMDSs(status, err, expect.MDSs{Ranks: []expect.MDSRank{{Rank: before.Active[0].Rank, NotGID: before.Active[0].GID}}, Exact: true})
+		if err == nil && took.Matched && findCephFSSession(t, ctx, fs, strconv.FormatUint(opened.Client, 10)) == nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("rank 0 did not come back without the reconnecting session: %+v, %v", status, err)
+			t.Fatalf("rank 0 did not come back without the reconnecting session: %v, %v", took, err)
 		}
 		time.Sleep(2 * time.Second)
 	}

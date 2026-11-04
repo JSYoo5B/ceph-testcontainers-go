@@ -191,8 +191,8 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 		t.Fatalf("killed client %s is not blocklisted: %+v", session.Address, entries)
 	}
 	after, err := h.FS.MDSStatus(ctx)
-	if err != nil || len(after.Active) != 1 || after.Active[0].GID != h.MDS.GID {
-		t.Fatalf("mds.%s changed: %+v, %v", h.MDS.Name, after, err)
+	if result, err := evaluateMDSs(after, err, sameMDSRank(h.MDS)); err != nil || !result.Matched {
+		t.Fatalf("mds.%s changed: %v, %v", h.MDS.Name, result, err)
 	}
 	reader := h.ReadNamespace(t, ctx)
 	t.Logf("CEPHFS_UNSAFE_KILL %s mds.%s gid=%d client.%d tid=%d inode=%d: rename returned in %d ms and was held unsafe on both sides; session before the kill %s; actor PID %d killed with SIGKILL (%s); 3 s later the session was %q and the MDS still held the request unsafe (events %v); pause restored %s after the kill; the request committed and replied by %s (events %v, %.1f s in the MDS); session states %q, gone %s after the kill with session_timeout=%s session_autoclose=%s; address %s blocklisted; reader client.%d found the target and ENOENT for the source",

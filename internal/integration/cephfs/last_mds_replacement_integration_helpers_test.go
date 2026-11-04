@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
@@ -194,8 +195,12 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	checkPublic := func(native lastMDSScope) {
 		t.Helper()
 		status, err := target.MDSStatus(ctx)
-		if err != nil || status.FilesystemID != before.target.id || status.MaxMDS != 1 || len(status.Active) != 1 || len(status.Standby) != 0 || len(status.StandbyReplay) != 0 || !status.Active[0].Owned || status.Active[0].Rank != 0 || status.Active[0].Name != replacement.ID || status.Active[0].GID != native.target.active.gid || status.Active[0].State != "up:active" {
-			t.Fatal("public replacement logical rank differs from strict native map", err)
+		if result, err := evaluateMDSs(status, err, expect.MDSs{
+			FilesystemID: before.target.id, MaxMDS: 1, Owned: true, Exact: true,
+			Ranks:   []expect.MDSRank{{Rank: 0, Name: replacement.ID, GID: native.target.active.gid}},
+			Standby: &expect.MDSStandbys{}, StandbyReplay: &expect.MDSStandbys{},
+		}); err != nil || !result.Matched {
+			t.Fatal("public replacement logical rank differs from strict native map:", result, err)
 		}
 	}
 	checkPublic(current)

@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -68,8 +69,8 @@ func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context)
 		if err != nil {
 			return nil, false, nil
 		}
-		active, ok := activeRank(status, 0)
-		return status, ok && len(status.Active) == 1 && active.State == "up:active" && active.GID != old.GID, nil
+		took, err := expect.MDSs{Ranks: []expect.MDSRank{{Rank: 0, NotGID: old.GID}}, Exact: true}.Evaluate(*status)
+		return status, err == nil && took.Matched, err
 	})
 	if err != nil {
 		t.Fatalf("the standby did not take rank 0: last %+v: %v", seen.Value, err)

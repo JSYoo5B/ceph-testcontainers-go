@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
@@ -56,8 +57,8 @@ func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 	cephFSTopologyIO(t, ctx, client, alpha.FilesystemName, "alpha-data", "after-failure", 1, "")
 	cephFSTopologyIO(t, ctx, client, beta.FilesystemName, "beta-data", "verify", 0, "")
 	betaAfter := cephFSTopologyStatus(t, ctx, beta)
-	if len(betaAfter.Active) != 1 || betaAfter.Active[0].GID != betaBefore.Active[0].GID {
-		t.Fatal("alpha failure changed beta's active MDS")
+	if result, err := sameMDSRank(betaBefore.Active[0]).Evaluate(*betaAfter); err != nil || !result.Matched {
+		t.Fatal("alpha failure changed beta's active MDS:", result, err)
 	}
 	if err := failed.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -102,8 +103,9 @@ func TestCephFSStandbyReplayFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := cephFSTopologyStatus(t, ctx, fs)
-	if len(after.StandbyReplay) != 1 || after.StandbyReplay[0].Name != old.Name || after.StandbyReplay[0].GID == old.GID {
-		t.Fatalf("restarted daemon did not rejoin as a fresh journal follower: %+v", after)
+	rejoined := expect.MDSs{StandbyReplay: &expect.MDSStandbys{Count: 1, Daemons: []expect.MDSDaemon{{Name: old.Name, NotGID: old.GID}}}}
+	if result, err := rejoined.Evaluate(*after); err != nil || !result.Matched {
+		t.Fatalf("restarted daemon did not rejoin as a fresh journal follower: %v, %v", result, err)
 	}
 	cephFSTopologyIO(t, ctx, client, fs.FilesystemName, "hot-data", "final", 0, "")
 	t.Logf("standby-replay mds.%s took over rank0 after mds.%s gid=%d died; retained file and new write/read verified in fresh sessions; old daemon returned with fresh GID=%d as replay standby", replay.Name, old.Name, old.GID, after.StandbyReplay[0].GID)

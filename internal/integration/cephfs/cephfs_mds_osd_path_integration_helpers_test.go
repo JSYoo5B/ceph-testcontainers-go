@@ -398,8 +398,8 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		t.Fatalf("independent reader: %+v, want inode %d with %d bytes", independent, opened.Inode, len(whole))
 	}
 	status, err := m.FS.MDSStatus(ctx)
-	if err != nil || len(status.Active) != 1 || status.Active[0].GID != m.MDS.GID {
-		t.Fatalf("mds.%s GID %d was replaced: %+v, %v", m.MDS.Name, m.MDS.GID, status, err)
+	if result, err := evaluateMDSs(status, err, sameMDSRank(m.MDS)); err != nil || !result.Matched {
+		t.Fatalf("mds.%s GID %d was replaced: %v, %v", m.MDS.Name, m.MDS.GID, result, err)
 	}
 	entries, err := harness.ObserveCluster(m.Cluster).BlocklistEntries(ctx)
 	if err != nil {

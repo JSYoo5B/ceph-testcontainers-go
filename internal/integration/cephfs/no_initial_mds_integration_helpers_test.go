@@ -18,6 +18,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
@@ -169,8 +170,12 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	live := coldMDSMap(t, ctx, cluster, target.FilesystemName, members[0].ID)
 	process := coldMDSProcess(t, ctx, oracle, members[0])
 	reported, err := target.MDSStatus(ctx)
-	if err != nil || reported.FilesystemID != beforeTarget.id || reported.MaxMDS != 1 || len(reported.Active) != 1 || len(reported.Standby) != 0 || len(reported.StandbyReplay) != 0 || !reported.Active[0].Owned || reported.Active[0].Name != live.active.name || reported.Active[0].GID != live.active.gid || reported.Active[0].Rank != 0 {
-		t.Fatal("public first rank does not match strict original native FSMap", err)
+	if result, err := evaluateMDSs(reported, err, expect.MDSs{
+		FilesystemID: beforeTarget.id, MaxMDS: 1, Owned: true, Exact: true,
+		Ranks:   []expect.MDSRank{{Rank: 0, Name: live.active.name, GID: live.active.gid}},
+		Standby: &expect.MDSStandbys{}, StandbyReplay: &expect.MDSStandbys{},
+	}); err != nil || !result.Matched {
+		t.Fatal("public first rank does not match strict original native FSMap:", result, err)
 	}
 	// This consumer-side query uses the live parent after the wait worker joined.
 	t.Logf("GO_WAIT_CHANNEL filesystem=%s outcome=success result_count=1 channel_closed=true worker_joined=true consumer_reentered=true", target.FilesystemName)
