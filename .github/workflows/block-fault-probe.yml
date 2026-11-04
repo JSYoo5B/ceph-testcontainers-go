@@ -80,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        release: ['20.2.4', '19.2.5']
+        release: ['20.2.4', '21.2.0', '19.2.5']
     env:
       CGO_ENABLED: '0'
       TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'

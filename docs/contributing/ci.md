@@ -515,11 +515,11 @@ The account runs at most 40 hosted jobs at once. The constants in
 | --- | --- | --- |
 | `RUNNER_LIMIT` | 40 | The measured limit. |
 | `PULL_REQUEST_RUNNERS` | 16 | Runners that Ceph periodic leaves free for pull requests. |
-| `RELEASE_MAX_PARALLEL` | short 4, topology 2, multicluster 2, recovery 2 | `max-parallel` of each release caller in Ceph periodic and Ceph release matrix. |
+| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Ceph periodic and Ceph release matrix. |
 | `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
 
-A full matrix run holds at most 21 runners and a campaign at most 3; both can
+A full matrix run holds at most 19 runners and a campaign at most 3; both can
 run at once because their concurrency groups differ.
 `tag_scenarios.py releases --scope all` fails when the two together could
 exceed `RUNNER_LIMIT - PULL_REQUEST_RUNNERS`, and `--scope others` fails when
@@ -579,7 +579,7 @@ Only a batch job of a runtime caller that ran to an end counts as an
 execution; a run that ended in `Gate`, `Releases`, `Pin` or `History` did
 not execute the commit.
 
-Dispatch a run to check a branch on both releases before merging:
+Dispatch a run to check a branch on every supported release before merging:
 
 ```sh
 gh workflow run "Ceph periodic" --ref <branch>
@@ -593,7 +593,7 @@ issue and fix the cause; do not re-run to get a pass.
 
 `SUPPORTED_RELEASES` in `.github/scripts/run_image_matrix.py` lists each
 supported release with its codename and pinned official image (Tentacle
-20.2.4 and Squid 19.2.5). The `Releases` jobs generate the callers:
+20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The `Releases` jobs generate the callers:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic'
@@ -606,7 +606,8 @@ periodic job. The command fails unless every required profile runs on every
 release of the scope exactly once, and `test_scenario_shards.py` checks the
 same offline.
 
-To add a release, add its row once ceph-testcontainers-images publishes its
+To add a release, add its row and the published digests to
+`.github/ceph-role-images.json` once ceph-testcontainers-images publishes its
 role images, add it to the `release` options of `ceph-periodic.yml` and the
 `public-api` matrix of `block-fault-probe.yml`, which cannot read the table
 (`test_scenario_shards.py` fails until they match), run the CI tooling tests,
@@ -626,7 +627,7 @@ gh variable delete CI_RELEASE_PHASE              # after the release
 
 While it is `true`, Ceph periodic runs the full matrix on every firing, every
 pull request and push to `main` runs every batch on Tentacle, and Ceph
-release matrix runs every category on Squid.
+release matrix runs every category on Umbrella and Squid.
 
 ### Representative campaign
 

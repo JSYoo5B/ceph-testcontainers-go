@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "image_revision": "eceba87b6676c2861ec957a33cd260a59f26cd43",
   "publication_runs": {
     "20.2.4": 41189650768,
-    "19.2.5": 41189652756
+    "19.2.5": 41189652756,
+    "21.2.0": 41577887418
   },
   "images": {
     "20.2.4": {
@@ -57,6 +57,37 @@
         "rbd-aux": "sha256:975de4d7d970690108791c3de7cbbfaa454da5db1fba8cec2d59a41259830c58",
         "rgw": "sha256:9a1f7e4477d1e0f5f88d7c735dbef0473dedd183bfa69fcb01476ef08b3d86c0"
       }
+    },
+    "21.2.0": {
+      "official": {
+        "all": "sha256:7fce1d2de623a5e6c9f7dc7dd13b356dcb1f71b0b4d74bf7cd2c175cd802735f",
+        "cephfs": "sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973",
+        "client": "sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+        "essential": "sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+        "rbd-aux": "sha256:2a0b72d90e81a4102ff7c608af4a4014c76c4d776bff015ad1459215543def01",
+        "rgw": "sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
+      },
+      "debian": {
+        "all": "sha256:dcf0f17995e545a839513ad4909ed04000406ab0121250d70d90d4930e77e528",
+        "cephfs": "sha256:879c3e4d7b3bc12a557c8f35e89e6c85b2266ce1375536164621fee0dc674af6",
+        "client": "sha256:c7f64dd4a3298425c99c6f53b4f58e36957665a38c372e5e3607edec7d0518ff",
+        "essential": "sha256:89f3a00a91b345756cbbf571da39718d5df4a8b7b3f1f266500d075b17dbc43d",
+        "rbd-aux": "sha256:8fe7e4c61406c0d81f066b1f9ff576c1385f6d1a0ee1d3d4be6c09667cf4fcb9",
+        "rgw": "sha256:260dd05ceb34b3ceac264fce078819520e62569a03e4c445a3d1983a7608003a"
+      },
+      "ubuntu": {
+        "all": "sha256:770a7163da50a8bd18e80677dd19543ba38a33dfbfa56449099a3adecdb042b0",
+        "cephfs": "sha256:6dbf03fad57e34b113214fe08022d6e835fdfeaa58bc96bfa1d7986be957a46a",
+        "client": "sha256:bf2c4a4b25f6b9871931322ddc298e6e974772be79b4765cc68813bb9b7bada3",
+        "essential": "sha256:721fa9560184cef6c1be62d5fe2752740e31f0242ea9222518ef63f2e62b16ed",
+        "rbd-aux": "sha256:facc1e77de0b4f848fe15f36d399246e7e83cde7c296956dd5d69d8a5af7906e",
+        "rgw": "sha256:dde1dd1902299fa8fb1009a5ac286d8f4b427508f81ba2ad477a7815443d45f8"
+      }
     }
+  },
+  "image_revisions": {
+    "20.2.4": "eceba87b6676c2861ec957a33cd260a59f26cd43",
+    "19.2.5": "eceba87b6676c2861ec957a33cd260a59f26cd43",
+    "21.2.0": "141d3c903ab8c35a3d0073dd369d6025cc656381"
   }
 }

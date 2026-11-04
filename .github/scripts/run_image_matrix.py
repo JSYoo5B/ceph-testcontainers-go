@@ -38,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SUPPORTED_RELEASES = (
     ("20.2.4", "tentacle",
      "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"),
+    ("21.2.0", "umbrella",
+     "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"),
     ("19.2.5", "squid",
      "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b"),
 )
