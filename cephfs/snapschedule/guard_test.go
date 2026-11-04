@@ -106,7 +106,7 @@ func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 		t.Errorf("sync primitives changed: %v", mutexes)
 	}
 	slices.Sort(admitted)
-	if !slices.Equal(admitted, []string{"Lease.Restore", "Lease.Snapshots", "Lease.Status", "Lease.begin", "add"}) {
+	if !slices.Equal(admitted, []string{"Lease.Restore", "Lease.Snapshots", "Lease.Status", "Lease.begin", "Lease.watchRead", "add"}) {
 		t.Errorf("the filesystem admission is taken by %v", admitted)
 	}
 	slices.Sort(setLockers)

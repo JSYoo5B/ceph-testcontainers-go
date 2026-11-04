@@ -230,13 +230,18 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 // until done. It refuses a filesystem that is no longer the registered one of
 // its cluster, whose exported descriptor name was edited or whose native
 // identity was not captured, then reads the FSMap, which refuses a replaced
-// filesystem or original pool, and returns the filesystem's native ID.
+// filesystem or original pool, and returns the filesystem's native ID. A
+// filesystem that is no longer registered, or that the FSMap shows replaced,
+// is an fsbase.IdentityChanged error: no later admission can succeed.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
 	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
 		RecheckCanceled: true,
-		Refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
+		Refusal:         admissionRefusal,
 		Check: func(context.Context) (bool, error) {
-			return fs.Registered() && fs.DescriptorIntact() && fs.Native() != nil, nil
+			if !fs.Registered() {
+				return false, fsbase.IdentityRefusal(admissionRefusal)
+			}
+			return fs.DescriptorIntact() && fs.Native() != nil, nil
 		},
 	})
 	if err != nil {
@@ -250,8 +255,11 @@ func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func()
 	return ctx, state.ID, done, nil
 }
 
+const admissionRefusal = "CephFS filesystem must be an active filesystem created by this cluster"
+
 // begin admits one operation of the lease and refuses a filesystem whose
-// native ID is not the one the lease was added on.
+// native ID is not the one the lease was added on, with an
+// fsbase.IdentityChanged error.
 func (l *Lease) begin(ctx context.Context) (context.Context, func(), error) {
 	ctx, fsID, done, err := begin(ctx, l.filesystem)
 	if err != nil {
@@ -259,7 +267,7 @@ func (l *Lease) begin(ctx context.Context) (context.Context, func(), error) {
 	}
 	if fsID != l.filesystemID {
 		done()
-		return ctx, func() {}, fmt.Errorf("CephFS filesystem ID is %d, not the lease's %d: the filesystem was replaced", fsID, l.filesystemID)
+		return ctx, func() {}, fsbase.IdentityRefusal(fmt.Sprintf("CephFS filesystem ID is %d, not the lease's %d: the filesystem was replaced", fsID, l.filesystemID))
 	}
 	return ctx, done, nil
 }

@@ -19,8 +19,9 @@ no container. See
    "/data", Repeat: "1m", Retention: map[string]int{"n": 3}})`. It returns a
    `Lease`.
 3. **Run the SUT** while the module takes `scheduled-…` snapshots.
-4. **Observe** with `Lease.Status` (the module's counts and times) and
-   `Lease.Snapshots` (the scheduled snapshots in the directory's `.snap`).
+4. **Observe** with `Lease.Status` (the module's counts and times),
+   `Lease.Watch` (their changes) and `Lease.Snapshots` (the scheduled
+   snapshots in the directory's `.snap`).
 5. **Restore** with `Lease.Restore`, which removes the retention rules and the
    schedule the lease added; the snapshots stay.
 
@@ -34,6 +35,28 @@ if err != nil {
 }
 snapshots, err := lease.Snapshots(ctx)
 ```
+
+## Watching the schedule
+
+`lease.Watch(ctx, cfg)` polls the module's status of the lease's schedule in
+one goroutine and sends an event when its active state, its created or pruned
+count, its first or last snapshot time or the directory's retention changes.
+This is aggregate progress, emitted only on change, not a per-snapshot event
+history: two runs between reads are one event, a read equal to the previous
+one is none, and nothing says why the module deactivated a schedule. List the
+snapshots themselves with `Lease.Snapshots`. The baseline is buffered before
+it returns. A failed read is a `ceph.WatchGap` event and the next success is
+`ceph.WatchResumed`. A deactivated schedule is a change, not the end of the
+watch, since the module can activate it again. The watch has no terminal
+state; these end it with `ceph.ErrInvalidRequest`: `Restore`, a schedule the
+module no longer lists (even if added again with the same path and repeat),
+another schedule of the directory with the lease's repeat, a removed or
+replaced filesystem and cluster termination. A full buffer ends it with
+`ceph.ErrWatchOverflow`. A lease whose add was never confirmed cannot be
+watched; restore it. Call `Stop` before `Restore` and the fixture's cleanup: it
+joins the watch and returns why it ended. See
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
+the lifecycle that every Watch shares.
 
 ## Concepts and limits
 
