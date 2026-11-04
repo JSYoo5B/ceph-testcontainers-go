@@ -343,3 +343,20 @@ func TestRGWBucketSyncPolicyReadyRevalidatesMasterWhileLocalPolicyLags(t *testin
 		})
 	}
 }
+
+func TestRGWBucketSyncPolicyReadyRetriesAFailedMasterRead(t *testing.T) {
+	_, cli, g := newRGWPolicyImportFixture(t)
+	cli.policyLagReads = 1
+	failed := false
+	cli.onExec = func(_ context.Context, args []string) {
+		if !failed && syncTestFlag(args, "--zone-id") == "dest-id" && syncTestCommand(args, "period", "get") {
+			failed, cli.remainingReadFailures = true, 1
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	state, err := g.WaitBucketPolicyReady(ctx, "destination")
+	if err != nil || !state.Imported || !failed || cli.remainingReadFailures != 0 {
+		t.Fatalf("a failed master read ended the wait: %+v %v", state, err)
+	}
+}

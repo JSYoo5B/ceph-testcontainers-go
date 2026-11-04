@@ -218,17 +218,19 @@ func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[strin
 	if !reflect.DeepEqual(current, period) {
 		return nil, true, errors.New("RGW master committed period changed during policy import observation")
 	}
+	// The instances come first: the policy read also refuses a recreated
+	// bucket, but without telling it apart from a failed read.
+	for _, bucket := range buckets {
+		if err := g.checkBucketInstance(ctx, master, bucket); err != nil {
+			return nil, errors.Is(err, errSyncBucketRecreated), err
+		}
+	}
 	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return nil, false, err
 	}
 	if !reflect.DeepEqual(syncNativeGroup(policy, g.ID()), g.state.group) {
 		return nil, true, errors.New("RGW owned master bucket policy changed during import observation")
-	}
-	for _, bucket := range buckets {
-		if err := g.checkBucketInstance(ctx, master, bucket); err != nil {
-			return nil, errors.Is(err, errSyncBucketRecreated), err
-		}
 	}
 	return master, false, nil
 }

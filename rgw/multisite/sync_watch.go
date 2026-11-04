@@ -19,9 +19,16 @@ import (
 // every 20 seconds by default.
 const syncWatchDefaultInterval = 5 * time.Second
 
+// bucketPolicyWatchDefaultInterval is the default WatchConfig.Interval of
+// WatchBucketPolicy. A destination imports a bucket policy within seconds of
+// the change, and one read also takes about a second, so a longer interval
+// tends to see only the imported result.
+const bucketPolicyWatchDefaultInterval = 2 * time.Second
+
 const (
-	syncWatchOperation       = "watch RGW zone sync"
-	bucketSyncWatchOperation = "watch RGW bucket sync"
+	syncWatchOperation         = "watch RGW zone sync"
+	bucketSyncWatchOperation   = "watch RGW bucket sync"
+	bucketPolicyWatchOperation = "watch RGW bucket policy import"
 )
 
 // errSyncPeriodChanged ends a watch whose observed committed period or realm
@@ -29,8 +36,8 @@ const (
 var errSyncPeriodChanged = errors.New("the committed period changed; start a new watch")
 
 // syncWatchSettings validates cfg for one Watch of this package.
-func syncWatchSettings(operation string, cfg ceph.WatchConfig) (watch.Settings, error) {
-	s, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, syncWatchDefaultInterval)
+func syncWatchSettings(operation string, cfg ceph.WatchConfig, defaultInterval time.Duration) (watch.Settings, error) {
+	s, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, defaultInterval)
 	if err != nil {
 		return watch.Settings{}, multisiteInvalid(fmt.Errorf("%s: %v", operation, err))
 	}
@@ -134,7 +141,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 	if f == nil {
 		return nil, multisiteInvalid(errors.New("RGW multisite fixture is required"))
 	}
-	settings, err := syncWatchSettings(syncWatchOperation, cfg)
+	settings, err := syncWatchSettings(syncWatchOperation, cfg, syncWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +320,7 @@ func (g *SyncGroup) WatchBucketSync(ctx context.Context, cfg ceph.WatchConfig, p
 	if err != nil {
 		return nil, err
 	}
-	settings, err := syncWatchSettings(bucketSyncWatchOperation, cfg)
+	settings, err := syncWatchSettings(bucketSyncWatchOperation, cfg, syncWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -399,4 +406,145 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 		return status, fatal(errSyncPeriodChanged)
 	}
 	return status, err
+}
+
+// BucketPolicyWatchEvent is one event of a BucketPolicyWatch.
+//
+// Sequence, Kind, Started and Finished are as in SyncWatchEvent. Status is the
+// BucketSyncPolicyStatus of that read; its stages PeriodImported,
+// PolicyImported, BucketsImported and Imported are compared, and its
+// identities stay the baseline's. On a WatchGap it is the partial report of
+// the failed read, with Imported false. Two statuses separated by a gap, or by
+// the polling interval, do not establish the stages in between.
+type BucketPolicyWatchEvent struct {
+	Sequence          uint64
+	Kind              ceph.WatchEventKind
+	Started, Finished time.Time
+	Status            BucketSyncPolicyStatus
+	Err               error
+}
+
+// BucketPolicyWatch is a running watch of one bucket policy import. It
+// behaves as SyncWatch, except that it ends by itself once it has sent an
+// imported status.
+type BucketPolicyWatch struct {
+	stream *watch.Stream[BucketPolicyWatchEvent]
+}
+
+// Events returns the receive-only event channel. The baseline is already in
+// it when WatchBucketPolicy returns. The channel closes when the watch ends;
+// Stop returns why.
+//
+//purpose:observation
+func (w *BucketPolicyWatch) Events() <-chan BucketPolicyWatchEvent {
+	if w == nil {
+		return nil
+	}
+	return w.stream.Events()
+}
+
+// Stop cancels the watch if it is still running, waits until its goroutine
+// has returned and Events is closed, and returns the cause that ended the
+// watch, as SyncWatch.Stop does: nil also when the watch ended after an
+// imported status. Call it before Terminate.
+//
+//purpose:observation,lifetime
+func (w *BucketPolicyWatch) Stop() error {
+	if w == nil || !w.stream.Started() {
+		return syncWatchNotStarted(bucketPolicyWatchOperation)
+	}
+	return w.stream.Stop()
+}
+
+// WatchBucketPolicy polls the import of this owned bucket group's policy
+// into an explicit attached destination selected by its pipes, the same
+// observation as WaitBucketPolicyReady, and reports its stages as they
+// change: the captured committed period, the group's policy and every
+// referenced bucket instance imported, and all of them together as Imported.
+// The default WatchConfig.Interval is 2 seconds.
+//
+// Before it returns, WatchBucketPolicy makes one read under ctx and
+// QueryTimeout. A failed first read returns its error and starts nothing.
+// That read admits the request as WaitBucketPolicyReady does, and the watch
+// keeps what it captured for its lifetime: the master's committed period, the
+// group's policy as the fixture confirmed it, the destination zone and the
+// referenced source and destination bucket instances. Start the watch after
+// the policy change, as you would WaitBucketPolicyReady; a baseline that is
+// already imported is the only event.
+//
+// Each read takes the fixture's topology lock for one bounded observation and
+// holds it neither while the event is sent nor between reads, so the test may
+// stop gateways or fault the zone link while the watch runs. A failed read,
+// including a gateway that cannot be reached and a bucket that is deleted but
+// not recreated, produces a WatchGap and the watch continues; the next
+// successful read is WatchResumed. The watch ends with a nil cause after it
+// has sent the first imported status. These end it instead: ctx ending, Stop,
+// Terminate (ceph.ErrInvalidRequest), a full buffer (ceph.ErrWatchOverflow),
+// the group removed or changed through the fixture or a pending change on it,
+// the destination no longer attached, the group's native policy changed on
+// the master, a referenced bucket recreated under the same name, a destination
+// period of another realm, and a committed period on the master other than
+// the captured one, as any sync policy or topology commit makes: watch the
+// new policy with a new WatchBucketPolicy. A destination that has not yet
+// imported the captured period is the first stage, not an error.
+//
+// Imported is the prerequisite WaitBucketPolicyReady waits for. It does not
+// attest data checkpoints, payloads or permissions: verify the application's
+// objects and the bucket checkpoint separately.
+//
+//purpose:observation
+func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig, destinationZone string) (*BucketPolicyWatch, error) {
+	f, err := g.fixture()
+	if err != nil {
+		return nil, err
+	}
+	settings, err := syncWatchSettings(bucketPolicyWatchOperation, cfg, bucketPolicyWatchDefaultInterval)
+	if err != nil {
+		return nil, err
+	}
+	var target *policyImportTarget
+	stream, err := watch.Start(ctx, watch.Spec[BucketSyncPolicyStatus, BucketPolicyWatchEvent]{
+		Name:     bucketPolicyWatchOperation,
+		Settings: settings,
+		Read: func(ctx context.Context) (BucketSyncPolicyStatus, error) {
+			if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+				return BucketSyncPolicyStatus{}, err
+			}
+			defer f.topologyMu.Unlock()
+			if target == nil {
+				admitted, status, err := g.admitPolicyImport(ctx, destinationZone)
+				if err != nil {
+					return status, err
+				}
+				status, _, err = admitted.sample(ctx)
+				if err == nil {
+					target = admitted
+				}
+				return status, err
+			}
+			status, fatal, err := target.sample(ctx)
+			if fatal {
+				return status, watch.Fatal(fmt.Errorf("%s: %w", bucketPolicyWatchOperation, err))
+			}
+			return status, err
+		},
+		Equal: bucketPolicyWatchEqual,
+		Final: func(s BucketSyncPolicyStatus) bool { return s.Imported },
+		Event: func(m watch.Meta, s BucketSyncPolicyStatus, err error) BucketPolicyWatchEvent {
+			s.Buckets = slices.Clone(s.Buckets)
+			e := BucketPolicyWatchEvent{Status: s, Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = m.Sequence, ceph.WatchEventKind(m.Kind), m.Started, m.Finished
+			return e
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BucketPolicyWatch{stream: stream}, nil
+}
+
+// bucketPolicyWatchEqual compares the import stages; the identities are the
+// baseline's in every read.
+func bucketPolicyWatchEqual(a, b BucketSyncPolicyStatus) bool {
+	return a.PeriodImported == b.PeriodImported && a.PolicyImported == b.PolicyImported && a.BucketsImported == b.BucketsImported && a.Imported == b.Imported
 }
