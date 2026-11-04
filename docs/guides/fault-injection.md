@@ -218,6 +218,10 @@ Traps:
 - `Terminate` restores owned interruptions before removing networks. Restore a
   caller-owned container's endpoint before you terminate that container.
   `fault.InterruptLink` on a named bridge is always caller-owned.
+- `Restore` reattaches the endpoint, and Docker publishes the container's
+  ports again: a port mapped to a random host port can come back on another
+  one. Resolve `PortEndpoint` or `MappedPort` again after `Restore`, as a
+  gateway's `S3Endpoint` does on every call.
 
 ## Delaying packets below Ceph
 

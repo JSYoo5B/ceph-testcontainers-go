@@ -176,8 +176,10 @@ recovery need the default two OSDs or more.
 - Gateways run 4 worker threads: functional tests, not load tests. Docker exec
   cancellation does not stop a native worker already running (such as
   `bucket sync run`).
-- Out of scope: production Vault setups and other KMS backends, Swift large
-  objects, temporary URLs and Keystone catalogues.
+- Out of scope: managing a KMS (see
+  [Server-side encryption with an external KMS](#server-side-encryption-with-an-external-kms)
+  for wiring a test-owned Vault), other KMS backends, Swift large objects,
+  temporary URLs and Keystone catalogues.
 
 ## Stable endpoint across gateways
 
@@ -212,6 +214,74 @@ has an unknown outcome and the SUT's own retry decides what happens next. In
 bridge mode, read the endpoints again after any gateway restart, because the
 forwarder addresses mapped host ports. Both gateways serve the same cluster
 storage: this is gateway failover, not replicated storage.
+
+## Server-side encryption with an external KMS
+
+The package has no KMS type. The test owns the KMS (a Vault container, its
+keys, policies and tokens) and wires RGW to it with what the package already
+has: `override.SetConfig` for the RGW options and
+`testcontainers.WithFiles` on `rgw.Start` for the token and CA files.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+// Vault runs on the cluster bridge with the alias "vault", which is also in
+// its certificate. kmsToken may read one KV-v2 key; sseS3Token manages keys of
+// one Transit mount.
+for _, s := range []ceph.ConfigSetting{
+	{Section: "client.admin", Name: "rgw_crypt_s3_kms_backend", Value: "vault"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_auth", Value: "token"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_token_file", Value: "/tc/kms-token"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_addr", Value: "https://vault:8200"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_prefix", Value: "/v1/kv/data"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_secret_engine", Value: "kv"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_verify_ssl", Value: "true"},
+	{Section: "client.admin", Name: "rgw_crypt_vault_ssl_cacert", Value: "/tc/vault-ca.pem"},
+	// SSE-S3 has its own rgw_crypt_sse_s3_* options of the same names,
+	// with the transit engine and its own token file.
+} {
+	change, err := override.SetConfig(ctx, cluster, s)
+	// defer change.Restore(...)
+}
+gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "s3", TLS: material},
+	testcontainers.WithFiles(
+		testcontainers.ContainerFile{Reader: bytes.NewReader(kmsToken), ContainerFilePath: "/tc/kms-token", FileMode: 0o600},
+		testcontainers.ContainerFile{Reader: bytes.NewReader(vaultCA), ContainerFilePath: "/tc/vault-ca.pem", FileMode: 0o600},
+	))
+```
+
+`TestRGWExternalKMS` in
+[`internal/integration/rgw`](../internal/integration/rgw/rgw_external_kms_integration_helpers_test.go)
+runs the complete recipe for both modes. What it establishes:
+
+- There are two TLS connections. `TLSConfig` secures the SUT's connection to
+  RGW; `rgw_crypt_vault_verify_ssl` and `rgw_crypt_vault_ssl_cacert` (and
+  their `sse_s3` twins) secure RGW's connection to Vault. With
+  `rgw_crypt_require_ssl` left at `true`, RGW refuses SSE requests over plain
+  HTTP.
+- Every gateway runs as `client.admin`, so the options apply to every gateway
+  of the cluster and are read when a gateway starts: set them before
+  `rgw.Start`. Gateways differ only in the files at those paths. A gateway
+  given an unrelated CA answers an encrypted GET with 500, while its sibling
+  with the right CA reads the exact bytes and the unrelated one still serves
+  listings and unencrypted objects.
+- RGW reads the token file on every Vault request. A revoked token makes an
+  encrypted GET fail with 403 `AccessDenied`; writing a new token next to
+  the file and renaming it over the same path (keep mode `0600`) recovers
+  the running gateway without a restart.
+- `fault.InterruptNetwork` on the Vault container cuts the KMS: encrypted
+  GETs fail with 500 while listings and unencrypted objects still work, and
+  after `Restore` the same object reads its exact bytes again. RGW keeps its
+  connection to Vault open, and a request on it waits until libcurl's
+  low-speed limit aborts it: `rgw_curl_low_speed_time`, 5 minutes by
+  default, which the test lowers to 5 seconds. Reattaching the endpoint can
+  publish Vault's port on a different host port, so resolve `PortEndpoint`
+  again before the next management request.
+- With SSE-S3, RGW creates one Transit key per bucket, named by the bucket
+  ID, and deletes it with the bucket. A bucket DELETE still answers 204
+  when Vault refuses the key deletion: the bucket is gone and its key stays.
+  Nothing retries the deletion, so a successful bucket removal is no proof
+  of key cleanup; check the key in Vault and delete an orphan as the KMS
+  operator.
 
 ## Reference
 
