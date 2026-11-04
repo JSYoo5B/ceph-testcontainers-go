@@ -27,7 +27,8 @@ import (
 // silentHealth is set. lostReply applies force_readonly and fails its reply;
 // noCommand drops force_readonly from the command list, and status replaces
 // the status reply of a GID. beforeDump runs
-// before each fs dump with its sequence number.
+// before each fs dump with its sequence number. silentRead runs after a
+// health read that left an applied read-only state unreported.
 type readOnlyControl struct {
 	*clustertest.CannedCommandContainer
 	fsID, metadataPool int64
@@ -40,6 +41,7 @@ type readOnlyControl struct {
 	status             map[uint64]string
 	dumps              int
 	beforeDump         func(int)
+	silentRead         func()
 }
 
 func (ctr *readOnlyControl) daemon(gid uint64) (fsbase.MDSInfo, bool) {
@@ -86,6 +88,9 @@ func (ctr *readOnlyControl) Exec(ctx context.Context, args []string, opts ...tce
 	}
 	health, _ := json.Marshal(map[string]any{"status": "HEALTH_WARN", "checks": checks})
 	ctr.Output["health detail --format json"] = string(health)
+	if command == "health detail --format json" && ctr.silentHealth && len(ctr.readOnly) > 0 && ctr.silentRead != nil {
+		defer ctr.silentRead()
+	}
 	var gid uint64
 	var verb string
 	if _, err := fmt.Sscanf(command, "tell mds.%d %s", &gid, &verb); err == nil {
@@ -357,10 +362,13 @@ func TestCephFSMDSReadOnlyKeepsTheFaultAfterAnUncertainApply(t *testing.T) {
 
 	_, ctr, active, _ = readOnlyFixture(t)
 	ctr.silentHealth = true
-	short, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	// End the caller's wait once the applied state has gone unreported,
+	// not on a wall-clock budget that admission and selection can consume.
+	short, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	ctr.silentRead = cancel
 	fault, err = active.ForceReadOnly(short)
-	if fault == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "did not report MDS_READ_ONLY") {
+	if fault == nil || !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "did not report MDS_READ_ONLY") {
 		t.Fatalf("unconfirmed state: fault=%v error=%v", fault, err)
 	}
 	ctr.takeover(4203)
