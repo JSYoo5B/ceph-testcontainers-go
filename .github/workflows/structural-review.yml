@@ -6,6 +6,9 @@ on:
   workflow_run:
     workflows: [Code checks]
     types: [completed]
+    # Filter the source run before GitHub creates a publisher run for main CI.
+    # This matches the source branch, not the branch holding this trusted file.
+    branches-ignore: [main]
 
 permissions: {}
 
