@@ -171,6 +171,33 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 scenario_history.collect(root/'history', incoming)
 
+    def test_versions_share_one_deadline_and_stop_after_dirty_cleanup(self):
+        # This explicit leaf substitute checks coordinator admission only,
+        # not Ceph, Docker cleanup, or native test success.
+        for dirty in (False,True):
+            bundle = self.bundle()
+            calls = []
+            def leaf(path,directory,trial,runner,deadline,binaries):
+                plan = json.loads(Path(path).read_text())
+                calls.append((deadline,id(binaries)))
+                sample.write(Path(directory)/'periodic-run.json',{
+                    'release':plan['release'],'complete':not dirty,
+                    'classification':'cleanup_failure' if dirty else 'passed'})
+                return int(dirty)
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                sample.write(root/'plan.json',bundle)
+                with mock.patch.object(tags,'load_catalog',return_value=self.catalog), \
+                        mock.patch.object(executor,'execute',side_effect=leaf):
+                    code = executor.execute_bundle(root/'plan.json',root/'out',trial=True)
+                receipt = json.loads((root/'out/periodic-bundle.json').read_text())
+                sample.validate_bundle_receipt(receipt)
+            self.assertEqual(code,int(dirty))
+            self.assertEqual(len(set(calls)),1)
+            self.assertEqual(len(calls),1 if dirty else len(bundle['runs']))
+            self.assertEqual(len(receipt['unstarted_versions']),len(bundle['runs'])-len(calls))
+
+
 
 class ExecutionControls(unittest.TestCase):
     @classmethod

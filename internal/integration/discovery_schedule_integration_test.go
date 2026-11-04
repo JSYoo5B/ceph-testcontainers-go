@@ -6,10 +6,11 @@ package integration_test
 
 import (
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestDiscoveryTrashScheduleBoundary records native acceptance/refusal with
