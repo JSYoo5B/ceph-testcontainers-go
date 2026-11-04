@@ -2,8 +2,22 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "fault",
-  "count": 70,
+  "count": 78,
   "types": {
+    "fault.CPULimit": [
+      "CPULimit.NanoCPUs field int64"
+    ],
+    "fault.CPULimitLease": [
+      "CPULimitLease.ContainerID field string"
+    ],
+    "fault.CPULimitStatus": [
+      "CPULimitStatus.Period field time.Duration",
+      "CPULimitStatus.Periods field int64",
+      "CPULimitStatus.Quota field time.Duration",
+      "CPULimitStatus.ThrottledPeriods field int64",
+      "CPULimitStatus.ThrottledTime field time.Duration",
+      "CPULimitStatus.Unlimited field bool"
+    ],
     "fault.NetworkInterruption": [
       "NetworkInterruption.ContainerID field string",
       "NetworkInterruption.NetworkName field string",

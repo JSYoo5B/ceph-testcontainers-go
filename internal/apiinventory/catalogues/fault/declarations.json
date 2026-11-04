@@ -2,12 +2,19 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault",
-  "count": 44,
+  "count": 50,
   "entries": [
     {
       "current": "fault.AllPackets",
       "kind": "const",
       "proposed": "fault.AllPackets",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ApplyCPULimit",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, limit CPULimit) (*CPULimitLease, error)",
+      "proposed": "fault.ApplyCPULimit",
       "decision": "baseline"
     },
     {
@@ -34,6 +41,40 @@
       "current": "fault.BothDirections",
       "kind": "const",
       "proposed": "fault.BothDirections",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.CPULimit",
+      "kind": "type",
+      "proposed": "fault.CPULimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.CPULimitLease",
+      "kind": "type",
+      "proposed": "fault.CPULimitLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.CPULimitLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*CPULimitLease",
+      "proposed": "fault.CPULimitLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.CPULimitLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (CPULimitStatus, error)",
+      "receiver": "*CPULimitLease",
+      "proposed": "fault.CPULimitLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.CPULimitStatus",
+      "kind": "type",
+      "proposed": "fault.CPULimitStatus",
       "decision": "baseline"
     },
     {
