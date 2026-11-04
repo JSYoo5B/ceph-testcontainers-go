@@ -192,7 +192,9 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		// A Ceph 19 gateway stores a user policy and never applies it to
 		// requests the user's S3 keys sign: the override is refused before
 		// any change, so the policy and access stay as they were.
-		harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRGWUserRateLimit, "user-scope rate limit")
+		if refusal := harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRGWUserRateLimit, "user-scope rate limit"); refusal.Target != "cluster" {
+			t.Fatalf("user-scope refusal names %q, want the cluster", refusal.Target)
+		}
 		if policy := readPolicy(userScope...); !equalPolicy(policy, userBefore) {
 			t.Fatalf("a refused user override changed the user policy: %v, want %v", policy, userBefore)
 		}
@@ -243,5 +245,9 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		t.Fatalf("a refused Restore changed the new bucket's policy: %v", policy)
 	}
 	waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
-	t.Log("native rate limit: 503 SlowDown on the selected bucket and user scopes, unlimited dimension and control scopes admitted, overlap/outside edit/replaced bucket refused, exact prior policies restored, access after Restore")
+	userResult := "503 SlowDown on the user scope"
+	if !userSupported {
+		userResult = "user scope refused as unsupported without a change"
+	}
+	t.Logf("native rate limit: 503 SlowDown on the selected bucket scope, %s, unlimited dimension and control scopes admitted, overlap/outside edit/replaced bucket refused, exact prior policies restored, access after Restore", userResult)
 }
