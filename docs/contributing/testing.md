@@ -737,3 +737,34 @@ rename proposal is pending. It does not check that the two changes work
 together; the merged source must still compile and pass the tests. Otherwise
 it writes nothing and names the rows, and `regenerate` followed by a separate
 `approve` is required. Commit the result with the merge.
+
+## Structural metric triage
+
+For a report-only comparison, use `internal/tools/lintcalibration` with the
+Code workflow's pinned golangci-lint executable. Build the command once, collect
+both snapshots with the same binary and package patterns, and keep the output
+outside the source tree:
+
+```sh
+go build -o /tmp/lintcalibration ./internal/tools/lintcalibration
+/tmp/lintcalibration report -dir BASE_CHECKOUT ./ceph > base.json
+/tmp/lintcalibration report -dir HEAD_CHECKOUT ./ceph > head.json
+/tmp/lintcalibration pair -base base.json -head head.json \
+  -base-ref BASE_SHA -head-ref HEAD_SHA \
+  -base-dir BASE_CHECKOUT -head-dir HEAD_CHECKOUT > delta.json
+/tmp/lintcalibration pair -base base.json -head head.json \
+  -base-ref BASE_SHA -head-ref HEAD_SHA \
+  -base-dir BASE_CHECKOUT -head-dir HEAD_CHECKOUT \
+  -format markdown -limit 20 > summary.md
+```
+
+Start with `summary.md` and follow its locations; retain `delta.json`, `base.json`
+and `head.json` with it as review evidence. The summary records provenance,
+state counts and omitted row counts. Its inspection order puts newly reported
+and changed messages first; it does not compare severity across metrics or
+call a missing diagnostic an improvement. Dupl blocks stay unmatched, and
+column zero means unspecified. The command's package documentation describes
+identity, build constraints, exclusions and optional real-binary tests.
+
+Do not commit these reports, regenerate a shared baseline, or run native suites
+for structural measurement. No default CI check or quality threshold uses them.

@@ -454,3 +454,17 @@ func TestCIPinnedVersionMatchesTheWorkflow(t *testing.T) {
 		t.Fatalf("code.yml does not pin golangci-lint v%s", ciPinnedVersion)
 	}
 }
+
+func TestReportColumnContract(t *testing.T) {
+	for _, col := range []string{"0", "1", "-1", "null", `"0"`} {
+		js := `{"Issues":[{"FromLinter":"dupl","Text":"duplicate block","Pos":{"Filename":"a.go","Line":3,"Column":` + col + `}}],` + linterList(allMetrics...) + `}`
+		rep, err := parse([]byte(js))
+		valid := col == "0" || col == "1"
+		if valid && err != nil {
+			t.Errorf("column %s: %v", col, err)
+		}
+		if !valid && err == nil {
+			t.Errorf("invalid column %s accepted: %+v", col, rep)
+		}
+	}
+}

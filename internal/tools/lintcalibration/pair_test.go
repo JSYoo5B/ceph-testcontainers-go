@@ -144,6 +144,8 @@ func TestPairRefusesUnusableRawCollections(t *testing.T) {
 		"null count":             edit(func(m map[string]any) { m["diagnostics_per_linter"].(map[string]any)["cyclop"] = nil }),
 		"unknown field":          edit(func(m map[string]any) { m["extra"] = 1 }),
 		"missing message":        edit(func(m map[string]any) { delete(locs(m)["diagnostics"].([]any)[0].(map[string]any), "message") }),
+		"null column":            edit(func(m map[string]any) { locs(m)["diagnostics"].([]any)[0].(map[string]any)["column"] = nil }),
+		"negative column":        edit(func(m map[string]any) { locs(m)["diagnostics"].([]any)[0].(map[string]any)["column"] = -1 }),
 		"missing column":         edit(func(m map[string]any) { delete(locs(m)["diagnostics"].([]any)[0].(map[string]any), "column") }),
 		"wrong overlap":          edit(func(m map[string]any) { locs(m)["overlap"] = true }),
 		"wrong test flag":        edit(func(m map[string]any) { locs(m)["test_file"] = true }),
@@ -428,9 +430,12 @@ func render(t *testing.T, d *delta, format string) string {
 	t.Helper()
 	var b bytes.Buffer
 	var err error
-	if format == "tsv" {
+	switch format {
+	case "markdown":
+		err = writeDeltaMarkdown(&b, d, 3)
+	case "tsv":
 		err = writeDeltaTSV(&b, d)
-	} else {
+	default:
 		enc := json.NewEncoder(&b)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(d)
@@ -451,9 +456,9 @@ func TestPairOutputIsDeterministicInBothInputOrders(t *testing.T) {
 			b, h = reverse(base), reverse(head)
 		}
 		d := mustPair(t, raw(t, b...), raw(t, h...), bd, hd)
-		outs = append(outs, render(t, d, "json"), render(t, d, "tsv"))
+		outs = append(outs, render(t, d, "json"), render(t, d, "tsv"), render(t, d, "markdown"))
 	}
-	if outs[0] != outs[2] || outs[1] != outs[3] {
+	if outs[0] != outs[3] || outs[1] != outs[4] || outs[2] != outs[5] {
 		t.Errorf("output depends on input order:\n%s\n---\n%s", outs[1], outs[3])
 	}
 	d := mustPair(t, raw(t, base...), raw(t, head...), bd, hd)
@@ -543,7 +548,17 @@ func TestPairCommandReadsFilesAndRefusesBadUsage(t *testing.T) {
 	if !strings.Contains(out.String(), "# base.ref: b1") || strings.Contains(out.String(), dir) {
 		t.Errorf("unexpected output %q", out.String())
 	}
+	out.Reset()
+	args[len(args)-1] = "markdown"
+	if err := run(append(args, "-limit", "1"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Structural metric triage") {
+		t.Fatal(out.String())
+	}
 	for _, bad := range [][]string{
+		{"pair", "-limit", "0"},
+		{"pair", "-limit", "-1"},
 		{"pair"},
 		{"pair", "-base", bp, "-head", hp},
 		{"pair", "-base", bp, "-head", hp, "-base-ref", "b", "-head-ref", "h", "-format", "xml"},
@@ -611,5 +626,65 @@ func TestPairAmbiguousDeclarationStaysUnmatched(t *testing.T) {
 	}
 	if e := only(t, mustPair(t, raw(t, d1), raw(t), one, one)); e.State != stateNotReported {
 		t.Errorf("unique one-sided: %+v", e)
+	}
+}
+
+// Dupl has no function identity and legitimately emits column zero. Preserve
+// both facts through collector JSON, validation and both delta serializers.
+func TestPairPreservesUnspecifiedColumn(t *testing.T) {
+	raw := raw(t, fd{"dupl", "a.go", 3, 0, "3-40 lines are duplicate of `b.go:3-40`"})
+	d := mustPair(t, raw, raw, "", "")
+	if len(d.Entries) != 2 {
+		t.Fatalf("want two unmatched blocks: %+v", d.Entries)
+	}
+	for _, e := range d.Entries {
+		if e.State != stateUnmatched || e.Reason != reasonNoIdentity {
+			t.Fatalf("%+v", e)
+		}
+		for _, s := range []*site{e.Base, e.Head} {
+			if s != nil && s.Column != 0 {
+				t.Fatalf("invented column: %+v", s)
+			}
+		}
+	}
+	var out bytes.Buffer
+	if err := writeDeltaTSV(&out, d); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "a.go\t3\t0") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestDuplRoundTripOnRealBinary(t *testing.T) {
+	bin := realBinary(t)
+	root := writeModule(t, map[string]string{"a.go": "package m\n\n" + hotFunc("First") + "\n" + hotFunc("Second")})
+	rep, err := collect(root, bin, []string{"./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zeros := 0
+	for _, loc := range rep.Locations {
+		for _, diag := range loc.Diagnostics {
+			if diag.Linter == "dupl" && diag.Column == 0 {
+				zeros++
+			}
+		}
+	}
+	if zeros == 0 {
+		t.Fatal("real fixture did not exercise dupl column zero")
+	}
+	d := mustPair(t, marshalReport(t, rep), marshalReport(t, rep), root, root)
+	blocks := 0
+	for _, e := range d.Entries {
+		if e.Linter == "dupl" {
+			blocks++
+			if e.State != stateUnmatched || e.Reason != reasonNoIdentity {
+				t.Fatalf("%+v", e)
+			}
+		}
+	}
+	if blocks != 2*rep.Counts["dupl"] {
+		t.Fatalf("lost blocks: %d", blocks)
 	}
 }

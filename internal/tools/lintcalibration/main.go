@@ -233,6 +233,9 @@ func parse(raw []byte) (*report, error) {
 		if is.FromLinter == nil || is.Text == nil || is.Pos == nil || is.Pos.Filename == nil || is.Pos.Line == nil || is.Pos.Column == nil {
 			return nil, fmt.Errorf("issue %d lacks FromLinter, Text or Pos.Filename/Line/Column", i)
 		}
+		if *is.Pos.Filename == "" || *is.Pos.Line < 1 || *is.Pos.Column < 0 {
+			return nil, fmt.Errorf("issue %d has invalid filename, line or column", i)
+		}
 		if _, ok := rep.Counts[*is.FromLinter]; !ok {
 			return nil, fmt.Errorf("issue %d is from unexpected linter %q", i, *is.FromLinter)
 		}

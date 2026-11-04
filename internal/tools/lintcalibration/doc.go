@@ -3,12 +3,13 @@
 // keeps every diagnostic, and prints them grouped by source location. Its pair
 // subcommand joins two such raw collections into a base-versus-head delta. It
 // is a reference measurement for triage: it defines no threshold, gate or
-// ranking, and nothing in CI runs it.
+// severity ranking, and nothing in CI runs it. Markdown output orders
+// inspection candidates.
 //
 // # Usage
 //
 //	lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]
-//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv]
+//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N]
 //
 // Flags of report:
 //
@@ -23,7 +24,9 @@
 //   - -base-ref, -head-ref: identifiers of the snapshots, for example commits.
 //   - -base-dir, -head-dir: module roots the matching collections ran in. They
 //     are read, never written, and their paths are not recorded.
-//   - -format: json (default) or tsv.
+//   - -format: json (default), tsv or markdown.
+//   - -limit: maximum Markdown finding rows (default 20, positive). JSON and
+//     TSV retain every entry.
 //
 // A typical pairing:
 //
@@ -67,8 +70,8 @@
 // report: a missing Report.Linters, an omitted top-level Issues member (null
 // and [] are accepted as empty), an enabled set other than the four metric
 // linters, an issue without linter, text, or a well-typed file, line and
-// column, an issue from another linter, a non-zero golangci-lint exit, or
-// undecodable JSON.
+// column (zero means unspecified; negative is invalid), an issue from another
+// linter, a non-zero golangci-lint exit, or undecodable JSON.
 //
 // # Pairing
 //
@@ -135,9 +138,30 @@
 // "# key: value" lines for the schema, both evidence references, the shared
 // provenance, the entry count per state and the scope.
 //
+// # Bounded review summary
+//
+// Use the same pair command with -format markdown -limit 20 for a PR attachment
+// or a local review entry point. Retain the full JSON delta and both raw JSON
+// collections alongside it; the Markdown identifies their digests and snapshots.
+// It prints all state counts, the number of unchanged messages omitted and the
+// number of candidates hidden by the row limit. Inspect JSON/TSV for those rows.
+// Newly reported findings come first, then changed messages, unmatched findings
+// and threshold absences. This is inspection order, not a cross-metric severity
+// score. A changed message can contain a smaller or larger value; read both.
+// Identical messages are omitted even if their source locations changed.
+//
+// A dupl column of zero remains zero in every format: it means the linter did
+// not specify a column. Missing, null and negative columns are rejected. A
+// dupl block never gains a function identity merely because it has a location.
+//
+// This command is opt-in and adds no CI job or gate. Run it on the packages a
+// change affects, retain output as uncommitted review evidence and follow the
+// reported source locations. Test files are labeled; generated files and tagged
+// configurations follow collection scope. Do not extrapolate to unmeasured code.
+//
 // # What it does not measure
 //
-//   - No ranking, gate, summary verdict or threshold beyond the collector's
+//   - No severity ranking, gate, summary verdict or threshold beyond the collector's
 //     own, and it does not choose or calibrate thresholds.
 //   - Test files are included and flagged test_file; generated files are
 //     skipped. Scenario code is not otherwise separated from implementation.

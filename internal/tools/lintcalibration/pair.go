@@ -73,7 +73,7 @@ const (
 )
 
 const (
-	deltaUsage          = "usage: lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv]"
+	deltaUsage          = "usage: lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv|markdown] [-limit N]"
 	snapshotCaveatLimit = "a snapshot directory must be the module root the matching collection ran in"
 )
 
@@ -256,8 +256,8 @@ func loadRaw(data []byte) (*report, error) {
 		loc := location{File: *rl.File, Line: *rl.Line, Test: *rl.Test, Overlap: *rl.Overlap}
 		linters := map[string]bool{}
 		for j, rd := range *rl.Diagnostics {
-			if rd.Linter == nil || rd.Message == nil || rd.Column == nil || *rd.Column < 1 {
-				return nil, fmt.Errorf("raw collection location %s diagnostic %d lacks linter, message or column", key, j)
+			if rd.Linter == nil || rd.Message == nil || rd.Column == nil || *rd.Column < 0 {
+				return nil, fmt.Errorf("raw collection location %s diagnostic %d lacks linter, message or non-negative column", key, j)
 			}
 			if _, ok := want[*rd.Linter]; !ok {
 				return nil, fmt.Errorf("raw collection location %s diagnostic %d is from unexpected linter %q", key, j, *rd.Linter)
@@ -728,12 +728,16 @@ func runPair(args []string, out io.Writer) error {
 	headRef := fl.String("head-ref", "", "identifier of the head snapshot, for example a commit")
 	baseDir := fl.String("base-dir", "", "module root of the base snapshot; "+snapshotCaveatLimit)
 	headDir := fl.String("head-dir", "", "module root of the head snapshot; "+snapshotCaveatLimit)
-	format := fl.String("format", "json", "json or tsv")
+	format := fl.String("format", "json", "json, tsv or markdown")
+	limit := fl.Int("limit", 20, "maximum Markdown finding rows (positive; other formats retain all entries)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
-	if *format != "json" && *format != "tsv" {
+	if *format != "json" && *format != "tsv" && *format != "markdown" {
 		return fmt.Errorf("unknown format %q", *format)
+	}
+	if *limit < 1 {
+		return errors.New("limit must be positive")
 	}
 	if *basePath == "" || *headPath == "" || fl.NArg() != 0 {
 		return errors.New(deltaUsage)
@@ -749,6 +753,9 @@ func runPair(args []string, out io.Writer) error {
 	d, err := makeDelta(in)
 	if err != nil {
 		return err
+	}
+	if *format == "markdown" {
+		return writeDeltaMarkdown(out, d, *limit)
 	}
 	if *format == "tsv" {
 		return writeDeltaTSV(out, d)
