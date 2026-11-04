@@ -84,7 +84,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_comment_data_cannot_escape_code_fence_or_mention(self):
         receipt, _ = reporter.evidence(archive(), RUN, LINKED)
-        body = reporter.comment_body(REPO, RUN, receipt, "```\n@everyone\n<script>\n[x](https://example.org)\n\x00\u202e")
+        body = reporter.comment_body(REPO, RUN, receipt, "&#96;&#96;&#96;\n&#64;everyone\n<script>\n[x](https://example.org)\n\x00\u202e")
         self.assertIn("````text", body)
         self.assertNotIn("@everyone", body)
         self.assertNotIn("\x00", body)

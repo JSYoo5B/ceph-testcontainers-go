@@ -7,6 +7,7 @@ and workflow path authorize the destination; no artifact field selects a PR.
 """
 import argparse
 import hashlib
+import html
 import io
 import json
 import os
@@ -107,6 +108,7 @@ def evidence(raw, run, linked):
 def comment_body(repository, run, receipt, text):
     # Treat the report as literal data even if a contributor replaces the
     # producer. It cannot inject Markdown links, HTML, mentions or code fences.
+    text = html.unescape(text)
     text = "".join(c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C"))
     text = text.replace("@", "＠")
     truncated = len(text) > MAX_SUMMARY
