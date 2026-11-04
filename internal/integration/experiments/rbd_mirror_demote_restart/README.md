@@ -46,6 +46,15 @@ expected result for an unpatched defect; it is not a fixture failure.
   about a minute to copy.
 - The test bounds itself to 25 minutes; the batch timeout is 30 minutes.
 
+## Tier and triggers
+
+Deliberately failing reproducer: one run takes about 7 minutes and fails at
+the exact-bytes check on every published image. It never runs on a pull
+request, on `main` or in periodic samples, and never gates anything.
+
+- Manual: `gh workflow run "Native regressions" -f batch=rbd_demote_restart`.
+- Comment: `/ci run rbd_demote_restart` or `/ci run rbd_demote_restart on squid`.
+
 ## Running it
 
 ```sh

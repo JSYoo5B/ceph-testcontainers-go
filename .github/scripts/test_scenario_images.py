@@ -377,7 +377,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", prepare)
         self.assertEqual(scalar(self.optional_entry, "category"), "optional")
         self.assertEqual(scalar(self.optional_entry, "optional_batch"),
-                         "${{ inputs.failure_archive && 'failure_archive' || 'native_rgw_translation' }}")
+                         "${{ inputs.batch }}")
         self.assertEqual(scalar(self.optional_entry, "rgw_image"), "${{ inputs.rgw_image }}")
         self.assertEqual(scalar(run, "CEPH_TEST_RGW_IMAGE"),
                          "${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}")

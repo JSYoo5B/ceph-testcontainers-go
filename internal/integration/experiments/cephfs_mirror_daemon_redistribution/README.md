@@ -34,6 +34,15 @@ workaround.
 - The scenario bounds itself to 15 minutes; the batch timeout is 60 minutes
   for both variants.
 
+## Tier and triggers
+
+Deliberately failing reproducer on 20.2.4, with a bridge and a host-network
+variant (NATIVE_SHUFFLE_README). It never runs on a pull request, on `main` or
+in periodic samples, and never gates anything.
+
+- Manual: `gh workflow run "Native regressions" -f batch=native_shuffle`.
+- Comment: `/ci run native_shuffle`.
+
 ## Running it
 
 ```sh
@@ -43,9 +52,15 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/cephfs_mirror_daemon_redistribution
 ```
 
-In CI: the `Native regressions` workflow with batch `native_shuffle`, or
-`/ci run native_shuffle` on a pull request. Record the image digest with the
-result.
+or exactly as CI runs the batch:
+
+```sh
+python3 .github/scripts/tag_scenarios.py optional --batch native_shuffle \
+  --package ./internal/integration/experiments/cephfs_mirror_daemon_redistribution \
+  --directory artifacts/native-shuffle
+```
+
+Record the image digest with the result.
 
 ## Observations and controls
 

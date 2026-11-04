@@ -1,4 +1,4 @@
-//go:build integration && ci_optional && ci_batch_discovery_schedule
+//go:build all || (integration && (!ci || (ci_topology && (!ci_batch || ci_batch_discovery_schedule))))
 
 //ci: timeout=7m job-timeout=15 image-roles=essential,client
 

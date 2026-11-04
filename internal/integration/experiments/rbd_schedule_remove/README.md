@@ -1,7 +1,7 @@
 # RBD schedule removal with malformed input
 
 Owner: RBD. Kind: cross-build characterization.
-Test: `TestDiscoveryTrashScheduleBoundary`, optional batch `discovery_schedule`.
+Test: `TestDiscoveryTrashScheduleBoundary`, batch `topology/discovery_schedule`.
 
 ## Use case and native contract
 
@@ -35,24 +35,42 @@ Upstream references:
 - The fixture exposes no schedule API. The test enables `rbd_support`
   explicitly and never waits for a schedule to fire.
 
+## Tier and triggers
+
+Cheap and deterministic: one native run takes about 20 seconds on 20.2.4
+(76 seconds on 19.2.2 including the image pull) and passes on every build.
+
+- Pull request: only when a file of this directory changes (a required
+  `topology` batch), or with the `ci:full` label. The test uses no fixture API
+  beyond starting the cluster, so no other change selects it.
+- Comment: `/ci run discovery_schedule` or `/ci run discovery_schedule on squid`.
+- Periodic: `rotate` can draw it on the supported releases; `discovery` adds
+  it whenever it draws 19.2.2 or 19.2.3, freezes the image digests in its
+  plan, and `periodic_execute.py` copies every JSON case line into the durable
+  receipt as `characterization`. `targeted` runs it on any catalogued patch.
+
 ## Running it
 
-The build line needs the batch's CI tags, so run it through the tag runner
-from the module root:
+From the module root:
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 \
-python3 .github/scripts/tag_scenarios.py optional \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=10m \
+  -run '^TestDiscoveryTrashScheduleBoundary$' \
+  ./internal/integration/experiments/rbd_schedule_remove
+```
+
+or exactly as CI runs the batch:
+
+```sh
+python3 .github/scripts/tag_scenarios.py run --category topology \
   --batch discovery_schedule \
   --package ./internal/integration/experiments/rbd_schedule_remove \
-  --directory artifacts/rbd-schedule-remove-19.2.2
+  --directory artifacts/rbd-schedule-remove
 ```
 
 Use a pinned digest (`quay.io/ceph/ceph:v19.2.2@sha256:...`) or the published
-role aggregate when the result is evidence. The periodic `discovery` mode adds
-this test on 19.2.2 and 19.2.3 automatically and freezes the image digests in
-its plan; `periodic_execute.py` copies every JSON case line into the durable
-receipt as `characterization`.
+role aggregate when the result is evidence.
 
 ## Observations and controls
 

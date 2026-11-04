@@ -40,6 +40,17 @@ Upstream references:
   peon, the MON holding most of them is restarted before any measurement until
   they do.
 
+## Tier and triggers
+
+Deliberately failing reproducer: it fails on the published images (about 100
+seconds on 20.2.4) and passes on 19.2.2 (about 55 seconds). It never runs on a
+pull request, on `main` or in periodic samples, and never gates anything.
+
+- Manual: `gh workflow run "Native regressions" -f batch=mon_log_ack`.
+- Comment: `/ci run mon_log_ack` (a non-gating run on a pull request's head).
+- The parser tests in `log_ack_fixture_test.go` are the `code/pure` batch of
+  this package and run in Code checks for every change.
+
 ## Running it
 
 ```sh

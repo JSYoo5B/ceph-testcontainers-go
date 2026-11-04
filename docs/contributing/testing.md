@@ -600,11 +600,13 @@ releases it runs on.
   fix links go in this manual; code comments, test messages, commits and pull
   requests describe the mechanism instead.
 - Its `_test.go` files keep the usual build constraints, `//ci:` lines and
-  batches: a cheap deterministic case stays selectable (a `code` batch, a
-  periodic discovery selection), an expensive or deliberately failing one
-  stays an optional batch with `native_regression` where it must fail on the
-  unpatched image. A case directory does not make a test manual-only, and
-  moving a case changes its package path, so run
+  batches, and its tier decides which: a cheap deterministic case is a
+  required batch of a non-`short` category, so a pull request runs it only
+  when the case's files change; a case that fails on the unpatched published
+  images is an optional `native_regression` batch that runs only on request
+  (see [Experiment case tiers](ci.md#experiment-case-tiers)). Give the
+  manual the tier and the exact command. A case directory does not make a
+  test manual-only, and moving a case changes its package path, so run
   [`plan --verify`](#verify-batch-profiles-before-pushing) and update every
   `--package` that names it.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
