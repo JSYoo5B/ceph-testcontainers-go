@@ -194,6 +194,7 @@ Watch takes a `ceph.WatchConfig` and has the same lifecycle:
 | `subvolume.Clone.Watch` | native clone state and progress, until a terminal state | the clone request's target and source | 3s |
 | `quiesce.Set.Watch` | native state, version, timeout and expiration of one quiesce set, until a terminal state | FSMap ID, the set ID, its members and the version `Start` confirmed | 1s |
 | `snapschedule.Lease.Watch` | active state, created and pruned counts, first and last snapshot times and retention of one schedule | FSMap ID and the schedule's native start and creation time | 5s |
+| `session.Watch` | admission, native state and removal of the selected client sessions, from samples bracketed by two reads of the active-rank holders | FSMap ID | 2s |
 | `mirror.Mirror.WatchReceivers` and `Namespace.WatchReceivers` (RBD) | receiver membership, instances and leader agreement | the receiver cohort, peer and policies | 5s |
 | `mirror.Mirror.WatchImage` and `Namespace.WatchImage` (RBD) | replay state and receiver assignment of one image pair | source image ID, global ID and the destination once enrolled | 5s |
 | `mirror.Mirror.WatchDirectory` (CephFS) | assignment, sync state and last synced snapshot of one directory | filesystems, peer and the directory policy | 5s |

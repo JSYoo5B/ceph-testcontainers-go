@@ -38,8 +38,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    principal), and pass it `fs.FilesystemName` and the subvolume path.
 4. **Reproduce conditions and observe**: stop an MDS or `fault.Pause` a client,
    `quiesce.Start`, then check `MDSStatus`, `WatchMDSs`, `WaitReady`,
-   `session.List`, `subvolume.Info`, `Clone.Status`, `Set.Watch`,
-   `Lease.Watch`, `DataPools` and the `ceph` observation APIs.
+   `session.List`, `session.Watch`, `subvolume.Info`, `Clone.Status`,
+   `Set.Watch`, `Lease.Watch`, `DataPools` and the `ceph` observation APIs.
 5. **Clean up**: terminate the cluster; it removes owned filesystems,
    subvolumes, principals and daemons. Use the handles' `Remove`,
    `Deauthorize` and `Restore` only to test those steps or to restore state

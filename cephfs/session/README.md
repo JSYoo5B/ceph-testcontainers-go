@@ -20,7 +20,9 @@ the package starts no container. See
 3. **Reproduce the condition**: freeze the client with `fault.Pause`, kill it,
    or let another client ask for its capabilities.
 4. **Observe**: `session.List(ctx, fs)` lists the sessions of every active
-   rank; `session.Timeouts(ctx, fs)` reads the current limits; the cluster's
+   rank; `session.Watch(ctx, fs, cfg, clientIDs...)` reports the selected
+   sessions as they appear, change state or disappear;
+   `session.Timeouts(ctx, fs)` reads the current limits; the cluster's
    `BlocklistEntries` show the evicted address.
 5. **Restore** with `TimeoutsOverrideHandle.Restore`, or let the cluster's
    termination discard the filesystem.
@@ -38,6 +40,26 @@ if err != nil {
 	t.Fatal(err)
 }
 // Match the client by Session.ID or Address, then poll until it is gone.
+```
+
+To follow one client through its eviction, watch its session from a
+baseline taken before the fault:
+
+```golang
+w, err := session.Watch(ctx, fs, ceph.WatchConfig{}, holder.ID)
+if err != nil {
+	t.Fatal(err) // the first read failed or was incoherent; nothing runs
+}
+t.Cleanup(func() { _ = w.Stop() })
+<-w.Events() // the baseline, with holder's open session
+// ... freeze the client with fault.Pause ...
+for event := range w.Events() {
+	if len(event.Removed) > 0 {
+		// The MDS that held the session no longer lists it; read the
+		// blocklist for the cause.
+		break
+	}
+}
 ```
 
 To refuse new sessions, call `session.OverrideRefusal(ctx, fs)`. It sets the
@@ -139,6 +161,25 @@ if err := required.Restore(ctx); err != nil {
 - `List` reports a client once per rank and includes the fixture's own
   short-lived libcephfs probes. `Session.Address` has the form that
   blocklist entries use.
+- `Watch` reads the active ranks, lists each rank in turn and reads the
+  active ranks again. It derives a removal only from a coherent sample: the
+  same rank holders (rank and GID) and `max_mds` before and after, every rank
+  below `max_mds` active. Any other sample, such as one taken while a standby
+  takes over or while no rank is active, is a `WatchGap` and removes nothing.
+  A rank whose holder changed since the previous coherent sample is listed in
+  `Rebaselined`: its sessions are reported, not diffed, so a client that does
+  not come back after a takeover shows as missing from `Sessions`, not in
+  `Removed`. The ranks are listed one after another, so a multi-rank sample
+  is not atomic. Native tests cover one rank; the multi-rank rules are unit
+  tested.
+- A removal means only that the daemon that listed the session no longer
+  does. It does not say why, and it is not proof of blocklisting, flushed
+  data or a client that stopped; read the blocklist and the client's own
+  state for those. A reconnect under a new address nonce is a removal and an
+  addition. Select clients by `Session.ID`; client metadata such as PID or
+  hostname does not identify a session.
+- A filesystem that was removed, is no longer the cluster's owned one or was
+  recreated under the same name ends the watch with `ceph.ErrInvalidRequest`.
 - Evicting the sessions of one subvolume principal is
   `subvolume.Authorization.EvictClients` in
   [`cephfs/subvolume`](../subvolume/README.md).
