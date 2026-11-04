@@ -50,22 +50,42 @@ func readCloneIncarnation(ctx context.Context, v fsbase.VolumeCommands, identity
 		return nil, fmt.Errorf("decode native clone incarnation: %w", err)
 	}
 	if metadata.Version != 2 || metadata.Type != "clone" || metadata.Inode == 0 || metadata.BirthTime == "" || path.Dir(metadata.Path) != base {
-		return nil, errors.New("unsupported or incomplete native clone incarnation")
+		return nil, cloneIdentityRefusal("unsupported or incomplete native clone incarnation")
 	}
 	if _, err := uuid.Parse(path.Base(metadata.Path)); err != nil {
-		return nil, errors.New("native clone incarnation path is not a UUID")
+		return nil, cloneIdentityRefusal("native clone incarnation path is not a UUID")
 	}
 	if metadata.State != "pending" && metadata.State != "in-progress" && metadata.State != "complete" && metadata.State != "failed" && metadata.State != "canceled" {
-		return nil, errors.New("unsupported native clone incarnation state")
+		return nil, cloneIdentityRefusal("unsupported native clone incarnation state")
 	}
 	source := identity.source.subvolume
 	if len(metadata.Source) != 0 && (metadata.Source["volume"] != v.Name() || metadata.Source["group"] != source.Group || metadata.Source["subvolume"] != source.Name || metadata.Source["snapshot"] != identity.source.name) {
-		return nil, errors.New("native clone metadata source does not match this request")
+		return nil, cloneIdentityRefusal("native clone metadata source does not match this request")
 	}
 	if metadata.State != "complete" && len(metadata.Source) == 0 {
-		return nil, errors.New("incomplete clone has no native source metadata")
+		return nil, cloneIdentityRefusal("incomplete clone has no native source metadata")
 	}
 	return &metadata.cloneIncarnation, nil
+}
+
+// cloneIdentityError is a successful native read that shows this request's
+// filesystem, target incarnation or source is no longer the one it captured,
+// or that its target was removed. A later read cannot undo it, so a clone
+// watch ends on it instead of reporting a gap. It keeps the message of the
+// refusal it marks.
+type cloneIdentityError struct{ error }
+
+func (e cloneIdentityError) Unwrap() error { return e.error }
+
+func cloneIdentityRefusal(message string) error {
+	return cloneIdentityError{errors.New(message)}
+}
+
+// cloneIdentityChanged reports a refusal that a later read cannot undo: a
+// cloneIdentityError or a filesystem identity change.
+func cloneIdentityChanged(err error) bool {
+	var drift cloneIdentityError
+	return errors.As(err, &drift) || fsbase.IdentityChanged(err)
 }
 
 func nativeGroup(group string) string {
@@ -77,16 +97,25 @@ func nativeGroup(group string) string {
 
 func checkCloneIncarnation(ctx context.Context, fs *fsbase.Core, identity *cloneRecord) error {
 	if identity.incarnation == nil {
-		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
+		return cloneIdentityRefusal("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
 	current, err := readCloneIncarnation(ctx, fs.Volumes(), identity)
 	if err != nil {
 		return err
 	}
 	if *current != *identity.incarnation {
-		return errors.New("native clone UUID, inode or birth time was replaced; refusing mutation")
+		return cloneIdentityRefusal("native clone UUID, inode or birth time was replaced; refusing mutation")
 	}
 	return nil
+}
+
+// checkedStatus verifies the captured native incarnation and then reads the
+// native status. The caller holds the subvolume operation gate.
+func (identity *cloneRecord) checkedStatus(ctx context.Context, fs *fsbase.Core, fsID int64) (*CloneStatus, error) {
+	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
+		return nil, err
+	}
+	return cloneStatus(ctx, fs, fsID, identity)
 }
 
 func cloneSourceDetached(ctx context.Context, fs *fsbase.Core, fsID int64, identity *cloneRecord) (bool, error) {
@@ -157,10 +186,7 @@ func (clone *Clone) cancelStep(ctx context.Context, fs *fsbase.Core, request boo
 	}
 	defer done()
 	identity := clone.identity
-	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
-		return false, err
-	}
-	status, err := cloneStatus(ctx, fs, fsID, identity)
+	status, err := identity.checkedStatus(ctx, fs, fsID)
 	if err != nil {
 		return false, err
 	}
@@ -228,10 +254,7 @@ func (clone *Clone) RemovePartial(ctx context.Context) error {
 		}
 		return errors.New("partial clone disappeared outside this fixture")
 	}
-	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
-		return err
-	}
-	status, err := cloneStatus(ctx, fs, fsID, identity)
+	status, err := identity.checkedStatus(ctx, fs, fsID)
 	if err != nil {
 		return err
 	}

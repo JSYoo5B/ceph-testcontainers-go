@@ -103,7 +103,7 @@ func awaitOSDWatchEvent(t *testing.T, w *ceph.OSDWatch, last *uint64, gaps *int,
 				t.Fatalf("%s: event %d follows %d", what, event.Sequence, *last)
 			}
 			*last = event.Sequence
-			if event.Kind == ceph.OSDWatchGap {
+			if event.Kind == ceph.WatchGap {
 				*gaps++
 				t.Logf("%s: gap at event %d after %v: %v", what, event.Sequence, event.Finished.Sub(event.Started), event.Err)
 				continue
@@ -155,7 +155,7 @@ func testOSDWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 
 	const interval = time.Second
 	watchStarted := time.Now()
-	w, err := observer.WatchOSDs(ctx, ceph.OSDWatchConfig{Interval: interval})
+	w, err := observer.WatchOSDs(ctx, ceph.WatchConfig{Interval: interval})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func testOSDWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	t.Cleanup(func() { _ = w.Stop() })
 	var last uint64
 	gaps := 0
-	baseline := awaitOSDWatchEvent(t, w, &last, &gaps, time.Second, "baseline", func(e ceph.OSDWatchEvent) bool { return e.Kind == ceph.OSDWatchBaseline })
+	baseline := awaitOSDWatchEvent(t, w, &last, &gaps, time.Second, "baseline", func(e ceph.OSDWatchEvent) bool { return e.Kind == ceph.WatchBaseline })
 	if len(baseline.States) != 3 {
 		t.Fatalf("baseline = %+v", baseline)
 	}

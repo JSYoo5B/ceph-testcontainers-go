@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs",
-  "count": 36,
+  "count": 44,
   "types": {
     "cephfs.Config": [
       "Config.ActiveMDS field int",
@@ -54,6 +54,16 @@
       "MDSStatus.Owned field bool `json:\"owned\"`",
       "MDSStatus.Rank field int `json:\"rank\"`",
       "MDSStatus.State field string `json:\"state\"`"
+    ],
+    "cephfs.MDSWatchEvent": [
+      "MDSWatchEvent.Epoch field uint64",
+      "MDSWatchEvent.Err field error",
+      "MDSWatchEvent.Finished field time.Time",
+      "MDSWatchEvent.Kind field ceph.WatchEventKind",
+      "MDSWatchEvent.MDSMapEpoch field uint64",
+      "MDSWatchEvent.Sequence field uint64",
+      "MDSWatchEvent.Started field time.Time",
+      "MDSWatchEvent.Status field FilesystemStatus"
     ],
     "cephfs.TimingProfile": [
       "TimingProfile.DirectoryPins field bool"

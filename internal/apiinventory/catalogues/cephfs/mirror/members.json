@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/mirror",
-  "count": 94,
+  "count": 100,
   "types": {
     "cephfs/mirror.Config": [
       "Config.DaemonCount field int",
@@ -65,6 +65,14 @@
       "DirectoryStatus.SourceFilesystem field string",
       "DirectoryStatus.SourceFilesystemID field int",
       "DirectoryStatus.State field string"
+    ],
+    "cephfs/mirror.DirectoryWatchEvent": [
+      "DirectoryWatchEvent.Err field error",
+      "DirectoryWatchEvent.Finished field time.Time",
+      "DirectoryWatchEvent.Kind field ceph.WatchEventKind",
+      "DirectoryWatchEvent.Sequence field uint64",
+      "DirectoryWatchEvent.Started field time.Time",
+      "DirectoryWatchEvent.Status field DirectoryStatus"
     ],
     "cephfs/mirror.Mirror": [
       "Mirror embed testcontainers.Container",

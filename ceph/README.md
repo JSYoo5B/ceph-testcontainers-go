@@ -182,9 +182,39 @@ out or unselected OSD from the observation it evaluated.
 To react to owned OSD state while the SUT runs, `observer.WatchOSDs(ctx, cfg)`
 polls the OSDMap in one goroutine and sends changes on one channel. The
 baseline is buffered before it returns and fixes the watched OSDs by ID and
-UUID. Wait for it before you cause the fault. A failed read is an
-`OSDWatchGap` event and the next success is `OSDWatchResumed`. A full buffer
+UUID. Wait for it before you cause the fault. A failed read is a
+`WatchGap` event and the next success is `WatchResumed`. A full buffer
 ends the watch with `ErrWatchOverflow` instead of dropping events, and so do
 identity drift and cluster termination. Call `Stop` before the fixture's
 cleanup: it joins the watch and returns why it ended. See
-[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-owned-osd-state).
+[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-state).
+
+To follow one pool's reported PGs through an OSD loss or a placement change,
+`pool.WatchPGs(ctx, cfg)` repeats the `Pool.PGs` observation on the same
+watch contract. The baseline pins the original FSID and the pool's native ID;
+a split or merge is an event, and a removed, renamed or recreated pool ends
+the watch instead of being followed by name. Only PG states, ordered up and
+acting sets, primaries, the PG set, `PGReady` and pool policy are compared.
+Epochs, reported sequences and statistics travel with each event but cause
+none. A reported active+clean PG proves no write visibility or durability, so
+check those with the workload.
+
+To observe a fault-specific health check appear, change its mute state and
+clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
+contract with the original FSID pinned. It compares status, check codes,
+severities, counts and muted flags and the stored mutes, never message text,
+so countdowns cause no events. It never mutes or clears a check, and
+messages can contain application data, so do not print events unfiltered.
+
+To follow the control plane in the same way, `observer.WatchMonitors(ctx,
+cfg)` reports the monmap members with their advertised addresses, the quorum
+and its leader, and `observer.WatchManagers(ctx, cfg)` reports the active
+MGR's name and GID, its availability, the standbys and the service URLs of
+the same MGRMap. Both pin the cluster by its original bootstrap FSID rather
+than one daemon, so added, removed or replaced MONs and a failover are
+events, and another FSID ends the watch. A MON that stops stays a member and
+leaves the quorum; while no majority answers, the watch reports gaps, not an
+empty quorum. A map without an active manager is a successful observation,
+and an advertised URL is not proof that its listener answers. Neither watch
+takes the topology lock, so the test can stop or replace daemons while it
+runs.

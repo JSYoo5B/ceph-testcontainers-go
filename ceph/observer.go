@@ -317,6 +317,15 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if err != nil {
 		return HealthSnapshot{}, err
 	}
+	snapshot, err := c.healthDetails(ctx)
+	return snapshot, oneShotError(err)
+}
+
+// healthDetails is one HealthDetails read under the topology lock, released
+// before it returns. A terminated cluster and a foreign native FSID are
+// marked with endObservation, which HealthDetails removes and WatchHealth
+// uses to end the watch.
+func (c *Container) healthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return HealthSnapshot{}, err
 	}
@@ -328,7 +337,7 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return HealthSnapshot{}, errClusterTerminated
+		return HealthSnapshot{}, endObservation(errClusterTerminated, errClusterTerminated)
 	}
 	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
@@ -363,7 +372,11 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 		native := strings.TrimSpace(string(data))
 		parsed, err := uuid.Parse(native)
 		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
-			return clientOperationError(ctx, "native health FSID differs from the original cluster", err)
+			failure := clientOperationError(ctx, "native health FSID differs from the original cluster", err)
+			if foreignFSID(native, fsid) {
+				return endObservation(failure, invalid(errForeignFSID))
+			}
+			return failure
 		}
 		return ctx.Err()
 	}

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 279,
+  "count": 309,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -113,6 +113,14 @@
       "HealthSnapshot.Mutes field []HealthMute",
       "HealthSnapshot.Status field string"
     ],
+    "ceph.HealthWatchEvent": [
+      "HealthWatchEvent.Err field error",
+      "HealthWatchEvent.Finished field time.Time",
+      "HealthWatchEvent.Health field HealthSnapshot",
+      "HealthWatchEvent.Kind field WatchEventKind",
+      "HealthWatchEvent.Sequence field uint64",
+      "HealthWatchEvent.Started field time.Time"
+    ],
     "ceph.ImageSet": [
       "ImageSet.All field string",
       "ImageSet.CephFS field string",
@@ -161,6 +169,16 @@
       "ManagerStatus.Standbys[].GID field uint64 `json:\"gid\"`",
       "ManagerStatus.Standbys[].Name field string `json:\"name\"`"
     ],
+    "ceph.ManagerWatchEvent": [
+      "ManagerWatchEvent.Epoch field uint64",
+      "ManagerWatchEvent.Err field error",
+      "ManagerWatchEvent.Finished field time.Time",
+      "ManagerWatchEvent.Kind field WatchEventKind",
+      "ManagerWatchEvent.Sequence field uint64",
+      "ManagerWatchEvent.Services field map[string]string",
+      "ManagerWatchEvent.Started field time.Time",
+      "ManagerWatchEvent.Status field ManagerStatus"
+    ],
     "ceph.MessengerPolicy": [
       "MessengerPolicy.Managers field []MessengerConnectionMode",
       "MessengerPolicy.Monitors field []MessengerConnectionMode",
@@ -175,6 +193,18 @@
     "ceph.MonitorContainer": [
       "MonitorContainer embed testcontainers.Container",
       "MonitorContainer.DaemonName field string"
+    ],
+    "ceph.MonitorWatchEvent": [
+      "MonitorWatchEvent.ElectionEpoch field uint64",
+      "MonitorWatchEvent.Err field error",
+      "MonitorWatchEvent.Finished field time.Time",
+      "MonitorWatchEvent.Kind field WatchEventKind",
+      "MonitorWatchEvent.Leader field string",
+      "MonitorWatchEvent.Members field []DaemonAddress",
+      "MonitorWatchEvent.MonMapEpoch field uint64",
+      "MonitorWatchEvent.Quorum field []string",
+      "MonitorWatchEvent.Sequence field uint64",
+      "MonitorWatchEvent.Started field time.Time"
     ],
     "ceph.NativeCommand": [
       "NativeCommand.Argv field []string",
@@ -246,16 +276,11 @@
       "OSDState.Up field bool",
       "OSDState.Weight field float64"
     ],
-    "ceph.OSDWatchConfig": [
-      "OSDWatchConfig.Buffer field int",
-      "OSDWatchConfig.Interval field time.Duration",
-      "OSDWatchConfig.QueryTimeout field time.Duration"
-    ],
     "ceph.OSDWatchEvent": [
       "OSDWatchEvent.Epoch field uint64",
       "OSDWatchEvent.Err field error",
       "OSDWatchEvent.Finished field time.Time",
-      "OSDWatchEvent.Kind field OSDWatchEventKind",
+      "OSDWatchEvent.Kind field WatchEventKind",
       "OSDWatchEvent.Sequence field uint64",
       "OSDWatchEvent.Started field time.Time",
       "OSDWatchEvent.States field []OSDState"
@@ -321,6 +346,14 @@
       "PoolPGSnapshot.PGs field []PGState",
       "PoolPGSnapshot.PoolAfter field PoolState",
       "PoolPGSnapshot.PoolBefore field PoolState"
+    ],
+    "ceph.PoolPGWatchEvent": [
+      "PoolPGWatchEvent.Err field error",
+      "PoolPGWatchEvent.Finished field time.Time",
+      "PoolPGWatchEvent.Kind field WatchEventKind",
+      "PoolPGWatchEvent.Sequence field uint64",
+      "PoolPGWatchEvent.Snapshot field PoolPGSnapshot",
+      "PoolPGWatchEvent.Started field time.Time"
     ],
     "ceph.PoolPlacement": [
       "PoolPlacement.CRUSHRoot field string",
@@ -388,6 +421,11 @@
       "Status.PGMap.PGsByState field []struct {\n\tStateName string `json:\"state_name\"`\n\tCount     int    `json:\"count\"`\n} `json:\"pgs_by_state\"`",
       "Status.PGMap.PGsByState[].Count field int `json:\"count\"`",
       "Status.PGMap.PGsByState[].StateName field string `json:\"state_name\"`"
+    ],
+    "ceph.WatchConfig": [
+      "WatchConfig.Buffer field int",
+      "WatchConfig.Interval field time.Duration",
+      "WatchConfig.QueryTimeout field time.Duration"
     ]
   }
 }

@@ -30,8 +30,10 @@ type PoolAttachment struct {
 	Confirmed, Used, Removed, RemovalAttempted bool
 }
 
-// FSMap is the decoded native global MDS map (ceph fs dump).
+// FSMap is the decoded native global MDS map (ceph fs dump). Epoch is the
+// FSMap epoch and MDSMap.Epoch the epoch of one filesystem's MDSMap in it.
 type FSMap struct {
+	Epoch        uint64 `json:"epoch"`
 	FeatureFlags struct {
 		EnableMultiple bool `json:"enable_multiple"`
 	} `json:"feature_flags"`
@@ -39,6 +41,7 @@ type FSMap struct {
 	Filesystems []struct {
 		ID     int64 `json:"id"`
 		MDSMap struct {
+			Epoch        uint64             `json:"epoch"`
 			Name         string             `json:"fs_name"`
 			MaxMDS       int                `json:"max_mds"`
 			Info         map[string]MDSInfo `json:"info"`
@@ -100,7 +103,8 @@ func (c *Core) CaptureNativePools(ctx context.Context) error {
 
 // ReadNativePools reads the filesystem's FSMap entry and the cluster's pools.
 // Once the native identity is captured it refuses a filesystem or an original
-// pool that was replaced or renamed.
+// pool that was replaced or renamed. A successful read that shows the owned
+// filesystem absent, replaced or renamed is an IdentityChanged error.
 func (c *Core) ReadNativePools(ctx context.Context) (*NativePools, error) {
 	data, err := c.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
@@ -122,7 +126,7 @@ func (c *Core) ReadNativePools(ctx context.Context) (*NativePools, error) {
 			DataPools: slices.Clone(native.MDSMap.DataPools)}
 	}
 	if result == nil {
-		return nil, errors.New("owned filesystem is absent from FSMap")
+		return nil, identityError("owned filesystem is absent from FSMap")
 	}
 	result.Pools, err = servicehook.PoolStates(ctx, c.cluster)
 	if err != nil {
@@ -130,7 +134,7 @@ func (c *Core) ReadNativePools(ctx context.Context) (*NativePools, error) {
 	}
 	if identity := c.native; identity != nil {
 		if result.ID != identity.ID || result.MetadataPool != identity.MetadataPool || result.DataPools[0] != identity.DefaultPool {
-			return nil, errors.New("filesystem or its original pools were replaced; refusing operation")
+			return nil, identityError("filesystem or its original pools were replaced; refusing operation")
 		}
 		for _, original := range []struct {
 			id   int64
@@ -140,11 +144,31 @@ func (c *Core) ReadNativePools(ctx context.Context) (*NativePools, error) {
 		} {
 			pool, err := result.PoolByID(original.id)
 			if err != nil || pool.Name != original.name {
-				return nil, errors.New("original filesystem pool was replaced or renamed")
+				return nil, identityError("original filesystem pool was replaced or renamed")
 			}
 		}
 	}
 	return result, nil
+}
+
+// identityError is a successful native read that shows the owned filesystem
+// or one of its original pools absent, replaced or renamed. A later read
+// cannot undo it.
+type identityError string
+
+func (e identityError) Error() string { return string(e) }
+
+// IdentityRefusal returns an IdentityChanged error with message, for an
+// admission that refuses a filesystem no later admission can accept.
+func IdentityRefusal(message string) error { return identityError(message) }
+
+// IdentityChanged reports an error that a successful read or admission
+// produced because the owned filesystem is no longer registered, or it or an
+// original pool is absent, replaced or renamed, rather than a failed query. A
+// watch ends on it instead of reporting a gap.
+func IdentityChanged(err error) bool {
+	var e identityError
+	return errors.As(err, &e)
 }
 
 // PoolByID returns the pool with the native ID id.

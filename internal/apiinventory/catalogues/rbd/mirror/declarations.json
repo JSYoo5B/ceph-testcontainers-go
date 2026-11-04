@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/mirror",
-  "count": 44,
+  "count": 56,
   "entries": [
     {
       "current": "rbd/mirror.Config",
@@ -58,6 +58,34 @@
       "current": "rbd/mirror.ImageStatus",
       "kind": "type",
       "proposed": "rbd/mirror.ImageStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageWatch",
+      "kind": "type",
+      "proposed": "rbd/mirror.ImageWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan ImageWatchEvent",
+      "receiver": "*ImageWatch",
+      "proposed": "rbd/mirror.ImageWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*ImageWatch",
+      "proposed": "rbd/mirror.ImageWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageWatchEvent",
+      "kind": "type",
+      "proposed": "rbd/mirror.ImageWatchEvent",
       "decision": "baseline"
     },
     {
@@ -179,6 +207,22 @@
       "decision": "baseline"
     },
     {
+      "current": "rbd/mirror.Mirror.WatchImage",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, imageName string) (*ImageWatch, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.WatchImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.WatchReceivers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, expectedDaemons ...string) (*ReceiverWatch, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.WatchReceivers",
+      "decision": "baseline"
+    },
+    {
       "current": "rbd/mirror.Mode",
       "kind": "type",
       "proposed": "rbd/mirror.Mode",
@@ -235,6 +279,22 @@
       "decision": "baseline"
     },
     {
+      "current": "rbd/mirror.Namespace.WatchImage",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, imageName string) (*ImageWatch, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.WatchImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace.WatchReceivers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, expectedDaemons ...string) (*ReceiverWatch, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.WatchReceivers",
+      "decision": "baseline"
+    },
+    {
       "current": "rbd/mirror.NamespaceState",
       "kind": "type",
       "proposed": "rbd/mirror.NamespaceState",
@@ -276,6 +336,34 @@
       "current": "rbd/mirror.ReceiverStatus",
       "kind": "type",
       "proposed": "rbd/mirror.ReceiverStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverWatch",
+      "kind": "type",
+      "proposed": "rbd/mirror.ReceiverWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan ReceiverWatchEvent",
+      "receiver": "*ReceiverWatch",
+      "proposed": "rbd/mirror.ReceiverWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*ReceiverWatch",
+      "proposed": "rbd/mirror.ReceiverWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverWatchEvent",
+      "kind": "type",
+      "proposed": "rbd/mirror.ReceiverWatchEvent",
       "decision": "baseline"
     },
     {

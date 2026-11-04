@@ -259,11 +259,12 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"configureDefaultCRUSHRoot":        {"free", []string{"applyDefaultCRUSHRule"}},
 	"evidenceInventory":                {"free", []string{"diagnosticKeyring"}},
 	"fullRatiosSession":                {"free", []string{"identity"}},
-	"HealthDetails":                    {"free", []string{"identity"}},
-	"PGs":                              {"free", []string{"identity"}},
+	"healthDetails":                    {"free", []string{"identity"}},
+	"observePGs":                       {"free", []string{"identity"}},
 	"Usage":                            {"free", []string{"identity"}},
 	"ClusterIdentity":                  {"free", []string{"identity"}},
 	"ConnectionConfig":                 {"free", []string{"connection"}},
+	"watchOriginalFSID":                {"free", []string{"identity"}},
 	"UnitState":                        {"identity", []string{"mutex"}},
 }
 

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 28,
+  "count": 33,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -115,6 +115,14 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs.Filesystem.WatchMDSs",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig) (*MDSWatch, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.WatchMDSs",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs.FilesystemStatus",
       "kind": "type",
       "proposed": "cephfs.FilesystemStatus",
@@ -153,6 +161,34 @@
       "current": "cephfs.MDSStatus",
       "kind": "type",
       "proposed": "cephfs.MDSStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSWatch",
+      "kind": "type",
+      "proposed": "cephfs.MDSWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan MDSWatchEvent",
+      "receiver": "*MDSWatch",
+      "proposed": "cephfs.MDSWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*MDSWatch",
+      "proposed": "cephfs.MDSWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSWatchEvent",
+      "kind": "type",
+      "proposed": "cephfs.MDSWatchEvent",
       "decision": "baseline"
     },
     {

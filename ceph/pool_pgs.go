@@ -45,6 +45,16 @@ type PGStats struct {
 	ObjectsDegraded, ObjectsMisplaced, ObjectsUnfound int64
 }
 
+// The decoding failures of a well-formed OSDMap that no later read of the
+// same pool can undo. Their texts name no native value.
+var (
+	errPoolPGForeignMap = errors.New("the native OSDMap belongs to another cluster")
+	errPoolPGAbsent     = errors.New("the native OSDMap has no pool with this name: it was removed or renamed")
+)
+
+// decodePoolPGOSDMap decodes the pool called name from an osd dump. A valid
+// map of another cluster is errPoolPGForeignMap and a valid map without the
+// name is errPoolPGAbsent; every other failure is a malformed report.
 func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, error) {
 	var native struct {
 		FSID  *string `json:"fsid"`
@@ -73,7 +83,11 @@ func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, erro
 	}
 	// The existing decoder bounds size/depth, rejects duplicate and aliased
 	// known keys (including Unicode folds), and permits unrelated future fields.
-	if err := healthDetailsJSON(data, &native); err != nil || native.FSID == nil || *native.FSID != fsid || native.Epoch == nil || native.Pools == nil {
+	if err := healthDetailsJSON(data, &native); err != nil || native.FSID == nil || native.Epoch == nil || native.Pools == nil {
+		return failure()
+	}
+	foreign := *native.FSID != fsid
+	if foreign && !foreignFSID(*native.FSID, fsid) {
 		return failure()
 	}
 	seenIDs, seenNames := map[int64]bool{}, map[string]bool{}
@@ -110,8 +124,11 @@ func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, erro
 		}
 		found = true
 	}
-	if !found {
-		return failure()
+	switch {
+	case foreign:
+		return PoolState{}, 0, errPoolPGForeignMap
+	case !found:
+		return PoolState{}, 0, errPoolPGAbsent
 	}
 	return result, *native.Epoch, nil
 }

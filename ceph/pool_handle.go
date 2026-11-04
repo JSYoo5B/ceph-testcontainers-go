@@ -289,6 +289,16 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	if err != nil {
 		return PoolPGSnapshot{}, err
 	}
+	snapshot, err := p.observePGs(ctx, c)
+	return snapshot, oneShotError(err)
+}
+
+// observePGs is one PGs read of c under the topology lock, released before
+// it returns. A terminated cluster, a foreign native FSID and a pool that is
+// no longer the one the handle identifies (removed, renamed or replaced) are
+// marked with endObservation, which PGs removes and WatchPGs uses to end the
+// watch.
+func (p *Pool) observePGs(ctx context.Context, c *Container) (PoolPGSnapshot, error) {
 	// It observes one existing pool through one captured control CLI handle.
 	// It checks the original bootstrap FSID and the exact pool name/ID before and
 	// after pg ls-by-pool, using five CLI reads and no per-PG mapping fanout. It
@@ -316,10 +326,10 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
+		return PoolPGSnapshot{}, endObservation(clientOperationError(ctx, "ceph cluster is terminated", nil), errClusterTerminated)
 	}
 	if err := handle.matchLocked(name, -1); err != nil {
-		return PoolPGSnapshot{}, err
+		return PoolPGSnapshot{}, endObservation(err, err)
 	}
 	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
@@ -354,7 +364,11 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 		native := strings.TrimSpace(string(data))
 		parsed, err := uuid.Parse(native)
 		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
-			return clientOperationError(ctx, "native pool PG FSID differs from the original cluster", err)
+			failure := clientOperationError(ctx, "native pool PG FSID differs from the original cluster", err)
+			if foreignFSID(native, fsid) {
+				return endObservation(failure, invalid(errForeignFSID))
+			}
+			return failure
 		}
 		return ctx.Err()
 	}
@@ -365,7 +379,11 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 		}
 		pool, epoch, err := decodePoolPGOSDMap(data, fsid, name)
 		if err != nil || ctx.Err() != nil {
-			return PoolState{}, 0, clientOperationError(ctx, "decode native pool PG identity failed", err)
+			failure := clientOperationError(ctx, "decode native pool PG identity failed", err)
+			if errors.Is(err, errPoolPGForeignMap) || errors.Is(err, errPoolPGAbsent) {
+				return PoolState{}, 0, endObservation(failure, invalid(err))
+			}
+			return PoolState{}, 0, failure
 		}
 		return pool, epoch, nil
 	}
@@ -377,7 +395,7 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 		return PoolPGSnapshot{}, err
 	}
 	if err := handle.matchLocked(name, before.ID); err != nil {
-		return PoolPGSnapshot{}, err
+		return PoolPGSnapshot{}, endObservation(err, err)
 	}
 	data, err := query("pg", "ls-by-pool", name, "--format", "json")
 	if err != nil {
@@ -392,7 +410,8 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 		return PoolPGSnapshot{}, err
 	}
 	if after.ID != before.ID {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "native pool was replaced during PG observation", nil)
+		failure := clientOperationError(ctx, "native pool was replaced during PG observation", nil)
+		return PoolPGSnapshot{}, endObservation(failure, invalid(fmt.Errorf("%w: pool %q was replaced by another pool (native ID %d, then %d)", errStalePool, name, before.ID, after.ID)))
 	}
 	if err := checkFSID(); err != nil {
 		return PoolPGSnapshot{}, err

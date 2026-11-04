@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 291,
+  "count": 311,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -722,6 +722,34 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.HealthWatch",
+      "kind": "type",
+      "proposed": "ceph.HealthWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan HealthWatchEvent",
+      "receiver": "*HealthWatch",
+      "proposed": "ceph.HealthWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*HealthWatch",
+      "proposed": "ceph.HealthWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.HealthWatchEvent",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ImageOptions",
       "kind": "type",
       "proposed": "ceph.ImageOptions",
@@ -847,6 +875,34 @@
       "current": "ceph.ManagerStatus",
       "kind": "type",
       "proposed": "ceph.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatch",
+      "kind": "type",
+      "proposed": "ceph.ManagerWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan ManagerWatchEvent",
+      "receiver": "*ManagerWatch",
+      "proposed": "ceph.ManagerWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*ManagerWatch",
+      "proposed": "ceph.ManagerWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.ManagerWatchEvent",
       "decision": "baseline"
     },
     {
@@ -985,6 +1041,34 @@
       "signature": "func() MonitorStorage",
       "receiver": "MonitorStorage",
       "proposed": "ceph.MonitorStorage.WithVolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch",
+      "kind": "type",
+      "proposed": "ceph.MonitorWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan MonitorWatchEvent",
+      "receiver": "*MonitorWatch",
+      "proposed": "ceph.MonitorWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*MonitorWatch",
+      "proposed": "ceph.MonitorWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.MonitorWatchEvent",
       "decision": "baseline"
     },
     {
@@ -1519,45 +1603,9 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.OSDWatchBaseline",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchBaseline",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchChanged",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchChanged",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchConfig",
-      "kind": "type",
-      "proposed": "ceph.OSDWatchConfig",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.OSDWatchEvent",
       "kind": "type",
       "proposed": "ceph.OSDWatchEvent",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchEventKind",
-      "kind": "type",
-      "proposed": "ceph.OSDWatchEventKind",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchGap",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchGap",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDWatchResumed",
-      "kind": "const",
-      "proposed": "ceph.OSDWatchResumed",
       "decision": "baseline"
     },
     {
@@ -1756,9 +1804,33 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.WatchHealth",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*HealthWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchHealth",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WatchManagers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*ManagerWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.WatchMonitors",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*MonitorWatch, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.WatchMonitors",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.WatchOSDs",
       "kind": "method",
-      "signature": "func(ctx context.Context, cfg OSDWatchConfig) (*OSDWatch, error)",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*OSDWatch, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.WatchOSDs",
       "decision": "baseline"
@@ -1919,6 +1991,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Pool.WatchPGs",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg WatchConfig) (*PoolPGWatch, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.WatchPGs",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.PoolConfig",
       "kind": "type",
       "proposed": "ceph.PoolConfig",
@@ -1928,6 +2008,34 @@
       "current": "ceph.PoolPGSnapshot",
       "kind": "type",
       "proposed": "ceph.PoolPGSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch",
+      "kind": "type",
+      "proposed": "ceph.PoolPGWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan PoolPGWatchEvent",
+      "receiver": "*PoolPGWatch",
+      "proposed": "ceph.PoolPGWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*PoolPGWatch",
+      "proposed": "ceph.PoolPGWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGWatchEvent",
+      "kind": "type",
+      "proposed": "ceph.PoolPGWatchEvent",
       "decision": "baseline"
     },
     {
@@ -1977,6 +2085,42 @@
       "current": "ceph.Status",
       "kind": "type",
       "proposed": "ceph.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchBaseline",
+      "kind": "const",
+      "proposed": "ceph.WatchBaseline",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchChanged",
+      "kind": "const",
+      "proposed": "ceph.WatchChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchConfig",
+      "kind": "type",
+      "proposed": "ceph.WatchConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchEventKind",
+      "kind": "type",
+      "proposed": "ceph.WatchEventKind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchGap",
+      "kind": "const",
+      "proposed": "ceph.WatchGap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WatchResumed",
+      "kind": "const",
+      "proposed": "ceph.WatchResumed",
       "decision": "baseline"
     },
     {

@@ -57,12 +57,40 @@ func Of(o Owner) *Volume { return o.volume() }
 // invoke an orchestrator and create resources outside this fixture's
 // ownership.
 func Begin(ctx context.Context, core *fsbase.Core) (context.Context, int64, func(), error) {
+	ctx, fsID, done, err := admit(ctx, core)
+	if err != nil {
+		return ctx, 0, done, err
+	}
+	if err := core.Volumes().EnsureVolumesModule(ctx); err != nil {
+		done()
+		return ctx, 0, func() {}, err
+	}
+	return ctx, fsID, done, nil
+}
+
+// BeginObservation admits one read-only observation as Begin does and reads
+// the native pool identity, but leaves the MGR volumes module alone: it
+// neither enables the module nor waits for its CLI, so a disabled module
+// fails the observation's own volumes command instead of being repaired. A
+// watch reads through it.
+func BeginObservation(ctx context.Context, core *fsbase.Core) (context.Context, int64, func(), error) {
+	return admit(ctx, core)
+}
+
+// admit is the admission and the native pool identity read that Begin and
+// BeginObservation share. A filesystem that is no longer the registered one
+// of an open cluster is refused with an fsbase.IdentityChanged error, because
+// no later admission of the same core can succeed.
+func admit(ctx context.Context, core *fsbase.Core) (context.Context, int64, func(), error) {
 	ctx, done, err := core.Admit(ctx, fsbase.AdmissionSpec{
 		RecheckCanceled: true,
-		Refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
+		Refusal:         admissionRefusal,
 		Check: func(ctx context.Context) (bool, error) {
 			c := core.Cluster()
-			if !core.Registered() || !core.DescriptorIntact() || core.Native() == nil {
+			if !core.Registered() {
+				return false, fsbase.IdentityRefusal(admissionRefusal)
+			}
+			if !core.DescriptorIntact() || core.Native() == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -80,12 +108,10 @@ func Begin(ctx context.Context, core *fsbase.Core) (context.Context, int64, func
 		done()
 		return ctx, 0, func() {}, err
 	}
-	if err := core.Volumes().EnsureVolumesModule(ctx); err != nil {
-		done()
-		return ctx, 0, func() {}, err
-	}
 	return ctx, state.ID, done, nil
 }
+
+const admissionRefusal = "CephFS filesystem must be an active filesystem created by this cluster"
 
 // CheckIdentity refuses a native resource whose filesystem ID, path or birth
 // time differs from the captured identity: it was replaced outside this

@@ -437,7 +437,7 @@ func validateCloneHandle(fs *fsbase.Core, clone *Clone) error {
 
 func cloneStatus(ctx context.Context, fs *fsbase.Core, fsID int64, identity *cloneRecord) (*CloneStatus, error) {
 	if identity.filesystemID != fsID {
-		return nil, errors.New("CephFS filesystem was replaced outside this fixture; refusing clone adoption")
+		return nil, cloneIdentityRefusal("CephFS filesystem was replaced outside this fixture; refusing clone adoption")
 	}
 	args := fsbase.AppendGroup([]string{"fs", "clone", "status", fs.Name(), identity.name}, identity.group)
 	data, err := fs.Cluster().Ceph(ctx, append(args, "--format", "json")...)
@@ -450,18 +450,18 @@ func cloneStatus(ctx context.Context, fs *fsbase.Core, fsID int64, identity *clo
 	}
 	source := identity.source.subvolume
 	if status.SourceFilesystem != "" && (status.SourceFilesystem != fs.Name() || status.SourceSubvolume != source.Name || status.SourceGroup != source.Group || status.SourceSnapshot != identity.source.name) {
-		return nil, errors.New("native clone source was replaced outside this fixture")
+		return nil, cloneIdentityRefusal("native clone source was replaced outside this fixture")
 	}
 	if identity.subvolume != nil {
 		if identity.subvolume.identity.Removed {
-			return nil, errors.New("completed clone subvolume has been removed")
+			return nil, cloneIdentityRefusal("completed clone subvolume has been removed")
 		}
 		info, err := fs.Volumes().SubvolumeInfo(ctx, identity.name, identity.group)
 		if err != nil {
 			return nil, err
 		}
 		if err := identity.subvolume.identity.CheckIdentity(fsID, info.Path, info.CreatedAt); err != nil {
-			return nil, err
+			return nil, cloneIdentityError{err}
 		}
 	}
 	return status, nil
@@ -480,15 +480,23 @@ func (clone *Clone) Status(ctx context.Context) (*CloneStatus, error) {
 	if err := validateCloneHandle(fs, clone); err != nil {
 		return nil, err
 	}
-	ctx, fsID, done, err := volbase.Begin(ctx, fs)
+	return clone.statusSample(ctx, fs, volbase.Begin)
+}
+
+// statusSample is one admitted read of this request's native status, shared
+// by Status and Watch. begin admits it; the subvolume operation gate is held
+// for this read only. It refuses a target that RemovePartial removed, then
+// verifies the captured incarnation before it reads the status.
+func (clone *Clone) statusSample(ctx context.Context, fs *fsbase.Core, begin func(context.Context, *fsbase.Core) (context.Context, int64, func(), error)) (*CloneStatus, error) {
+	ctx, fsID, done, err := begin(ctx, fs)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	if err := checkCloneIncarnation(ctx, fs, clone.identity); err != nil {
-		return nil, err
+	if clone.identity.removed {
+		return nil, cloneIdentityRefusal("partial clone target was removed by Clone.RemovePartial")
 	}
-	return cloneStatus(ctx, fs, fsID, clone.identity)
+	return clone.identity.checkedStatus(ctx, fs, fsID)
 }
 
 // Wait waits within the cluster startup timeout or the caller's
@@ -537,10 +545,7 @@ func (clone *Clone) waitStep(ctx context.Context, fs *fsbase.Core) (*Subvolume, 
 	}
 	defer done()
 	identity := clone.identity
-	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
-		return nil, false, err
-	}
-	status, err := cloneStatus(ctx, fs, fsID, identity)
+	status, err := identity.checkedStatus(ctx, fs, fsID)
 	if err != nil {
 		return nil, false, err
 	}

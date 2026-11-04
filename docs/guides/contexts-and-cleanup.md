@@ -176,14 +176,31 @@ if result.err != nil {
   observe on their first read; after `AddDaemon`, `Daemon.Remove` or a
   replacement, start a new wait.
 
-### Watching owned OSD state
+### Watching state
 
-A wait returns once. To observe owned OSD state repeatedly while the SUT runs,
-use `Observer.WatchOSDs`: one goroutine polls the OSDMap and sends events on
-one receive-only channel. Fan-out to several consumers is yours to build.
+A wait returns once. To observe state repeatedly while the SUT runs, use a
+Watch: one goroutine polls a native report and sends events on one
+receive-only channel. Fan-out to several consumers is yours to build. Every
+Watch takes a `ceph.WatchConfig` and has the same lifecycle:
+
+| Watch | Observes | Fixed by the baseline | Default interval |
+| --- | --- | --- | --- |
+| `ceph.Observer.WatchOSDs` | up, in and weight of the owned OSDs | OSD IDs and native UUIDs | 2s |
+| `ceph.Pool.WatchPGs` | PG states, up and acting sets, primaries and the PG set of one pool | FSID and native pool ID | 5s |
+| `ceph.Observer.WatchHealth` | health status, check codes, severities, counts and mutes | FSID | 5s |
+| `ceph.Observer.WatchMonitors` | monmap members and addresses, quorum and leader | FSID | 1s |
+| `ceph.Observer.WatchManagers` | active MGR name and GID, availability, standbys and service URLs | FSID | 3s |
+| `cephfs.Filesystem.WatchMDSs` | active ranks, standbys, standby-replay daemons and `max_mds` | FSMap ID and pool IDs | 2s |
+| `subvolume.Clone.Watch` | native clone state and progress, until a terminal state | the clone request's target and source | 3s |
+| `mirror.Mirror.WatchReceivers` and `Namespace.WatchReceivers` (RBD) | receiver membership, instances and leader agreement | the receiver cohort, peer and policies | 5s |
+| `mirror.Mirror.WatchImage` and `Namespace.WatchImage` (RBD) | replay state and receiver assignment of one image pair | source image ID, global ID and the destination once enrolled | 5s |
+| `mirror.Mirror.WatchDirectory` (CephFS) | assignment, sync state and last synced snapshot of one directory | filesystems, peer and the directory policy | 5s |
+
+The default interval follows the cost of one read: an OSD watch read is one
+`osd dump`, while a mirror read runs about a dozen commands on both clusters.
 
 ```golang
-watch, err := observer.WatchOSDs(ctx, ceph.OSDWatchConfig{Interval: time.Second})
+watch, err := observer.WatchOSDs(ctx, ceph.WatchConfig{Interval: time.Second})
 if err != nil {
 	t.Fatal(err) // the baseline read failed; nothing runs
 }
@@ -194,7 +211,7 @@ baseline := <-watch.Events() // already buffered
 // ... stop an owned OSD and run the SUT ...
 
 for event := range watch.Events() {
-	if event.Kind == ceph.OSDWatchGap {
+	if event.Kind == ceph.WatchGap {
 		continue // a failed read: event.Err says why
 	}
 	if slices.ContainsFunc(event.States, func(s ceph.OSDState) bool { return s.ID == osd.ID && !s.Up }) {
@@ -206,29 +223,39 @@ if err := watch.Stop(); err != nil {
 }
 ```
 
-- The baseline is the first event and the read that `WatchOSDs` made before
-  returning. It fixes the watched OSDs by ID and native UUID. OSDs added later
-  are not watched, and removing, detaching or replacing a watched OSD ends the
-  watch with an error.
-- An event is sent only when the compared fields (ID, UUID, up, in, weight)
-  differ from the previous successful read. A failed read is an
-  `OSDWatchGap`, and the next success is `OSDWatchResumed` even when nothing
-  changed. Two states either side of a gap or of one interval do not show what
+- The baseline is the first event and the read that the Watch call made
+  before returning. It fixes the identities the watch follows. A later change
+  that the watch reports, such as a failover or a new daemon instance, is an
+  event; a replaced identity, such as a recreated pool or filesystem of the
+  same name or another FSID, ends the watch with an error. Receive the
+  baseline before you cause the change to observe.
+- An event is sent only when the compared fields differ from the previous
+  successful read. Each Watch documents the fields it compares. Epochs,
+  counters and status text travel with the events but cause none by
+  themselves.
+- A failed read is a `WatchGap`, never an empty or healthy observation, and
+  the next success is `WatchResumed` even when nothing changed. Two
+  observations either side of a gap or of one interval do not show what
   happened between them: a transition shorter than the interval can be
   missed.
 - `Sequence` increases by one per event and no event is dropped. A consumer
   that leaves the buffer full for one interval ends the watch with
   `ErrWatchOverflow`, which names the first undelivered event.
 - `Started` and `Finished` are the local clock around the read, not when Ceph
-  changed the state. `Epoch` is the native OSDMap epoch of that read.
-- Each read holds the topology lock only for its `osd dump` and is bounded by
-  `QueryTimeout`, so the consumer can call any fixture operation between
-  events. A read that waits too long for the lock is a gap.
+  changed the state. Native epochs appear on an event only when the read
+  supplied them.
+- Each read is bounded by `QueryTimeout`, including its wait for fixture
+  locks, and holds no lock between reads or while an event waits for the
+  consumer. The test can call fixture operations between events. A read that
+  waits too long for a lock is a gap.
 - `Stop` cancels the watch, waits for its goroutine and returns the cause:
-  nil for `Stop` itself, the context's error, `ErrWatchOverflow`, or the read
-  error that ended it. Cancelling the context alone does not wait.
-- Up and down are what the OSDMap reports, not proof that the daemon process
-  runs or that clients reach it. Check the SUT's own results as well.
+  nil for `Stop` itself or a finished clone, the context's error,
+  `ErrWatchOverflow`, or the read error that ended it. Cancelling the context
+  alone does not wait. Stopping a watch never changes what it observed: a
+  clone keeps running and a mirror keeps replaying.
+- A Watch reports what Ceph reported. Up, active+clean, replaying or synced
+  are not proof that a client reaches the daemon or that particular data
+  arrived, so check the SUT's own results as well.
 
 ## Ownership
 

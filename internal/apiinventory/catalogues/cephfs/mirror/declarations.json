@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/mirror",
-  "count": 52,
+  "count": 57,
   "entries": [
     {
       "current": "cephfs/mirror.Config",
@@ -122,6 +122,34 @@
       "current": "cephfs/mirror.DirectoryStatus",
       "kind": "type",
       "proposed": "cephfs/mirror.DirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryWatch",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryWatch.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan DirectoryWatchEvent",
+      "receiver": "*DirectoryWatch",
+      "proposed": "cephfs/mirror.DirectoryWatch.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryWatch.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*DirectoryWatch",
+      "proposed": "cephfs/mirror.DirectoryWatch.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryWatchEvent",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryWatchEvent",
       "decision": "baseline"
     },
     {
@@ -272,6 +300,14 @@
       "signature": "func(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error)",
       "receiver": "*Mirror",
       "proposed": "cephfs/mirror.Mirror.WaitSnapshotSynced",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.WatchDirectory",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cfg ceph.WatchConfig, directory string) (*DirectoryWatch, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.WatchDirectory",
       "decision": "baseline"
     },
     {

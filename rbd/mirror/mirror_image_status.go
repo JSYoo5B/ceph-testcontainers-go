@@ -324,8 +324,7 @@ func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (ImageSt
 func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe func(context.Context) (ImageStatus, error)) (ImageStatus, error) {
 	var last ImageStatus
 	var lastErr error
-	var sourceID, destinationID, globalID string
-	enrolled := false
+	var pins rbdImageContinuity
 	for {
 		if err := ctx.Err(); err != nil {
 			last.ReplayReady = false
@@ -341,30 +340,9 @@ func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe fu
 			last = current
 		}
 		lastErr = multicluster.RetainWaitQueryCause(ctx, lastErr, err)
-		if current.SourceImageID != "" {
-			if sourceID != "" && (sourceID != current.SourceImageID || globalID != current.GlobalID) {
-				last.ReplayReady = false
-				return last, rbdImageGuardError("RBD source image changed while waiting for replay")
-			}
-			sourceID, globalID = current.SourceImageID, current.GlobalID
-		}
-		if current.DestinationImageID != "" {
-			if destinationID != "" && destinationID != current.DestinationImageID {
-				last.ReplayReady = false
-				return last, rbdImageGuardError("RBD destination image changed while waiting for replay")
-			}
-			destinationID = current.DestinationImageID
-		}
-		// A destination is disabled only before rbd-mirror enrolls it.
-		switch current.DestinationMirrorState {
-		case "disabled":
-			if enrolled {
-				last.ReplayReady = false
-				return last, rbdImageGuardError("RBD destination image mirroring was disabled while waiting for replay")
-			}
-		case "":
-		default:
-			enrolled = true
+		if err := pins.admit(current, "while waiting for replay"); err != nil {
+			last.ReplayReady = false
+			return last, err
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			last.ReplayReady = false
@@ -387,10 +365,51 @@ func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe fu
 	}
 }
 
+// rbdImageContinuity is the image identity that a replay wait or an image
+// watch keeps across its reads: the source image and global mirror ID first
+// observed, the destination image once one appears, and whether that
+// destination has been enrolled for mirroring. A replacement is refused, never
+// adopted.
+type rbdImageContinuity struct {
+	sourceID, globalID, destinationID string
+	enrolled                          bool
+}
+
+// admit pins the identities that current reports for the first time and
+// refuses a source, global or destination ID that differs from a pinned one,
+// and a destination whose mirroring is disabled after it was enrolled. during
+// ends the refusal message, such as "while waiting for replay". current may be
+// the partial report of a failed read.
+func (c *rbdImageContinuity) admit(current ImageStatus, during string) error {
+	if current.SourceImageID != "" {
+		if c.sourceID != "" && (c.sourceID != current.SourceImageID || c.globalID != current.GlobalID) {
+			return rbdImageGuardError("RBD source image changed " + during)
+		}
+		c.sourceID, c.globalID = current.SourceImageID, current.GlobalID
+	}
+	if current.DestinationImageID != "" {
+		if c.destinationID != "" && c.destinationID != current.DestinationImageID {
+			return rbdImageGuardError("RBD destination image changed " + during)
+		}
+		c.destinationID = current.DestinationImageID
+	}
+	// A destination is disabled only before rbd-mirror enrolls it.
+	switch current.DestinationMirrorState {
+	case "disabled":
+		if c.enrolled {
+			return rbdImageGuardError("RBD destination image mirroring was disabled " + during)
+		}
+	case "":
+	default:
+		c.enrolled = true
+	}
+	return nil
+}
+
 type rbdImageObservationError struct {
-	message   string
-	cause     error
-	permanent bool
+	message            string
+	cause              error
+	permanent, pending bool
 }
 
 func (e *rbdImageObservationError) Error() string { return e.message }
@@ -402,7 +421,15 @@ func rbdImageGuardError(message string) error {
 
 // rbdImagePendingError reports a native state that a wait passes through.
 func rbdImagePendingError(message string) error {
-	return &rbdImageObservationError{message: message}
+	return &rbdImageObservationError{message: message, pending: true}
+}
+
+// rbdImagePending reports the error of a read that found the destination
+// image created but not yet enrolled for mirroring, a state that a wait
+// passes through and a watch reports.
+func rbdImagePending(err error) bool {
+	var observation *rbdImageObservationError
+	return errors.As(err, &observation) && observation.pending
 }
 
 // errRBDImageMirroringDisabled is the info of an image whose mirroring is

@@ -28,7 +28,7 @@ func ExampleObserver_WatchOSDs() {
 	if err != nil {
 		panic(err)
 	}
-	watch, err := observer.WatchOSDs(ctx, ceph.OSDWatchConfig{Interval: time.Second})
+	watch, err := observer.WatchOSDs(ctx, ceph.WatchConfig{Interval: time.Second})
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +40,7 @@ func ExampleObserver_WatchOSDs() {
 	}
 	// ... the SUT runs ...
 	for event := range watch.Events() {
-		if event.Kind == ceph.OSDWatchGap {
+		if event.Kind == ceph.WatchGap {
 			continue
 		}
 		for _, s := range event.States {

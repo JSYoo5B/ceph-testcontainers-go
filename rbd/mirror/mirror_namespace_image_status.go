@@ -45,9 +45,22 @@ func (v *Namespace) WaitReplayReady(ctx context.Context, imageName string) (Imag
 }
 
 func (v *Namespace) waitReplayReady(ctx context.Context, interval time.Duration, imageName string) (ImageStatus, error) {
+	status, err := waitRBDMirrorReplay(ctx, interval, v.imageReader(imageName, "while waiting for replay"))
+	if err != nil {
+		status.ReplayReady = false
+		return status, scopedRBDImageError(ctx, err)
+	}
+	return status, nil
+}
+
+// imageReader returns the reads of one image that a wait or a watch makes in
+// turn: the first admitted read pins the receiver cohort and every later one
+// checks it, and the source image's mode is pinned once observed. during ends
+// the refusal message of a mode change.
+func (v *Namespace) imageReader(imageName, during string) func(context.Context) (ImageStatus, error) {
 	var witness *rbdReceiverWitness
 	var mode Mode
-	status, err := waitRBDMirrorReplay(ctx, interval, func(attempt context.Context) (ImageStatus, error) {
+	return func(attempt context.Context) (ImageStatus, error) {
 		current, captured, err := v.imageStatus(attempt, imageName, witness)
 		if witness == nil && captured != nil {
 			witness = captured
@@ -55,17 +68,12 @@ func (v *Namespace) waitReplayReady(ctx context.Context, interval time.Duration,
 		if current.SourceImageID != "" {
 			if mode != "" && mode != current.Mode {
 				current.ReplayReady = false
-				return current, rbdImageGuardError("RBD source image mode changed while waiting for replay")
+				return current, rbdImageGuardError("RBD source image mode changed " + during)
 			}
 			mode = current.Mode
 		}
 		return current, err
-	})
-	if err != nil {
-		status.ReplayReady = false
-		return status, scopedRBDImageError(ctx, err)
 	}
-	return status, nil
 }
 
 func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous *rbdReceiverWitness) (ImageStatus, *rbdReceiverWitness, error) {
@@ -108,7 +116,7 @@ func scopedRBDImageError(ctx context.Context, err error) error {
 	if permanent {
 		message = "RBD namespace image original authority or native identity is invalid"
 	}
-	return &rbdImageObservationError{message: message, cause: safe.cause, permanent: permanent}
+	return &rbdImageObservationError{message: message, cause: safe.cause, permanent: permanent, pending: !permanent && rbdImagePending(err)}
 }
 
 func scopedRBDImagePermanent(err error) bool {
