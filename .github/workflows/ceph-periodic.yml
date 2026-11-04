@@ -1,6 +1,6 @@
 name: Ceph periodic
 
-# One daily allocation: supported-release core + an extension rotation on
+# One daily allocation: random supported-release batches on
 # five days; historical/new patch discovery on Tuesday and Friday (UTC).
 # Full matrices and repeated representative campaigns require manual dispatch.
 # Every sample publishes one frozen source/image/test plan before execution.
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: rotate/discovery sample coverage; targeted reproduces selected tests; full/representative/storage are explicit investigations
+        description: rotate/discovery flaky samples; targeted reproduces selected tests; full/representative/storage are explicit investigations
         type: choice
         options: [rotate, discovery, targeted, full, representative, storage]
         default: rotate
@@ -33,7 +33,7 @@ on:
         options: ['20.2.4', '21.2.0', '19.2.5']
         default: '20.2.4'
       ref:
-        description: Source ref to freeze; an exact original SHA reproduces the recorded source; empty uses the dispatched commit
+        description: Source ref for sampled, representative and storage runs; full uses the dispatched commit; empty uses the dispatched commit
         type: string
         default: ''
       patch:
@@ -83,11 +83,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          ref: scenario-history
-          path: history
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
@@ -109,7 +104,7 @@ jobs:
         run: |
           sha=$(git rev-parse HEAD)
           python3 .github/scripts/tag_scenarios.py modules --directory artifacts/plan-modules
-          python3 .github/scripts/periodic_selection.py --mode "$SAMPLE_MODE" --history history --source "$sha" --release "$SAMPLE_RELEASE" --profiles "$SAMPLE_PROFILES" --tests "$SAMPLE_TESTS" --network "$SAMPLE_NETWORK" --freeze-images --output artifacts/periodic-plan.json
+          python3 .github/scripts/periodic_selection.py --mode "$SAMPLE_MODE" --source "$sha" --release "$SAMPLE_RELEASE" --profiles "$SAMPLE_PROFILES" --tests "$SAMPLE_TESTS" --network "$SAMPLE_NETWORK" --freeze-images --output artifacts/periodic-plan.json
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Publish the plan before native work
         if: always()

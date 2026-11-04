@@ -19,7 +19,7 @@ SHA = 'a' * 40
 
 
 def history(cell, mode='rotate', date='2026-11-01T00:00:00+00:00', advances=True,
-            complete=False, reason='oldest_attempt'):
+            complete=False, reason='random_sample'):
     row = {'schema': sample.SCHEMA, 'source_sha': SHA, 'execution': '1-1',
            'mode': mode, 'cell': cell, 'release': '20.2.4', 'selected_at': date, 'advances': advances,
            'complete': complete, 'reason': reason, 'entries': []}
@@ -32,69 +32,42 @@ class SelectionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = tags.load_catalog()
 
-    def plan(self, mode='rotate', rows=(), **kwargs):
-        return sample.make_plan(self.catalog, list(rows), SHA, mode, NOW, **kwargs)
+    def bundle(self, mode='rotate', **kwargs):
+        return sample.sample_plan(self.catalog, SHA, mode, NOW, seed='control', **kwargs)
 
-    def test_required_profile_network_inventory_is_retained_exactly_once(self):
-        core, groups = sample.scope(self.catalog)
-        self.assertEqual({t for e in core for t in e['tests']}, set(sample.CORE))
-        required = tags.discover(self.catalog)
-        expected = tags.network_matrix([p for p in required['include'] if p['requires_ceph']], 'all')
-        actual = [e for g in groups for e in g['entries']]
-        self.assertEqual(len(actual), len(expected))
-        self.assertEqual(len({e['id'] for e in actual}), len(actual))
-        self.assertEqual({(e['profile']['id'], e['network']) for e in actual},
-                         {(e['id'].removesuffix('-' + e['network']), e['network']) for e in expected})
-        self.assertTrue(all(e['native_seconds'] <= 1200 for e in actual))
+    def plan(self, mode='rotate', **kwargs):
+        return self.bundle(mode, **kwargs)['runs'][0]
+
+    def test_draw_is_small_distinct_and_reproducible(self):
+        for mode in ('rotate','discovery'):
+            first = self.bundle(mode)
+            self.assertEqual(first, self.bundle(mode))
+            self.assertIn(len(first['runs']), (2,3))
+            self.assertEqual(len({r['release'] for r in first['runs']}),len(first['runs']))
+            self.assertTrue(all(2 <= len(r['entries']) <= 4 for r in first['runs']))
+            sample.validate_bundle(first,self.catalog)
+            other = sample.sample_plan(self.catalog,SHA,mode,NOW,seed='another draw')
+            self.assertNotEqual(first['plan_sha256'],other['plan_sha256'])
 
     def test_schedule_has_five_rotation_and_two_discovery_days(self):
-        modes = [sample.make_plan(self.catalog, [], SHA, 'auto', NOW + dt.timedelta(days=d))['mode'] for d in range(7)]
-        self.assertEqual((modes.count('rotate'), modes.count('discovery')), (5, 2))
+        # Only the weekday routing is under test; no native work is claimed.
+        with mock.patch.object(sample.tags,'discover',wraps=tags.discover):
+            modes = [sample.sample_plan(self.catalog,SHA,'auto',NOW+dt.timedelta(days=d),seed='control')['mode'] for d in range(7)]
+        self.assertEqual((modes.count('rotate'),modes.count('discovery')),(5,2))
 
-    def test_complete_cartesian_rotation_before_repeating_a_cell(self):
-        _, groups = sample.scope(self.catalog)
-        candidates = [{'id': release + '/' + group['id']} for release in sample.images.RELEASES for group in groups]
-        rows, seen = [], set()
-        for i in range(len(candidates)):
-            chosen, _ = sample.choose(candidates, rows, 'rotate')
-            self.assertNotIn(chosen['id'], seen)
-            seen.add(chosen['id'])
-            # Failures advance exactly like successes, but remain incomplete.
-            rows.append(history(chosen['id'], date=(NOW + dt.timedelta(seconds=i)).isoformat()))
-        first, _ = sample.choose(candidates, rows, 'rotate')
-        self.assertEqual(first['id'], rows[0]['cell'])
-
-    def test_supported_releases_interleave_in_the_initial_rotation(self):
-        rows = []
-        releases = []
-        for index in range(len(sample.images.RELEASES)):
-            plan = self.plan(rows=rows)
-            releases.append(plan['release'])
-            rows.append(history(plan['cell'], date=(NOW + dt.timedelta(seconds=index)).isoformat()))
-        self.assertEqual(releases, list(sample.images.RELEASES))
-
-    def test_cancelled_before_native_has_no_turn_credit(self):
-        candidates = [{'id': 'a'}, {'id': 'b'}]
-        picked, _ = sample.choose(candidates, [history('a', advances=False)], 'rotate')
-        self.assertEqual(picked['id'], 'a')
-
-    def test_new_patch_priority_alternates_with_oldest_attempt(self):
-        candidates = [{'id': v, 'release': v} for v in ('19.2.0', '19.2.1', '21.2.0')]
-        first, reason = sample.choose(candidates, [], 'discovery')
-        self.assertEqual((first['release'], reason), ('21.2.0', 'new_patch'))
-        rows = [history('21.2.0', mode='discovery', reason=reason)]
-        second, reason = sample.choose(candidates, rows, 'discovery')
-        self.assertEqual((second['release'], reason), ('19.2.0', 'oldest_attempt'))
-
-    def test_failure_does_not_replace_last_complete_evidence(self):
-        first = self.plan()
-        old = history(first['cell'], complete=True)
-        failed = history(first['cell'], date=NOW.isoformat())
-        # Restrict selection to this cell to inspect last complete provenance.
-        with mock.patch.object(sample, 'choose', return_value=({'id': first['cell'], 'release': first['release'],
-                                                               'entries': first['entries']}, 'oldest_attempt')):
-            plan = self.plan(rows=[old, failed])
-        self.assertEqual(plan['last_complete'], old['selected_at'])
+    def test_bundle_rejects_mixed_sources_duplicate_versions_and_budgets(self):
+        original = self.bundle()
+        for kind in ('source','duplicate','budget'):
+            bad = copy.deepcopy(original)
+            if kind == 'source':
+                bad['source_sha'] = 'b'*40
+            elif kind == 'duplicate':
+                bad['runs'][1] = bad['runs'][0]
+            else:
+                bad['budget_seconds'] += 1
+            bad['plan_sha256'] = sample.digest({k:v for k,v in bad.items() if k != 'plan_sha256'})
+            with self.subTest(kind=kind),self.assertRaises(ValueError):
+                sample.validate_bundle(bad,self.catalog)
 
     def test_discovery_does_not_expand_ordinary_supported_releases(self):
         supported = tuple(sample.images.RELEASES)
@@ -106,11 +79,11 @@ class SelectionTests(unittest.TestCase):
         plan = self.plan('discovery')
         self.assertIn('reference', plan['images'])
         self.assertEqual(tuple(sample.images.RELEASES), supported)
-        self.assertEqual(plan['scope'], 'sampled_compatibility_not_support')
+        self.assertEqual(plan['scope'], 'flaky_discovery_sample_not_support')
 
     def test_targeted_same_sha_keeps_requested_patch_and_tests(self):
         first = self.plan()
-        e = first['entries'][0]
+        e = next(e for e in first['entries'] if e['profile']['checker'] == 'none')
         plan = self.plan('targeted', release='19.2.2', profiles=e['profile']['id'], tests=e['tests'][0])
         self.assertEqual((plan['release'], plan['source_sha'], len(plan['entries'])), ('19.2.2', SHA, 1))
         self.assertEqual(plan['entries'][0]['tests'], [e['tests'][0]])
@@ -131,7 +104,7 @@ class SelectionTests(unittest.TestCase):
             elif change == 'native_budget':
                 bad['entries'][0]['native_seconds'] = 100000
             elif change == 'images':
-                bad['images']['references']['essential'] = 'moving:tag'
+                bad['images']['references'][next(iter(bad['images']['references']))] = 'moving:tag'
             else:
                 bad['budget_seconds'] = 1000000
             bad['plan_sha256'] = sample.digest({k:v for k,v in bad.items() if k != 'plan_sha256'})
@@ -154,9 +127,9 @@ class SelectionTests(unittest.TestCase):
         sample.validate_plan(frozen, self.catalog)
 
     def test_sample_selection_is_refused_before_native_on_unknown_tests_or_expanded_budget(self):
-        core, _ = sample.scope(self.catalog)
-        profile = core[0]['profile']
-        for selection, timeout in [('TestAbsent', 1), (core[0]['tests'][0], 1000000)]:
+        item = self.plan()['entries'][0]
+        profile = item['profile']
+        for selection, timeout in [('TestAbsent', 1), (item['tests'][0], 1000000)]:
             with mock.patch.object(tags.subprocess, 'Popen') as popen, self.assertRaises(ValueError):
                 tags.run_profile(self.catalog, tags.discover(self.catalog), profile['category'], profile['batch'],
                                  profile['package'], Path('/never/create'), selected_tests_text=selection,
@@ -203,7 +176,7 @@ class ExecutionControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.catalog = tags.load_catalog()
-        cls.plan = sample.make_plan(cls.catalog, [], SHA, 'rotate', NOW)
+        cls.plan = sample.sample_plan(cls.catalog, SHA, 'rotate', NOW, seed='control')['runs'][0]
 
     def run_control(self, failure='', cleanup_pass=True):
         """Fake commands test admission/checkpoints only; they run no Ceph."""
@@ -276,6 +249,27 @@ class ExecutionControls(unittest.TestCase):
         _, result, _ = self.run_control('native')
         self.assertFalse(result['complete'])
         self.assertTrue(all(e['classification'] != 'passed' for e in result['entries']))
+
+    def test_successful_control_keeps_its_sample_scope_and_all_started_entries(self):
+        code, result, _ = self.run_control()
+        self.assertEqual(code, 0)
+        self.assertTrue(result['complete'])
+        self.assertTrue(all(e['native_started'] for e in result['entries']))
+        self.assertEqual(result['plan']['scope'], 'flaky_discovery_sample_not_support')
+
+    def test_characterization_preserves_first_observation_and_requires_all_controls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'native.log'
+            cases = sorted(executor.SCHEDULE_CASES)
+            text = ''.join(json.dumps({'case':c,'code':0,'out':'[]'}) + '\n' for c in cases)
+            path.write_text(text)
+            self.assertEqual(set(executor.characterization(path)), set(cases))
+            path.write_text(text + json.dumps({'case':cases[0],'code':22,'out':'[]'}))
+            with self.assertRaises(ValueError):
+                executor.characterization(path)
+            path.write_text('\n'.join(text.splitlines()[1:]))
+            with self.assertRaises(ValueError):
+                executor.characterization(path)
 
     def test_cpu_baseline_requires_actual_loader_evidence(self):
         for text, want in [('x86-64-v3 (supported, searched)', True), ('x86-64-v2 (supported, searched)', False)]:

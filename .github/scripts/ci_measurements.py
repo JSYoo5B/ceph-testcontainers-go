@@ -1392,18 +1392,13 @@ def parse_markers(values):
     return markers
 
 
-def periodic_samples(directory, jobs=None):
+def periodic_samples(directory):
     """Packed receipts alongside existing Actions job timing, without turning
     sample passes into full-profile or current-main coverage claims."""
     from periodic_selection import validate_receipt
-    jobs = jobs or {}
     samples = []
     for path in sorted(Path(directory).rglob("periodic-run.json")):
         row = validate_receipt(json.loads(path.read_text()))
-        run_id, attempt = row["execution"].split("-")
-        held = [job for job in jobs.get(run_id, []) if ran(job)
-                and str(job.get("run_attempt", 1)) == attempt
-                and job["name"] in ("Sample plan", "Sequential sample", "History")]
         phases = {name: sum(entry.get("phases", {}).get(name, {}).get("elapsed_seconds", 0)
                             for entry in row["entries"]) for name in ("compile", "test_images", "native")}
         samples.append({"execution": row["execution"], "source_sha": row["source_sha"],
@@ -1413,9 +1408,9 @@ def periodic_samples(directory, jobs=None):
                         "executor_seconds": row.get("elapsed_seconds"),
                         "preparation_seconds": row.get("preparation_seconds"), "phases": phases,
                         "native_entries_started": sum(e["native_started"] for e in row["entries"]),
-                        "runner_allocations": len(held) if held else None,
-                        "runner_seconds": sum(seconds(j["started_at"], j["completed_at"]) for j in held) if held else None,
-                        "created_to_start_seconds": [seconds(j.get("created_at"), j["started_at"]) for j in held],
+                        "runner_allocations": None,
+                        "runner_seconds": None,
+                        "created_to_start_seconds": None,
                         "runner_queue_seconds": None})
     return {"schema": "ceph-ci-periodic-measurements/v1", "samples": samples,
             "scope": "sampled execution only; runner acquisition is unknown without dependency-ready evidence"}
@@ -1462,12 +1457,11 @@ def main(argv=None):
                          help="Runners left for pull requests; default tag_scenarios.PULL_REQUEST_RUNNERS")
     command = commands.add_parser("periodic", help="Measure packed periodic receipts without full-profile acceptance claims")
     command.add_argument("--receipts", type=Path, required=True)
-    command.add_argument("--cache", type=Path, help="Optional existing Actions measurement cache for runner timing")
     command.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "periodic":
-            result = periodic_samples(args.receipts, load_jobs(args.cache) if args.cache else None)
+            result = periodic_samples(args.receipts)
             if args.output:
                 args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
             print(json.dumps(result, indent=2, sort_keys=True))

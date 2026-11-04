@@ -763,10 +763,13 @@ def collect(history_dir, rows_dir):
     # Packed periodic executions keep their sampled scope and attempt state
     # in this same history branch. They are never normalized as full-profile
     # passes or mixed into the existing same-configuration classifier.
-    from periodic_selection import validate_receipt
-    for path in sorted(rows_dir.rglob("periodic-run.json")):
-        receipt = validate_receipt(json.loads(path.read_text()))
-        target = history_dir / "periodic" / (receipt["execution"] + ".json")
+    from periodic_selection import validate_receipt, validate_bundle_receipt
+    paths = sorted(rows_dir.rglob("periodic-run.json")) + sorted(rows_dir.rglob("periodic-bundle.json"))
+    for path in paths:
+        bundle = path.name == "periodic-bundle.json"
+        receipt = (validate_bundle_receipt if bundle else validate_receipt)(json.loads(path.read_text()))
+        suffix = "bundle" if bundle else receipt["release"]
+        target = history_dir / "periodic" / (receipt["execution"] + "-" + suffix + ".json")
         if target.exists() and json.loads(target.read_text()) != receipt:
             raise ValueError("conflicting periodic receipt for " + receipt["execution"])
         if not target.exists():

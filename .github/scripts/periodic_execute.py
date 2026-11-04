@@ -205,7 +205,7 @@ def persist(path, receipt):
     selection.write(path, receipt)
 
 
-def execute(plan_path, directory, trial=False, runner=command):
+def execute(plan_path, directory, trial=False, runner=command, deadline=None, binaries=None):
     plan_path, directory = Path(plan_path).resolve(), Path(directory).resolve()
     plan = json.loads(plan_path.read_text())
     catalog = tags.load_catalog()
@@ -228,7 +228,7 @@ def execute(plan_path, directory, trial=False, runner=command):
     result_path = directory / 'periodic-run.json'
     persist(result_path, receipt)
     started = time.monotonic()
-    deadline = started + plan['budget_seconds']
+    deadline = started + plan['budget_seconds'] if deadline is None else deadline
     environment = tags.go_environment()
     for key in images.ROLE_ENV.values():
         environment.pop(key, None)
@@ -264,7 +264,7 @@ def execute(plan_path, directory, trial=False, runner=command):
         environment.update(prepared['prepared_environment'])
         # Compile receipts remain per profile; reuse only the same verified
         # binary for another selection/network of that profile in this run.
-        binaries = {}
+        binaries = {} if binaries is None else binaries
         for item in plan['entries']:
             record = {'id': item['id'], 'profile': item['profile'], 'tests': item['tests'], 'network': item['network'],
                       'native_started': False, 'classification': 'not_started', 'phases': {}}
@@ -396,6 +396,48 @@ def execute(plan_path, directory, trial=False, runner=command):
     return 0 if receipt['complete'] else 1
 
 
+def execute_bundle(plan_path, directory, trial=False, runner=command):
+    """Run the random draw sequentially under one shared deadline and binary cache."""
+    bundle = json.loads(Path(plan_path).read_text())
+    selection.validate_bundle(bundle, tags.load_catalog())
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=False)
+    started = time.monotonic()
+    deadline, binaries = started + bundle['budget_seconds'], {}
+    receipt = {'schema': selection.BUNDLE_SCHEMA, 'source_sha': bundle['source_sha'],
+               'execution': os.environ.get('GITHUB_RUN_ID', '0') + '-' + os.environ.get('GITHUB_RUN_ATTEMPT', '1'),
+               'plan': bundle, 'versions': [], 'complete': False, 'classification': 'not_started'}
+    result_path = directory / 'periodic-bundle.json'
+    persist(result_path, receipt)
+    try:
+        for plan in bundle['runs']:
+            if deadline - time.monotonic() < min(e['native_seconds'] for e in plan['entries']) + CLEANUP_RESERVE + 570:
+                receipt['classification'] = 'budget_not_started'
+                break
+            path = directory / (plan['release'] + '-plan.json')
+            selection.write(path, plan)
+            execute(path, directory / plan['release'], trial, runner, deadline, binaries)
+            outcome = json.loads((directory / plan['release'] / 'periodic-run.json').read_text())
+            receipt['versions'].append({'release': plan['release'], 'complete': outcome['complete'],
+                                        'classification': outcome['classification']})
+            persist(result_path, receipt)
+            if outcome['classification'] in ('cleanup_failure', 'interrupted'):
+                receipt['classification'] = outcome['classification']
+                break
+        receipt['complete'] = (len(receipt['versions']) == len(bundle['runs'])
+                               and all(row['complete'] for row in receipt['versions']))
+        if receipt['classification'] == 'not_started':
+            receipt['classification'] = 'passed' if receipt['complete'] else 'incomplete_or_failed'
+    except InterruptedError:
+        receipt['classification'] = 'interrupted'
+    finally:
+        receipt['unstarted_versions'] = [p['release'] for p in bundle['runs']
+                                         if p['release'] not in {r['release'] for r in receipt['versions']}]
+        receipt['elapsed_seconds'] = round(time.monotonic() - started, 3)
+        persist(result_path, receipt)
+    return 0 if receipt['complete'] else 1
+
+
 def helper_names_from(plan):
     return {reference: 'helper-' + str(number) for number, reference in enumerate(plan.get('test_images', {}))}
 
@@ -416,7 +458,9 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     if args.command == 'execute':
-        return execute(args.plan, args.directory, args.trial)
+        plan = json.loads(args.plan.read_text())
+        run = execute_bundle if plan.get('schema') == selection.BUNDLE_SCHEMA else execute
+        return run(args.plan, args.directory, args.trial)
     plan = json.loads(args.plan.read_text())
     item = next(e for e in plan['entries'] if e['id'] == args.entry)
     return native(plan, item, args.directory, args.compile)

@@ -14,7 +14,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
 | Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
-| Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Budgeted supported-release rotation or historical patch discovery; explicit full matrices and repeated investigations |
+| Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
@@ -561,14 +561,15 @@ read as a hit or a write, and a missing log is `unknown`.
 
 ## Periodic runs
 
+Periodic primarily searches for flaky tests and patch-dependent differences.
 The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
 Friday use `discovery`; the other five days use `rotate`. A release phase does
 not expand this daily sample. Ordinary PR/main checks keep their own triggers.
 
 | Mode | Selection | Invocation |
 | --- | --- | --- |
-| `rotate` | One supported release, the six-test operational core and one extension group/network selection | Five scheduled slots per week; manual default |
-| `discovery` | One historical/new patch, the same compact core, plus applicable directed characterization | Two scheduled slots per week; manual |
+| `rotate` | Random 2–3 supported releases and 2–3 native batches/network selections | Five scheduled slots per week; manual default |
+| `discovery` | Random 2–3 historical/new patches and 2–3 compact parents, plus applicable directed characterization | Two scheduled slots per week; manual |
 | `targeted` | Explicit source ref, catalogued patch, profile IDs and optional parent tests/network | Manual failure comparison |
 | `full` | Every required profile/network on every supported release, plus environment checks | Manual only |
 | `representative` | Source-owned representative batches with explicit repetitions | Manual only; default one repetition |
@@ -578,7 +579,8 @@ not expand this daily sample. Ordinary PR/main checks keep their own triggers.
 
 `Sample plan` freezes the exact checkout SHA, Ceph index/platform identities,
 source-proven additional image and Ryuk digests, parent test names, tags,
-network modes and selection reason. The plan is uploaded before `Sequential
+network modes and the random seed. The run identity seeds the draw, so later
+runs can select a different combination even at the same source SHA. The plan is uploaded before `Sequential
 sample` starts. Every native case consumes that plan and the compiled binary's
 existing source/inventory receipt; an unknown test, expanded timeout or changed
 source/image selection is refused. The worker records the actual native build
@@ -592,7 +594,7 @@ sufficient headroom causes no deletion. Every actual Docker storage filesystem
 must pass admission, including post-image and per-batch checks. A dirty cleanup
 stops further native admission; the executor never prunes other resources.
 
-The executor admits work within 110 minutes, reserves cleanup time, and does
+All selected versions share one 110-minute deadline; the executor reserves cleanup time, and does
 not start a case without its full bounded native window. Core selections have
 a ten-minute cap and extensions at most twenty minutes, each no greater than
 the source timeout. A case that times out, skips, panics or fails its existing
@@ -616,40 +618,30 @@ The core reuses these existing parent tests in their declared default network:
 - `TestClientIdentities`: authentication/capability refusal and working controls.
 - `TestCephFSOSDRecovery`: OSD interruption/recovery and retained exact bytes.
 
-`periodic_selection.py` retains **every** required non-environment profile and
-all declared network combinations in the extension inventory. Source-owned
-cost hints in `.github/periodic-costs.json` group those entries at a 45-minute
-estimate; the hints are grouping inputs, never pass evidence or hard timing
-predictions. A missing hint uses a conservative ten-minute estimate. Additional
-network modes keep the existing network-test selection and complete checker
-contracts. Environment/code checks remain in their existing workflows.
-
-For a fixed inventory there are 24 extension groups, 148 profile/network
-combinations per release and 72 supported-release/group cells. Five rotation
-slots per week revisit all cells in approximately **15 weeks**. Releases are
-interleaved within the complete product of groups and releases; separate modulo
-counters cannot accidentally omit combinations. Inventory changes create new
-cell identities. These revisit estimates assume successful scheduling and a
-fixed inventory, not that every attempted cell completes.
+`rotate` draws from required native batches; `discovery` draws from the six
+compact parents above. Each draw uses the same selected batches/parents across
+its 2–3 versions, with the declared network selection frozen before execution.
+Alternate network modes keep the existing network-test scope, and checker
+profiles retain their complete parent set. Environment/code checks remain in
+their existing workflows. There are no cost bins, exhaustive rotation ledger,
+or fixed coverage/revisit guarantees. A random sample can repeat or miss a
+version, batch or network across successive executions.
 
 ### Selection, evidence and failure routing
 
-Read selection history from the existing `scenario-history` branch. Choose
-never-attempted cells first, then the oldest last attempt with stable ordering.
-A native failure, timeout, incomplete native run, preparation failure or
-ineligible environment advances the attempt while preserving its failure and
-unfinished cases. Cancellation before native starts earns no native execution
-credit. A checkpoint is written only after the Go process actually starts.
-Last attempt and last complete result are separate; repeated failures cannot
-monopolize a cell's turn or become passes.
+A Go-process start checkpoint distinguishes an actual native attempt from a
+preparation failure or cancellation before execution. Native failures, timeouts,
+incomplete work, unavailable artifacts and ineligible environments remain
+separate outcomes. The first failure remains recorded; there is no automatic
+retry until green. Dirty cleanup stops the remaining versions too.
 
-Packed receipts and their frozen plans live under `periodic/<run>-<attempt>.json`
-on the same history branch. They retain actual source/build/image/test identity
-and case-level preparation/native/cleanup outcomes, including unstarted entries.
-They are not ingested as full-profile passes by the ordinary same-configuration
-classifier. Different executions may use newer main SHAs: no old snapshot is
-held merely to finish a rotation. Results are compatibility samples at those
-sources, never proof that current main passed every version or network.
+Frozen plans and packed receipts live under `periodic/` on the existing
+`scenario-history` branch, keyed by run, attempt and release, with a separate
+bundle receipt retaining unstarted versions. They retain actual source/build/
+image/test identities and preparation/native/cleanup outcomes. They are not
+ingested as full-profile passes by the ordinary same-configuration classifier.
+Every execution uses its selected source; an old SHA is not held while waiting
+for coverage. A sample is never proof that current main passed every version.
 
 Historical discovery uses a separate inventory in
 `.github/ceph-discovery-images.json`: official aggregate images for Squid
@@ -663,10 +655,9 @@ CPU/platform preflight is an environment result, not a Ceph failure. Missing
 artifacts, unresolved helpers and inapplicable extra-image contracts remain
 preparation/eligibility outcomes rather than native passes.
 
-A new patch receives a priority turn, alternating with oldest-attempt turns so
-new arrivals cannot permanently starve historical work. Fifteen patches at two
-slots per week imply roughly **eight weeks** for a fixed inventory. Discovery
-does not add historical patches to `SUPPORTED_RELEASES` or change support policy.
+Discovery does not add historical patches to `SUPPORTED_RELEASES` or change
+support policy. Add a newly published patch to the discovery inventory to make
+it eligible for random selection; use `targeted` for an immediate check.
 The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
 malformed trash-purge schedule removal with empty and populated schedules. It
 preserves native exit codes and unchanged-state controls in the durable receipt:
@@ -698,9 +689,8 @@ the existing tooling:
 python3 .github/scripts/ci_measurements.py periodic --receipts <artifact-directory> --output <report.json>
 ```
 
-An optional existing `--cache` adds actual job allocations and runner time.
-Missing timing stays unknown; created-to-start delay is not relabeled as runner
-queue time without dependency-ready evidence.
+This reports observed preparation/compile/native times per version; shared
+runner allocation and queue timing remain unknown in these receipts.
 
 ### Supported releases
 
