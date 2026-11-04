@@ -1,0 +1,104 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 156.662,
+  "execution": "41808404407-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "targeted",
+    "plan_sha256": "3b0701e219dc8f59a89656c96977c1174edf8be78cfeeef2a9ae43de78a8766a",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "d48b1c0d3bf1e67955ca9ad92b6365571ee456f44fcb80e286aab7797a80f550",
+        "cell": "20.2.5/b86ab0aa85f2",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-default-a488da21-e3bcc77f86",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-a488da21",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestPoolPolicies"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/default/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/ceph_integration_test.go",
+                "internal/integration/placement_integration_test.go",
+                "internal/integration/pool_integration_test.go",
+                "internal/integration/pool_pg_primary_integration_test.go",
+                "internal/integration/pool_pgs_integration_test.go",
+                "internal/integration/pool_policy_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestClusterLifecycle"
+            ]
+          }
+        ],
+        "images": {
+          "codename": "tentacle",
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "original": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+          "platforms": {
+            "linux/amd64": "sha256:b2f0255d0e2626473e72f2ded7e67dfaf546272f1c6fa699e1aaffce288b6e57",
+            "linux/arm64": "sha256:049acd51a7a9a6e10051ed60ae3ee2d8d4b3988a90b62487eeea2897b5d90f0d"
+          },
+          "publication": "The official-20.2.5-all role aggregate is not published; this is the separately pinned upstream aggregate.",
+          "reference": "quay.io/ceph/ceph@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+          "release_notes": "https://docs.ceph.com/en/latest/releases/tentacle/#v20-2-5-tentacle",
+          "variant": "upstream_aggregate"
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "targeted",
+        "plan_sha256": "2b2bbea1711b4e9ce7080ea4e15223b550d0b5ff4b7e207b44e439a172dabbf5",
+        "platform": "linux/amd64",
+        "reason": "explicit_target",
+        "release": "20.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-04T09:33:07.085232+00:00",
+        "source_sha": "eee0a4c57e05a2fbc5cb522bb1b432b16eb6e4d2",
+        "test_images": {
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "eee0a4c57e05a2fbc5cb522bb1b432b16eb6e4d2:41808404407:1",
+    "selected_at": "2026-11-04T09:33:07.085232+00:00",
+    "source_sha": "eee0a4c57e05a2fbc5cb522bb1b432b16eb6e4d2"
+  },
+  "receipt_sha256": "1ccdf4ac94e58cb0b29c6da1623c2ab3d9b8ffdf675db9828c9243ac26790689",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "eee0a4c57e05a2fbc5cb522bb1b432b16eb6e4d2",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.5"
+    }
+  ]
+}
