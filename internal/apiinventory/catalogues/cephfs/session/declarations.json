@@ -2,8 +2,14 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/session",
-  "count": 17,
+  "count": 24,
   "entries": [
+    {
+      "current": "cephfs/session.Change",
+      "kind": "type",
+      "proposed": "cephfs/session.Change",
+      "decision": "baseline"
+    },
     {
       "current": "cephfs/session.Feature",
       "kind": "type",
@@ -42,6 +48,12 @@
       "kind": "function",
       "signature": "func(ctx context.Context, fs *cephfs.Filesystem, requested Limits) (*TimeoutsOverrideHandle, error)",
       "proposed": "cephfs/session.OverrideTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RankHolder",
+      "kind": "type",
+      "proposed": "cephfs/session.RankHolder",
       "decision": "baseline"
     },
     {
@@ -118,6 +130,41 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*TimeoutsOverrideHandle",
       "proposed": "cephfs/session.TimeoutsOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Watch",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, clients ...uint64) (*Watcher, error)",
+      "proposed": "cephfs/session.Watch",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.WatchEvent",
+      "kind": "type",
+      "proposed": "cephfs/session.WatchEvent",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Watcher",
+      "kind": "type",
+      "proposed": "cephfs/session.Watcher",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Watcher.Events",
+      "kind": "method",
+      "signature": "func() \u003c-chan WatchEvent",
+      "receiver": "*Watcher",
+      "proposed": "cephfs/session.Watcher.Events",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.Watcher.Stop",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*Watcher",
+      "proposed": "cephfs/session.Watcher.Stop",
       "decision": "baseline"
     }
   ]

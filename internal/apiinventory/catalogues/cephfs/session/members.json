@@ -2,8 +2,12 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/session",
-  "count": 17,
+  "count": 35,
   "types": {
+    "cephfs/session.Change": [
+      "Change.PreviousState field string",
+      "Change.Session field Session"
+    ],
     "cephfs/session.Feature": [
       "Feature.Bit field int",
       "Feature.Name field string"
@@ -11,6 +15,11 @@
     "cephfs/session.Limits": [
       "Limits.Autoclose field time.Duration",
       "Limits.Timeout field time.Duration"
+    ],
+    "cephfs/session.RankHolder": [
+      "RankHolder.GID field uint64",
+      "RankHolder.Name field string",
+      "RankHolder.Rank field int"
     ],
     "cephfs/session.RequirementStep": [
       "RequirementStep.AlreadyRequired field bool",
@@ -28,6 +37,21 @@
       "Session.Rank field int",
       "Session.Root field string",
       "Session.State field string"
+    ],
+    "cephfs/session.WatchEvent": [
+      "WatchEvent.Added field []Session",
+      "WatchEvent.After field []RankHolder",
+      "WatchEvent.Before field []RankHolder",
+      "WatchEvent.Changed field []Change",
+      "WatchEvent.Err field error",
+      "WatchEvent.Finished field time.Time",
+      "WatchEvent.Kind field ceph.WatchEventKind",
+      "WatchEvent.MaxMDS field int",
+      "WatchEvent.Rebaselined field []int",
+      "WatchEvent.Removed field []Session",
+      "WatchEvent.Sequence field uint64",
+      "WatchEvent.Sessions field []Session",
+      "WatchEvent.Started field time.Time"
     ]
   }
 }
