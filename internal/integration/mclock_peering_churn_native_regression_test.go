@@ -1,4 +1,4 @@
-//go:build (all || (integration && recovery)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_mclock_peering_churn)))
+//go:build (all || integration) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_mclock_peering_churn)))
 
 //ci: timeout=40m job-timeout=55 image-roles=essential,client
 
@@ -42,8 +42,11 @@ import (
 // must not change, and the seeded objects must read back exactly.
 func TestMClockScrubUnderPeeringChurn(t *testing.T) {
 	for _, cutoff := range []string{"high", "low"} {
-		t.Run("cutoff_"+cutoff, func(t *testing.T) { runMClockPeeringChurn(t, cutoff) })
+		t.Run("cutoff_"+cutoff, func(t *testing.T) { runMClockPeeringChurn(t, cutoff, "") })
 	}
+	// The smallest starvation bound the bounded builds accept; builds without
+	// the option ignore it, which the config readback shows.
+	t.Run("cutoff_high_bound_min", func(t *testing.T) { runMClockPeeringChurn(t, "high", "osd_mclock_max_starve_time_hdd = 0.1\n") })
 }
 
 const (
@@ -86,17 +89,17 @@ print(h.hexdigest())
 
 type churnShardSample struct{ total, both, highOnly, maxHigh, maxManaged int }
 
-func runMClockPeeringChurn(t *testing.T, cutoff string) {
+func runMClockPeeringChurn(t *testing.T, cutoff, extra string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	image, opts := harness.IntegrationImages(t)
 	config := filepath.Join(t.TempDir(), "mclock.conf")
-	if err := os.WriteFile(config, []byte("[mon]\npaxos_propose_interval = 0.1\n[osd]\nosd_op_queue = mclock_scheduler\nosd_op_queue_cut_off = "+cutoff+"\ndebug_mclock = 10\n"), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte("[mon]\npaxos_propose_interval = 0.1\n[osd]\nosd_op_queue = mclock_scheduler\nosd_op_queue_cut_off = "+cutoff+"\ndebug_mclock = 10\n"+extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts = append(opts, ceph.WithConfigFile(config),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
-		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip).WithBlockSize(8<<30)))
 	cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 	t.Logf("CHURN ceph=%s cutoff=%s", harness.StaticFacts(cluster).CephVersion, cutoff)
 	osds := clusteraccess.OSDs(t, cluster)
