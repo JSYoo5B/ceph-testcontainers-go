@@ -6,11 +6,11 @@ package integration_test
 
 import (
 	"context"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -152,8 +152,8 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(sortedClone(status.QuorumNames), baseline.Members) || status.MonMap.FSID != baseline.FSID {
-		t.Fatalf("control quorum after recovery: %v fsid %s", status.QuorumNames, status.MonMap.FSID)
+	if result, err := (expect.Monitors{FSID: baseline.FSID, Quorum: baseline.Members}).Evaluate(status); err != nil || !result.Matched {
+		t.Fatalf("control quorum after recovery: %v %v", result, err)
 	}
 	if problems := checkMajorityAddresses(baseline, status); len(problems) > 0 {
 		t.Fatalf("monmap members or addresses changed: %v", problems)

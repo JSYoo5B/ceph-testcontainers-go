@@ -107,6 +107,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		t.Fatalf("initial MON/MGR identities: %+v %+v %v", quorum, managerBefore, err)
 	}
 	standbyName := managerBefore.Standbys[0].Name
+	promoted := expect.Managers{Available: true, Active: standbyName, FormerGID: managerBefore.ActiveGID}
 	owned := map[string]bool{}
 	var members []outageMember
 	monitors, managers := clusteraccess.Monitors(t, cluster), clusteraccess.Managers(t, cluster)
@@ -299,9 +300,11 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 			}
 		}
 		if !observed["mgr"] {
-			if m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
-				observed["mgr"], managerDuring = true, m
-				plan.Observe("mgr", mgrA.Name)
+			if m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil {
+				if r, err := promoted.Evaluate(m); err == nil && r.Matched {
+					observed["mgr"], managerDuring = true, m
+					plan.Observe("mgr", mgrA.Name)
+				}
 			}
 		}
 		if !observed["osd"] {
@@ -341,8 +344,16 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		if len(q.QuorumNames) != 3 || !m.Available || len(m.Standbys) != 1 {
-			return false, fmt.Errorf("quorum %v, manager available=%t standbys=%d", q.QuorumNames, m.Available, len(m.Standbys))
+		quorumEval, err := expect.Monitors{QuorumSize: 3}.Evaluate(q)
+		if err != nil {
+			return false, err
+		}
+		managerEval, err := expect.Managers{Available: true, StandbyCount: 1}.Evaluate(m)
+		if err != nil {
+			return false, err
+		}
+		if !quorumEval.Matched || !managerEval.Matched {
+			return false, fmt.Errorf("%v; %v", quorumEval, managerEval)
 		}
 		s, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {

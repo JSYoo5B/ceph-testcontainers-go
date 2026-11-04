@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -146,8 +147,11 @@ func monitorStoreReplace(t *testing.T, host bool) {
 		receipt = append(receipt, map[string]any{"mon": old.DaemonName, "volume": volume, "old": old.GetContainerID()[:12], "new": replaced.GetContainerID()[:12]})
 	}
 	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
-	if err != nil || len(q.QuorumNames) != 3 {
-		t.Fatalf("quorum %v: %v", q.QuorumNames, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (expect.Monitors{QuorumSize: 3}).Evaluate(q); err != nil || !result.Matched {
+		t.Fatalf("%v: %v", result, err)
 	}
 	t.Logf("MON_STORE_REPLACE_MONMAP host=%v %s", host, identity)
 

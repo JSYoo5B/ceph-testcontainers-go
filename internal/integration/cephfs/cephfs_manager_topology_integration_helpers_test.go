@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
@@ -58,8 +59,11 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	status, err := harness.ObserveCluster(source).ManagerStatus(ctx)
-	if err != nil || !status.Available || status.ActiveName != "b" || len(status.Standbys) != 1 {
-		t.Fatalf("source surviving manager topology: %+v error=%v", status, err)
+	if err != nil {
+		t.Fatalf("source surviving manager topology: %v", err)
+	}
+	if result, err := (expect.Managers{Available: true, Active: "b", StandbyCount: 1}).Evaluate(status); err != nil || !result.Matched {
+		t.Fatalf("source surviving manager topology: %v error=%v", result, err)
 	}
 	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {

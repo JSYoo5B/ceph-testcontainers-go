@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -68,20 +69,33 @@ func profileConfigFile(t *testing.T, text string) string {
 // readiness gate of a suite that starts its daemons itself.
 func waitProfileTopology(t *testing.T, ctx context.Context, cluster *ceph.Container, monitors, standbys int) {
 	t.Helper()
-	var quorum ceph.QuorumStatus
-	var managers ceph.ManagerStatus
+	wantQuorum := expect.Monitors{MemberCount: monitors, QuorumSize: monitors}
+	wantManagers := expect.Managers{Available: true, StandbyCount: standbys}
+	if standbys == 0 {
+		wantManagers = expect.Managers{Available: true, Standbys: []string{}}
+	}
+	var quorum expect.MonitorEvaluation
+	var managers expect.ManagerEvaluation
 	var err error
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		quorum, err = harness.ObserveCluster(cluster).QuorumStatus(ctx)
-		if err == nil && len(quorum.QuorumNames) == monitors && len(quorum.MonMap.Mons) == monitors {
-			managers, err = harness.ObserveCluster(cluster).ManagerStatus(ctx)
-			if err == nil && (standbys < 0 || managers.Available && len(managers.Standbys) == standbys) {
+		var status ceph.QuorumStatus
+		if status, err = harness.ObserveCluster(cluster).QuorumStatus(ctx); err == nil {
+			quorum, err = wantQuorum.Evaluate(status)
+		}
+		if err == nil && quorum.Matched {
+			if standbys < 0 {
+				return
+			}
+			var status ceph.ManagerStatus
+			if status, err = harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil {
+				managers, err = wantManagers.Evaluate(status)
+			}
+			if err == nil && managers.Matched {
 				return
 			}
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
-			t.Fatalf("want %d MONs in quorum and %d standby MGRs: quorum %v of %d, managers %+v, %v",
-				monitors, standbys, quorum.QuorumNames, len(quorum.MonMap.Mons), managers, err)
+			t.Fatalf("want %d MONs in quorum and %d standby MGRs: %v; %v; %v", monitors, standbys, quorum, managers, err)
 		}
 		time.Sleep(time.Second)
 	}
@@ -301,19 +315,18 @@ func checkPausedButOpen(t *testing.T, ctx context.Context, cluster *ceph.Contain
 // waitQuorumNames waits until the quorum is exactly names.
 func waitQuorumNames(t *testing.T, ctx context.Context, cluster *ceph.Container, names ...string) {
 	t.Helper()
-	slices.Sort(names)
-	var got []string
+	want := expect.Monitors{Quorum: names}
+	var got expect.MonitorEvaluation
 	for deadline := time.Now().Add(3 * time.Minute); ; {
 		quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		if err == nil {
-			got = slices.Clone(quorum.QuorumNames)
-			slices.Sort(got)
-			if slices.Equal(got, names) {
-				return
-			}
+			got, err = want.Evaluate(quorum)
+		}
+		if err == nil && got.Matched {
+			return
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
-			t.Fatalf("quorum %v, want %v: %v", got, names, err)
+			t.Fatalf("%v: %v", got, err)
 		}
 		time.Sleep(time.Second)
 	}
@@ -371,8 +384,11 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 
 	// Pause the active MGR, fail it over, then resume it as the standby.
 	before, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-	if err != nil || !before.Available || len(before.Standbys) != 1 {
-		t.Fatalf("managers before the pause: %+v, %v", before, err)
+	if err != nil {
+		t.Fatalf("managers before the pause: %v", err)
+	}
+	if result, err := (expect.Managers{Available: true, StandbyCount: 1}).Evaluate(before); err != nil || !result.Matched {
+		t.Fatalf("managers before the pause: %v, %v", result, err)
 	}
 	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
@@ -395,13 +411,18 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if _, err := cluster.Ceph(ctx, "mgr", "fail", before.ActiveName); err != nil {
 		t.Fatal(err)
 	}
+	takeover := expect.Managers{Available: true, Active: before.Standbys[0].Name}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
+		var result expect.ManagerEvaluation
 		after, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-		if err == nil && after.Available && after.ActiveName == before.Standbys[0].Name {
+		if err == nil {
+			result, err = takeover.Evaluate(after)
+		}
+		if err == nil && result.Matched {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the standby did not take over: %+v, %v", after, err)
+			t.Fatalf("the standby did not take over: %v, %v", result, err)
 		}
 		time.Sleep(time.Second)
 	}

@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -171,9 +172,9 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				slices.Sort(quorum.QuorumNames)
-				if !slices.Equal(quorum.QuorumNames, []string{"d", "e", "f"}) {
-					t.Fatal("original monitor survived the rolling replacement")
+				result, err := expect.Monitors{Quorum: []string{"d", "e", "f"}}.Evaluate(quorum)
+				if err != nil || !result.Matched {
+					t.Fatalf("original monitor survived the rolling replacement: %v %v", result, err)
 				}
 			}
 			for _, n := range nodes {

@@ -73,12 +73,18 @@ func noInitialOSDBootstrap(t *testing.T, ctx context.Context, cluster *ceph.Cont
 		t.Fatal("native original FSID unavailable")
 	}
 	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
-	if err != nil || q.MonMap.FSID != status.FSID || len(q.MonMap.Mons) != 1 || !slices.Equal(q.QuorumNames, []string{"a"}) {
+	if err != nil {
 		t.Fatal("MON-only native majority unavailable", err)
 	}
+	if result, err := (expect.Monitors{FSID: status.FSID, MemberCount: 1, Quorum: []string{"a"}}).Evaluate(q); err != nil || !result.Matched {
+		t.Fatal("MON-only native majority unavailable", result, err)
+	}
 	mgr, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-	if err != nil || !mgr.Available || mgr.ActiveName != "a" || mgr.ActiveGID == 0 || !status.MgrMap.Available {
+	if err != nil || !status.MgrMap.Available {
 		t.Fatal("actual active MGR unavailable", err)
+	}
+	if result, err := (expect.Managers{Available: true, Active: "a"}).Evaluate(mgr); err != nil || !result.Matched {
+		t.Fatal("actual active MGR unavailable", result, err)
 	}
 	if status.OSDMap.NumOSDs != 0 || status.OSDMap.NumUpOSDs != 0 || status.OSDMap.NumInOSDs != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero construction registered or launched storage")
@@ -230,8 +236,11 @@ func runNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("explicit storage replaced original cluster", err)
 	}
 	mgr, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
-	if err != nil || !mgr.Available || mgr.ActiveGID != mgrGID || customizers.Load() != 1 {
+	if err != nil || customizers.Load() != 1 {
 		t.Fatal("explicit storage replaced original manager/customizer authority", err)
+	}
+	if result, err := (expect.Managers{Available: true, ActiveGID: mgrGID}).Evaluate(mgr); err != nil || !result.Matched {
+		t.Fatal("explicit storage replaced original manager/customizer authority", result, err)
 	}
 	cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer done()
