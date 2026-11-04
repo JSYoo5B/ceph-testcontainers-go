@@ -164,6 +164,14 @@ These affect commands or client libraries you run yourself, not the typed API:
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
   99 roles list correctly, and Squid 19.2.5 and Umbrella 21.2.0 list 105.
   Read a known role with `role get` instead; the fixture never lists roles.
+- **Squid 19.2.5, SSE-S3 key left in Vault.** Deleting a bucket with
+  SSE-S3 default encryption marks its Vault Transit key deletable and stops
+  there: the gateway logs `Unable to remove KEK ID ... got -22` and sends no
+  deletion, and the bucket DELETE still answers 204. Squid accepts only an
+  empty response to the key's config update, and Vault 1.21 answers it with
+  the key's description. Tentacle 20.2.4 and Umbrella 21.2.0 delete the key.
+  Remove the key yourself; `TestRGWExternalKMS` reads the outcome from
+  Vault's audit log on every release.
 - **Squid 19.2.6, RGW multisite.** On a secondary zone, `radosgw-admin realm
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the

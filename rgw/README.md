@@ -277,8 +277,10 @@ runs the complete recipe for both modes. What it establishes:
   publish Vault's port on a different host port, so resolve `PortEndpoint`
   again before the next management request.
 - With SSE-S3, RGW creates one Transit key per bucket, named by the bucket
-  ID, and deletes it with the bucket. A bucket DELETE still answers 204
-  when Vault refuses the key deletion: the bucket is gone and its key stays.
+  ID, and tries to delete it with the bucket. A bucket DELETE answers 204
+  whatever happens to the key: when Vault refuses the key deletion the
+  bucket is gone and its key stays, and on Squid the key always stays (see
+  [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
   Nothing retries the deletion, so a successful bucket removal is no proof
   of key cleanup; check the key in Vault and delete an orphan as the KMS
   operator.
