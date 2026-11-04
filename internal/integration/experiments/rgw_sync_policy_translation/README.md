@@ -47,7 +47,7 @@ patched RGW image.
 ## Tier and triggers
 
 Deliberately failing reproducer on the published images, with a bridge and a
-host-network variant (NATIVE_RGW_README). It never runs on a pull request, on
+host-network variant (about 8.5 minutes for the bridge variant on 20.2.4). It never runs on a pull request, on
 `main` or in periodic samples, and never gates anything.
 
 - Manual: `gh workflow run "Native regressions" -f batch=native_rgw_translation
@@ -91,8 +91,10 @@ result.
 
 - **Pass:** both cases held. On a patched gateway this is the evidence the
   patch works for these cases.
-- **Observed bug:** an object replicates through the lower-priority pipe or
-  class, or a denied object replicates before the grant (20.2.4).
+- **Observed bug:** the overlapping pipes do not resolve by priority (an
+  object or class goes the wrong way; on 20.2.4 the `red` object, which only
+  the higher-priority pipe selects, never arrives), or the denied object
+  replicates before the grant (20.2.4).
 - **Not reproduced:** a pass on the published 20.2.4 image. Compare the
   gateway build before trusting it.
 - **Unavailable prerequisite:** the realm, zones, placement or policy import

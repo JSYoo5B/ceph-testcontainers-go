@@ -37,7 +37,7 @@ workaround.
 ## Tier and triggers
 
 Deliberately failing reproducer on 20.2.4, with a bridge and a host-network
-variant (NATIVE_SHUFFLE_README). It never runs on a pull request, on `main` or
+variant (about 6 minutes for the bridge variant on 20.2.4). It never runs on a pull request, on `main` or
 in periodic samples, and never gates anything.
 
 - Manual: `gh workflow run "Native regressions" -f batch=native_shuffle`.
@@ -79,9 +79,10 @@ Record the image digest with the result.
 
 - **Pass:** the MGR redistributed the directories at step 3 without the
   fixture's help.
-- **Observed bug:** steps 1 and 2 pass and step 3 times out waiting for a
-  two-daemon assignment, with the MGR log naming the `DirectoryState` error
-  (20.2.4).
+- **Observed bug:** steps 1 and 2 pass and step 3 fails with "native CephFS
+  mirror assignments did not converge" while every directory stays with the
+  surviving daemon (20.2.4). The MGR's own log names the `DirectoryState`
+  error; the test prints the daemons' logs and the final native topology.
 - **Not reproduced:** a pass on a build claimed to be affected.
 - **Unavailable prerequisite:** the `cephfs` role, the second cluster or the
   mirror link does not start; the failure names the setup step.

@@ -837,8 +837,8 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
-| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | NATIVE_RGW | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
-| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | NATIVE_SHUFFLE | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
+| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
+| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 
 - A cheap deterministic case is a required batch of a non-`short` category,
   so a pull request runs it only when it changes one of the case's own test
