@@ -95,8 +95,9 @@ The client feature under test decides what the fixture must provide:
 | Group snapshots | Format 2 images; flush and close writers first. It is a checkpoint of those images, not an application transaction. |
 | Exclusive lock | The `exclusive-lock` feature and two independent RADOS sessions; `rbd.ImageClients` shows the owner, `fault.Pause` and `override.AddBlocklist` freeze and fence it. |
 | Encryption (LUKS1, LUKS2) | librbd with libcryptsetup (client role and `all` images); no `journaling` on the image. librbd has no rekey API: run `cryptsetup luksChangeKey` on the exported header. |
+| Encrypted clone, flatten | A protected parent snapshot. A clone formatted with its own secret opens only with `encryption_load2` and every formatted ancestor's secret, so flatten it while the chain is loaded; a raw flatten leaves parent data the child secret cannot read. The Python binding fails `encryption_load2` with EPERM when the passphrases are `str`: pass `bytes`. |
 | Erasure-coded data | An EC pool with `AllowOverwrites`, passed as the image's data pool. |
-| Backup to another cluster | `rbd.ExportBackup` / `ExportIncremental` on one cluster, `RestoreBackup` / `RestoreIncremental` on the other. |
+| Backup to another cluster | `rbd.ExportBackup` / `ExportIncremental` on one cluster, `RestoreBackup` / `RestoreIncremental` on the other. An encrypted image travels as its raw LUKS header and ciphertext: the restored image opens with its own secret, and a clone formatted with its own secret must be flattened first. |
 
 ## Reference
 
