@@ -724,6 +724,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `fs set session_timeout`/`session_autoclose` | `session.OverrideTimeouts` | `session.OverrideTimeouts` |
 | `fs set refuse_client_session` | `session.OverrideRefusal`, and every fixture operation that opens a CephFS session | `session.OverrideRefusal` |
 | `fs set max_file_size` | `Filesystem.OverrideMaxFileSize` | `Filesystem.OverrideMaxFileSize` |
+| `fs required_client_features add`/`rm` of a feature a handle added | `session.OverrideRequiredFeatures`, which refuses to restore an owned feature that was removed outside it | `session.OverrideRequiredFeatures` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | `cephfs/subvolume` handles, which check native identity | The `cephfs/subvolume` functions and handles |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `account.Account` and `placement.Placement` methods such as `Placement.Apply`, which verify keys and identity | The typed RGW helpers of `rgw`, `rgw/account` and `rgw/placement` |
 | `radosgw-admin key create`/`key rm` on keys that `User.CreateS3Key` or `CreateUser` created | Every owned-user operation, which refuses a changed or reappeared fixture key | `User.CreateS3Key`, `S3Key.Revoke`; keys added natively are left alone |

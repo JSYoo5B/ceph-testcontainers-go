@@ -3,8 +3,9 @@
 Import `github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session` to observe the
 client sessions of an existing filesystem, to shorten its session limits, so
 that a test can watch the MDS evict a silent or frozen client within seconds
-instead of minutes, and to make the MDS refuse new client sessions while open
-ones keep working. The filesystem stays in the [cephfs package](../README.md);
+instead of minutes, to make the MDS refuse new client sessions while open
+ones keep working, and to require client features, so that only clients that
+lack them are refused or evicted. The filesystem stays in the [cephfs package](../README.md);
 the package starts no container. See
 [API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
@@ -59,6 +60,36 @@ if err := refusal.Restore(ctx); err != nil {
 // New mounts succeed again.
 ```
 
+To make the MDS refuse only clients that lack a client feature, call
+`session.OverrideRequiredFeatures(ctx, fs, names...)` with names that the
+image's `fs feature ls` lists. It adds each feature to the filesystem's
+`required_client_features`: a client that does not advertise one of them
+fails to mount with EPERM, an open session that lacks one is evicted and, with
+Ceph's default `mds_session_blocklist_on_evict`, blocklisted, and clients that
+advertise every required feature are admitted as before.
+`session.RequiredFeatures(ctx, fs)` reads the required set back from the
+MDSMap. `RequiredFeaturesOverrideHandle.Steps` reports, per requested
+feature, whether it was already required, whether its add was sent and
+whether a readback confirmed it; `Restore` removes only the bits this handle
+added.
+
+```golang
+required, err := session.OverrideRequiredFeatures(ctx, fs, "metric_collect")
+if required != nil {
+	defer required.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+// A client that does not advertise metric_collect now fails to mount with
+// EPERM; its open session is evicted. Clients that advertise it mount.
+if err := required.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+// The client that lacks the feature mounts again; the evicted session does
+// not come back.
+```
+
 ## Concepts and limits
 
 - Both limits are MDSMap settings of one filesystem, not central
@@ -83,6 +114,27 @@ if err := refusal.Restore(ctx); err != nil {
   I/O does not come back after `Restore`.
 - The flag exists on every supported release; a cluster whose MDSMap does
   not report it returns `ceph.ErrUnsupported` before any change.
+- `OverrideRequiredFeatures` sets the admission policy of one filesystem
+  and proves only that its MDSMap requires the features. Which features a
+  client advertises is the client's own state: the fixture neither reads nor
+  changes it, so observe the client's mount and session outcome separately.
+  A feature name that the image does not list returns `ceph.ErrUnsupported`;
+  an empty list, a blank or a repeated name returns `ceph.ErrInvalidRequest`,
+  both before any change.
+- A feature that was already required is recorded as `AlreadyRequired`: the
+  handle owns nothing for it and `Restore` leaves it required. Bits the
+  handle did not add, including ones the release does not name, are never
+  changed. If every requested feature was already required, the handle owns
+  nothing but still holds the filesystem's slot until `Restore`.
+- The native command adds or removes one feature at a time without a
+  precondition, so the override is a sequence: a failure stops it and returns
+  the handle with the error, owning the steps that were sent. `Restore`
+  refuses, with `ceph.ErrInvalidRequest` and before any change, an owned
+  feature that a readback had confirmed but that is no longer required, and a
+  filesystem recreated under the same name. An outside remove and re-add of an
+  owned feature between two reads cannot be detected.
+- Removing a requirement restores the policy only: a session that it evicted
+  stays closed and its blocklist entry stays.
 - `List` reports a client once per rank and includes the fixture's own
   short-lived libcephfs probes. `Session.Address` has the form that
   blocklist entries use.

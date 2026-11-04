@@ -448,7 +448,7 @@ result:
 | `rgw.Gateway.CreateRole` | Role whose creation or permission policies failed or are unknown | `Role.Remove`, or discard the cluster; do not create the same name again |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](ceph-operations.md#clientconfigreplacekey)) |
-| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
+| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `session.OverrideTimeouts`, `session.OverrideRefusal`, `session.OverrideRequiredFeatures`, `cephfs.Filesystem.OverrideMaxFileSize`, `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin`, `rgw.User.OverrideRateLimit` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `quiesce.Start` | Quiesce set handle (the set may exist and hold I/O paused) | `Release`, or let its `Expiration` pass before terminating the cluster |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
@@ -474,6 +474,7 @@ back. Some wrap several native settings:
 | `override.AddBlocklist` | Adds one exact client-session blocklist entry; a refused call still returns a handle whose `Restore` does nothing |
 | `session.OverrideTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
 | `session.OverrideRefusal` | Sets a filesystem's `refuse_client_session`; a filesystem that already refuses new sessions is refused without a handle |
+| `session.OverrideRequiredFeatures` | Adds named features to a filesystem's `required_client_features`; a feature already required is recorded and owned by nobody, and `Restore` removes only the added bits |
 | `cephfs.Filesystem.OverrideMaxFileSize` | A filesystem's `max_file_size` |
 | `subvolume.Subvolume.OverridePin`, `subvolume.Group.OverridePin` | One pin policy field of a subvolume or group |
 | `rgw.User.OverrideRateLimit` | The rate-limit policy of one owned user or of one bucket it owns; a refused call still returns a handle whose `Restore` does nothing |
@@ -531,6 +532,15 @@ Handle-specific details:
   command, so apply and restore are not atomic.
 - `session.TimeoutsOverrideHandle.Restore` refuses a filesystem that was recreated
   under the same name.
+- `session.RequiredFeaturesOverrideHandle` owns each bit it added, not the
+  features that were already required. The native command adds one feature
+  at a time, so a failed later step returns the handle with the earlier
+  steps owned, and `Steps` reports each one. `Restore` removes the owned
+  bits in reverse order and refuses, before any change, an owned feature
+  that was removed outside it; an add whose outcome was never confirmed is
+  removed only when it is required. The commands have no precondition, so an
+  outside remove and re-add between two reads is not detected. Removing a
+  requirement does not reopen a session it evicted.
 
 `fault.PauseLease.Resume` and `NetworkInterruption.Restore` follow the same
 pattern for Docker state, with one difference: the cluster resumes and
