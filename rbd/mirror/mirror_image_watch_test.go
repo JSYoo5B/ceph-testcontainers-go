@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,14 +29,25 @@ func rbdWatchImageStatus(instance, daemon, state, lastUpdate string) string {
 	return fmt.Sprintf(`{"name":"volume","global_id":"global-image","state":%q,"description":"replaying, bytes_per_second: %s","last_update":%q,"daemon_service":{"service_id":"22","instance_id":%q,"daemon_id":%q}}`, state, lastUpdate, lastUpdate, instance, daemon)
 }
 
-// startTestImageWatch watches the unscoped image "volume" of m. A set block
-// makes the next reads wait for their context.
-func startTestImageWatch(t *testing.T, ctx context.Context, m *Mirror, settings watch.Settings, block *atomic.Bool) (*ImageWatch, *rbdWatchReads) {
+// blockedRead makes the reads of a test watch wait for their context once it
+// is set, and reports the first read that does.
+type blockedRead struct {
+	on      atomic.Bool
+	entered chan struct{}
+	once    sync.Once
+}
+
+func newBlockedRead() *blockedRead { return &blockedRead{entered: make(chan struct{})} }
+
+// startTestImageWatch watches the unscoped image "volume" of m. With a set
+// block, a read waits until its context ends.
+func startTestImageWatch(t *testing.T, ctx context.Context, m *Mirror, settings watch.Settings, block *blockedRead) (*ImageWatch, *rbdWatchReads) {
 	t.Helper()
 	reads := &rbdWatchReads{}
 	w, err := startImageWatch(ctx, settings, m.checkWatchOpen, func(ctx context.Context) (ImageStatus, error) {
 		defer reads.n.Add(1)
-		if block != nil && block.Load() {
+		if block != nil && block.on.Load() {
+			block.once.Do(func() { close(block.entered) })
 			<-ctx.Done()
 			return ImageStatus{}, ctx.Err()
 		}
@@ -226,10 +238,20 @@ func TestRBDImageWatchStopAndCancelDuringQuery(t *testing.T) {
 	for _, cancelCtx := range []bool{false, true} {
 		link, _, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 		ctx, cancel := context.WithCancel(t.Context())
-		var block atomic.Bool
-		w, reads := startTestImageWatch(t, ctx, link, fastRBDWatch(1), &block)
-		block.Store(true)
-		reads.await(t, 1) // a read that started after the block is now waiting
+		// Only Stop or the cancellation may end the blocked read: its own
+		// timeout is longer than the test's deadline, so a slow test
+		// goroutine cannot turn it into a gap that overflows the one-slot
+		// buffer the unread baseline fills.
+		settings := fastRBDWatch(1)
+		settings.Timeout = time.Minute
+		block := newBlockedRead()
+		w, _ := startTestImageWatch(t, ctx, link, settings, block)
+		block.on.Store(true)
+		select {
+		case <-block.entered: // a read is now waiting for its context
+		case <-time.After(5 * time.Second):
+			t.Fatal("no blocked read")
+		}
 		ended := make(chan error, 1)
 		if cancelCtx {
 			cancel()
