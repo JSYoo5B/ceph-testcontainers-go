@@ -81,8 +81,8 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
 // and the division of work. The core's Admit (fsbase) owns the admission
-// lifetime: in package cephfs it is called only by the data-pool and timing
-// flows, which pass their own Check functions and take or release neither setupMu nor the
+// lifetime: in package cephfs it is called only by the data-pool, timing,
+// max_file_size and MDS read-only flows, which pass their own Check functions and take or release neither setupMu nor the
 // topology mutex itself. volbase's
 // TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal pins the same for
 // the subvolume flow, volbase.Begin, which the feature packages share, and
@@ -91,7 +91,7 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 // fsbase's TestAdmitHoldsNoPredicateAndTakesTheLocksInOrder pins that Admit
 // takes setupMu first and holds no predicate.
 func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	begins := []string{"OverrideTiming", "beginDataPoolOperation", "beginMaxFileSizeOperation"}
+	begins := []string{"OverrideTiming", "beginDataPoolOperation", "beginMDSReadOnlyOperation", "beginMaxFileSizeOperation"}
 	callers := map[string][]string{}
 	lockCalls := map[string][]string{}
 	files := parseCephFSProductionFiles(t)

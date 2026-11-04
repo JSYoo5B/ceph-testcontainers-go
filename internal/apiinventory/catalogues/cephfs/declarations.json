@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 33,
+  "count": 37,
   "entries": [
     {
       "current": "cephfs.Config",
@@ -150,11 +150,41 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs.MDS.ForceReadOnly",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*MDSReadOnlyFault, error)",
+      "receiver": "*MDS",
+      "proposed": "cephfs.MDS.ForceReadOnly",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs.MDS.RemoveStopped",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
       "receiver": "*MDS",
       "proposed": "cephfs.MDS.RemoveStopped",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSReadOnlyFault",
+      "kind": "type",
+      "proposed": "cephfs.MDSReadOnlyFault",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSReadOnlyFault.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*MDSReadOnlyFault",
+      "proposed": "cephfs.MDSReadOnlyFault.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSReadOnlyFault.WaitReplaced",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MDSStatus, error)",
+      "receiver": "*MDSReadOnlyFault",
+      "proposed": "cephfs.MDSReadOnlyFault.WaitReplaced",
       "decision": "baseline"
     },
     {

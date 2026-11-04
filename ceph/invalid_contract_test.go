@@ -36,14 +36,16 @@ import (
 // input, existing-role, tracked-name, ownership, replaced-role and
 // outside-edit refusals of its roles. The watches add their configuration,
 // unstarted-Stop and ending-read refusals: one more in cephfs for its MDS
-// watch, which share mdsWatchInvalid; three more in cephfs/subvolume for its
+// watch, which share mdsWatchInvalid; one more in cephfs for the MDS
+// read-only fault, whose input, ownership, target and recreated-filesystem
+// refusals share mdsReadOnlyInvalid; three more in cephfs/subvolume for its
 // clone watch; five more in rbd/mirror for its receiver and image watches
 // (an invalid configuration, Stop of an unstarted watch, a terminated mirror,
 // a terminated cluster and a receiver cohort without a daemon); and six more
 // in cephfs/mirror for the refused config, path, fixture and unstarted Stop
 // of its directory watch and the terminated mirror or cluster that ends one.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 26, "rgw": 47,
+	"rbd": 28, "cephfs": 27, "rgw": 47,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
