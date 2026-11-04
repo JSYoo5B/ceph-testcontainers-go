@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import unicodedata
+from urllib.parse import quote
 import zipfile
 
 MARKER = "<!-- ceph-structural-review -->"
@@ -160,8 +161,20 @@ def publish(repository, run_id, attempt, dry_run=False):
         raise Refusal("missing analysis source identity")
     if analysis != linked["head"]["sha"]:
         commit = api(root+"/git/commits/"+analysis)
-        if {p["sha"] for p in commit["parents"]} != {linked["base"]["sha"], linked["head"]["sha"]} or len(commit["parents"]) != 2:
-            raise Refusal("analysis was not built from the head or its recorded merge")
+        parents = [p["sha"] for p in commit["parents"]]
+        if len(parents) != 2 or parents.count(linked["head"]["sha"]) != 1:
+            raise Refusal("analysis merge does not directly contain the recorded PR head")
+        engine_base = next(p for p in parents if p != linked["head"]["sha"])
+        if engine_base != linked["base"]["sha"]:
+            # GitHub can refresh the synthetic merge after the PR event when
+            # the target advances. Bind that parent to the target lineage,
+            # rather than accepting an arbitrary merge containing the head.
+            since_event = api(root+"/compare/"+linked["base"]["sha"]+"..."+engine_base)
+            target = api(root+"/git/ref/heads/"+quote(linked["base"]["ref"], safe=""))["object"]["sha"]
+            to_target = api(root+"/compare/"+engine_base+"..."+target)
+            if (since_event["merge_base_commit"]["sha"] != linked["base"]["sha"]
+                    or to_target["merge_base_commit"]["sha"] != engine_base):
+                raise Refusal("analysis merge base is outside the recorded target lineage")
     body = comment_body(repository, run, receipt, text)
     # Only the Actions bot owns the report. Human comments are never adopted
     # merely because they contain the marker.
@@ -206,7 +219,12 @@ def main():
         return 1
     try:
         print(publish(args.repository, args.run, args.attempt, args.dry_run))
-    except (Refusal, OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
+    except Refusal as err:
+        # Refusal messages are fixed protocol reasons, never artifact content
+        # or transport responses. They all precede any API write.
+        print("Structural report refused: " + str(err))
+        return 1
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
         # Do not leak response bodies, tokens or arbitrary artifact content.
         print("Structural report publication not confirmed; inspect the PR before retrying.")
         return 1

@@ -218,6 +218,22 @@ class PublishTests(unittest.TestCase):
                         reporter.publish(REPO, 10, 2)
             self.assertEqual(any(c[1] != "GET" for c in calls), accepted)
 
+    def test_target_can_advance_between_event_and_ci_checkout(self):
+        merge, engine_base, target, foreign = "d"*40, "c"*40, "e"*40, "f"*40
+        for event_ancestor, target_ancestor, accepted in ((BASE, engine_base, True), (foreign, engine_base, False), (BASE, foreign, False)):
+            api, calls, reads = self.api_fixture(raw=archive({"analysis_sha": merge}))
+            reads["/git/commits/"+merge] = {"parents": [{"sha": engine_base}, {"sha": HEAD}]}
+            reads["/compare/"+BASE+"..."+engine_base] = {"merge_base_commit": {"sha": event_ancestor}}
+            reads["/git/ref/heads/main"] = {"object": {"sha": target}}
+            reads["/compare/"+engine_base+"..."+target] = {"merge_base_commit": {"sha": target_ancestor}}
+            with mock.patch.object(reporter, "api", side_effect=api):
+                if accepted:
+                    reporter.publish(REPO, 10, 2)
+                else:
+                    with self.assertRaises(reporter.Refusal):
+                        reporter.publish(REPO, 10, 2)
+            self.assertEqual(any(c[1] != "GET" for c in calls), accepted)
+
     def test_dry_run_and_failed_write_are_never_retried(self):
         api, calls, _ = self.api_fixture()
         with mock.patch.object(reporter, "api", side_effect=api):

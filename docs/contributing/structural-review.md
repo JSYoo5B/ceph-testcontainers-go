@@ -92,7 +92,9 @@ scope affect those numbers; neither is a token, billing or review-time saving.
 After Code checks completes, `structural-review.yml` runs a trusted
 publisher from the default branch. It verifies GitHub's run/PR association,
 workflow identity, latest attempt, exact head/base, artifact digests and the
-analysis source. The privileged job executes no PR code and restores no PR
+analysis source. A CI synthetic merge may use a newer target than the event:
+its other parent must descend from the event target and belong to the current
+target branch ancestry. An unrelated parent is refused. The privileged job executes no PR code and restores no PR
 cache. Report text is quoted as data in the comment; the job summary provides
 the formatted tables. A stale head, closed PR, duplicate artifact, invalid
 receipt or missing report is never posted as a fresh clean result. A newer
