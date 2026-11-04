@@ -298,7 +298,7 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *gwbase
 	defer cancel()
 	native, err := g.OwnedUser(ctx, user)
 	if err != nil {
-		return err
+		return fmt.Errorf("confirm the owned RGW user (user info): %w", err)
 	}
 	return fn(ctx, g, user, native)
 }

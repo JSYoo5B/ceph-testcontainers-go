@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -288,7 +290,7 @@ func (s *rateLimitState) transition(ctx context.Context, g *gwbase.Core, user *g
 		}
 		if _, err := g.UserCommand(ctx, user, slices.Concat(step.args, s.target.selector())...); err != nil {
 			s.owned = []rateLimitPolicy{current, next}
-			return err
+			return fmt.Errorf("change RGW rate-limit policy (%s): %w", strings.Join(step.args[:2], " "), err)
 		}
 		current = next
 		s.owned = []rateLimitPolicy{current}
@@ -371,7 +373,7 @@ func bindRateLimitBucket(ctx context.Context, g *gwbase.Core, user *gwbase.User,
 	}
 	data, err := g.UserCommand(ctx, user, args...)
 	if err != nil {
-		return rateLimitTarget{}, err
+		return rateLimitTarget{}, fmt.Errorf("read RGW bucket identity (bucket stats): %w", err)
 	}
 	var stats struct {
 		Bucket *string `json:"bucket"`
@@ -449,7 +451,7 @@ func (p rateLimitPolicy) clone() rateLimitPolicy {
 func readRateLimitPolicy(ctx context.Context, g *gwbase.Core, user *gwbase.User, target rateLimitTarget) (rateLimitPolicy, error) {
 	data, err := g.UserCommand(ctx, user, slices.Concat([]string{"ratelimit", "get"}, target.selector())...)
 	if err != nil {
-		return rateLimitPolicy{}, err
+		return rateLimitPolicy{}, fmt.Errorf("read RGW rate-limit policy (ratelimit get): %w", err)
 	}
 	section := "user_ratelimit"
 	if target.bucket != "" {
