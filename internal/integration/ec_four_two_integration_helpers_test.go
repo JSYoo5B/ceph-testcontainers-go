@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -313,7 +314,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			}
 		}
 	}
-	finalStates := requireOSDs(t, ctx, cluster, "owned registrations restored", ceph.OSDExpectation{Select: initialStates, Up: true, In: true, Exact: true})
+	finalStates := requireOSDs(t, ctx, cluster, "owned registrations restored", expect.OSDs{Select: initialStates, Up: true, In: true, Exact: true})
 	r, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", ecFourTwoVerifyScript, pool.Name, strconv.Itoa(size), strconv.FormatUint(seed.Snap, 10), strconv.Itoa(last.Value)}, Timeout: time.Minute, MaxStdout: 1 << 16, MaxStderr: 1 << 16, Label: "fresh 4+2 readback"})
 	var readback ecFourTwoReadback
 	if err != nil || !r.Complete() || r.ExitCode != 0 || json.Unmarshal(r.Stdout, &readback) != nil || checkECFourTwoReadback(seed, last, readback, size, pool.MinSize == 5) != nil {

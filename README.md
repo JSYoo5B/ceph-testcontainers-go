@@ -26,6 +26,9 @@ Documentation for a published release is available at its Git tag.
   Cephx identities, configuration and health.
   - [`ceph/diagnostics`](ceph/diagnostics/README.md): read-only diagnostics
     reports, crash metadata and secret redaction for a cluster.
+  - [`ceph/expect`](ceph/expect/README.md): pure evaluations of captured
+    observations against a test's stated conditions, with mismatch
+    explanations.
   - [`ceph/finalize`](ceph/finalize/README.md): one ordered cleanup path with
     post-test checks, log and crash verification, a failure archive and
     `Terminate`.

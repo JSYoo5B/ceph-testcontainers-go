@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -74,8 +75,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
-	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
-	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := expect.OSDs{Select: states, Up: true, In: true, Exact: true}
 	acting := func(object string) []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -189,7 +190,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	}
 	osdAID, _ := strconv.Atoi(osdA.Name)
 	// The stopped OSD is reported down but stays in, under its own registration.
-	stoppedOSD := ceph.OSDExpectation{Up: false, In: true}
+	stoppedOSD := expect.OSDs{Up: false, In: true}
 	for _, state := range states {
 		if state.ID == osdAID {
 			stoppedOSD.Select = []ceph.OSDState{state}

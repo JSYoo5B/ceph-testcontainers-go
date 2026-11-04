@@ -1,0 +1,86 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "ceph/expect",
+  "count": 12,
+  "entries": [
+    {
+      "current": "ceph/expect.OSDEvaluation",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDEvaluation",
+      "proposed": "ceph/expect.OSDEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatch",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDMismatch",
+      "proposed": "ceph/expect.OSDMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchAbsent",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchIn",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchReason",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchReplaced",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchReplaced",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchUnselected",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchUnselected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDMismatchUp",
+      "kind": "const",
+      "proposed": "ceph/expect.OSDMismatchUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDs",
+      "kind": "type",
+      "proposed": "ceph/expect.OSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/expect.OSDs.Evaluate",
+      "kind": "method",
+      "signature": "func(observed []ceph.OSDState) (OSDEvaluation, error)",
+      "receiver": "OSDs",
+      "proposed": "ceph/expect.OSDs.Evaluate",
+      "decision": "baseline"
+    }
+  ]
+}

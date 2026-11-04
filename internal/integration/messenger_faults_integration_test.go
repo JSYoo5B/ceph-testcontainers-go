@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -103,7 +104,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 						t.Fatalf("object %s with primary osd.%d: %+v", result.Name, primaries[result.Name], result)
 					}
 				}
-				requireOSDs(t, ctx, cluster, "OSDs stay in the map while dropping client messages", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+				requireOSDs(t, ctx, cluster, "OSDs stay in the map while dropping client messages", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
 				hold()
 				allWritten(t, "after-blackhole", 10)
 			})

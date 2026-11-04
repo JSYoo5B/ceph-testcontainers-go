@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
@@ -179,7 +180,7 @@ func runNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("first explicit storage launch failed", err)
 	}
 	oracle.Owned = append(oracle.Owned, first.GetContainerID())
-	before := requireOSDs(t, ctx, cluster, "first explicit OSD exact up/in", ceph.OSDExpectation{Select: osdSelection([]*ceph.OSDContainer{first}), Up: true, In: true, Exact: true})
+	before := requireOSDs(t, ctx, cluster, "first explicit OSD exact up/in", expect.OSDs{Select: osdSelection([]*ceph.OSDContainer{first}), Up: true, In: true, Exact: true})
 	if err := first.Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
 		t.Fatal("zero-initial option changed last-OSD protection", err)
 	}
@@ -192,7 +193,7 @@ func runNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("second explicit storage launch failed", err)
 	}
 	oracle.Owned = append(oracle.Owned, second.GetContainerID())
-	states := requireOSDs(t, ctx, cluster, "explicit OSDs exact up/in", ceph.OSDExpectation{Select: osdSelection([]*ceph.OSDContainer{first, second}), Up: true, In: true, Exact: true})
+	states := requireOSDs(t, ctx, cluster, "explicit OSDs exact up/in", expect.OSDs{Select: osdSelection([]*ceph.OSDContainer{first, second}), Up: true, In: true, Exact: true})
 	if states[0].UUID == states[1].UUID || len(noInitialOSDNativeDump(t, ctx, cluster)) != 2 {
 		t.Fatal("explicit storage identities are not distinct native registrations")
 	}

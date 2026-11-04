@@ -1,0 +1,26 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "ceph/expect",
+  "count": 12,
+  "types": {
+    "ceph/expect.OSDEvaluation": [
+      "OSDEvaluation.Expectation field OSDs",
+      "OSDEvaluation.Matched field bool",
+      "OSDEvaluation.Mismatches field []OSDMismatch",
+      "OSDEvaluation.Observed field []ceph.OSDState"
+    ],
+    "ceph/expect.OSDMismatch": [
+      "OSDMismatch.ID field int",
+      "OSDMismatch.Observed field ceph.OSDState",
+      "OSDMismatch.Reason field OSDMismatchReason",
+      "OSDMismatch.UUID field string"
+    ],
+    "ceph/expect.OSDs": [
+      "OSDs.Exact field bool",
+      "OSDs.In field bool",
+      "OSDs.Select field []ceph.OSDState",
+      "OSDs.Up field bool"
+    ]
+  }
+}

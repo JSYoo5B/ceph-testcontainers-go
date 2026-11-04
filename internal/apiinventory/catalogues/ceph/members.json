@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 309,
+  "count": 297,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -250,24 +250,6 @@
     "ceph.OSDContainer": [
       "OSDContainer embed testcontainers.Container",
       "OSDContainer.ID field int"
-    ],
-    "ceph.OSDEvaluation": [
-      "OSDEvaluation.Expectation field OSDExpectation",
-      "OSDEvaluation.Matched field bool",
-      "OSDEvaluation.Mismatches field []OSDMismatch",
-      "OSDEvaluation.Observed field []OSDState"
-    ],
-    "ceph.OSDExpectation": [
-      "OSDExpectation.Exact field bool",
-      "OSDExpectation.In field bool",
-      "OSDExpectation.Select field []OSDState",
-      "OSDExpectation.Up field bool"
-    ],
-    "ceph.OSDMismatch": [
-      "OSDMismatch.ID field int",
-      "OSDMismatch.Observed field OSDState",
-      "OSDMismatch.Reason field OSDMismatchReason",
-      "OSDMismatch.UUID field string"
     ],
     "ceph.OSDState": [
       "OSDState.ID field int",

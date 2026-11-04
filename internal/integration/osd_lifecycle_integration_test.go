@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
@@ -164,7 +165,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := foreignTarget.Stop(ctx, &grace); err != nil {
 				t.Fatal(err)
 			}
-			waitOSDPolicyState(t, ctx, cluster, ceph.OSDExpectation{Select: []ceph.OSDState{{ID: foreignTarget.ID}}, Up: false, In: false})
+			waitOSDPolicyState(t, ctx, cluster, expect.OSDs{Select: []ceph.OSDState{{ID: foreignTarget.ID}}, Up: false, In: false})
 			harness.CephCommand(t, ctx, cluster, "osd", "purge", strconv.Itoa(foreignTarget.ID), "--yes-i-really-mean-it")
 			foreignUUID := uuid.NewString()
 			harness.CephCommand(t, ctx, cluster, "osd", "create", foreignUUID, strconv.Itoa(foreignTarget.ID))

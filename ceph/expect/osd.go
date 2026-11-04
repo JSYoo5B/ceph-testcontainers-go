@@ -1,7 +1,8 @@
-package ceph
+package expect
 
 import (
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"slices"
 	"strconv"
 	"strings"
@@ -9,25 +10,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// OSDExpectation states the OSDMap membership a test expects of selected owned
+// OSDs states the OSDMap membership a test expects of selected owned
 // OSDs. Select names the OSDs by ID and, when UUID is set, by native UUID:
-// states from an earlier Observer.OSDStates baseline pin the exact
+// states from an earlier ceph.Observer.OSDStates baseline pin the exact
 // registrations, so an OSD that a replacement re-registered under the same ID
 // does not match. Only ID and UUID of a Select entry are read. Up and In are
 // the reported OSDMap flags every selected OSD must have; they are not proof
 // of process liveness or client reachability. Exact also requires the
 // observation to contain no owned OSD outside the selection.
 //
-// Unlike Observer.WaitForClean, which compares native OSD counts from the
+// Unlike ceph.Observer.WaitForClean, which compares native OSD counts from the
 // cluster status, an expectation checks individual identities, so it can tell
 // which OSD is missing, replaced, down or out.
-type OSDExpectation struct {
-	Select []OSDState
+type OSDs struct {
+	Select []ceph.OSDState
 	Up, In bool
 	Exact  bool
 }
 
-// OSDMismatchReason names why one OSD does not satisfy an OSDExpectation.
+// OSDMismatchReason names why one OSD does not satisfy an OSDs expectation.
 type OSDMismatchReason string
 
 // The reasons an OSDEvaluation reports.
@@ -55,7 +56,7 @@ type OSDMismatch struct {
 	Reason   OSDMismatchReason
 	ID       int
 	UUID     string
-	Observed OSDState
+	Observed ceph.OSDState
 }
 
 // String names the OSD, the reason and the evaluated values.
@@ -81,8 +82,8 @@ func (m OSDMismatch) String() string {
 // ordered by OSD ID, then in the order of the reason constants; Matched means
 // there are none.
 type OSDEvaluation struct {
-	Expectation OSDExpectation
-	Observed    []OSDState
+	Expectation OSDs
+	Observed    []ceph.OSDState
 	Mismatches  []OSDMismatch
 	Matched     bool
 }
@@ -119,38 +120,38 @@ func (e OSDEvaluation) String() string {
 	return b.String()
 }
 
-// Evaluate checks one successful Observer.OSDStates observation against the
+// Evaluate checks one successful ceph.Observer.OSDStates observation against the
 // expectation. It reads only its arguments: no query, wait or retry, so a
 // test composes it with its own polling or assertion helpers. A mismatch is
 // a result; an error means no verdict. An empty or duplicate selection or an
-// unparsable selected UUID is ErrInvalidRequest, and an observation with a
+// unparsable selected UUID is ceph.ErrInvalidRequest, and an observation with a
 // negative or repeated ID or an unparsable UUID is a malformed observation,
 // never a mismatch. The result shares no slice with its arguments.
 //
 //purpose:observation
-func (e OSDExpectation) Evaluate(observed []OSDState) (OSDEvaluation, error) {
+func (e OSDs) Evaluate(observed []ceph.OSDState) (OSDEvaluation, error) {
 	if len(e.Select) == 0 {
-		return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects no OSD", ErrInvalidRequest)
+		return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects no OSD", ceph.ErrInvalidRequest)
 	}
 	selected := make(map[int]uuid.UUID, len(e.Select))
 	for _, s := range e.Select {
 		if s.ID < 0 {
-			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects negative osd.%d", ErrInvalidRequest, s.ID)
+			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects negative osd.%d", ceph.ErrInvalidRequest, s.ID)
 		}
 		if _, dup := selected[s.ID]; dup {
-			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects osd.%d twice", ErrInvalidRequest, s.ID)
+			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects osd.%d twice", ceph.ErrInvalidRequest, s.ID)
 		}
 		var pinned uuid.UUID
 		if s.UUID != "" {
 			parsed, err := uuid.Parse(s.UUID)
 			if err != nil || parsed == uuid.Nil {
-				return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation pins an invalid UUID for osd.%d", ErrInvalidRequest, s.ID)
+				return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation pins an invalid UUID for osd.%d", ceph.ErrInvalidRequest, s.ID)
 			}
 			pinned = parsed
 		}
 		selected[s.ID] = pinned
 	}
-	byID := make(map[int]OSDState, len(observed))
+	byID := make(map[int]ceph.OSDState, len(observed))
 	for _, s := range observed {
 		if s.ID < 0 {
 			return OSDEvaluation{}, fmt.Errorf("malformed OSD observation: negative osd.%d", s.ID)
@@ -164,7 +165,7 @@ func (e OSDExpectation) Evaluate(observed []OSDState) (OSDEvaluation, error) {
 		byID[s.ID] = s
 	}
 	result := OSDEvaluation{
-		Expectation: OSDExpectation{Select: slices.Clone(e.Select), Up: e.Up, In: e.In, Exact: e.Exact},
+		Expectation: OSDs{Select: slices.Clone(e.Select), Up: e.Up, In: e.In, Exact: e.Exact},
 		Observed:    slices.Clone(observed),
 	}
 	for _, s := range e.Select {

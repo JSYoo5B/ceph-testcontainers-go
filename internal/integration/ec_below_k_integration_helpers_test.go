@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
@@ -295,7 +296,7 @@ func testECBelowK(t *testing.T) {
 			}
 		}
 	}
-	final := requireOSDs(t, ctx, c, "OSD registrations restored", ceph.OSDExpectation{Select: initial, Up: true, In: true, Exact: true})
+	final := requireOSDs(t, ctx, c, "OSD registrations restored", expect.OSDs{Select: initial, Up: true, In: true, Exact: true})
 	read := ecBelowKRead(t, ctx, c, client, pool.Name, size, seed, recoveredAck)
 	if slices.Contains([]uint64{kRead.Reader, recoveredAck.Writer, recoveredAck.Reader}, read.Reader) {
 		t.Fatal("final read reused prior client")

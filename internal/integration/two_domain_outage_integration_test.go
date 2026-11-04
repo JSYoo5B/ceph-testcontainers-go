@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -74,8 +75,8 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
-	states := requireOSDs(t, ctx, cluster, "initial OSD identities", ceph.OSDExpectation{Select: osdSelection(osds), Up: true, In: true, Exact: true})
-	restored := ceph.OSDExpectation{Select: states, Up: true, In: true, Exact: true}
+	states := requireOSDs(t, ctx, cluster, "initial OSD identities", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
+	restored := expect.OSDs{Select: states, Up: true, In: true, Exact: true}
 	acting := func() []int {
 		var mapping struct {
 			Acting []int `json:"acting"`
@@ -313,7 +314,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	for {
 		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(recoverCtx)
 		m, merr := harness.ObserveCluster(cluster).ManagerStatus(recoverCtx)
-		var osdEval ceph.OSDEvaluation
+		var osdEval expect.OSDEvaluation
 		s, serr := harness.ObserveCluster(cluster).OSDStates(recoverCtx)
 		if serr == nil {
 			osdEval, serr = restored.Evaluate(s)

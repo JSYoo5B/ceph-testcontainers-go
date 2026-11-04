@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/mount"
@@ -424,14 +425,14 @@ func attachedWaitUp(t *testing.T, parent context.Context, cluster *ceph.Containe
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
-	want := ceph.OSDExpectation{Select: osdSelection([]*ceph.OSDContainer{osd}), Up: true, In: true, Exact: true}
+	want := expect.OSDs{Select: osdSelection([]*ceph.OSDContainer{osd}), Up: true, In: true, Exact: true}
 	var last any
 	for {
 		state, err := osd.State(ctx)
 		if err != nil || state == nil || !state.Running {
 			t.Fatalf("the restarted OSD exited: %+v %v", state, err)
 		}
-		var result ceph.OSDEvaluation
+		var result expect.OSDEvaluation
 		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err == nil {
 			result, err = want.Evaluate(states)

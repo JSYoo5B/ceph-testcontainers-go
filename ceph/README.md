@@ -171,13 +171,10 @@ metadata and read-only command probes. These waits retain the cluster's
 startup timeout and release observation locks between polls. An observer can
 be acquired for a partial cluster without reading or changing its state.
 
-To assert the up/in state of particular OSDs, evaluate an `OSDStates`
-observation with an `OSDExpectation`. Select the OSDs from an earlier
-`OSDStates` baseline to pin their native UUIDs, so a re-registered ID does not
-pass, and set `Exact` when no other owned OSD may exist. `Evaluate` performs no
-query or retry: the test polls with its own loop or assertion helper, a failed
-query stays an error, and `OSDEvaluation` lists each absent, replaced, down,
-out or unselected OSD from the observation it evaluated.
+To assert the up/in state of particular OSDs in an `OSDStates` observation,
+use the optional [`ceph/expect`](expect/README.md) package: it evaluates a
+captured observation against the condition the test states and explains each
+mismatch, without querying again.
 
 To react to owned OSD state while the SUT runs, `observer.WatchOSDs(ctx, cfg)`
 polls the OSDMap in one goroutine and sends changes on one channel. The
