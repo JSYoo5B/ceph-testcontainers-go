@@ -737,6 +737,59 @@ alone, so a PG-wide BLOCK never stands in for an object backoff.
 `messenger_backoff_fixture_test.go` tests the parsing and both scopes without
 Docker.
 
+## Held replies
+
+A backoff holds an operation inside the protocol. A consumer that stops
+reading holds a reply in the transport instead: the OSD has answered, and the
+bytes wait in its socket because the receiver drains nothing. No public option
+is needed. `fault.Pause` freezes both ends, and the OSD's own socket table
+proves the hold. `TestHeldNativeReply` and `TestAbandonedHeldNativeReply` log
+`HELD_REPLY_RECEIPT`:
+
+1. A one-OSD cluster holds a 32 MiB object in a one-PG pool. The consumer
+   runs in a `WithClient` container of its own. It reads the first byte, which
+   opens its OSD session, and waits on its standard input. A second idle
+   container joins the OSD's network namespace, so the OSD's socket table
+   stays readable while the OSD is frozen. The OSD's and the consumer's
+   `/proc/net/tcp` and `tcp6` share exactly one established connection, the
+   consumer's OSD session, and its send queue is empty.
+2. With `nodown`, freeze the OSD and let the consumer submit one asynchronous
+   read of the whole object, with `rados_osd_op_timeout` 0. The consumer's
+   `debug_ms=1` log must show the read, its send queue on the connection must
+   be empty, and the OSD's receive queue on it must hold more than while
+   idle. The log line alone is not enough: the Messenger logs a message when
+   it queues it, before a separate handler writes it, and an empty send queue
+   also holds before that write. Only bytes waiting unread in the frozen
+   OSD's socket prove that the request arrived.
+3. Freeze the consumer and thaw the OSD. The OSD reads the request and writes
+   the reply. Its send queue on that connection must reach 64 KiB and stay
+   there for four samples one second apart. Then `ceph status` and
+   `ceph tell osd.N version` must still answer, and the queue must still be
+   held. A reply that fits the buffers and drains early fails as "condition
+   not established"; the recipe never grows the payload to make it pass.
+4. `TestHeldNativeReply` thaws the consumer. Its read returns the whole
+   object, and the SHA-256 matches the seeded bytes.
+   `TestAbandonedHeldNativeReply` kills the frozen consumer instead. The reply
+   is never delivered, and the OSD's end of the connection must leave its
+   table.
+5. In both tests a fresh client then reads the same object version back,
+   byte for byte. Nothing is rewritten.
+
+The receipt records the connection's endpoints, the idle, delivered and held
+queue samples, the control answers, the drained or closed outcome, the image IDs
+and each restore. The queue is the OSD's unacknowledged send data on the one
+connection, read from the kernel and not from Ceph. It proves that a reply is
+held in transit. It does not prove that a particular send call blocked, that
+the Messenger's own queues are full or that the receiver advertised a zero
+window. Killing the consumer resets its connection, which is not a
+cancellation through a client API. Exercising cancellation, short reads,
+framing and the CRC or secure mode of a held session belongs to the client's
+own tests, which can freeze or stop reading their own consumer at the same
+point. `/proc/net/tcp` is Linux's, so the containers must run on a Linux
+kernel; Docker Desktop's VM provides one. `messenger_held_reply_fixture_test.go`
+tests the socket table parser, the pairing of both ends and the delivery
+judgement, including a write that has not run yet, without Docker.
+
 ## Authentication refusal causes
 
 A client sees most refusals as the same `[errno 13] RADOS permission denied`,
