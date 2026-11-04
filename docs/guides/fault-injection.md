@@ -15,6 +15,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
 | A daemon or client is alive but silent | `fault.Pause` | No replies, no closed connection; down only after heartbeat grace | Yes | `PauseLease.Resume` |
+| A daemon or client is alive but slow | `fault.ApplyCPULimit` | Replies and heartbeats arrive late; the process, its memory and its connections stay | Yes | `CPULimitLease.Restore` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets a container sends are delayed, dropped, rate-limited, reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow or lossy replies from that container; connections stay up | No | `NetworkProfileLease.Restore` |
 | Replication between two clusters stops | `rbdmirror.Daemon.InterruptPeerLink`, `cephfsmirror.Daemon.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
@@ -107,6 +108,73 @@ What Ceph does with the frozen container:
   fails with ETIMEDOUT. For RBD locks and CephFS sessions see
   [Handing over an RBD exclusive lock](#handing-over-an-rbd-exclusive-lock) and
   [Evicting a silent CephFS client](#evicting-a-silent-cephfs-client).
+
+## Limiting a container's CPU
+
+[`fault.ApplyCPULimit`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#ApplyCPULimit)
+lowers the CFS bandwidth of a running daemon or `WithClient` container, as
+`docker update --cpus` does, without restarting it. The process keeps its
+identity, memory and connections; it only gets less CPU time, so it answers
+late instead of not at all.
+
+```golang
+limit, err := fault.ApplyCPULimit(ctx, cluster, osd, fault.CPULimit{NanoCPUs: 250_000_000})
+if limit != nil {
+	defer limit.Restore(cleanupCtx) // also when err is not nil
+}
+if err != nil {
+	t.Fatal(err)
+}
+before, err := limit.Status(ctx)
+// ... run the SUT against the slow OSD ...
+after, err := limit.Status(ctx)
+// after.ThrottledPeriods > before.ThrottledPeriods: the OSD was throttled.
+```
+
+`ApplyCPULimit` returns without error only when the engine's settings and the
+kernel's `cpu.max` of the same container generation show the limit; a lost
+update reply is settled by that evidence, never by sending the update again.
+`Status` reads `cpu.max` and the `cpu.stat` counters (`nr_periods`,
+`nr_throttled`, `throttled_usec`). A slow reply alone does not show that the
+limit caused it; rising throttling counters do.
+
+The limit keeps the encoding of the target's current setting, which is the
+baseline that `Restore` puts back:
+
+| Baseline | Limit installed as | Restored as |
+| --- | --- | --- |
+| `NanoCPUs` (`--cpus`) | `NanoCPUs` | The same `NanoCPUs` |
+| `CPUQuota`, with or without `CPUPeriod` | `CPUQuota` over the same period | The same `CPUQuota` |
+| None, or a negative `CPUQuota` | `CPUQuota` over the same period | `CPUQuota` -1 (or the negative value found); the kernel reads `max` again |
+
+Docker ignores a setting of zero on update, so an unset quota comes back as
+Docker's unlimited value -1 rather than 0. The container behaves the same,
+also after a restart. `Restore` checks the engine's settings and the kernel's
+`cpu.max` after the update, and the cluster's `Terminate` restores a held
+limit after it resumes paused containers.
+
+Refusals, all before any update is sent:
+
+- The limit is not below the current limit or the engine's CPU count, or does
+  not give a quota of at least 1 ms and a whole number of microseconds per
+  period.
+- The container is not running, is paused, or mixes `NanoCPUs` with a quota or
+  period.
+- The engine does not use cgroup v2 or has no CFS bandwidth control, the
+  container does not run in a cgroup namespace of its own (Docker's default on
+  cgroup v2), the cpu controller is not enabled for it (`cpu.max` or the
+  throttling counters of `cpu.stat` are missing, as on a rootless engine
+  without CPU delegation), or its `cpu.max` does not express its engine
+  settings. These are `ceph.ErrEnvironmentUnavailable`.
+
+The files are read with `cat` inside the target, so that read counts against
+the limit and the image must provide `cat`. This also works on desktop
+engines, whose cgroups live in a VM the test process cannot read.
+
+`Restore` refuses, and stays retryable, for a paused container (resume it
+first), a container that was restarted while limited, and settings changed
+outside the lease, which it does not overwrite. A stopped container only gets
+its settings back. Restore before stopping, restarting or pausing the target.
 
 ## Interrupting a network endpoint
 
@@ -822,7 +890,7 @@ them under a deadline instead of asserting once.
 
 ## Related APIs
 
-- [`fault`](../../fault/README.md): `Pause`, `InterruptNetwork`, `ApplyNetworkProfile`, `InjectObjectDataError`.
+- [`fault`](../../fault/README.md): `Pause`, `ApplyCPULimit`, `InterruptNetwork`, `ApplyNetworkProfile`, `InjectObjectDataError`.
 - [`override`](../../override/README.md): `SetConfig`, `SetMessengerPolicy`, `AddBlocklist`, `SetFullRatios`, `SetOSDFlag`.
 - [`ceph`](../../ceph/README.md): scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
 - [`rbd`](../../rbd/README.md), [`rbd/mirror`](../../rbd/mirror/README.md),

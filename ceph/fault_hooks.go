@@ -26,6 +26,7 @@ var faultKindNames = map[string]faultKind{
 	"NetworkDelay":        faultNetworkDelay,
 	"NetworkInterruption": faultNetworkInterruption,
 	"ContainerPause":      faultContainerPause,
+	"CPULimit":            faultCPULimit,
 }
 
 var errFaultToken = errors.New("fault registry token is not one that a cluster issued")

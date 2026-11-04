@@ -9,22 +9,27 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// This file binds the CPU-controller witness to the cgroup of one frozen
-// container generation. It reuses the identity fence of the memory
-// qualification (container ID, engine start time, init PID, kernel process
-// start time, cgroup directory identity) and adds a re-resolution of the
-// cgroup path from the PID, so a migrated or replaced cgroup cannot be read as
-// the frozen target.
+// This file binds a target-local cgroup witness to the cgroup of one frozen
+// container generation: container ID, engine start time, init PID, kernel
+// process start time and cgroup directory identity, with a re-resolution of
+// the cgroup path from the PID, so a migrated or replaced cgroup cannot be
+// read as the frozen target. The memory qualifications read their files
+// between two of its fences.
 //
 // Roots are injectable so the Docker-free fixtures drive the real binder over a
 // synthetic proc and cgroup tree. No engine call is made here: the caller
 // supplies the engine state it inspected, and no native cgroup was read by the
 // change that introduced this file.
 
-var errCPUBinding = errors.New("cpu witness binding refused")
+var (
+	errCPUBinding           = errors.New("cpu witness binding refused")
+	errCPUWitnessGeneration = errors.New("cpu witness generation is not comparable")
+)
+
+// cpuWitnessSource names the observer in a binding receipt.
+const cpuWitnessSource = "cgroup-v2-local:cpu"
 
 // cpuFSRoots are the proc and cgroup v2 mount points.
 type cpuFSRoots struct{ Proc, Cgroup string }
@@ -76,8 +81,9 @@ type cpuWitnessTarget struct {
 	identity os.FileInfo
 	checks   cpuBindChecks
 
-	// betweenFences runs after the first fence and the reads, before the
-	// closing fence. Tests use it to change the tree mid-read.
+	// betweenFences runs after the first fence and the reads of a fenced
+	// witness, before the closing fence. Tests use it to change the tree
+	// mid-read.
 	betweenFences func()
 }
 
@@ -174,34 +180,6 @@ func (t *cpuWitnessTarget) fence(state cpuEngineState) error {
 		}
 	}
 	return nil
-}
-
-// read takes one witness bracketed by two fences. The state function is called
-// once per fence so both inspections happen on either side of the file reads.
-func (t *cpuWitnessTarget) read(state func() (cpuEngineState, error), now func() time.Time) (*cpuWitness, error) {
-	inspect := func() error {
-		s, err := state()
-		if err != nil {
-			return fmt.Errorf("%w: engine inspection: %v", errCPUBinding, err)
-		}
-		return t.fence(s)
-	}
-	if err := inspect(); err != nil {
-		return nil, err
-	}
-	w, err := readCPUWitness(t.Generation, t.group, now())
-	if err != nil {
-		return nil, err
-	}
-	if t.betweenFences != nil {
-		t.betweenFences()
-	}
-	if !t.checks.skipPostFence {
-		if err := inspect(); err != nil {
-			return nil, err
-		}
-	}
-	return &w, nil
 }
 
 // receipt is the public description of the binding. It carries identity

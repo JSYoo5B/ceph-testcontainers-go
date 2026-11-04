@@ -5,15 +5,13 @@ package integration_test
 import (
 	"errors"
 	"fmt"
-	"math/big"
 
 	"github.com/moby/moby/api/types/container"
 )
 
-// This file is the engine adapter for the CPU witness binder. It converts one
-// engine inspection into the cpuEngineState the fence compares and
-// cross-checks an engine-configured CPU limit against the kernel's cpu.max.
-// The conversion is pure, so the Docker-free fixtures drive it with
+// This file is the engine adapter for the cgroup witness binder. It converts
+// one engine inspection into the cpuEngineState the fence compares. The
+// conversion is pure, so the Docker-free fixtures drive it with
 // synthetic inspection responses. Nothing here mutates a container.
 
 var errCPUEngineState = errors.New("cpu engine state is not usable")
@@ -46,24 +44,4 @@ func cpuEngineStateFromInspect(c container.InspectResponse, checks cpuEngineChec
 		return cpuEngineState{}, fmt.Errorf("%w: inspection lacks identity", errCPUEngineState)
 	}
 	return s, nil
-}
-
-// cpuMaxMatchesNanoCPUs checks that the kernel's cpu.max expresses the engine's
-// NanoCPUs setting exactly (quota/period equals nano/1e9). Docker derives the
-// quota by integer division, so a value that does not divide evenly is
-// reported as a mismatch rather than rounded. An unlimited kernel setting or a
-// nonpositive engine setting never matches.
-func cpuMaxMatchesNanoCPUs(max cpuMax, nano int64) error {
-	if nano <= 0 {
-		return fmt.Errorf("%w: engine CPU limit is not finite", errCPUWitnessInconclusive)
-	}
-	if max.Unlimited || max.Period == 0 || max.Quota == 0 {
-		return fmt.Errorf("%w: kernel CPU limit is not finite", errCPUWitnessInconclusive)
-	}
-	left := new(big.Int).Mul(new(big.Int).SetUint64(max.Quota), big.NewInt(1_000_000_000))
-	right := new(big.Int).Mul(big.NewInt(nano), new(big.Int).SetUint64(max.Period))
-	if left.Cmp(right) != 0 {
-		return fmt.Errorf("%w: kernel cpu.max does not match the engine CPU limit", errCPUWitnessInconclusive)
-	}
-	return nil
 }

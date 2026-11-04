@@ -1006,3 +1006,34 @@ func TestOSDOOMPressureEffectIsSettledNarrowly(t *testing.T) {
 		t.Fatalf("an unsettled pressure update still gave %s", v)
 	}
 }
+
+func TestOSDMapEntryRequiresEveryField(t *testing.T) {
+	entry := func(fields string) string {
+		return `{"epoch": 41, "osds": [{"osd": 0, "up": 1, "in": 1, "up_from": 5, "down_at": 0}, {"osd": 2` + fields + `}]}`
+	}
+	good := entry(`, "up": 1, "in": 1, "up_from": 9, "down_at": 7`)
+	m, err := parseOSDMapEntry([]byte(good), 2)
+	if err != nil || m != (osdMapEntry{Epoch: 41, Up: true, In: true, UpFrom: 9, DownAt: 7}) {
+		t.Fatalf("good: %+v %v", m, err)
+	}
+	if m, err := parseOSDMapEntry([]byte(entry(`, "up": 0, "in": 1, "up_from": 9, "down_at": 7`)), 2); err != nil || m.Up {
+		t.Fatalf("down entry: %+v %v", m, err)
+	}
+	for name, data := range map[string]string{
+		"not json":        "nope",
+		"no epoch":        `{"osds": []}`,
+		"null epoch":      `{"epoch": null, "osds": []}`,
+		"no osds":         `{"epoch": 1}`,
+		"null osds":       `{"epoch": 1, "osds": null}`,
+		"osd absent":      `{"epoch": 1, "osds": [{"osd": 0, "up": 1, "in": 1, "up_from": 1, "down_at": 0}]}`,
+		"missing up":      entry(`, "in": 1, "up_from": 9, "down_at": 7`),
+		"null up":         entry(`, "up": null, "in": 1, "up_from": 9, "down_at": 7`),
+		"missing in":      entry(`, "up": 1, "up_from": 9, "down_at": 7`),
+		"missing up_from": entry(`, "up": 1, "in": 1, "down_at": 7`),
+		"missing down_at": entry(`, "up": 1, "in": 1, "up_from": 9`),
+	} {
+		if m, err := parseOSDMapEntry([]byte(data), 2); err == nil {
+			t.Errorf("%s: accepted as %+v", name, m)
+		}
+	}
+}

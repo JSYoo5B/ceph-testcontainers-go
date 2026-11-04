@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,69 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 )
+
+// osdInstanceView is the engine's account of the target container at one
+// moment: the running identity compared with the frozen one.
+type osdInstanceView struct {
+	Running, OOMKilled bool
+	PID                int
+	StartedAt          string
+}
+
+// osdMapEntry is the target's entry in one "osd dump".
+type osdMapEntry struct {
+	Epoch          int
+	Up, In         bool
+	UpFrom, DownAt int
+}
+
+// parseOSDMapEntry extracts one OSD from "osd dump --format json". Epoch, the
+// osds list, and the entry's osd, up, in, up_from and down_at fields are all
+// required and typed: a missing or null field is an error, never a down or
+// zero entry.
+func parseOSDMapEntry(data []byte, osd int) (osdMapEntry, error) {
+	var dump struct {
+		Epoch *int `json:"epoch"`
+		OSDs  *[]struct {
+			OSD    *int `json:"osd"`
+			Up     *int `json:"up"`
+			In     *int `json:"in"`
+			UpFrom *int `json:"up_from"`
+			DownAt *int `json:"down_at"`
+		} `json:"osds"`
+	}
+	if err := json.Unmarshal(data, &dump); err != nil {
+		return osdMapEntry{}, fmt.Errorf("osd dump: %w", err)
+	}
+	if dump.Epoch == nil || dump.OSDs == nil {
+		return osdMapEntry{}, errors.New("osd dump has no epoch or osds")
+	}
+	for _, e := range *dump.OSDs {
+		if e.OSD == nil || *e.OSD != osd {
+			continue
+		}
+		if e.Up == nil || e.In == nil || e.UpFrom == nil || e.DownAt == nil {
+			return osdMapEntry{}, fmt.Errorf("osd.%d entry lacks up, in, up_from or down_at", osd)
+		}
+		return osdMapEntry{Epoch: *dump.Epoch, Up: *e.Up == 1, In: *e.In == 1, UpFrom: *e.UpFrom, DownAt: *e.DownAt}, nil
+	}
+	return osdMapEntry{}, fmt.Errorf("osd.%d is not in the osd dump", osd)
+}
+
+// osdSlowLiveView is one observation of the target. A part that could not be
+// read stays nil or false-with-an-error; it is never decoded as healthy.
+type osdSlowLiveView struct {
+	At       time.Time
+	Errs     []string
+	Instance *osdInstanceView
+	Map      *osdMapEntry
+	// PGState is the selected PG's state string, PGRead whether it was read.
+	PGState       string
+	PGRead        bool
+	ActingPrimary int
+	HealthCodes   []string
+	HealthRead    bool
+}
 
 // This file is the model of the first OSD memory-OOM step. One owned OSD, the
 // acting primary of a single-PG replicated pool, is moved to a finite memory

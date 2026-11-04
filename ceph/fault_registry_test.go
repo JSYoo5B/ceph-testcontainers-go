@@ -67,7 +67,7 @@ func hold(t *testing.T, c *Container, kind faultKind, key, network string, log *
 	case faultShaping:
 		f.releases = true
 		c.faults.settle(token, network, f, f.undo, nil)
-	case faultEndpoint, faultFreeze:
+	case faultEndpoint, faultFreeze, faultThrottle:
 		c.faults.settle(token, network, f, f.undo, f.complete)
 	default:
 		c.faults.settle(token, network, f, nil, nil)
@@ -151,6 +151,7 @@ func TestFaultRegistryCompletionKindsReturnPreviousHandle(t *testing.T) {
 	for kind, want := range map[faultKind]string{
 		faultNetworkInterruption: "restore the existing endpoint interruption first",
 		faultContainerPause:      "resume the existing container pause first",
+		faultCPULimit:            "restore the existing CPU limit of this container first",
 	} {
 		c := &Container{}
 		var log []string
@@ -214,6 +215,7 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 	hold(t, c, faultFullRatios, "", "", &log)
 	hold(t, c, faultNetworkInterruption, "link-b", "net", &log)
 	hold(t, c, faultNetworkDelay, "delay-b", "", &log)
+	hold(t, c, faultCPULimit, "cpu-a", "", &log)
 	// A reservation is not undone: its caller settles after Terminate.
 	c.mu.Lock()
 	reserved, _, _ := c.faults.reserve(t.Context(), faultNetworkDelay, "delay-reserved")
@@ -227,11 +229,13 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 			return 1
 		case strings.HasPrefix(entry, "link-"):
 			return 2
+		case strings.HasPrefix(entry, "cpu-"):
+			return 4
 		}
 		return 3
 	}
-	if len(log) != 6 || !slices.IsSortedFunc(log, func(a, b string) int { return phase(a) - phase(b) }) {
-		t.Fatalf("undo order %v; want delays, interruptions, pauses and nothing else", log)
+	if len(log) != 7 || !slices.IsSortedFunc(log, func(a, b string) int { return phase(a) - phase(b) }) {
+		t.Fatalf("undo order %v; want delays, interruptions, pauses, CPU limits and nothing else", log)
 	}
 	for _, entry := range log {
 		if want := map[bool]string{true: ":unlocked", false: ":locked"}[phase(entry) == 1]; !strings.HasSuffix(entry, want) {

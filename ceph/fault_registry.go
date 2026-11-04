@@ -25,6 +25,7 @@ const (
 	faultBlockIO
 	faultPGPrimary
 	faultMinCompatClient
+	faultCPULimit
 )
 
 // faultPhase is when, and under which lock mode, terminate undoes a kind.
@@ -40,17 +41,21 @@ const (
 	// faultEndpoint entries are undone third, after faultStorage, under
 	// c.mu. A failure keeps the entry's network, which the undo still needs.
 	faultEndpoint
-	// faultFreeze entries are undone last, under c.mu, before native
+	// faultFreeze entries are undone fourth, under c.mu, before native
 	// commands are stopped: a frozen process cannot handle a stop signal.
 	faultFreeze
 	// faultStorage entries are undone second, after faultShaping: they
 	// restore owned block tables with c.mu released, before a daemon is
 	// stopped or its device claim can be released.
 	faultStorage
+	// faultThrottle entries are undone last, under c.mu, after faultFreeze:
+	// restoring a CPU limit reads the target's cgroup from inside it, which a
+	// frozen container cannot answer.
+	faultThrottle
 )
 
 // faultPhases is terminate's order.
-var faultPhases = []faultPhase{faultShaping, faultStorage, faultEndpoint, faultFreeze}
+var faultPhases = []faultPhase{faultShaping, faultStorage, faultEndpoint, faultFreeze, faultThrottle}
 
 type faultKindSpec struct {
 	phase faultPhase
@@ -79,6 +84,9 @@ var faultKinds = map[faultKind]faultKindSpec{
 	}},
 	faultContainerPause: {phase: faultFreeze, undone: "resume paused container", refuse: func(bool) error {
 		return invalidRequest("resume the existing container pause first")
+	}},
+	faultCPULimit: {phase: faultThrottle, undone: "restore CPU limit", refuse: func(bool) error {
+		return invalidRequest("restore the existing CPU limit of this container first")
 	}},
 	faultBlocklist: {phase: faultTracked, refuse: func(bool) error {
 		return errors.New("restore the existing client blocklist override first")
