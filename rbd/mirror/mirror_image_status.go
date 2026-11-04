@@ -23,7 +23,8 @@ import (
 //
 // GlobalID is the native global mirror image ID, equal on both sides.
 // SourceMirrorState and DestinationMirrorState are the native mirroring states
-// (enabled, creating, disabling, ...). DaemonName and InstanceID name the owned
+// (enabled, creating, disabling, ...). Squid's rbd before 19.2.3 prints
+// creating as unknown. DaemonName and InstanceID name the owned
 // receiver that reports the replay.
 type ImageStatus struct {
 	Pool, SourceNamespace, DestinationNamespace, Name string
@@ -487,7 +488,10 @@ func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObserv
 		result.ID, result.State = *tagged.ID, "disabled"
 		return result, errRBDImageMirroringDisabled
 	}
-	if mirror.Mode == nil || mirror.State == nil || mirror.GlobalID == nil || mirror.Primary == nil || (mode != "" && *mirror.Mode != string(mode) || mode == "" && !slices.Contains([]string{"snapshot", "journal"}, *mirror.Mode)) || !slices.Contains([]string{"creating", "enabled", "disabling"}, *mirror.State) || *mirror.GlobalID == "" {
+	// Squid's rbd before 19.2.3 has no name for the creating state, which
+	// rbd-mirror sets on a new destination image, and prints "unknown". Like
+	// creating, it is a valid state that is never replay-ready.
+	if mirror.Mode == nil || mirror.State == nil || mirror.GlobalID == nil || mirror.Primary == nil || (mode != "" && *mirror.Mode != string(mode) || mode == "" && !slices.Contains([]string{"snapshot", "journal"}, *mirror.Mode)) || !slices.Contains([]string{"creating", "unknown", "enabled", "disabling"}, *mirror.State) || *mirror.GlobalID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing mirroring fields")
 	}
 	result.ID, result.GlobalID, result.State, result.Primary = *tagged.ID, *mirror.GlobalID, *mirror.State, *mirror.Primary

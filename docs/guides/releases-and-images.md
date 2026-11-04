@@ -114,7 +114,7 @@ These affect commands or client libraries you run yourself, not the typed API:
 | --- | --- |
 | Messenger encryption | There is no `messenger dump` admin command showing per-connection encryption. Check the daemons' `ms_*_mode` settings (for example with `ceph config show`) and, for your own librados or libcephfs clients, the `secure` mode on READY connections in `debug_ms=1` logs. |
 | RGW STS roles | `radosgw-admin role get` for a missing role exits with code 2 and prints one ENOENT line. |
-| Python `rbd` group API | `Group.id()` and `get_snap_info()` do not exist. Read the group ID from the `rbd_group_directory` object and member snapshots from each image's group snapshot namespace. |
+| Python `rbd` group API | `Group.id()` and `get_snap_info()` do not exist. Read the group ID from the `rbd_group_directory` object and member snapshots from each image's group snapshot namespace. `list_snaps()` of a group that does not exist returns an empty list; Tentacle 20.2.5 and Umbrella raise `ObjectNotFound`, and 20.2.4 crashes (see [Known release-specific issues](#known-release-specific-issues)). |
 | `rbd mirror pool info` | No `mirror_uuid` or `remote_namespace` fields; no `--remote-namespace` option. |
 | `radosgw-admin bucket sync status` | Text output only. |
 
@@ -179,6 +179,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   rejects such requests. No setting disables the check. `multisite.Run`
   therefore cannot start on 19.2.6. Use 19.2.5 for
   multisite tests on Squid; everything else behaves on 19.2.6 as on 19.2.5.
+- **Tentacle 20.2.4, Python `rbd` snapshot list of a missing group.**
+  `rbd.Group(ioctx, name).list_snaps()` for a group that does not exist
+  crashes the Python process with `SIGSEGV` instead of raising
+  `ObjectNotFound`: when the native call fails, the binding's iterator is
+  freed with its original entry count and frees entries that the call never
+  filled, so no `except` clause runs.
+  It crashed in every attempt with the pinned 20.2.4 aggregate. Tentacle
+  20.2.5 and Umbrella 21.2.0 raise the exception and continue. Check that the
+  group exists (`rbd group ls`) before listing its snapshots from Python on
+  20.2.4, or run the listing in a child process. The module does not list the
+  snapshots of a missing group.
 - **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
   releases generate only `aes` keys, as Squid does. `ceph.WithAuth` and
@@ -193,6 +204,22 @@ These affect commands or client libraries you run yourself, not the typed API:
   `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
+- **Every tested release, RBD snapshot copy resumed after a killed
+  receiver.** When an `rbd-mirror` daemon is killed while it copies a mirror
+  snapshot and the same daemon is started again, it resumes the copy and marks
+  the snapshot complete, but the object numbered
+  `last_copied_object_number` at the kill keeps the previous snapshot's bytes.
+  It happened in every demotion run on 19.2.4, 19.2.5, 20.2.4 and 21.2.0
+  (SIGKILL on all four, `Stop` without a grace period on 19.2.4 and 20.2.4),
+  and for an ordinary mirror snapshot on 19.2.5 and 20.2.4; a graceful stop
+  was not tried. Squid
+  19.2.3 does not resume an interrupted demotion copy at all (Tentacle 20.2.0
+  has the same code); the destination stays `up+unknown`
+  ("remote image is not primary"). A test that kills a receiver during a
+  snapshot sync must compare the destination's data afterwards rather than
+  trust the completed snapshot; see
+  `TestRBDMirrorDemotionResumesAfterReceiverRestart` (optional
+  `native_regression` batch `rbd_demote_restart`).
 - **Both releases, MON paused past the ticket lifetime.** A MON paused for
   longer than the MON ticket lifetime can strand a daemon whose MON session was
   on it: its reconnect is refused with `EACCES`, and it stops authenticating

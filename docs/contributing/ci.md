@@ -661,8 +661,10 @@ Discovery does not add historical patches to `SUPPORTED_RELEASES` or change
 support policy. Add a newly published patch to the discovery inventory to make
 it eligible for random selection; use `targeted` for an immediate check.
 The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
-malformed trash-purge schedule removal with empty and populated schedules. It
-preserves native exit codes and unchanged-state controls in the durable receipt:
+malformed schedule removal with empty and populated schedules for both
+`rbd_support` schedule handlers, trash purge and mirror snapshot, which share
+one removal path. It asserts the refusal with a schedule present and preserves
+native exit codes and unchanged-state controls in the durable receipt:
 characterizing an old success on invalid input is not claiming that behavior is
 correct. Discovery also samples the existing RGW multisite bootstrap contract on
 19.2.5/19.2.6/19.2.7, preserving the documented 19.2.6 failure as a control.
@@ -796,6 +798,21 @@ acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 go test -tags all,native_regression -run '^TestMONLogAckThroughPeon$' -v ./internal/integration
+```
+
+`rbd_demote_restart` (`TestRBDMirrorDemotionResumesAfterReceiverRestart`,
+bridge mode, netem helper) kills the RBD receiver with SIGKILL while it copies
+a planned demotion snapshot through a rate-limited source OSD path, then
+restarts the same container. It requires the same demotion copy to complete,
+the destination image whose demoted primary was removed meanwhile to be
+removed too, exact bytes, non-forced promotion and replication back. Squid
+19.2.3 never resumes the copy. 19.2.4, 19.2.5, 20.2.4 and
+21.2.0 resume and complete it, but the object numbered
+`last_copied_object_number` at the kill keeps the previous snapshot's bytes,
+so the test fails at the exact-bytes check on every published image:
+
+```sh
+CEPH_TEST_IMAGE=<aggregate> go test -tags all,native_regression -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' -v ./internal/integration/rbd
 ```
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in

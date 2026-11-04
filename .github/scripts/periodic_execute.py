@@ -29,9 +29,11 @@ import tag_scenarios as tags
 ROOT = selection.ROOT
 CLEANUP_RESERVE = 120
 MIN_FREE_BYTES = 12 * (1 << 30)
-SCHEDULE_CASES = {'version', 'empty-before', 'empty-invalid-interval', 'empty-invalid-start', 'empty-after',
-                  'add', 'present-before', 'present-invalid-interval', 'present-invalid-start',
-                  'present-after', 'cleanup', 'restored'}
+SCHEDULE_HANDLER_CASES = ('empty-before', 'empty-invalid-interval', 'empty-invalid-start', 'empty-after',
+                          'add', 'present-before', 'present-invalid-interval', 'present-invalid-start',
+                          'present-after', 'cleanup', 'restored')
+# Trash purge cases keep their bare names; mirror snapshot cases are prefixed.
+SCHEDULE_CASES = {'version'} | set(SCHEDULE_HANDLER_CASES) | {'mirror-' + c for c in SCHEDULE_HANDLER_CASES}
 
 
 def characterization(log):
