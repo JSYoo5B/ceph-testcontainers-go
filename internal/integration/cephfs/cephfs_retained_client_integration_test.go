@@ -61,8 +61,9 @@ func TestCephFSMetadataRecipe(t *testing.T) {
 }
 
 // One client's discovery, session open, renewals and close, a path-restricted
-// identity admitted and refused, and a required client feature that evicts
-// and refuses a client without it.
+// identity admitted and refused, and a required client feature, set through
+// session.OverrideRequiredFeatures next to one an administrator required,
+// that evicts and refuses a client without it until Restore.
 func TestCephFSSessionAdmission(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	testCephFSSessionAdmission(t)
