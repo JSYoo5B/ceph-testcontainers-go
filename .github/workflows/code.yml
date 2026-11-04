@@ -1,6 +1,8 @@
 name: Code checks
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   # A weekly scan catches new advisories without a source change.
@@ -16,7 +18,7 @@ env:
   GOPROXY: 'https://proxy.golang.org|direct'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 
 # Go jobs restore the module cache that the Plan job of tagged-runtime.yml

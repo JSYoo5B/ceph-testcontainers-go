@@ -3,10 +3,20 @@ name: Ceph short
 # Runtime batches never read documentation or the separately built go-ceph
 # probe module, so a change to those alone runs only Code checks.
 #
-# Every batch runs on every pull request unless it opts in to declaration
-# selection with ci:selected-batches outside a release phase (CI_RELEASE_PHASE
-# "true"). Manual runs cover every batch; Ceph periodic covers main.
+# Every batch runs on every push to main and on every pull request. A pull
+# request can opt in to running only the batches that reach a declaration it
+# changes, with the ci:selected-batches label, outside a release phase
+# (CI_RELEASE_PHASE "true"). The selection is
+# advisory: adding or removing the label starts a new run, and pushes to main
+# always run every batch, so a selection miss surfaces at the next merge.
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     paths-ignore:
@@ -33,7 +43,7 @@ permissions:
 # does nothing; its own group keeps it from cancelling the pull request's run
 # in progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selected-batches' && format('-{0}', github.run_id) || '' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selected-batches' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
