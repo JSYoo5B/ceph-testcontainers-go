@@ -197,6 +197,7 @@ Watch takes a `ceph.WatchConfig` and has the same lifecycle:
 | `mirror.Mirror.WatchDirectory` (CephFS) | assignment, sync state and last synced snapshot of one directory | filesystems, peer and the directory policy | 5s |
 | `multisite.Fixture.WatchSync` (RGW) | metadata sync and the selected sources' data sync of one zone | realm, zonegroup and zone IDs and the committed period | 5s |
 | `multisite.SyncGroup.WatchBucketSync` (RGW) | the bucket checkpoint of one pipe between two zones | the group's policy, both bucket instances and the committed period | 5s |
+| `multisite.SyncGroup.WatchBucketPolicy` (RGW) | period, policy and bucket metadata import of one bucket policy into one zone, until imported | the committed period, the group's policy, the zone and the referenced bucket instances | 2s |
 
 The default interval follows the cost of one read: an OSD watch read is one
 `osd dump`, while a mirror read runs about a dozen commands on both clusters.
@@ -251,7 +252,8 @@ if err := watch.Stop(); err != nil {
   consumer. The test can call fixture operations between events. A read that
   waits too long for a lock is a gap.
 - `Stop` cancels the watch, waits for its goroutine and returns the cause:
-  nil for `Stop` itself or a finished clone, the context's error,
+  nil for `Stop` itself, a finished clone or an imported bucket policy, the
+  context's error,
   `ErrWatchOverflow`, or the read error that ended it. Cancelling the context
   alone does not wait. Stopping a watch never changes what it observed: a
   clone keeps running and a mirror keeps replaying.

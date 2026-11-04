@@ -30,7 +30,8 @@ quotas) stays in [`rgw`](../README.md), accounts in
 5. **Observe and verify**: `WaitSyncReady` (metadata and data catch-up),
    `SyncGroup.WaitBucketPolicyReady`, `SyncGroup.WaitBucketSyncReady`, then read
    the objects through the other zone's endpoint. `WatchSync` and
-   `SyncGroup.WatchBucketSync` report lag and catch-up while a fault runs.
+   `SyncGroup.WatchBucketSync` report lag and catch-up while a fault runs;
+   `SyncGroup.WatchBucketPolicy` reports the stages of one policy import.
    `ZoneAdmin` runs `radosgw-admin` in any zone.
 6. **Clean up**: terminate the fixture before the clusters; a non-nil
    `*Fixture` returned with an error must still be terminated.
@@ -86,8 +87,19 @@ reading as progress:
 - for a bucket watch, a bucket recreated under the same name, and the group
   changed through the fixture or outside it.
 
+`group.WatchBucketPolicy(ctx, cfg, "west")` reports the stages of the read
+`WaitBucketPolicyReady` makes, 2 seconds apart by default: the committed
+period, the group's policy and the referenced bucket instances imported into
+the zone, and `Status.Imported` once all three are. Start it after the policy
+change; it ends with a nil cause after it has sent the imported status, and an
+imported baseline is its only event. A bucket that the zone has not imported
+yet makes the native command fail, so that stage is a `WatchGap` with
+`BucketsImported` false. The watch keeps the committed period, the group's
+policy, the zone and the bucket instances it captured: a new committed period,
+a changed or removed group, a detached zone and a recreated bucket end it.
+
 A full buffer ends the watch with `ceph.ErrWatchOverflow`, and `Terminate`
-ends it with `ceph.ErrInvalidRequest`. Neither watch proves that a
+ends it with `ceph.ErrInvalidRequest`. No watch proves that a
 particular object arrived: compare the objects through the other zone. Call
 `Stop` before `Terminate`: it joins the watch and returns why it ended. See
 [watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
