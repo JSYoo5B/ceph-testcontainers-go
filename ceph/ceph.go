@@ -89,7 +89,7 @@ type Container struct {
 	// native is the native-command state and the cancellation and fencing of
 	// its calls; see nativeCommands. Its state has its own leaf lock.
 	native nativeCommands
-	// faults holds the network delays, interruptions and pauses, and the
+	// faults holds the network delays, interruptions, pauses and CPU limits, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
 	// flag, MGR module and PG primary overrides, reserved or held; see
 	// faultRegistry. It is guarded by mu, and terminate runs its undo through
@@ -1099,7 +1099,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// run; then owned block I/O faults, also with c.mu released, before a
 	// daemon is stopped or its device released; then interruptions of caller-owned clients and owned daemons
 	// before any network is removed; then pauses, because a frozen process
-	// cannot handle the stop signal until it is thawed. A failed undo
+	// cannot handle the stop signal until it is thawed; then CPU limits,
+	// whose restoration reads the thawed target's cgroup. A failed undo
 	// remains retryable through its handle.
 	errs, blockedNetworks := c.faults.undo(ctx, &c.mu)
 	// Stop native commands while their containers still run. Those that

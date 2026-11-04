@@ -174,6 +174,7 @@ func (om osdMap) fsid(ctx context.Context) (string, error) {
 // after its network name, by the name a detach refusal gives them.
 var instanceFaultNames = map[faultKind]string{
 	faultNetworkDelay: "network delay", faultNetworkInterruption: "network interruption", faultContainerPause: "container pause",
+	faultCPULimit: "CPU limit",
 }
 
 // refuseInstanceFaults refuses an OSD container that a held network or

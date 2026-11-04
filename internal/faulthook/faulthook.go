@@ -6,8 +6,8 @@
 // The registry is the only way to make a fault known to Terminate. Each kind
 // has a phase that package ceph fixes: network delays are undone first and
 // block I/O tables second, both with the cluster mutex released, then
-// interruptions under it (a failure keeps the network) and pauses last under
-// it. Callers cannot add a phase, change the order or register another
+// interruptions under it (a failure keeps the network), then pauses and CPU
+// limits last under it. Callers cannot add a phase, change the order or register another
 // cleanup.
 //
 // Lock rules: Reserve, Settle, Release, Closed, Owns, OwnedOSD,
@@ -44,6 +44,9 @@ const (
 	// ContainerPause holds a frozen container per ID; Terminate resumes it
 	// under the mutex before native commands stop.
 	ContainerPause Kind = "ContainerPause"
+	// CPULimit holds a CPU bandwidth limit per container ID; Terminate
+	// restores it under the mutex after pauses are resumed.
+	CPULimit Kind = "CPULimit"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -101,7 +104,7 @@ func get() hooks {
 
 // Reserve reserves key for a fault of kind. The caller holds the mutex and
 // has refused a closed cluster with its own error. A refusal of
-// NetworkInterruption or ContainerPause may return the previous handle,
+// NetworkInterruption, ContainerPause or CPULimit may return the previous handle,
 // which still needs its undo.
 func Reserve(ctx context.Context, c *ceph.Container, kind Kind, key string) (Token, any, error) {
 	token, previous, err := get().Reserve(ctx, c, string(kind), key)
