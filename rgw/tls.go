@@ -143,7 +143,9 @@ func (l *tlsListener) fingerprint() string {
 // supplies the new CA to the SUT the way it reads its configuration. When the
 // gateway does not stop, the previous material is put back; when it stopped
 // and fails to start, the error is returned with the new material installed
-// and no rollback, which would need another restart.
+// and no rollback, which would need another restart. To return to the
+// previous certificate, call ReplaceTLS with it again; that restarts the
+// gateway once more.
 //
 //purpose:condition
 func (g *Gateway) ReplaceTLS(ctx context.Context, config TLSConfig) error {
