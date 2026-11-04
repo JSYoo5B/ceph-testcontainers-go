@@ -14,13 +14,13 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
 | Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
-| Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases), on `main` |
+| Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Budgeted supported-release rotation or historical patch discovery; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
-The runtime workflows call the reusable template `tagged-runtime.yml`
+The ordinary runtime workflows and explicit full periodic runs call the reusable template `tagged-runtime.yml`
 (`workflow_call` only). The workflows are independent: none waits for
 another, and each can be re-run on its own.
 
@@ -133,7 +133,7 @@ lists renames as a deletion and an addition.
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
 | Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run. Manual runs are never cancelled. |
-| Ceph periodic | workflow name and ref, plus `-campaign` for the representative campaign; a storage qualification dispatch shares the matrix's group | A new run waits for the run in progress and never cancels it. GitHub keeps one waiting run per group, so a waiting storage dispatch and a waiting matrix firing replace each other; dispatch the storage run again when it ends cancelled. |
+| Ceph periodic | workflow name and ref; explicit representative investigations add `-campaign` | Rotate, discovery, targeted, full and storage runs wait in one group. They never cancel an executing run. The representative group is separate and bounded; it has no schedule. GitHub retains only one waiting run per group, so a later queued request can replace an earlier queued request. |
 | Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
@@ -519,7 +519,7 @@ The account runs at most 40 hosted jobs at once. The constants in
 | `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
 
-A full matrix run holds at most 19 runners and a campaign at most 3; both can
+An explicit full matrix run holds at most 19 runners and a campaign at most 3; both can
 run at once because their concurrency groups differ.
 `tag_scenarios.py releases --scope all` fails when the two together could
 exceed `RUNNER_LIMIT - PULL_REQUEST_RUNNERS`, and `--scope others` fails when
@@ -561,39 +561,148 @@ read as a hit or a write, and a missing log is `unknown`.
 
 ## Periodic runs
 
-`Ceph periodic` runs every runtime category on every
-[supported release](#supported-releases), on `main`, in every
-[network mode](#network-modes) a batch declares. Its schedule fires every 3
-hours, and its `Gate` job (`periodic_gate.py`) decides whether the matrix
-runs:
+The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
+Friday use `discovery`; the other five days use `rotate`. A release phase does
+not expand this daily sample. Ordinary PR/main checks keep their own triggers.
 
-| Situation | Matrix runs |
-| --- | --- |
-| `main` has a commit that no earlier periodic run executed | yes |
-| The last execution of the current commit is 7 days old or older | yes, as a repeat |
-| `CI_RELEASE_PHASE` is `true` | yes, on every firing |
-| A manual dispatch | yes |
-| Otherwise | no; the run ends after `Gate` |
+| Mode | Selection | Invocation |
+| --- | --- | --- |
+| `rotate` | One supported release, the six-test operational core and one extension group/network selection | Five scheduled slots per week; manual default |
+| `discovery` | One historical/new patch, the same compact core, plus applicable directed characterization | Two scheduled slots per week; manual |
+| `targeted` | Explicit source ref, catalogued patch, profile IDs and optional parent tests/network | Manual failure comparison |
+| `full` | Every required profile/network on every supported release, plus environment checks | Manual only |
+| `representative` | Source-owned representative batches with explicit repetitions | Manual only; default one repetition |
+| `storage` | Existing runner-storage qualification | Manual only |
 
-Only a batch job of a runtime caller that ran to an end counts as an
-execution; a run that ended in `Gate`, `Releases`, `Pin` or `History` did
-not execute the commit.
+### Frozen plan and bounded execution
 
-Dispatch a run to check a branch on every supported release before merging:
+`Sample plan` freezes the exact checkout SHA, Ceph index/platform identities,
+source-proven additional image and Ryuk digests, parent test names, tags,
+network modes and selection reason. The plan is uploaded before `Sequential
+sample` starts. Every native case consumes that plan and the compiled binary's
+existing source/inventory receipt; an unknown test, expanded timeout or changed
+source/image selection is refused. The worker records the actual native build
+string and local image/platform IDs before tests.
+
+The worker executes batches sequentially, with independent test-owned fixtures.
+There is no shared-cluster manager. Module/image preparation is amortized;
+verified binaries can be reused only for the same source profile in this run.
+Only inadequate disk admission permits the existing standard hosted cleanup;
+sufficient headroom causes no deletion. Every actual Docker storage filesystem
+must pass admission, including post-image and per-batch checks. A dirty cleanup
+stops further native admission; the executor never prunes other resources.
+
+The executor admits work within 110 minutes, reserves cleanup time, and does
+not start a case without its full bounded native window. Core selections have
+a ten-minute cap and extensions at most twenty minutes, each no greater than
+the source timeout. A case that times out, skips, panics or fails its existing
+completion/checker assertions remains failed or incomplete. The source timeout
+and complete compiled inventory of ordinary CI are unchanged.
+
+Workflow limits include preparation and reporting: plan 15 minutes, worker
+120 minutes (including upload margin), history 15 minutes; at most **150 summed
+runner-minutes** and three allocations per scheduled execution. This is an upper
+bound, not a latency measurement. Runner queue/dependency delay is separate.
+Full and repeated manual investigations retain their existing larger bounds.
+
+### Core and extension inventory
+
+The core reuses these existing parent tests in their declared default network:
+
+- `TestClusterLifecycle`: identity/readiness, RADOS bytes and topology/removal.
+- `TestRBDLifecycle`: native RBD operations and data.
+- `TestCephFSFilesystem`: native filesystem I/O and topology/removal.
+- `TestRGWS3`: real S3 operations through RGW.
+- `TestClientIdentities`: authentication/capability refusal and working controls.
+- `TestCephFSOSDRecovery`: OSD interruption/recovery and retained exact bytes.
+
+`periodic_selection.py` retains **every** required non-environment profile and
+all declared network combinations in the extension inventory. Source-owned
+cost hints in `.github/periodic-costs.json` group those entries at a 45-minute
+estimate; the hints are grouping inputs, never pass evidence or hard timing
+predictions. A missing hint uses a conservative ten-minute estimate. Additional
+network modes keep the existing network-test selection and complete checker
+contracts. Environment/code checks remain in their existing workflows.
+
+For a fixed inventory there are 24 extension groups, 148 profile/network
+combinations per release and 72 supported-release/group cells. Five rotation
+slots per week revisit all cells in approximately **15 weeks**. Releases are
+interleaved within the complete product of groups and releases; separate modulo
+counters cannot accidentally omit combinations. Inventory changes create new
+cell identities. These revisit estimates assume successful scheduling and a
+fixed inventory, not that every attempted cell completes.
+
+### Selection, evidence and failure routing
+
+Read selection history from the existing `scenario-history` branch. Choose
+never-attempted cells first, then the oldest last attempt with stable ordering.
+A native failure, timeout, incomplete native run, preparation failure or
+ineligible environment advances the attempt while preserving its failure and
+unfinished cases. Cancellation before native starts earns no native execution
+credit. A checkpoint is written only after the Go process actually starts.
+Last attempt and last complete result are separate; repeated failures cannot
+monopolize a cell's turn or become passes.
+
+Packed receipts and their frozen plans live under `periodic/<run>-<attempt>.json`
+on the same history branch. They retain actual source/build/image/test identity
+and case-level preparation/native/cleanup outcomes, including unstarted entries.
+They are not ingested as full-profile passes by the ordinary same-configuration
+classifier. Different executions may use newer main SHAs: no old snapshot is
+held merely to finish a rotation. Results are compatibility samples at those
+sources, never proof that current main passed every version or network.
+
+Historical discovery uses a separate inventory in
+`.github/ceph-discovery-images.json`: official aggregate images for Squid
+19.2.0–19.2.7, Tentacle 20.2.0–20.2.4 and Umbrella 21.2.0. Each cell keeps one
+release for every role/client and pins index and native architecture children.
+Only linux/amd64 executes by default; arm64 manifest availability is not native
+arm64 validation. Umbrella's official amd64 images require x86-64-v3; a failed
+CPU/platform preflight is an environment result, not a Ceph failure. Missing
+artifacts, unresolved helpers and inapplicable extra-image contracts remain
+preparation/eligibility outcomes rather than native passes.
+
+A new patch receives a priority turn, alternating with oldest-attempt turns so
+new arrivals cannot permanently starve historical work. Fourteen patches at two
+slots per week imply roughly **seven weeks** for a fixed inventory. Discovery
+does not add historical patches to `SUPPORTED_RELEASES` or change support policy.
+The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
+malformed trash-purge schedule removal with empty and populated schedules. It
+preserves native exit codes and unchanged-state controls: characterizing an old
+success on invalid input is not claiming that behavior is correct.
+
+Investigate meaningful differences with scoped issues. Preserve the first
+failure, then compare the same test at the recorded source with an adjacent
+patch or control. No automatic full-matrix expansion, retry-until-green,
+support-policy change or compatibility workaround follows a discovery result.
 
 ```sh
-gh workflow run "Ceph periodic" --ref <branch>
+# Profile IDs come from the plan or the source-owned vocabulary.
+gh workflow run "Ceph periodic" -f mode=targeted -f ref=<original-sha> \
+  -f patch=19.2.2 -f profiles=<exact-profile-id> -f tests=<parent-test> -f network=host
+gh workflow run "Ceph periodic" -f mode=targeted -f ref=<same-original-sha> \
+  -f patch=19.2.3 -f profiles=<same-profile-id> -f tests=<same-parent-test> -f network=host
+# Complete release work is explicit:
+gh workflow run "Ceph periodic" -f mode=full
 ```
 
-A profile that fails and passes in different runs of the same commit is a
-flaky candidate. Record its first failure (run link, commit, image IDs) in an
-issue and fix the cause; do not re-run to get a pass.
+The requested source must contain these planning/execution tools. Local
+`periodic_execute.py execute --trial` records working-tree provenance rather
+than claiming a verified Git checkout. Measure downloaded packed receipts with
+the existing tooling:
+
+```sh
+python3 .github/scripts/ci_measurements.py periodic --receipts <artifact-directory> --output <report.json>
+```
+
+An optional existing `--cache` adds actual job allocations and runner time.
+Missing timing stays unknown; created-to-start delay is not relabeled as runner
+queue time without dependency-ready evidence.
 
 ### Supported releases
 
 `SUPPORTED_RELEASES` in `.github/scripts/run_image_matrix.py` lists each
 supported release with its codename and pinned official image (Tentacle
-20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The `Releases` jobs generate the callers:
+20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and release-phase `Releases` jobs generate the callers:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic'
@@ -625,8 +734,8 @@ gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
 gh variable delete CI_RELEASE_PHASE              # after the release
 ```
 
-While it is `true`, Ceph periodic runs the full matrix on every firing, every
-pull request and push to `main` runs every batch on Tentacle, and Ceph
+While it is `true`, every pull request and push to `main` runs every batch
+on Tentacle, and Ceph
 release matrix runs every category on Umbrella and Squid.
 
 ### Representative campaign
@@ -638,13 +747,12 @@ every batch whose `//ci:` line declares `representative=<theme>` (see
 if a theme (`topology`, `auth`, `mirroring`, `recovery`, `flaky`) has no
 batch.
 
-It runs in Ceph periodic on the daily `23 4 * * *` firing or a dispatch with
-mode `representative`:
+It runs only through an explicit dispatch with mode `representative`:
 
 1. `Pin` resolves the commit (the `ref` input or the run's commit) and the
    registry digest of every role image (`periodic_campaign.py pin`).
 2. `Representative` calls the template with `category: representative`. Each
-   entry repeats `repetitions` times (default 3, at most 10) as separate jobs
+   entry repeats `repetitions` times (default 1, at most 10) as separate jobs
    named `<batch> #<n>`, artifacts ending in `-r<n>`, each checking out the
    pinned commit and pulling `tag@digest`. History rows carry
    `repetition_id` `<n>`.

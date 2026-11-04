@@ -127,7 +127,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     COMMAND = "ci-command.yml"
     # The scratch-device research probe (#7): its own paths only, no scenarios.
     BLOCK_FAULT_PROBE = "block-fault-probe.yml"
-    PERIODIC_SCHEDULE = "41 */3 * * *"
+    PERIODIC_SCHEDULE = "41 4 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
 
     @staticmethod
@@ -354,14 +354,19 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         with self.subTest(workflow=self.PERIODIC):
             workflow = self.workflows[self.PERIODIC]
             self.assertRegex(workflow, r"(?m)^name: Ceph periodic$")
-            self.assertIn("\non:\n  schedule:\n    - cron: '" + self.PERIODIC_SCHEDULE + "'\n    - cron: '"
-                          + self.CAMPAIGN_SCHEDULE + "'\n  workflow_dispatch:\n", workflow)
+            self.assertIn("\non:\n  schedule:\n    - cron: '" + self.PERIODIC_SCHEDULE + "'\n  workflow_dispatch:\n", workflow)
             self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request):")
             self.assertEqual(scalar(workflow, "group"),
-                             "${{ github.workflow }}-${{ github.ref }}${{ (github.event.schedule == '"
-                             + self.CAMPAIGN_SCHEDULE + "' || inputs.mode == 'representative') && '-campaign' || '' }}")
+                             "${{ github.workflow }}-${{ github.ref }}${{ inputs.mode == 'representative' && '-campaign' || '' }}")
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "false")
             jobs = dict(self.jobs[self.PERIODIC])
+            sample_plan, sample = jobs.pop("sample-plan"), jobs.pop("sample")
+            self.assertIn("github.event_name == 'schedule'", scalar(sample_plan.split("    steps:", 1)[0], "if"))
+            self.assertEqual(scalar(sample, "needs"), "sample-plan")
+            self.assertEqual(scalar(sample, "timeout-minutes"), "120")
+            self.assertIn('--source "$sha"', sample_plan)
+            self.assertIn("periodic_execute.py execute", sample)
+            self.assertIn("ref: ${{ needs.sample-plan.outputs.sha }}", sample)
             gate = jobs.pop("gate")
             self.assertIn("python3 .github/scripts/periodic_gate.py --workflow " + self.PERIODIC
                           + " --campaign-schedule '" + self.CAMPAIGN_SCHEDULE + "'", gate)
@@ -377,7 +382,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(qualification, "max_parallel"), str(engine.STORAGE_MAX_PARALLEL))
             self.assertEqual(scalar(qualification, "ref"), "${{ inputs.ref || github.sha }}")
             self.assertEqual(scalar(qualification, "storage_policy"), "${{ inputs.storage_policy }}")
-            self.assertEqual(scalar(gate, "if"), "inputs.mode != 'storage'")
+            self.assertEqual(scalar(gate, "if"), "github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')")
             self.assertFalse(periodic_gate.runtime_job({"name": "Storage qualification / rados_fixtures_watchers"}))
             # The campaign: one pinned commit and pinned digests for every
             # attempt of the source-owned representative batches.
@@ -389,16 +394,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(representative, "ref"), "${{ needs.pin.outputs.sha }}")
             self.assertEqual(scalar(representative, "role_digests"), "${{ needs.pin.outputs.digests }}")
             self.assertEqual(scalar(representative, "release"), "${{ needs.pin.outputs.release }}")
-            self.assertEqual(scalar(representative, "repetitions"), "${{ fromJSON(inputs.repetitions || 3) }}")
+            self.assertEqual(scalar(representative, "repetitions"), "${{ fromJSON(inputs.repetitions || 1) }}")
             self.assertEqual(scalar(representative.split("    with:", 1)[0], "name"), "Representative")
             # The gate tells campaign jobs from matrix batches by this name.
             self.assertEqual(scalar(representative.split("    with:", 1)[0], "name"), periodic_gate.CAMPAIGN_CALLER)
             # Only the History job writes, and only the history branch.
             self.assertEqual(scalar(history, "contents"), "write")
             self.assertEqual(scalar(workflow.split("\njobs:\n", 1)[0], "contents"), "read")
-            self.assertEqual(scalar(history, "if"),
-                             "always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true')")
-            self.assertEqual(scalar(history, "pattern"), "tag-scenario-*")
+            self.assertEqual(scalar(history.split("    steps:", 1)[0], "if"),
+                             "always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true' || needs.sample-plan.result == 'success')")
+            self.assertIn("pattern: tag-scenario-*", history)
+            self.assertIn("pattern: periodic-sample-*", history)
             self.assertIn("scenario_history.py collect --history-dir . --rows ../artifacts/rows", history)
             self.assertIn("push -q origin HEAD:refs/heads/scenario-history", history)
             self.assertNotIn("git push origin main", history)
@@ -947,12 +953,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         Ceph periodic, from the workflow's group expression."""
         expression = scalar(self.workflows[self.PERIODIC], "group")
         match = re.fullmatch(r"\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}"
-                             r"\$\{\{ \(github\.event\.schedule == '([^']+)' \|\| inputs\.mode == 'representative'\)"
-                             r" && '([^']*)' \|\| '([^']*)' \}\}", expression)
+                             r"\$\{\{ inputs\.mode == 'representative' && '([^']*)' \|\| '([^']*)' \}\}", expression)
         self.assertIsNotNone(match, expression)
-        self.assertEqual(match[1], self.CAMPAIGN_SCHEDULE)
-        return {"full": "Ceph periodic-refs/heads/main" + match[3],
-                "representative": "Ceph periodic-refs/heads/main" + match[2]}
+        return {"full": "Ceph periodic-refs/heads/main" + match[2],
+                "representative": "Ceph periodic-refs/heads/main" + match[1]}
 
     def test_full_and_campaign_runs_together_leave_pull_request_runners(self):
         """A full run and a campaign run in different concurrency groups can
