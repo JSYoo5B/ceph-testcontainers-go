@@ -8,17 +8,24 @@ run tests locally and how to add them is described in [Testing](testing.md).
 
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
-| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, lint, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
-| Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
-| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
-| Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
-| Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
-| Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
+| Code checks | `code.yml` | pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, lint, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
+| Docker checks | `docker.yml` | pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
+| Ceph short | `ceph-short.yml` | pull request, manual | The `short` category on Tentacle 20.2.4 |
+| Ceph topology | `ceph-topology.yml` | pull request, manual | The `topology` category on Tentacle 20.2.4 |
+| Ceph multicluster | `ceph-multicluster.yml` | pull request, manual | The `multicluster` category on Tentacle 20.2.4 |
+| Ceph recovery | `ceph-recovery.yml` | pull request, manual | The `recovery` category on Tentacle 20.2.4 |
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases), on `main` |
-| Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
+| Ceph release matrix | `ceph-release-matrix.yml` | pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
+
+Pushes do not start CI workflows. Pull requests validate changes before
+merge; Ceph periodic checks the integrated main branch, and the weekly Code
+checks schedule scans for new vulnerabilities. Use manual dispatch for an
+immediate main-branch check. Scheduled and manual main runs retain the
+shared cache population paths. Structural report publication uses trusted
+main-branch code after a PR's Code checks complete; it does not rerun tests.
 
 The runtime workflows call the reusable template `tagged-runtime.yml`
 (`workflow_call` only). The workflows are independent: none waits for
@@ -132,7 +139,7 @@ lists renames as a deletion and an addition.
 
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
-| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run. Manual runs are never cancelled. |
+| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the run ID (manual and scheduled runs) | A new commit on a PR cancels that PR's previous run of the same workflow. Manual runs are never cancelled. |
 | Ceph periodic | workflow name and ref, plus `-campaign` for the representative campaign; a storage qualification dispatch shares the matrix's group | A new run waits for the run in progress and never cancels it. GitHub keeps one waiting run per group, so a waiting storage dispatch and a waiting matrix firing replace each other; dispatch the storage run again when it ends cancelled. |
 | Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
@@ -145,9 +152,6 @@ Consequences:
   branch of the previous one.
 - Changing a PR's base branch starts no checks (`edited` is not a trigger).
   Rebase and push the child after the parent moves.
-- A push to `main` discards the `main` run in progress. Push feature work when
-  `main` CI is idle (`gh run list --branch main --limit 10`); push a fix for a
-  confirmed failure immediately.
 
 ## Code checks
 
@@ -317,9 +321,9 @@ base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 `no` and its reason.
 
 Adding or removing the label replaces the run in progress; later commits run
-selected while the label stays. Every other trigger and workflow runs all its
-batches, and the `main` push after a merge runs every Ceph short batch, so a
-selection miss fails there. Record a miss with its plan, failed job and
+selected while the label stays. Manual Ceph short runs cover every batch,
+and Ceph periodic covers every runtime category on main. A selection miss
+can therefore surface in periodic coverage rather than before the merge. Record a miss with its plan, failed job and
 selection evidence in a new issue. The label only helps for changes inside the
 integration test packages and the harness.
 
@@ -466,7 +470,7 @@ matrix entry sets `CEPH_TEST_NETWORK`:
 
 | Scope | Entries of a batch |
 | --- | --- |
-| Pull requests, `main` pushes, CI command (`networks: default`) | One, in the default mode, with all tests |
+| Pull requests, manual category runs, CI command (`networks: default`) | One, in the default mode, with all tests |
 | Ceph periodic and the release matrix (`networks: all`) | The default entry, plus one per other mode that runs only the mode-declaring tests (`--tests`), named `<batch> (<mode>)` |
 
 A test without `harness.NetworkModes` runs once and ignores `CEPH_TEST_NETWORK`. Run
@@ -625,7 +629,7 @@ gh variable delete CI_RELEASE_PHASE              # after the release
 ```
 
 While it is `true`, Ceph periodic runs the full matrix on every firing, every
-pull request and push to `main` runs every batch on Tentacle, and Ceph
+pull request runs every batch on Tentacle, and Ceph
 release matrix runs every category on Squid.
 
 ### Representative campaign

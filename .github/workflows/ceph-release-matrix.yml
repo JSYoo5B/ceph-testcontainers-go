@@ -1,18 +1,11 @@
 name: Ceph release matrix
 
 # In a release phase (repository variable CI_RELEASE_PHASE is "true"), every
-# pull request and push to main also runs every runtime category on each
+# pull request also runs every runtime category on each
 # supported release other than the current one (the rows of SUPPORTED_RELEASES
 # in .github/scripts/run_image_matrix.py). Outside it, this workflow skips its
 # jobs and Ceph periodic covers those releases on main.
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - 'LICENSE'
-      - 'internal/integration/goceph/**'
   pull_request:
     paths-ignore:
       - 'docs/**'
@@ -25,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
