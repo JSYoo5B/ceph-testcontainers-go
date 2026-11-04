@@ -38,6 +38,8 @@ var reportScope = scope{
 		"exported_methods: methods declared on the owner whose name is exported (a private owner can have them)",
 		"private_methods: methods declared on the owner whose name is not exported",
 		"fields: direct struct members; an embedded member counts once, a multi-name member counts each name",
+		"package lines: physical lines of the measured files of the package directory",
+		"package exported_declarations: exported package-level functions, types, variables and constants; methods are counted on their owners",
 	},
 	Exclusions: []string{
 		"files ending in _test.go",
@@ -46,7 +48,7 @@ var reportScope = scope{
 		"subdirectories of a listed package directory",
 		"type aliases, non-struct named types and struct types declared inside functions",
 		"promoted methods and promoted fields",
-		"top-level functions, function complexity, length and duplication",
+		"top-level functions from owner counts; function complexity, length and duplication",
 	},
 	Caveats: []string{
 		"lexical and untyped: every file is read regardless of build constraints and merged, so a type declared in several build profiles reports declarations above 1",
@@ -79,12 +81,14 @@ type ownerRow struct {
 }
 
 type packageRow struct {
-	Package         string `json:"package"`
-	Files           int    `json:"files"`
-	Owners          int    `json:"owners"`
-	ExportedMethods int    `json:"exported_methods"`
-	PrivateMethods  int    `json:"private_methods"`
-	Fields          int    `json:"fields"`
+	Package              string `json:"package"`
+	Files                int    `json:"files"`
+	Lines                int    `json:"lines"`
+	ExportedDeclarations int    `json:"exported_declarations"`
+	Owners               int    `json:"owners"`
+	ExportedMethods      int    `json:"exported_methods"`
+	PrivateMethods       int    `json:"private_methods"`
+	Fields               int    `json:"fields"`
 }
 
 type snapshot struct {
@@ -224,7 +228,7 @@ func measurePackage(src source, pkg string) ([]ownerRow, packageRow, error) {
 	}
 	owners := map[string]*owner{}
 	methods := map[string]*counts{}
-	files := 0
+	files, lines, exported := 0, 0, 0
 	for _, name := range names {
 		if !productionFile(name) {
 			continue
@@ -243,6 +247,11 @@ func measurePackage(src source, pkg string) ([]ownerRow, packageRow, error) {
 			continue
 		}
 		files++
+		lines += bytes.Count(data, []byte("\n"))
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			lines++
+		}
+		exported += exportedDeclarations(file)
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.GenDecl:
@@ -287,7 +296,7 @@ func measurePackage(src source, pkg string) ([]ownerRow, packageRow, error) {
 		}
 	}
 	var rows []ownerRow
-	total := packageRow{Package: pkg, Files: files}
+	total := packageRow{Package: pkg, Files: files, Lines: lines, ExportedDeclarations: exported}
 	for name, o := range owners {
 		row := ownerRow{Owner: pkg + "." + name, Package: pkg, Type: name, Locations: o.locations, counts: o.counts}
 		if m := methods[name]; m != nil {
@@ -302,6 +311,37 @@ func measurePackage(src source, pkg string) ([]ownerRow, packageRow, error) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Owner < rows[j].Owner })
 	return rows, total, nil
+}
+
+// exportedDeclarations counts the exported package-level names of file:
+// functions without a receiver and the names of type, variable and constant
+// specs. Methods are counted on their owners instead.
+func exportedDeclarations(file *ast.File) int {
+	total := 0
+	for _, decl := range file.Decls {
+		switch decl := decl.(type) {
+		case *ast.FuncDecl:
+			if decl.Recv == nil && decl.Name.IsExported() {
+				total++
+			}
+		case *ast.GenDecl:
+			for _, spec := range decl.Specs {
+				switch spec := spec.(type) {
+				case *ast.TypeSpec:
+					if spec.Name.IsExported() {
+						total++
+					}
+				case *ast.ValueSpec:
+					for _, name := range spec.Names {
+						if name.IsExported() {
+							total++
+						}
+					}
+				}
+			}
+		}
+	}
+	return total
 }
 
 func measure(src source, pkgs []string) (*snapshot, error) {
@@ -525,8 +565,8 @@ func writeMeasureTSV(out io.Writer, r *measureReport) error {
 		fmt.Fprintf(&w, "# unmeasured_package: %s\n", pkg)
 	}
 	for _, p := range r.Packages {
-		fmt.Fprintf(&w, "# package: %s files=%d owners=%d exported_methods=%d private_methods=%d fields=%d\n",
-			p.Package, p.Files, p.Owners, p.ExportedMethods, p.PrivateMethods, p.Fields)
+		fmt.Fprintf(&w, "# package: %s files=%d lines=%d exported_declarations=%d owners=%d exported_methods=%d private_methods=%d fields=%d\n",
+			p.Package, p.Files, p.Lines, p.ExportedDeclarations, p.Owners, p.ExportedMethods, p.PrivateMethods, p.Fields)
 	}
 	fmt.Fprintln(&w, "owner\texported_methods\tprivate_methods\tfields\tdeclarations\tlocations")
 	for _, o := range r.Owners {

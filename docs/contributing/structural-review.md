@@ -1,9 +1,14 @@
 # Structural review
 
-The Code job **Vet, compile and CI tooling** attaches a structural report to
-code-changing pull requests. Start with its job summary or the single
-**Structural review** PR comment, follow the reported source locations, then
-read the affected implementation and tests. Check the head and measured base
+The **Structural review evidence** workflow (`structural-collect.yml`)
+attaches a structural report to pull requests that change library code. It
+runs on its own, starting with the pull request event, so the report does not
+wait for Code checks. The report shows how the PR changes
+the size and concentration of the library: which packages grow, which owners
+gain methods or fields, and which complexity, length and duplication findings
+change. Start with its job summary or the single **Structural review** PR
+comment, follow the reported source locations, then read the affected
+implementation and tests. Check the head and measured base
 SHAs before using a report. A base branch can advance after measurement; this
 report is a comparison of the two named snapshots, not a fresh analysis of a
 later merge candidate.
@@ -24,8 +29,8 @@ responsibility boundaries, lock order, lifecycle and behavioral changes.
 | Repeated blocks | golangci-lint `dupl` | Candidates for inspection, not mandatory abstraction. Lock tests for `Mutex` and `RWMutex`, for example, can look alike while checking different contracts. Column zero is unspecified. Blocks have no function identity and remain unmatched. |
 | Package boundaries | Existing import/source checks and Go compilation | Compilation already rejects cycles; no additional cycle checker is needed. An architectural gate needs a specific forbidden dependency, not a generic quality score. |
 
-These reuse the existing Go parsers and the Code job's pinned golangci-lint
-binary. No extra lint framework or dependency is installed. All four lint
+These reuse the existing Go parsers and the golangci-lint version pinned in
+Code checks. No extra lint framework or dependency is installed. All four lint
 signals remain report-only calibration, with the collection thresholds in
 `internal/tools/lintcalibration/golangci.yml`; none is enabled as an additional
 ordinary lint gate. In particular, overlapping complexity checks are not two
@@ -37,6 +42,30 @@ shared suppression ledger or mechanically move methods into package functions,
 facades or meaningless helpers to improve a number. A smaller owner is useful
 only when responsibility, dependencies and ownership become clearer.
 
+## Eligibility and measured scope
+
+The library is every package a consumer imports and the internal packages they
+depend on. Public test-convenience packages such as `ceph/expect` are library
+API. Repository-only code is outside it:
+
+| Kind | Paths |
+| --- | --- |
+| Test helpers and fixtures | `internal/integration` (including `harness` and nested modules), `internal/clusteraccess`, `internal/clustertest`, `internal/testhelper`, `internal/debugoverhead`, `_test.go` files, `testdata` |
+| Tools and configuration | `internal/tools`, `internal/apiinventory`, `.github`, `.golangci.yml`, `Makefile` |
+| Documentation | Markdown files, `docs`, `LICENSE` |
+
+A unit test of `structural_review.py` compares the repository-only directories
+with `go list -deps` of the public packages, so a directory that becomes a
+library dependency, or a new internal directory nobody classified, fails it.
+
+Before any tool is built, the workflow's first step classifies both sides of every changed
+path, renames included. A change to library code, `go.mod` or `go.sum` is
+measured; so is any path the classifier does not recognize, which is never
+assumed to be test-only. A change to tests, helpers, fixtures, documentation or
+tools alone skips the tool builds, both collections and the upload. The tools
+have their own tests in the ordinary checks. A mixed change measures only the
+library.
+
 ## Scope and ordering
 
 The report compares the PR merge base and exact head, using one build of the
@@ -44,7 +73,7 @@ analysis tools and one embedded lint configuration for both. GitHub's compare
 API names the merge base; the target SHA at the PR event is recorded separately.
 Advances on the target branch therefore do not appear as removals by the PR. It does not
 substitute the synthetic merge tree for the PR head. The root module is
-collected with `./...` on Linux amd64, using Code's Go toolchain and the tag set
+collected with `./...` on Linux amd64, using the Go toolchain of Code checks and the tag set
 in the embedded calibration configuration. Test diagnostics are explicitly
 labeled; generated files follow golangci-lint's exclusion policy. Nested Go
 modules, fixtures, other platforms and other tag combinations are not measured.
@@ -54,30 +83,48 @@ Go version, GOOS, GOARCH and CGO policy; differing environments produce an
 unavailable comparison. The raw lint reports record the actual linter
 version, configuration digest and package patterns.
 
-Concrete-owner counts show both sides and package totals. An introduced or
+The comment shows three bounded tables of changed library structure, at most
+15 rows each, with the count of further rows and the artifact file that holds
+them:
+
+1. **Changed packages**: lines and exported package-level declarations, base
+   to head, and the package's added plus deleted lines with its share of all
+   such lines in library packages. A high share is where to look, not a verdict.
+2. **Changed owners**: public methods, private methods and direct fields of
+   each changed struct, base to head.
+3. **Changed findings**: complexity, length and duplication findings of
+   library code whose value changed, with the extracted number (cyclomatic
+   complexity 14 → 20) rather than the linter's message.
+
+An eligible change without structural change reports one line. Tool versions,
+configuration and evidence digests, the measured scope and timing are in a
+collapsed details section. Whole-repository distributions stay in the
+artifact.
+
+Concrete-owner counts show both sides. An introduced or
 removed owner may be a move; an absent package is unmeasured, never an automatic
 zero. Same-package file relocation without count changes produces no type delta.
 Complexity identity is package/receiver/function: renames, cross-package moves
 and ambiguous tagged declarations stay unmatched. A diagnostic disappearing
 below a threshold or behind `nolint` is not a measured zero or improvement.
 
-The type summary puts method-count growth first and labels the largest current
-owners as existing context. The lint summary focuses on files changed on either
-side, so both ends of file moves remain eligible; changes to global analysis
-inputs expand focus to the whole module. Within that focus, newly reported
-findings and changed messages come before unmatched blocks and threshold
-absences. Identical messages and rows beyond the limit are counted explicitly.
-This is inspection order, not a severity ranking across incomparable metrics.
-The complete delta retains all rows outside the summary.
+Owners are ordered by method-count change and findings by state: newly
+above threshold, changed, unmatched, then no longer above threshold. This is
+inspection order, not a severity ranking across incomparable metrics. A
+function below a threshold has no value, which is not zero. The complete delta
+retains all rows outside the tables; `lint-summary.md` keeps the whole-module
+lint triage, including test diagnostics.
 
 ## Delivery and cost
 
-Analysis reuses the existing Code job's installed linter and caches. It starts
-no Docker or native jobs and adds no required check. Metric collection and
+The workflow has one job. Its first step classifies the change and, when the
+change is not eligible, every later step is skipped, so no Go toolchain,
+linter or cache is installed. An eligible change installs the pinned linter
+and collects with a cold build cache. It starts no Docker or native jobs and
+adds no required check. A new commit cancels the PR's run in progress. Metric collection and
 upload are advisory steps: collection failure reports **unavailable**, never
-"clean", and cannot turn a metric value into a failing quality gate. No-Go
-changes report **not_requested**; documentation-only PRs retain the existing
-lightweight Code policy. Normal Code tests, source checks and native selection
+"clean", and cannot turn a metric value into a failing quality gate. A change
+that is not eligible is not measured and publishes nothing new. Normal Code tests, source checks and native selection
 are unchanged.
 
 The job summary is available as soon as collection completes. Artifact
@@ -89,13 +136,14 @@ and both collections, and maximum child-process RSS on Linux (checkout/fetch and
 the measurement timer). Cache state and
 scope affect those numbers; neither is a token, billing or review-time saving.
 
-After Code checks completes on a branch other than `main`,
-`structural-review.yml` runs a trusted publisher from the default branch.
-The source-branch filter prevents main CI completions from creating publisher
-runs; the job also requires a pull-request source event. GitHub can still
+When a Structural review evidence run completes,
+`structural-review.yml` runs a trusted publisher from the default branch, so
+the comment is updated as soon as the evidence exists. The source workflow
+runs only for pull requests, and the publisher also requires a pull-request
+source event. GitHub can still
 show main as the publisher's branch because it executes trusted default-branch
 code. The filter also excludes PRs whose source branch is named `main`,
-including fork branches with that name; their reports remain in Code artifacts
+including fork branches with that name; their reports remain in the evidence artifacts
 and can be published with the manual delivery inputs below.
 
 The publisher verifies GitHub's run/PR association,
@@ -106,10 +154,14 @@ target branch ancestry. An unrelated parent is refused. The privileged job execu
 cache. Report headings, tables and inline code render as Markdown in the comment
 and job summary. Cell entities stay escaped; raw HTML, notification mentions,
 link/image syntax from report data and unexpected block-code fences are neutralized. A stale head, closed PR, duplicate artifact, invalid
-receipt or missing report is never posted as a fresh clean result. A newer
+receipt or missing report is never posted as a fresh clean result. When the
+current head was not measured, the bot's report of an earlier run is deleted,
+so an old report never stands for the new head; no comment announces the
+skip. A run that ends after its PR was merged or closed has no PR association
+any more and publishes nothing, without failing. A newer
 report cannot be overwritten by an older run. The source attempt, completed
-state and PR association are re-read immediately before creating or updating
-the comment; a rerun observed during artifact processing prevents the write.
+state and PR association are re-read immediately before creating, updating or
+deleting the comment; a rerun observed during artifact processing prevents the write.
 Updating the one marker-owned
 comment avoids notification spam; API writes are not blindly retried. Human
 comments are never adopted as bot reports, and the personal CLI can only

@@ -16,6 +16,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
+| Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -137,6 +138,7 @@ lists renames as a deletion and an addition.
 | Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
+| Structural review evidence | workflow name and PR number | A new commit on a PR cancels that PR's previous run. |
 | Native regressions | none | Runs are independent. |
 | Block fault probe | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous probe. |
 
@@ -1197,11 +1199,12 @@ test, use `go test -tags=all -run` (see [Testing](testing.md#one-test)).
 
 ## Structural review reports
 
-The existing Code static job collects report-only type and lint deltas for
-pull requests, reusing its installed lint binary and caches. Its job summary
-and `structural-review-RUN_ID-ATTEMPT` artifact retain named base/head evidence.
-A trusted `workflow_run` publisher updates one current-head PR comment after
-Code completes. Collection/upload are advisory and do not change required
+The Structural review evidence workflow collects report-only type and lint
+deltas for pull requests that change library code, starting with the pull
+request event. Its job summary and `structural-review-RUN_ID-ATTEMPT` artifact
+retain named base/head evidence. A trusted `workflow_run` publisher updates
+one current-head PR comment as soon as that run completes, without waiting
+for Code checks. Collection/upload are advisory and do not change required
 checks, documentation-only policy or native selection. See
 [Structural review](structural-review.md) for identity checks, limits, artifact
 contents, exclusions and local commands.
