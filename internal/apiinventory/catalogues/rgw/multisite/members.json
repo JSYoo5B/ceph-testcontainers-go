@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw/multisite",
-  "count": 116,
+  "count": 129,
   "types": {
     "rgw/multisite.BucketSyncPolicyStatus": [
       "BucketSyncPolicyStatus.Bucket field SyncBucketIdentity",
@@ -34,6 +34,14 @@
       "BucketSyncStatus.Zone field string",
       "BucketSyncStatus.ZoneID field string",
       "BucketSyncStatus.ZonegroupID field string"
+    ],
+    "rgw/multisite.BucketSyncWatchEvent": [
+      "BucketSyncWatchEvent.Err field error",
+      "BucketSyncWatchEvent.Finished field time.Time",
+      "BucketSyncWatchEvent.Kind field ceph.WatchEventKind",
+      "BucketSyncWatchEvent.Sequence field uint64",
+      "BucketSyncWatchEvent.Started field time.Time",
+      "BucketSyncWatchEvent.Status field BucketSyncStatus"
     ],
     "rgw/multisite.Config": [
       "Config.Destination field *ceph.Container",
@@ -123,6 +131,15 @@
       "SyncStatus.Zone field string",
       "SyncStatus.ZoneID field string",
       "SyncStatus.ZonegroupID field string"
+    ],
+    "rgw/multisite.SyncWatchEvent": [
+      "SyncWatchEvent.Err field error",
+      "SyncWatchEvent.Finished field time.Time",
+      "SyncWatchEvent.Kind field ceph.WatchEventKind",
+      "SyncWatchEvent.Ready field bool",
+      "SyncWatchEvent.Sequence field uint64",
+      "SyncWatchEvent.Started field time.Time",
+      "SyncWatchEvent.Status field SyncStatus"
     ],
     "rgw/multisite.TimingProfile": [
       "TimingProfile.IncrementalSync field bool"

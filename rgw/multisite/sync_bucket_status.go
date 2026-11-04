@@ -33,6 +33,14 @@ type BucketSyncStatus struct {
 	CaughtUp                               bool
 }
 
+// errSyncBucketRecreated reports a checkpoint bucket name that now resolves
+// to another native instance.
+var errSyncBucketRecreated = errors.New("RGW checkpoint bucket was recreated; refusing another native instance")
+
+// errSyncPolicyChanged reports a checkpoint group whose native policy differs
+// from the one the fixture confirmed.
+var errSyncPolicyChanged = errors.New("RGW owned checkpoint policy was externally changed")
+
 type rgwSyncBucketCheckpoint struct {
 	group                    *SyncGroup
 	source, destination      *rgwZoneState
@@ -221,7 +229,7 @@ func (g *SyncGroup) checkBucketInstance(ctx context.Context, zone *rgwZoneState,
 		return err
 	}
 	if id != bucket.ID {
-		return errors.New("RGW checkpoint bucket was recreated; refusing another native instance")
+		return errSyncBucketRecreated
 	}
 	return nil
 }
@@ -245,7 +253,7 @@ func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucke
 		return result, err
 	}
 	if !reflect.DeepEqual(syncNativeGroup(policy, g.ID()), g.state.group) {
-		return result, errors.New("RGW owned checkpoint policy was externally changed")
+		return result, errSyncPolicyChanged
 	}
 	for _, side := range []struct {
 		zone   *rgwZoneState
