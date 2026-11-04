@@ -33,8 +33,9 @@ import (
 // One MON and three OSDs start with debug_mclock 10; the MON proposes every
 // 0.1 s so that the churn commits several OSD maps a second. A size-3 one-PG pool
 // holds seeded objects and is the scrub target (PG seed 0, OSD shard 0). A
-// separate size-3 pool of 240 PGs (with the target and .mgr, just under the
-// per-OSD PG limit) supplies the churn: a client toggles its min_size,
+// separate size-3 pool of 232 PGs supplies the churn (with the target, the
+// load pool and .mgr, just under the per-OSD PG limit), and two rados bench
+// clients keep client ops waiting in the managed queue on a third pool: a client toggles its min_size,
 // which starts a new interval for each of its PGs and none for the target.
 // The target is deep-scrubbed once quiet and once during the churn; every
 // OSD's queue sizes are sampled per shard, the target's last_became_active
@@ -49,7 +50,8 @@ const (
 	churnSeconds    = 120
 	churnTargetPool = "tc-churn-scrub"
 	churnPool       = "tc-churn"
-	churnPGs        = 240
+	churnPGs        = 232
+	churnLoadPool   = "tc-churn-load"
 	churnSeeds      = 600
 	churnScrubAfter = 15 * time.Second
 	churnForced     = "forcing a dequeue attempt"
@@ -112,6 +114,9 @@ func runMClockPeeringChurn(t *testing.T, cutoff string) {
 		t.Fatal(err)
 	}
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: churnPool, Application: "rados", PGNum: churnPGs, Replicas: 3, MinSize: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: churnLoadPool, Application: "rados", PGNum: 8, Replicas: 3, MinSize: 2}); err != nil {
 		t.Fatal(err)
 	}
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
@@ -190,6 +195,20 @@ func runMClockPeeringChurn(t *testing.T, cutoff string) {
 		}()
 	}
 
+	loadOut := make(chan string, 2)
+	for i := range 2 {
+		go func() {
+			code, out, err := harness.SessionExec(ctx, client, "timeout", fmt.Sprint(churnSeconds+60), "rados", "-p", churnLoadPool,
+				"bench", fmt.Sprint(churnSeconds), "write", "-b", "4096", "-t", "16", "--no-cleanup", "--run-name", fmt.Sprintf("load%d", i))
+			summary := []string{}
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "Total writes made") || strings.HasPrefix(line, "Average IOPS") || strings.HasPrefix(line, "Max latency(s)") {
+					summary = append(summary, strings.Join(strings.Fields(line), " "))
+				}
+			}
+			loadOut <- fmt.Sprintf("client=%d exit=%d err=%v summary=%q", i, code, err, summary)
+		}()
+	}
 	churnDone := make(chan string, 1)
 	go func() {
 		code, out, err := harness.SessionExec(ctx, client, "timeout", fmt.Sprint(churnSeconds+60), "python3", "-c", churnScript, churnPool, fmt.Sprint(churnSeconds))
@@ -222,6 +241,9 @@ func runMClockPeeringChurn(t *testing.T, cutoff string) {
 	}
 	stopSampling()
 	sampler.Wait()
+	for range 2 {
+		t.Logf("CHURN load %s", <-loadOut)
+	}
 	epochAfter := churnEpoch(t, ctx, cluster)
 	t.Logf("CHURN churn %s osdmap_epochs=%d..%d", churnOut, epochBefore, epochAfter)
 	t.Logf("CHURN loaded pg=%s scrub_err=%v scrub_elapsed=%s finished_during_churn=%v churn_after_scrub=%s",
