@@ -163,6 +163,24 @@ def bot_report(root, number):
     return comments[0] if comments else None
 
 
+def write_boundary(root, number, run, linked, repository, outcome):
+    """Re-read the PR and the source run right before any comment mutation.
+
+    Returns a benign reason when the write must not happen, None when it may.
+    A rerun can supersede the attempt without moving the PR head, so the head
+    check alone does not authorize a POST, PATCH or DELETE.
+    """
+    if not current(api(root+"/pulls/"+str(number)), linked, repository):
+        return "PR changed during analysis; " + outcome
+    latest = api(root+"/actions/runs/"+str(run["id"]))
+    if latest["run_attempt"] != run["run_attempt"]:
+        return "source attempt superseded during analysis; " + outcome
+    if (latest["id"] != run["id"] or latest["workflow_id"] != run["workflow_id"]
+            or association(latest, repository) != linked):
+        raise Refusal("source run identity changed during analysis")
+    return None
+
+
 def withdraw(root, number, run, linked, repository, dry_run):
     """Remove the bot's report of an earlier run when this run measured nothing."""
     existing = bot_report(root, number)
@@ -173,8 +191,9 @@ def withdraw(root, number, run, linked, repository, dry_run):
         raise Refusal("existing report lacks a run identity")
     if tuple(map(int, stamp.groups())) >= (run["id"], run["run_attempt"]):
         return "no structural artifact for this attempt; a newer report is kept"
-    if not current(api(root+"/pulls/"+str(number)), linked, repository):
-        return "PR changed during analysis; nothing withdrawn"
+    stale = write_boundary(root, number, run, linked, repository, "nothing withdrawn")
+    if stale:
+        return stale
     if dry_run:
         return "would withdraw the report of run %s attempt %s" % stamp.groups()
     api(root+"/issues/comments/%d" % existing["id"], "DELETE", binary=True)
@@ -242,16 +261,9 @@ def publish(repository, run_id, attempt, dry_run=False):
         if existing["body"] == body:
             return "report already current; nothing published"
     # Re-read after artifact processing. No previous SHA is posted as current.
-    if not current(api(root+"/pulls/"+str(number)), linked, repository):
-        return "PR changed during analysis; nothing published"
-    # A Code rerun can start while artifacts are processed without changing
-    # the PR head. Revalidate its attempt and eligibility at the write boundary.
-    latest = api(root+"/actions/runs/"+str(run_id))
-    if latest["run_attempt"] != attempt:
-        return "source attempt superseded during analysis; nothing published"
-    if (latest["id"] != run_id or latest["workflow_id"] != run["workflow_id"]
-            or association(latest, repository) != linked):
-        raise Refusal("source run identity changed during analysis")
+    stale = write_boundary(root, number, run, linked, repository, "nothing published")
+    if stale:
+        return stale
     if dry_run:
         return body
     if existing:

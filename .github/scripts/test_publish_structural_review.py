@@ -244,7 +244,7 @@ class PublishTests(unittest.TestCase):
             self.assertIn("changed during", reporter.publish(REPO, 10, 2))
         self.assertTrue(all(c[1] == "GET" for c in calls))
 
-    def test_late_rerun_and_ineligible_completion_prevent_post_and_patch(self):
+    def test_late_rerun_and_ineligible_completion_prevent_post_patch_and_delete(self):
         old = {"id": 30, "user": {"login": "github-actions[bot]"},
                "body": reporter.MARKER+"\n<!-- structural-review-run:9:1 -->\nOld report"}
         late_states = [
@@ -257,10 +257,14 @@ class PublishTests(unittest.TestCase):
             {"head_sha": BASE},
             {"pull_requests": [{**LINKED, "number": 8}]},
         ]
-        for comments in ([], [old]):
+        # DELETE: no artifact for this attempt and an older bot report to withdraw.
+        for operation, comments, outcome in (("POST", [], "nothing published"), ("PATCH", [old], "nothing published"),
+                                             ("DELETE", [old], "nothing withdrawn")):
             for late in late_states:
-                with self.subTest(operation="PATCH" if comments else "POST", late=late):
+                with self.subTest(operation=operation, late=late):
                     api, calls, reads = self.api_fixture(comments)
+                    if operation == "DELETE":
+                        reads["/actions/runs/10/artifacts?per_page=100&page=1"] = {"artifacts": []}
                     pull_reads = 0
                     def rerun(path, *args, **kwargs):
                         nonlocal pull_reads
@@ -272,26 +276,32 @@ class PublishTests(unittest.TestCase):
                     with mock.patch.object(reporter, "api", side_effect=rerun):
                         try:
                             result = reporter.publish(REPO, 10, 2)
-                            self.assertIn("nothing published", result)
+                            self.assertIn(outcome, result)
                         except reporter.Refusal:
                             pass
                     self.assertEqual(sum(c[0] == "/actions/runs/10" for c in calls), 2)
                     self.assertTrue(all(c[1] == "GET" for c in calls), calls)
 
     def test_late_run_read_failure_does_not_write(self):
-        api, calls, _ = self.api_fixture()
-        reads = 0
-        def unavailable(path, *args, **kwargs):
-            nonlocal reads
-            if path.endswith("/actions/runs/10"):
-                reads += 1
-                if reads == 2:
-                    raise OSError("source run read unavailable")
-            return api(path, *args, **kwargs)
-        with mock.patch.object(reporter, "api", side_effect=unavailable), self.assertRaises(OSError):
-            reporter.publish(REPO, 10, 2)
-        self.assertEqual(reads, 2)
-        self.assertTrue(all(c[1] == "GET" for c in calls))
+        old = {"id": 30, "user": {"login": "github-actions[bot]"},
+               "body": reporter.MARKER+"\n<!-- structural-review-run:9:1 -->\nOld report"}
+        for operation, comments in (("POST", []), ("PATCH", [old]), ("DELETE", [old])):
+            with self.subTest(operation=operation):
+                api, calls, fixture = self.api_fixture(comments)
+                if operation == "DELETE":
+                    fixture["/actions/runs/10/artifacts?per_page=100&page=1"] = {"artifacts": []}
+                reads = 0
+                def unavailable(path, *args, **kwargs):
+                    nonlocal reads
+                    if path.endswith("/actions/runs/10"):
+                        reads += 1
+                        if reads == 2:
+                            raise OSError("source run read unavailable")
+                    return api(path, *args, **kwargs)
+                with mock.patch.object(reporter, "api", side_effect=unavailable), self.assertRaises(OSError):
+                    reporter.publish(REPO, 10, 2)
+                self.assertEqual(reads, 2)
+                self.assertTrue(all(c[1] == "GET" for c in calls))
 
     def test_artifact_and_workflow_identity_and_human_comments(self):
         human = {"id": 99, "user": {"login": "owner"}, "body": reporter.MARKER+"\nnot a bot report"}

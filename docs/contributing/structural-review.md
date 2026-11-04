@@ -160,8 +160,8 @@ so an old report never stands for the new head; no comment announces the
 skip. A run that ends after its PR was merged or closed has no PR association
 any more and publishes nothing, without failing. A newer
 report cannot be overwritten by an older run. The source attempt, completed
-state and PR association are re-read immediately before creating or updating
-the comment; a rerun observed during artifact processing prevents the write.
+state and PR association are re-read immediately before creating, updating or
+deleting the comment; a rerun observed during artifact processing prevents the write.
 Updating the one marker-owned
 comment avoids notification spam; API writes are not blindly retried. Human
 comments are never adopted as bot reports, and the personal CLI can only
