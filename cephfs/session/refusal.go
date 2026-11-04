@@ -128,7 +128,7 @@ func readRefusal(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (bool
 	}
 	refused, err := parseRefusal(data, fsID)
 	if errors.Is(err, errNoRefusalFlag) {
-		return false, unsupportedRefusal(v.Cluster(), err)
+		return false, unsupported(v.Cluster(), "fs set refuse_client_session", err)
 	}
 	return refused, err
 }
@@ -149,8 +149,9 @@ func parseRefusal(data []byte, fsID int64) (bool, error) {
 	return *native.MDSMap.Flags.RefuseClientSession, nil
 }
 
-func unsupportedRefusal(cluster *ceph.Container, cause error) error {
-	err := &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: "cluster", Capability: "fs set refuse_client_session", Err: cause}
+// unsupported reports that the cluster's release lacks capability.
+func unsupported(cluster *ceph.Container, capability string, cause error) error {
+	err := &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: "cluster", Capability: capability, Err: cause}
 	if facts, factsErr := ceph.FactsOf(cluster); factsErr == nil {
 		err.Version = facts.CephVersion
 	}

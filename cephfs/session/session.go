@@ -282,20 +282,26 @@ func validateLimits(requested Limits) error {
 }
 
 // begin serializes with other CephFS setup and confirms that fs is still the
-// cluster's active owned filesystem. It does not recheck cancellation after
-// the setup gate.
+// cluster's active owned filesystem; a filesystem that is not, such as one of
+// a terminated cluster, is refused with ceph.ErrInvalidRequest. It does not
+// recheck cancellation after the setup gate.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
 	var fsID int64
+	refused := false
 	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
 		Refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		Check: func(context.Context) (bool, error) {
 			if !fs.Registered() || !fs.DescriptorIntact() || fs.Native() == nil {
+				refused = true
 				return false, nil
 			}
 			fsID = fs.Native().ID
 			return true, nil
 		},
 	})
+	if refused {
+		err = servicehook.Invalid(err)
+	}
 	if err != nil {
 		return ctx, 0, func() {}, err
 	}
@@ -356,7 +362,8 @@ const overrideKind = "cephfs/session.overrides"
 
 // overrides are the session overrides of each filesystem of one cluster that
 // are not restored yet, keyed by the filesystem's core: at most one timeouts
-// override and one new-session refusal per filesystem. The setup gate of the
+// override, one new-session refusal and one required client features override
+// per filesystem. The setup gate of the
 // cluster's filesystem registry, which every session operation holds through
 // begin, guards them, so they have no lock of their own. A removed
 // filesystem's entries stay but are inert: no operation admits that core
@@ -365,12 +372,14 @@ const overrideKind = "cephfs/session.overrides"
 type overrides struct {
 	byCore   map[*fsbase.Core]*timeoutsState
 	refusals map[*fsbase.Core]*refusalState
+	features map[*fsbase.Core]*featuresState
 }
 
 // overridesOf returns the overrides of the cluster of core. The caller holds
 // the setup gate.
 func overridesOf(core *fsbase.Core) *overrides {
 	return servicehook.Extension(core.Cluster(), overrideKind, func() any {
-		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState)}
+		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState),
+			features: make(map[*fsbase.Core]*featuresState)}
 	}).(*overrides)
 }
