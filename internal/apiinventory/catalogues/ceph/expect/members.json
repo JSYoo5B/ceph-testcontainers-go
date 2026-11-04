@@ -2,8 +2,35 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph/expect",
-  "count": 12,
+  "count": 54,
   "types": {
+    "ceph/expect.Health": [
+      "Health.Exact field bool",
+      "Health.FSID field string",
+      "Health.Forbid field []string",
+      "Health.Mutes field []string",
+      "Health.NoMutes field []string",
+      "Health.Require field []HealthCheck",
+      "Health.Status field string"
+    ],
+    "ceph/expect.HealthCheck": [
+      "HealthCheck.Code field string",
+      "HealthCheck.Count field int64",
+      "HealthCheck.Muted field HealthMuteState",
+      "HealthCheck.Severity field string"
+    ],
+    "ceph/expect.HealthEvaluation": [
+      "HealthEvaluation.Expectation field Health",
+      "HealthEvaluation.Matched field bool",
+      "HealthEvaluation.Mismatches field []HealthMismatch",
+      "HealthEvaluation.Observed field ceph.HealthSnapshot"
+    ],
+    "ceph/expect.HealthMismatch": [
+      "HealthMismatch.Code field string",
+      "HealthMismatch.Observed field string",
+      "HealthMismatch.Reason field HealthMismatchReason",
+      "HealthMismatch.Want field string"
+    ],
     "ceph/expect.OSDEvaluation": [
       "OSDEvaluation.Expectation field OSDs",
       "OSDEvaluation.Matched field bool",
@@ -21,6 +48,35 @@
       "OSDs.In field bool",
       "OSDs.Select field []ceph.OSDState",
       "OSDs.Up field bool"
+    ],
+    "ceph/expect.PGEvaluation": [
+      "PGEvaluation.Expectation field PGs",
+      "PGEvaluation.Matched field bool",
+      "PGEvaluation.Mismatches field []PGMismatch",
+      "PGEvaluation.Observed field ceph.PoolPGSnapshot"
+    ],
+    "ceph/expect.PGMismatch": [
+      "PGMismatch.Observed field string",
+      "PGMismatch.PGID field ceph.PGID",
+      "PGMismatch.Reason field PGMismatchReason",
+      "PGMismatch.Want field string"
+    ],
+    "ceph/expect.PGs": [
+      "PGs.Acting field []int",
+      "PGs.ActingPrimary field []int",
+      "PGs.ActingSize field int",
+      "PGs.Count field int",
+      "PGs.FSID field string",
+      "PGs.Forbid field []string",
+      "PGs.InActing field []int",
+      "PGs.InUp field []int",
+      "PGs.NotInActing field []int",
+      "PGs.NotInUp field []int",
+      "PGs.Pool field ceph.PoolState",
+      "PGs.Require field []string",
+      "PGs.Select field []ceph.PGID",
+      "PGs.State field string",
+      "PGs.Up field []int"
     ]
   }
 }
