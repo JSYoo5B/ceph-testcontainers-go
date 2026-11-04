@@ -394,9 +394,11 @@ elif phase in ["encryption-format-load", "encryption-rekey"]:
     proof.update(images=encrypted_ids, bytes_per_image=len(payload), raw_plaintext_hidden=True, rekey=phase == "encryption-rekey")
 
 elif phase in ["encryption-clone-flatten", "encryption-clone-restore"]:
-    # Secrets are bytes on purpose: encryption_load2 with str passphrases
-    # fails with EPERM on Squid and Tentacle while bytes load the same chain.
-    # Do not read that EPERM as unsupported encrypted clones or flatten.
+    # Secrets are bytes on purpose: encryption_load2 converts a str secret
+    # into a temporary that it frees before the load, and an equal-length
+    # later secret reuses that memory, so two str secrets fail with EPERM on
+    # Squid, Tentacle and Umbrella while bytes load the same chain. Do not
+    # read that EPERM as unsupported encrypted clones or flatten.
     fmt, raw_size = rbd.RBD_ENCRYPTION_FORMAT_LUKS2, 64 << 20
     parent_pass, child_pass = b"temporary-fixture-parent-key", b"temporary-fixture-child-key"
     expected = patch + payload[len(patch):]
