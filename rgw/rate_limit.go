@@ -101,6 +101,17 @@ var rateLimitBucketName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$
 // kept as they are. A second override of the same scope is refused while the
 // first is not restored, even for the same policy.
 //
+// A user that stores no policy of its own enforces the native default: every
+// budget zero and disabled. Ceph 20 reports such a user's policy as that
+// default; a Ceph 21 radosgw-admin ratelimit get fails with ENOENT instead,
+// exactly as for a missing user. OverrideRateLimit takes the ENOENT as an
+// unset prior policy only when the user's native metadata, read in the same
+// call, names the user without a stored policy and the user is still the
+// identity it created; otherwise it fails. radosgw-admin cannot delete a stored
+// policy, so Restore of an unset prior policy stores the native default: the
+// scope enforces what it did before, and ratelimit get then reports that
+// default instead of failing.
+//
 // The commands never pass through a policy that enforces a mix of the prior
 // and requested budgets: limits are stored before the policy is enabled, and
 // the policy is disabled before limits are stored.
@@ -116,7 +127,8 @@ var rateLimitBucketName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$
 //   - User scope on a Ceph 19 cluster: not applied handle; ceph.ErrUnsupported,
 //     a *ceph.OperationError that names the release.
 //   - Bucket not owned by this user: not applied handle; ceph.ErrInvalidRequest.
-//   - The user is no longer the identity it created, the bucket is missing, the
+//   - The user is no longer the identity it created or is missing (also when
+//     a Ceph 21 ratelimit get reports ENOENT), the bucket is missing, the
 //     scope is already overridden, the context ended, or a read failed: not
 //     applied handle; the original error.
 //   - A failure from the first native change on (command, readback, canceled
@@ -174,8 +186,10 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 
 // Restore returns the scope to the policy it had before the override, after
 // confirming the same user and, for a bucket scope, the same bucket instance
-// and owner. It refuses a scope whose identity changed and a policy that is
-// neither the prior one nor one this override left, rather than overwriting an
+// and owner. For a user that stored no policy it stores the native default, as
+// OverrideRateLimit describes. A scope that already holds that policy needs no
+// command. It refuses a scope whose identity changed and a policy that is
+// neither that one nor one this override left, rather than overwriting an
 // outside edit. It is idempotent across copies; after an uncertain failure,
 // retry with a fresh context. A handle of a refused call returns nil.
 //
@@ -222,11 +236,14 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !current.equal(state.prior) {
+		// A scope that holds the prior policy, or for an unset prior the
+		// native default, needs no command.
+		target := state.prior.restoration()
+		if !current.equal(state.prior) && !current.equal(target) {
 			if !state.owns(current) {
 				return servicehook.Invalid(errors.New("RGW rate-limit policy changed outside this override; refusing restoration"))
 			}
-			if err := state.transition(ctx, g, user, current, state.prior); err != nil {
+			if err := state.transition(ctx, g, user, current, target); err != nil {
 				return err
 			}
 		}
@@ -305,6 +322,7 @@ func (s *rateLimitState) transition(ctx context.Context, g *gwbase.Core, user *g
 	if !actual.equal(to) {
 		return errors.New("RGW rate-limit readback differs from the requested policy; inspect native state before restoration")
 	}
+	s.owned = []rateLimitPolicy{actual}
 	if s.target.bucket != "" {
 		if _, err := bindRateLimitBucket(ctx, g, user, s.target.tenant, s.target.bucket, s.target); err != nil {
 			return err
@@ -406,13 +424,66 @@ func bindRateLimitBucket(ctx context.Context, g *gwbase.Core, user *gwbase.User,
 // rateLimitPolicy is one native policy object: the typed budgets and the
 // whole native object, so that a field this package does not set is compared
 // and kept as well.
+//
+// Two other forms stand for a user scope that stores no policy. unset is the
+// scope itself, as a Ceph 21 radosgw-admin reports it; it has no fields.
+// fromDefault is a policy that radosgw-admin materializes from the native
+// default, every budget zero and disabled: fields holds the budgets and the
+// flag that this package knows, and the native object it stands for has a
+// zero budget in every other field, such as a budget of a later release.
 type rateLimitPolicy struct {
-	limit  RateLimit
-	fields map[string]any
+	limit       RateLimit
+	fields      map[string]any
+	unset       bool
+	fromDefault bool
 }
 
 func (p rateLimitPolicy) equal(other rateLimitPolicy) bool {
-	return p.limit == other.limit && reflect.DeepEqual(p.fields, other.fields)
+	switch {
+	case p.unset || other.unset:
+		return p.unset == other.unset
+	case p.limit != other.limit:
+		return false
+	case p.fromDefault == other.fromDefault:
+		return reflect.DeepEqual(p.fields, other.fields)
+	case p.fromDefault:
+		return other.materializes(p)
+	default:
+		return p.materializes(other)
+	}
+}
+
+// materializes reports whether the native object p is the fromDefault policy
+// d: the same value in every field d names and a zero budget in every other.
+func (p rateLimitPolicy) materializes(d rateLimitPolicy) bool {
+	for name, value := range d.fields {
+		if actual, ok := p.fields[name]; !ok || !reflect.DeepEqual(actual, value) {
+			return false
+		}
+	}
+	for name, value := range p.fields {
+		if _, named := d.fields[name]; !named && value != json.Number("0") {
+			return false
+		}
+	}
+	return true
+}
+
+// defaultRateLimitPolicy is the native default policy that a user scope
+// without a stored policy enforces, and that radosgw-admin ratelimit set,
+// enable and disable store there before they apply their change.
+func defaultRateLimitPolicy() rateLimitPolicy {
+	return rateLimitPolicy{fromDefault: true, fields: map[string]any{"enabled": false, "max_read_ops": json.Number("0"),
+		"max_write_ops": json.Number("0"), "max_read_bytes": json.Number("0"), "max_write_bytes": json.Number("0")}}
+}
+
+// restoration is the policy that restores p: p itself, or the native default
+// for an unset scope, which radosgw-admin cannot return to unset.
+func (p rateLimitPolicy) restoration() rateLimitPolicy {
+	if p.unset {
+		return defaultRateLimitPolicy()
+	}
+	return p
 }
 
 // with returns p with every field of limit applied.
@@ -438,19 +509,30 @@ func (p rateLimitPolicy) withEnabled(enabled bool) rateLimitPolicy {
 	return next
 }
 
+// clone copies p; a change to an unset scope applies to the native default
+// that radosgw-admin materializes.
 func (p rateLimitPolicy) clone() rateLimitPolicy {
+	if p.unset {
+		return defaultRateLimitPolicy()
+	}
 	fields := make(map[string]any, len(p.fields))
 	for name, value := range p.fields {
 		fields[name] = value
 	}
-	return rateLimitPolicy{limit: p.limit, fields: fields}
+	return rateLimitPolicy{limit: p.limit, fields: fields, fromDefault: p.fromDefault}
 }
 
 // readRateLimitPolicy reads the native policy of target with radosgw-admin
-// ratelimit get.
+// ratelimit get. The caller has confirmed user in this admission.
 func readRateLimitPolicy(ctx context.Context, g *gwbase.Core, user *gwbase.User, target rateLimitTarget) (rateLimitPolicy, error) {
 	data, err := g.UserCommand(ctx, user, slices.Concat([]string{"ratelimit", "get"}, target.selector())...)
 	if err != nil {
+		if target.bucket == "" && unsetUserRateLimit(err) {
+			if err := confirmUnsetUserRateLimit(ctx, g, user); err != nil {
+				return rateLimitPolicy{}, err
+			}
+			return rateLimitPolicy{unset: true}, nil
+		}
 		return rateLimitPolicy{}, fmt.Errorf("read RGW rate-limit policy (ratelimit get): %w", err)
 	}
 	section := "user_ratelimit"
@@ -458,6 +540,69 @@ func readRateLimitPolicy(ctx context.Context, g *gwbase.Core, user *gwbase.User,
 		section = "bucket_ratelimit"
 	}
 	return decodeRateLimitPolicy(data, section)
+}
+
+// unsetUserRateLimit reports whether err is the failure of a user-scope
+// radosgw-admin ratelimit get of Ceph 21 for a user that stores no policy: exit
+// 254 with ENOENT. Ceph 21 fails the same way for a missing user, and Ceph 20
+// and 19 report the native default instead, so it is never evidence alone.
+//
+// Nothing establishes this ENOENT as an intended interface. The Ceph 21
+// change that adds it documents only the new list and delete budgets and
+// claims backward compatibility, the bucket scope and the Admin REST user
+// ratelimit info still report the default for the same state, and no defect
+// record names it. It is handled as a release-specific issue, not as a
+// declared release difference: the metadata proof below decides, never the
+// error or the release. A release that reports the default again never takes
+// this path. A release that keeps the policy outside userRateLimitAttr would
+// break the proof and needs its own path.
+func unsetUserRateLimit(err error) bool {
+	var failure *ceph.NativeFailure
+	return errors.As(err, &failure) && failure.ExitCode == 254 && failure.Errno == "ENOENT"
+}
+
+// userRateLimitAttr is the user attribute that stores a user's rate-limit
+// policy.
+const userRateLimitAttr = "user.rgw.ratelimit"
+
+// confirmUnsetUserRateLimit proves that user, which a ratelimit get reported
+// as ENOENT, exists and stores no policy: its native metadata names it and
+// lists its attributes without the policy attribute, and it is still the
+// identity it created. A missing or replaced user, and a policy attribute that
+// ratelimit get did not report, are errors.
+func confirmUnsetUserRateLimit(ctx context.Context, g *gwbase.Core, user *gwbase.User) error {
+	data, err := g.UserCommand(ctx, user, "metadata", "get", "user:"+user.ID)
+	if err != nil {
+		return fmt.Errorf("confirm the unset RGW user rate-limit policy (metadata get): %w", err)
+	}
+	var metadata struct {
+		Key  *string `json:"key"`
+		Data *struct {
+			UserID *string `json:"user_id"`
+			Attrs  *[]struct {
+				Key *string `json:"key"`
+			} `json:"attrs"`
+		} `json:"data"`
+	}
+	if strictjson.Decode(data, &metadata, strictjson.Options{RejectNull: true}) != nil || metadata.Key == nil || metadata.Data == nil ||
+		metadata.Data.UserID == nil || metadata.Data.Attrs == nil {
+		return errors.New("decode RGW user metadata")
+	}
+	if *metadata.Key != "user:"+user.ID || *metadata.Data.UserID != user.ID {
+		return errors.New("RGW user metadata names another user")
+	}
+	for _, attr := range *metadata.Data.Attrs {
+		if attr.Key == nil {
+			return errors.New("decode RGW user metadata")
+		}
+		if *attr.Key == userRateLimitAttr {
+			return errors.New("RGW user stores a rate-limit policy that ratelimit get does not report")
+		}
+	}
+	if _, err := g.OwnedUser(ctx, user); err != nil {
+		return fmt.Errorf("confirm the owned RGW user (user info): %w", err)
+	}
+	return nil
 }
 
 // decodeRateLimitPolicy decodes the one policy object named section. Native

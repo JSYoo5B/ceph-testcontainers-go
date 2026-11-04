@@ -48,7 +48,12 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    ...}`, such as a bucket the SUT created), and the returned handle's
    `Restore` puts the prior policy back. The user scope needs Ceph 20: on
    Squid it returns `ceph.ErrUnsupported`, because a Squid gateway never
-   applies a user's policy to requests its S3 keys sign.
+   applies a user's policy to requests its S3 keys sign. A user that stored
+   no policy is restored to the stored native default, every budget zero and
+   disabled, because `radosgw-admin` cannot delete a policy; on Umbrella,
+   where `ratelimit get` reports such a user as `ENOENT`, it then reports the
+   default (see
+   [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
 5. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.
