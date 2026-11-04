@@ -89,18 +89,23 @@ func TestFaultRegistryMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 //	"hook"   its doc comment says the caller holds the lock or the cluster is
 //	         not shared
 var faultRegistryCallers = map[string]stateCaller{
-	"Container.terminate":   {"takes", []string{"undo"}},
-	"Container.detachOSD":   {"takes", []string{"refuseInstanceFaults"}},
-	"Container.deletePool":  {"hook", []string{"poolDeleteOverrideHeld"}},
-	"faultHooks.Reserve":    {"hook", []string{"reserve"}},
-	"faultHooks.Settle":     {"hook", []string{"settle"}},
-	"faultHooks.Release":    {"hook", []string{"release"}},
-	"unitAccess.UnitFaults": {"hook", []string{"handles"}},
-	"overrideHooks.Reserve": {"hook", []string{"reserve"}},
-	"overrideHooks.Settle":  {"hook", []string{"settle"}},
-	"overrideHooks.Release": {"hook", []string{"release"}},
-	"overrideHooks.Tracks":  {"hook", []string{"tracks"}},
-	"unitAccess.UnitHeld":   {"hook", []string{"handles"}},
+	"Container.terminate":             {"takes", []string{"undo"}},
+	"Container.detachOSD":             {"takes", []string{"refuseInstanceFaults"}},
+	"Container.deletePool":            {"hook", []string{"poolDeleteOverrideHeld"}},
+	"faultHooks.Reserve":              {"hook", []string{"reserve"}},
+	"faultHooks.Settle":               {"hook", []string{"settle"}},
+	"faultHooks.Release":              {"hook", []string{"release"}},
+	"unitAccess.UnitFaults":           {"hook", []string{"handles"}},
+	"overrideHooks.Reserve":           {"hook", []string{"reserve"}},
+	"overrideHooks.Settle":            {"hook", []string{"settle"}},
+	"overrideHooks.Release":           {"hook", []string{"release"}},
+	"overrideHooks.Tracks":            {"hook", []string{"tracks"}},
+	"unitAccess.UnitHeld":             {"hook", []string{"handles"}},
+	"Pool.applyPGPrimaryLocked":       {"holds", []string{"reserve", "settle"}},
+	"PGPrimaryOverrideHandle.Restore": {"takes", []string{"release", "tracks"}},
+	"Container.minCompatLease":        {"holds", []string{"handles"}},
+	"Container.raiseMinCompat":        {"holds", []string{"reserve", "settle"}},
+	"Container.leaveMinCompatLease":   {"holds", []string{"release"}},
 }
 
 // TestFaultRegistryCallersAreAudited guards the callers: the set of functions

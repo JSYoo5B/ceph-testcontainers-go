@@ -23,6 +23,8 @@ const (
 	faultOSDFlag
 	faultMGRModule
 	faultBlockIO
+	faultPGPrimary
+	faultMinCompatClient
 )
 
 // faultPhase is when, and under which lock mode, terminate undoes a kind.
@@ -92,6 +94,12 @@ var faultKinds = map[faultKind]faultKindSpec{
 	}},
 	faultMGRModule: {phase: faultTracked, refuse: func(bool) error {
 		return errors.New("restore the existing MGR module override first")
+	}},
+	faultPGPrimary: {phase: faultTracked, refuse: func(bool) error {
+		return invalidRequest("restore the existing PG primary override of this PG first")
+	}},
+	faultMinCompatClient: {phase: faultTracked, refuse: func(bool) error {
+		return invalidRequest("another PG primary override is raising require_min_compat_client")
 	}},
 }
 

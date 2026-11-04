@@ -91,8 +91,9 @@ type Container struct {
 	native nativeCommands
 	// faults holds the network delays, interruptions and pauses, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
-	// flag and MGR module overrides, reserved or held; see faultRegistry. It
-	// is guarded by mu, and terminate runs its undo through faults.undo.
+	// flag, MGR module and PG primary overrides, reserved or held; see
+	// faultRegistry. It is guarded by mu, and terminate runs its undo through
+	// faults.undo.
 	faults faultRegistry
 	// debugLevels admits one override.SetDebugLevel window per daemon and
 	// option; it has its own leaf lock and is handed out only by
