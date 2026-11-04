@@ -5,6 +5,7 @@
 package rbd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -86,6 +87,7 @@ func TestRBDClientFeatures(t *testing.T) {
 			for _, phase := range []string{
 				"layering-flatten", "trash-restore-purge", "migration-commit", "migration-abort",
 				"group-snapshot", "exclusive-lock", "encryption-format-load", "encryption-rekey",
+				"encryption-clone-flatten", "encryption-clone-restore",
 			} {
 				if !t.Run(phase, func(t *testing.T) {
 					args := []string{"python3", "-c", `import subprocess, sys
@@ -120,6 +122,17 @@ sys.exit(result.returncode)`,
 						t.Fatalf("unexpected native proof: %s error=%v", output, err)
 					}
 					t.Logf("native proof: %s", output)
+					if phase == "encryption-clone-flatten" {
+						// The fixture archives the detached encrypted clone with its
+						// own credentials; the next phase reads it back as the SUT.
+						var archive bytes.Buffer
+						if err := rbd.ExportBackup(ctx, admin, pool+"/"+namespace+"/encrypted-child", &archive); err != nil {
+							t.Fatal(err)
+						}
+						if err := rbd.RestoreBackup(ctx, admin, pool+"/"+namespace+"/encrypted-restored", &archive); err != nil {
+							t.Fatal(err)
+						}
+					}
 				}) {
 					// A failed native phase may leave owned partial images or trash.
 					// Preserve its first error and let this fixture's cleanup remove
