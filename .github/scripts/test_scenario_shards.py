@@ -283,7 +283,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, "structural-review.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         probe = self.workflows[self.BLOCK_FAULT_PROBE]
         self.assertIn("\non:\n  pull_request:\n    paths:\n", probe)
@@ -849,6 +849,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                     with self.subTest(workflow=filename, job=name):
                         expected = ("${{ always() && needs.changes.outputs.docs_only != 'true' }}"
                                     if (filename, name) == ("code.yml", "vulncheck") else "always()")
+                        if (filename, name) == ("code.yml", "static") and "name: structural-review-${{ github.run_id }}-${{ github.run_attempt }}" in upload:
+                            expected = "${{ always() && github.event_name == 'pull_request' && steps.structural.outcome != 'skipped' }}"
+                            self.assertEqual(scalar(upload, "continue-on-error"), "true")
                         self.assertEqual(scalar(upload, "if"), expected)
         runtime_steps = steps(self.jobs["tagged-runtime.yml"]["runtime"])
         native = engine_step(runtime_steps, "run")
