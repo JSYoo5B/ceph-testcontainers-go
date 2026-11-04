@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 297,
+  "count": 300,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -280,6 +280,11 @@
       "OperationError.Op field string",
       "OperationError.Target field string",
       "OperationError.Version field string"
+    ],
+    "ceph.PGPrimary": [
+      "PGPrimary.OSD field *OSDContainer",
+      "PGPrimary.PG field PGID",
+      "PGPrimary.RaiseMinCompatClient field bool"
     ],
     "ceph.PGState": [
       "PGState.Acting field []int",

@@ -261,6 +261,7 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"fullRatiosSession":                {"free", []string{"identity"}},
 	"healthDetails":                    {"free", []string{"identity"}},
 	"observePGs":                       {"free", []string{"identity"}},
+	"pgPrimaryFSID":                    {"free", []string{"identity"}},
 	"Usage":                            {"free", []string{"identity"}},
 	"ClusterIdentity":                  {"free", []string{"identity"}},
 	"ConnectionConfig":                 {"free", []string{"connection"}},

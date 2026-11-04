@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 299,
+  "count": 303,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1816,6 +1816,26 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.PGPrimary",
+      "kind": "type",
+      "proposed": "ceph.PGPrimary",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGPrimaryOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.PGPrimaryOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGPrimaryOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*PGPrimaryOverrideHandle",
+      "proposed": "ceph.PGPrimaryOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.PGState",
       "kind": "type",
       "proposed": "ceph.PGState",
@@ -1838,6 +1858,14 @@
       "current": "ceph.Pool",
       "kind": "type",
       "proposed": "ceph.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.OverridePGPrimary",
+      "kind": "method",
+      "signature": "func(ctx context.Context, primary PGPrimary) (*PGPrimaryOverrideHandle, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.OverridePGPrimary",
       "decision": "baseline"
     },
     {

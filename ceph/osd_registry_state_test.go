@@ -197,6 +197,7 @@ var osdRegistryCallers = map[string]stateCaller{
 	"OSDs":                             {"takes", []string{"sorted"}},
 	"CreatePool":                       {"takes", []string{"placementDomains"}},
 	"SetIn":                            {"takes", []string{"current", "ownedState"}},
+	"applyPGPrimaryLocked":             {"holds", []string{"current"}},
 	"diagnosticOSDs":                   {"holds", []string{"each"}},
 	"openDebugTarget":                  {"takes", []string{"get"}},
 	"PoolPlacementDomains":             {"hook", []string{"placementDomains"}},
