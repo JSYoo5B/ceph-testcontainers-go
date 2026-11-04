@@ -37,6 +37,8 @@ Documentation for a published release is available at its Git tag.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
 - [`cephfs`](cephfs/README.md): filesystems, MDS topology and data pools.
+  - [`cephfs/expect`](cephfs/expect/README.md): pure evaluations of captured
+    MDS rank and standby observations, with mismatch explanations.
   - [`cephfs/subvolume`](cephfs/subvolume/README.md): subvolume groups and
     subvolumes, snapshots and clones, subvolume principals and pins.
   - [`cephfs/quiesce`](cephfs/quiesce/README.md): quiesce sets over owned
