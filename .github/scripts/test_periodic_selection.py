@@ -205,12 +205,15 @@ class ExecutionControls(unittest.TestCase):
         cls.catalog = tags.load_catalog()
         cls.plan = sample.sample_plan(cls.catalog, SHA, 'rotate', NOW, seed='control')['runs'][0]
 
-    def run_control(self, failure='', cleanup_pass=True):
+    def run_control(self, failure='', cleanup_pass=True, exhaust_after_images=False):
         """Fake commands test admission/checkpoints only; they run no Ceph."""
-        calls = []
+        calls, clock = [], [0.0]
         def fake(argv, log, seconds, env=None):
             phase = 'native' if 'native' in argv else 'test_images' if any('in_test_images.py' in s for s in argv) else 'compile' if 'compile' in argv else 'modules'
             calls.append(phase)
+            if phase == 'test_images' and exhaust_after_images:
+                clock[0] = (self.plan['budget_seconds'] - self.plan['entries'][0]['native_seconds']
+                            - executor.CLEANUP_RESERVE + 1)
             if phase == 'native' and failure == 'interrupt_before_native':
                 raise InterruptedError()
             if phase == 'native':
@@ -225,6 +228,7 @@ class ExecutionControls(unittest.TestCase):
             root = Path(directory)
             sample.write(root/'plan.json', self.plan)
             with mock.patch.object(tags, 'load_catalog', return_value=self.catalog), \
+                    mock.patch.object(executor.time, 'monotonic', side_effect=lambda: clock[0]), \
                     mock.patch.object(executor.images, 'source_manifest', return_value={}), \
                     mock.patch.object(executor, 'read_command', return_value=mock.Mock(returncode=0, stdout=SHA)), \
                     mock.patch.object(executor.shutil, 'disk_usage', return_value=mock.Mock(free=30 << 30)), \
@@ -265,12 +269,28 @@ class ExecutionControls(unittest.TestCase):
         self.assertTrue(result['unstarted_entries'])
 
     def test_cleanup_failure_stops_admission_even_after_image_preparation_failure(self):
-        for phase in ('', 'test_images'):
+        for phase in ('', 'test_images', 'interrupt_test_images', 'interrupt_native'):
             with self.subTest(phase=phase):
                 _, result, calls = self.run_control(phase, cleanup_pass=False)
                 self.assertEqual(len(result['entries']), 1)
                 self.assertEqual(result['classification'], 'cleanup_failure')
                 self.assertLessEqual(calls.count('native'), 1)
+
+    def test_budget_exit_preserves_cleanup_failure_before_native(self):
+        # The fake clock advances during image preparation; fake cleanup
+        # observations exercise stop propagation only, without running Docker.
+        for clean in (True, False):
+            with self.subTest(clean=clean):
+                code, result, calls = self.run_control(cleanup_pass=clean, exhaust_after_images=True)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(result['entries']), 1)
+                entry = result['entries'][0]
+                self.assertEqual(entry['classification'], 'budget_not_started')
+                self.assertEqual(entry['cleanup']['passed'], clean)
+                self.assertFalse(entry['native_started'])
+                self.assertNotIn('native', calls)
+                self.assertFalse(result['complete'])
+                self.assertEqual(result['classification'], 'incomplete_or_failed' if clean else 'cleanup_failure')
 
     def test_nonzero_native_exit_cannot_become_a_pass_from_a_stale_report(self):
         _, result, _ = self.run_control('native')

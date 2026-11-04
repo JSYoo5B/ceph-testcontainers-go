@@ -361,10 +361,11 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
                     # A cleanup failure makes later native results unsafe.
                     checked = cleanup.check(work / 'cleanup', grace_seconds=30)
                     record['cleanup'] = checked
+                    if not checked['passed']:
+                        receipt['classification'] = 'cleanup_failure'
                 persist(result_path, receipt)
             print(item['id'] + ': ' + record['classification'], flush=True)
-            if snapshot and not record['cleanup']['passed']:
-                receipt['classification'] = 'cleanup_failure'
+            if receipt['classification'] == 'cleanup_failure':
                 break
         receipt['complete'] = (len(receipt['entries']) == len(plan['entries']) and
                 all(r['classification'] == 'passed' and r['native_started'] and r.get('cleanup', {}).get('passed')
@@ -372,14 +373,16 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
         if receipt['classification'] != 'cleanup_failure':
             receipt['classification'] = 'passed' if receipt['complete'] else 'incomplete_or_failed'
     except InterruptedError:
-        receipt['classification'] = 'interrupted'
+        if receipt['classification'] != 'cleanup_failure':
+            receipt['classification'] = 'interrupted'
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        receipt['classification'] = 'preparation_failure'
         receipt['error'] = str(error)[:250]
         kind = str(error).split(':', 1)[0]
-        if kind in ('environment_ineligible', 'artifact_unavailable', 'artifact_version_mismatch',
-                    'artifact_resolution_failure', 'artifact_preflight_failure', 'contract_inapplicable'):
-            receipt['classification'] = kind
+        if receipt['classification'] != 'cleanup_failure':
+            receipt['classification'] = 'preparation_failure'
+            if kind in ('environment_ineligible', 'artifact_unavailable', 'artifact_version_mismatch',
+                        'artifact_resolution_failure', 'artifact_preflight_failure', 'contract_inapplicable'):
+                receipt['classification'] = kind
         receipt['advances'] = True
     finally:
         receipt['elapsed_seconds'] = round(time.monotonic() - started, 3)
