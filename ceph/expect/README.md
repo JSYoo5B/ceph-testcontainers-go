@@ -74,36 +74,6 @@ if err != nil {
 }
 result, err := want.Evaluate(health)
 
-## MON quorum
-
-`expect.Monitors` states the monmap members and the quorum of one
-`ceph.Observer.QuorumStatus` observation. `Members` and `Quorum` are exact
-name sets; `MemberCount` and `QuorumSize` count them for a test whose MONs
-get new names, such as a rolling replacement. `FSID` pins the cluster, so a
-rebuilt cluster that reuses the MON names does not pass. Every set field is a
-condition and a zero field is not checked. `MonitorEvaluation` names each
-member that is absent, unexpected, out of the quorum or in it unexpectedly.
-
-```golang
-// ... stop mon.c while the SUT runs ...
-want := expect.Monitors{Members: []string{"a", "b", "c"}, Quorum: []string{"a", "b"}}
-status, err := observer.QuorumStatus(ctx)
-if err != nil {
-	t.Fatal(err) // a failed query is never a mismatch
-}
-result, err := want.Evaluate(status)
-if err != nil {
-	t.Fatal(err)
-}
-if !result.Matched {
-	t.Fatal(result) // health want require=[OSD_DOWN] nomutes=[OSD_DOWN] in HEALTH_OK with 0 checks, 0 mutes: OSD_DOWN absent
-}
-```
-
-Ceph raises many checks only after a delay and clears them at a later
-monitor tick, so a test polls with its own deadline. A cleared check does
-not prove that the fault behind it is gone.
-
 ## Pool placement groups
 
 `expect.PGs` states the PGs one `ceph.Pool.PGs` observation must report.
@@ -139,6 +109,36 @@ request, since a `QuorumStatus` answer always comes from a majority. A match
 does not say which MON leads or that a member out of the quorum has stopped.
 Unlike `ceph.Observer.WaitForQuorum`, which accepts any majority, an
 expectation names the members the test requires.
+
+## MON quorum
+
+`expect.Monitors` states the monmap members and the quorum of one
+`ceph.Observer.QuorumStatus` observation. `Members` and `Quorum` are exact
+name sets; `MemberCount` and `QuorumSize` count them for a test whose MONs
+get new names, such as a rolling replacement. `FSID` pins the cluster, so a
+rebuilt cluster that reuses the MON names does not pass. Every set field is a
+condition and a zero field is not checked. `MonitorEvaluation` names each
+member that is absent, unexpected, out of the quorum or in it unexpectedly.
+
+```golang
+// ... stop mon.c while the SUT runs ...
+want := expect.Monitors{Members: []string{"a", "b", "c"}, Quorum: []string{"a", "b"}}
+status, err := observer.QuorumStatus(ctx)
+if err != nil {
+	t.Fatal(err) // a failed query is never a mismatch
+}
+result, err := want.Evaluate(status)
+if err != nil {
+	t.Fatal(err)
+}
+if !result.Matched {
+	t.Fatal(result) // health want require=[OSD_DOWN] nomutes=[OSD_DOWN] in HEALTH_OK with 0 checks, 0 mutes: OSD_DOWN absent
+}
+```
+
+Ceph raises many checks only after a delay and clears them at a later
+monitor tick, so a test polls with its own deadline. A cleared check does
+not prove that the fault behind it is gone.
 
 ## MGR registrations
 
