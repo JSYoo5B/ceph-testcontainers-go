@@ -120,6 +120,12 @@ These affect commands or client libraries you run yourself, not the typed API:
 
 ## Known release-specific issues
 
+- **Umbrella 21.2.0, unset RGW user rate limits.** Native `ratelimit get`
+  for a user without an explicit policy returns `ENOENT`. The rate-limit
+  integration contract currently fails at this initial read. An explicitly
+  stored user policy supports throttling and restoration; that does not
+  establish correct restoration of an originally absent policy.
+
 - **Squid 19.2.6, RGW multisite.** On a secondary zone, `radosgw-admin realm
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the
