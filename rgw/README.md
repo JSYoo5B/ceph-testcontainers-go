@@ -54,10 +54,14 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    where `ratelimit get` reports such a user as `ENOENT`, it then reports the
    default (see
    [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
-5. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
+5. **Replace the certificate** when the scenario tests how the SUT meets a
+   renewed certificate or a changed CA: `Gateway.ReplaceTLS` installs a new
+   `rgw.TLSConfig` and restarts the gateway; resolve `S3SecureEndpoint` again
+   and give the SUT the new CA the way it reads its configuration.
+6. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
    without a typed API.
-6. **Clean up**: terminate the cluster; gateways, users and data go with it.
+7. **Clean up**: terminate the cluster; gateways, users and data go with it.
    `Gateway.Remove`, `User.Remove` and `Role.Remove` are for tests of those
    steps.
 
@@ -141,7 +145,9 @@ recovery need the default two OSDs or more.
   caches, so poll with new requests.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
-  the ones done by `Placement.Apply`, `Placement.Reload` and multisite changes.
+  the ones done by `Gateway.ReplaceTLS`, `Placement.Apply`, `Placement.Reload`
+  and multisite changes. A test whose SUT must keep one URL while gateways
+  stop or move uses the [stable endpoint recipe](#stable-endpoint-across-gateways).
 - Quota enforcement, suspension, placement defaults, rate limits and usage
   counters go through caches and asynchronous accounting: poll with new
   requests instead of asserting right after a change. Usage log persistence is
@@ -155,6 +161,14 @@ recovery need the default two OSDs or more.
   bucket, whose restoration the handle refuses.
 - HTTPS is native Beast TLS without a proxy; clients must trust the CA.
   `NetworkConfig.WithMessengerMode` encrypts Ceph messenger traffic only.
+- Beast loads its certificate only when the gateway starts; replacing the
+  file is not reloaded. `Gateway.ReplaceTLS` therefore restarts the gateway:
+  it refuses connections meanwhile, connections established before are
+  closed (not moved to the new certificate), and a request in flight can fail
+  with an unknown outcome. Only new connections see the new certificate, and
+  every later start of the container, including a caller's own Stop and
+  Start, is ready only when it serves that certificate. A failed restart
+  leaves the new certificate installed; nothing rolls it back.
 - Printing a handle never writes keys; `Gateway.Admin` output can contain
   keys, and a failed call never includes native output. Every key the
   fixture created or tried to create, revoked ones included, is masked in
@@ -164,6 +178,40 @@ recovery need the default two OSDs or more.
   `bucket sync run`).
 - Out of scope: production Vault setups and other KMS backends, Swift large
   objects, temporary URLs and Keystone catalogues.
+
+## Stable endpoint across gateways
+
+The package has no load balancer. A test that needs the SUT to keep one URL
+while the gateway behind it stops or changes composes one from what the
+package already hands off: start two gateways in the same zone with the same
+`TLSConfig`, read each one's `S3SecureEndpoint`, and run a test-owned TCP
+forwarder that listens on one fixed address and connects every new client
+connection to the gateway the test currently selects. The forwarder copies
+bytes only, so TLS runs end to end and the SUT verifies the gateway's own
+certificate. The test switches the selection, stops the first gateway with
+`Stop`, and asserts with new requests of the SUT.
+
+```golang
+a, _ := rgw.Start(ctx, cluster, rgw.Config{Name: "a", TLS: material})
+b, _ := rgw.Start(ctx, cluster, rgw.Config{Name: "b", TLS: material})
+// forwarder is the test's own TCP forwarder to the host:port of
+// S3SecureEndpoint of a and of b.
+// The SUT is configured with https://<forwarder address> and the CA.
+forwarder.Select(1) // new connections go to b
+_ = a.Stop(ctx, nil)
+// The SUT's next requests reach b through the same URL.
+```
+
+`TestRGWStableEndpoint` in
+[`internal/integration/rgw`](../internal/integration/rgw/rgw_stable_endpoint_integration_helpers_test.go)
+runs this recipe with an AWS SDK process as the SUT and holds a complete
+forwarder. What it shows is limited: the forwarder chooses a backend when a
+connection opens and never checks health, retries or replays a request, or
+moves an established connection, so a request in flight when a gateway stops
+has an unknown outcome and the SUT's own retry decides what happens next. In
+bridge mode, read the endpoints again after any gateway restart, because the
+forwarder addresses mapped host ports. Both gateways serve the same cluster
+storage: this is gateway failover, not replicated storage.
 
 ## Reference
 
