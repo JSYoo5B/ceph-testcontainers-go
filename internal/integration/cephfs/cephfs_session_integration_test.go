@@ -197,6 +197,10 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 		t.Fatalf("holder session = %+v", *holder)
 	}
 	t.Logf("CEPHFS_SESSION holder %+v", *holder)
+	watched := startSessionWatchLog(t, ctx, p.fs, time.Second, holder.ID)
+	if base := watched.snapshot()[0]; len(base.Sessions) != 1 || base.Sessions[0].Address != holder.Address {
+		t.Fatalf("session watch baseline = %+v, want only the holder %+v", base, *holder)
+	}
 
 	pause, err := fault.Pause(ctx, p.cluster, p.client)
 	if pause != nil {
@@ -248,13 +252,32 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	}
 	evicted := time.Since(paused)
 	t.Logf("CEPHFS_SESSION evicted after %s, states while frozen %q", evicted.Round(time.Second), states)
+	// The watch reports the holder's removal from a coherent sample of the
+	// daemon that held it, after the pause; the blocklist, read on its own,
+	// names the removed address.
+	removal := watched.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool { return len(e.Removed) > 0 })
+	if err := watched.stop(t); err != nil {
+		t.Fatal("session watch:", err)
+	}
+	removed := removal.Removed[0]
+	if len(removal.Removed) != 1 || removed.ID != holder.ID || removed.Address != holder.Address || removed.Rank != holder.Rank || removal.Started.Before(paused) || slices.Contains(removal.Rebaselined, holder.Rank) {
+		t.Fatalf("session watch removal = %+v, want only holder %+v after the pause", removal, *holder)
+	}
+	var watchedStates []string
+	for _, event := range watched.snapshot() {
+		for _, change := range event.Changed {
+			watchedStates = append(watchedStates, change.PreviousState+"->"+change.Session.State)
+		}
+	}
 	entries, err := harness.ObserveCluster(p.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == holder.Address }) {
-		t.Fatalf("evicted holder %s is not blocklisted: %+v", holder.Address, entries)
+	if !slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == removed.Address }) {
+		t.Fatalf("the holder %s that the session watch removed is not blocklisted: %+v", removed.Address, entries)
 	}
+	t.Logf("CEPHFS_SESSION_WATCH removal of client.%d %s at event %d, %s after the pause; state changes %q; %d gaps",
+		removed.ID, removed.Address, removal.Sequence, removal.Started.Sub(paused).Round(time.Second), watchedStates, watched.checkNoRemoval(t))
 	if contend {
 		var read readResult
 		select {
