@@ -52,7 +52,7 @@ import (
 // unavailable-handle, untracked, replaced-filesystem and outside-edit
 // refusals of its required client features override.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 27, "rgw": 47,
+	"rbd": 28, "cephfs": 27, "rgw": 51,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 11, "cephfs/snapschedule": 16,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
