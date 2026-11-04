@@ -42,10 +42,12 @@ import (
 // a terminated cluster and a receiver cohort without a daemon); and six more
 // in cephfs/mirror for the refused config, path, fixture and unstarted Stop
 // of its directory watch and the terminated mirror or cluster that ends one.
+// cephfs/session has one more: the refused admission of a filesystem that
+// is no longer the cluster's active owned one.
 var invalidCallSites = map[string]int{
 	"rbd": 28, "cephfs": 26, "rgw": 47,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 4, "cephfs/internal/fsbase": 1,
-	"cephfs/session": 2, "cephfs/snapschedule": 12,
+	"cephfs/session": 3, "cephfs/snapschedule": 12,
 	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
 	"rbd/mirror": 34, "cephfs/mirror": 21,
 }

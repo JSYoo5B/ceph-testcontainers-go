@@ -141,7 +141,7 @@ func TestRefusalRestoreAcceptsAnOutsideClearAndRefusesARecreatedFilesystem(t *te
 		t.Fatalf("Restore on a recreated filesystem: %v", err)
 	}
 	fs.unregistered = true
-	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "active filesystem created by this cluster") {
+	if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "active filesystem created by this cluster") {
 		t.Fatalf("Restore on an unregistered filesystem: %v", err)
 	}
 	if got := ctr.mutations(); len(got) != 1 || !*ctr.refused {

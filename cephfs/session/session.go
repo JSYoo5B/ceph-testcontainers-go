@@ -282,20 +282,26 @@ func validateLimits(requested Limits) error {
 }
 
 // begin serializes with other CephFS setup and confirms that fs is still the
-// cluster's active owned filesystem. It does not recheck cancellation after
-// the setup gate.
+// cluster's active owned filesystem; a filesystem that is not, such as one of
+// a terminated cluster, is refused with ceph.ErrInvalidRequest. It does not
+// recheck cancellation after the setup gate.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
 	var fsID int64
+	refused := false
 	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
 		Refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		Check: func(context.Context) (bool, error) {
 			if !fs.Registered() || !fs.DescriptorIntact() || fs.Native() == nil {
+				refused = true
 				return false, nil
 			}
 			fsID = fs.Native().ID
 			return true, nil
 		},
 	})
+	if refused {
+		err = servicehook.Invalid(err)
+	}
 	if err != nil {
 		return ctx, 0, func() {}, err
 	}
