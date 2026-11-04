@@ -160,7 +160,13 @@ cd /tmp && sha256sum seed.* > /tmp/seed.sums`, mclockSeedObjects, mclockScrubPoo
 				"bench", fmt.Sprint(mclockLoadSeconds), "write", "-b", "4096", "-t", "32", "--no-cleanup", "--run-name", fmt.Sprintf("load%d", i))
 			loadMu.Lock()
 			defer loadMu.Unlock()
-			loadOut = append(loadOut, fmt.Sprintf("client=%d exit=%d err=%v tail=%q", i, code, err, harness.LastLine(strings.TrimSpace(out))))
+			summary := []string{}
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "Total writes made") || strings.HasPrefix(line, "Average IOPS") || strings.HasPrefix(line, "Average Latency(s)") || strings.HasPrefix(line, "Max latency(s)") {
+					summary = append(summary, strings.Join(strings.Fields(line), " "))
+				}
+			}
+			loadOut = append(loadOut, fmt.Sprintf("client=%d exit=%d err=%v summary=%q", i, code, err, summary))
 		}()
 	}
 	go func() { load.Wait(); close(loadDone) }()
