@@ -309,7 +309,7 @@ func rgwExternalKMS(t *testing.T) {
 		t.Logf("KMS reconnect: first exact read after %s, %d attempts", time.Since(started).Round(time.Millisecond), attempts)
 		readExact(trusted, "KMS reconnected")
 		// Docker publishes the ports again when the endpoint is reattached, so
-		// the host port can differ. vault.call resolves it on every request.
+		// the host port can differ. vault.do resolves it on every request.
 		after, err := vault.container.MappedPort(ctx, "8200/tcp")
 		if err != nil {
 			t.Fatal(err)
@@ -319,36 +319,63 @@ func rgwExternalKMS(t *testing.T) {
 	})
 
 	t.Run("sse-s3", func(t *testing.T) {
+		deleteBucket := func(name string) {
+			t.Helper()
+			rgwBackendRequire(t, rgwBackendSigned(t, ctx, trusted, "s3", http.MethodDelete, "/"+name, nil, nil), http.StatusNoContent)
+			gone := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, "/"+name+"?list-type=2", nil, nil)
+			rgwBackendRequire(t, gone, http.StatusNotFound)
+			if rgwBackendErrorCode(gone.body) != "NoSuchBucket" {
+				t.Fatal("deleted SSE-S3 bucket is still visible")
+			}
+		}
+		// The KMS operator removes a key that RGW left behind.
+		removeOrphan := func(key string) {
+			t.Helper()
+			vault.call(t, ctx, http.MethodPost, "/v1/tctransit/keys/"+key+"/config", map[string]any{"deletion_allowed": true}, http.StatusOK, http.StatusNoContent)
+			vault.call(t, ctx, http.MethodDelete, "/v1/tctransit/keys/"+key, nil, http.StatusNoContent)
+			vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+key, nil, http.StatusNotFound)
+		}
+
+		// Bucket deletion first marks the key deletable, then deletes it.
+		// Whether the deletion follows depends on the release: Squid stops
+		// after Vault answers the config update with a body, and the key
+		// stays. The audit tells the outcomes apart; the key state is read
+		// from Vault, never inferred from the S3 response.
 		removed := rgwSSES3Bucket(t, ctx, trusted, gateways[0], vault, "tc-sse-s3-removed")
-		rgwBackendRequire(t, rgwBackendSigned(t, ctx, trusted, "s3", http.MethodDelete, "/tc-sse-s3-removed", nil, nil), http.StatusNoContent)
-		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+removed, nil, http.StatusNotFound)
+		deleteBucket("tc-sse-s3-removed")
+		first := rgwSSES3KeyAudit(vault.audit(t, ctx), "tctransit/keys/"+removed)
+		retained := vault.do(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+removed, nil).code == http.StatusOK
+		switch {
+		case first.configured == 0:
+			t.Fatal("bucket deletion did not mark its Transit key deletable")
+		case !retained && first.deleted == 1 && first.refused == 0:
+			t.Log("SSE-S3 bucket deletion removed its own Transit key")
+		case retained && first.deleted == 0 && first.refused == 0:
+			t.Log("SSE-S3 bucket deletion marked its Transit key deletable and sent no deletion; the key stays")
+			removeOrphan(removed)
+		default:
+			t.Fatalf("Transit key retained=%t with audited deletions=%d refused=%d", retained, first.deleted, first.refused)
+		}
 		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+rgwSSES3Control, nil, http.StatusOK)
-		t.Log("SSE-S3 bucket deletion removed its own Transit key; control key kept")
 
 		// A bucket DELETE that RGW reports as successful while Vault refuses the
 		// key deletion leaves the key behind. Nothing retries it.
 		orphan := rgwSSES3Bucket(t, ctx, trusted, gateways[0], vault, "tc-sse-s3-orphan")
 		rgwSSES3SetPolicy(t, ctx, vault, false)
-		rgwBackendRequire(t, rgwBackendSigned(t, ctx, trusted, "s3", http.MethodDelete, "/tc-sse-s3-orphan", nil, nil), http.StatusNoContent)
-		gone := rgwBackendSigned(t, ctx, trusted, "s3", http.MethodGet, "/tc-sse-s3-orphan?list-type=2", nil, nil)
-		rgwBackendRequire(t, gone, http.StatusNotFound)
-		if rgwBackendErrorCode(gone.body) != "NoSuchBucket" {
-			t.Fatal("deleted SSE-S3 bucket is still visible")
-		}
+		deleteBucket("tc-sse-s3-orphan")
 		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusOK)
 		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+rgwSSES3Control, nil, http.StatusOK)
-		if denied := rgwSSES3DeniedDeletes(vault.audit(t, ctx), "tctransit/keys/"+orphan); denied == 0 {
-			t.Fatal("Vault audit has no refused deletion of the bucket's Transit key")
+		second := rgwSSES3KeyAudit(vault.audit(t, ctx), "tctransit/keys/"+orphan)
+		if second.configured == 0 || second.deleted != 0 || (retained && second.refused != 0) || (!retained && second.refused == 0) {
+			t.Fatalf("refused key deletion: audited config updates=%d deletions=%d refused=%d", second.configured, second.deleted, second.refused)
 		}
 		rgwSSES3SetPolicy(t, ctx, vault, true)
-		// The KMS operator removes the orphan; restoring the permission alone
-		// does not, and the bucket it belonged to no longer exists.
+		// Restoring the permission does not remove the orphan: the bucket it
+		// belonged to no longer exists.
 		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusOK)
-		vault.call(t, ctx, http.MethodPost, "/v1/tctransit/keys/"+orphan+"/config", map[string]any{"deletion_allowed": true}, http.StatusOK, http.StatusNoContent)
-		vault.call(t, ctx, http.MethodDelete, "/v1/tctransit/keys/"+orphan, nil, http.StatusNoContent)
-		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusNotFound)
+		removeOrphan(orphan)
 		vault.call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+rgwSSES3Control, nil, http.StatusOK)
-		t.Log("SSE-S3 bucket DELETE 204 with refused key deletion: orphan Transit key audited and removed by the KMS operator")
+		t.Logf("SSE-S3 bucket DELETE 204 with key deletion refused=%d: orphan Transit key removed by the KMS operator", second.refused)
 	})
 
 	for _, key := range []string{"encrypted", "plain"} {
@@ -413,10 +440,12 @@ func rgwSSES3SetPolicy(t *testing.T, ctx context.Context, vault *rgwKMSVault, de
 	vault.call(t, ctx, http.MethodPut, "/v1/sys/policies/acl/"+rgwSSES3Policy, map[string]any{"policy": `path "tctransit/*" { capabilities = [` + capabilities + `] }`}, http.StatusNoContent)
 }
 
-// rgwSSES3DeniedDeletes counts completed Vault deletions of path refused for
-// lack of permission.
-func rgwSSES3DeniedDeletes(audit []byte, path string) int {
-	denied := 0
+// rgwSSES3KeyOutcome counts the completed Vault requests on one Transit key
+// that bucket deletion makes.
+type rgwSSES3KeyOutcome struct{ configured, deleted, refused int }
+
+func rgwSSES3KeyAudit(audit []byte, path string) rgwSSES3KeyOutcome {
+	var outcome rgwSSES3KeyOutcome
 	for _, line := range bytes.Split(audit, []byte("\n")) {
 		var event struct {
 			Type    string `json:"type"`
@@ -426,11 +455,19 @@ func rgwSSES3DeniedDeletes(audit []byte, path string) int {
 				Operation string `json:"operation"`
 			} `json:"request"`
 		}
-		if json.Unmarshal(line, &event) == nil && event.Type == "response" && event.Request.Path == path && event.Request.Operation == "delete" && strings.Contains(event.Error, "permission denied") {
-			denied++
+		if json.Unmarshal(line, &event) != nil || event.Type != "response" {
+			continue
+		}
+		switch {
+		case event.Request.Path == path+"/config" && event.Request.Operation == "update" && event.Error == "":
+			outcome.configured++
+		case event.Request.Path == path && event.Request.Operation == "delete" && event.Error == "":
+			outcome.deleted++
+		case event.Request.Path == path && event.Request.Operation == "delete" && strings.Contains(event.Error, "permission denied"):
+			outcome.refused++
 		}
 	}
-	return denied
+	return outcome
 }
 
 func rgwKMSStartVault(t *testing.T, ctx context.Context, cluster *ceph.Container) *rgwKMSVault {
@@ -478,10 +515,21 @@ func rgwKMSStartVault(t *testing.T, ctx context.Context, cluster *ceph.Container
 	return vault
 }
 
-// call sends one management request with the root token. It resolves the
-// mapped port on every call: when its bridge endpoint is reattached, Docker
-// can publish the port on another host port.
+// call sends one management request with the root token and requires one of
+// the wanted statuses.
 func (vault *rgwKMSVault) call(t *testing.T, ctx context.Context, method, path string, data any, want ...int) []byte {
+	t.Helper()
+	response := vault.do(t, ctx, method, path, data)
+	if !slices.Contains(want, response.code) {
+		// Vault bodies can contain keys and tokens.
+		t.Fatalf("Vault %s %s status=%d want=%v (body redacted)", method, path, response.code, want)
+	}
+	return response.body
+}
+
+// do resolves the mapped port on every call: when its bridge endpoint is
+// reattached, Docker can publish the port on another host port.
+func (vault *rgwKMSVault) do(t *testing.T, ctx context.Context, method, path string, data any) rgwBackendResponse {
 	t.Helper()
 	endpoint, err := vault.container.PortEndpoint(ctx, "8200/tcp", "https")
 	if err != nil {
@@ -497,12 +545,7 @@ func (vault *rgwKMSVault) call(t *testing.T, ctx context.Context, method, path s
 	}
 	request.Header.Set("X-Vault-Token", vault.rootToken)
 	request.Header.Set("Content-Type", "application/json")
-	response := rgwBackendDo(t, vault.http, request)
-	if !slices.Contains(want, response.code) {
-		// Vault bodies can contain keys and tokens.
-		t.Fatalf("Vault %s %s status=%d want=%v (body redacted)", method, path, response.code, want)
-	}
-	return response.body
+	return rgwBackendDo(t, vault.http, request)
 }
 
 // token issues a non-renewable token that has only policy.
