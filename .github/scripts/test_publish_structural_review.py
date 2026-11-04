@@ -176,7 +176,7 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(all(c[1] == "GET" for c in calls))
 
     def test_artifact_and_workflow_identity_and_human_comments(self):
-        human = {"id": 99, "user": {"login": "contributor"}, "body": reporter.MARKER+"\nnot a bot report"}
+        human = {"id": 99, "user": {"login": "owner"}, "body": reporter.MARKER+"\nnot a bot report"}
         api, calls, reads = self.api_fixture([human])
         with mock.patch.object(reporter, "api", side_effect=api):
             reporter.publish(REPO, 10, 2)
@@ -235,12 +235,21 @@ class PublishTests(unittest.TestCase):
 
 
 class CommandFailureTests(unittest.TestCase):
+    def test_personal_cli_cannot_publish_a_human_report(self):
+        with mock.patch("sys.argv", ["publisher", "--repository", REPO, "--run", "10", "--attempt", "2"]), \
+                mock.patch.object(reporter, "publish") as publish, \
+                mock.patch.dict(reporter.os.environ, {"GITHUB_ACTIONS": "false"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(reporter.main(), 1)
+        publish.assert_not_called()
+
     def test_lost_write_response_never_claims_no_comment_was_created(self):
         output = io.StringIO()
         # A lost response after a write can leave a committed comment. The CLI
         # must preserve that uncertainty and must not expose transport details.
         with mock.patch("sys.argv", ["publisher", "--repository", REPO, "--run", "10", "--attempt", "2"]), \
                 mock.patch.object(reporter, "publish", side_effect=OSError("private transport detail")), \
+                mock.patch.dict(reporter.os.environ, {"GITHUB_ACTIONS": "true"}), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(reporter.main(), 1)
         self.assertIn("publication not confirmed", output.getvalue())
@@ -256,6 +265,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("Collect report-only structural review evidence", code)
         self.assertIn("continue-on-error: true", code)
         self.assertNotIn("pull-requests: write", code)
+        command = (root/".github/workflows/ci-command.yml").read_text()
+        manual = command.split("\n  structural-report:\n", 1)[1]
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", manual)
+        self.assertIn("ref: ${{ github.sha }}", manual)
+        self.assertNotIn("setup-go", manual)
+        self.assertNotIn("actions/cache", manual)
+        self.assertIn("group: structural-report-${{ needs.structural-source.outputs.sha }}", manual)
+        self.assertIn("group: structural-report-${{ github.event.workflow_run.head_sha }}", workflow)
         self.assertIn("workflow_run:", workflow)
         self.assertIn("workflows: [Code checks]", workflow)
         self.assertIn("pull-requests: write", workflow)

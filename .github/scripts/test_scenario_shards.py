@@ -461,12 +461,12 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     def test_comment_command_runs_named_profiles_with_minimal_permissions_per_job(self):
         workflow, jobs = self.workflows[self.COMMAND], self.jobs[self.COMMAND]
         self.assertRegex(workflow, r"(?m)^name: CI command$")
-        self.assertIn("\non:\n  issue_comment:\n    types: [created]\n\npermissions: {}\n", workflow)
-        self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request|pull_request_target|workflow_dispatch):")
+        self.assertIn("\non:\n  issue_comment:\n    types: [created]\n  workflow_dispatch:\n", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request|pull_request_target):")
         # No workflow-level group: a comment that is not a command must never
         # cancel or queue behind a command run.
         self.assertNotRegex(workflow, r"(?m)^concurrency:")
-        self.assertEqual(set(jobs), {"command", "validate", "acknowledge", "runtime", "report"})
+        self.assertEqual(set(jobs), {"command", "validate", "acknowledge", "runtime", "report", "structural-source", "structural-report"})
         permissions = {name: dict(re.findall(r"(?m)^      ([a-z-]+): (read|write)$", re.search(
                            r"(?m)^    permissions:\n((?:      .*\n)+)", job)[1])) for name, job in jobs.items()}
         self.assertEqual(permissions, {
@@ -474,9 +474,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             "validate": {"contents": "read"},
             "acknowledge": {"statuses": "write"},
             "runtime": {"contents": "read"},
-            "report": {"contents": "read", "pull-requests": "write", "statuses": "write"}})
+            "report": {"contents": "read", "pull-requests": "write", "statuses": "write"},
+            "structural-source": {"actions": "read"},
+            "structural-report": {"contents": "read", "actions": "read", "pull-requests": "write"}})
         self.assertEqual(scalar(jobs["command"], "if"),
-                         "github.event.issue.pull_request && contains(github.event.comment.body, '/ci')")
+                         "github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/ci')")
         # Only Validate checks out the head commit, beside the default
         # branch's scripts; no checkout keeps credentials.
         self.assertEqual(workflow.count("uses: actions/checkout@v7"), workflow.count("persist-credentials: false"))

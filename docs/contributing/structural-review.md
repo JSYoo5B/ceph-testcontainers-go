@@ -97,10 +97,20 @@ cache. Report text is quoted as data in the comment; the job summary provides
 the formatted tables. A stale head, closed PR, duplicate artifact, invalid
 receipt or missing report is never posted as a fresh clean result. A newer
 report cannot be overwritten by an older run. Updating the one marker-owned
-comment avoids notification spam; API writes are not blindly retried.
+comment avoids notification spam; API writes are not blindly retried. Human
+comments are never adopted as bot reports, and the personal CLI can only
+preview with `--dry-run`, not publish.
 
 The publisher workflow becomes active when it is on the default branch. It
 cannot automatically handle completion events that occurred before that point.
+For retained reports, a maintainer can use the CI command workflow's
+**structural_report_run** and **structural_report_attempt** dispatch inputs to
+republish from the selected trusted engine commit. That authenticated,
+write-enabled job runs on GitHub Actions and posts as `github-actions[bot]`;
+PR events cannot enter it. It runs no Go analysis, tests or native jobs. Native `/ci` comment authorization and required Code checks are unchanged.
+The publisher keeps all source-run identity, freshness and idempotence checks.
+This is also how a new publisher can be exercised before it reaches the default
+branch, without treating a maintainer-authored comment as bot validation.
 
 ## Local use
 

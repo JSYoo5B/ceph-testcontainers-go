@@ -163,9 +163,9 @@ def publish(repository, run_id, attempt, dry_run=False):
         if {p["sha"] for p in commit["parents"]} != {linked["base"]["sha"], linked["head"]["sha"]} or len(commit["parents"]) != 2:
             raise Refusal("analysis was not built from the head or its recorded merge")
     body = comment_body(repository, run, receipt, text)
-    # A bot or repository owner can seed the report. Never edit a contributor's
-    # comment merely because it contains the marker.
-    authors = {"github-actions[bot]", repository.split("/")[0]}
+    # Only the Actions bot owns the report. Human comments are never adopted
+    # merely because they contain the marker.
+    authors = {"github-actions[bot]"}
     comments = [c for c in pages(root+"/issues/%d/comments" % number)
                 if c["user"]["login"] in authors and c.get("body", "").startswith(MARKER+"\n")]
     if len(comments) > 1:
@@ -201,6 +201,9 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repository) or min(args.run, args.attempt) < 1:
         parser.error("invalid repository or run identity")
+    if not args.dry_run and os.environ.get("GITHUB_ACTIONS") != "true":
+        print("Publish through GitHub Actions; personal CLI credentials may only use --dry-run.")
+        return 1
     try:
         print(publish(args.repository, args.run, args.attempt, args.dry_run))
     except (Refusal, OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, subprocess.SubprocessError):
