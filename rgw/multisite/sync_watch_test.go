@@ -220,3 +220,60 @@ func TestRGWWatchBucketSyncEndsOnGroupOrPeriodChange(t *testing.T) {
 		t.Fatalf("period change ended with %v", err)
 	}
 }
+
+func TestRGWWatchSyncEndsOnAPeriodTheZoneHasNotImported(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
+	w, err := f.WatchSync(t.Context(), syncWatchTestConfig, "destination", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextSyncEvent(t, w.Events())
+	underTopology(f, func() {
+		stale := cli.current
+		nextPeriod(cli)
+		cli.periodByZone = map[string]map[string]any{"dest-id": stale}
+	})
+	for e := range w.Events() {
+		t.Fatalf("event after the period change %+v", e)
+	}
+	if err := w.Stop(); !errors.Is(err, errSyncPeriodChanged) {
+		t.Fatalf("an unimported new period ended the watch with %v", err)
+	}
+}
+
+func TestRGWWatchBucketSyncEndsOnAPeriodThatDropsThePipe(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.additionalBuckets = map[string]string{"input": "source-instance", "output": "destination-instance"}
+	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "published", Status: SyncEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "input"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Apply(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cli.bucketStatusOutput = `{"realm":"realm","zonegroup":"group-id","zone":"dest-id","bucket":"output","bucket_instance_id":"destination-instance","sources":[{"source_zone":"source-id","source_name":"source","source_bucket":"input","source_bucket_id":"source-instance","total_shards":1,"behind_shards":[]}]}`
+	w, err := g.WatchBucketSync(t.Context(), syncWatchTestConfig, "selected", "source", "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline := nextSyncEvent(t, w.Events()); !baseline.Status.CaughtUp {
+		t.Fatalf("baseline %+v", baseline)
+	}
+	// A new committed period without the group: the read learns the period,
+	// then fails the publication check.
+	underTopology(f, func() {
+		nextPeriod(cli)
+		current := syncPeriodGroups(cli.current)[0]
+		current["sync_policy"] = syncPolicyReplace(current["sync_policy"].(map[string]any), g.ID(), nil)
+	})
+	for e := range w.Events() {
+		t.Fatalf("event after the period change %+v", e)
+	}
+	if err := w.Stop(); !errors.Is(err, errSyncPeriodChanged) {
+		t.Fatalf("a period that dropped the pipe ended the watch with %v", err)
+	}
+}

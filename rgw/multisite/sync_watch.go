@@ -122,7 +122,8 @@ func (w *SyncWatch) Stop() error {
 // selected source that is no longer an attached owned zone of the
 // zonegroup, a changed realm, zonegroup or zone identity, and a committed
 // period or realm epoch other than the baseline's, as any sync policy or
-// topology commit makes: watch the new period with a new WatchSync.
+// topology commit makes, even while the zone has not imported it yet: watch
+// the new period with a new WatchSync.
 //
 // Ready reports the native comparison at that read. It does not prove that a
 // particular object arrived or that sync completes under continuous writes:
@@ -144,12 +145,22 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 		Settings: settings,
 		Read: func(ctx context.Context) (SyncStatus, error) {
 			status, err := f.watchSyncRead(ctx, zoneName, sources)
+			if pin == nil {
+				if err == nil {
+					pin = &status
+				}
+				return status, err
+			}
+			// The read fills the committed period before it checks that the
+			// zone imported it, so a known new period ends the watch even
+			// when a later step of the read failed.
+			if status.PeriodID != "" && (status.PeriodID != pin.PeriodID || status.RealmEpoch != pin.RealmEpoch) {
+				return status, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, errSyncPeriodChanged))
+			}
 			if err != nil {
 				return status, err
 			}
-			if pin == nil {
-				pin = &status
-			} else if refusal := syncWatchPinned(*pin, status); refusal != nil {
+			if refusal := syncWatchPinned(*pin, status); refusal != nil {
 				return status, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, refusal))
 			}
 			return status, nil
@@ -288,7 +299,8 @@ func (w *BucketSyncWatch) Stop() error {
 // removed or changed through the fixture or a pending change on it, the
 // group's native policy changed outside the fixture, a bucket recreated
 // under the same name, and a committed period or realm epoch other than the
-// baseline's.
+// baseline's, even when that period no longer publishes the pipe or an
+// endpoint has not imported it yet.
 //
 // CaughtUp reports the native comparison at that read. Native RGW combines
 // comparisons from matching pipes, so it does not attest the selected pipe's
@@ -379,7 +391,11 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 	if errors.Is(err, errSyncBucketRecreated) || errors.Is(err, errSyncPolicyChanged) {
 		return status, fatal(err)
 	}
-	if err == nil && (status.PeriodID != p.period || status.RealmEpoch != p.epoch) {
+	// The read fills the committed period before its later steps, which a
+	// new period can make fail: a policy commit that drops the pipe fails
+	// the publication check, and an endpoint may not have imported it yet.
+	// A known new period ends the watch whether or not the rest succeeded.
+	if status.PeriodID != "" && (status.PeriodID != p.period || status.RealmEpoch != p.epoch) {
 		return status, fatal(errSyncPeriodChanged)
 	}
 	return status, err
