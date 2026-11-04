@@ -152,3 +152,29 @@ func TestRemoveKeepsFilesystemWhenNativeRemovalFails(t *testing.T) {
 		t.Fatal("nil cluster accepted")
 	}
 }
+
+// An FSMap read right after fs rm on a monitor that cleared every remaining
+// daemon's join_fscid reports each owned survivor daemon; the next read, after
+// their beacons, reports none. Unowned daemons and daemons absent from the map
+// are not judged.
+func TestSurvivorAffinityLost(t *testing.T) {
+	survivors := map[int64][]string{2: {"b-0", "b-1", "b-2"}}
+	cleared := `{"epoch":20,"standbys":[{"name":"a-0","gid":9,"state":"up:standby","join_fscid":-1}],
+"filesystems":[{"id":2,"mdsmap":{"fs_name":"b","info":{
+"gid_7":{"name":"b-0","gid":7,"rank":0,"state":"up:active","join_fscid":-1},
+"gid_8":{"name":"b-1","gid":8,"rank":0,"state":"up:standby-replay","join_fscid":-1},
+"gid_5":{"name":"other","gid":5,"rank":1,"state":"up:active","join_fscid":-1}}}}]}`
+	lost, err := survivorAffinityLost([]byte(cleared), survivors)
+	if err != nil || len(lost) != 2 || !strings.HasPrefix(lost[0], "b-0 ") || !strings.HasPrefix(lost[1], "b-1 ") {
+		t.Fatalf("cleared survivors=%q err=%v", lost, err)
+	}
+	restored := strings.NewReplacer(`"up:active","join_fscid":-1},
+"gid_8"`, `"up:active","join_fscid":2},
+"gid_8"`, `"up:standby-replay","join_fscid":-1`, `"up:standby-replay","join_fscid":2`).Replace(cleared)
+	if lost, err := survivorAffinityLost([]byte(restored), survivors); err != nil || len(lost) != 0 {
+		t.Fatalf("restored survivors=%q err=%v", lost, err)
+	}
+	if _, err := survivorAffinityLost([]byte(`{"epoch":1}`), survivors); err == nil {
+		t.Fatal("an FSMap without filesystems was accepted")
+	}
+}
