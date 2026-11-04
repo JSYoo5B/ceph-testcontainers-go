@@ -244,9 +244,11 @@ type watchedFSMapSchema struct {
 
 // checkWatchedFSMap confirms that an FSMap which lacks the watched filesystem,
 // or shows it with other identities, is a complete report before the watch
-// ends on it: the filesystems list is present, every entry is named, and the
-// named entry carries its ID and pools. An empty or truncated reply such as {}
-// is a gap, because a later read can still show the filesystem unchanged.
+// ends on it: the filesystems list is present, every entry has a non-empty
+// name, and the named entry carries a non-negative ID and metadata pool and
+// at least one data pool, none negative. Any other reply, such as {}, an
+// unnamed entry or an empty data_pools list, is a gap, because a later read
+// can still show the filesystem unchanged.
 func checkWatchedFSMap(data []byte, name string) error {
 	var schema watchedFSMapSchema
 	if err := json.Unmarshal(data, &schema); err != nil {
@@ -257,11 +259,14 @@ func checkWatchedFSMap(data []byte, name string) error {
 	}
 	for i, filesystem := range *schema.Filesystems {
 		m := filesystem.MDSMap
-		if m == nil || m.Name == nil {
+		if m == nil || m.Name == nil || *m.Name == "" {
 			return fmt.Errorf("decode cephfs FSMap: filesystem entry %d has no name", i)
 		}
-		if *m.Name == name && (filesystem.ID == nil || m.MetadataPool == nil || m.DataPools == nil) {
-			return fmt.Errorf("decode cephfs FSMap: the entry of cephfs %q lacks its ID or pools", name)
+		if *m.Name != name {
+			continue
+		}
+		if filesystem.ID == nil || *filesystem.ID < 0 || m.MetadataPool == nil || *m.MetadataPool < 0 || m.DataPools == nil || len(*m.DataPools) == 0 || slices.ContainsFunc(*m.DataPools, func(id int64) bool { return id < 0 }) {
+			return fmt.Errorf("decode cephfs FSMap: the entry of cephfs %q lacks a valid ID, metadata pool or data pool", name)
 		}
 	}
 	return nil

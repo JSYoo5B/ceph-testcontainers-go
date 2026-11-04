@@ -429,6 +429,18 @@ func TestMDSWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 		"entry without pools": func(s *mdsWatchSource, _ error) {
 			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant"}}]}`)
 		},
+		"empty name": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"","metadata_pool":1,"data_pools":[2]}}]}`)
+		},
+		"empty data pools": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[]}}]}`)
+		},
+		"negative ID": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":-1,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[2]}}]}`)
+		},
+		"negative data pool": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[-1]}}]}`)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := newMDSWatchSource()
