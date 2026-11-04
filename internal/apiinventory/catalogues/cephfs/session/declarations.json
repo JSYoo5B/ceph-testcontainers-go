@@ -2,8 +2,14 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/session",
-  "count": 10,
+  "count": 17,
   "entries": [
+    {
+      "current": "cephfs/session.Feature",
+      "kind": "type",
+      "proposed": "cephfs/session.Feature",
+      "decision": "baseline"
+    },
     {
       "current": "cephfs/session.Limits",
       "kind": "type",
@@ -25,6 +31,13 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs/session.OverrideRequiredFeatures",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem, names ...string) (*RequiredFeaturesOverrideHandle, error)",
+      "proposed": "cephfs/session.OverrideRequiredFeatures",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs/session.OverrideTimeouts",
       "kind": "function",
       "signature": "func(ctx context.Context, fs *cephfs.Filesystem, requested Limits) (*TimeoutsOverrideHandle, error)",
@@ -43,6 +56,41 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*RefusalOverrideHandle",
       "proposed": "cephfs/session.RefusalOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RequiredFeatures",
+      "kind": "function",
+      "signature": "func(ctx context.Context, fs *cephfs.Filesystem) ([]Feature, error)",
+      "proposed": "cephfs/session.RequiredFeatures",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RequiredFeaturesOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs/session.RequiredFeaturesOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RequiredFeaturesOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*RequiredFeaturesOverrideHandle",
+      "proposed": "cephfs/session.RequiredFeaturesOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RequiredFeaturesOverrideHandle.Steps",
+      "kind": "method",
+      "signature": "func() []RequirementStep",
+      "receiver": "*RequiredFeaturesOverrideHandle",
+      "proposed": "cephfs/session.RequiredFeaturesOverrideHandle.Steps",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/session.RequirementStep",
+      "kind": "type",
+      "proposed": "cephfs/session.RequirementStep",
       "decision": "baseline"
     },
     {

@@ -6,7 +6,7 @@ name: CI command
 # ci:selected-batches labels are unchanged by it.
 #
 # issue_comment runs this file and its scripts from the default branch.
-# Command and Report check out only the default branch; Validate and the
+# Native Command and Report check out only the default branch; Validate and the
 # runtime jobs check out the recorded head commit with a read-only token and
 # no persisted credentials. Pull requests from forks are refused before any
 # of their code is checked out.
@@ -19,6 +19,16 @@ name: CI command
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      structural_report_run:
+        description: 'Completed PR Code run whose structural report should be republished'
+        required: true
+        type: string
+      structural_report_attempt:
+        description: 'Source Code run attempt'
+        type: string
+        default: '1'
 
 permissions: {}
 
@@ -30,7 +40,7 @@ env:
 jobs:
   command:
     name: Command
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '/ci')
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -204,3 +214,53 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PULL_NUMBER: ${{ github.event.issue.number }}
         run: gh api "repos/$GITHUB_REPOSITORY/issues/$PULL_NUMBER/comments" -F body=@"$RUNNER_TEMP/reply.md" > /dev/null
+
+  structural-source:
+    name: Locate structural source run
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Read the source head for delivery serialization
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.structural_report_run }}
+        run: |
+          case "$SOURCE_RUN" in ''|*[!0-9]*) exit 1;; esac
+          REPORT_HEAD=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq .head_sha)
+          [[ "$REPORT_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          echo "sha=$REPORT_HEAD" >> "$GITHUB_OUTPUT"
+
+  # Only an authenticated maintainer dispatch enters this job. The chosen
+  # engine commit is explicit; artifacts never supply executable source.
+  structural-report:
+    name: Republish structural review
+    needs: structural-source
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    concurrency:
+      group: structural-report-${{ needs.structural-source.outputs.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Publish the retained current-head report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.structural_report_run }}
+          SOURCE_ATTEMPT: ${{ inputs.structural_report_attempt }}
+        run: >-
+          python3 .github/scripts/publish_structural_review.py
+          --run "$SOURCE_RUN" --attempt "$SOURCE_ATTEMPT"

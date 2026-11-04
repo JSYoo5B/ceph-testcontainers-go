@@ -172,6 +172,11 @@ prove Docker or native Ceph interoperability. Run substantial checks and Docker
 integration on an authorized Linux runner. Use a desktop engine only for an
 explicitly required desktop-specific behavior check.
 
+For structural triage, start with the current-head PR comment or Code artifact
+described in [Structural review](docs/contributing/structural-review.md). Follow
+its source locations rather than recounting methods or diagnostics through broad
+scans. Check its scope and snapshot IDs; metrics do not replace design review.
+
 For documentation-only changes, check the diff, privacy candidates and affected
 links. For fixture changes, run the affected fixture tests. Match every CI claim
 to its exact commit and attempt; skipped, canceled and earlier-commit jobs do not

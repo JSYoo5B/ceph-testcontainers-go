@@ -5,7 +5,9 @@ package cephfs_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -381,9 +383,16 @@ type cephFSFeature struct {
 // Required features: a client of the image's release advertises every
 // feature that "fs feature ls" lists, so none can be required that it lacks.
 // The test makes a client that leaves one out with
-// client_debug_inject_features. Requiring that feature evicts its mounted
-// session and blocklists it, refuses its next mount with EPERM and still
-// admits an ordinary client; removing the requirement admits it again.
+// client_debug_inject_features. Another feature is already required by an
+// outside command. session.OverrideRequiredFeatures of both owns only the
+// added one; the FSMap's "fs dump", read apart from the handle, shows both.
+// The requirement evicts the mounted session that lacks the feature and
+// blocklists it, refuses its next mount with EPERM and still admits an
+// ordinary client. Restore removes only the owned bit, keeps the outside one
+// and the eviction's blocklist entry, and a client without the feature
+// mounts again. A second handle whose feature is removed outside it refuses
+// Restore with ErrInvalidRequest and no change, then restores once the
+// feature is required again.
 func testCephFSSessionAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -592,30 +601,71 @@ func testCephFSSessionAdmission(t *testing.T) {
 	if rank.Required != "{}" {
 		t.Fatalf("required_client_features before the test: %s", rank.Required)
 	}
+	// An administrator already requires another feature that every client
+	// here advertises; the override must not own or remove it.
+	preexisting := ""
+	for _, f := range features {
+		if f.Name != feature && f.Name != "reserved" {
+			preexisting = f.Name
+			break
+		}
+	}
+	if preexisting == "" {
+		t.Fatalf("fs feature ls has no feature besides %s: %s", feature, out)
+	}
+	removePreexisting := func(ctx context.Context) error {
+		_, err := cluster.Ceph(ctx, "fs", "required_client_features", fs.FilesystemName, "rm", preexisting)
+		return err
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := removePreexisting(cleanupCtx); err != nil {
+			t.Errorf("remove required client feature %s: %v", preexisting, err)
+		}
+	})
+	harness.MustCeph(t, ctx, cluster, "fs", "required_client_features", fs.FilesystemName, "add", preexisting)
+	before := requiredOf(t, ctx, cluster, fs.FilesystemName, rank.GID)
+	if len(before) != 1 || !slices.Contains(slices.Collect(maps.Values(before)), preexisting) {
+		t.Fatalf("required_client_features after the outside add: %v", before)
+	}
 	inject := strings.Join(bits, ",")
 	lagging := h.attempt(t, ctx, "lagging", "admin", "-", "/", "-", inject, "")
 	if advertised, err := featureBits(lagging.session); lagging.mounted.Errno != 0 || err != nil || advertised != lacking {
 		t.Fatalf("client without %s: %+v session %+v (%v)", feature, lagging.mounted, lagging.session, err)
 	}
-	added := false
-	t.Cleanup(func() {
-		if !added {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if _, err := cluster.Ceph(cleanupCtx, "fs", "required_client_features", fs.FilesystemName, "rm", feature); err != nil {
-			t.Errorf("remove required client feature %s: %v", feature, err)
-		}
-	})
-	added = true
-	harness.MustCeph(t, ctx, cluster, "fs", "required_client_features", fs.FilesystemName, "add", feature)
-	requiring, err := readAdmissionRank(ctx, cluster, fs.FilesystemName)
+	requirement, err := cephfssession.OverrideRequiredFeatures(ctx, fs, preexisting, feature)
+	if requirement != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := requirement.Restore(cleanupCtx); err != nil {
+				t.Errorf("restore required client features: %v", err)
+			}
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf(`{"feature_%d":%q}`, required, feature); requiring.Required != want || requiring.GID != rank.GID {
-		t.Fatalf("required_client_features %s on GID %d, want %s on %d", requiring.Required, requiring.GID, want, rank.GID)
+	steps := requirement.Steps()
+	if len(steps) != 2 || !steps[0].AlreadyRequired || steps[0].Sent || steps[0].Feature.Name != preexisting ||
+		steps[1].AlreadyRequired || !steps[1].Sent || !steps[1].Confirmed || steps[1].Feature != (cephfssession.Feature{Bit: required, Name: feature}) {
+		t.Fatalf("override steps %+v", steps)
+	}
+	// The oracle is the FSMap's own dump, not the handle's fs get readback.
+	requiringRank, err := readAdmissionRank(ctx, cluster, fs.FilesystemName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdsmapEpoch := requiringRank.MDSMapEpoch
+	want := maps.Clone(before)
+	want[fmt.Sprintf("feature_%d", required)] = feature
+	if requiring := requiredOf(t, ctx, cluster, fs.FilesystemName, rank.GID); !maps.Equal(requiring, want) {
+		t.Fatalf("required_client_features %v, want %v", requiring, want)
+	}
+	observed, err := cephfssession.RequiredFeatures(ctx, fs)
+	if err != nil || len(observed) != 2 || !slices.Contains(observed, cephfssession.Feature{Bit: required, Name: feature}) {
+		t.Fatalf("RequiredFeatures %+v, %v", observed, err)
 	}
 	// The MDS evicts the mounted session that lacks the feature, and with
 	// the default mds_session_blocklist_on_evict blocklists its address.
@@ -637,31 +687,84 @@ func testCephFSSessionAdmission(t *testing.T) {
 		t.Fatalf("client without %s while it is required: %+v, want EPERM and a rejection warning", feature, refused.mounted)
 	}
 
-	harness.MustCeph(t, ctx, cluster, "fs", "required_client_features", fs.FilesystemName, "rm", feature)
-	added = false
-	restored, err := readAdmissionRank(ctx, cluster, fs.FilesystemName)
-	if err != nil {
+	if err := requirement.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if restored.Required != rank.Required {
-		t.Fatalf("required_client_features %s after removal, %s before", restored.Required, rank.Required)
+	if err := requirement.Restore(ctx); err != nil {
+		t.Fatalf("a repeated Restore: %v", err)
+	}
+	// Restore removed only its own bit: the outside requirement stays.
+	if restored := requiredOf(t, ctx, cluster, fs.FilesystemName, rank.GID); !maps.Equal(restored, before) {
+		t.Fatalf("required_client_features %v after Restore, %v before the override", restored, before)
 	}
 	readmitted := h.attempt(t, ctx, "readmitted", "admin", "-", "/", "-", inject, "")
 	if readmitted.mounted.Errno != 0 {
-		t.Fatalf("client without %s refused after the requirement was removed: %+v", feature, readmitted.mounted)
+		t.Fatalf("client without %s refused after the requirement was restored: %+v", feature, readmitted.mounted)
 	}
 	h.Finish(t, ctx, readmitted)
+	// The evicted address stays blocklisted: Restore restores the policy only.
+	if !h.blocklisted(t, ctx, lagging) {
+		t.Fatalf("the blocklist entry of the evicted client went away with the requirement")
+	}
+
+	// An outside removal of the owned feature is refused without a change,
+	// and the same handle restores once the feature is required again.
+	edited, err := cephfssession.OverrideRequiredFeatures(ctx, fs, feature)
+	if edited != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := edited.Restore(cleanupCtx); err != nil {
+				t.Errorf("restore edited required client features: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.MustCeph(t, ctx, cluster, "fs", "required_client_features", fs.FilesystemName, "rm", feature)
+	if err := edited.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("Restore after an outside removal: %v", err)
+	}
+	if now := requiredOf(t, ctx, cluster, fs.FilesystemName, rank.GID); !maps.Equal(now, before) {
+		t.Fatalf("a refused Restore changed required_client_features to %v", now)
+	}
+	harness.MustCeph(t, ctx, cluster, "fs", "required_client_features", fs.FilesystemName, "add", feature)
+	if err := edited.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePreexisting(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if final, err := readAdmissionRank(ctx, cluster, fs.FilesystemName); err != nil || final.Required != rank.Required {
+		t.Fatalf("required_client_features %s at the end (%v), %s before", final.Required, err, rank.Required)
+	}
 
 	t.Logf("CEPHFS_SESSION_ADMISSION fsid=%s fs=%s id=%d fsmap=%d mdsmap=%d rank0=mds.%s gid=%d addrs=%s (MON a %s, monmap %d); "+
 		"client.%d (PID %d, no session before mount) session open from %s to %s at client mdsmap %d, features %s; "+
 		"renew seq %d->%d in %s with cap_ttl=last_renew+30s; unmount closed it without blocklist; "+
 		"restricted client.%d mounted /admitted, / and /other refused EPERM without a session; "+
-		"%s (bit %d) required at mdsmap %d: client.%d advertising %s evicted and blocklisted (unmount errno %d), ordinary client.%d admitted, a client without it refused EPERM, readmitted client.%d after rm",
+		"%s (bit %d) required by the override next to %s at mdsmap %d: client.%d advertising %s evicted and blocklisted (unmount errno %d), ordinary client.%d admitted, a client without it refused EPERM, readmitted client.%d after Restore, which kept %s; an outside removal refused Restore",
 		fsid, fs.FilesystemName, rank.FilesystemID, rank.FSMapEpoch, rank.MDSMapEpoch, rank.Name, rank.GID, rank.Addrs, monV2, addresses.MonMapEpoch,
 		admin.mounted.Client, admin.init.PID, admin.session.Entity.Addr, own.Sessions[0].Addrs.Addrvec, own.MDSMapEpoch, admin.session.Metadata.Features.Bits,
 		first.RenewSeq, last.RenewSeq, renewed.Elapsed.Round(time.Second),
 		admitted.mounted.Client,
-		feature, required, requiring.MDSMapEpoch, lagging.mounted.Client, lagging.session.Metadata.Features.Bits, laggingClosed.CloseErrno, ordinary.mounted.Client, readmitted.mounted.Client)
+		feature, required, preexisting, mdsmapEpoch, lagging.mounted.Client, lagging.session.Metadata.Features.Bits, laggingClosed.CloseErrno, ordinary.mounted.Client, readmitted.mounted.Client, preexisting)
+}
+
+// requiredOf reads the required_client_features of filesystem from the
+// native "fs dump", by "feature_<bit>", on the rank 0 daemon gid.
+func requiredOf(t *testing.T, ctx context.Context, cluster *ceph.Container, filesystem string, gid uint64) map[string]string {
+	t.Helper()
+	rank, err := readAdmissionRank(ctx, cluster, filesystem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var required map[string]string
+	if err := json.Unmarshal([]byte(rank.Required), &required); err != nil || rank.GID != gid {
+		t.Fatalf("required_client_features %s on GID %d (%v), want GID %d", rank.Required, rank.GID, err, gid)
+	}
+	return required
 }
 
 // renewalTTL returns cap_ttl minus last_cap_renew_request, as the client's

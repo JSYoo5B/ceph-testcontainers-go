@@ -28,6 +28,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
 | A CephFS MDS answers but refuses metadata mutations | `cephfs.MDS.ForceReadOnly` | EROFS for writes; reads of existing data work | Yes | None: replace the process, then `MDSReadOnlyFault.WaitReplaced` |
 | A CephFS client cannot open a new session | `session.OverrideRefusal` (`cephfs/session`) | The new mount fails with EPERM; open sessions keep working | Yes | `RefusalOverrideHandle.Restore` |
+| A CephFS client that lacks a client feature is refused or evicted | `session.OverrideRequiredFeatures` (`cephfs/session`) | A new mount of a client that does not advertise the feature fails with EPERM; its open session is evicted and blocklisted; clients that advertise it are admitted | Yes | `RequiredFeaturesOverrideHandle.Restore` (policy only; an evicted session stays closed) |
 | The MDS evicts a silent CephFS client quickly | `session.OverrideTimeouts` (`cephfs/session`) with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `TimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `override.AddBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
