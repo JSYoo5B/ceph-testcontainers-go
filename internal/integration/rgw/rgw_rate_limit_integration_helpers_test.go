@@ -24,7 +24,8 @@ import (
 // scope, admitted requests in the dimension the policy leaves unlimited, an
 // unaffected control scope, refusal of an overlapping override, of an outside
 // policy edit and of a bucket the SUT replaced, exact restoration of the prior
-// native policy and access again after Restore.
+// native policy and access again after Restore. On Ceph 19 the user scope is
+// refused as unsupported and changes nothing.
 func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -180,28 +181,43 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 
 	t.Log("user scope: writes the SUT signs throttled")
 	write := rgw.RateLimit{Enabled: true, MaxWriteOps: 1}
+	userSupported := harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityRGWUserRateLimit)
 	userChange, err := users[0].OverrideRateLimit(ctx, rgw.RateLimitScope{}, write)
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
 		defer stop()
 		_ = userChange.Restore(cleanup)
 	})
-	if err != nil {
-		t.Fatal(err)
+	if !userSupported {
+		// A Ceph 19 gateway stores a user policy and never applies it to
+		// requests the user's S3 keys sign: the override is refused before
+		// any change, so the policy and access stay as they were.
+		harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRGWUserRateLimit, "user-scope rate limit")
+		if policy := readPolicy(userScope...); !equalPolicy(policy, userBefore) {
+			t.Fatalf("a refused user override changed the user policy: %v, want %v", policy, userBefore)
+		}
+		if err := userChange.Restore(ctx); err != nil {
+			t.Fatalf("Restore of a refused user override: %v", err)
+		}
+		requireAdmitted("write after a refused user override", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
+	} else {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if policy := readPolicy(userScope...); policy["enabled"] != true || policy["max_write_ops"] != float64(1) || policy["max_read_ops"] != float64(0) {
+			t.Fatalf("native readback of the user override: %v", policy)
+		}
+		waitSlowDown("user write SlowDown", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
+		requireAdmitted("user read", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, control) })
+		requireAdmitted("other user write", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, other, otherBucket) })
+		if err := userChange.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if restored := readPolicy(userScope...); !equalPolicy(restored, userBefore) {
+			t.Fatalf("Restore did not put back the exact prior user policy: %v, want %v", restored, userBefore)
+		}
+		waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
 	}
-	if policy := readPolicy(userScope...); policy["enabled"] != true || policy["max_write_ops"] != float64(1) || policy["max_read_ops"] != float64(0) {
-		t.Fatalf("native readback of the user override: %v", policy)
-	}
-	waitSlowDown("user write SlowDown", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
-	requireAdmitted("user read", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, control) })
-	requireAdmitted("other user write", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, other, otherBucket) })
-	if err := userChange.Restore(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if restored := readPolicy(userScope...); !equalPolicy(restored, userBefore) {
-		t.Fatalf("Restore did not put back the exact prior user policy: %v, want %v", restored, userBefore)
-	}
-	waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
 
 	t.Log("bucket scope: a bucket the SUT replaces is refused")
 	replaced, err := users[0].OverrideRateLimit(ctx, rgw.RateLimitScope{Bucket: limited}, read)
