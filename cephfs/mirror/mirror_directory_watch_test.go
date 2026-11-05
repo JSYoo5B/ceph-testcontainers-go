@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -448,7 +449,7 @@ func TestDirectoryWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 			}
 			f.mirror.mu.Unlock()
 			for _, cluster := range []*ceph.Container{f.mirror.source, f.mirror.destination} {
-				if !servicehook.TryLock(cluster) {
+				if !testhelper.TestState(cluster).Mutex.TryLock() {
 					t.Fatalf("the watch kept a cluster topology lock %s", phase)
 				}
 				servicehook.Unlock(cluster)

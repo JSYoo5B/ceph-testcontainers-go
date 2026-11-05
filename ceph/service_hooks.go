@@ -266,7 +266,4 @@ func (serviceHooks) StartService(ctx context.Context, c *Container, name, image 
 // StartupTimeout bounds one fixture operation.
 func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settings.startupTimeout }
 
-// TryLock holds the cluster mutex if it is free.
-func (serviceHooks) TryLock(c *Container) bool { return c.mu.TryLock() }
-
 func (serviceHooks) Unlock(c *Container) { c.mu.Unlock() }
