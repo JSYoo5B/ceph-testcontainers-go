@@ -399,8 +399,9 @@ func parseStatuses(data []byte, dir string) ([]Status, error) {
 // find reads the directory's schedules and returns the lease's: the one with
 // its native start and creation time once bound. Before that, it is the only
 // schedule with the requested repeat and start, a requested start being
-// compared only when one was given. A schedule with the lease's repeat that is
-// not the lease's is ceph.ErrInvalidRequest; none is nil.
+// compared only when one was given. Any schedule with the lease's repeat that
+// is not the lease's is ceph.ErrInvalidRequest, wherever the module lists it
+// and even beside the lease's own; none is nil.
 func (l *Lease) find(ctx context.Context) (*Status, error) {
 	listed, err := statuses(ctx, l.filesystem.Volumes(), l.Path)
 	if err != nil {
@@ -409,18 +410,22 @@ func (l *Lease) find(ctx context.Context) (*Status, error) {
 	return l.match(listed)
 }
 
-// match returns the lease's schedule among the directory's, as find does.
+// match returns the lease's schedule among the directory's, as find does. It
+// inspects every listed schedule with the lease's repeat before it accepts
+// one, so the order of the module's list never decides the outcome.
 func (l *Lease) match(statuses []Status) (*Status, error) {
 	var candidates []Status
 	for _, status := range statuses {
 		if status.Schedule != l.Repeat {
 			continue
 		}
+		var mine bool
 		if l.added != "" {
-			if status.start == l.start && status.added == l.added {
-				return &status, nil
-			}
-		} else if l.Start.IsZero() || status.Start.Equal(l.Start.Truncate(time.Second)) {
+			mine = status.start == l.start && status.added == l.added
+		} else {
+			mine = l.Start.IsZero() || status.Start.Equal(l.Start.Truncate(time.Second))
+		}
+		if mine {
 			candidates = append(candidates, status)
 			continue
 		}

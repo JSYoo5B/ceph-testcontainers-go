@@ -529,3 +529,80 @@ func TestLeaseAdmission(t *testing.T) {
 		t.Fatalf("Restore: %v, %s", err, fake.state())
 	}
 }
+
+// reorder lists the fake's schedules in reverse, as a module whose status
+// lists them in another order would.
+func (f *fakeSnapSchedule) reorder() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	slices.Reverse(f.schedules)
+}
+
+// Another schedule of the directory with the lease's repeat is refused
+// wherever the module lists it, before or after the lease's own, by Status,
+// a watch read and Restore, which change nothing; once it is gone the lease's
+// own schedule is accepted again.
+func TestLeaseRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *testing.T) {
+	for name, schedule := range map[string]Config{
+		"default start":   {Path: "/", Repeat: "1h"},
+		"requested start": {Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeSnapSchedule()
+			lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owned := fake.state()
+			fake.native(t, "fs snap-schedule add / 1h 2031-01-01T00:00:00")
+			for _, order := range []string{"owned first", "other first"} {
+				before := fake.state()
+				if _, err := lease.Status(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Errorf("%s: Status = %v", order, err)
+				}
+				var ended leaseWatchEnded
+				if _, err := lease.watchRead(t.Context()); !errors.As(err, &ended) || !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Errorf("%s: watch read = %v", order, err)
+				}
+				if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before || lease.restored {
+					t.Errorf("%s: Restore = %v, %s", order, err, fake.state())
+				}
+				fake.reorder()
+			}
+			fake.native(t, "fs snap-schedule remove / 1h 2031-01-01T00:00:00")
+			if fake.state() != owned {
+				t.Fatalf("the lease's schedule changed: %s", fake.state())
+			}
+			if status, err := lease.watchRead(t.Context()); err != nil || status.Schedule != "1h" {
+				t.Fatalf("the lease's own schedule: %+v, %v", status, err)
+			}
+			if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+				t.Fatalf("Restore: %v, %s", err, fake.state())
+			}
+		})
+	}
+}
+
+// A lease whose add reply was lost takes the only schedule with its repeat and
+// requested start as its own; another one with that repeat is refused in either
+// order and leaves both schedules.
+func TestLeaseAfterALostAddRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *testing.T) {
+	fake := newFakeSnapSchedule()
+	fake.lost["fs snap-schedule add"] = true
+	lease, err := add(t.Context(), snapScheduleFilesystem(fake), Config{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+	if err == nil || lease == nil || lease.added != "" {
+		t.Fatalf("%v, %v", lease, err)
+	}
+	fake.native(t, "fs snap-schedule add / 1h 2031-01-01T00:00:00")
+	for _, order := range []string{"owned first", "other first"} {
+		before := fake.state()
+		if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before {
+			t.Errorf("%s: Restore = %v, %s", order, err, fake.state())
+		}
+		fake.reorder()
+	}
+	fake.native(t, "fs snap-schedule remove / 1h 2031-01-01T00:00:00")
+	if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+		t.Fatalf("Restore: %v, %s", err, fake.state())
+	}
+}
