@@ -11,7 +11,7 @@ import (
 
 // Production native command/parser orchestration, with only existing private
 // original-template attestation replaced by the established test callback.
-func newDirectoryAdditionFixture(t *testing.T) (*Mirror, *directoryRemovalControlFake, *peerRemovalControlFake) {
+func newDirectoryAdditionFixture(t *testing.T) (*Container, *directoryRemovalControlFake, *peerRemovalControlFake) {
 	t.Helper()
 	m, s, d, _, _ := newDirectoryRemovalFixture()
 	m.ops.peerGeneration = 1
@@ -23,7 +23,7 @@ func newDirectoryAdditionFixture(t *testing.T) (*Mirror, *directoryRemovalContro
 	return m, s, d
 }
 
-func beginDirectoryAdditionFixture(t *testing.T, m *Mirror, path string) (*DirectoryAddition, error) {
+func beginDirectoryAdditionFixture(t *testing.T, m *Container, path string) (*DirectoryAddition, error) {
 	t.Helper()
 	return m.beginDirectoryAddition(t.Context(), path, peerRemovalClusterReader)
 }
@@ -413,7 +413,7 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 }
 
 func TestCephFSDirectoryAdditionNilCanceledQueryAndFinalOwnerDrift(t *testing.T) {
-	var mirror *Mirror
+	var mirror *Container
 	var receipt *DirectoryAddition
 	if _, err := mirror.BeginDirectoryAddition(t.Context(), "/added"); !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("nil mirror")

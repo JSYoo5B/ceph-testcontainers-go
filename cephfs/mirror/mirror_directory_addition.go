@@ -51,14 +51,14 @@ type DirectoryAdditionStatus struct {
 // picked up the path.
 //
 //purpose:construction,condition
-func (mirror *Mirror) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
+func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
 	}
 	return mirror.beginDirectoryAddition(ctx, directory, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryAddition, error) {
+func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
 	}

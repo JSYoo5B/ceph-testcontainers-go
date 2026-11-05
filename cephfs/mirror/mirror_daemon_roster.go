@@ -20,9 +20,9 @@ import (
 // cephFSDaemonRoster is the fixture's daemon membership and the settings
 // every new daemon is launched with: the image, the source principal and its
 // keyring, the constructor customizers and the optional process observer
-// factory. The first daemon it ever adds is the initial one, which backs
-// Mirror's embedded container; a later daemon never takes that slot. It is
-// guarded by Mirror.mu.
+// factory. The first daemon it ever adds is the initial one, which backs the
+// fixture's embedded container; a later daemon never takes that slot. It is
+// guarded by Container.mu.
 type cephFSDaemonRoster struct {
 	image, sourceID      string
 	keyring              []byte

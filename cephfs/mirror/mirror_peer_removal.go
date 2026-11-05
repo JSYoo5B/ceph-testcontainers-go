@@ -61,11 +61,11 @@ type PeerRemovalDaemonStatus struct {
 // interrupted removal.
 //
 //purpose:condition,lifetime
-func (mirror *Mirror) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
+func (mirror *Container) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
 	return mirror.beginPeerRemoval(ctx, id, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*PeerRemoval, error) {
+func (mirror *Container) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*PeerRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS mirror fixture is unavailable")
 	}
@@ -110,7 +110,7 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 
 // resumeRetained continues the peer removal already registered for this peer:
 // an acknowledged process policy is only confirmed, otherwise the handle is
-// checked and the removal resumed. Mirror.mu is held.
+// checked and the removal resumed. Container.mu is held.
 func (r *PeerRemoval) resumeRetained(ctx context.Context) error {
 	if r.processQuiescenceAcknowledged {
 		return r.confirmAcknowledgedProcessPolicy(ctx)
@@ -123,7 +123,7 @@ func (r *PeerRemoval) resumeRetained(ctx context.Context) error {
 
 // preflight is the read-only admission of a new peer removal: the peer and
 // filesystem policies are present, the daemon cohort is captured and a second
-// read finds both policies unchanged. Mirror.mu is held.
+// read finds both policies unchanged. Container.mu is held.
 func (r *PeerRemoval) preflight(ctx context.Context) error {
 	present, fsPresent, err := r.scope.policy(ctx)
 	if err != nil {
@@ -301,7 +301,7 @@ func (r *PeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (
 // observeCohort observes each original daemon under its own lock and records
 // its state and problem in daemons. It reports whether every daemon has
 // drained the peer, the observation errors, and whether a guard refusal ended
-// the observation early. Mirror.mu is held.
+// the observation early. Container.mu is held.
 func (r *PeerRemoval) observeCohort(ctx context.Context, watchers map[string]string, daemons map[string]PeerRemovalDaemonStatus) (bool, []error, bool) {
 	all := true
 	var errs []error

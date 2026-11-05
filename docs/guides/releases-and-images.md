@@ -203,7 +203,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   daemon joins, the MGR `mirroring` module fails to redistribute directories
   that are already assigned (`'DirectoryState' object is not subscriptable`).
   Failover to a surviving daemon still works. Call
-  `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
+  `cephfsmirror.Container.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - **Every tested release, RBD snapshot copy resumed after a killed
@@ -468,7 +468,7 @@ the retained store and the returned handle are enough to continue.
   `DaemonOptions.WithImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
-- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Container.RebalanceDirectories`.
 - [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `WithTopology`,
   `Config.SetupImage`.
 - [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.

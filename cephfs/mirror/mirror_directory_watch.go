@@ -131,7 +131,7 @@ func (w *DirectoryWatch) Stop() error {
 // samples, not a complete history of native transitions.
 //
 //purpose:observation
-func (mirror *Mirror) WatchDirectory(ctx context.Context, cfg ceph.WatchConfig, directory string) (*DirectoryWatch, error) {
+func (mirror *Container) WatchDirectory(ctx context.Context, cfg ceph.WatchConfig, directory string) (*DirectoryWatch, error) {
 	if mirror == nil {
 		return nil, servicehook.Invalid(fmt.Errorf("%s: CephFS mirror fixture is unavailable", directoryWatchOperation))
 	}
@@ -149,7 +149,7 @@ func (mirror *Mirror) WatchDirectory(ctx context.Context, cfg ceph.WatchConfig, 
 // directoryWatchRead returns the read of one watch of a normalized directory:
 // the cluster check, then one observation whose admission pins the
 // identities on the first call and checks them on every later one.
-func (mirror *Mirror) directoryWatchRead(directory string) func(context.Context) (DirectoryStatus, error) {
+func (mirror *Container) directoryWatchRead(directory string) func(context.Context) (DirectoryStatus, error) {
 	pin := &directoryWatchPin{mirror: mirror, directory: directory}
 	return func(ctx context.Context) (DirectoryStatus, error) {
 		if err := pin.running(ctx); err != nil {
@@ -160,9 +160,9 @@ func (mirror *Mirror) directoryWatchRead(directory string) func(context.Context)
 }
 
 // directoryWatchPin holds the identities that the baseline fixed. admit runs
-// under Mirror.mu, and only on the producer, one read at a time.
+// under Container.mu, and only on the producer, one read at a time.
 type directoryWatchPin struct {
-	mirror                              *Mirror
+	mirror                              *Container
 	directory                           string
 	pinned                              bool
 	directoryGeneration, peerGeneration uint64
@@ -171,7 +171,7 @@ type directoryWatchPin struct {
 
 // running refuses a read once the source or the destination cluster is
 // terminated. It takes each cluster's topology lock only to read that state,
-// before Mirror.mu, so a long cluster operation never holds up the mirror's
+// before Container.mu, so a long cluster operation never holds up the mirror's
 // own operations behind a waiting read; a lock wait that ctx ends is a gap.
 // Both clusters are fixed when the mirror is constructed.
 func (p *directoryWatchPin) running(ctx context.Context) error {

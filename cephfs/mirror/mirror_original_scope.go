@@ -18,9 +18,9 @@ import (
 // the two clusters and their FSIDs, both filesystems and their metadata
 // pools, the source client, the owned peer and its generation. It records no
 // daemon, witness or progress, so a directory addition captures it without a
-// live daemon. Its methods run while Mirror.mu is held.
+// live daemon. Its methods run while Container.mu is held.
 type cephFSOriginalScope struct {
-	mirror                                                              *Mirror
+	mirror                                                              *Container
 	source, destination                                                 *ceph.Container
 	sourceFilesystem, destinationFilesystem, sourceClient, metadataPool string
 	sourceID, destinationID                                             int
@@ -34,8 +34,8 @@ type cephFSOriginalScope struct {
 
 // captureOriginalScope records the fixture's current identity for peerID
 // after its native cluster identities are read and found distinct. operation
-// names the receipt in the refusals. Mirror.mu is held.
-func (mirror *Mirror) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
+// names the receipt in the refusals. Container.mu is held.
+func (mirror *Container) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
 	if mirror.metadataPoolID <= 0 || mirror.destinationMetadataPoolID <= 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
 		return nil, cephFSObserveGuard(operation + " original filesystem metadata identity is unavailable")
 	}
@@ -64,7 +64,7 @@ func (s *cephFSOriginalScope) usable() bool {
 // sameFixture reports whether the fixture still has the recorded clusters,
 // filesystems, metadata pools, clients, destination site and peer. A peer
 // removal passes allowClearedPeer, because its own request clears the
-// fixture's peer. Mirror.mu is held.
+// fixture's peer. Container.mu is held.
 func (s *cephFSOriginalScope) sameFixture(allowClearedPeer bool) bool {
 	m := s.mirror
 	peer := m.peerID == s.peerID || (allowClearedPeer && m.peerID == "")
@@ -299,7 +299,7 @@ func validCephFSRemovalClusters(values [2]string) bool {
 	return true
 }
 
-func (mirror *Mirror) peerRemovalClusterIdentities(ctx context.Context) ([2]string, error) {
+func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]string, error) {
 	var result [2]string
 	for i, cluster := range []*ceph.Container{mirror.source, mirror.destination} {
 		if cluster == nil {

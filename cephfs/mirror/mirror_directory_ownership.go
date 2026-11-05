@@ -10,7 +10,7 @@ import (
 // acknowledged owned registration advances a generation, and a release keeps
 // it, so a receipt that recorded one detects any later registration of the
 // same path. A path whose remove is pending is never removed again until it
-// has left the native policy. It is guarded by Mirror.mu. In-flight receipts
+// has left the native policy. It is guarded by Container.mu. In-flight receipts
 // are not part of it; mirrorOperations keeps them.
 type cephFSDirectoryOwnership struct {
 	owned, pendingRelease map[string]bool
@@ -90,8 +90,8 @@ func (o *cephFSDirectoryOwnership) ownedPaths() []string {
 // a completed addition receipt of the path is superseded, the path's
 // generation advances and, with publish, Directories lists the path.
 // Directories is a published descriptor only; ownership never reads it back.
-// Mirror.mu is held, or Run has not shared the mirror yet.
-func (mirror *Mirror) registerDirectory(directory string, publish bool) {
+// Container.mu is held, or Run has not shared the mirror yet.
+func (mirror *Container) registerDirectory(directory string, publish bool) {
 	mirror.ops.supersedeDirectoryAddition(directory)
 	mirror.directories.register(directory)
 	if publish && !slices.Contains(mirror.Directories, directory) {
@@ -100,8 +100,8 @@ func (mirror *Mirror) registerDirectory(directory string, publish bool) {
 }
 
 // forgetDirectory drops the ownership of directory and its Directories entry.
-// Mirror.mu is held.
-func (mirror *Mirror) forgetDirectory(directory string) {
+// Container.mu is held.
+func (mirror *Container) forgetDirectory(directory string) {
 	mirror.Directories = slices.DeleteFunc(mirror.Directories, func(item string) bool { return item == directory })
 	mirror.directories.forget(directory)
 }

@@ -436,7 +436,7 @@ func TestCephFSOriginalProcessSanitizerPreservesCanonicalJoinedCauses(t *testing
 	}
 }
 
-func enableProcessDraftBindings(m *Mirror, daemons ...*peerRemovalDaemonFake) []*processRawFake {
+func enableProcessDraftBindings(m *Container, daemons ...*peerRemovalDaemonFake) []*processRawFake {
 	m.roster.processClientFactory = func(context.Context) (*mobycl.Client, error) { return nil, nil }
 	var result []*processRawFake
 	for i, d := range daemons {

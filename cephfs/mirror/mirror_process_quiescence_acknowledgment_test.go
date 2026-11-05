@@ -13,7 +13,7 @@ import (
 	"github.com/containerd/errdefs"
 )
 
-func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*PeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
+func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*PeerRemoval, *Container, *peerRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
 	t.Helper()
 	m, s, d, a, b := newPeerRemovalFixture()
 	raws := enableProcessDraftBindings(m, a, b)
@@ -28,7 +28,7 @@ func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*PeerRemoval,
 	return r, m, s, d, raws
 }
 
-func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*DirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
+func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*DirectoryRemoval, *Container, *directoryRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
 	t.Helper()
 	m, s, d, a, b := newDirectoryRemovalFixture()
 	raws := enableProcessDraftBindings(m, a.peerRemovalDaemonFake, b.peerRemovalDaemonFake)
@@ -43,7 +43,7 @@ func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*Directo
 	return r, m, s, d, raws
 }
 
-func removeAcknowledgmentOriginals(t *testing.T, m *Mirror, raw []*processRawFake) {
+func removeAcknowledgmentOriginals(t *testing.T, m *Container, raw []*processRawFake) {
 	t.Helper()
 	for _, d := range m.Daemons() {
 		if err := d.Remove(t.Context()); err != nil {

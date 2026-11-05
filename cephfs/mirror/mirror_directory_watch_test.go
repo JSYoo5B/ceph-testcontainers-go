@@ -19,9 +19,9 @@ import (
 
 // directoryWatchFixture is the scripted mirror of the DirectoryStatus tests,
 // observed by a watch. Every change of the scripted native state happens
-// under Mirror.mu, which each read holds for its whole observation.
+// under Container.mu, which each read holds for its whole observation.
 type directoryWatchFixture struct {
-	mirror              *Mirror
+	mirror              *Container
 	source, destination *cephFSObserverDraftControl
 	a, b                *cephFSObserverDraftDaemon
 	reads               atomic.Int64
@@ -528,7 +528,7 @@ func TestDirectoryWatchRefusalsStartNothing(t *testing.T) {
 	if w, err := f.mirror.WatchDirectory(t.Context(), ceph.WatchConfig{}, "owned"); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("relative path = %v, %v", w, err)
 	}
-	var none *Mirror
+	var none *Container
 	if w, err := none.WatchDirectory(t.Context(), ceph.WatchConfig{}, "/owned"); w != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("nil mirror = %v, %v", w, err)
 	}

@@ -133,7 +133,7 @@ func (f *directoryRemovalDaemonFake) Exec(ctx context.Context, args []string, op
 
 const directoryRemovalTracked = `{"/owned":{"state":"idle","snaps_synced":1,"snaps_deleted":0,"snaps_renamed":0}}`
 
-func newDirectoryRemovalFixture() (*Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
+func newDirectoryRemovalFixture() (*Container, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
 	m, source, destination, a, b := newPeerRemovalFixture()
 	s := &directoryRemovalControlFake{peerRemovalControlFake: source, directories: []string{"/owned"}, applyRemoval: true, applyAdd: true}
 	da := &directoryRemovalDaemonFake{peerRemovalDaemonFake: a, stats: directoryRemovalTracked}
@@ -144,7 +144,7 @@ func newDirectoryRemovalFixture() (*Mirror, *directoryRemovalControlFake, *peerR
 	return m, s, destination, da, db
 }
 
-func beginDirectoryRemovalFixture(t *testing.T) (*DirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
+func beginDirectoryRemovalFixture(t *testing.T) (*DirectoryRemoval, *Container, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
 	t.Helper()
 	m, s, d, a, b := newDirectoryRemovalFixture()
 	r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)

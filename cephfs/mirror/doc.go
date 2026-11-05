@@ -3,8 +3,10 @@
 // cephfs-mirror daemons: directory enrollment, peer management, MGR
 // reassignment, process quiescence and typed readiness observation.
 //
-// Run starts the fixture for two existing clusters. Filesystems and data are
-// prepared with the cephfs package. RBD mirroring is a separate fixture in the
+// Run starts the fixture for two existing clusters and returns a *Container,
+// which owns the mirror daemons and coordinates the peer and directory
+// operations; its embedded container is the initial daemon. Filesystems and
+// data are prepared with the cephfs package. RBD mirroring is a separate fixture in the
 // rbd/mirror package; the two services share no public interface.
 //
 // # Tracked changes

@@ -38,7 +38,7 @@ func (c *cephFSIdentityControl) Exec(ctx context.Context, args []string, opts ..
 	return c.cephFSObserverDraftControl.Exec(ctx, args, opts...)
 }
 
-func newCephFSIdentityFixture(answer func(name string) (string, error)) (*Mirror, *[]string) {
+func newCephFSIdentityFixture(answer func(name string) (string, error)) (*Container, *[]string) {
 	mirror, source, destination, _, _ := newCephFSObserverDraft()
 	reads := &[]string{}
 	mirror.source = &ceph.Container{Container: &cephFSIdentityControl{source, answer, reads}}
@@ -52,12 +52,12 @@ func newCephFSIdentityFixture(answer func(name string) (string, error)) (*Mirror
 func TestCephFSOriginalFilesystemIdentityDiagnostics(t *testing.T) {
 	checks := []struct {
 		name     string
-		run      func(*Mirror, context.Context) error
+		run      func(*Container, context.Context) error
 		readText string
 		mismatch string
 	}{
-		{"status", (*Mirror).checkCephFSObservedIdentities, "read CephFS filesystem identity failed", "CephFS original filesystem or metadata pool identity differs"},
-		{"refresh", (*Mirror).checkCephFSRefreshFilesystems, "read original CephFS bootstrap filesystem failed", "CephFS original bootstrap filesystem or metadata pool identity differs"},
+		{"status", (*Container).checkCephFSObservedIdentities, "read CephFS filesystem identity failed", "CephFS original filesystem or metadata pool identity differs"},
+		{"refresh", (*Container).checkCephFSRefreshFilesystems, "read original CephFS bootstrap filesystem failed", "CephFS original bootstrap filesystem or metadata pool identity differs"},
 	}
 	good := map[string]string{"source": `{"id":1,"mdsmap":{"metadata_pool":7}}`, "destination": `{"id":2,"mdsmap":{"metadata_pool":9}}`}
 	transport := errors.New("native transport")

@@ -301,7 +301,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
 }
 
-func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
+func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfsmirror.Container, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
 	t.Helper()
 	ops := []struct {
 		name string
@@ -331,7 +331,7 @@ func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context
 	}
 }
 
-func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, directory string, receipt *cephfsmirror.DirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
+func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *cephfsmirror.Container, directory string, receipt *cephfsmirror.DirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -428,7 +428,7 @@ func cephFSDirectoryAdditionPathCount(paths []string, selected string) int {
 	return count
 }
 
-func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfsmirror.DirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *cephfsmirror.Mirror, policy harness.CephFSOriginalProcessPolicy) {
+func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfsmirror.DirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *cephfsmirror.Container, policy harness.CephFSOriginalProcessPolicy) {
 	t.Helper()
 	data, err := json.Marshal(struct {
 		Case, Stage                                                                                                                            string

@@ -61,7 +61,7 @@ func TestCephFSMirrorDaemonCountDefaultsAndValidation(t *testing.T) {
 }
 
 // daemonNamed returns the owned daemon called name.
-func daemonNamed(t *testing.T, m *Mirror, name string) *Daemon {
+func daemonNamed(t *testing.T, m *Container, name string) *Daemon {
 	t.Helper()
 	for _, daemon := range m.Daemons() {
 		if daemon.DaemonName == name {
@@ -77,7 +77,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	bContainer := &cephFSMirrorDaemonFake{id: "daemon-b"}
 	a := &Daemon{Container: aContainer, DaemonName: "a"}
 	b := &Daemon{Container: bContainer, DaemonName: "b"}
-	mirror := &Mirror{Container: aContainer, roster: cephFSDaemonRoster{daemons: []*Daemon{a, b}, initial: a},
+	mirror := &Container{Container: aContainer, roster: cephFSDaemonRoster{daemons: []*Daemon{a, b}, initial: a},
 		peerID: "owned-peer", SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"}}
 	a.owner, b.owner = mirror, mirror
 	inventory := mirror.Daemons()
@@ -107,7 +107,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 }
 
 func TestCephFSMirrorDaemonMutationsRefuseUninitializedAndClosedFixtures(t *testing.T) {
-	mirror := &Mirror{}
+	mirror := &Container{}
 	if _, err := mirror.AddDaemon(t.Context(), "a"); err == nil {
 		t.Fatal("uninitialized fixture started a daemon")
 	}
@@ -123,7 +123,7 @@ func TestCephFSMirrorDaemonMutationsRefuseUninitializedAndClosedFixtures(t *test
 }
 
 func TestCephFSMirrorDaemonCleanupSkipsRemovedAndRetriesFailedProcess(t *testing.T) {
-	mirror := &Mirror{}
+	mirror := &Container{}
 	a := &cephFSMirrorDaemonFake{id: "a"}
 	b := &cephFSMirrorDaemonFake{id: "b", terminateErr: errors.New("cleanup transport failed")}
 	first := mirror.registerDaemonContainer(a, "a")
@@ -147,7 +147,7 @@ func TestCephFSMirrorDaemonCleanupSkipsRemovedAndRetriesFailedProcess(t *testing
 }
 
 func TestCephFSMirrorDaemonDirectTerminationAndSortedInventory(t *testing.T) {
-	mirror := &Mirror{}
+	mirror := &Container{}
 	z := &cephFSMirrorDaemonFake{id: "first"}
 	a := &cephFSMirrorDaemonFake{id: "second"}
 	first := mirror.registerDaemonContainer(z, "z")
@@ -473,7 +473,7 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 
 func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *testing.T) {
 	control := &cephFSMirrorNativeControlFake{directories: map[string]bool{"/owned": true, "/foreign": true}}
-	mirror := &Mirror{
+	mirror := &Container{
 		source: &ceph.Container{Container: control}, peerID: "owned-peer", SourceFilesystem: "source",
 		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
 		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},

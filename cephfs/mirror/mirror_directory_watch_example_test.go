@@ -14,7 +14,7 @@ import (
 // stopped only after the watch has a known starting state. One event then
 // advances the test while the SUT keeps writing checkpoints. The destination
 // bytes are still compared separately. This example is compiled, not run.
-func ExampleMirror_WatchDirectory() {
+func ExampleContainer_WatchDirectory() {
 	ctx := context.Background()
 	var clusters [2]*cephfs.Container
 	for i := range clusters {

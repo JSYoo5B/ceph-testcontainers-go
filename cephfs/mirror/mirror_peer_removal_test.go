@@ -166,7 +166,7 @@ func peerRemovalManagerPeers() string {
 func peerRemovalClusterReader(context.Context) ([2]string, error) {
 	return [2]string{peerRemovalSourceFSID, peerRemovalDestinationFSID}, nil
 }
-func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
+func newPeerRemovalFixture() (*Container, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
 	source := &peerRemovalControlFake{name: "source", fsid: peerRemovalSourceFSID, id: 1, pool: 7, fsPeers: peerRemovalRemotePeers(), managerPeers: peerRemovalManagerPeers(), applyRemoval: true, watchers: "watcher=172.20.0.8:0/1234 client.4262 cookie=1\nwatcher=172.20.0.9:0/5678 client.4266 cookie=2\n"}
 	destination := &peerRemovalControlFake{name: "destination", fsid: peerRemovalDestinationFSID, id: 2, pool: 9, fsPeers: "{}", managerPeers: "{}"}
 	makeDaemon := func(id, address string) *peerRemovalDaemonFake {
@@ -174,14 +174,14 @@ func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalCont
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
+	mirror := &Container{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
 	for _, d := range mirror.roster.daemons {
 		d.owner = mirror
 		mirror.owned.AddContainer(d)
 	}
 	return mirror, source, destination, a, b
 }
-func beginPeerRemovalFixture(t *testing.T) (*PeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
+func beginPeerRemovalFixture(t *testing.T) (*PeerRemoval, *Container, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
 	t.Helper()
 	m, s, d, a, b := newPeerRemovalFixture()
 	r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)

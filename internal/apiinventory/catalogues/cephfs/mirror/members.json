@@ -15,6 +15,14 @@
       "Config.Source field *ceph.Container",
       "Config.SourceFilesystem field string"
     ],
+    "cephfs/mirror.Container": [
+      "Container embed testcontainers.Container",
+      "Container.DestinationClientEntity field string",
+      "Container.DestinationFilesystem field string",
+      "Container.Directories field []string",
+      "Container.SourceClientEntity field string",
+      "Container.SourceFilesystem field string"
+    ],
     "cephfs/mirror.Daemon": [
       "Daemon embed testcontainers.Container",
       "Daemon.DaemonName field string"
@@ -73,14 +81,6 @@
       "DirectoryWatchEvent.Sequence field uint64",
       "DirectoryWatchEvent.Started field time.Time",
       "DirectoryWatchEvent.Status field DirectoryStatus"
-    ],
-    "cephfs/mirror.Mirror": [
-      "Mirror embed testcontainers.Container",
-      "Mirror.DestinationClientEntity field string",
-      "Mirror.DestinationFilesystem field string",
-      "Mirror.Directories field []string",
-      "Mirror.SourceClientEntity field string",
-      "Mirror.SourceFilesystem field string"
     ],
     "cephfs/mirror.OriginalProcessStatus": [
       "OriginalProcessStatus.ContainerID field string",

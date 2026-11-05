@@ -50,7 +50,7 @@ type DirectoryStatus struct {
 // peer-removal observation require a separate retained policy handle.
 //
 //purpose:observation
-func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (DirectoryStatus, error) {
+func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) (DirectoryStatus, error) {
 	var result DirectoryStatus
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
@@ -65,11 +65,11 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Di
 }
 
 // directoryStatus is one DirectoryStatus observation of a normalized
-// directory under Mirror.mu, bounded by ctx including the lock wait. admit,
+// directory under Container.mu, bounded by ctx including the lock wait. admit,
 // when set, runs first under the lock and refuses the observation with its
 // error; WatchDirectory checks its pinned identities there. Every lock is
 // released before it returns.
-func (mirror *Mirror) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
+func (mirror *Container) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
 	var result DirectoryStatus
 	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
 		return result, err
@@ -135,7 +135,7 @@ func (mirror *Mirror) directoryStatus(ctx context.Context, directory string, adm
 
 // readFilesystemWatchers reads the watchers of the source filesystem's
 // cephfs_mirror object, by watcher address.
-func (mirror *Mirror) readFilesystemWatchers(ctx context.Context) (map[string]string, error) {
+func (mirror *Container) readFilesystemWatchers(ctx context.Context) (map[string]string, error) {
 	control, err := mirror.source.ClientContainer(ctx)
 	if err != nil {
 		return nil, cephFSObserveQuery("read CephFS filesystem watchers", err)
@@ -157,8 +157,8 @@ func (mirror *Mirror) readFilesystemWatchers(ctx context.Context) (map[string]st
 // selectDirectoryDaemon finds the one owned daemon whose filesystem session
 // watches the mapped instance and checks its peer. A daemon that cannot be
 // observed is recorded in result.DaemonProblems and returned among the
-// observation errors; a contradiction is returned as err. Mirror.mu is held.
-func (mirror *Mirror) selectDirectoryDaemon(ctx context.Context, instanceID string, watchers map[string]string, result *DirectoryStatus) (*Daemon, []error, error) {
+// observation errors; a contradiction is returned as err. Container.mu is held.
+func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID string, watchers map[string]string, result *DirectoryStatus) (*Daemon, []error, error) {
 	var selected *Daemon
 	var observationErrors []error
 	problem := func(name string, err error) {
@@ -199,7 +199,7 @@ func (mirror *Mirror) selectDirectoryDaemon(ctx context.Context, instanceID stri
 // watcher address and peer. A daemon that is missing, not running normally or
 // whose session cannot be read or is failed is reported as unavailable, the
 // problem recorded for it; a malformed session is returned as err.
-func (mirror *Mirror) observeDaemonSession(ctx context.Context, daemon *Daemon) (address string, peer cephFSPeerIdentity, unavailable, err error) {
+func (mirror *Container) observeDaemonSession(ctx context.Context, daemon *Daemon) (address string, peer cephFSPeerIdentity, unavailable, err error) {
 	if daemon.Container == nil {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is unavailable", nil), nil
 	}
@@ -226,7 +226,7 @@ func (mirror *Mirror) observeDaemonSession(ctx context.Context, daemon *Daemon) 
 
 // readDirectoryReplay reads the selected daemon's replay state of directory
 // into result.
-func (mirror *Mirror) readDirectoryReplay(ctx context.Context, selected *Daemon, directory string, result *DirectoryStatus) error {
+func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daemon, directory string, result *DirectoryStatus) error {
 	data, err := multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID), mirror.peerID)
 	if err != nil {
 		return cephFSObserveQuery("read CephFS mirror directory replay", err)
@@ -247,7 +247,7 @@ func (mirror *Mirror) readDirectoryReplay(ctx context.Context, selected *Daemon,
 // confirmDirectoryUnchanged rereads the directory mapping and the filesystem
 // and peer identities after the observation, so that a status assembled
 // across a reassignment or replacement is never reported.
-func (mirror *Mirror) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping) error {
+func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping) error {
 	after, err := mirror.readCephFSObservedMapping(ctx, directory)
 	if err != nil {
 		return err
@@ -272,7 +272,7 @@ func (mirror *Mirror) confirmDirectoryUnchanged(ctx context.Context, directory s
 // at once; after recreating the peer, start a new wait.
 //
 //purpose:observation
-func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) (DirectoryStatus, error) {
+func (mirror *Container) WaitDirectoryReady(ctx context.Context, directory string) (DirectoryStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
@@ -294,7 +294,7 @@ func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) 
 // nothing. It waits at most four minutes.
 //
 //purpose:observation
-func (mirror *Mirror) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error) {
+func (mirror *Container) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error) {
 	if checkpoint.ID == 0 || checkpoint.ID > cephFSObservationMaxSnapshotID || checkpoint.Name == "" || checkpoint.Name == "." || checkpoint.Name == ".." || strings.ContainsAny(checkpoint.Name, "/\x00\r\n") {
 		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror checkpoint requires a source snapshot ID and valid name")
 	}
@@ -379,7 +379,7 @@ func cephFSObserveQuery(operation string, cause error) error {
 	return &cephFSObservationError{message: operation + " failed", cause: cause}
 }
 
-func (mirror *Mirror) checkCephFSObservedIdentities(ctx context.Context) error {
+func (mirror *Container) checkCephFSObservedIdentities(ctx context.Context) error {
 	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read CephFS filesystem identity", "CephFS original filesystem or metadata pool identity differs"); err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func (mirror *Mirror) checkCephFSObservedIdentities(ctx context.Context) error {
 
 type cephFSObservedMapping struct{ State, InstanceID string }
 
-func (mirror *Mirror) readCephFSObservedMapping(ctx context.Context, directory string) (cephFSObservedMapping, error) {
+func (mirror *Container) readCephFSObservedMapping(ctx context.Context, directory string) (cephFSObservedMapping, error) {
 	var result cephFSObservedMapping
 	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
 	if err != nil {
@@ -568,7 +568,7 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 // identity is a permanent guard error with the exact mismatch text. Callers
 // own both texts so each caller's diagnostics stay its own; the source is
 // always checked first and a failure stops before the destination is read.
-func (mirror *Mirror) checkCephFSOriginalFilesystemIdentities(ctx context.Context, readOperation, mismatch string) error {
+func (mirror *Container) checkCephFSOriginalFilesystemIdentities(ctx context.Context, readOperation, mismatch string) error {
 	for _, site := range []struct {
 		name   string
 		id     int

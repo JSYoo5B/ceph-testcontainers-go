@@ -18,7 +18,7 @@ import (
 // optional process observer is bound to each original run. The per-daemon
 // completion observations differ (a peer drain waits for the peer command to
 // unregister, a directory release for the path to leave the peer stats), so
-// each removal keeps its own. Its methods run while Mirror.mu is held.
+// each removal keeps its own. Its methods run while Container.mu is held.
 type cephFSRemovalCohort struct {
 	scope     *cephFSOriginalScope
 	witnesses []cephFSRemovalWitness

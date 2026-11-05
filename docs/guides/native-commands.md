@@ -493,7 +493,7 @@ out, err = exec(ctx, cephfsMirror.Daemons()[0], "ceph", "--admin-daemon",
 
 Prefer the typed observers when they cover your case:
 `rbdmirror.Daemon.Status`, `rbdmirror.Mirror.ReceiverStatus`, `ImageStatus`,
-`cephfsmirror.Mirror.DirectoryStatus`.
+`cephfsmirror.Container.DirectoryStatus`.
 
 ### Observing Cephx keys from the daemon side
 

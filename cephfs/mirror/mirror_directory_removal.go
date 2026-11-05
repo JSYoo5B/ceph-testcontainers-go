@@ -39,7 +39,7 @@ var errCephFSUncertainRemoval = errors.New("an uncertain native CephFS mirror di
 // uncertainRemoval reports the native mapping of a path whose earlier remove
 // is uncertain, without sending anything. It is retryable: a later call that
 // finds the path gone from the policy completes the request.
-func uncertainRemoval(ctx context.Context, m *Mirror, directory string) error {
+func uncertainRemoval(ctx context.Context, m *Container, directory string) error {
 	state := "unread"
 	if mapping, err := m.readCephFSObservedMapping(ctx, directory); err == nil {
 		state = mapping.State
@@ -100,14 +100,14 @@ type DirectoryRemovalDaemonStatus struct {
 // unchanged. See the package documentation for an interrupted removal.
 //
 //purpose:condition,lifetime
-func (mirror *Mirror) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
+func (mirror *Container) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
 	}
 	return mirror.beginDirectoryRemoval(ctx, directory, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {
+func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
 	}
@@ -155,7 +155,7 @@ func (mirror *Mirror) beginDirectoryRemoval(ctx context.Context, directory strin
 
 // resumeRetained continues the directory removal already registered for this
 // directory and generation: an acknowledged process policy is only confirmed,
-// otherwise the handle is checked and the removal resumed. Mirror.mu is held.
+// otherwise the handle is checked and the removal resumed. Container.mu is held.
 func (r *DirectoryRemoval) resumeRetained(ctx context.Context) error {
 	if r.processQuiescenceAcknowledged {
 		return r.confirmAcknowledgedProcessPolicy(ctx)
@@ -169,7 +169,7 @@ func (r *DirectoryRemoval) resumeRetained(ctx context.Context) error {
 // preflight is the read-only admission of a new directory removal: the peer
 // and directory policies are present, the directory has a stable mapped
 // owner, the daemon cohort is captured and confirmed, and a second read finds
-// the same policy and owner. It records the owner. Mirror.mu is held.
+// the same policy and owner. It records the owner. Container.mu is held.
 func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 	mirror := r.scope.mirror
 	if err := r.peerPolicy(ctx); err != nil {
@@ -514,7 +514,7 @@ func (r *DirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bo
 // observeCohort observes each original daemon under its own lock and records
 // its state and problem in daemons. It reports whether every daemon has
 // released the directory, the observation errors, and whether a guard
-// refusal ended the observation early. Mirror.mu is held.
+// refusal ended the observation early. Container.mu is held.
 func (r *DirectoryRemoval) observeCohort(ctx context.Context, watchers map[string]string, daemons map[string]DirectoryRemovalDaemonStatus) (bool, []error, bool) {
 	all := true
 	var errs []error
