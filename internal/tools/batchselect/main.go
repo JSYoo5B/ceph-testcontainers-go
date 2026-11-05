@@ -545,13 +545,20 @@ func main() {
 	var with string
 	flag.StringVar(&with, "with", "", "comma-separated module-relative directories of imported non-test packages to analyse with the test package")
 	flag.StringVar(&opts.unionTags, "union-tags", "all", "tags of the build that compiles every batch's files")
-	flag.StringVar(&opts.goos, "goos", "linux", "GOOS of the batch builds")
-	flag.StringVar(&opts.goarch, "goarch", "amd64", "GOARCH of the batch builds")
+	// No default platform: a caller that analyses another architecture's
+	// build than it names would record the wrong source graph.
+	flag.StringVar(&opts.goos, "goos", "", "GOOS of the batch builds (required)")
+	flag.StringVar(&opts.goarch, "goarch", "", "GOARCH of the batch builds (required)")
 	flag.StringVar(&batches, "batches", "", `JSON file of [{"id": ..., "tags": "a,b"}]`)
 	var images, tests string
 	flag.StringVar(&images, "images", "", "report the images that the comma-separated -tests name under these build tags, instead of a selection")
 	flag.StringVar(&tests, "tests", "", "comma-separated top-level tests of -images")
 	flag.Parse()
+	if opts.goos == "" || opts.goarch == "" {
+		fmt.Fprintln(os.Stderr, "batchselect: -goos and -goarch are required")
+		flag.Usage()
+		os.Exit(2)
+	}
 	if with != "" {
 		opts.with = strings.Split(with, ",")
 	}
