@@ -39,9 +39,10 @@ default [network mode](#network-modes):
   label, Ceph short runs only the batches that declaration selection selects
   (see [Opting in to declaration selection](#opting-in-to-declaration-selection));
 - of the `topology`, `multicluster` and `recovery` categories, only the
-  batches whose own test files the pull request changes. A change to a shared
-  helper or a public package selects none of them; Ceph periodic runs them on
-  `main`.
+  batches whose own test files the pull request changes, and the batches of an
+  [experiment case](testing.md#experiment-cases) any of whose files (helpers
+  and manual included) it changes. A change to a shared helper or a public
+  package selects none of them; Ceph periodic runs them on `main`.
 
 The `ci:full` label (adding it starts a run) and a release phase run every
 batch of those categories instead. Each `Plan` job's `tag-plan.json` artifact
@@ -835,16 +836,21 @@ unless noted; the batch budget is the `//ci:` timeout.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
+| `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | cheap, deterministic characterization of fixed defects | 104 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `targeted` |
+| `rbd_encrypted_clone_flatten` (`topology/rbd_encrypted_clone_flatten`) | cheap, deterministic characterization | 75 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rbd_encrypted_clone_flatten [on <release>]` | `rotate` may draw it | `targeted` |
+| `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
 | `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
 | `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 
 - A cheap deterministic case is a required batch of a non-`short` category,
-  so a pull request runs it only when it changes one of the case's own test
-  files (see [Pull request scope](#pull-request-scope)), and periodic runs
-  keep it covered on `main`. `rbd_schedule_remove` calls no fixture API of
-  its own, so its files are the whole selection input.
+  so a pull request runs it only when it changes a file of the case's
+  directory (see [Pull request scope](#pull-request-scope)), and periodic runs
+  keep it covered on `main`. A change to a public package or the harness
+  selects none of these batches; the fixture behaviour they use is covered
+  by the ordinary batches of its package (`rbd_schedule_remove` calls no
+  fixture API beyond starting the cluster).
 - A case that fails on the published images (an unpatched upstream defect)
   stays an optional `native_regression` batch. It runs only when someone asks
   for it, never gates a pull request or `main`, and is never drawn by

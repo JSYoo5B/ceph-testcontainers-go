@@ -42,7 +42,7 @@ Tentacle 20.2.4 and Umbrella 21.2.0.
 
 ## Tier and triggers
 
-Cheap and deterministic (TIER_MEASURE).
+Cheap and deterministic: one run takes about 75 seconds on 20.2.4.
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `topology` batch).

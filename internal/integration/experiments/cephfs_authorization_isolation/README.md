@@ -33,7 +33,8 @@ not a fixture fault.
 
 ## Tier and triggers
 
-Cheap and deterministic on the supported releases (TIER_MEASURE).
+Cheap and deterministic on the supported releases: one run takes about
+105 seconds on 20.2.4.
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `topology` batch).

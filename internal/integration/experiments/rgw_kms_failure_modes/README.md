@@ -34,8 +34,8 @@ consistent outcomes. No upstream issue is recorded for the Squid difference.
 
 ## Tier and triggers
 
-Deterministic; the cut is bounded by the lowered low-speed limit
-(TIER_MEASURE).
+Deterministic; the cut is bounded by the lowered low-speed limit. One run
+takes about a minute on 20.2.4.
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `recovery` batch).

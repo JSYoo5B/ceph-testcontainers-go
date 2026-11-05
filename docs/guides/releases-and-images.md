@@ -171,8 +171,9 @@ These affect commands or client libraries you run yourself, not the typed API:
   deletion, and the bucket DELETE still answers 204. Squid accepts only an
   empty response to the key's config update, and Vault 1.21 answers it with
   the key's description. Tentacle 20.2.4 and Umbrella 21.2.0 delete the key.
-  Remove the key yourself; `TestRGWExternalKMS` reads the outcome from
-  Vault's audit log on every release.
+  Remove the key yourself; `TestRGWKMSFailureModes` (experiment case
+  [`rgw_kms_failure_modes`](../../internal/integration/experiments/rgw_kms_failure_modes/README.md))
+  reads the outcome from Vault's audit log on every release.
 - **Squid 19.2.6, RGW multisite.** On a secondary zone, `radosgw-admin realm
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the
@@ -269,7 +270,10 @@ These affect commands or client libraries you run yourself, not the typed API:
   namespace-isolated subvolumes with the same name in two groups share one
   RADOS namespace before 19.2.4, so each one's principal reads the other's file
   data through RADOS; a path-restricted principal is refused reads of a
-  snapshot of a directory it deleted before 19.2.3. Use 19.2.5 or later.
+  snapshot of a directory it deleted before 19.2.3. Use 19.2.5 or later. The
+  experiment case
+  [`cephfs_authorization_isolation`](../../internal/integration/experiments/cephfs_authorization_isolation/README.md)
+  checks all three on a chosen image.
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
   [CephFS limitations](../../cephfs/README.md#concepts-and-limits).

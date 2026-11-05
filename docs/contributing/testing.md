@@ -588,7 +588,13 @@ fixture works". Each case is its own test package in
 `rbd_schedule_remove` or `mon_log_ack_peon`. Ordinary fixture tests and
 established fixture regressions stay in their area's package even when they
 run on several releases; classify by what the assertion means, not by the
-releases it runs on.
+releases it runs on. An assertion about native Ceph behaviour stays a
+characterization when it passes on every supported image, and a release
+guide entry that documents the behaviour does not change that. When one test
+mixes fixture coverage with native characterization, split it by subtest:
+`TestCephFSRemovalKeepsSurvivorAffinity` and `TestRGWExternalKMS` keep the
+fixture parts, and `cephfs_authorization_isolation` and
+`rgw_kms_failure_modes` hold the native ones.
 
 - The case directory holds a `README.md` manual: use case, native contract
   and trigger, upstream issue and fix links, topology and image roles,
