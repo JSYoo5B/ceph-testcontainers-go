@@ -606,6 +606,65 @@ sending beacons, so no failover happens. New mounts fail with ETIMEDOUT after
 `fs.MDSStatus` as the `Section`. Pausing the MDS container produces a failover
 instead.
 
+### Ordered runtime settings on one daemon
+
+`override.SetConfig` stores an entry in the central configuration database
+and verifies the stored entry, which every daemon of the section applies and
+a restart keeps. A recipe that changes one daemon's running process instead,
+in a fixed order and with each step's effective value journaled, composes
+`override.SetDebugLevel` for the debug levels with the daemon's
+`AdminSocket` for the settings that are not debug levels, such as
+`ms_blackhole_client`, `osd_copyfrom_max_chunk` and
+`osd_debug_inject_copyfrom_error`. The library has no primitive for those
+settings: each has its own values and its own effect to prove, and the
+composition below already keeps everything a primitive would.
+
+```golang
+// Debug first, so that the first dropped message is logged.
+debug, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "10/10"})
+journal(debug.Receipt())
+if err != nil {
+	t.Fatal(err)
+}
+state, err := osd.State(ctx) // pin the generation the step is applied to
+generation := osd.GetContainerID() + "@" + state.StartedAt
+prior := configGet(ctx, osd, "ms_blackhole_client") // effective, from the daemon
+journal(step{Option: "ms_blackhole_client", Prior: prior, Generation: generation, State: "intended"})
+_, err = osd.AdminSocket(ctx, "config", "set", "ms_blackhole_client", "true")
+applied := configGet(ctx, osd, "ms_blackhole_client")
+journal(step{Option: "ms_blackhole_client", Applied: applied, State: "applied"}) // or "uncertain"
+// ... the operation under the fault ...
+// Restore in reverse order: the blackhole, then debug.Restore(cleanupCtx).
+```
+
+Each step of such a composition:
+
+- reads the daemon's effective prior value and pins the container generation
+  (`ID@StartedAt` from `State`) before its mutation, and journals the intent;
+- treats a failed set or readback as uncertain, not as unapplied, and keeps
+  the step for restoration;
+- restores in the reverse order, first comparing the generation (a restarted
+  daemon lost the value: record it and set nothing), then observing the
+  current value: the prior counts as restored, a third value is an outside
+  edit that is left alone, and only the step's own value is set back, once,
+  and read back;
+- is not atomic with its neighbours, so a partial composition stays as it is
+  until its evidence is recorded and its own restoration runs.
+
+Command success is not evidence of the fault. Show the effect on the
+selected operation, with a negative control before and the restored behavior
+after: with `ms_blackhole_client` on an OSD a client write times out (110) and
+the OSD logs `.handle_message blackhole osd_op(` at `debug_ms` 10; a lowered
+`osd_copyfrom_max_chunk` shows as `copy-get max <chunk>` operations in
+`dump_historic_ops` and a byte-identical copy; `osd_debug_inject_copyfrom_error`
+fails `rados cp`. `TestOSDRuntimeFaultComposition` in
+`internal/integration/osd_runtime_fault_composition_integration_test.go` runs
+both recipes, including a restarted OSD that the composition refuses to
+restore. An MDS has no `AdminSocket` method: run `ceph --admin-daemon
+/var/run/ceph/ceph-mds.<name>.asok` in the MDS container through
+`Container.RunNativeCommand`, and pin its incarnation with the `id` (GID) of
+its admin socket `status`, which changes when it respawns.
+
 ### Warnings
 
 - Never set `ms_blackhole_client` on MONs (section `mon`, `mon.<name>` or
