@@ -48,11 +48,11 @@ func filesystemFixture() (*Filesystem, *poolFixtureContainer) {
 
 // setServices replaces the service containers the cluster owns.
 func setServices(c *ceph.Container, services map[string]testcontainers.Container) {
-	for name := range servicehook.Services(c) {
+	for name := range testhelper.TestServices(c) {
 		servicehook.DeleteService(c, name)
 	}
 	for name, ctr := range services {
-		servicehook.SetService(c, name, ctr)
+		testhelper.TestRecordService(c, name, ctr)
 	}
 }
 

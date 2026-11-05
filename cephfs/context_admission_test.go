@@ -54,7 +54,7 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 					t.Fatalf("queued admission sent CLI or daemon queries: calls=%v states=%d", control.Calls, daemon.states)
 				}
 				if servicehook.Closed(cluster) || len(filesystems(cluster).byName) != 1 || filesystems(cluster).byName["fixture"] != fs ||
-					len(servicehook.Services(cluster)) != 1 || servicehook.Service(cluster, "mds.a") != daemon ||
+					len(testhelper.TestServices(cluster)) != 1 || servicehook.Service(cluster, "mds.a") != daemon ||
 					fs.Container != daemon || !slices.Equal(fs.mds.roster.daemons, originalMDSS) ||
 					!reflect.DeepEqual(fs.config, originalConfig) || fs.base().Native() != originalIdentity ||
 					len(originalIdentity.Attachments) != 1 || originalIdentity.Attachments["additional"] != attempt ||
@@ -84,7 +84,7 @@ func TestCephFSContextSetupAdmissionDeadline(t *testing.T) {
 				return err
 			})
 			if result != nil || len(control.Calls) != 0 || len(filesystems(cluster).byName) != 0 ||
-				len(servicehook.Services(cluster)) != 0 || servicehook.Closed(cluster) || testhelper.TestOSDCount(cluster) != 2 {
+				len(testhelper.TestServices(cluster)) != 0 || servicehook.Closed(cluster) || testhelper.TestOSDCount(cluster) != 2 {
 				t.Fatal("queued setup registered an attempt, ran native commands or changed cluster ownership")
 			}
 			assertCephFSContextAdmissionReleased(t, cluster)
@@ -93,7 +93,7 @@ func TestCephFSContextSetupAdmissionDeadline(t *testing.T) {
 				t.Fatalf("fresh setup failed to reach its harmless native probe: fs=%v error=%v", result, err)
 			}
 			if len(control.Calls) != 1 || !slices.Equal(control.Calls[0], []string{"fs", "dump", "--format", "json"}) ||
-				len(filesystems(cluster).byName) != 0 || len(servicehook.Services(cluster)) != 0 {
+				len(filesystems(cluster).byName) != 0 || len(testhelper.TestServices(cluster)) != 0 {
 				t.Fatal("fresh setup went beyond the fake FSMap failure")
 			}
 		})
@@ -186,7 +186,7 @@ func TestCephFSContextSetupRegistrationAdmissionCancellation(t *testing.T) {
 		result, err = startFilesystem(ctx, cluster, Config{Name: "tenant"})
 		return err
 	})
-	if result != nil || len(filesystems(cluster).byName) != 0 || len(servicehook.Services(cluster)) != 0 ||
+	if result != nil || len(filesystems(cluster).byName) != 0 || len(testhelper.TestServices(cluster)) != 0 ||
 		len(native.Calls) != 1 || !slices.Equal(native.Calls[0], []string{"fs", "dump", "--format", "json"}) {
 		t.Fatal("expired registration admission published an attempt or created native resources")
 	}

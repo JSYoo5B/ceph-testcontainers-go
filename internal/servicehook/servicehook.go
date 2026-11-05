@@ -66,9 +66,7 @@ type hooks interface {
 	Service(c *ceph.Container, name string) testcontainers.Container
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
 	ServiceImage(c *ceph.Container, role string) string
-	Services(c *ceph.Container) map[string]testcontainers.Container
 	SetClientRevoked(client *ceph.ClientConfig, revoked bool)
-	SetService(c *ceph.Container, name string, ctr testcontainers.Container)
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 	StartService(ctx context.Context, c *ceph.Container, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	StartupTimeout(c *ceph.Container) time.Duration
@@ -243,20 +241,10 @@ func Service(c *ceph.Container, name string) testcontainers.Container { return g
 // ServiceImage returns the image selected for an image role: rgw or cephfs.
 func ServiceImage(c *ceph.Container, role string) string { return get().ServiceImage(c, role) }
 
-// Services returns a copy of the service containers. The caller holds the
-// cluster mutex.
-func Services(c *ceph.Container) map[string]testcontainers.Container { return get().Services(c) }
-
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
 func SetClientRevoked(client *ceph.ClientConfig, revoked bool) {
 	get().SetClientRevoked(client, revoked)
-}
-
-// SetService records a service container the cluster owns and terminates.
-// The caller holds the cluster mutex.
-func SetService(c *ceph.Container, name string, ctr testcontainers.Container) {
-	get().SetService(c, name, ctr)
 }
 
 // SettleClient makes sure that no earlier auth command of the module for the

@@ -2,11 +2,12 @@ package rgw
 
 import (
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"net/netip"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
@@ -39,10 +40,10 @@ func TestGatewayRemovalRetainsFailedCleanup(t *testing.T) {
 	if err := removeGateway(t.Context(), cluster, &Gateway{Container: ctr, GatewayName: "unknown"}); err == nil || ctr.terminations != 0 {
 		t.Fatal("unknown gateway attempted container removal")
 	}
-	if err := removeGateway(t.Context(), cluster, gateway); err == nil || len(gateways(cluster).byName) != 1 || len(servicehook.Services(cluster)) != 1 {
+	if err := removeGateway(t.Context(), cluster, gateway); err == nil || len(gateways(cluster).byName) != 1 || len(testhelper.TestServices(cluster)) != 1 {
 		t.Fatal("failed cleanup lost gateway ownership")
 	}
-	if err := removeGateway(t.Context(), cluster, gateway); err != nil || len(gateways(cluster).byName) != 0 || len(servicehook.Services(cluster)) != 0 || ctr.terminations != 2 {
+	if err := removeGateway(t.Context(), cluster, gateway); err != nil || len(gateways(cluster).byName) != 0 || len(testhelper.TestServices(cluster)) != 0 || ctr.terminations != 2 {
 		t.Fatalf("gateway cleanup did not recover: %v", err)
 	}
 }
