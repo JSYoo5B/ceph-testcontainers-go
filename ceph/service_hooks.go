@@ -242,10 +242,11 @@ func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
-	client.revoked = revoked
 	if revoked {
-		client.owner.ledger.authRecords.confirmKey(client.name, "")
+		client.owner.authLedger().clientDeleted(client)
+		return
 	}
+	client.revoked = false
 }
 
 // SetService records a service container the cluster owns and terminates.

@@ -3,7 +3,6 @@ package ceph
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // ClientRevocationHandle manages removal and restoration of a client identity
@@ -65,32 +64,5 @@ func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	if err := c.authLedger().settleClient(ctx, state.client.name); err != nil {
-		return err
-	}
-	// Settling may have confirmed a permanent removal.
-	if state.deleted {
-		return fmt.Errorf("cephx client %s was deleted for good", state.client.name)
-	}
-	current, err := authStore{c.conn()}.readRecord(ctx, state.client.name)
-	if err != nil {
-		return err
-	}
-	finish := func() {
-		state.restored = true
-		c.ledger.authRecords.dropRevocationIf(state.client.name, state)
-	}
-	switch {
-	case current.equal(state.original):
-		// The removal never applied, or the identity is restored already.
-		finish()
-		return nil
-	case state.restored || current.exists:
-		return invalid(fmt.Errorf("cephx identity %s now has another key or other capabilities; refusing to overwrite it", state.client.name))
-	}
-	// auth add with the original keyring creates exactly the original entry,
-	// which auth import refuses without capabilities, and fails rather than
-	// changing an entry that another call created meanwhile.
-	_, err = c.authLedger().changeClient(ctx, state.client.name, map[string]any{"prefix": "auth add", "entity": state.client.name}, state.original.keyring, current, state.original, finish)
-	return err
+	return c.authLedger().restoreClient(ctx, state)
 }

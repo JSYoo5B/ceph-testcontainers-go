@@ -59,7 +59,7 @@ func (c *Container) evidenceInventory(ctx context.Context) (evidence.Inventory, 
 	}
 	// Every client key the module generated, including replaced, attempted
 	// and revoked ones.
-	inv.Secrets = append(inv.Secrets, c.ledger.authRecords.secretValues()...)
+	inv.Secrets = append(inv.Secrets, c.authLedger().authRecords.secretValues()...)
 	for _, nw := range c.nets.bridges() {
 		inv.Networks = append(inv.Networks, evidence.Network{ID: nw.ID, Name: nw.Name})
 	}
