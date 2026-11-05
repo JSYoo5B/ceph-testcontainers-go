@@ -112,6 +112,13 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 		t.Helper()
 		return mustRados(fmt.Sprintf("rados -p %s get %s - | sha256sum", pool, dst))
 	}
+	// The operation history keeps osd_op_history_size operations, 20 by
+	// default, which the cluster's own traffic fills; widen it for the
+	// observation, as one more restored step.
+	history := &runtimeComposition{osd: osd, journal: journal}
+	if err := history.apply(ctx, "osd_op_history_size", "1000"); err != nil {
+		t.Fatal(err)
+	}
 	copyFrom := &runtimeComposition{osd: osd, journal: journal}
 	if err := copyFrom.apply(ctx, "osd_copyfrom_max_chunk", "32768"); err != nil {
 		t.Fatal(err)
@@ -120,12 +127,12 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 	if got := copied("copy-chunked"); got != source {
 		t.Fatalf("the chunked copy differs: %s, source %s", got, source)
 	}
-	history, err := osd.AdminSocket(ctx, "dump_historic_ops")
+	ops, err := osd.AdminSocket(ctx, "dump_historic_ops")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chunks := strings.Count(string(history), "copy-get max 32768"); chunks < size/32768 {
-		t.Fatalf("the copy used %d copy-get chunks of 32768 bytes, want at least %d: %.2048s", chunks, size/32768, history)
+	if chunks := strings.Count(string(ops), "copy-get max 32768"); chunks < size/32768 {
+		t.Fatalf("the copy used %d copy-get chunks of 32768 bytes, want at least %d: %.4096s", chunks, size/32768, ops)
 	}
 	if err := copyFrom.apply(ctx, "osd_debug_inject_copyfrom_error", "true"); err != nil {
 		t.Fatal(err)
@@ -139,6 +146,9 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 	mustRados("rados -p " + pool + " cp copy-src copy-restored")
 	if got := copied("copy-restored"); got != source {
 		t.Fatalf("the restored copy differs: %s, source %s", got, source)
+	}
+	if err := history.restore(ctx); err != nil {
+		t.Fatal(err)
 	}
 
 	// A restarted OSD runs another generation without the runtime value:
