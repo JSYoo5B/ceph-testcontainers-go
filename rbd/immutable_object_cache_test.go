@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -40,10 +41,12 @@ type fakeCacheClient struct {
 	nextPID int
 	// startExit is the daemonizing parent's status; noSocket keeps the daemon
 	// from opening its socket. execFail fails the exec of that operation
-	// after the operation ran.
-	startExit int
-	noSocket  bool
-	execFail  string
+	// after the operation ran. statusDrop leaves that field out of the status
+	// report.
+	startExit  int
+	noSocket   bool
+	execFail   string
+	statusDrop string
 }
 
 func newFakeCacheClient() *fakeCacheClient {
@@ -115,8 +118,11 @@ func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.Pro
 			out = append(out, "running=0")
 		}
 		if f.files[a[3]] == "dir" {
-			out = append(out, fmt.Sprintf("files=%d", f.objects[a[3]][0]), fmt.Sprintf("bytes=%d", f.objects[a[3]][1]))
+			out = append(out, "dir=1", fmt.Sprintf("files=%d", f.objects[a[3]][0]), fmt.Sprintf("bytes=%d", f.objects[a[3]][1]))
+		} else {
+			out = append(out, "dir=0")
 		}
+		out = slices.DeleteFunc(out, func(line string) bool { return f.statusDrop != "" && strings.HasPrefix(line, f.statusDrop+"=") })
 	case "stop":
 		if d := f.daemon(a[0], a[1], a[2]); d != nil {
 			// TERM, then KILL; the daemon leaves its socket file behind.
@@ -181,15 +187,15 @@ func TestImmutableObjectCacheLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lease.Config.Path != DefaultImmutableObjectCachePath || lease.Config.Socket != DefaultImmutableObjectCacheSocket || lease.Config.MaxSize != 1<<30 {
-		t.Fatalf("defaults %+v", lease.Config)
+	if config := lease.Config(); config.Path != DefaultImmutableObjectCachePath || config.Socket != DefaultImmutableObjectCacheSocket || config.MaxSize != 1<<30 {
+		t.Fatalf("defaults %+v", config)
 	}
 	if options := lease.ClientOptions(); options["rbd_plugins"] != "parent_cache" || options["immutable_object_cache_sock"] != DefaultImmutableObjectCacheSocket ||
 		options["rbd_parent_cache_enabled"] != "true" {
 		t.Fatalf("client options %v", options)
 	}
-	client.read(lease.Config.Path, 16)
-	client.read(lease.Config.Path, 16)
+	client.read(DefaultImmutableObjectCachePath, 16)
+	client.read(DefaultImmutableObjectCachePath, 16)
 	status, err := lease.Status(t.Context())
 	if err != nil || !status.Running || status.CachedObjects != 16 || status.CachedBytes != 16<<22 || status.RADOSReads != 16 || status.PID == 0 {
 		t.Fatalf("status %+v, %v", status, err)

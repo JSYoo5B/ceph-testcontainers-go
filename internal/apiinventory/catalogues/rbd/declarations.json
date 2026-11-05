@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd",
-  "count": 30,
+  "count": 31,
   "entries": [
     {
       "current": "rbd.Container",
@@ -100,6 +100,14 @@
       "signature": "func() map[string]string",
       "receiver": "*ImmutableObjectCacheLease",
       "proposed": "rbd.ImmutableObjectCacheLease.ClientOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease.Config",
+      "kind": "method",
+      "signature": "func() ImmutableObjectCache",
+      "receiver": "*ImmutableObjectCacheLease",
+      "proposed": "rbd.ImmutableObjectCacheLease.Config",
       "decision": "baseline"
     },
     {
