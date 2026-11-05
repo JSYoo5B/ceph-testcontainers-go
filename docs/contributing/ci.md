@@ -18,6 +18,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`) or the `failure_archive` proof |
+| Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
@@ -141,6 +142,7 @@ lists renames as a deletion and an addition.
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
 | Structural review evidence | workflow name and PR number | A new commit on a PR cancels that PR's previous run. |
 | Native regressions | none | Runs are independent. |
+| Ceph arm64 | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous run. Scheduled and manual runs are never cancelled. |
 | Block fault probe | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous probe. |
 
 Consequences:
@@ -288,7 +290,10 @@ object (`selected` and `excluded` reasons per profile, `fallback`,
 only the selected profiles and `selected_scope` is `declarations`.
 `--summary FILE` appends the decisions as a Markdown table.
 
-The tool diffs the checkout against its merge base with the base, type-checks
+The analysis has no default platform: the planner passes `-goos linux` and its
+`--goarch` (`amd64` unless a plan names another), and the plan records both, so
+a selection never describes another architecture's source files than the
+plan's. The tool diffs the checkout against its merge base with the base, type-checks
 the package's `all` build (and each batch build not covered by it) with
 `go/types`, together with the harness from source (`-with`), and builds one
 graph over the top-level declarations of both. Edges are resolved
@@ -385,17 +390,20 @@ python3 .github/scripts/ci_command.py select \
 
 ## How a batch runs
 
-Each matrix entry is one job on one `ubuntu-24.04` runner:
+Each matrix entry is one job on one runner of the plan's target architecture:
+`ubuntu-24.04` for amd64, the default, and `ubuntu-24.04-arm` for the
+[arm64 cohort](#native-arm64-cohort). The Plan job runs on the same
+architecture, because it warms the build cache that the jobs restore.
 
 | Step | Phase in summary | What happens |
 | --- | --- | --- |
 | Restore the Go module and build caches | n/a | Restores what a `Plan` job saved. A build-cache miss only slows compilation. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` first refuses a runner whose Go toolchain is not natively the matrix entry's `goarch` (host and target), then runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
 | Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload/images and actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
-| Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source: each image reference among the constants of the declarations that the tests reach (constants of other packages included), a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag), and a read of `.github/ceph-role-images.json` (the declared roles of every supported release). With prepared role images, the published role image fallback is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
+| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, freezes local image IDs and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
+| Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source, for the GOOS and GOARCH that the compile receipt records, and the step refuses a Docker engine of another platform: each image reference among the constants of the declarations that the tests reach (constants of other packages included), a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag), and a read of `.github/ceph-role-images.json` (the declared roles of every supported release). With prepared role images, the published role image fallback is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Verify post-image runner headroom | Post-image runner headroom | Ceph batches only. `runner_storage.py ready` refuses the job before the tests when the pulled images left too little headroom for the workload. Writes `runner-storage/storage-ready.json`. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
@@ -505,7 +513,8 @@ The planner accepts a process timeout up to 6 hours and a job timeout of 1 to
 360 minutes, and requires the job timeout to exceed the process timeout;
 batches leave 5 to 15 minutes for setup and cleanup. Run
 `tag_scenarios.py plan` to see every budget. Runners are GitHub-hosted
-`ubuntu-24.04` machines with 16 GB of memory. `CEPH_TEST_PARALLEL=2` lets two
+`ubuntu-24.04` machines with 16 GB of memory (`ubuntu-24.04-arm` for the
+arm64 cohort). `CEPH_TEST_PARALLEL=2` lets two
 opted-in tests run at once in a batch; the rest run sequentially within the
 process timeout.
 
@@ -770,6 +779,66 @@ gh workflow run "Ceph periodic" -f mode=representative -f ref=<commit>
 
 `ref` must contain the campaign tooling, because every job runs the pinned
 commit's scripts.
+
+## Native ARM64 cohort
+
+Ceph arm64 runs a small source-owned cohort on a GitHub-hosted native ARM64
+runner (`ubuntu-24.04-arm`) with the `linux/arm64` children of the published
+role images. A batch joins it with `architecture=arm64` on its `//ci:` line
+(see [Testing](testing.md#batches-and-the-ci-line)). The cohort is
+`default` and `network_faults` of `./internal/integration`: cluster startup and
+bootstrap failure cleanup, the Ceph tools in the role containers, pool and
+placement observation, and the netem helper image. The cgroup, device-mapper
+and clock-interposition recipes stay out of it until their host
+prerequisites are established on that runner.
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --architecture-cohort --goarch arm64 --output plan.json
+gh workflow run "Ceph arm64" [-f ref=<commit>]
+```
+
+The workflow calls the template with `category: architecture` and
+`goarch: arm64`. The cohort plan claims only its batches (`coverage_scope`
+`architecture`); every category workflow still runs amd64, the default, and
+none of them depends on Ceph arm64, so amd64 acceptance stays attributable on
+its own. `plan --goarch arm64` without `--architecture-cohort` is refused, so
+no caller can run an ordinary category on ARM64 by accident. Ceph arm64 runs
+weekly, on a pull request that changes the planner, image or storage
+preparation, the runtime template, the bootstrap scripts or the netem helper,
+and manually. It is not a required check, and its rows are not written to
+the scenario history.
+
+The architectures are recorded separately, each by the phase that observes it:
+
+| Fact | Receipt |
+| --- | --- |
+| Planned architecture | `tag-plan.json` (`goos`, `goarch`) and each matrix entry's `goarch` |
+| Go toolchain host and target | `compile-report.json` `platform` (`planned`, `host`, `target`) and the binary's build key |
+| Docker engine | `runtime-cleanup` engine identity and `scenario-images/summary.json` `docker` |
+| Selected image | each image's `selected_platform` (the child Docker chose) beside `repo_digests` (the pulled index) in `scenario-images/summary.json` and `test-images/summary.json` |
+
+Compilation refuses a runner whose Go toolchain is not natively the planned
+architecture, host and target alike, so a cross-compiled binary is never
+built. Image preparation and test image preparation refuse an engine of
+another platform than the plan's and the binary's: emulation is separate
+evidence, not qualification.
+
+Runner storage on ARM64 has no measured qualification:
+`runner_storage.QUALIFIED_STORAGE_PLATFORMS` holds `linux/amd64` only. On
+another engine the layout is unverified (`docker-platform-not-qualified`), the
+job keeps the standard cleanup and the conservative minimum headroom guard,
+and a cohort budget of `.github/runner-storage.json` measured on another
+platform is refused (`budget_refused: engine-platform-differs`) instead of
+granting its allowance. The `storage-*.json` receipts of each run record the
+ARM64 runner's actual filesystems and layout reasons; a skip shortcut or a
+pressure policy on ARM64 needs a `linux/arm64` budget measured from them.
+
+Read a run by its phases, not its colour. An unavailable runner leaves the
+job queued or failed before any step; a compile, storage or image refusal is
+an environment result; a native failure, timeout or `--- SKIP` fails the
+native phase as on amd64; cleanup is checked on the same runner. A skipped or
+cancelled job is not qualification, and a pass qualifies only the cohort's
+batches on the recorded release, images and runner.
 
 ## Native regressions
 

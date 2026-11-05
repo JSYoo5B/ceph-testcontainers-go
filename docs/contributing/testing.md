@@ -475,6 +475,12 @@ Squid, so a test must pass on both (see
   `flaky`) adds the batch to the periodic campaign (see
   [Representative campaign](ci.md#representative-campaign)). Choose short
   batches; use `flaky` for a known intermittent failure to keep measuring.
+- `architecture=arm64` adds the batch to the native ARM64 cohort that Ceph
+  arm64 runs on a native ARM64 runner (see
+  [Native ARM64 cohort](ci.md#native-arm64-cohort)). Keep the cohort small:
+  startup, helper and tool execution, native observation and cleanup. A batch
+  whose host prerequisites (cgroup controllers, device-mapper, clock
+  interposition) are not established on that runner stays out of it.
 - When a batch approaches its budget, move a long independent test into its
   own batch instead of raising the limit. Keep short related tests together.
 - A batch is one CI job, and each job pays about two minutes before and after
