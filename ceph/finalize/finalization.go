@@ -34,11 +34,13 @@ type Config struct {
 	// Archive enables the failure archive: when the test has failed, a
 	// check failed or a finalization cleanup failed, the diagnostics, crash
 	// metadata and a manifest are written before the cluster is terminated.
-	// A passing run collects nothing. For a testing.T with a deadline, it
-	// also arms a before-deadline archive: when the test still runs
-	// ArchiveTimeout plus ten seconds before the test binary's -timeout,
-	// whose panic runs no cleanup, the archive is written while the test
-	// and the cluster still run.
+	// The finalization of a passing run collects nothing. For a testing.T
+	// with a deadline, it also arms a before-deadline archive: when the test
+	// still runs ArchiveTimeout plus ten seconds before the test binary's
+	// -timeout, whose panic runs no cleanup, the archive is written while
+	// the test and the cluster still run, whether or not the test has
+	// failed. A test that then passes keeps that archive, with its manifest
+	// not final.
 	Archive bool
 	// ArchiveDirectory is the root under which each archive gets its own
 	// directory, named after the test, the cluster and a random execution

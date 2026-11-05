@@ -57,6 +57,12 @@ type nativeTarget struct {
 	refuseAttach bool
 	// attachClosed runs when an attached exec's connection closes.
 	attachClosed func()
+	// holdInput, when set, stands for a connection that does not take
+	// input: each write that reaches an attached exec's connection sends its
+	// length here and then waits until the connection closes, which fails
+	// it. A test that needs a write in progress at a given moment receives
+	// from it, instead of relying on a delay or a full buffer.
+	holdInput chan<- int
 	// stateHook and networksHook run before State and Networks answer, and
 	// an error that they return is the answer.
 	stateHook, networksHook func() error
@@ -238,19 +244,31 @@ type nativeAttached struct {
 	stdin  io.WriteCloser
 	output *io.PipeReader
 	closed func()
+	held   chan<- int
+	gone   chan struct{}
 	once   sync.Once
 }
 
-func (a *nativeAttached) Write(p []byte) (int, error) { return a.stdin.Write(p) }
+func (a *nativeAttached) Write(p []byte) (int, error) {
+	if a.held != nil {
+		a.held <- len(p)
+		<-a.gone
+		return 0, io.ErrClosedPipe
+	}
+	return a.stdin.Write(p)
+}
 
 func (a *nativeAttached) CloseWrite() error { return a.stdin.Close() }
 
 func (a *nativeAttached) Close() error {
 	_ = a.stdin.Close()
 	err := a.output.Close()
-	if a.closed != nil {
-		a.once.Do(a.closed)
-	}
+	a.once.Do(func() {
+		close(a.gone)
+		if a.closed != nil {
+			a.closed()
+		}
+	})
 	return err
 }
 
@@ -284,7 +302,7 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 	case f.refuseAttach:
 		refused = errors.New("engine unreachable")
 	}
-	gate, closed := f.startGate, f.attachClosed
+	gate, closed, held := f.startGate, f.attachClosed, f.holdInput
 	f.mu.Unlock()
 	if refused != nil {
 		return supervised.Attachment{}, refused
@@ -342,7 +360,7 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 		exited <- code
 	}()
 	return supervised.Attachment{
-		Input:  &nativeAttached{stdin: stdin, output: reader, closed: closed},
+		Input:  &nativeAttached{stdin: stdin, output: reader, closed: closed, held: held, gone: make(chan struct{})},
 		Output: reader,
 		ExitCode: func(ctx context.Context) (int, error) {
 			select {

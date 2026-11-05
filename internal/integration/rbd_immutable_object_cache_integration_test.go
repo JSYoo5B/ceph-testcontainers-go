@@ -63,12 +63,24 @@ func TestImmutableObjectCache(t *testing.T) {
 	rbdCLI("snap", "create", pool+"/parent@base")
 	rbdCLI("snap", "protect", pool+"/parent@base")
 	rbdCLI("clone", pool+"/parent@base", pool+"/child")
-	checksum := func(image string, options map[string]string) string {
-		args := []string{"sh", "-c", `rbd "$@" export --no-progress "$0" - | md5sum`, pool + "/" + image, "--id", id}
+	export := func(image string, options map[string]string) (string, error) {
+		args := []string{"rbd", "--id", id}
 		for name, value := range options {
 			args = append(args, "--"+name+"="+value)
 		}
-		return strings.Fields(harness.ExecOutput(t, ctx, client, args...))[0]
+		return checkedRBDExportDigest(ctx, client, pool+"/"+image, args...)
+	}
+	checksum := func(image string, options map[string]string) string {
+		t.Helper()
+		digest, err := export(image, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+	// A failed export is never hashed into a checksum.
+	if digest, err := export("tc-missing", nil); err == nil || !strings.Contains(err.Error(), "rbd export exited") {
+		t.Fatalf("the export of a missing image returned digest %q, %v", digest, err)
 	}
 	want := checksum("parent@base", nil)
 	// The daemon reads each parent object from RADOS once and writes it into

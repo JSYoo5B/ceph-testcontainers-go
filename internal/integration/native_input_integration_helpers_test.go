@@ -92,20 +92,24 @@ func testNativeCommandInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenHex, workdir := hex.EncodeToString(token), "/tmp/native-input-worker"
+	runCtx, stop := context.WithCancel(ctx)
 	input := ceph.NewNativeInput()
-	type outcome struct {
+	// The call stores its outcome and then closes finished, so the normal
+	// path below and the cleanup both wait on finished.
+	finished := make(chan struct{})
+	var run struct {
 		result ceph.NativeCommandResult
 		err    error
 	}
-	done := make(chan outcome, 1)
 	go func() {
-		result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		defer close(finished)
+		run.result, run.err = cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
 			Argv:    []string{"python3", "-c", nativeInputWorker, workdir, tokenHex, spec(first), spec(second)},
 			Timeout: 2 * time.Minute, MaxStdout: 4096, MaxStderr: 64 << 10, Label: "native input worker",
 			Input: input, MaxInput: len(first) + len(second),
 		})
-		done <- outcome{result, err}
 	}()
+	joinNativeInputAtCleanup(t, ctx, stop, input, &run.err, finished)
 	ready := nativeInputReceipt(t, ctx, client, workdir, tokenHex, "ready")
 	if err := input.Write(ctx, first); err != nil {
 		t.Fatal("first record:", err)
@@ -122,7 +126,7 @@ func testNativeCommandInput(t *testing.T) {
 	if err := input.Close(); err != nil {
 		t.Fatal(err)
 	}
-	run := <-done
+	<-finished
 	total := int64(len(first) + len(second))
 	if run.err != nil || run.result.ExitCode != 0 || !run.result.Complete() || run.result.InputWritten != total ||
 		run.result.InputDelivered != total || !run.result.InputEOF {
@@ -143,26 +147,32 @@ func testNativeCommandInput(t *testing.T) {
 	checkNoSupervisedLeftovers(t, ctx, client)
 }
 
-// testNativeCommandInputCancellation cancels a call while it writes to a
-// command that does not read. The call returns after it stopped the command,
-// the writer then fails, and the container keeps no process or marker of it.
+// testNativeCommandInputCancellation cancels a call to a command that does
+// not read, once its supervisor took input. The call returns after it
+// stopped the command, every later write fails as closed input, and the
+// container keeps no process or marker of it. The supervisor buffers input
+// up to MaxInput, so whether a write is still in progress at the
+// cancellation is not observed here; the writer's log line says whether it
+// reached MaxInput first. TestNativeCommandInputCancellationDuringTransfer
+// covers a write interrupted on the connection.
 func testNativeCommandInputCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, roles := harness.IntegrationImages(t)
 	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
 	input := ceph.NewNativeInput()
-	done := make(chan error, 1)
+	called := make(chan struct{})
+	var callErr error
 	go func() {
-		_, err := cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
+		defer close(called)
+		_, callErr = cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
 			Argv:    []string{"sh", "-c", "echo $$ > /tmp/native-input-sleeper.pid; exec sleep 300"},
 			Timeout: 5 * time.Minute, MaxStdout: 4096, MaxStderr: 4096, Label: "native input sleeper",
 			Input: input, MaxInput: ceph.MaxNativeCommandInput,
 		})
-		done <- err
 	}()
+	joinNativeInputAtCleanup(t, ctx, stop, input, &callErr, called)
 	var pid string
 	for deadline := time.Now().Add(time.Minute); pid == ""; {
 		if code, out, err := harness.SessionExec(ctx, client, "cat", "/tmp/native-input-sleeper.pid"); err == nil && code == 0 {
@@ -173,25 +183,53 @@ func testNativeCommandInputCancellation(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
-	writes := make(chan error, 1)
+	// The writer writes until a write fails. A write refused at MaxInput
+	// leaves nothing in progress to interrupt, so the writer then waits for
+	// the call to end and requires its next write to fail as closed input.
+	took, wrote := make(chan struct{}), make(chan struct{})
+	var writeErr error
+	var limited bool
 	go func() {
+		defer close(wrote)
 		chunk := bytes.Repeat([]byte{0x00, 0xff}, 512<<10)
-		for {
-			if err := input.Write(ctx, chunk); err != nil {
-				writes <- err
-				return
+		for first := true; ; first = false {
+			err := input.Write(ctx, chunk)
+			if err == nil {
+				if first {
+					close(took)
+				}
+				continue
 			}
+			if errors.Is(err, ceph.ErrInvalidRequest) {
+				limited = true
+				<-called
+				err = input.Write(ctx, []byte{1})
+			}
+			writeErr = err
+			return
 		}
 	}()
-	time.Sleep(2 * time.Second)
+	joinNativeInputAtCleanup(t, ctx, stop, input, nil, wrote)
+	select {
+	case <-took:
+	case <-wrote:
+		t.Fatalf("the first write failed: %v", writeErr)
+	case <-time.After(time.Minute):
+		t.Fatal("the supervisor did not take the first write")
+	}
 	stop()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled call returned %v", err)
+	select {
+	case <-called:
+		if !errors.Is(callErr, context.Canceled) {
+			t.Fatalf("canceled call returned %v", callErr)
+		}
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the canceled call did not return")
 	}
 	select {
-	case err := <-writes:
-		if !errors.Is(err, ceph.ErrNativeInputClosed) && !errors.Is(err, ceph.ErrInvalidRequest) {
-			t.Fatalf("the writer ended with %v", err)
+	case <-wrote:
+		if !errors.Is(writeErr, ceph.ErrNativeInputClosed) || errors.Is(writeErr, ceph.ErrInvalidRequest) {
+			t.Fatalf("the writer ended with %v", writeErr)
 		}
 	case <-time.After(time.Minute):
 		t.Fatal("the writer did not return after the call was canceled")
@@ -199,8 +237,40 @@ func testNativeCommandInputCancellation(t *testing.T) {
 	if code, _, err := harness.SessionExec(ctx, client, "kill", "-0", pid); err != nil || code == 0 {
 		t.Fatalf("the canceled command %s still runs: %d, %v", pid, code, err)
 	}
-	t.Logf("NATIVE_INPUT canceled sleeper pid=%s is gone and the writer returned", pid)
+	t.Logf("NATIVE_INPUT canceled sleeper pid=%s is gone and the writer returned closed input (reached MaxInput first: %t)", pid, limited)
 	checkNoSupervisedLeftovers(t, ctx, client)
+}
+
+// joinNativeInputAtCleanup registers, right after workers started and so
+// before the fixture cleanups registered earlier, a cleanup that cancels the
+// call, closes its input and waits until every channel in finished is
+// closed, also when an assertion ended the test early. With callErr, which
+// the call sets before its channel closes, a command that the call could not
+// confirm stopped is stopped there.
+func joinNativeInputAtCleanup(t *testing.T, ctx context.Context, stop context.CancelFunc, input *ceph.NativeInput, callErr *error, finished ...<-chan struct{}) {
+	t.Helper()
+	t.Cleanup(func() {
+		stop()
+		_ = input.Close()
+		timeout := time.After(2 * time.Minute)
+		for _, done := range finished {
+			select {
+			case <-done:
+			case <-timeout:
+				t.Error("a native input worker did not return before the fixture cleanup")
+				return
+			}
+		}
+		var unstopped *ceph.NativeCommandUnstoppedError
+		if callErr == nil || !errors.As(*callErr, &unstopped) {
+			return
+		}
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		if err := unstopped.Stop(stopCtx); err != nil {
+			t.Errorf("stop the unconfirmed native input command: %v", err)
+		}
+	})
 }
 
 // checkNoSupervisedLeftovers requires that no supervisor marker remains in

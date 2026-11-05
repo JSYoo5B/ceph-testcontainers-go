@@ -12,8 +12,8 @@ func TestNativeCommandInput(t *testing.T) {
 	testNativeCommandInput(t)
 }
 
-// Canceling a call while it writes to a command that does not read stops the
-// command and ends the writes.
+// Canceling a call once the supervisor took input for a command that does not
+// read stops the command, and every later write fails as closed input.
 func TestNativeCommandInputCancellation(t *testing.T) {
 	testNativeCommandInputCancellation(t)
 }

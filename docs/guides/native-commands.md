@@ -205,19 +205,20 @@ if errors.As(err, &unstopped) {
 
 A worker that starts before its data exists can read the data from standard
 input. Pass a `ceph.NewNativeInput()` with `MaxInput`, run the call in a
-goroutine, and write once the worker is ready:
+goroutine, and write once the worker is ready. The goroutine stores its
+outcome and then closes `finished`; that channel is the only completion
+signal, so the normal path and the cleanup can both wait for it without
+competing for one value:
 
 ```golang
 input := ceph.NewNativeInput()
 runCtx, cancel := context.WithCancel(ctx)
-done := make(chan error, 1)
-t.Cleanup(func() {
-	cancel()
-	_ = input.Close()
-	<-done // Join the call even when an assertion below fails.
-})
+finished := make(chan struct{})
+var result ceph.NativeCommandResult
+var runErr error
 go func() {
-	result, err := cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
+	defer close(finished)
+	result, runErr = cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
 		Argv:      []string{"python3", "-c", worker},
 		Timeout:   2 * time.Minute,
 		MaxStdout: 4096,
@@ -226,20 +227,39 @@ go func() {
 		Input:     input,
 		MaxInput:  1 << 20,
 	})
-	if err == nil && (!result.InputEOF || result.InputDelivered != result.InputWritten || result.ExitCode != 0) {
-		err = fmt.Errorf("worker exited %d after %d of %d input bytes", result.ExitCode, result.InputDelivered, result.InputWritten)
-	}
-	done <- err
 }()
+// Registered after the cluster and client, so it runs before their removal,
+// also when an assertion below ends the test early.
+t.Cleanup(func() {
+	cancel()
+	_ = input.Close()
+	<-finished
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if errors.As(runErr, &unstopped) {
+		ctx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := unstopped.Stop(ctx); err != nil {
+			t.Error(err)
+		}
+	}
+})
 // Wait for the worker's ready receipt, then:
 if err := input.Write(ctx, record); err != nil {
 	t.Fatal(err)
 }
 _ = input.Close()
+<-finished
+if runErr != nil || result.ExitCode != 0 || !result.Complete() || !result.InputEOF ||
+	result.InputDelivered != result.InputWritten || result.InputWritten != int64(len(record)) {
+	t.Fatalf("worker exited %d after %d of %d input bytes: %v",
+		result.ExitCode, result.InputDelivered, result.InputWritten, runErr)
+}
+// Then check the worker's own receipt of the record in result.Stdout.
 ```
 
-Handle a `*ceph.NativeCommandUnstoppedError` from the goroutine as in
-[Cancellation and cleanup](#cancellation-and-cleanup).
+The cleanup stops a command that the call could not confirm as in
+[Cancellation and cleanup](#cancellation-and-cleanup), so an early failure
+does not lose the `*ceph.NativeCommandUnstoppedError`.
 
 - An input serves one command. `MaxInput` bounds all writes together; a write
   that would pass it is refused whole with `ceph.ErrInvalidRequest` and the

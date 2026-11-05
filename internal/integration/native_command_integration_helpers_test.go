@@ -389,11 +389,13 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		osd := clusteraccess.OSDs(t, cluster)[0]
 		result, err := cluster.RunNativeCommand(ctx, osd, ceph.NativeCommand{Argv: []string{"ceph-osd", "--version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
-		switch {
+		switch failure := nativeSucceeded("OSD container ceph-osd --version", result, err); {
 		case errors.Is(err, ceph.ErrImageCapability) && strings.Contains(err.Error(), "cannot run python3"):
 			t.Logf("the OSD image has no python3: %v", err)
-		case err != nil || !bytes.Contains(result.Stdout, []byte(harness.StaticFacts(cluster).CephVersion)):
-			t.Fatalf("OSD container: %+v %v", result, err)
+		case failure != nil:
+			t.Fatal(failure)
+		case !bytes.Contains(result.Stdout, []byte(harness.StaticFacts(cluster).CephVersion)):
+			t.Fatalf("OSD container ceph-osd --version printed %q", result.Stdout)
 		}
 		foreign, err := testcontainers.Run(ctx, "busybox:1.37.0", ceph.WithIdleEntrypoint())
 		testcontainers.CleanupContainer(t, foreign)
@@ -429,7 +431,8 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		data := bytes.Repeat([]byte("\x00oracle\xff"), 2048)
 		write := ceph.NativeCommand{Argv: []string{"python3", "-c", nativeWriteScript, pool, object, base64.StdEncoding.EncodeToString(data)},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 64 << 10, Label: "write object"}
-		if _, err := cluster.RunNativeCommand(ctx, client, write); err != nil {
+		written, err := cluster.RunNativeCommand(ctx, client, write)
+		if err := nativeSucceeded("write object", written, err); err != nil {
 			t.Fatal(err)
 		}
 		read, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", nativeStatReadScript, pool, object},
@@ -447,13 +450,16 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		// The official images, and so the recipe, have ceph-dencoder.
 		dencoder, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph-dencoder", "version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
-		if err != nil || !strings.HasPrefix(string(dencoder.Stdout), harness.StaticFacts(cluster).CephVersion) {
-			t.Fatalf("ceph-dencoder version: %q %v", dencoder.Stdout, err)
+		if err := nativeSucceeded("ceph-dencoder version", dencoder, err); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(dencoder.Stdout), harness.StaticFacts(cluster).CephVersion) {
+			t.Fatalf("ceph-dencoder version printed %q", dencoder.Stdout)
 		}
 		getmap, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph", "osd", "getmap", "-o", "/tmp/tc-osdmap"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096, Label: "get OSDMap"})
-		if err != nil || getmap.ExitCode != 0 {
-			t.Fatalf("get OSDMap: exit %d, %v", getmap.ExitCode, err)
+		if err := nativeSucceeded("get OSDMap", getmap, err); err != nil {
+			t.Fatal(err)
 		}
 		decoded, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 			Argv:    []string{"ceph-dencoder", "type", "OSDMap", "import", "/tmp/tc-osdmap", "decode", "dump_json"},
@@ -545,6 +551,24 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 
 // logNativeRuntime records the platform, the Ceph release and the immutable
 // image IDs that the native checks ran on.
+// nativeSucceeded returns nil for a call that is meant to succeed when it
+// returned no error and its command exited 0. RunNativeCommand returns a
+// nonzero exit as a result, not an error, so output that looks right does
+// not show success on its own. The error names stage, the exit status and
+// the first bytes of the command's standard error; standard output, which
+// can hold the command's data, is left out.
+func nativeSucceeded(stage string, result ceph.NativeCommandResult, err error) error {
+	const shown = 1024
+	stderr := result.Stderr[:min(len(result.Stderr), shown)]
+	switch {
+	case err != nil:
+		return fmt.Errorf("%s: %w (exit %d, stderr %q)", stage, err, result.ExitCode, stderr)
+	case result.ExitCode != 0:
+		return fmt.Errorf("%s: exit %d, stderr %q", stage, result.ExitCode, stderr)
+	}
+	return nil
+}
+
 func logNativeRuntime(t *testing.T, ctx context.Context, cluster *ceph.Container, containers map[string]testcontainers.Container) {
 	t.Helper()
 	for _, name := range []string{"control", "mgr", "osd", "client"} {
