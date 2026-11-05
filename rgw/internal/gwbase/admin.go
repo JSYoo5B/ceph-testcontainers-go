@@ -1,9 +1,12 @@
 package gwbase
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -11,6 +14,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -63,14 +67,206 @@ func ValidateAdminArgs(args []string) error {
 // RedactAdminFailure hides the native output of a failed radosgw-admin
 // command, which can include secret keys, and keeps the classification of err,
 // including the *ceph.NativeFailure exit code and errno, which its text also
-// names. Other errors are returned unchanged.
+// names. When the command reported a fatal signal, the text also names the
+// signal, the thread and the first backtrace frames, read from the
+// already redacted and bounded Reason. Other errors are returned unchanged.
 func RedactAdminFailure(err error) error {
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) {
 		return err
 	}
+	reason, cut := strings.CutSuffix(failure.Reason, "...")
+	return redactAdminFailure(err, failure, fatalSignalReport(strings.Split(reason, "; "), cut))
+}
+
+// adminRunFailure describes a radosgw-admin run that exited nonzero as
+// RedactAdminFailure does, reading a fatal signal report from its whole
+// standard error. With such a report it also describes the shape of its
+// standard output, but never its content, which tells a command that crashed
+// after it wrote its result from one that crashed before.
+func adminRunFailure(report supervised.ShellReport) error {
+	err := servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr)
+	var failure *ceph.NativeFailure
+	if !errors.As(err, &failure) {
+		return err
+	}
+	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"), false)
+	output := ""
+	if crash != "" {
+		output = adminOutputShape(report.Stdout, report.StdoutTruncated)
+	}
+	return redactAdminFailure(err, failure, crash, output)
+}
+
+func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...string) error {
 	exit := ceph.NativeFailure{Program: "radosgw-admin", ExitCode: failure.ExitCode, Errno: failure.Errno}
-	return clusterutil.Quiet(fmt.Errorf("%s; native output is redacted", exit.Error()), err)
+	text := exit.Error()
+	for _, detail := range details {
+		if detail != "" {
+			text += "; " + detail
+		}
+	}
+	return clusterutil.Quiet(fmt.Errorf("%s; native output is redacted", text), err)
+}
+
+// The fatal signal report that Ceph's signal handler writes to standard error
+// before the process dies of the signal: a header, the thread, the version,
+// then numbered frames, each a demangled symbol with its offset, a file with
+// its offset, or a bare symbol, most with their address.
+var (
+	fatalSignalHeader = regexp.MustCompile(`^\*\*\* Caught signal \(([A-Za-z][A-Za-z -]{0,39})\) \*\*$`)
+	fatalSignalThread = regexp.MustCompile(`^in thread [0-9a-fx]{1,18} thread_name:([!-~]{1,15})$`)
+	frameNumber       = regexp.MustCompile(`^\d{1,3}(?::|$)`)
+	backtraceFrame    = regexp.MustCompile(`^\d{1,3}: ([ -~]+?)(?: \[0x[0-9a-f]{1,16}\])?$`)
+	symbolFrame       = regexp.MustCompile(`^\(([ -~]+)\+(0x[0-9a-f]{1,16})\)$`)
+	fileFrame         = regexp.MustCompile(`^(?:/[!-~]*/)?([!-'*-.0-~]+\([!-'*-.0-~]*\+0x[0-9a-f]{1,16}\))$`)
+	// A function name without its argument list. Template arguments may
+	// hold spaces and parentheses, never a directory or an address.
+	functionName = regexp.MustCompile(`^[A-Za-z_~][ -'*-.0-Z^-~]*(?:\([ -'*-.0-Z^-~]*\)[ -'*-.0-Z^-~]*)*$`)
+	// A bare symbol, with an empty argument list when it has one.
+	bareSymbol = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_.$@]*)(?:\(\))?$`)
+)
+
+// incompleteFrame stands for a frame that is not one of the complete shapes,
+// as the end of a bounded Reason can be, and ends the backtrace.
+const incompleteFrame = "an incomplete frame"
+
+const (
+	// maxSignalFrames bounds the backtrace frames of a fatal signal report.
+	maxSignalFrames = 8
+	// maxFrameBytes bounds one frame.
+	maxFrameBytes = 120
+	// maxFrameGap is how many lines (the thread, the version and blank
+	// lines) may separate the header from the first frame.
+	maxFrameGap = 5
+)
+
+// fatalSignalReport summarizes the first fatal signal report in lines: the
+// signal, the thread and at most maxSignalFrames frames, each a function name
+// with its offset, a file name with its offset or a bare symbol, never an
+// address, a directory or an argument list. It returns "" when lines hold no
+// report. Frames are names from the binary, not data of the request. When cut
+// is true the last line was cut short, and a frame there is incomplete.
+func fatalSignalReport(lines []string, cut bool) string {
+	start := -1
+	signal := ""
+	for i, line := range lines {
+		if match := fatalSignalHeader.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
+			start, signal = i, match[1]
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	thread := ""
+	var frames []string
+	extra := 0
+	for i := start + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if len(frames) == 0 && i-start > maxFrameGap {
+			break
+		}
+		if cut && i == len(lines)-1 {
+			if (len(frames) > 0 || frameNumber.MatchString(line)) && len(frames) < maxSignalFrames {
+				frames = append(frames, incompleteFrame)
+			}
+			break
+		}
+		if match := backtraceFrame.FindStringSubmatch(line); match != nil {
+			if len(frames) == maxSignalFrames {
+				extra++
+				continue
+			}
+			name, ok := backtraceFrameName(match[1])
+			if !ok {
+				frames = append(frames, incompleteFrame)
+				break
+			}
+			frames = append(frames, name)
+			continue
+		}
+		if len(frames) > 0 {
+			break
+		}
+		if match := fatalSignalThread.FindStringSubmatch(line); match != nil {
+			thread = match[1]
+		}
+	}
+	text := "radosgw-admin reported fatal signal " + signal
+	if thread != "" {
+		text += " in thread " + thread
+	}
+	if len(frames) == 0 {
+		return text + ", without a backtrace"
+	}
+	text += ", backtrace " + strings.Join(frames, " < ")
+	if extra > 0 {
+		text += fmt.Sprintf(" < %d more frames", extra)
+	}
+	return text
+}
+
+// backtraceFrameName shortens one frame: "(ns::f(args) const+0x1f)" to
+// "ns::f+0x1f", "/lib64/libc.so.6(+0x3fb30)" to "libc.so.6(+0x3fb30)" and
+// "main()" to "main", bounded by maxFrameBytes. It reports false for a frame
+// of any other shape, such as one cut inside its name, its argument list, its
+// directory or its address, whose text it never returns.
+func backtraceFrameName(frame string) (string, bool) {
+	if match := symbolFrame.FindStringSubmatch(frame); match != nil {
+		name, ok := withoutArguments(match[1])
+		if !ok || !functionName.MatchString(name) {
+			return "", false
+		}
+		frame = name + "+" + match[2]
+	} else if match := fileFrame.FindStringSubmatch(frame); match != nil {
+		frame = match[1]
+	} else if match := bareSymbol.FindStringSubmatch(frame); match != nil {
+		frame = match[1]
+	} else {
+		return "", false
+	}
+	if len(frame) > maxFrameBytes {
+		frame = frame[:maxFrameBytes-len("...")] + "..."
+	}
+	return frame, true
+}
+
+// withoutArguments removes the trailing argument list, and a const after it,
+// of a demangled function name. It reports false when the name has an
+// unbalanced trailing argument list or a parenthesis without one.
+func withoutArguments(symbol string) (string, bool) {
+	symbol = strings.TrimSuffix(symbol, " const")
+	if !strings.HasSuffix(symbol, ")") {
+		return symbol, !strings.ContainsAny(symbol, "()")
+	}
+	depth := 0
+	for i := len(symbol) - 1; i >= 0; i-- {
+		switch symbol[i] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				return symbol[:i], i > 0
+			}
+		}
+	}
+	return "", false
+}
+
+// adminOutputShape describes standard output by its size and whether it is
+// one complete JSON document.
+func adminOutputShape(stdout []byte, truncated bool) string {
+	switch {
+	case truncated:
+		return fmt.Sprintf("it wrote more than %d bytes of standard output", len(stdout))
+	case len(bytes.TrimSpace(stdout)) == 0:
+		return "it wrote no standard output"
+	case json.Valid(stdout):
+		return fmt.Sprintf("it wrote %d bytes of standard output, a complete JSON document", len(stdout))
+	}
+	return fmt.Sprintf("it wrote %d bytes of standard output, not a complete JSON document", len(stdout))
 }
 
 // AdminCommand runs radosgw-admin in the gateway container, in the gateway's
@@ -141,7 +337,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
 			Err: errors.New("the gateway image has no radosgw-admin")}
 	case report.ExitCode != 0:
-		return nil, false, RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr))
+		return nil, false, adminRunFailure(report)
 	}
 	return report.Stdout, report.StdoutTruncated, nil
 }

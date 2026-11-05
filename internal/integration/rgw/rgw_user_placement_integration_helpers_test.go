@@ -167,13 +167,55 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 
 func requireRGWUserBucketPlacement(t *testing.T, ctx context.Context, gateway *rgw.Gateway, bucket, expected string) {
 	t.Helper()
-	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
+	name := strings.TrimPrefix(bucket, "/")
+	args := []string{"bucket", "stats", "--bucket", name}
+	data, err := gateway.Admin(ctx, args...)
 	var stats struct {
 		PlacementRule string `json:"placement_rule"`
 	}
 	if err != nil || json.Unmarshal(data, &stats) != nil || stats.PlacementRule != expected {
-		t.Fatalf("bucket %s placement=%q expected=%q error=%v", bucket, stats.PlacementRule, expected, err)
+		t.Fatalf("bucket %s placement=%q expected=%q error=%v; argv: radosgw-admin --format json %s; %s",
+			bucket, stats.PlacementRule, expected, err, strings.Join(args, " "), rgwUserPlacementFailureContext(ctx, gateway, name))
 	}
+}
+
+// rgwUserPlacementFailureContext records, after a failed placement read,
+// which gateway container generation was running and what the bucket's
+// retained entrypoint and instance metadata say. It never repeats the failed
+// read and never decides the assertion.
+func rgwUserPlacementFailureContext(ctx context.Context, gateway *rgw.Gateway, bucket string) string {
+	var parts []string
+	if inspect, err := gateway.Inspect(ctx); err != nil {
+		parts = append(parts, fmt.Sprintf("gateway inspect error=%v", err))
+	} else {
+		parts = append(parts, fmt.Sprintf("gateway container=%.12s status=%s started=%s restarts=%d pid=%d",
+			inspect.ID, inspect.State.Status, inspect.State.StartedAt, inspect.RestartCount, inspect.State.Pid))
+	}
+	entry, err := gateway.Admin(ctx, "metadata", "get", "bucket:"+bucket)
+	var entrypoint struct {
+		Data struct {
+			Bucket struct {
+				BucketID string `json:"bucket_id"`
+			} `json:"bucket"`
+			CreationTime string `json:"creation_time"`
+		} `json:"data"`
+	}
+	if err != nil || json.Unmarshal(entry, &entrypoint) != nil || entrypoint.Data.Bucket.BucketID == "" {
+		return strings.Join(append(parts, fmt.Sprintf("bucket entrypoint unreadable error=%v", err)), "; ")
+	}
+	parts = append(parts, fmt.Sprintf("bucket entrypoint id=%s created=%s", entrypoint.Data.Bucket.BucketID, entrypoint.Data.CreationTime))
+	instance, err := gateway.Admin(ctx, "metadata", "get", "bucket.instance:"+bucket+":"+entrypoint.Data.Bucket.BucketID)
+	var info struct {
+		Data struct {
+			BucketInfo struct {
+				PlacementRule json.RawMessage `json:"placement_rule"`
+			} `json:"bucket_info"`
+		} `json:"data"`
+	}
+	if err != nil || json.Unmarshal(instance, &info) != nil {
+		return strings.Join(append(parts, fmt.Sprintf("bucket instance unreadable error=%v", err)), "; ")
+	}
+	return strings.Join(append(parts, fmt.Sprintf("bucket instance placement_rule=%s", info.Data.BucketInfo.PlacementRule)), "; ")
 }
 
 func requireRGWUserPlacementUnrelatedPolicy(t *testing.T, before, after rgw.UserInfo) {
