@@ -322,7 +322,7 @@ func osdLog(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(io.LimitReader(reader, 256<<20))
 	if err != nil {
 		t.Fatal(err)
