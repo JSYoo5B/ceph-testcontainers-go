@@ -137,3 +137,108 @@ func TestCephFSObservationMutationCheckRejectsIdempotentWrite(t *testing.T) {
 		t.Fatal("first mutation of a new kind accepted")
 	}
 }
+
+// cephFSPublishedClient models the cluster's published client pointer: swap
+// publishes next only while current is still published, as the unit seam does.
+type cephFSPublishedClient struct {
+	published testcontainers.Container
+	swaps     int
+	refuse    bool
+}
+
+func (p *cephFSPublishedClient) swap(_ context.Context, current, next testcontainers.Container) (bool, error) {
+	p.swaps++
+	if p.refuse || p.published != current {
+		return false, nil
+	}
+	p.published = next
+	return true, nil
+}
+
+// TestCephFSWrapHandlesCountsASeparateClientContainer covers a separate
+// client image: the client container gets its own transparent counter, so a
+// write that an observation sends through ClientContainer is rejected, and the
+// restore puts the CLI handle back before the client container.
+func TestCephFSWrapHandlesCountsASeparateClientContainer(t *testing.T) {
+	control := &cephFSCommandRecorder{reader: strings.NewReader("")}
+	client := &cephFSCommandRecorder{reader: strings.NewReader("")}
+	published := &cephFSPublishedClient{published: client}
+	var handle testcontainers.Container = control
+	var order []string
+	setControl := func(next testcontainers.Container) {
+		handle = next
+		if next == control {
+			order = append(order, "control")
+		}
+	}
+	swap := func(ctx context.Context, current, next testcontainers.Container) (bool, error) {
+		if next == client {
+			order = append(order, "client")
+		}
+		return published.swap(ctx, current, next)
+	}
+	counters, restore, err := cephFSWrapHandles(t.Context(), control, client, setControl, swap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counters.client == nil || published.published != counters.client || handle != counters.control || len(counters.all()) != 2 {
+		t.Fatalf("counters not installed on both handles: published=%v handle=%v", published.published, handle)
+	}
+	before := counters.client.counts()
+	read := []string{"rados", "--pool", "meta", "listwatchers", "cephfs_mirror"}
+	if _, _, err := published.published.Exec(t.Context(), read); err != nil {
+		t.Fatal(err)
+	}
+	if err := cephFSMutationsChanged(before, counters.client.counts()); err != nil || counters.client.commands.Load() != 1 {
+		t.Fatalf("client read counted as a mutation or not seen: %v", err)
+	}
+	write := []string{"rados", "--pool", "meta", "rm", "cephfs_mirror"}
+	if _, _, err := published.published.Exec(t.Context(), write); err != nil {
+		t.Fatal(err)
+	}
+	if err := cephFSMutationsChanged(before, counters.client.counts()); err == nil || !strings.Contains(err.Error(), "rados rm: 0 -> 1") {
+		t.Fatalf("client write accepted: %v", err)
+	}
+	if len(client.received) != 2 || !slices.Equal(client.received[1], write) || len(control.received) != 0 {
+		t.Fatalf("client counter did not forward to the client container: client=%q control=%q", client.received, control.received)
+	}
+	if err := restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if handle != control || published.published != client || !slices.Equal(order, []string{"control", "client"}) {
+		t.Fatalf("restore order or result: order=%v handle=%v published=%v", order, handle, published.published)
+	}
+	if err := restore(t.Context()); err != nil || published.swaps != 2 {
+		t.Fatalf("a second restore swapped again: %v swaps=%d", err, published.swaps)
+	}
+}
+
+// TestCephFSWrapHandlesSharedOrRefusedClient keeps an aggregate image, whose
+// client is the CLI handle, to one counter, and refuses to start counting
+// when the client container cannot be replaced or cannot be restored.
+func TestCephFSWrapHandlesSharedOrRefusedClient(t *testing.T) {
+	control := &cephFSCommandRecorder{}
+	published := &cephFSPublishedClient{published: control}
+	var handle testcontainers.Container = control
+	counters, _, err := cephFSWrapHandles(t.Context(), control, control, func(next testcontainers.Container) { handle = next }, published.swap)
+	if err != nil || counters.client != nil || published.swaps != 0 || handle != counters.control || len(counters.all()) != 1 {
+		t.Fatalf("shared client: %v client=%v swaps=%d", err, counters.client, published.swaps)
+	}
+
+	client := &cephFSCommandRecorder{}
+	refused := &cephFSPublishedClient{published: client, refuse: true}
+	handle = control
+	if _, _, err := cephFSWrapHandles(t.Context(), control, client, func(next testcontainers.Container) { handle = next }, refused.swap); err == nil || handle != control || refused.published != client {
+		t.Fatalf("a refused client swap still installed counters: %v handle=%v", err, handle)
+	}
+
+	stale := &cephFSPublishedClient{published: client}
+	_, restore, err := cephFSWrapHandles(t.Context(), control, client, func(next testcontainers.Container) { handle = next }, stale.swap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.published = &cephFSCommandRecorder{}
+	if err := restore(t.Context()); err == nil || handle != control {
+		t.Fatalf("a client container replaced behind the counter was restored silently: %v", err)
+	}
+}

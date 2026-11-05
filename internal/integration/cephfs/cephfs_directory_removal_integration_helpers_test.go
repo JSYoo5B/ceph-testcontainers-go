@@ -136,12 +136,20 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		}
 	}
 	// The default single-MON fixtures' embedded handles are the CLIs. Transparent
-	// counters stay in front of both from Begin until the last observational
-	// Status; the reply fault sits in front of the source counter only while
-	// Begin is retried. Neither replaces a native outcome.
-	sourceCounter, restoreSource := cephFSInstallMutationCounter(t, ctx, source)
-	destinationCounter, restoreDestination := cephFSInstallMutationCounter(t, ctx, destination)
-	counters := []*cephFSMutationCounter{sourceCounter, destinationCounter}
+	// counters stay in front of both CLI handles, and of each separate client
+	// container, from Begin until the last observational Status. The reply fault
+	// sits in front of the source CLI counter only while Begin is retried.
+	// Neither replaces a native outcome.
+	sourceCounters, restoreSource := cephFSInstallMutationCounters(t, ctx, source)
+	destinationCounters, restoreDestination := cephFSInstallMutationCounters(t, ctx, destination)
+	sourceCounter := sourceCounters.control
+	counters := append(sourceCounters.all(), destinationCounters.all()...)
+	// The observation reads both policies through the CLI handles and the
+	// source watchers through the source client.
+	required := []*cephFSMutationCounter{sourceCounter, destinationCounters.control}
+	if sourceCounters.client != nil {
+		required = append(required, sourceCounters.client)
+	}
 	fault := &cephFSDirectoryRemovalReplyFault{Container: sourceCounter, filesystem: sourceFS.FilesystemName, directory: selected}
 	source.Container = fault
 	receipt, removeErr := mirror.BeginDirectoryRemoval(ctx, selected)
@@ -180,7 +188,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		t.Fatalf("mutation counter is not in the native remove dispatch path: removals=%d", removals)
 	}
 	source.Container = sourceCounter
-	observed := cephFSRequireNoObservationalMutation(t, "directory release observation", counters, func() {
+	cephFSRequireNoObservationalMutation(t, "directory release observation", counters, required, func() {
 		releaseCtx, releaseCancel := context.WithTimeout(ctx, 3*time.Minute)
 		released, err := receipt.WaitReleased(releaseCtx)
 		releaseCancel()
@@ -203,9 +211,6 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 			t.Fatal("directory release changed original peer policy", err)
 		}
 	})
-	if observed[0] == 0 || observed[1] == 0 {
-		t.Fatalf("directory release observation issued no command through the mutation counters: source=%d destination=%d", observed[0], observed[1])
-	}
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	pending := checkpoint("while-directory-removed")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
@@ -215,7 +220,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	if err := mirror.AddDirectory(ctx, selected); err != nil {
 		t.Fatal("released receipt did not release same-path registration gate", err)
 	}
-	cephFSRequireNoObservationalMutation(t, "superseded directory receipt status", counters, func() {
+	cephFSRequireNoObservationalMutation(t, "superseded directory receipt status", counters, nil, func() {
 		if old, err := receipt.Status(ctx); err == nil || old.Released || old.Directory != selected {
 			t.Fatalf("old receipt adopted the newly registered path: %+v %v", old, err)
 		}

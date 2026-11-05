@@ -109,12 +109,20 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	}
 
 	// The default single-MON fixtures' embedded handles are the CLIs. Transparent
-	// counters stay in front of both from Begin until the last observational
-	// Status; the reply fault sits in front of the source counter only while
-	// Begin is retried. There is no Docker or native replacement.
-	sourceCounter, restoreSource := cephFSInstallMutationCounter(t, ctx, source)
-	destinationCounter, restoreDestination := cephFSInstallMutationCounter(t, ctx, destination)
-	counters := []*cephFSMutationCounter{sourceCounter, destinationCounter}
+	// counters stay in front of both CLI handles, and of each separate client
+	// container, from Begin until the last observational Status. The reply fault
+	// sits in front of the source CLI counter only while Begin is retried.
+	// There is no Docker or native replacement.
+	sourceCounters, restoreSource := cephFSInstallMutationCounters(t, ctx, source)
+	destinationCounters, restoreDestination := cephFSInstallMutationCounters(t, ctx, destination)
+	sourceCounter := sourceCounters.control
+	counters := append(sourceCounters.all(), destinationCounters.all()...)
+	// The observation reads both policies through the CLI handles and the
+	// source watchers through the source client.
+	required := []*cephFSMutationCounter{sourceCounter, destinationCounters.control}
+	if sourceCounters.client != nil {
+		required = append(required, sourceCounters.client)
+	}
 	fault := &cephFSPeerRemovalReplyFault{Container: sourceCounter, filesystem: sourceFS.FilesystemName, peerID: originalPeer}
 	source.Container = fault
 	receipt, removeErr := mirror.BeginPeerRemoval(ctx, originalPeer)
@@ -147,7 +155,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 		t.Fatalf("mutation counter is not in the native peer_remove dispatch path: removals=%d", removals)
 	}
 	source.Container = sourceCounter
-	observed := cephFSRequireNoObservationalMutation(t, "peer drain observation", counters, func() {
+	cephFSRequireNoObservationalMutation(t, "peer drain observation", counters, required, func() {
 		drainCtx, drainCancel := context.WithTimeout(ctx, 3*time.Minute)
 		drained, err := receipt.WaitDrained(drainCtx)
 		drainCancel()
@@ -167,9 +175,6 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 			t.Fatalf("drained peer still in MGR policy: %v %v", currentPeers, err)
 		}
 	})
-	if observed[0] == 0 || observed[1] == 0 {
-		t.Fatalf("peer drain observation issued no command through the mutation counters: source=%d destination=%d", observed[0], observed[1])
-	}
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
 	pending := checkpoint("while-peer-removed")
 	harness.CephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "while-peer-removed", 10*time.Second)
@@ -177,7 +182,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	if err != nil || newPeer == "" || newPeer == originalPeer {
 		t.Fatalf("drained receipt did not release explicit import gate: %s %v", newPeer, err)
 	}
-	cephFSRequireNoObservationalMutation(t, "superseded peer receipt status", counters, func() {
+	cephFSRequireNoObservationalMutation(t, "superseded peer receipt status", counters, nil, func() {
 		if obsolete, err := receipt.Status(ctx); err == nil || obsolete.Drained || obsolete.PeerID != originalPeer {
 			t.Fatalf("old receipt adopted a newly bootstrapped UUID: %+v %v", obsolete, err)
 		}

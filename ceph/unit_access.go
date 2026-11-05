@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -18,8 +19,9 @@ import (
 // through an interface; the type is unexported and appears in no public
 // package. A same-package test needs none of it and uses the fields directly.
 //
-// Every method takes no lock. The caller holds the mutex that UnitState
-// returns, or owns a cluster value that no other goroutine uses yet.
+// Every method except UnitSwapFeatureClient takes no lock. The caller holds
+// the mutex that UnitState returns, or owns a cluster value that no other
+// goroutine uses yet.
 //
 //testdouble:unit-seam
 type unitAccess struct{}
@@ -71,6 +73,23 @@ func (unitAccess) UnitSetClosed(c *Container, closed bool) { c.closed = closed }
 // ControlMutex or the cluster value is not shared.
 func (unitAccess) UnitSetControlPlane(c *Container, control testcontainers.Container) {
 	c.controlPlane.handle = control
+}
+
+// UnitSwapFeatureClient publishes next as the started feature client when
+// current is still the published one and its startup succeeded, and reports
+// whether it did. Unlike the other methods it takes the startup lock itself,
+// because integration tests use it on a live cluster; it never takes
+// Container.mu, so it keeps the lock order of terminate and ClientContainer.
+func (unitAccess) UnitSwapFeatureClient(ctx context.Context, c *Container, current, next testcontainers.Container) (bool, error) {
+	if err := c.toolkit.lock(ctx); err != nil {
+		return false, err
+	}
+	defer c.toolkit.unlock()
+	if current == nil || next == nil || !c.toolkit.startupReady() || c.toolkit.current() != current {
+		return false, nil
+	}
+	c.toolkit.publish(next)
+	return true, nil
 }
 
 // UnitSetConfig replaces the recorded bootstrap configuration. The caller holds

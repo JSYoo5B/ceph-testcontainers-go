@@ -4,6 +4,7 @@ package cephfs_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,9 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -141,44 +144,118 @@ func cephFSMutationsChanged(before, after map[string]int) error {
 	return fmt.Errorf("observation dispatched state-changing commands: %s", strings.Join(changed, ", "))
 }
 
-// cephFSInstallMutationCounter puts a counter in front of cluster's embedded
-// CLI handle, which is the command container of a default single-MON
-// fixture. The returned restore puts the original handle back; a cleanup
-// registered here does the same before the fixture cleanups registered
-// earlier run.
-func cephFSInstallMutationCounter(t *testing.T, ctx context.Context, cluster *ceph.Container) (*cephFSMutationCounter, func()) {
+// cephFSHandleCounters are the counters in front of one cluster's command
+// handles: the CLI handle and, when the cluster runs a separate client image,
+// the client container that ClientContainer returns. client is nil when the
+// client is the CLI handle itself.
+type cephFSHandleCounters struct {
+	control, client *cephFSMutationCounter
+}
+
+func (h cephFSHandleCounters) all() []*cephFSMutationCounter {
+	if h.client == nil {
+		return []*cephFSMutationCounter{h.control}
+	}
+	return []*cephFSMutationCounter{h.control, h.client}
+}
+
+// cephFSWrapHandles puts a counter in front of control and, when client is a
+// different container, in front of client through swapClient, which publishes
+// next only while current is still the client. The returned restore puts the
+// originals back in the reverse order, CLI handle first.
+func cephFSWrapHandles(ctx context.Context, control, client testcontainers.Container, setControl func(testcontainers.Container), swapClient func(ctx context.Context, current, next testcontainers.Container) (bool, error)) (cephFSHandleCounters, func(context.Context) error, error) {
+	if control == nil || client == nil {
+		return cephFSHandleCounters{}, nil, errors.New("mutation counters need both command handles")
+	}
+	counters := cephFSHandleCounters{control: &cephFSMutationCounter{Container: control}}
+	if client != control {
+		counters.client = &cephFSMutationCounter{Container: client}
+		if swapped, err := swapClient(ctx, client, counters.client); err != nil || !swapped {
+			return cephFSHandleCounters{}, nil, fmt.Errorf("install the client container counter (swapped=%t): %w", swapped, err)
+		}
+	}
+	setControl(counters.control)
+	var once sync.Once
+	var restoreErr error
+	restore := func(ctx context.Context) error {
+		once.Do(func() {
+			setControl(control)
+			if counters.client != nil {
+				if swapped, err := swapClient(ctx, counters.client, client); err != nil || !swapped {
+					restoreErr = fmt.Errorf("restore the original client container (swapped=%t): %w", swapped, err)
+				}
+			}
+		})
+		return restoreErr
+	}
+	return counters, restore, nil
+}
+
+// cephFSInstallMutationCounters puts counters in front of cluster's command
+// handles: the embedded CLI handle of a default single-MON fixture and, for a
+// separate client image, the started client container. The returned restore
+// puts the originals back; a cleanup registered here does the same before the
+// fixture cleanups registered earlier run.
+func cephFSInstallMutationCounters(t *testing.T, ctx context.Context, cluster *ceph.Container) (cephFSHandleCounters, func()) {
 	t.Helper()
 	original := cluster.Container
 	control, err := cluster.ControlContainer(ctx)
 	if err != nil || control != original {
 		t.Fatalf("mutation counter needs the original single-MON CLI handle: %v", err)
 	}
-	counter := &cephFSMutationCounter{Container: original}
-	cluster.Container = counter
-	restore := func() { cluster.Container = original }
-	t.Cleanup(restore)
-	return counter, restore
+	client, err := cluster.ClientContainer(ctx)
+	if err != nil {
+		t.Fatalf("mutation counter needs the client container: %v", err)
+	}
+	counters, restoreHandles, err := cephFSWrapHandles(ctx, original, client,
+		func(handle testcontainers.Container) { cluster.Container = handle },
+		func(ctx context.Context, current, next testcontainers.Container) (bool, error) {
+			return testhelper.TestSwapFeatureClient(ctx, cluster, current, next)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("mutation counters installed: CLI handle, separate client container %t", counters.client != nil)
+	restore := func() error {
+		restoreCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		return restoreHandles(restoreCtx)
+	}
+	t.Cleanup(func() {
+		if err := restore(); err != nil {
+			t.Errorf("restore original command handles: %v", err)
+		}
+	})
+	return counters, func() {
+		t.Helper()
+		if err := restore(); err != nil {
+			t.Fatalf("restore original command handles: %v", err)
+		}
+	}
 }
 
 // cephFSRequireNoObservationalMutation runs observe with the counters in the
 // dispatch path and fails when any counter recorded a state-changing command.
-// It returns how many commands reached each counter, so a caller can show
-// that a counter was still in the dispatch path of an observation that must
+// Each counter in required must have received at least one command, which
+// shows that it was still in the dispatch path of an observation that must
 // read through it.
-func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters []*cephFSMutationCounter, observe func()) []int64 {
+func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters, required []*cephFSMutationCounter, observe func()) {
 	t.Helper()
-	before := make([]map[string]int, len(counters))
-	commands := make([]int64, len(counters))
-	for i, counter := range counters {
-		before[i] = counter.counts()
-		commands[i] = -counter.commands.Load()
+	before := make(map[*cephFSMutationCounter]map[string]int, len(counters))
+	commands := make(map[*cephFSMutationCounter]int64, len(counters))
+	for _, counter := range append(slices.Clone(counters), required...) {
+		before[counter] = counter.counts()
+		commands[counter] = counter.commands.Load()
 	}
 	observe()
-	for i, counter := range counters {
-		commands[i] += counter.commands.Load()
-		if err := cephFSMutationsChanged(before[i], counter.counts()); err != nil {
+	for _, counter := range counters {
+		if err := cephFSMutationsChanged(before[counter], counter.counts()); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	return commands
+	for i, counter := range required {
+		if counter.commands.Load() == commands[counter] {
+			t.Fatalf("%s issued no command through required mutation counter %d", name, i)
+		}
+	}
 }
