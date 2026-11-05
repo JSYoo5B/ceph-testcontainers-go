@@ -63,9 +63,9 @@ if report.End != capture.EndStopped || report.File.Status != capture.FileValid {
   namespace are refused. There is no rotation and no host-network capture.
 - The helper image is the caller's choice. It must meet
   [packet-capture contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md);
-  no helper image is published yet, so nothing selects one implicitly. The
-  helper runs as the image's non-root user with `NET_RAW` as its only
-  capability.
+  select the reference helper described there or another conforming image
+  explicitly. The helper runs as the image's non-root user with `NET_RAW` as
+  its only capability.
 - A capture is bound to the target's container instance and network sandbox
   at readiness and never follows a restart; `Report.Target` says whether the
   target changed.

@@ -27,10 +27,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// The capture helper is not published yet. Without CEPH_TEST_CAPTURE_IMAGE
-// the test builds the reference helper of contract 1 from the
-// ceph-testcontainers-images commit that merged it, so the engine runs that
-// source's Dockerfile; this module produces no image of its own.
+// Without CEPH_TEST_CAPTURE_IMAGE the test builds contract 1's reference
+// helper from pinned ceph-testcontainers-images source. The engine runs
+// that repository's Dockerfile.
 const helperSource = "https://github.com/JSYoo5B/ceph-testcontainers-images.git#cbee3950dfab150b196fb5b4bf955045079f9fc9:image/extensions/capture"
 
 func captureHelper(t *testing.T, ctx context.Context) string {

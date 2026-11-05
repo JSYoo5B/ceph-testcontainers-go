@@ -26,9 +26,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// The capture helper is not published. Without CEPH_TEST_CAPTURE_IMAGE the
-// test builds the reference helper of contract 1 from the same pinned
-// ceph-testcontainers-images commit as the capture package's own scenario.
+// Without CEPH_TEST_CAPTURE_IMAGE the test builds contract 1's reference
+// helper from the same pinned ceph-testcontainers-images source as the
+// capture package's ordinary scenario.
 const (
 	killedCaptureHelperSource = "https://github.com/JSYoo5B/ceph-testcontainers-images.git#cbee3950dfab150b196fb5b4bf955045079f9fc9:image/extensions/capture"
 	killedCaptureHelperTag    = "ceph-testcontainers-capture-helper:cbee3950"

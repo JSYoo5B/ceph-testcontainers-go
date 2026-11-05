@@ -5,8 +5,8 @@
 // dropped, or that any protocol message in it is valid.
 //
 // The helper meets contract 1 of the packet-capture extension of
-// ceph-testcontainers-images. No helper image is published yet, so callers
-// always name the image; the package never selects one by itself.
+// ceph-testcontainers-images. Callers explicitly select a helper image that
+// meets that contract; the package never selects one by itself.
 package capture
 
 import (
