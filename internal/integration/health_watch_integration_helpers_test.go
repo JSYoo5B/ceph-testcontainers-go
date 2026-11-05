@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"testing"
@@ -186,10 +187,8 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range states {
-		if s.ID == target.ID && (!s.Up || !s.In) {
-			t.Fatalf("osd.%d after restart: %+v", target.ID, s)
-		}
+	if err := checkRestartedOSDState(states, target.ID); err != nil {
+		t.Fatal(err)
 	}
 	if err := observer.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
@@ -216,4 +215,24 @@ func testHealthWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	elapsed := time.Since(watchStarted)
 	t.Logf("native health watch: baseline -> osd.%d stopped -> OSD_DOWN reported -> round trip -> muted -> restarted -> cleared; %d events, %d gaps, watch ran %v at a %v interval (about %d reads)",
 		target.ID, last, gaps, elapsed.Round(time.Second), interval, int(elapsed/interval)+1)
+}
+
+// checkRestartedOSDState requires the OSDMap states to hold exactly one entry
+// for the restarted OSD and that entry to be up and in.
+func checkRestartedOSDState(states []ceph.OSDState, id int) error {
+	var matches []ceph.OSDState
+	for _, s := range states {
+		if s.ID == id {
+			matches = append(matches, s)
+		}
+	}
+	switch {
+	case len(matches) == 0:
+		return fmt.Errorf("osd.%d after restart is missing from the %d observed OSD states", id, len(states))
+	case len(matches) > 1:
+		return fmt.Errorf("osd.%d after restart is reported %d times: %+v", id, len(matches), matches)
+	case !matches[0].Up || !matches[0].In:
+		return fmt.Errorf("osd.%d after restart: %+v", id, matches[0])
+	}
+	return nil
 }

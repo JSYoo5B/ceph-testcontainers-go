@@ -182,7 +182,12 @@ func TestRGWWatchBucketSyncKeepsItsCheckpoint(t *testing.T) {
 		t.Fatalf("caught up %+v", caught)
 	}
 	underTopology(f, func() { cli.bucketID = "bucket-recreated" })
-	for range w.Events() {
+	// A successful event after the recreation may only be a buffered
+	// observation of the baseline bucket, never the replacement instance.
+	for e := range w.Events() {
+		if e.Err == nil && (e.Status.SourceBucket != baseline.Status.SourceBucket || e.Status.DestinationBucket != baseline.Status.DestinationBucket) {
+			t.Fatalf("event %d after the recreation reports source %+v destination %+v", e.Sequence, e.Status.SourceBucket, e.Status.DestinationBucket)
+		}
 	}
 	if err := w.Stop(); !errors.Is(err, errSyncBucketRecreated) {
 		t.Fatalf("recreated bucket ended with %v", err)

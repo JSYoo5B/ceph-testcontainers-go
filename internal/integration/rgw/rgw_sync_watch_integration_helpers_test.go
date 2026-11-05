@@ -216,8 +216,8 @@ func testRGWSyncWatch(t *testing.T) {
 				ended = true
 				break
 			}
-			if e.Err == nil && e.Kind != ceph.WatchChanged {
-				t.Fatalf("the recreated bucket read as an observation: %+v", e)
+			if err := checkBucketRecreationEvent(bucketBaseline.Status, e); err != nil {
+				t.Fatal(err)
 			}
 			t.Logf("bucket watch event %d %s err=%v", e.Sequence, e.Kind, e.Err)
 		case <-deadline:
@@ -229,4 +229,22 @@ func testRGWSyncWatch(t *testing.T) {
 		t.Fatalf("the bucket watch ended with %v", err)
 	}
 	t.Logf("SYNC_WATCH_RECREATED bucket watch ended: %v", checkpoint.Stop())
+}
+
+// checkBucketRecreationEvent checks one bucket watch event drained after the
+// watched bucket was recreated. A failed read is the expected ending. A
+// successful event may still be a buffered observation of the original
+// bucket, so it must be a change that keeps the baseline's source and
+// destination bucket identities; a replacement identity fails at once.
+func checkBucketRecreationEvent(baseline multisite.BucketSyncStatus, e multisite.BucketSyncWatchEvent) error {
+	switch {
+	case e.Err != nil:
+		return nil
+	case e.Kind != ceph.WatchChanged:
+		return fmt.Errorf("the recreated bucket read as an observation: %+v", e)
+	case e.Status.SourceBucket != baseline.SourceBucket || e.Status.DestinationBucket != baseline.DestinationBucket:
+		return fmt.Errorf("bucket watch event %d reports source %+v destination %+v, not the baseline source %+v destination %+v",
+			e.Sequence, e.Status.SourceBucket, e.Status.DestinationBucket, baseline.SourceBucket, baseline.DestinationBucket)
+	}
+	return nil
 }
