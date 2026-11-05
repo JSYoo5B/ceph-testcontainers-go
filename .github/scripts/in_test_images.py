@@ -68,27 +68,33 @@ def reaper_reference(listed):
 
 
 def compiled_profile(directory, selection):
-    """Package, tags and the tests that this job runs, from the compile
-    receipt; selection, when not empty, is the matrix entry's subset."""
+    """Package, tags, the tests that this job runs and the binary's GOOS and
+    GOARCH, from the compile receipt; selection, when not empty, is the
+    matrix entry's subset."""
     report = json.loads((Path(directory) / "compile-report.json").read_text(encoding="utf-8"))
     binary = report.get("binary") if isinstance(report, dict) else None
     if not isinstance(binary, dict) or report.get("passed") is not True:
         raise ValueError("the compile receipt records no built binary")
-    profile, tests = report.get("profile") or {}, binary.get("tests")
+    profile, tests, key = report.get("profile") or {}, binary.get("tests"), binary.get("build_key") or {}
     if not isinstance(profile.get("package"), str) or not isinstance(profile.get("tags"), str) \
             or not isinstance(tests, list) or not tests:
         raise ValueError("the compile receipt names no package, tags or tests")
+    if key.get("goos") != tag_scenarios.GOOS or key.get("goarch") not in tag_scenarios.GOARCHES:
+        raise ValueError("the compile receipt names no supported GOOS and GOARCH")
     if selection:
         chosen = selection.split(",")
         if not set(chosen) <= set(tests):
             raise ValueError("the test selection names tests that were not compiled")
         tests = chosen
-    return profile["package"], profile["tags"], sorted(tests)
+    return profile["package"], profile["tags"], sorted(tests), key["goos"] + "/" + key["goarch"]
 
 
-def analysis_command(package, tags, tests):
+def analysis_command(package, tags, tests, platform):
+    """The image analysis of the build that runs: the binary's platform
+    decides which source files the tests reach."""
+    goos, _, goarch = platform.partition("/")
     command = ["go", "run", "-mod=readonly", "./internal/tools/batchselect", "-root", str(ROOT),
-               "-package", package, "-images", tags, "-tests", ",".join(tests)]
+               "-package", package, "-goos", goos, "-goarch", goarch, "-images", tags, "-tests", ",".join(tests)]
     if tag_scenarios.integration_package(package):
         command += ["-with", ",".join(tag_scenarios.INTEGRATION_HARNESS)]
     return command
@@ -188,9 +194,10 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
             raise ValueError("unsupported release " + arguments.release)
         roles = matrix.parse_roles(arguments.roles) if arguments.roles else ()
         roles_prepared = environ.get("SCENARIO_IMAGE_LAYOUT") == "roles"
-        package, tags, tests = compiled_profile(arguments.compile, arguments.tests)
-        summary |= {"package": package, "tags": tags, "tests": tests, "roles_prepared": roles_prepared}
-        analysed = capture(analysis_command(package, tags, tests), ANALYSIS_SECONDS)
+        package, tags, tests, build_platform = compiled_profile(arguments.compile, arguments.tests)
+        summary |= {"package": package, "tags": tags, "tests": tests, "roles_prepared": roles_prepared,
+                    "build_platform": build_platform}
+        analysed = capture(analysis_command(package, tags, tests, build_platform), ANALYSIS_SECONDS)
         if analysed.returncode:
             raise ValueError("the image analysis failed: " + analysed.stderr.strip()[-500:])
         uses = validate_analysis(json.loads(analysed.stdout), package, tests)
@@ -205,6 +212,9 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
             raise ValueError("Docker engine info failed")
         platform = matrix.native_platform(json.loads(info.stdout))
         summary["platform"] = platform
+        if platform != build_platform:
+            raise ValueError("the Docker engine is " + platform + " but the tests were built for " + build_platform
+                             + "; emulation is not native evidence")
 
         def resolve(name, reference):
             def attempt(number):

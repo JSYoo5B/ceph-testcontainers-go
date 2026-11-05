@@ -142,7 +142,7 @@ def freeze_test_images(plan, resolved=None, deadline=None):
         references = {in_test_images.reaper_reference(listed.stdout)}
         for item in plan['entries']:
             p = item['profile']
-            result = run(in_test_images.analysis_command(p['package'], p['tags'], item['tests']),
+            result = run(in_test_images.analysis_command(p['package'], p['tags'], item['tests'], plan['platform']),
                          capture_output=True, text=True, timeout=60)
             if result.returncode:
                 raise ValueError('test image analysis failed')
