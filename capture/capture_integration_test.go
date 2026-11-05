@@ -68,6 +68,7 @@ func captureHelper(t *testing.T, ctx context.Context) string {
 type flow struct {
 	srcPort, dstPort uint16
 	src, dst         [4]byte
+	flags            byte
 	payload          []byte
 }
 
@@ -97,7 +98,7 @@ func flows(t *testing.T, data []byte) []flow {
 		}
 		tcp := ip[header:]
 		total := int(binary.BigEndian.Uint16(ip[2:]))
-		f := flow{srcPort: binary.BigEndian.Uint16(tcp), dstPort: binary.BigEndian.Uint16(tcp[2:])}
+		f := flow{srcPort: binary.BigEndian.Uint16(tcp), dstPort: binary.BigEndian.Uint16(tcp[2:]), flags: tcp[13]}
 		copy(f.src[:], ip[12:16])
 		copy(f.dst[:], ip[16:20])
 		if offset := header + int(tcp[12]>>4)*4; offset < min(total, len(ip)) {
