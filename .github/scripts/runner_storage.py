@@ -47,6 +47,13 @@ MON_DATA_AVAIL_CRIT = 5
 PHASE = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 COMMAND_SECONDS = 120
 PRESSURE_POLICIES = ("pressure", "pressure-supplemental")
+# Docker engine platforms whose hosted runner storage layout has been
+# measured. Another native architecture's runner keeps the conservative
+# cleanup and minimum headroom guard, and its receipts record the layout it
+# actually has; extending this needs that platform's own measured cohort
+# budget, never a reuse of another platform's qualification.
+QUALIFIED_STORAGE_PLATFORMS = ("linux/amd64",)
+ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 POLICIES = ("auto", "always", *PRESSURE_POLICIES)
 
 
@@ -214,7 +221,9 @@ def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=
             or environ.get("DOCKER_CONTEXT") not in (None, "", "default")):
         layout["verified"] = False
         layout["reasons"].append("docker-endpoint-not-qualified")
-    if info.get("OSType") != "linux" or info.get("Architecture") not in ("x86_64", "amd64"):
+    architecture = info.get("Architecture") if isinstance(info.get("Architecture"), str) else ""
+    platform = str(info.get("OSType", "")) + "/" + ARCHITECTURES.get(architecture, architecture)
+    if platform not in QUALIFIED_STORAGE_PLATFORMS:
         layout["verified"] = False
         layout["reasons"].append("docker-platform-not-qualified")
     filesystems = {}
@@ -231,7 +240,15 @@ def storage_snapshot(run=run_command, statvfs=os.statvfs, stat=os.stat, environ=
         raise ValueError("no Docker storage filesystem could be inspected")
     return {"layout": layout, "filesystems": list(filesystems.values()),
             "engine": {"driver": info.get("Driver"), "driver_status": info.get("DriverStatus"),
-                       "platform": info.get("OSType", "") + "/" + info.get("Architecture", "")}}
+                       "platform": platform, "architecture": architecture}}
+
+
+def engine_budget(snapshot, budget):
+    """The budget only for the engine platform it measured, else None: an
+    amd64 cohort budget is no allowance on another architecture's engine."""
+    if budget is None or budget.get("platform") == snapshot["engine"]["platform"]:
+        return budget
+    return None
 
 
 def headroom(snapshot, budget, before_images):
@@ -291,6 +308,9 @@ def prepare(directory, budget, policy="auto", run=run_command, snapshot=None, re
               "policy": policy, "qualified": budget is not None}
     try:
         report["before"] = snapshot()
+        if budget is not None and engine_budget(report["before"], budget) is None:
+            report["qualified"], report["budget_refused"] = False, "engine-platform-differs"
+            budget = None
         preclean = None
         if policy in PRESSURE_POLICIES:
             if (os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted" or budget is None
@@ -374,9 +394,12 @@ def release_pressure(directory):
 def ready(directory, budget, run=run_command, snapshot=None):
     """Recheck after actual pulls, before native tests can encounter MON_DISK_LOW."""
     observed = (snapshot or (lambda: storage_snapshot(run)))()
-    result = headroom(observed, budget, False)
+    allowed = engine_budget(observed, budget)
+    result = headroom(observed, allowed, False)
     report = {"schema": 2, "phase": "ready", "started_at": timestamp(), "snapshot": observed,
               "headroom": result, "passed": result["passed"]}
+    if budget is not None and allowed is None:
+        report["budget_refused"] = "engine-platform-differs"
     write(directory, "storage-ready.json", report)
     return report
 
