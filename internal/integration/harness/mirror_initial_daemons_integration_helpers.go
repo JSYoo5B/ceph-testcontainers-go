@@ -13,6 +13,10 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// mirrorInitialSessionLabel is the label with which Testcontainers marks the
+// containers of one test session.
+const mirrorInitialSessionLabel = "org.testcontainers.sessionId"
+
 type MirrorInitialDockerOracle struct {
 	Client *mobycl.Client
 	Engine string
@@ -48,9 +52,12 @@ func MirrorInitialNewDockerOracle(t *testing.T, ctx context.Context) MirrorIniti
 	return MirrorInitialDockerOracle{Client: client.Client, Engine: info.Info.ID, Before: before}
 }
 
-// This test owns a fresh pair and runs exclusively. The uncached engine/list/
-// exact-CID oracle counts new containers, including stopped partial processes.
-// It is a local resource proof, not a promise that a shared pool has no peers.
+// The uncached engine/list/exact-CID oracle counts new containers of this
+// test process's Testcontainers session, including stopped partial
+// processes. Every container the fixture starts carries the session label,
+// so a hidden mirror process is still counted, while containers that another
+// test process starts on the same engine are not. It is a local resource
+// proof, not a promise that a shared pool has no peers.
 func (o MirrorInitialDockerOracle) AssertPolicyOnly(t *testing.T, ctx context.Context, cliCount int, kind string) {
 	t.Helper()
 	info, err := o.Client.Info(ctx, mobycl.InfoOptions{})
@@ -66,7 +73,7 @@ func (o MirrorInitialDockerOracle) AssertPolicyOnly(t *testing.T, ctx context.Co
 		if item.ID == "" {
 			t.Fatal("empty native full container ID")
 		}
-		if o.Before[item.ID] {
+		if o.Before[item.ID] || item.Labels[mirrorInitialSessionLabel] != testcontainers.SessionID() {
 			continue
 		}
 		created++
