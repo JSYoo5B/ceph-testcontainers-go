@@ -360,7 +360,9 @@ was at that moment. The test and the cluster still run during the snapshot,
 and its manifest is never final, since no cleanup or termination outcome
 follows the panic. A test that ends after it is finalized as usual, and
 writes its own archive when it has failed; the finalization waits for a
-before-deadline archive in progress first. A test that registers its
+before-deadline archive in progress first. A test that passes after a
+before-deadline archive adds no archive of its own and keeps that one,
+whose manifest stays not final. A test that registers its
 finalization when less than that margin is left gets no before-deadline
 archive. Nothing runs after any other forced exit: `os.Exit`, a signal such
 as a cancelled job's, or a lost runner.
@@ -399,7 +401,9 @@ bounded: 32 windows (`debug_windows_omitted` counts the rest), the first 16
 and last 16 transitions of a window (`transitions_omitted` counts the middle),
 256-byte fields and 2048-byte transition errors, all redacted like the other
 manifest errors. Registering after finalization started fails the test.
-Passing runs archive nothing. The copies are not native evidence of a restored
+The finalization of a passing run archives nothing, so such a run keeps
+a copy only in a before-deadline archive taken while it still ran, labeled
+`before-deadline`. The copies are not native evidence of a restored
 daemon level and do not cover other daemons, options or a window that spans an
 OSD replacement.
 

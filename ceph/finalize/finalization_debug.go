@@ -44,8 +44,10 @@ type DebugLevelReceipter interface {
 // is taken, labeled with the archive's phase, and a second copy after the
 // cleanups, so that a restoration run by Finalization.Cleanup is a separate,
 // later record. Taking a copy reads only the handle's local state; it never
-// applies or restores a level and never queries the daemon. Passing runs
-// archive nothing. Registering after finalization started fails the test.
+// applies or restores a level and never queries the daemon. The
+// finalization of a passing run archives nothing; a before-deadline archive
+// taken while the test still ran keeps its copy, labeled with that phase.
+// Registering after finalization started fails the test.
 //
 //purpose:evidence
 func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter) {

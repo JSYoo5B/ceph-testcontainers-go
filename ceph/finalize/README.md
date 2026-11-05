@@ -63,17 +63,19 @@ finalization.Check("pool still clean", observer.WaitForClean)
   manifest.
 - The archive holds a manifest and the reports of `diagnostics.Collect` and
   `diagnostics.CollectCrashMetadata`, configured through `Config.Diagnostics`
-  and `Config.CrashMetadata`, plus verification and capture reports. A passing
-  run collects nothing. By default it goes into the test's `ArtifactDir`,
-  which `go test` keeps only with `-artifacts`.
+  and `Config.CrashMetadata`, plus verification and capture reports. The
+  finalization of a passing run collects nothing. By default it goes into the
+  test's `ArtifactDir`, which `go test` keeps only with `-artifacts`.
 - A verification that is unexpected or incomplete fails the test. It never
   changes the cluster, and clean is evidence for the reported sources and
   window only.
 - When the test binary has a `-timeout`, the archive is armed to run while a
   test still runs `ArchiveTimeout` plus ten seconds before that deadline. Go's
   timeout panic runs no cleanup, so this `before-deadline` archive is the
-  only evidence such a test leaves; its manifest is never final. A test that
-  ends after it is finalized as usual.
+  only evidence such a test leaves; its manifest is never final. It is taken
+  whether or not the test has failed. A test that ends after it is finalized
+  as usual, and when it passes, the before-deadline archive remains with its
+  manifest not final.
 - Adding a step after finalization has started fails the test. Nothing runs
   after another forced process exit (`os.Exit`, a signal, a cancelled job) or
   a lost runner.

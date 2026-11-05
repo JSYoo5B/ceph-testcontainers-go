@@ -9,7 +9,9 @@
 //
 // The failure archive holds a manifest and the reports of
 // diagnostics.Collect and diagnostics.CollectCrashMetadata, configured
-// through [Config]; a passing run collects nothing. Nothing in this package is
+// through [Config]; the finalization of a passing run collects nothing, and
+// only a before-deadline archive taken while the test still ran remains.
+// Nothing in this package is
 // needed to run a cluster: a test that terminates its cluster with
 // testcontainers.CleanupContainer does not import it.
 //
