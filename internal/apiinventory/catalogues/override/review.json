@@ -2,9 +2,9 @@
   "schema": "ceph-api-naming-review/v2",
   "package": "override",
   "declarations_sha256": "e122f1a69091a342ddb2ff5d92e1ebaf190f8411cb3358473745fe2fe442541e",
-  "members_sha256": "547bf68e75131b817d697630d96d8ebef36e5906371cf63725849180c5420676",
+  "members_sha256": "c275c286c1f49b11c871a5d9382a31d31d83e0c65cd490310bf9087a249cd170",
   "declarations": 41,
-  "members": 17,
+  "members": 18,
   "review": "api-naming.md",
   "page": "override/README.md"
 }

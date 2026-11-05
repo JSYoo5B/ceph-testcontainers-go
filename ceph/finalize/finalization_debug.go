@@ -87,6 +87,7 @@ type finalizationDebugReceipt struct {
 	Daemon     string                   `json:"daemon"`
 	Name       string                   `json:"name"`
 	Generation string                   `json:"generation"`
+	GID        uint64                   `json:"gid,omitempty"`
 	Requested  string                   `json:"requested"`
 	Prior      string                   `json:"prior"`
 	Applied    string                   `json:"applied,omitempty"`
@@ -143,7 +144,7 @@ func (f *Finalization) debugSnapshot(handle DebugLevelReceipter, phase string) f
 	}
 	field := func(s string) string { return f.debugField(s, maxFinalizationDebugField) }
 	out := &finalizationDebugReceipt{Daemon: field(receipt.Daemon), Name: field(receipt.Name), Generation: field(receipt.Generation),
-		Requested: field(receipt.Requested), Prior: field(receipt.Prior), Applied: field(receipt.Applied), Restored: field(receipt.Restored),
+		GID: receipt.GID, Requested: field(receipt.Requested), Prior: field(receipt.Prior), Applied: field(receipt.Applied), Restored: field(receipt.Restored),
 		State: override.DebugLevelState(field(string(receipt.State))), Reason: f.debugField(receipt.Reason, maxFinalizationDebugError), Transitions: []finalizationDebugTransition{}}
 	transitions := receipt.Transitions
 	if len(transitions) > maxFinalizationDebugTransitions {
