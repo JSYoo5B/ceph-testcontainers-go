@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -63,12 +65,24 @@ func TestImmutableObjectCache(t *testing.T) {
 	rbdCLI("snap", "create", pool+"/parent@base")
 	rbdCLI("snap", "protect", pool+"/parent@base")
 	rbdCLI("clone", pool+"/parent@base", pool+"/child")
-	checksum := func(image string, options map[string]string) string {
-		args := []string{"sh", "-c", `rbd "$@" export --no-progress "$0" - | md5sum`, pool + "/" + image, "--id", id}
+	export := func(image string, options map[string]string) (string, error) {
+		args := []string{"rbd", "--id", id}
 		for name, value := range options {
 			args = append(args, "--"+name+"="+value)
 		}
-		return strings.Fields(harness.ExecOutput(t, ctx, client, args...))[0]
+		return checkedRBDExportDigest(ctx, client, pool+"/"+image, args...)
+	}
+	checksum := func(image string, options map[string]string) string {
+		t.Helper()
+		digest, err := export(image, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+	// A failed export is never hashed into a checksum.
+	if digest, err := export("tc-missing", nil); err == nil || !strings.Contains(err.Error(), "rbd export exited") {
+		t.Fatalf("the export of a missing image returned digest %q, %v", digest, err)
 	}
 	want := checksum("parent@base", nil)
 	// The daemon reads each parent object from RADOS once and writes it into
@@ -170,6 +184,43 @@ func TestImmutableObjectCache(t *testing.T) {
 // partially started lease, when the test ends, before its client container
 // is terminated, with its own time bound: the test's context is already
 // cancelled then. A Restore error fails the test.
+// rbdExportDigest exports an image into a private temporary directory,
+// stops with the export's own status when it fails, and only then hashes the
+// file; the directory is removed on every path. Arguments: the image, then
+// the rbd command with its options.
+const rbdExportDigest = `dir=$(mktemp -d) || exit 125
+trap 'rm -rf "$dir"' EXIT
+image=$1
+shift
+"$@" export --no-progress "$image" "$dir/image" >&2 || { status=$?; echo "rbd export exited $status" >&2; exit "$status"; }
+md5sum < "$dir/image"`
+
+// checkedRBDExportDigest returns the MD5 digest of image as rbd (with its
+// options) exports it in client. It fails when the export or the hash
+// exits nonzero or the digest is malformed; standard error stays apart from
+// the digest and is shown only on failure.
+func checkedRBDExportDigest(ctx context.Context, client testcontainers.Container, image string, rbdArgs ...string) (string, error) {
+	execCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	code, reader, err := client.Exec(execCtx, append([]string{"sh", "-c", rbdExportDigest, "sh", image}, rbdArgs...))
+	if err != nil {
+		return "", fmt.Errorf("export %s: %w", image, err)
+	}
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+		return "", fmt.Errorf("export %s: read output: %w", image, err)
+	}
+	diagnostics := stderr.Bytes()[:min(stderr.Len(), 2048)]
+	if code != 0 {
+		return "", fmt.Errorf("export %s: exit %d: %s", image, code, diagnostics)
+	}
+	fields := strings.Fields(stdout.String())
+	if len(fields) == 0 || len(fields[0]) != 32 || strings.Trim(fields[0], "0123456789abcdef") != "" {
+		return "", fmt.Errorf("export %s: md5sum printed %q: %s", image, stdout.Bytes()[:min(stdout.Len(), 256)], diagnostics)
+	}
+	return fields[0], nil
+}
+
 func restoreImmutableObjectCacheAtCleanup(t *testing.T, lease *rbd.ImmutableObjectCacheLease) {
 	t.Helper()
 	if lease == nil {
