@@ -176,13 +176,26 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.authLedger().settleClient(ctx, entity); err != nil {
+	client := &ClientConfig{owner: c, name: entity}
+	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
+	return c.authLedger().addClient(ctx, client, generate, capArgs)
+}
+
+// addClient creates the identity of client, a new descriptor of an admitted
+// call, with the fresh key that generate prints and the caps in capArgs. It
+// refuses an identity that is revoked temporarily or exists already, before
+// any change, with a nil descriptor; from the key generation on it returns
+// client, which is ready once the MONs hold exactly its key. The caller holds
+// c.mu.
+func (l authLedger) addClient(ctx context.Context, client *ClientConfig, generate, capArgs []string) (*ClientConfig, error) {
+	entity := client.name
+	if err := l.settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
-	if c.ledger.authRecords.revocation(entity) != nil {
+	if l.authRecords.revocation(entity) != nil {
 		return nil, fmt.Errorf("cephx identity %q is revoked temporarily; restore it or delete it first", entity)
 	}
-	data, err := authStore{c.conn()}.clientCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
+	data, err := authStore{l.conn}.clientCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +212,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 			return nil, invalid(fmt.Errorf("cephx identity %q already exists", entity))
 		}
 	}
-	client := &ClientConfig{owner: c, name: entity}
-	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
-	control, err = c.conn().controlContainer(ctx)
+	control, err := l.conn.controlContainer(ctx)
 	if err != nil {
 		return client, err
 	}
@@ -209,7 +220,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
-	c.ledger.authRecords.addSecret(string(bytes.TrimSpace(secret)))
+	l.authRecords.addSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
 	defer func() {
@@ -223,12 +234,12 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	// Supplying our fresh key makes Ceph reject a concurrently created identity
 	// with another key. An auth-add command without -i can silently reuse it.
 	args := append([]string{"auth", "add", entity, "-i", keyringPath}, capArgs...)
-	if _, err := (authStore{c.conn()}).clientCommand(ctx, "create "+entity, args...); err != nil {
+	if _, err := (authStore{l.conn}).clientCommand(ctx, "create "+entity, args...); err != nil {
 		return client, err
 	}
 	client.created = true
-	c.ledger.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
-	keyring, err := authStore{c.conn()}.clientCommand(ctx, "retrieve "+entity, "auth", "get", entity)
+	l.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
+	keyring, err := authStore{l.conn}.clientCommand(ctx, "retrieve "+entity, "auth", "get", entity)
 	if err != nil {
 		return client, err
 	}

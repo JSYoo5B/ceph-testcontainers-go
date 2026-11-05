@@ -3,11 +3,12 @@ package rgw
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/containerd/errdefs"
@@ -82,7 +83,7 @@ func TestDiscardRGWConflictRetainsFailedCleanupAndNewOwner(t *testing.T) {
 		t.Fatal("successfully removed conflict still blocks a new RGW attempt")
 	}
 	replacement := &rgwTestContainer{id: "replacement"}
-	servicehook.SetService(c, "rgw", replacement)
+	testhelper.TestRecordService(c, "rgw", replacement)
 	if err := discardNamedAttempt(t.Context(), c, "rgw", failed); err != nil || servicehook.Service(c, "rgw") != replacement {
 		t.Fatal("old-attempt cleanup removed a different RGW owner")
 	}

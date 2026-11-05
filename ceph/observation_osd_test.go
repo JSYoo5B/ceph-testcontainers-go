@@ -23,10 +23,21 @@ func osdEntry(id, uuid string, up, in int) string {
 
 func itoa(v int) string { return string(rune('0' + v)) }
 
-func TestReadOwnedOSDStatesSortedAndOneDump(t *testing.T) {
+// ownedOSDStatesFrom runs the part of Observer.OSDStates that needs no
+// cluster: the one osd dump that ownedOSDSample reads, with its error
+// returned unchanged, and the resolution that osdStates applies to it.
+func ownedOSDStatesFrom(ctx context.Context, run cliQuery, owned map[int]*osdRegistration) ([]OSDState, error) {
+	dump, err := readOSDPolicyDump(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	return resolveOwnedOSDStates(dump, owned)
+}
+
+func TestOwnedOSDStatesSortedAndOneDump(t *testing.T) {
 	cli := &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(osdDumpFor(osdEntry("1", osdUUID1, 1, 0), osdEntry("0", osdUUID0, 1, 1), osdEntry("7", "33333333-3333-4333-8333-333333333333", 1, 1)))}}
 	owned := map[int]*osdRegistration{1: {nativeUUID: osdUUID1}, 0: {nativeUUID: osdUUID0}}
-	got, err := readOwnedOSDStates(context.Background(), cli.run, owned)
+	got, err := ownedOSDStatesFrom(context.Background(), cli.run, owned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,15 +50,15 @@ func TestReadOwnedOSDStatesSortedAndOneDump(t *testing.T) {
 	}
 }
 
-func TestReadOwnedOSDStatesNoOwnedIsEmptyNotNil(t *testing.T) {
+func TestOwnedOSDStatesNoOwnedIsEmptyNotNil(t *testing.T) {
 	cli := &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(osdDumpFor())}}
-	got, err := readOwnedOSDStates(context.Background(), cli.run, nil)
+	got, err := ownedOSDStatesFrom(context.Background(), cli.run, nil)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("states = %v, %v", got, err)
 	}
 }
 
-func TestReadOwnedOSDStatesRefusals(t *testing.T) {
+func TestOwnedOSDStatesRefusals(t *testing.T) {
 	dump := osdDumpFor(osdEntry("0", osdUUID0, 1, 1))
 	cases := map[string]map[int]*osdRegistration{
 		"nil registration":     {0: nil},
@@ -60,32 +71,32 @@ func TestReadOwnedOSDStatesRefusals(t *testing.T) {
 	var cli *fakeCLI
 	for name, owned := range cases {
 		cli = &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(dump)}}
-		if got, err := readOwnedOSDStates(context.Background(), cli.run, owned); got != nil || err == nil {
+		if got, err := ownedOSDStatesFrom(context.Background(), cli.run, owned); got != nil || err == nil {
 			t.Errorf("%s: got %+v, %v", name, got, err)
 		}
 	}
 	cli = &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(dump)}}
-	if _, err := readOwnedOSDStates(context.Background(), cli.run, map[int]*osdRegistration{5: {nativeUUID: osdUUID1}}); err == nil || !strings.Contains(err.Error(), "missing from native OSDMap") {
+	if _, err := ownedOSDStatesFrom(context.Background(), cli.run, map[int]*osdRegistration{5: {nativeUUID: osdUUID1}}); err == nil || !strings.Contains(err.Error(), "missing from native OSDMap") {
 		t.Errorf("missing owned OSD error = %v", err)
 	}
 	// A nil registered UUID must not match a nil UUID reported by the map.
 	nilDump := osdDumpFor(osdEntry("0", "00000000-0000-0000-0000-000000000000", 1, 1))
 	cli = &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(nilDump)}}
-	if got, err := readOwnedOSDStates(context.Background(), cli.run, map[int]*osdRegistration{0: {nativeUUID: "00000000-0000-0000-0000-000000000000"}}); got != nil || err == nil {
+	if got, err := ownedOSDStatesFrom(context.Background(), cli.run, map[int]*osdRegistration{0: {nativeUUID: "00000000-0000-0000-0000-000000000000"}}); got != nil || err == nil {
 		t.Errorf("nil uuid on both sides: got %+v, %v", got, err)
 	}
 	// Control: the accepted registration alone passes against the same dump.
 	cli = &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(dump)}}
-	if got, err := readOwnedOSDStates(context.Background(), cli.run, map[int]*osdRegistration{0: {nativeUUID: osdUUID0}}); err != nil || len(got) != 1 {
+	if got, err := ownedOSDStatesFrom(context.Background(), cli.run, map[int]*osdRegistration{0: {nativeUUID: osdUUID0}}); err != nil || len(got) != 1 {
 		t.Fatalf("control: %+v, %v", got, err)
 	}
 }
 
-func TestReadOwnedOSDStatesDumpFailuresAreNotEvidence(t *testing.T) {
+func TestOwnedOSDStatesDumpFailuresAreNotEvidence(t *testing.T) {
 	boom := errors.New("boom")
 	owned := map[int]*osdRegistration{0: {nativeUUID: osdUUID0}}
 	cli := &fakeCLI{errs: map[string]error{osdDumpCmd: boom}}
-	if got, err := readOwnedOSDStates(context.Background(), cli.run, owned); got != nil || err != boom {
+	if got, err := ownedOSDStatesFrom(context.Background(), cli.run, owned); got != nil || err != boom {
 		t.Fatalf("command error = %v, %v", got, err)
 	}
 	for name, reply := range map[string]string{
@@ -95,7 +106,7 @@ func TestReadOwnedOSDStatesDumpFailuresAreNotEvidence(t *testing.T) {
 		"missing osds":  `{"flags":""}`,
 	} {
 		cli := &fakeCLI{replies: map[string][]byte{osdDumpCmd: []byte(reply)}}
-		if got, err := readOwnedOSDStates(context.Background(), cli.run, owned); got != nil || err == nil {
+		if got, err := ownedOSDStatesFrom(context.Background(), cli.run, owned); got != nil || err == nil {
 			t.Errorf("%s: got %+v, %v", name, got, err)
 		}
 	}

@@ -125,7 +125,7 @@ func (r *replacementMDSFixture) start(ctx context.Context, name, image string, o
 		return nil, err
 	}
 	if !r.nilResult {
-		servicehook.SetService(r.fs.base().Cluster(), name, r.newCID)
+		testhelper.TestRecordService(r.fs.base().Cluster(), name, r.newCID)
 	}
 	servicehook.Unlock(r.fs.base().Cluster())
 	if !r.noPromotion {
@@ -805,7 +805,7 @@ func TestMDSReplacementLegacyStarterReceiptUnchanged(t *testing.T) {
 			}
 			err := r.fs.fleet().startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				if ctr != nil {
-					servicehook.SetService(r.fs.base().Cluster(), "mds.target-1", ctr)
+					testhelper.TestRecordService(r.fs.base().Cluster(), "mds.target-1", ctr)
 				}
 				return ctr, cause
 			})

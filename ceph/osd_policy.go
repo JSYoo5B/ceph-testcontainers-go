@@ -27,38 +27,6 @@ type OSDState struct {
 	Weight float64
 }
 
-// osdStates implements Observer.OSDStates.
-func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
-	dump, owned, err := c.ownedOSDSample(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return resolveOwnedOSDStates(dump, owned)
-}
-
-// ownedOSDSample runs one osd dump under the topology lock and copies the
-// owned registrations that the same lock protects, so the dump and the
-// registry describe one serialized observation. The lock is released before it
-// returns; the caller resolves the copies without it.
-func (c *Container) ownedOSDSample(ctx context.Context) (osdPolicySnapshot, map[int]*osdRegistration, error) {
-	if err := c.lockTopology(ctx); err != nil {
-		return osdPolicySnapshot{}, nil, err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return osdPolicySnapshot{}, nil, err
-	}
-	owned := make(map[int]*osdRegistration, c.fleet.osdHandles.count())
-	for id, osd := range c.fleet.osdHandles.each() {
-		owned[id] = registrationOf(osd)
-	}
-	dump, err := readOSDPolicyDump(ctx, c.conn().ceph)
-	if err != nil {
-		return osdPolicySnapshot{}, nil, err
-	}
-	return dump, owned, nil
-}
-
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name
 // the flags that override.SetOSDFlag can change. OSDFlags returns the flags that
 // the cluster reports, which can include other tokens, so the type stays open: a

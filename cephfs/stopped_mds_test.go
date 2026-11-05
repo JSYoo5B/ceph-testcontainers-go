@@ -235,7 +235,7 @@ func stoppedMDSPublish(t *testing.T, fs *Filesystem, daemon *stoppedMDSDaemon, s
 			if err := servicehook.LockTopology(ctx, fs.base().Cluster()); err != nil {
 				return nil, err
 			}
-			servicehook.SetService(fs.base().Cluster(), name, daemon)
+			testhelper.TestRecordService(fs.base().Cluster(), name, daemon)
 			servicehook.Unlock(fs.base().Cluster())
 		}
 		return daemon, startErr
@@ -282,7 +282,7 @@ func TestStoppedMDSNilAndCanceledPublicationPreservesOldReceipt(t *testing.T) {
 				if !canceled {
 					return nil, nil
 				}
-				servicehook.SetService(fs.base().Cluster(), "mds.target-2", daemon)
+				testhelper.TestRecordService(fs.base().Cluster(), "mds.target-2", daemon)
 				cancel()
 				return daemon, nil
 			})
@@ -358,7 +358,7 @@ func TestStoppedMDSOwnerGuardsCannotRedirectRemoval(t *testing.T) {
 			case "cid":
 				old.cid = strings.Repeat("c", 64)
 			case "service":
-				servicehook.SetService(fs.base().Cluster(), "mds.target-0", &stoppedMDSDaemon{cid: old.cid})
+				testhelper.TestRecordService(fs.base().Cluster(), "mds.target-0", &stoppedMDSDaemon{cid: old.cid})
 			case "filesystem-owner":
 				filesystems(fs.base().Cluster()).byName["target"] = &Filesystem{}
 			case "native-identity":
@@ -668,7 +668,7 @@ func TestStoppedMDSLatenessPreservesPendingOwnership(t *testing.T) {
 					case "after-terminate-native-name":
 						name()
 					case "after-terminate-registry":
-						servicehook.SetService(fs.base().Cluster(), "mds.target-0", &stoppedMDSDaemon{cid: old.cid})
+						testhelper.TestRecordService(fs.base().Cluster(), "mds.target-0", &stoppedMDSDaemon{cid: old.cid})
 					case "after-terminate-attachments":
 						native.target()["data_pools"] = []int64{1, 2}
 					}
@@ -721,7 +721,7 @@ func TestStoppedMDSWholeClusterCleanupRetainsPartialAndAmbiguousHandles(t *testi
 	}
 	old.termErr = nil
 	testhelper.TestReplaceOSDs(fs.base().Cluster(), map[int]*ceph.OSDContainer{})
-	if err := fs.base().Cluster().Terminate(t.Context()); err != nil || old.removes != 2 || survivor.removes != 1 || partial.removes != 1 || len(servicehook.Services(fs.base().Cluster())) != 0 || !servicehook.Closed(fs.base().Cluster()) {
+	if err := fs.base().Cluster().Terminate(t.Context()); err != nil || old.removes != 2 || survivor.removes != 1 || partial.removes != 1 || len(testhelper.TestServices(fs.base().Cluster())) != 0 || !servicehook.Closed(fs.base().Cluster()) {
 		t.Fatalf("whole cleanup lost a retained owned handle: %v", err)
 	}
 }

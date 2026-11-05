@@ -46,13 +46,7 @@ func (c *Container) addBlockDeviceOSD(ctx context.Context, device osdBlockDevice
 	if err != nil {
 		return launch.osd, err
 	}
-	if err := c.osdFleet().startOSD(ctx, launch); err != nil {
-		return launch.osd, err
-	}
-	if err := (osdMap{c.conn()}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
-		return launch.osd, err
-	}
-	return launch.osd, osdMap{c.conn()}.assignDeviceClass(ctx, launch.osd)
+	return launch.osd, c.osdFleet().bringUpOSD(ctx, launch)
 }
 
 // judgeDeviceChain is the one production caller of the release gate

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -94,7 +93,7 @@ func UserDocument(id, secret string, suspended bool, quota gwbase.Quota) string 
 func Cluster(control testcontainers.Container, config testhelper.TestConfig, services map[string]testcontainers.Container) *ceph.Container {
 	c := testhelper.TestCluster(control, config)
 	for name, ctr := range services {
-		servicehook.SetService(c, name, ctr)
+		testhelper.TestRecordService(c, name, ctr)
 	}
 	return c
 }
@@ -133,7 +132,7 @@ func NewGateway(ctr, control testcontainers.Container) *Gateway {
 //testdouble:shared-double
 func (g *Gateway) Replace(ctr testcontainers.Container) {
 	g.Container = ctr
-	servicehook.SetService(g.Cluster, "rgw", ctr)
+	testhelper.TestRecordService(g.Cluster, "rgw", ctr)
 }
 
 // Foreign returns the core of a gateway "default" of another synthetic cluster

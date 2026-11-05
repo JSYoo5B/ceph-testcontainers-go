@@ -369,7 +369,8 @@ func TestCompetingReopensDispatchOnce(t *testing.T) {
 }
 
 // reopenOrderOK reports whether the reopenOSD source cleans the stale socket
-// and rechecks the context before it consumes the detached handle.
+// and rechecks the context before it consumes the detached handle, which only
+// osdFleet.reopenDetached does.
 func reopenOrderOK(src string) bool {
 	start := strings.Index(src, "func (c *Container) reopenOSD(")
 	if start < 0 {
@@ -381,8 +382,9 @@ func reopenOrderOK(src string) bool {
 	}
 	clean := strings.Index(body, "c.osdFleet().clearStaleOSDSocket(")
 	recheck := strings.Index(body[max(clean, 0):], "ctx.Err()")
-	consume := strings.Index(body, "detached.reopened = true")
+	consume := strings.Index(body, "c.osdFleet().reopenDetached(")
 	return clean >= 0 && consume >= 0 && recheck >= 0 && clean+recheck < consume &&
+		!strings.Contains(body, "detached.reopened = true") &&
 		strings.Count(body, "c.osdFleet().clearStaleOSDSocket(") == 1 && !strings.Contains(body, "c.clearAdminSocket(")
 }
 
@@ -399,8 +401,7 @@ func TestReopenSourceCleansBeforeConsuming(t *testing.T) {
 	if err := ctx.Err(); err != nil {
 		return
 	}
-	detached.reopened = true
-	c.fleet.osdHandles.register(id, osd)
+	osd, err := c.osdFleet().reopenDetached(ctx, detached, image)
 	if err := c.osdFleet().clearStaleOSDSocket(ctx, detached); err != nil {
 		return
 	}

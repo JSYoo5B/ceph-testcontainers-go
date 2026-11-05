@@ -333,7 +333,7 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 // wiring step and the terminate step hold it. claim has no other production
 // caller.
 var osdDeviceClaimCallers = map[string]stateCaller{
-	"removeOSD": {"takes", []string{"release"}},
+	"retireOSD": {"holds", []string{"release"}},
 	"terminate": {"takes", []string{"settle"}},
 	// registerBlockDeviceOSD's callers are also pinned by osdDeviceWiringCallers.
 	"registerBlockDeviceOSD": {"holds", []string{"claim"}},
@@ -410,8 +410,10 @@ func TestOSDDeviceClaimCallersAreTheReleaseHooksAndTheWiringStep(t *testing.T) {
 // ordering: in terminate the per-OSD release sits after osd.Terminate and
 // before the handle is forgotten, inside the loop that continues past a failed
 // termination; settle comes after the labeled-container removal, whose error it
-// reads; in removeOSD the release comes after the container terminated and the
-// storage directory was discarded, immediately before the handle is forgotten.
+// reads; removeOSD fences the OSD's native commands after the removal
+// preflight and before osdFleet.retireOSD, in which the release comes after the
+// drain and purge, the container's termination and the discard of the storage
+// directory, immediately before the handle is forgotten.
 func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 	positions := func(fn *ast.FuncDecl) map[string][]token.Pos {
 		at := map[string][]token.Pos{}
@@ -440,7 +442,7 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 		return problems
 	}
 	var problems []string
-	sawTerminate, sawRemove := false, false
+	sawTerminate, sawRemove, sawRetire := false, false, false
 	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -465,16 +467,25 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 				at := positions(fn)
 				problems = append(problems, check("removeOSD", at, []string{
 					"c.lockTopology(ctx)",
+					"c.osdFleet().checkOSDRemovable(ctx, osd)",
+					"c.native.fence(ctx, osd.GetContainerID())",
+					"c.osdFleet().retireOSD(ctx, osd)",
+				})...)
+			case fn.Name.Name == "retireOSD" && receiverTypeName(fn) == "osdFleet":
+				sawRetire = true
+				at := positions(fn)
+				problems = append(problems, check("retireOSD", at, []string{
+					"f.drainAndPurgeOSD(ctx, osd)",
 					"osd.Terminate(ctx)",
-					"c.fleet.stores.discard(ctx, id)",
-					"c.fleet.deviceClaims.release(id, osd.Container != nil)",
-					"c.fleet.osdHandles.forget(id)",
+					"f.stores.discard(ctx, osd.ID)",
+					"f.deviceClaims.release(osd.ID, osd.Container != nil)",
+					"f.osdHandles.forget(osd.ID)",
 				})...)
 			}
 		}
 	}
-	if !sawTerminate || !sawRemove {
-		problems = append(problems, "terminate or removeOSD not found")
+	if !sawTerminate || !sawRemove || !sawRetire {
+		problems = append(problems, "terminate, removeOSD or retireOSD not found")
 	}
 	if len(problems) != 0 {
 		t.Fatalf("device claim release order changed: %v", problems)

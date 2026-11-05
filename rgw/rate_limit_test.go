@@ -12,7 +12,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
@@ -210,7 +209,7 @@ func newRateLimitFixture(t *testing.T) (*User, *rateLimitGateway) {
 		policies: map[string]map[string]any{},
 	}
 	gateway.Container = f
-	servicehook.SetService(gateway.base().Cluster(), rgwServiceName(gateway.config), f)
+	testhelper.TestRecordService(gateway.base().Cluster(), rgwServiceName(gateway.config), f)
 	return rgwAdminOwnedTestUser(gateway), f
 }
 
