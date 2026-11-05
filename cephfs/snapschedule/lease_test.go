@@ -664,3 +664,29 @@ func TestLeaseIgnoresEditedDescriptors(t *testing.T) {
 		}
 	}
 }
+
+// Concurrent Restore calls of one lease remove its schedule and rules once:
+// the lease's mutex orders them, every call succeeds, and the directory is
+// released.
+func TestLeaseConcurrentRestoresRemoveOnce(t *testing.T) {
+	fake := newFakeSnapSchedule()
+	lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	for range cap(errs) {
+		wg.Go(func() { errs <- lease.Restore(t.Context()) })
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if state := fake.state(); state != "" || !lease.restored || len(lease.leases.paths) != 0 {
+		t.Fatalf("after concurrent Restores: %q, restored %t, %d reservations", state, lease.restored, len(lease.leases.paths))
+	}
+}
