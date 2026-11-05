@@ -187,6 +187,7 @@ var osdRegistryCallers = map[string]stateCaller{
 	"reopenOSD":                        {"takes", []string{"detachedOf", "get", "unpark"}},
 	"ownedBy":                          {"holds", []string{"get"}},
 	"generationLocked":                 {"holds", nil},
+	"ownedLocked":                      {"holds", nil},
 	"daemonKeyrings":                   {"holds", []string{"get"}},
 	"validateOSDPlacement":             {"holds", []string{"count", "each"}},
 	"nativePoolDomains":                {"holds", []string{"get"}},

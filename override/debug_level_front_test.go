@@ -34,13 +34,19 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 			cancel()
 			return ctx
 		}},
-		"MON":            {setting: DebugLevelSetting{Daemon: "mon.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"MGR":            {setting: DebugLevelSetting{Daemon: "mgr.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"malformed":      {setting: DebugLevelSetting{Daemon: "osd.01", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"option":         {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_mon", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
-		"level":          {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "100"}, kind: ceph.ErrInvalidRequest, want: "N or N/M"},
-		"unknown OSD":    {setting: DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable OSD"},
-		"closed cluster": {config: &testhelper.TestConfig{Closed: true, OSDs: 1}, setting: good, want: "terminated"},
+		"MON":               {setting: DebugLevelSetting{Daemon: "mon.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
+		"RGW":               {setting: DebugLevelSetting{Daemon: "rgw.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD, MGR or MDS"},
+		"unowned MGR":       {setting: DebugLevelSetting{Daemon: "mgr.z", Name: "debug_mgr", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable"},
+		"unowned MDS":       {setting: DebugLevelSetting{Daemon: "mds.fs-a", Name: "debug_mds", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable"},
+		"OSD option on MGR": {setting: DebugLevelSetting{Daemon: "mgr.a", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "select debug_ms or debug_mgr"},
+		"MDS option on OSD": {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_mds", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "select debug_ms or debug_osd"},
+		"auth on MDS":       {setting: DebugLevelSetting{Daemon: "mds.fs-a", Name: "debug_auth", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "select debug_ms or debug_mds"},
+		"fault flag":        {setting: DebugLevelSetting{Daemon: "osd.0", Name: "ms_blackhole_client", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
+		"malformed":         {setting: DebugLevelSetting{Daemon: "osd.01", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
+		"option":            {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_mon", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
+		"level":             {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "100"}, kind: ceph.ErrInvalidRequest, want: "N or N/M"},
+		"unknown OSD":       {setting: DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable OSD"},
+		"closed cluster":    {config: &testhelper.TestConfig{Closed: true, OSDs: 1}, setting: good, want: "terminated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			native := &blocklistFixture{}

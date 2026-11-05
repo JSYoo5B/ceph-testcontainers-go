@@ -126,8 +126,8 @@ func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address 
 	return err
 }
 
-// OpenDebugTarget checks that daemon is an OSD that this cluster owns and can
-// run, and returns the target of its admin socket. It waits for the topology
+// OpenDebugTarget checks that daemon is an OSD, MGR or MDS that this cluster
+// owns and can run, and returns the target of its admin socket. It waits for the topology
 // lock under ctx and holds no lock when it returns. A terminated cluster
 // returns the error of Terminated.
 func (overrideHooks) OpenDebugTarget(ctx context.Context, c *Container, daemon string) (any, error) {

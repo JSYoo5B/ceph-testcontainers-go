@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,15 +58,29 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 	return receipt
 }
 
-// SetDebugLevel changes one runtime debug level of one running owned OSD
-// through its admin socket, as ceph.OSDContainer.AdminSocket reaches it, until
-// Restore. It reads the daemon's effective prior level, sets the requested
-// level and verifies the normalized effective readback, so "20" reads back as
-// "20/20". It changes the daemon's runtime value, never the central
-// configuration database, and a daemon restart drops it; see SetConfig for
-// stored entries. The window is bound to the daemon container's generation.
-// Only one window per daemon and option may be open; a second one is refused
-// until the first is restored or reaches a terminal state.
+// SetDebugLevel changes one runtime debug level of one running owned OSD, MGR
+// or MDS through its admin socket until Restore. It reads the daemon's
+// effective prior level, sets the requested level and verifies the
+// normalized effective readback, so "20" reads back as "20/20". It changes the
+// daemon's runtime value, never the central configuration database, and a
+// daemon restart or respawn drops it; see SetConfig for stored entries. Only
+// one window per daemon and option may be open; a second one is refused until
+// the first is restored or reaches a terminal state.
+//
+// The window is bound to the daemon's incarnation, not to its name. For an
+// OSD that is the container generation. An MDS or MGR also respawns inside
+// its container, for example after ceph mds fail, ceph mgr fail or a changed
+// set of MGR modules, and comes back with a new native GID and none of the
+// window's runtime value; the incarnation therefore also holds the GID that
+// the MDS reports on its admin socket, or the MGR's GID in the MgrMap
+// together with the identity of the admin socket file that its process
+// bound. Every check before a set, after a read and during Restore compares
+// the whole incarnation, and a replacement is never restored. An MDS standby
+// that takes over a rank keeps its process and its window. A MGR incarnation
+// needs a MON to answer the MgrMap read.
+//
+// The OSD and MGR sockets are reached from the control container through the
+// shared run directory, the MDS socket in the MDS container itself.
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op (see DebugLevelHandle). A nil cluster is
@@ -85,9 +101,9 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 // returned.
 //
 // Each set is admitted only while the daemon still runs the window's
-// generation, and the cluster's own topology operations, such as
-// OSDContainer.Remove, OSDContainer.Detach and DetachedOSD.Reopen, wait until
-// the set has ended. A set whose end cannot be confirmed may still run: the
+// incarnation, and the cluster's own topology operations, such as
+// OSDContainer.Remove, OSDContainer.Detach, DetachedOSD.Reopen and the
+// removal or replacement of an MGR or MDS, wait until the set has ended. A set whose end cannot be confirmed may still run: the
 // window keeps it, and no later set or terminal state is taken until it is
 // confirmed stopped. Until then OSDContainer.Remove and OSDContainer.Detach
 // first stop it, or refuse to replace the OSD.
@@ -95,8 +111,9 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 // The readbacks around each set are not an atomic compare-and-swap: another
 // writer of the same daemon and option must not race the window, and an
 // outside write of the window's own value cannot be told apart from it. A
-// restart of the daemon's container from outside the cluster after the last
-// check is not held off either.
+// restart of the daemon's container or a respawn of its process after the
+// last check is not held off either: a set that lands in the new incarnation
+// is reported as target-changed and left in place.
 //
 // There is no generic logging default: no level or duration is a universal
 // diagnostic setting, and 0/0 is a control rather than a silence guarantee.
@@ -111,22 +128,24 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 //   - Context already ended: not applied handle; the context error.
 //   - Option or level not supported: not applied handle;
 //     ceph.ErrInvalidRequest.
-//   - Daemon is not an OSD such as osd.0: not applied handle;
+//   - Daemon is not an OSD, MGR or MDS such as osd.0, mgr.a or mds.<name>,
+//     or the option is not one of its role: not applied handle;
 //     ceph.ErrInvalidRequest.
-//   - OSD unknown, purged, being purged or detaching: not applied handle;
-//     ceph.ErrInvalidRequest.
+//   - OSD unknown, purged, being purged or detaching, or MGR or MDS not
+//     owned: not applied handle; ceph.ErrInvalidRequest.
 //   - Terminated cluster: not applied handle; the error of an operation on a
 //     terminated cluster.
 //   - A window for this daemon and option is open: not applied handle;
 //     ceph.ErrInvalidRequest.
-//   - The daemon is not an owned running one, or the prior level cannot be
-//     read: not applied handle; the native or inspection error.
-//   - The generation changed before the set was issued: not applied handle;
+//   - The daemon is not an owned running one, its incarnation cannot be read
+//     or the prior level cannot be read: not applied handle; the native or
+//     inspection error.
+//   - The incarnation changed before the set was issued: not applied handle;
 //     the refusal.
 //   - The set, its settling or its readback fails or differs: real handle
 //     (apply-uncertain); the joined errors.
-//   - The generation changed during the set: real handle (target-changed); the
-//     joined errors.
+//   - The incarnation changed during the set: real handle (target-changed);
+//     the joined errors.
 //
 //purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {
@@ -180,9 +199,24 @@ func sameDebugLevel(a, b string) bool {
 	return a == b
 }
 
+// debugLevelOptions is the supported option set of each daemon role: the
+// messenger and the role's own subsystem. Options that can print keys, such as
+// debug_auth, and fault settings such as ms_blackhole_client are not debug
+// levels of this window.
+var debugLevelOptions = map[string][]string{
+	"osd": {"debug_ms", "debug_osd"},
+	"mgr": {"debug_ms", "debug_mgr"},
+	"mds": {"debug_ms", "debug_mds"},
+}
+
 func normalizeDebugLevelSetting(setting DebugLevelSetting) (DebugLevelSetting, string, error) {
-	if setting.Name != "debug_ms" && setting.Name != "debug_osd" {
-		return setting, "", overridehook.Invalid(fmt.Errorf("debug level option %q is not supported; select debug_ms or debug_osd", setting.Name))
+	role, _, _ := strings.Cut(setting.Daemon, ".")
+	options, ok := debugLevelOptions[role]
+	if !ok {
+		return setting, "", overridehook.Invalid(fmt.Errorf("debug level daemon %q must be an OSD, MGR or MDS such as osd.0, mgr.a or mds.<name>", setting.Daemon))
+	}
+	if !slices.Contains(options, setting.Name) {
+		return setting, "", overridehook.Invalid(fmt.Errorf("debug level option %q is not supported for %s; select %s", setting.Name, setting.Daemon, strings.Join(options, " or ")))
 	}
 	owned, ok := normalizeDebugLevel(setting.Level)
 	if !ok {
@@ -268,7 +302,7 @@ func (s *debugLevelState) finish(state DebugLevelState, readback string, err err
 	return err
 }
 
-// sameGeneration checks the target against the window's generation: changed
+// sameGeneration checks the target against the window's incarnation: changed
 // is a terminal mismatch, and err is a check that could not be completed.
 func (s *debugLevelState) sameGeneration(ctx context.Context) (changed bool, err error) {
 	owned, identity, running, paused, err := s.target.Generation(ctx)
@@ -329,6 +363,7 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	s.identity = identity
 	s.mu.Lock()
 	s.receipt.Generation = identity
+	s.receipt.GID = overridehook.DebugIdentityGID(identity)
 	s.mu.Unlock()
 	prior, err := target.Get(ctx, setting.Name)
 	if err != nil {
@@ -389,16 +424,16 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 }
 
 // Restore returns the daemon's runtime level to the prior value after it
-// confirms the same container generation and that the daemon still shows
+// confirms the same daemon incarnation and that the daemon still shows
 // the window's own value; it then verifies the restored readback. A prior
 // value already in place counts as restored. Another value is an outside
-// edit, which Restore leaves as it is. A stopped, restarted or replaced
-// daemon is not restored, and neither is one of a cluster that has been
+// edit, which Restore leaves as it is. A stopped, restarted, respawned or
+// replaced daemon is not restored, and neither is one of a cluster that has been
 // terminated. These outcomes are terminal: Restore returns nil once restored
 // and the same error again otherwise. A paused daemon, an unavailable socket,
 // an unverified readback or an earlier set of the window that may still run
 // leave the window open, and a later Restore settles and reconciles it first.
-// The generation is checked again after each read. The readback after the set
+// The incarnation is checked again after each read. The readback after the set
 // and the settling of a set use fresh contexts bounded by the cluster's
 // startup timeout. A handle of a call that was not applied returns nil without
 // taking a lock.

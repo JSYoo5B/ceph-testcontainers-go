@@ -32,9 +32,13 @@ func TestOpenDebugTargetRefusesBeforeCommands(t *testing.T) {
 		daemon string
 		want   string
 	}{
-		"MON":            {nil, "mon.a", "must be an OSD"},
-		"MGR":            {nil, "mgr.a", "must be an OSD"},
-		"malformed":      {nil, "osd.01", "must be an OSD"},
+		"MON":            {nil, "mon.a", "must be an OSD, MGR or MDS"},
+		"RGW":            {nil, "rgw.a", "must be an OSD, MGR or MDS"},
+		"malformed":      {nil, "osd.01", "must be an OSD, MGR or MDS"},
+		"malformed MDS":  {nil, "mds.-x", "must be an OSD, MGR or MDS"},
+		"terminated MGR": {nil, "mgr.b", "not a running-capable"},
+		"unknown MGR":    {nil, "mgr.z", "not a running-capable"},
+		"unknown MDS":    {nil, "mds.fs-a", "not a running-capable"},
 		"unknown OSD":    {nil, "osd.7", "not a running-capable OSD"},
 		"purged OSD":     {nil, "osd.1", "not a running-capable OSD"},
 		"detaching OSD":  {func(c *Container) { c.fleet.osdHandles.get(0).detaching = true }, "osd.0", "not a running-capable OSD"},
@@ -55,7 +59,7 @@ func TestOpenDebugTargetRefusesBeforeCommands(t *testing.T) {
 	t.Run("owned running-capable OSD", func(t *testing.T) {
 		c, control := adminSocketCluster()
 		target, err := c.openDebugTarget(t.Context(), "osd.0")
-		if err != nil || target == nil || target.daemon != "osd.0" || target.id != 0 || target.osd != c.fleet.osdHandles.get(0) || len(control.Calls) != 0 {
+		if err != nil || target == nil || target.daemon != "osd.0" || target.kind != "osd" || target.name != "0" || target.osd != c.fleet.osdHandles.get(0) || len(control.Calls) != 0 {
 			t.Fatalf("target %+v err %v calls %v", target, err, control.Calls)
 		}
 		// The topology lock is released again.
@@ -63,6 +67,24 @@ func TestOpenDebugTargetRefusesBeforeCommands(t *testing.T) {
 			t.Fatal("openDebugTarget kept the topology lock")
 		}
 		c.mu.Unlock()
+	})
+	t.Run("owned MGR and MDS", func(t *testing.T) {
+		c, control := adminSocketCluster()
+		mds := &debugLevelOSD{id: "mds-container"}
+		c.members.roster.setService("mds.fs-a", mds)
+		target, err := c.openDebugTarget(t.Context(), "mgr.a")
+		if err != nil || target.kind != "mgr" || target.mgr != c.members.roster.manager("a") || target.container() != control {
+			t.Fatalf("MGR target %+v err %v", target, err)
+		}
+		target, err = c.openDebugTarget(t.Context(), "mds.fs-a")
+		if err != nil || target.kind != "mds" || target.mds != mds || target.container() != mds || len(control.Calls) != 0 {
+			t.Fatalf("MDS target %+v err %v calls %v", target, err, control.Calls)
+		}
+		// A replacement under the same service name is another descriptor.
+		c.members.roster.setService("mds.fs-a", &debugLevelOSD{id: "mds-container-2"})
+		if gen, err := target.generation(t.Context()); err != nil || gen.owned {
+			t.Fatalf("generation of a replaced MDS %+v %v", gen, err)
+		}
 	})
 	t.Run("topology busy", func(t *testing.T) {
 		c, _ := adminSocketCluster()
@@ -140,16 +162,39 @@ func TestCheckDebugLevelGeneration(t *testing.T) {
 		changed bool
 		want    string
 	}{
-		"same":        {good, nil, false, ""},
-		"inspect":     {good, errors.New("boom"), false, "inspect osd.0"},
-		"not owned":   {debugLevelGeneration{identity: "osd0@start-1", running: true}, nil, true, "no longer owned"},
-		"restarted":   {debugLevelGeneration{owned: true, identity: "osd0@start-2", running: true}, nil, true, "another container generation"},
-		"no identity": {debugLevelGeneration{owned: true, running: true}, nil, true, "another container generation"},
-		"stopped":     {debugLevelGeneration{owned: true, identity: "osd0@start-1"}, nil, true, "is stopped"},
-		"paused":      {debugLevelGeneration{owned: true, identity: "osd0@start-1", running: true, paused: true}, nil, false, "is paused"},
+		"same":               {good, nil, false, ""},
+		"inspect":            {good, errors.New("boom"), false, "inspect osd.0"},
+		"not owned":          {debugLevelGeneration{identity: "osd0@start-1", running: true}, nil, true, "no longer owned"},
+		"restarted":          {debugLevelGeneration{owned: true, identity: "osd0@start-2", running: true}, nil, true, "another container generation"},
+		"no identity":        {debugLevelGeneration{owned: true, running: true}, nil, true, "another container generation"},
+		"stopped":            {debugLevelGeneration{owned: true, identity: "osd0@start-1"}, nil, true, "is stopped"},
+		"paused":             {debugLevelGeneration{owned: true, identity: "osd0@start-1", running: true, paused: true}, nil, false, "is paused"},
+		"paused replacement": {debugLevelGeneration{owned: true, identity: "osd0@start-2", running: true, paused: true}, nil, true, "another container generation"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed, err := checkDebugLevelGeneration(test.gen, test.err, "osd0@start-1", "osd.0")
+			if changed != test.changed || (test.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("changed %v err %v", changed, err)
+			}
+		})
+	}
+	// An MDS or MGR incarnation adds its process: a paused daemon is compared
+	// by its container only, a running one by the whole incarnation.
+	const want = "mgr0@start-1/gid=4100/asok=12@t1"
+	for name, test := range map[string]struct {
+		gen     debugLevelGeneration
+		changed bool
+		want    string
+	}{
+		"same":           {debugLevelGeneration{owned: true, identity: want, running: true}, false, ""},
+		"respawned":      {debugLevelGeneration{owned: true, identity: "mgr0@start-1/gid=4200/asok=12@t2", running: true}, true, "another daemon process"},
+		"rebound socket": {debugLevelGeneration{owned: true, identity: "mgr0@start-1/gid=4100/asok=12@t2", running: true}, true, "another daemon process"},
+		"paused":         {debugLevelGeneration{owned: true, identity: "mgr0@start-1", running: true, paused: true}, false, "is paused"},
+		"stopped":        {debugLevelGeneration{owned: true, identity: "mgr0@start-1"}, true, "is stopped"},
+		"new container":  {debugLevelGeneration{owned: true, identity: "mgr0@start-2/gid=4100/asok=12@t1", running: true}, true, "another container generation"},
+	} {
+		t.Run("process "+name, func(t *testing.T) {
+			changed, err := checkDebugLevelGeneration(test.gen, nil, want, "mgr.a")
 			if changed != test.changed || (test.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), test.want)) {
 				t.Fatalf("changed %v err %v", changed, err)
 			}
@@ -174,7 +219,7 @@ func TestOSDDebugTargetGeneration(t *testing.T) {
 	c, _ := adminSocketCluster()
 	ctr := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
 	c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
-	target := &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
+	target := &debugTarget{c: c, kind: "osd", name: "0", daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
 	gen, err := target.generation(t.Context())
 	if err != nil || gen != (debugLevelGeneration{owned: true, identity: "osd-container@start-1", running: true}) {
 		t.Fatalf("generation %+v %v", gen, err)
@@ -203,11 +248,11 @@ func TestOSDDebugTargetGeneration(t *testing.T) {
 }
 
 func TestOSDDebugTargetSetAdmission(t *testing.T) {
-	newTarget := func() (*Container, *poolFixtureContainer, *debugLevelOSD, *osdDebugTarget) {
+	newTarget := func() (*Container, *poolFixtureContainer, *debugLevelOSD, *debugTarget) {
 		c, control := adminSocketCluster()
 		ctr := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
 		c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
-		return c, control, ctr, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
+		return c, control, ctr, &debugTarget{c: c, kind: "osd", name: "0", daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
 	}
 	for name, test := range map[string]struct {
 		edit    func(*Container, *debugLevelOSD)
@@ -248,7 +293,7 @@ func TestOSDDebugTargetSetAdmission(t *testing.T) {
 // debugLevelNativeCluster is a cluster whose control container runs its
 // commands as real processes through the supervisor, with a ceph program
 // that only appends its arguments to the returned log.
-func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *osdDebugTarget, string) {
+func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *debugTarget, string) {
 	t.Helper()
 	control := newNativeTarget(t, "control", "tc-public")
 	bin := t.TempDir()
@@ -261,7 +306,7 @@ func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *osdDebug
 	c.Container, c.runDir.volume = control, &runVolume{name: "run"}
 	osd := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
 	c.fleet.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: osd}})
-	return c, control, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}, log
+	return c, control, &debugTarget{c: c, kind: "osd", name: "0", daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}, log
 }
 
 func cephCalls(t *testing.T, log string) string {
@@ -352,4 +397,94 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 			t.Fatalf("set on a fenced instance: %v", err)
 		}
 	})
+}
+
+func TestManagerGIDReadsActiveAndStandby(t *testing.T) {
+	dump := []byte(`{"active_name":"a","active_gid":4100,"standbys":[{"name":"b","gid":4200}]}`)
+	for name, want := range map[string]uint64{"a": 4100, "b": 4200} {
+		if gid, err := managerGID(dump, name); err != nil || gid != want {
+			t.Errorf("%s: %d %v", name, gid, err)
+		}
+	}
+	for _, dump := range []string{`{}`, `{"active_name":"a","active_gid":0}`, `[]`, `{"standbys":[{"name":"c","gid":1}]}`} {
+		if gid, err := managerGID([]byte(dump), "a"); err == nil {
+			t.Errorf("%s: %d", dump, gid)
+		}
+	}
+}
+
+// TestManagerDebugTargetIncarnation pins the process part of a MGR's
+// identity: its MgrMap GID and the inode and change time of its admin socket.
+// A paused or stopped MGR is not asked.
+func TestManagerDebugTargetIncarnation(t *testing.T) {
+	c, control := adminSocketCluster()
+	mgr := &debugLevelOSD{id: "mgr-container", state: container.State{Running: true, StartedAt: "start-1"}}
+	c.members.roster.manager("a").Container = mgr
+	// The canned control strips the first three words of every command.
+	control.Output["/var/run/ceph/ceph-mgr.a.asok"] = "1234@2026-11-05 10:42:01.123456789 +0000\n"
+	control.Output["mgr dump --format json"] = `{"active_name":"a","active_gid":4100}`
+	target, err := c.openDebugTarget(t.Context(), "mgr.a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := target.generation(t.Context())
+	want := "mgr-container@start-1/gid=4100/asok=1234@2026-11-05_10:42:01.123456789_+0000"
+	if err != nil || gen.identity != want || !gen.owned || !gen.running {
+		t.Fatalf("generation %+v %v calls %v", gen, err, control.Calls)
+	}
+	control.Output["mgr dump --format json"] = `{"active_name":"b","active_gid":4300}`
+	if _, err := target.generation(t.Context()); err == nil || !strings.Contains(err.Error(), "not in the MgrMap") {
+		t.Fatalf("a MGR missing from the MgrMap: %v", err)
+	}
+	calls := len(control.Calls)
+	mgr.state.Paused = true
+	if gen, err := target.generation(t.Context()); err != nil || gen.identity != "mgr-container@start-1" || !gen.paused || len(control.Calls) != calls {
+		t.Fatalf("paused generation %+v %v", gen, err)
+	}
+}
+
+// TestMDSDebugTargetRunsInItsContainer pins the MDS path: the admin socket is
+// reached in the MDS container, whose status names the native GID that the
+// incarnation holds, and a respawn with another GID is another incarnation.
+func TestMDSDebugTargetRunsInItsContainer(t *testing.T) {
+	requireLinuxGroups(t)
+	c, control, _, log := debugLevelNativeCluster(t)
+	mds := newNativeTarget(t, "mds-container", "tc-public")
+	gidFile := filepath.Join(t.TempDir(), "gid")
+	if err := os.WriteFile(gidFile, []byte("4321"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\ncase \"$*\" in *' status') echo \"{\\\"id\\\": $(cat '" + gidFile + "')}\";; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "ceph"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c.members.roster.setService("mds.fs-a", mds)
+	target, err := c.openDebugTarget(t.Context(), "mds.fs-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := target.generation(t.Context())
+	if err != nil || gen.identity != "mds-container@start-1/gid=4321" {
+		t.Fatalf("generation %+v %v", gen, err)
+	}
+	controlExecs, mdsExecs := control.execCount(), mds.execCount()
+	if settle, err := target.set(t.Context(), gen.identity, "debug_mds", "10"); settle != nil || err != nil || registered(c) != 0 {
+		t.Fatalf("set: %v", err)
+	}
+	if control.execCount() != controlExecs || mds.execCount() == mdsExecs {
+		t.Fatalf("the set ran in the control container: control %d mds %d", control.execCount(), mds.execCount())
+	}
+	if got := cephCalls(t, log); !strings.HasSuffix(got, "--admin-daemon /var/run/ceph/ceph-mds.fs-a.asok status\n--admin-daemon /var/run/ceph/ceph-mds.fs-a.asok config set debug_mds 10\n") {
+		t.Fatalf("ceph calls %q", got)
+	}
+	// ceph mds fail respawns the daemon in place with another GID.
+	if err := os.WriteFile(gidFile, []byte("4400"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var refusal *debugLevelRefusal
+	if _, err := target.set(t.Context(), gen.identity, "debug_mds", "1/5"); !errors.As(err, &refusal) || !refusal.changed || strings.Contains(cephCalls(t, log), "1/5") {
+		t.Fatalf("set into a respawned MDS: %v", err)
+	}
 }

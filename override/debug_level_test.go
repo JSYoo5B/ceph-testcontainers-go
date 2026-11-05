@@ -769,3 +769,44 @@ func TestDebugLevelEndedWorkloadContext(t *testing.T) {
 		t.Fatalf("restore with a fresh context: %v", err)
 	}
 }
+
+// TestDebugLevelPinsProcessIncarnation covers an MDS or MGR window: the
+// receipt names the native GID, a respawn in the same container is a changed
+// target that is not restored, and a paused daemon, which cannot report its
+// process, waits.
+func TestDebugLevelPinsProcessIncarnation(t *testing.T) {
+	newFake := func() *debugLevelFake {
+		fake := newDebugLevelFake("1/5")
+		fake.gen.identity = "mds0@start-1/gid=4100"
+		return fake
+	}
+	t.Run("respawned", func(t *testing.T) {
+		registry := newDebugWindows(t)
+		fake := newFake()
+		h, err := openDebugLevelFake(t.Context(), registry, fake, "10")
+		if err != nil || h.Receipt().GID != 4100 || h.Receipt().Generation != "mds0@start-1/gid=4100" {
+			t.Fatalf("open: %v %+v", err, h.Receipt())
+		}
+		// ceph mds fail: the same container, a new process with the default.
+		fake.edit(func(f *debugLevelFake) { f.gen.identity, f.value = "mds0@start-1/gid=4200", "1/5" })
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || len(fake.setCalls()) != 1 {
+			t.Fatalf("restore into a respawned daemon: %v %+v sets %v", err, h.Receipt(), fake.setCalls())
+		}
+	})
+	t.Run("paused, then resumed", func(t *testing.T) {
+		registry := newDebugWindows(t)
+		fake := newFake()
+		h, err := openDebugLevelFake(t.Context(), registry, fake, "10")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.edit(func(f *debugLevelFake) { f.gen.identity, f.gen.paused = "mds0@start-1", true })
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed {
+			t.Fatalf("restore of a paused daemon: %v %+v", err, h.Receipt())
+		}
+		fake.edit(func(f *debugLevelFake) { f.gen.identity, f.gen.paused = "mds0@start-1/gid=4100", false })
+		if err := h.Restore(t.Context()); err != nil || h.Receipt().State != DebugLevelRestored || fake.current() != "1/5" {
+			t.Fatalf("restore after resume: %v %+v", err, h.Receipt())
+		}
+	})
+}

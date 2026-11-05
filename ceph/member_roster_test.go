@@ -262,10 +262,12 @@ func TestMemberRosterMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 // memberRosterCallers pins every function that uses the roster or sits
 // between such a function and its lock (see stateCaller).
 var memberRosterCallers = map[string]stateCaller{
-	"Service":       {"hook", []string{"service"}},
-	"SetService":    {"hook", []string{"setService"}},
-	"DeleteService": {"hook", []string{"dropService"}},
-	"Services":      {"hook", []string{"serviceCopy"}},
+	"Service":         {"hook", []string{"service"}},
+	"openDebugTarget": {"takes", []string{"manager", "service"}},
+	"ownedLocked":     {"holds", []string{"service"}},
+	"SetService":      {"hook", []string{"setService"}},
+	"DeleteService":   {"hook", []string{"dropService"}},
+	"Services":        {"hook", []string{"serviceCopy"}},
 
 	"serviceContainers":  {"takes", []string{"sortedServices"}},
 	"Managers":           {"takes", []string{"eachManager", "managerCount"}},
