@@ -379,6 +379,11 @@ certificate it cannot verify as `untrusted`, apart from an S3 refusal.
 `TestRGWPublicSDKConsumer` builds its fixture through public entry points
 only and logs the Ceph version, images and S3 SDK version it ran with.
 
+`TestConsumerEvidenceIPCFixture` (`internal/integration`) builds the
+`internal/consumerevidence/ipcfixture` command with the `go` command that runs
+the test and drives it as a separate fixture process; that example imports no
+internal package, which `TestImportsOnlyPublicPackages` checks without Docker.
+
 ## Writing a new integration test
 
 ### Files

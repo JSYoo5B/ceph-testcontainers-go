@@ -426,6 +426,21 @@ caller-owned clients before `Terminate` on one ordered path, register
 `ceph.Run` instead of `testcontainers.CleanupContainer`. Each of its phases
 uses a fresh context bounded by its own timeout in `finalize.Config`.
 
+### A fixture without a testing.TB
+
+`finalize.TerminateOnCleanup` needs a `testing.TB`. A fixture that runs in a
+process of its own, driven by a test over IPC, has none. It ends the cluster
+itself: on the driver's failure signal, on the driver going away or on an
+interrupt, it runs one `diagnostics.Collect` with a fresh bounded context and
+saves the report, even one returned with an error, and then calls `Terminate`
+with another fresh bounded context. Keep the failure signal in the process's
+result whatever the collection and `Terminate` return, so that a complete
+report or a clean `Terminate` does not turn a failed run into a pass.
+`Finish` in `internal/consumerevidence` and its command `ipcfixture` show it
+with public calls only. Disable the reaper in that process
+(`TESTCONTAINERS_RYUK_DISABLED=true`) only when the driver checks the cleanup
+itself and removes what is left on failure.
+
 ## Handles returned with errors
 
 Many calls return a non-nil result together with an error:
