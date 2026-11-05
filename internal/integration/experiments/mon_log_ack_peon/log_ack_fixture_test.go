@@ -2,7 +2,7 @@
 
 //ci: timeout=20m job-timeout=30
 
-package integration_test
+package mon_log_ack_peon_test
 
 import (
 	"fmt"

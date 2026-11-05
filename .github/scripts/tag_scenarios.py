@@ -78,6 +78,9 @@ TEST_ARTIFACTS = "test-artifacts"
 # compiles the export data of every dependency.
 INTEGRATION_ROOT = "./internal/integration"
 INTEGRATION_HARNESS = ("internal/integration/harness",)
+# Experiment case packages: cross-build characterizations and upstream bug
+# reproducers, one package per case directory.
+EXPERIMENTS_ROOT = INTEGRATION_ROOT + "/experiments"
 DECLARATION_TIMEOUT_SECONDS = 600
 
 
@@ -847,15 +850,32 @@ def coverage_difference(required, actual):
             "extra": sorted((actual - required).elements(), key=key)}
 
 
+def experiment_case_directory(package):
+    """The directory of an experiment case package, or None.
+
+    Each case under internal/integration/experiments is one package that owns
+    its test files, case-local helpers and manual, so any change inside it is
+    a change to the case."""
+    if package.startswith(EXPERIMENTS_ROOT + "/"):
+        return package[len("./"):] + "/"
+    return None
+
+
 def select_changed_plan(plan, changed):
     """Keep only the batches whose own test files a change touched.
 
     This is the pull request scope of the categories that do not gate every
     merge. A change to a shared helper, a public package or anything else
-    selects nothing here; the periodic matrix runs those batches on main.
+    selects nothing here; the periodic matrix runs those batches on main. An
+    experiment case is selected by any change inside its directory.
     """
     changed = {path.strip() for path in changed if path.strip()}
-    selected = [profile for profile in plan["include"] if changed & set(profile["sources"])]
+
+    def touched(profile):
+        case = experiment_case_directory(profile.get("package", ""))
+        return bool(changed & set(profile["sources"])) or (case is not None and any(path.startswith(case) for path in changed))
+
+    selected = [profile for profile in plan["include"] if touched(profile)]
     return {**plan, "include": selected, "selected_scope": "changed",
             "changed_files": sorted(changed), "selected_profiles": len(selected)}
 

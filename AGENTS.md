@@ -158,7 +158,12 @@ the classes are in the [inventory](docs/contributing/test-double-inventory.md).
 An integration test goes in the test package of its area:
 `internal/integration/rbd`, `internal/integration/cephfs` or
 `internal/integration/rgw` for one service, `internal/integration` for the
-cluster and everything else. A helper stays in its test package while only
+cluster and everything else. The exception is a cross-build characterization
+or an upstream bug reproducer: it is an experiment case with its own package
+and `README.md` manual in `internal/integration/experiments/<service>_<case>`
+(see [Experiment cases](docs/contributing/testing.md#experiment-cases)).
+Ordinary fixture tests and fixture regressions stay in their area's package
+even when they run on several releases. A helper stays in its test package while only
 that package uses it; when a second package needs it, move it to
 `internal/integration/harness`, the non-test package that only test files
 import, and export it there. See

@@ -62,6 +62,29 @@ class TagPlannerTests(unittest.TestCase):
         selected = engine.select_changed_plan(plan, ["internal/integration/pool_cases_test.go"])
         self.assertEqual([profile["batch"] for profile in selected["include"]], ["pools"])
 
+    def test_changed_scope_selects_an_experiment_case_by_its_directory(self):
+        case = "internal/integration/experiments/rbd_case"
+        catalog = [fixture(path=case + "/case_integration_test.go", category="topology", batch="case", tests=("TestCase",)),
+                   fixture(path="internal/integration/experiments/other_case/other_integration_test.go", category="topology",
+                           batch="other", tests=("TestOther",)),
+                   fixture(path="internal/integration/plain_test.go", category="topology", batch="plain", tests=("TestPlain",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "topology")
+        self.assertEqual(engine.experiment_case_directory("./" + case), case + "/")
+        self.assertIsNone(engine.experiment_case_directory("./internal/integration"))
+        self.assertIsNone(engine.experiment_case_directory("./internal/integration/experiments"))
+        for changed, batches in {
+                # A case-local helper or the case manual selects only its case.
+                (case + "/case_integration_helpers_test.go",): ["case"],
+                (case + "/README.md",): ["case"],
+                (case + "/case_integration_test.go",): ["case"],
+                # A same-prefix sibling directory is another case.
+                ("internal/integration/experiments/rbd_case_two/x_test.go",): [],
+                # A helper outside a case keeps selecting nothing.
+                ("internal/integration/plain_integration_helpers_test.go", "internal/integration/harness/x.go"): []}.items():
+            with self.subTest(changed=changed):
+                selected = engine.select_changed_plan(plan, list(changed))
+                self.assertEqual([profile["batch"] for profile in selected["include"]], batches)
+
     def test_new_test_and_new_file_join_existing_batch_without_ci_edit(self):
         first = fixture(tests=("TestExisting", "TestNewInSameFile"))
         second = fixture(path="internal/integration/another_test.go", tests=("TestNewInNewFile",))

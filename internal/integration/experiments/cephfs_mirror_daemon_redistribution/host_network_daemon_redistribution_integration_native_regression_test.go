@@ -2,12 +2,14 @@
 
 //ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs
 
-package cephfs_test
+package cephfs_mirror_daemon_redistribution_test
 
 import (
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestHostNetworkCephFSMirrorDaemonTopology(t *testing.T) {
-	runCephFSMirrorDaemonTopology(t, true)
+	harness.RunCephFSMirrorDaemonTopology(t, true)
 }

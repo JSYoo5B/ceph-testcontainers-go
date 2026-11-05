@@ -30,8 +30,8 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}, opts...)...)
-	authority := newRGWTestAuthority(t)
-	original := authority.issue(t)
+	authority := harness.NewRGWTestAuthority(t)
+	original := authority.Issue(t)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "tls-replace", TLS: original, SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
@@ -99,15 +99,15 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	}
 
 	// A renewed leaf of the same CA: the SUT's trust stays valid.
-	renewed := authority.issue(t)
+	renewed := authority.Issue(t)
 	endpoint = replace(renewed, authority.Roots, authority.Roots)
 	if bytes.Equal(rgwLeaf(t, renewed), rgwLeaf(t, original)) {
 		t.Fatal("the renewed certificate is the original one")
 	}
 
 	// A leaf of another CA: the old trust is refused.
-	successor := newRGWTestAuthority(t)
-	moved := successor.issue(t)
+	successor := harness.NewRGWTestAuthority(t)
+	moved := successor.Issue(t)
 	endpoint = replace(moved, authority.Roots, successor.Roots)
 	var unknown x509.UnknownAuthorityError
 	if _, err := rgwDialTLS(t, endpoint, authority.Roots); !errors.As(err, &unknown) {

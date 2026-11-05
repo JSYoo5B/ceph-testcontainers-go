@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, or the deliberately failing `failure_archive` batch |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`) or the `failure_archive` proof |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
@@ -39,9 +39,10 @@ default [network mode](#network-modes):
   label, Ceph short runs only the batches that declaration selection selects
   (see [Opting in to declaration selection](#opting-in-to-declaration-selection));
 - of the `topology`, `multicluster` and `recovery` categories, only the
-  batches whose own test files the pull request changes. A change to a shared
-  helper or a public package selects none of them; Ceph periodic runs them on
-  `main`.
+  batches whose own test files the pull request changes, and the batches of an
+  [experiment case](testing.md#experiment-cases) any of whose files (helpers
+  and manual included) it changes. A change to a shared helper or a public
+  package selects none of them; Ceph periodic runs them on `main`.
 
 The `ci:full` label (adding it starts a run) and a release phase run every
 batch of those categories instead. Each `Plan` job's `tag-plan.json` artifact
@@ -660,7 +661,8 @@ preparation/eligibility outcomes rather than native passes.
 Discovery does not add historical patches to `SUPPORTED_RELEASES` or change
 support policy. Add a newly published patch to the discovery inventory to make
 it eligible for random selection; use `targeted` for an immediate check.
-The optional `discovery_schedule` characterization on 19.2.2/19.2.3 records
+The `discovery_schedule` characterization on 19.2.2/19.2.3
+([`rbd_schedule_remove`](../../internal/integration/experiments/rbd_schedule_remove/README.md)) records
 malformed schedule removal with empty and populated schedules for both
 `rbd_support` schedule handlers, trash purge and mirror snapshot, which share
 one removal path. It asserts the refusal with a schedule present and preserves
@@ -772,48 +774,33 @@ commit's scripts.
 ## Native regressions
 
 Optional (`ci_optional`) batches are outside every required check. Run one
-with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or for
-two of them through `Native regressions`.
+with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
+for the deliberately failing ones, through `Native regressions`, which runs
+the one batch its `batch` input names.
 
-`native_rgw_translation` holds strict RGW sync-policy cases (numeric pipe
-priority, ordinary-user source authorization) that unpatched Ceph 20.2.4 does
-not satisfy, so it is expected to fail on the published images. Use it to
-test a patched RGW image; an empty `rgw_image` uses the published role image,
-and the workflow never builds one:
+Four optional batches are [experiment cases](testing.md#experiment-cases)
+that reproduce an unpatched upstream defect and fail on the published images:
+`native_rgw_translation`
+([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
+`native_shuffle`
+([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
+`mon_log_ack`
+([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md))
+and `rbd_demote_restart`
+([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)).
+Each case's `README.md` gives its trigger, controls, command and the meaning
+of each outcome; [Experiment case tiers](#experiment-case-tiers) says when
+each one runs.
 
-```sh
-gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/ceph-rgw:patched
-```
-
-`mon_log_ack` (`TestMONLogAckThroughPeon`) requires every OSD's cluster log
-entries to be acknowledged in a three-MON cluster, through the leader and
-through a peon. It arranges sessions on both before measuring, restarting a
-MON if needed. The window is rejected if the leader, the election epoch or any
-OSD's session (MON and `global_id`) changed, or if an OSD's MonClient log
-shows a reset, reopen or hunt in it, even one that returns to the same MON. A
-peon-connected OSD passes only if its peon forwarded its MLog and routed the
-covering MLogAck back under that tid. On 20.2.4 the peon discards the MLogAck the leader routes back
-("don't have routed request"), so the peon-connected OSDs are never
-acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
+`native_rgw_translation` also tests a patched RGW image; an empty
+`rgw_image` uses the published role image, and the workflow never builds one:
 
 ```sh
-CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 go test -tags all,native_regression -run '^TestMONLogAckThroughPeon$' -v ./internal/integration
+gh workflow run "Native regressions" --ref main -f batch=native_rgw_translation \
+  -f rgw_image=ghcr.io/example/ceph-rgw:patched
 ```
 
-`rbd_demote_restart` (`TestRBDMirrorDemotionResumesAfterReceiverRestart`,
-bridge mode, netem helper) kills the RBD receiver with SIGKILL while it copies
-a planned demotion snapshot through a rate-limited source OSD path, then
-restarts the same container. It requires the same demotion copy to complete,
-the destination image whose demoted primary was removed meanwhile to be
-removed too, exact bytes, non-forced promotion and replication back. Squid
-19.2.3 never resumes the copy. 19.2.4, 19.2.5, 20.2.4 and
-21.2.0 resume and complete it, but the object numbered
-`last_copied_object_number` at the kill keeps the previous snapshot's bytes,
-so the test fails at the exact-bytes check on every published image:
-
-```sh
-CEPH_TEST_IMAGE=<aggregate> go test -tags all,native_regression -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' -v ./internal/integration/rbd
-```
+The other optional batches are not experiment cases:
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
@@ -837,6 +824,42 @@ has been run on Docker Desktop, whose kernel has NBD built in.
 
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
+
+### Experiment case tiers
+
+An experiment case runs where its cost and determinism allow, through the
+existing triggers only. Durations are one native run of the parent test on a
+Linux amd64 Docker Engine host (12 cores) with warm images, Tentacle 20.2.4
+unless noted; the batch budget is the `//ci:` timeout.
+
+| Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
+| `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | cheap, deterministic characterization of fixed defects | 104 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `targeted` |
+| `rbd_encrypted_clone_flatten` (`topology/rbd_encrypted_clone_flatten`) | cheap, deterministic characterization | 75 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rbd_encrypted_clone_flatten [on <release>]` | `rotate` may draw it | `targeted` |
+| `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
+| `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
+| `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
+| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
+| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
+
+- A cheap deterministic case is a required batch of a non-`short` category,
+  so a pull request runs it only when it changes a file of the case's
+  directory (see [Pull request scope](#pull-request-scope)), and periodic runs
+  keep it covered on `main`. A change to a public package or the harness
+  selects none of these batches; the fixture behaviour they use is covered
+  by the ordinary batches of its package (`rbd_schedule_remove` calls no
+  fixture API beyond starting the cluster).
+- A case that fails on the published images (an unpatched upstream defect)
+  stays an optional `native_regression` batch. It runs only when someone asks
+  for it, never gates a pull request or `main`, and is never drawn by
+  periodic sampling, so a red result is never mistaken for a regression.
+  `Native regressions` runs one chosen batch; `/ci run <batch> on <release>`
+  runs it on a supported release on a pull request's head.
+- An expensive case that passes on the published images would be scheduled
+  through the periodic `discovery` selection (`periodic_selection.py`), not
+  through pull requests. No current case is in that tier.
 
 ## Reading a failing batch
 
@@ -1086,7 +1109,7 @@ subtests (an ordinary assertion and a finalization check) through the real
 restore receipts. Run it only on explicit request:
 
 ```sh
-gh workflow run native-regressions.yml --ref <branch> -f failure_archive=true
+gh workflow run native-regressions.yml --ref <branch> -f batch=failure_archive
 ```
 
 The native step and the workflow must fail. Then download the attempt's

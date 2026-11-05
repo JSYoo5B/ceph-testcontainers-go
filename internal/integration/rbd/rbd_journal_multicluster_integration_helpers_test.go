@@ -91,7 +91,7 @@ func runMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontainer
 	// Writers are closed before demotion. Native promotion retries while the
 	// journal receiver consumes the demotion marker, and never uses --force.
 	harness.RBDScenarioCommand(t, ctx, forward.SourceRBD, "mirror", "image", "demote", image)
-	rbdMultiClusterPromote(t, ctx, destinationClient, image)
+	harness.RBDMultiClusterPromote(t, ctx, destinationClient, image)
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, false)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, true)
 	rbdScenarioStop(t, ctx, forward)
@@ -103,7 +103,7 @@ func runMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontainer
 	harness.RBDJournalWaitBytes(t, ctx, sourceClient, sourceStatus.FSID, pool, name, onB)
 
 	harness.RBDScenarioCommand(t, ctx, reverse.SourceRBD, "mirror", "image", "demote", image)
-	rbdMultiClusterPromote(t, ctx, sourceClient, image)
+	harness.RBDMultiClusterPromote(t, ctx, sourceClient, image)
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, true)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, false)
 	harness.RBDJournalRead(t, ctx, sourceClient, sourceStatus.FSID, pool, name, onB)

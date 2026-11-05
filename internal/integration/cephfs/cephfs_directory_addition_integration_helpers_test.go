@@ -187,7 +187,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	if err != nil || receiver == nil || len(mirror.Daemons()) != 1 || customizers.Load() != 2 {
 		t.Fatal("registered zero-inventory intent did not permit ordinary new receiver", err)
 	}
-	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{seed, foreign, added}, 1)
+	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{seed, foreign, added}, 1)
 	backlogStatus := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, added, backlog)
 	if backlogStatus.DaemonName != receiver.DaemonName || backlogStatus.InstanceID != owners[added] {
 		t.Fatal("backlog public replay attributed to another receiver")

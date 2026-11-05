@@ -2,7 +2,7 @@
 
 //ci: timeout=60m job-timeout=75 image-roles=essential,client,rgw
 
-package rgw_test
+package rgw_sync_policy_translation_test
 
 import (
 	"testing"

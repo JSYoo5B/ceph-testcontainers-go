@@ -119,3 +119,23 @@ func RBDNamespaceMappingUnsupported(t *testing.T, ctx context.Context, cluster *
 	t.Helper()
 	return !CapabilitySupported(t, ctx, cluster, CapabilityRBDNamespaceMapping)
 }
+
+func VerifyRBDBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, expected []byte) {
+	t.Helper()
+	const path = "/tmp/rbd-result"
+	// The export command refuses to overwrite an existing local destination.
+	ExecCommand(t, ctx, client, "rm", "-f", path)
+	ExecCommand(t, ctx, client, "rbd", "export", image, path, "--no-progress")
+	r, err := client.CopyFileFromContainer(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, expected) {
+		t.Fatalf("%s payload changed: got %d bytes, want %d bytes", image, len(actual), len(expected))
+	}
+}

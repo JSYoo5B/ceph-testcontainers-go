@@ -5,10 +5,7 @@ package rgw_test
 import (
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -17,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
 func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup) {
@@ -217,28 +215,13 @@ func rgwScenarioUser(t *testing.T, ctx context.Context, admin func(context.Conte
 	return template
 }
 
-func rgwScenarioRequest(ctx context.Context, client harness.S3HTTPClient, method, path string) (int, []byte, error) {
-	request, err := http.NewRequestWithContext(ctx, method, client.Endpoint+path, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-	client.Sign(request, nil, time.Now().UTC())
-	response, err := client.HTTP.Do(request)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	body, err := io.ReadAll(response.Body)
-	return response.StatusCode, body, err
-}
-
 func waitRGWScenarioResponse(t *testing.T, ctx context.Context, client harness.S3HTTPClient, method, path string, expected int) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	var last string
 	for {
-		status, body, err := rgwScenarioRequest(waitCtx, client, method, path)
+		status, body, err := harness.RGWScenarioRequest(waitCtx, client, method, path)
 		if err == nil && status == expected {
 			return
 		}
@@ -246,34 +229,6 @@ func waitRGWScenarioResponse(t *testing.T, ctx context.Context, client harness.S
 		select {
 		case <-waitCtx.Done():
 			t.Fatalf("wait for RGW %s %s status=%d: %s", method, path, expected, last)
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-type rgwAbsentObject struct {
-	client harness.S3HTTPClient
-	path   string
-}
-
-func requireRGWObjectsAbsent(t *testing.T, ctx context.Context, duration time.Duration, objects ...rgwAbsentObject) {
-	t.Helper()
-	deadline := time.Now().Add(duration)
-	for time.Now().Before(deadline) {
-		for _, object := range objects {
-			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-			status, body, err := rgwScenarioRequest(attempt, object.client, http.MethodGet, object.path)
-			cancel()
-			var s3Error struct {
-				Code string `xml:"Code"`
-			}
-			if err != nil || status != http.StatusNotFound || xml.Unmarshal(body, &s3Error) != nil || s3Error.Code != "NoSuchKey" {
-				t.Fatalf("excluded RGW object %s must remain NoSuchKey: status=%d error=%v code=%s", object.path, status, err, s3Error.Code)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
 		case <-time.After(time.Second):
 		}
 	}

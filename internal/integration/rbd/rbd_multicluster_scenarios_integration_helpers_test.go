@@ -3,46 +3,16 @@
 package rbd_test
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 )
-
-func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Mirror {
-	t.Helper()
-	image := harness.StaticFacts(source).Images.RBDAux
-	link, err := rbdmirror.Run(ctx, harness.NativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{
-		Source: source, Destination: destination, Pool: pool,
-		SourceSite: sourceSite, DestinationSite: destinationSite,
-	}))
-	if link != nil {
-		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if t.Failed() && link.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, link.Container)
-			}
-			if err := link.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate RBD scenario link: %v", err)
-			}
-		})
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return link
-}
 
 func rbdScenarioSeed(t *testing.T, ctx context.Context, client testcontainers.Container, image string, seed int) []byte {
 	t.Helper()
@@ -60,41 +30,6 @@ func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbdmirror.Mirror) 
 	grace := 3 * time.Second
 	if err := link.Stop(ctx, &grace); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func rbdScenarioWaitBytes(t *testing.T, parent context.Context, client testcontainers.Container, image string, expected []byte) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
-	defer cancel()
-	var last string
-	for {
-		attempt, stop := context.WithTimeout(ctx, 20*time.Second)
-		_, _, _ = harness.RBDMultiClusterExec(attempt, client, "rm", "-f", "/tmp/rbd-scenario-result")
-		code, out, err := harness.RBDMultiClusterExec(attempt, client, "rbd", "export", image, "/tmp/rbd-scenario-result", "--no-progress")
-		if err == nil && code == 0 {
-			reader, readErr := client.CopyFileFromContainer(attempt, "/tmp/rbd-scenario-result")
-			if readErr == nil {
-				actual, readErr := io.ReadAll(reader)
-				_ = reader.Close()
-				if readErr == nil && bytes.Equal(actual, expected) {
-					t.Logf("RBD %s complete bytes verified: sha256=%x", image, sha256.Sum256(expected))
-					stop()
-					return
-				}
-				last = fmt.Sprintf("read error=%v bytes=%d sha256=%x", readErr, len(actual), sha256.Sum256(actual))
-			} else {
-				last = readErr.Error()
-			}
-		} else {
-			last = fmt.Sprintf("export exit=%d error=%v output=%s", code, err, out)
-		}
-		stop()
-		select {
-		case <-ctx.Done():
-			t.Fatalf("wait for RBD %s data: %v; %s", image, ctx.Err(), last)
-		case <-time.After(2 * time.Second):
-		}
 	}
 }
 

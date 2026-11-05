@@ -35,8 +35,8 @@ func testRGWPublicSDKConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, unrelated := newRGWTestAuthority(t), newRGWTestAuthority(t)
-	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "sdk", TLS: authority.issue(t)})
+	authority, unrelated := harness.NewRGWTestAuthority(t), harness.NewRGWTestAuthority(t)
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "sdk", TLS: authority.Issue(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func testRGWPublicSDKConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trusted, untrusted := authority.file(t), unrelated.file(t)
+	trusted, untrusted := authority.File(t), unrelated.File(t)
 	probe := buildS3Probe(t, ctx, endpoint, gateway.Region)
 	const bucket, object = "tc-sdk-consumer", "data"
 	payload := "exact bytes an SDK consumer wrote over verified HTTPS"
@@ -74,15 +74,15 @@ func testRGWPublicSDKConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	successor := newRGWTestAuthority(t)
-	if err := gateway.ReplaceTLS(ctx, *successor.issue(t)); err != nil {
+	successor := harness.NewRGWTestAuthority(t)
+	if err := gateway.ReplaceTLS(ctx, *successor.Issue(t)); err != nil {
 		t.Fatal(err)
 	}
 	endpoint, err = gateway.S3SecureEndpoint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := run(endpoint, successor.file(t), gateway.SecretKey, "get", ""); result.Outcome != "accepted" || result.SHA256 != sha256Hex([]byte(payload)) {
+	if result := run(endpoint, successor.File(t), gateway.SecretKey, "get", ""); result.Outcome != "accepted" || result.SHA256 != sha256Hex([]byte(payload)) {
 		t.Fatalf("SDK that trusts the new CA after the replacement: %+v", result)
 	}
 	if result := run(endpoint, trusted, gateway.SecretKey, "get", ""); result.Outcome != "untrusted" {

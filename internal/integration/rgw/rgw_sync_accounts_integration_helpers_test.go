@@ -7,8 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"io"
 	"net/http"
 	"os"
@@ -21,6 +19,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -119,14 +118,14 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitRGWTranslationPolicyReady(t, ctx, link, selected)
+	harness.WaitRGWTranslationPolicyReady(t, ctx, link, selected)
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
 	payload := bytes.Repeat([]byte("creation-owned account root native user-mode replication\n"), 1024)
 	primary.Request(t, ctx, http.MethodPut, input+"/replica/initial", payload, http.StatusOK)
-	waitOwnedSyncObject(t, ctx, secondary, output+"/replica/initial", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
+	harness.WaitOwnedSyncObject(t, ctx, secondary, output+"/replica/initial", http.StatusOK, payload)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
 	outputIdentity := captureRGWSyncAccountBucket(t, ctx, link.Source, output, owned.ID(), "")
 	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, owned.ID(), outputIdentity)
 	waitRGWSyncBucketPolicy(t, ctx, primary, output, nil)
@@ -146,19 +145,19 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if got := secondary.Request(t, ctx, http.MethodGet, output+"/client-control", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("replication-only denial changed destination S3 read/write")
 	}
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{secondary, output + "/replica/denied"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: secondary, Path: output + "/replica/denied"})
 	// Native user-mode permission denial skips the entry and advances its
 	// checkpoint. Require that progress while Deny still applies so a stalled
 	// replication worker cannot satisfy the negative test merely by doing nothing.
-	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
-	requireRGWObjectsAbsent(t, ctx, time.Second, rgwAbsentObject{secondary, output + "/replica/denied"})
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
+	harness.RequireRGWObjectsAbsent(t, ctx, time.Second, harness.RGWAbsentObject{Client: secondary, Path: output + "/replica/denied"})
 	captureRGWSyncAccountBucket(t, ctx, link.Source, output, owned.ID(), outputIdentity)
 	captureRGWSyncAccountBucket(t, ctx, link.Destination, output, owned.ID(), outputIdentity)
 	harness.S3FeatureRequest(t, ctx, primary, http.MethodDelete, output+"?policy", nil, nil, http.StatusNoContent)
 	waitRGWSyncBucketPolicy(t, ctx, secondary, output, nil)
 	primary.Request(t, ctx, http.MethodPut, input+"/replica/after-policy-clear", payload, http.StatusOK)
-	waitOwnedSyncObject(t, ctx, secondary, output+"/replica/after-policy-clear", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
+	harness.WaitOwnedSyncObject(t, ctx, secondary, output+"/replica/after-policy-clear", http.StatusOK, payload)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
 	if err := selected.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -285,13 +284,13 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		attempt, cancel := context.WithTimeout(inspect, 20*time.Second)
 		state, err := group.BucketSyncStatus(attempt, pipe.ID, "source", "destination")
 		cancel()
-		t.Logf("cross-tenant bucket diagnostic realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, rgwSyncDiagnosticError(err))
+		t.Logf("cross-tenant bucket diagnostic realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, harness.RGWSyncDiagnosticError(err))
 		rgwCrossTenantObjectStatDiagnostic(t, inspect, link.Destination, state.DestinationBucket)
 		const path = "/system_beta:tc-system-tenant-output/system/selected"
 		rgwCrossTenantS3Diagnostic(t, inspect, "alpha", secondaryAlpha, path)
 		rgwCrossTenantS3Diagnostic(t, inspect, "beta", secondaryBeta, path)
 	})
-	waitRGWTranslationPolicyReady(t, ctx, link, group)
+	harness.WaitRGWTranslationPolicyReady(t, ctx, link, group)
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
@@ -299,11 +298,11 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 	primaryAlpha.Request(t, ctx, http.MethodPut, input+"/system/selected", payload, http.StatusOK)
 	// System mode preserves the source object's ACL when no owner translation
 	// is requested. Address the destination tenant explicitly as that owner.
-	waitOwnedSyncObject(t, ctx, secondaryAlpha, "/system_beta:tc-system-tenant-output/system/selected", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, group, pipe.ID)
+	harness.WaitOwnedSyncObject(t, ctx, secondaryAlpha, "/system_beta:tc-system-tenant-output/system/selected", http.StatusOK, payload)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, group, pipe.ID)
 	secondaryBeta.Request(t, ctx, http.MethodHead, output, nil, http.StatusOK)
 	primaryAlpha.Request(t, ctx, http.MethodPut, input+"/private/excluded", payload, http.StatusOK)
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{secondaryBeta, output + "/private/excluded"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: secondaryBeta, Path: output + "/private/excluded"})
 	if err := group.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -311,21 +310,6 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		t.Fatal("cross-tenant system policy removal changed previous replica")
 	}
 	t.Log("system mode with no principal/owner translation copied exact bytes between captured buckets in different tenants and retained source object access; another prefix remained absent")
-}
-
-// Diagnostic failures never replace the test's original failure. Native output,
-// credentials, sync markers and S3 error bodies are deliberately not logged.
-func rgwSyncDiagnosticError(err error) string {
-	switch {
-	case err == nil:
-		return "none"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	default:
-		return "read_failed_redacted"
-	}
 }
 
 func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, identity multisite.SyncBucketIdentity) {
@@ -343,7 +327,7 @@ func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gatew
 		err = attempt.Err()
 	}
 	if err != nil {
-		t.Logf("cross-tenant native object stat scope=%s command_success=false object_exists=unconfirmed status_error=%s", scope, rgwSyncDiagnosticError(err))
+		t.Logf("cross-tenant native object stat scope=%s command_success=false object_exists=unconfirmed status_error=%s", scope, harness.RGWSyncDiagnosticError(err))
 		return
 	}
 	// Native v20.2.4 opens its first JSON section as object_metadata. The
@@ -367,13 +351,13 @@ func rgwCrossTenantS3Diagnostic(t *testing.T, ctx context.Context, principal str
 	defer cancel()
 	request, err := http.NewRequestWithContext(attempt, http.MethodGet, client.Endpoint+path, nil)
 	if err != nil {
-		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, rgwSyncDiagnosticError(err))
+		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, harness.RGWSyncDiagnosticError(err))
 		return
 	}
 	client.Sign(request, nil, time.Now().UTC())
 	response, err := client.HTTP.Do(request)
 	if err != nil {
-		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, rgwSyncDiagnosticError(err))
+		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, harness.RGWSyncDiagnosticError(err))
 		return
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -396,5 +380,5 @@ func rgwCrossTenantS3Diagnostic(t *testing.T, ctx context.Context, principal str
 			}
 		}
 	}
-	t.Logf("cross-tenant S3 diagnostic principal=%s status=%d code=%s response_bytes=%d status_error=%s", principal, response.StatusCode, code, len(body), rgwSyncDiagnosticError(readErr))
+	t.Logf("cross-tenant S3 diagnostic principal=%s status=%d code=%s response_bytes=%d status_error=%s", principal, response.StatusCode, code, len(body), harness.RGWSyncDiagnosticError(readErr))
 }

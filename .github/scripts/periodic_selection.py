@@ -227,7 +227,7 @@ def sample_plan(catalog, source_sha, mode, now, release='', profiles='', tests='
     for version in versions:
         chosen = list(entries)
         if mode == 'discovery' and version in ('19.2.2','19.2.3'):
-            p = next(p for p in optional if p['batch'] == 'discovery_schedule')
+            p = next(p for p in required if p['batch'] == 'discovery_schedule')
             chosen.append(selected_entry(catalog,p,['TestDiscoveryTrashScheduleBoundary']))
         if mode == 'discovery' and version in ('19.2.5','19.2.6','19.2.7'):
             name = 'TestMultiClusterRGWMultisite'

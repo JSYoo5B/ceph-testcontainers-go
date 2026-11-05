@@ -33,7 +33,7 @@ func TestRGWNativeTLS(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, _ := harness.NewServiceCluster(t, opts...)
-			material, roots := rgwTestCertificate(t)
+			material, roots := harness.RGWTestCertificate(t)
 			gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "tls", TLS: material, SkipUserCreation: true})
 			if err != nil {
 				t.Fatal(err)

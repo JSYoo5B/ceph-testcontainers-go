@@ -832,10 +832,21 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotRegex(caller, r"(?m)^    needs:")
         self.assertEqual(scalar(caller, "uses"), "./.github/workflows/tagged-runtime.yml")
         self.assertEqual(scalar(caller, "category"), "optional")
-        self.assertEqual(scalar(caller, "optional_batch"),
-                         "${{ inputs.failure_archive && 'failure_archive' || 'native_rgw_translation' }}")
-        self.assertIn("      failure_archive:\n", self.workflows["native-regressions.yml"])
-        self.assertIn("        type: boolean\n        default: false\n", self.workflows["native-regressions.yml"])
+        self.assertEqual(scalar(caller, "optional_batch"), "${{ inputs.batch }}")
+        workflow = self.workflows["native-regressions.yml"]
+        self.assertIn("      batch:\n", workflow)
+        self.assertIn("        type: choice\n        default: native_rgw_translation\n", workflow)
+        choices = re.findall(r"(?m)^          - ([a-z0-9_]+)$", workflow)
+        self.assertEqual(sorted(choices), ["failure_archive", "mon_log_ack", "native_rgw_translation",
+                                           "native_shuffle", "rbd_demote_restart"])
+        # Every choice is an optional profile that no required plan selects;
+        # the reproducers among them compile only with native_regression.
+        for choice in choices:
+            selected = engine.select_optional_plan(self.optional, choice)["include"]
+            self.assertTrue(selected, choice)
+            self.assertFalse(any(profile["batch"] == choice for profile in self.plan["include"]), choice)
+            if choice != "failure_archive":
+                self.assertTrue(all("native_regression" in profile["tags"].split(",") for profile in selected), choice)
         batch = "native_rgw_translation"
         profiles = [profile for profile in self.optional["include"] if profile["batch"] == batch]
         self.assertEqual(len(profiles), 1)

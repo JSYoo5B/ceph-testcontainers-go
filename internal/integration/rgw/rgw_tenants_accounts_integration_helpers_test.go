@@ -76,7 +76,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	// Explicit tenant paths must be signed with their escaped colon and denied
 	// for another tenant's ordinary identity, rather than fail authentication.
 	denied := rgwTenantRequest(t, ctx, clients[2], http.MethodGet, "/tenant_alpha:"+strings.TrimPrefix(sharedBucket, "/")+"/object", nil, http.StatusForbidden)
-	requireRGWUserPlacementDenied(t, denied)
+	harness.RequireRGWUserPlacementDenied(t, denied)
 	if _, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: localID, Tenant: "tenant_alpha"}); err == nil {
 		t.Fatal("existing tenant UID could be overwritten")
 	}

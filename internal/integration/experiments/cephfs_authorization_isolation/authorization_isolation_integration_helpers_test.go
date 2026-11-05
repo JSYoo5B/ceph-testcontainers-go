@@ -1,13 +1,10 @@
 //go:build all || (integration && features)
 
-package cephfs_test
+package cephfs_authorization_isolation_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,26 +17,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const (
-	isolationFSA = "iso-a"
-	isolationFSB = "iso-b"
-)
-
-func testCephFSMultiFilesystemIsolation(t *testing.T) {
+func testCephFSAuthorizationIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	image, _ := harness.IntegrationImages(t)
 	cluster, admin := harness.NewServiceCluster(t,
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)),
-		cephfs.WithFilesystems(cephfs.Config{Name: isolationFSA},
-			cephfs.Config{Name: isolationFSB, StandbyMDS: 1, StandbyReplay: true}))
+		cephfs.WithFilesystems(cephfs.Config{Name: harness.CephFSIsolationFSA},
+			cephfs.Config{Name: harness.CephFSIsolationFSB, StandbyMDS: 1, StandbyReplay: true}))
 	var fsA, fsB *cephfs.Filesystem
 	for _, fs := range cephfs.Filesystems(cluster) {
 		switch fs.FilesystemName {
-		case isolationFSA:
+		case harness.CephFSIsolationFSA:
 			fsA = fs
-		case isolationFSB:
+		case harness.CephFSIsolationFSB:
 			fsB = fs
 		}
 	}
@@ -59,12 +51,11 @@ func testCephFSMultiFilesystemIsolation(t *testing.T) {
 		}
 		return client
 	}
-	isolationJSON(t, ctx, admin, isolationSeed, isolationFSA, isolationFSB)
+	harness.CephFSIsolationJSON(t, ctx, admin, harness.CephFSIsolationSeed, harness.CephFSIsolationFSA, harness.CephFSIsolationFSB)
 
 	t.Run("caps per filesystem", func(t *testing.T) { testIsolationFilesystemCaps(t, ctx, cluster, newClient) })
 	t.Run("snapshot of a deleted directory", func(t *testing.T) { testIsolationDeletedDirectorySnapshot(t, ctx, cluster, admin, newClient) })
 	t.Run("same-named subvolumes", func(t *testing.T) { testIsolationSameNamedSubvolumes(t, ctx, fsA, admin, newClient) })
-	t.Run("survivor of a removal", func(t *testing.T) { testIsolationSurvivor(t, ctx, cluster, admin, fsA, fsB) })
 }
 
 // testIsolationFilesystemCaps checks that MDS caps with one clause per
@@ -73,7 +64,7 @@ func testCephFSMultiFilesystemIsolation(t *testing.T) {
 // Each probe is a new libcephfs client, which authenticates with the current
 // caps.
 func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *ceph.Container, newClient func(*ceph.ClientConfig) testcontainers.Container) {
-	osd := "allow rw tag cephfs data=" + isolationFSA + ", allow rw tag cephfs data=" + isolationFSB
+	osd := "allow rw tag cephfs data=" + harness.CephFSIsolationFSA + ", allow rw tag cephfs data=" + harness.CephFSIsolationFSB
 	clause := func(access, fs string) string { return "allow " + access + " fsname=" + fs }
 	variants := []struct {
 		mds            string
@@ -81,10 +72,10 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 		readOnlyFS     string
 		swappedClauses bool
 	}{
-		{clause("r", isolationFSA) + ", " + clause("rw", isolationFSB), isolationFSB, isolationFSA, false},
-		{clause("rw", isolationFSB) + ", " + clause("r", isolationFSA), isolationFSB, isolationFSA, true},
-		{clause("rw", isolationFSA) + ", " + clause("r", isolationFSB), isolationFSA, isolationFSB, false},
-		{clause("r", isolationFSB) + ", " + clause("rw", isolationFSA), isolationFSA, isolationFSB, true},
+		{clause("r", harness.CephFSIsolationFSA) + ", " + clause("rw", harness.CephFSIsolationFSB), harness.CephFSIsolationFSB, harness.CephFSIsolationFSA, false},
+		{clause("rw", harness.CephFSIsolationFSB) + ", " + clause("r", harness.CephFSIsolationFSA), harness.CephFSIsolationFSB, harness.CephFSIsolationFSA, true},
+		{clause("rw", harness.CephFSIsolationFSA) + ", " + clause("r", harness.CephFSIsolationFSB), harness.CephFSIsolationFSA, harness.CephFSIsolationFSB, false},
+		{clause("r", harness.CephFSIsolationFSB) + ", " + clause("rw", harness.CephFSIsolationFSA), harness.CephFSIsolationFSA, harness.CephFSIsolationFSB, true},
 	}
 	identity, err := cluster.CreateClient(ctx, "iso-multi", ceph.ClientCaps{Mon: "allow r", MDS: variants[0].mds, OSD: osd})
 	if err != nil {
@@ -102,7 +93,7 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 			t.Fatalf("native MDS caps=%q error=%v, want %q", caps.MDS, err, variant.mds)
 		}
 		for _, fs := range []string{variant.readOnlyFS, variant.writableFS} {
-			result := isolationJSON(t, ctx, client, isolationCapProbe, identity.User(), identity.KeyringPath(), fs, fmt.Sprintf("v%d", i))
+			result := harness.CephFSIsolationJSON(t, ctx, client, isolationCapProbe, identity.User(), identity.KeyringPath(), fs, fmt.Sprintf("v%d", i))
 			writable := fs == variant.writableFS
 			if result["mount"] != "ok" || result["read"] != "seed-of-"+fs {
 				t.Fatalf("caps %q on %s: %v", variant.mds, fs, result)
@@ -114,13 +105,13 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 			}
 		}
 	}
-	only, err := cluster.CreateClient(ctx, "iso-only-a", ceph.ClientCaps{Mon: "allow r", MDS: clause("rw", isolationFSA), OSD: "allow rw tag cephfs data=" + isolationFSA})
+	only, err := cluster.CreateClient(ctx, "iso-only-a", ceph.ClientCaps{Mon: "allow r", MDS: clause("rw", harness.CephFSIsolationFSA), OSD: "allow rw tag cephfs data=" + harness.CephFSIsolationFSA})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := isolationJSON(t, ctx, newClient(only), isolationCapProbe, only.User(), only.KeyringPath(), isolationFSB, "only")
+	result := harness.CephFSIsolationJSON(t, ctx, newClient(only), isolationCapProbe, only.User(), only.KeyringPath(), harness.CephFSIsolationFSB, "only")
 	if result["mount"] != "EPERM" {
-		t.Fatalf("a principal without an %s clause mounted it: %v", isolationFSB, result)
+		t.Fatalf("a principal without an %s clause mounted it: %v", harness.CephFSIsolationFSB, result)
 	}
 	for _, c := range []*ceph.ClientConfig{identity, only} {
 		if err := c.Delete(ctx); err != nil {
@@ -135,14 +126,14 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 // under the principal's path.
 func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cluster *ceph.Container, admin testcontainers.Container, newClient func(*ceph.ClientConfig) testcontainers.Container) {
 	identity, err := cluster.CreateClient(ctx, "iso-dir1", ceph.ClientCaps{Mon: "allow r",
-		MDS: "allow rw fsname=" + isolationFSB + " path=/dir1", OSD: "allow rw tag cephfs data=" + isolationFSB})
+		MDS: "allow rw fsname=" + harness.CephFSIsolationFSB + " path=/dir1", OSD: "allow rw tag cephfs data=" + harness.CephFSIsolationFSB})
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := newClient(identity)
-	isolationJSON(t, ctx, admin, isolationSnapshotSeed, isolationFSB)
-	before := isolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), isolationFSB, "before")
-	after := isolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), isolationFSB, "delete")
+	harness.CephFSIsolationJSON(t, ctx, admin, isolationSnapshotSeed, harness.CephFSIsolationFSB)
+	before := harness.CephFSIsolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), harness.CephFSIsolationFSB, "before")
+	after := harness.CephFSIsolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), harness.CephFSIsolationFSB, "delete")
 	for phase, result := range map[string]map[string]any{"before deletion": before, "after deletion": after} {
 		if result["snapshot read"] != "dir1-child-bytes" || result["snapshot size"] != float64(len("dir1-child-bytes")) ||
 			result["mount /"] != "EPERM" || result["mount /dir2"] != "EPERM" {
@@ -152,7 +143,7 @@ func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cl
 	if before["live read"] != "dir1-child-bytes" || after["deleted"] != "ok" || after["live read"] != "ENOENT" {
 		t.Fatalf("the live child was not readable before or present after its deletion: before=%v after=%v", before, after)
 	}
-	isolationJSON(t, ctx, admin, isolationSnapshotCleanup, isolationFSB)
+	harness.CephFSIsolationJSON(t, ctx, admin, isolationSnapshotCleanup, harness.CephFSIsolationFSB)
 	if err := identity.Delete(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +177,7 @@ func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cep
 		if err != nil {
 			t.Fatal(err)
 		}
-		object := isolationJSON(t, ctx, admin, isolationTenantSeed, fs.FilesystemName, volume.Path, "bytes-of-"+groupName)["object"]
+		object := harness.CephFSIsolationJSON(t, ctx, admin, isolationTenantSeed, fs.FilesystemName, volume.Path, "bytes-of-"+groupName)["object"]
 		tenants = append(tenants, &tenant{volume: volume, info: info, reader: reader, object: fmt.Sprint(object)})
 	}
 	a, b := tenants[0], tenants[1]
@@ -200,7 +191,7 @@ func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cep
 		if err != nil || !strings.Contains(caps.OSD, "namespace="+own.info.PoolNamespace) || strings.Contains(caps.OSD, "namespace="+other.info.PoolNamespace) {
 			t.Fatalf("reader of %s has OSD caps %q (error %v)", own.volume.GroupName, caps.OSD, err)
 		}
-		result := isolationJSON(t, ctx, newClient(identity), isolationTenantProbe, identity.User(), identity.KeyringPath(), fs.FilesystemName,
+		result := harness.CephFSIsolationJSON(t, ctx, newClient(identity), isolationTenantProbe, identity.User(), identity.KeyringPath(), fs.FilesystemName,
 			own.volume.Path, own.info.DataPool, own.info.PoolNamespace, own.object, other.info.PoolNamespace, other.object)
 		if result["own file"] != "bytes-of-"+own.volume.GroupName || result["own object"] != "bytes-of-"+own.volume.GroupName || result["other object"] != "EPERM" {
 			t.Fatalf("reader of %s: %v", own.volume.GroupName, result)
@@ -219,177 +210,9 @@ func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cep
 	}
 }
 
-// testIsolationSurvivor removes iso-a and checks iso-b right after Remove
-// returns: its FSMap ID, one active and one standby-replay owned daemon, the
-// native join_fscid of both, and its bytes. Some monitors clear the
-// join_fscid of every remaining daemon when a filesystem is removed, until
-// each daemon's next beacon; if the standby-replay daemon's beacon comes
-// first, the monitor fails the active over to it for its better affinity. The
-// FSMap epochs written by the removal show whether this monitor cleared the
-// affinity. Without the clear, the active and standby-replay GIDs must be the
-// ones before the removal; with it, the failover is native, and iso-b must
-// come back ready with the same topology.
-func testIsolationSurvivor(t *testing.T, ctx context.Context, cluster *ceph.Container, admin testcontainers.Container, fsA, fsB *cephfs.Filesystem) {
-	if err := fsB.WaitReady(ctx); err != nil {
-		t.Fatal(err)
-	}
-	before, err := fsB.MDSStatus(ctx)
-	if err != nil || len(before.Active) != 1 || len(before.StandbyReplay) != 1 {
-		t.Fatalf("%s before removal: %+v error=%v", isolationFSB, before, err)
-	}
-	beforeMap := isolationFSMap(t, ctx, cluster, "")
-	if err := fsA.Remove(ctx); err != nil {
-		t.Fatal(err)
-	}
-	after, err := fsB.MDSStatus(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	removedMap := isolationFSMap(t, ctx, cluster, "")
-	if len(removedMap.Filesystems) != 1 || removedMap.Filesystems[0].MDSMap.Name != isolationFSB || removedMap.Filesystems[0].ID != before.FilesystemID {
-		t.Fatalf("FSMap after removal: %+v", removedMap)
-	}
-	for _, info := range removedMap.Filesystems[0].MDSMap.Info {
-		if info.JoinFSCID != before.FilesystemID {
-			t.Fatalf("Remove returned while %s daemon %s has join_fscid %d, want %d", isolationFSB, info.Name, info.JoinFSCID, before.FilesystemID)
-		}
-	}
-	cleared := uint64(0)
-	for epoch := beforeMap.Epoch + 1; epoch <= removedMap.Epoch && cleared == 0; epoch++ {
-		for _, fs := range isolationFSMap(t, ctx, cluster, strconv.FormatUint(epoch, 10)).Filesystems {
-			for _, info := range fs.MDSMap.Info {
-				if fs.MDSMap.Name == isolationFSB && info.JoinFSCID != before.FilesystemID {
-					cleared = epoch
-				}
-			}
-		}
-	}
-	if cleared == 0 {
-		if after.FilesystemID != before.FilesystemID || len(after.Active) != 1 || len(after.StandbyReplay) != 1 ||
-			after.Active[0].GID != before.Active[0].GID || after.StandbyReplay[0].GID != before.StandbyReplay[0].GID {
-			t.Fatalf("%s changed when %s was removed: before=%+v after=%+v", isolationFSB, isolationFSA, before, after)
-		}
-	} else {
-		t.Logf("the monitor cleared the affinity of %s's daemons in FSMap epoch %d; status right after Remove: %+v", isolationFSB, cleared, after)
-		if err := fsB.WaitReady(ctx); err != nil {
-			t.Fatal(err)
-		}
-		settled, err := fsB.MDSStatus(ctx)
-		if err != nil || settled.FilesystemID != before.FilesystemID || len(settled.Active) != 1 || len(settled.StandbyReplay) != 1 ||
-			!settled.Active[0].Owned || !settled.StandbyReplay[0].Owned {
-			t.Fatalf("%s did not settle after the native failover: %+v error=%v", isolationFSB, settled, err)
-		}
-	}
-	if result := isolationJSON(t, ctx, admin, isolationSurvivorRead, isolationFSB); result["read"] != "seed-of-"+isolationFSB {
-		t.Fatalf("fresh read of %s: %v", isolationFSB, result)
-	}
-}
-
-// isolationFSMap reads the current FSMap, or the one of epoch.
-func isolationFSMap(t *testing.T, ctx context.Context, cluster *ceph.Container, epoch string) isolationMap {
-	t.Helper()
-	args := []string{"fs", "dump", "--format", "json"}
-	if epoch != "" {
-		args = []string{"fs", "dump", epoch, "--format", "json"}
-	}
-	data, err := cluster.Ceph(ctx, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fsmap isolationMap
-	if err := json.Unmarshal(data, &fsmap); err != nil {
-		t.Fatalf("decode FSMap %s: %v", data, err)
-	}
-	return fsmap
-}
-
-type isolationMap struct {
-	Epoch       uint64 `json:"epoch"`
-	Filesystems []struct {
-		ID     int64 `json:"id"`
-		MDSMap struct {
-			Name string `json:"fs_name"`
-			Info map[string]struct {
-				Name      string `json:"name"`
-				JoinFSCID int64  `json:"join_fscid"`
-			} `json:"info"`
-		} `json:"mdsmap"`
-	} `json:"filesystems"`
-}
-
-// isolationJSON runs a Python probe in client and decodes the last line that
-// is a JSON object. libcephfs writes a refused mount to stderr, which the exec
-// output interleaves.
-func isolationJSON(t *testing.T, ctx context.Context, client testcontainers.Container, script string, args ...string) map[string]any {
-	t.Helper()
-	out := cephFSSubvolumeExec(t, ctx, client, append([]string{"python3", "-c", script}, args...)...)
-	var last []byte
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		if line = bytes.TrimSpace(line); bytes.HasPrefix(line, []byte("{")) {
-			last = line
-		}
-	}
-	result := map[string]any{}
-	if err := json.Unmarshal(last, &result); err != nil {
-		t.Fatalf("probe output %s: %v", out, err)
-	}
-	t.Logf("native probe: %s", last)
-	return result
-}
-
-// isolationPreamble opens libcephfs handles for the admin or for one
-// principal, and names an errno the way the probes report it.
-const isolationPreamble = `import cephfs, errno, json, os, sys, threading
-deadline = threading.Timer(90, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-def handle(user=None, keyring=None):
-    fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id=user) if user else cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf')
-    if keyring:
-        fs.conf_set('keyring', keyring)
-    fs.conf_set('client_mount_timeout', '20')
-    return fs
-def code(error):
-    return errno.errorcode.get(abs(error.args[0]), str(error.args[0]))
-def attempt(operation):
-    try:
-        operation()
-        return "ok"
-    except cephfs.Error as error:
-        return code(error)
-def read(fs, path):
-    try:
-        fd = fs.open(path.encode(), 'r')
-    except cephfs.Error as error:
-        return code(error)
-    try:
-        return fs.read(fd, 0, 64).decode()
-    finally:
-        fs.close(fd)
-def write(fs, path, data):
-    fd = fs.open(path.encode(), 'w', 0o644)
-    fs.write(fd, data.encode(), 0)
-    fs.fsync(fd, 0)
-    fs.close(fd)
-`
-
-// isolationSeed gives each filesystem a world-writable /shared with a known
-// seed file, so POSIX permissions never refuse a create.
-const isolationSeed = isolationPreamble + `
-for name in sys.argv[1:]:
-    fs = handle()
-    fs.mount(filesystem_name=name.encode())
-    fs.mkdir(b'/shared', 0o777)
-    fs.chmod(b'/shared', 0o777)
-    write(fs, '/shared/seed', 'seed-of-' + name)
-    fs.unmount()
-    fs.shutdown()
-print(json.dumps({"seeded": sys.argv[1:]}))
-`
-
 // isolationCapProbe mounts one filesystem as a principal, reads the seed and
 // tries to create a file and a directory.
-const isolationCapProbe = isolationPreamble + `
+const isolationCapProbe = harness.CephFSIsolationPreamble + `
 user, keyring, name, tag = sys.argv[1:]
 fs = handle(user, keyring)
 out = {"filesystem": name, "mount": attempt(lambda: fs.mount(filesystem_name=name.encode()))}
@@ -404,7 +227,7 @@ print(json.dumps(out))
 
 // isolationSnapshotSeed creates /dir1/child/file and /dir2/file and takes the
 // /dir1 snapshot "before-delete".
-const isolationSnapshotSeed = isolationPreamble + `
+const isolationSnapshotSeed = harness.CephFSIsolationPreamble + `
 fs = handle()
 fs.mount(filesystem_name=sys.argv[1].encode())
 for path in (b'/dir1', b'/dir1/child', b'/dir2'):
@@ -420,7 +243,7 @@ print(json.dumps({"snapshot": "before-delete"}))
 // isolationSnapshotProbe mounts /dir1 as the restricted principal, optionally
 // deletes the live child, and reads the child's file live and through the
 // snapshot. Mounting / or /dir2 must be refused.
-const isolationSnapshotProbe = isolationPreamble + `
+const isolationSnapshotProbe = harness.CephFSIsolationPreamble + `
 user, keyring, name, phase = sys.argv[1:]
 out = {}
 for root in ('/', '/dir2'):
@@ -444,7 +267,7 @@ fs.shutdown()
 print(json.dumps(out))
 `
 
-const isolationSnapshotCleanup = isolationPreamble + `
+const isolationSnapshotCleanup = harness.CephFSIsolationPreamble + `
 fs = handle()
 fs.mount(filesystem_name=sys.argv[1].encode())
 fs.rmdir(b'/dir1/.snap/before-delete')
@@ -458,7 +281,7 @@ print(json.dumps({"cleaned": True}))
 
 // isolationTenantSeed writes one file in a subvolume as the admin and reports
 // the RADOS object that holds its first bytes.
-const isolationTenantSeed = isolationPreamble + `
+const isolationTenantSeed = harness.CephFSIsolationPreamble + `
 name, path, data = sys.argv[1:]
 fs = handle()
 fs.mount(filesystem_name=name.encode())
@@ -472,7 +295,7 @@ print(json.dumps({"object": "%x.00000000" % ino}))
 // isolationTenantProbe reads, as one subvolume's reader, its own file through
 // libcephfs and its own object through librados, then the other subvolume's
 // object in the other namespace.
-const isolationTenantProbe = isolationPreamble + `import rados
+const isolationTenantProbe = harness.CephFSIsolationPreamble + `import rados
 user, keyring, name, path, pool, namespace, obj, other_namespace, other_obj = sys.argv[1:]
 fs = handle(user, keyring)
 fs.mount(mount_root=path.encode(), filesystem_name=name.encode())
@@ -491,14 +314,5 @@ try:
                 out[key] = errno.errorcode.get(abs(error.errno), str(error.errno)) if error.errno else type(error).__name__
 finally:
     cluster.shutdown()
-print(json.dumps(out))
-`
-
-const isolationSurvivorRead = isolationPreamble + `
-fs = handle()
-fs.mount(filesystem_name=sys.argv[1].encode())
-out = {"read": read(fs, '/shared/seed')}
-fs.unmount()
-fs.shutdown()
 print(json.dumps(out))
 `

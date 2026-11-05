@@ -5,6 +5,8 @@ package harness
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -87,4 +89,37 @@ func PoolHandle(t testing.TB, ctx context.Context, c *ceph.Container, name strin
 		t.Fatalf("look up pool %q: %v", name, err)
 	}
 	return pool
+}
+
+// AdminSocket runs args on the admin socket of the daemon that daemon names,
+// such as "mon.a", "mgr.a" or "osd.0". The daemon must be owned by the
+// cluster. A failed lookup is returned as an error, never a test failure, so
+// a canceled context or a goroutine can call it.
+func AdminSocket(ctx context.Context, c *ceph.Container, daemon string, args ...string) ([]byte, error) {
+	kind, id, _ := strings.Cut(daemon, ".")
+	switch kind {
+	case "mon":
+		mon, err := FindMonitor(ctx, c, id)
+		if err != nil {
+			return nil, err
+		}
+		return mon.AdminSocket(ctx, args...)
+	case "mgr":
+		mgr, err := FindManager(ctx, c, id)
+		if err != nil {
+			return nil, err
+		}
+		return mgr.AdminSocket(ctx, args...)
+	case "osd":
+		n, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, fmt.Errorf("daemon %q is not an osd.<id>", daemon)
+		}
+		osd, err := FindOSD(ctx, c, n)
+		if err != nil {
+			return nil, err
+		}
+		return osd.AdminSocket(ctx, args...)
+	}
+	return nil, fmt.Errorf("daemon %q is not a mon.<name>, mgr.<name> or osd.<id>", daemon)
 }

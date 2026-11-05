@@ -6,10 +6,12 @@ package cephfs_test
 
 import (
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // This variant keeps native dead-owner failover unchanged, but requests an
 // explicit fixture rebalance after expanding the surviving set with AddDaemon.
 func TestMultiClusterCephFSMirrorDaemonRebalanceTopology(t *testing.T) {
-	runCephFSMirrorDaemonTopology(t, false, true)
+	harness.RunCephFSMirrorDaemonTopology(t, false, true)
 }

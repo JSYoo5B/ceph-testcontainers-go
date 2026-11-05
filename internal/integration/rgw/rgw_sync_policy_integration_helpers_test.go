@@ -5,9 +5,6 @@ package rgw_test
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -107,17 +105,17 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 			t.Fatal("source changed selective-sync payload")
 		}
 	}
-	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/published/selected", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
+	harness.WaitOwnedSyncObject(t, ctx, destinationS3, selected+"/published/selected", http.StatusOK, payload)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
 	waitRGWScenarioResponse(t, ctx, destinationS3, http.MethodHead, localOnly, http.StatusOK)
 	destinationS3.Request(t, ctx, http.MethodPut, selected+"/published/reverse-excluded", payload, http.StatusOK)
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second,
-		rgwAbsentObject{destinationS3, selected + "/private/excluded"},
-		rgwAbsentObject{destinationS3, localOnly + "/published/excluded"},
-		rgwAbsentObject{sourceS3, selected + "/published/reverse-excluded"},
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second,
+		harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/private/excluded"},
+		harness.RGWAbsentObject{Client: destinationS3, Path: localOnly + "/published/excluded"},
+		harness.RGWAbsentObject{Client: sourceS3, Path: selected + "/published/reverse-excluded"},
 	)
 	t.Log("owned policy replicated matching bucket/prefix bytes and excluded another prefix, another bucket and the reverse direction during 35 seconds")
 	if err := bucket.SetStatus(ctx, multisite.SyncForbidden); err != nil {
@@ -126,7 +124,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	watchOwnedBucketPolicyImport(t, ctx, bucket)
 	waitOwnedBucketDisabled(t, ctx, link, bucket, "prefix")
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/while-forbidden", payload, http.StatusOK)
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/published/while-forbidden"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/published/while-forbidden"})
 	if got := destinationS3.Request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("forbidden policy changed earlier replicated bytes")
 	}
@@ -138,7 +136,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 		t.Fatal(err)
 	}
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/after-enabled", payload, http.StatusOK)
-	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/published/after-enabled", http.StatusOK, payload)
+	harness.WaitOwnedSyncObject(t, ctx, destinationS3, selected+"/published/after-enabled", http.StatusOK, payload)
 	reconcileOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
 	t.Log("dynamic forbidden status stopped selected future writes during 35 seconds; enabled restored exact future bytes/checkpoint and retained earlier copies")
 	// A bucket update changes future selection without committing/restarting
@@ -149,11 +147,11 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	watchOwnedBucketPolicyImport(t, ctx, bucket)
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/reports/after-update", payload, http.StatusOK)
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/after-update", payload, http.StatusOK)
-	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusOK, payload)
+	harness.WaitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusOK, payload)
 	reconcileOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/published/after-update"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/published/after-update"})
 	sourceS3.Request(t, ctx, http.MethodDelete, selected+"/reports/after-update", nil, http.StatusNoContent)
-	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusNotFound, nil)
+	harness.WaitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusNotFound, nil)
 	copy := *bucket
 	if err := bucket.Remove(ctx); err != nil {
 		t.Fatal(err)
@@ -162,7 +160,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 		t.Fatal(err)
 	}
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/reports/after-removal", payload, http.StatusOK)
-	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/reports/after-removal"})
+	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/reports/after-removal"})
 	if got := destinationS3.Request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("sync group removal changed earlier replicated object bytes")
 	}
@@ -234,7 +232,7 @@ func watchOwnedBucketPolicyImport(t *testing.T, ctx context.Context, group *mult
 				ended = true
 				break
 			}
-			t.Logf("policy import watch event %d %s period=%t policy=%t buckets=%t imported=%t err=%s", e.Sequence, e.Kind, e.Status.PeriodImported, e.Status.PolicyImported, e.Status.BucketsImported, e.Status.Imported, rgwSyncDiagnosticError(e.Err))
+			t.Logf("policy import watch event %d %s period=%t policy=%t buckets=%t imported=%t err=%s", e.Sequence, e.Kind, e.Status.PeriodImported, e.Status.PolicyImported, e.Status.BucketsImported, e.Status.Imported, harness.RGWSyncDiagnosticError(e.Err))
 			if e.Sequence == 1 {
 				first = e
 			}
@@ -253,20 +251,6 @@ func watchOwnedBucketPolicyImport(t *testing.T, ctx context.Context, group *mult
 		t.Fatalf("the policy import watch ended with %v after %+v", err, last)
 	}
 	t.Logf("bucket policy import watched before future writes: elapsed=%s events=%d partial=%t group=%s period=%s zone=%s/%s bucket=%s/%s:%s", time.Since(started).Round(time.Millisecond), last.Sequence, partial, last.Status.GroupID, last.Status.PeriodID, last.Status.Zone, last.Status.ZoneID, last.Status.Bucket.Tenant, last.Status.Bucket.Name, last.Status.Bucket.ID)
-}
-
-func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) multisite.BucketSyncStatus {
-	t.Helper()
-	started := time.Now()
-	status, err := group.WaitBucketSyncReady(ctx, pipe, "source", "destination")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !status.CaughtUp || status.Shards <= 0 || status.BehindShards != 0 {
-		t.Fatalf("selected native bucket checkpoint is incomplete: %+v", status)
-	}
-	t.Logf("native bucket checkpoint after exact bytes: elapsed=%s period=%s source=%s/%s:%s destination=%s/%s:%s state=%s shards=%d behind=%d", time.Since(started).Round(time.Millisecond), status.PeriodID, status.SourceBucket.Tenant, status.SourceBucket.Name, status.SourceBucket.ID, status.DestinationBucket.Tenant, status.DestinationBucket.Name, status.DestinationBucket.ID, status.State, status.Shards, status.BehindShards)
-	return status
 }
 
 func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) {
@@ -291,7 +275,7 @@ func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *mul
 	if _, err := link.ZoneAdmin(run, before.Zone, args...); err != nil {
 		t.Fatalf("run exact owned bucket reconciliation: %v", err)
 	}
-	after := waitOwnedBucketCheckpoint(t, ctx, link, group, pipe)
+	after := harness.WaitOwnedBucketCheckpoint(t, ctx, link, group, pipe)
 	if after.RealmID != before.RealmID || after.PeriodID != before.PeriodID || after.SourceZoneID != before.SourceZoneID || after.ZoneID != before.ZoneID || after.SourceBucket != before.SourceBucket || after.DestinationBucket != before.DestinationBucket {
 		t.Fatal("bucket reconciliation changed the captured zone/period/bucket identities")
 	}
@@ -317,41 +301,6 @@ func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multisite.
 		select {
 		case <-wait.Done():
 			t.Fatalf("wait forbidden RGW bucket policy: %v; state=%s; last_error=%v", wait.Err(), status.State, lastErr)
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func waitOwnedSyncObject(t *testing.T, ctx context.Context, client harness.S3HTTPClient, path string, status int, payload []byte) {
-	t.Helper()
-	wait, cancel := context.WithTimeout(ctx, 4*time.Minute)
-	defer cancel()
-	started := time.Now()
-	var last string
-	for {
-		request, err := http.NewRequestWithContext(wait, http.MethodGet, client.Endpoint+path, nil)
-		if err == nil {
-			client.Sign(request, nil, time.Now())
-			response, err := client.HTTP.Do(request)
-			if err == nil {
-				body, readErr := io.ReadAll(response.Body)
-				_ = response.Body.Close()
-				code := rgwBackendErrorCode(body)
-				matches := (status == http.StatusNotFound && code == "NoSuchKey") || (status != http.StatusNotFound && bytes.Equal(body, payload))
-				if wait.Err() == nil && readErr == nil && response.StatusCode == status && matches {
-					t.Logf("strict replica path=%s status=%d bytes=%d elapsed=%s", path, status, len(payload), time.Since(started).Round(time.Millisecond))
-					return
-				}
-				last = fmt.Sprintf("status=%d code=%s bytes=%d read_error=%v", response.StatusCode, code, len(body), readErr)
-			} else {
-				last = "HTTP request failed"
-			}
-		} else {
-			last = "HTTP request could not be constructed"
-		}
-		select {
-		case <-wait.Done():
-			t.Fatalf("wait owned RGW replica %s: %v; %s", path, wait.Err(), last)
 		case <-time.After(time.Second):
 		}
 	}

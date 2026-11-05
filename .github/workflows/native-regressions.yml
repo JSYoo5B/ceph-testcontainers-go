@@ -3,14 +3,20 @@ name: Native regressions
 on:
   workflow_dispatch:
     inputs:
+      batch:
+        description: 'Optional batch: a deliberately failing upstream reproducer, or the failure-archive proof'
+        type: choice
+        default: native_rgw_translation
+        options:
+          - native_rgw_translation
+          - native_shuffle
+          - mon_log_ack
+          - rbd_demote_restart
+          - failure_archive
       rgw_image:
-        description: Existing RGW role image for strict upstream regressions (empty uses published role; no build)
+        description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
         type: string
         default: ''
-      failure_archive:
-        description: 'Run the deliberately FAILED native failure-archive proof instead of RGW regressions'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -22,5 +28,5 @@ jobs:
     with:
       category: optional
       check_name: Manual native checks
-      optional_batch: ${{ inputs.failure_archive && 'failure_archive' || 'native_rgw_translation' }}
+      optional_batch: ${{ inputs.batch }}
       rgw_image: ${{ inputs.rgw_image }}

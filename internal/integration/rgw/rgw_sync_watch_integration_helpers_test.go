@@ -120,8 +120,8 @@ func testRGWSyncWatch(t *testing.T) {
 	}
 	seed := syncWatchPayload(-1)
 	sourceS3.Request(t, ctx, http.MethodPut, "/"+syncWatchBucket+"/seed", seed, http.StatusOK)
-	waitOwnedSyncObject(t, ctx, destinationS3, "/"+syncWatchBucket+"/seed", http.StatusOK, seed)
-	waitOwnedBucketCheckpoint(t, ctx, link, bucket, "all")
+	harness.WaitOwnedSyncObject(t, ctx, destinationS3, "/"+syncWatchBucket+"/seed", http.StatusOK, seed)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, bucket, "all")
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func testRGWSyncWatch(t *testing.T) {
 		t.Fatalf("the watches changed identity: %+v %+v", caught.Status, ready.Status)
 	}
 	for i := range syncWatchObjects {
-		waitOwnedSyncObject(t, ctx, destinationS3, fmt.Sprintf("/%s/held-%02d", syncWatchBucket, i), http.StatusOK, syncWatchPayload(i))
+		harness.WaitOwnedSyncObject(t, ctx, destinationS3, fmt.Sprintf("/%s/held-%02d", syncWatchBucket, i), http.StatusOK, syncWatchPayload(i))
 	}
 	t.Logf("SYNC_WATCH_CAUGHT_UP zone_event=%d bucket_event=%d objects=%d exact", ready.Sequence, caught.Sequence, syncWatchObjects)
 

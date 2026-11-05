@@ -251,7 +251,9 @@ gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "s3", TLS: material},
 
 `TestRGWExternalKMS` in
 [`internal/integration/rgw`](../internal/integration/rgw/rgw_external_kms_integration_helpers_test.go)
-runs the complete recipe for both modes. What it establishes:
+runs the recipe for both modes, and the experiment case
+[`rgw_kms_failure_modes`](../internal/integration/experiments/rgw_kms_failure_modes/README.md)
+records the KMS failure behaviour below. What they establish:
 
 - There are two TLS connections. `TLSConfig` secures the SUT's connection to
   RGW; `rgw_crypt_vault_verify_ssl` and `rgw_crypt_vault_ssl_cacert` (and

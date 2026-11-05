@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"testing"
@@ -142,6 +143,45 @@ func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbdmirror.M
 			out, err := site.run(inspect, args...)
 			stop()
 			t.Logf("RBD %s %v: %s error=%v", site.name, args, out, err)
+		}
+	}
+}
+
+func RBDMultiClusterAssertPrimary(t *testing.T, ctx context.Context, client testcontainers.Container, image string, expected bool) {
+	t.Helper()
+	var info map[string]json.RawMessage
+	if err := json.Unmarshal(RBDOutput(t, ctx, client, "info", image, "--format", "json"), &info); err != nil {
+		t.Fatal(err)
+	}
+	var mirroring map[string]any
+	if err := json.Unmarshal(info["mirroring"], &mirroring); err != nil {
+		t.Fatal(err)
+	}
+	globalID, _ := mirroring["global_id"].(string)
+	if mirroring["mode"] != "snapshot" || mirroring["state"] != "enabled" || globalID == "" || mirroring["primary"] != expected {
+		t.Fatalf("%s has unexpected mirroring info: %+v; want snapshot mirroring primary=%v", image, mirroring, expected)
+	}
+}
+
+func RBDMultiClusterPromote(t *testing.T, parent context.Context, client testcontainers.Container, image string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var last string
+	for {
+		attempt, stop := context.WithTimeout(ctx, 15*time.Second)
+		code, out, err := RBDMultiClusterExec(attempt, client, "rbd", "mirror", "image", "promote", image)
+		stop()
+		if err == nil && code == 0 {
+			return
+		}
+		last = fmt.Sprintf("exit=%d error=%v output=%s", code, err, out)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for propagated demotion and promote %s: %v; %s", image, ctx.Err(), last)
+		case <-ticker.C:
 		}
 	}
 }

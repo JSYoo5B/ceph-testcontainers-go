@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +20,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // rgwPlacementBindSource captures the source gateway's container and process
@@ -271,7 +269,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 		}
 	}
 	for _, mapping := range []struct{ pool, key string }{{"tc-rgw-standard", "standard"}, {"tc-rgw-ec", "standard_ia"}} {
-		rgwPlacementPoolPayload(t, ctx, control, mapping.pool, strings.ToUpper(mapping.key), payload)
+		harness.RGWPlacementPoolPayload(t, ctx, control, mapping.pool, strings.ToUpper(mapping.key), payload)
 	}
 	// A new bucket created without a location still follows the untouched
 	// zonegroup default, while the preexisting default object remains readable.
@@ -293,57 +291,6 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	client.Request(t, ctx, http.MethodDelete, laterDefault, nil, http.StatusNoContent)
 	t.Log("named bucket placement + replicated STANDARD + EC STANDARD_IA: native mappings, S3 class listing, bytes and actual RADOS pools verified; original and later default buckets retained their original policy")
 }
-
-func rgwPlacementPoolPayload(t *testing.T, ctx context.Context, control testcontainers.Container, pool, class string, payload []byte) {
-	t.Helper()
-	probeCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	expectedHash := harness.S3Hash(payload)
-	code, reader, err := control.Exec(probeCtx, []string{"python3", "-c", rgwPlacementPoolPayloadScript, pool, strconv.Itoa(len(payload)), expectedHash}, tcexec.Multiplexed())
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := io.ReadAll(reader)
-	var proof struct {
-		Pool, Object, SHA256 string
-		Size                 int
-	}
-	if err != nil || code != 0 || json.Unmarshal(data, &proof) != nil || proof.Pool != pool || proof.Object == "" || proof.Size != len(payload) || proof.SHA256 != expectedHash {
-		t.Fatalf("native %s data pool %s did not contain the exact S3 payload: %s error=%v", class, pool, data, err)
-	}
-	t.Logf("native %s data pool %s contains %d payload bytes SHA256=%s in object %s", class, pool, proof.Size, proof.SHA256, proof.Object)
-}
-
-// RGW shadow object names are opaque. Read native objects with their actual
-// locator/namespace and prove their full content, using a fixture smaller than
-// one RGW stripe. An empty head or a merely nonempty pool is insufficient proof.
-const rgwPlacementPoolPayloadScript = `import hashlib, json, os, rados, sys, threading
-pool, size, expected_hash = sys.argv[1:]
-size = int(size)
-assert 0 < size < 4 * 1024 * 1024, 'fixture must fit in one native RGW stripe'
-deadline = threading.Timer(45, lambda: os._exit(124))
-deadline.daemon = True
-deadline.start()
-match = None
-observed = []
-with rados.Rados(conffile='/etc/ceph/ceph.conf', name='client.admin',
-                 conf={'rados_mon_op_timeout': '15', 'rados_osd_op_timeout': '15'}) as cluster:
-    with cluster.open_ioctx(pool) as io:
-        for index, obj in enumerate(io.list_objects()):
-            assert index < 32, 'unexpected object count in fresh placement data pool'
-            native_size, _ = obj.stat()
-            observed.append({'object': obj.key, 'size': native_size})
-            if native_size != size:
-                continue
-            data = obj.read(size + 1)
-            actual_hash = hashlib.sha256(data).hexdigest()
-            if len(data) == size and actual_hash == expected_hash:
-                match = {'pool': pool, 'object': obj.key, 'size': len(data), 'sha256': actual_hash}
-                break
-assert match is not None, 'exact S3 payload absent from actual pool: ' + json.dumps(observed)
-deadline.cancel()
-print(json.dumps(match, sort_keys=True))
-`
 
 func rgwPlacementRequest(t *testing.T, ctx context.Context, client harness.S3HTTPClient, method, path string, payload []byte, storageClass string, status int) []byte {
 	t.Helper()

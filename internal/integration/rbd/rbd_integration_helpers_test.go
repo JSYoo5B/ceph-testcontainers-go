@@ -3,11 +3,9 @@
 package rbd_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +58,7 @@ func runRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	}
 	harness.ExecCommand(t, ctx, client, "rbd", "import", "/tmp/rbd-before", pool+"/original", "--object-size", "1M", "--image-feature", "layering", "--no-progress")
 	verifyRBDInfo(t, ctx, client, pool+"/original", imageSize)
-	verifyRBDBytes(t, ctx, client, pool+"/original", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/original", before)
 	importUsage := verifyRBDPoolUsage(t, ctx, cluster, ceph.PoolUsageSnapshot{FSID: nativeStatus.FSID, Name: pool}, imageSize, "after_import")
 	harness.ExecCommand(t, ctx, client, "rbd", "snap", "create", pool+"/original@baseline")
 	harness.ExecCommand(t, ctx, client, "rbd", "snap", "protect", pool+"/original@baseline")
@@ -74,15 +72,15 @@ func runRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	harness.ExecCommand(t, ctx, client, "rbd", "export-diff", pool+"/replacement", "/tmp/rbd-replacement.diff", "--no-progress")
 	harness.ExecCommand(t, ctx, client, "rbd", "import-diff", "/tmp/rbd-replacement.diff", pool+"/original", "--no-progress")
 	harness.ExecCommand(t, ctx, client, "rbd", "rm", pool+"/replacement", "--no-progress")
-	verifyRBDBytes(t, ctx, client, pool+"/original", after)
-	verifyRBDBytes(t, ctx, client, pool+"/original@baseline", before)
-	verifyRBDBytes(t, ctx, client, pool+"/clone", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/original", after)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/original@baseline", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/clone", before)
 	t.Log("RBD: image create/info/delete, 8 MiB import/export, snapshot/clone isolation verified")
 
 	harness.AdvanceServiceTopology(t, ctx, cluster)
-	verifyRBDBytes(t, ctx, client, pool+"/original", after)
-	verifyRBDBytes(t, ctx, client, pool+"/original@baseline", before)
-	verifyRBDBytes(t, ctx, client, pool+"/clone", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/original", after)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/original@baseline", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/clone", before)
 	t.Log("RBD: parent, snapshot, and clone bytes survived OSD 2 -> 3 -> 2")
 	verifyRBDPoolUsage(t, ctx, cluster, importUsage, imageSize, "after_topology")
 
@@ -91,7 +89,7 @@ func runRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	harness.ExecCommand(t, ctx, client, "rbd", "flatten", pool+"/clone", "--no-progress")
 	harness.ExecCommand(t, ctx, client, "rbd", "snap", "unprotect", pool+"/original@baseline")
 	harness.ExecCommand(t, ctx, client, "rbd", "snap", "rm", pool+"/original@baseline", "--no-progress")
-	verifyRBDBytes(t, ctx, client, pool+"/clone", before)
+	harness.VerifyRBDBytes(t, ctx, client, pool+"/clone", before)
 	harness.ExecCommand(t, ctx, client, "rbd", "rm", pool+"/clone", "--no-progress")
 	harness.ExecCommand(t, ctx, client, "rbd", "rm", pool+"/original", "--no-progress")
 	verifyRBDImages(t, ctx, client, pool, nil)
@@ -113,26 +111,6 @@ func verifyRBDInfo(t *testing.T, ctx context.Context, client testcontainers.Cont
 	}
 	if !strings.Contains(strings.Join(info.Features, ","), "layering") {
 		t.Fatalf("%s lacks layering feature: %v", image, info.Features)
-	}
-}
-
-func verifyRBDBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, expected []byte) {
-	t.Helper()
-	const path = "/tmp/rbd-result"
-	// The export command refuses to overwrite an existing local destination.
-	harness.ExecCommand(t, ctx, client, "rm", "-f", path)
-	harness.ExecCommand(t, ctx, client, "rbd", "export", image, path, "--no-progress")
-	r, err := client.CopyFileFromContainer(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err := io.ReadAll(r)
-	_ = r.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("%s payload changed: got %d bytes, want %d bytes", image, len(actual), len(expected))
 	}
 }
 

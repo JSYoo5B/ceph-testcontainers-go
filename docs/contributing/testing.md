@@ -10,7 +10,7 @@ described in [Continuous integration](ci.md).
 | --- | --- | --- | --- |
 | Unit tests | Next to the code, no build tags | No | `go test ./...` |
 | Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw`, `fault`; `*_example_test.go` in `override` | No (Docker examples are only compiled) | `go test ./...` |
-| Ceph integration tests | `internal/integration` and its `rbd`, `cephfs` and `rgw` test packages, plus `*_integration_test.go` in `ceph`, `rbd/mirror`, `internal/debugoverhead` and `internal/capturearchive` | Yes, plus Ceph images | Build tags |
+| Ceph integration tests | `internal/integration`, its `rbd`, `cephfs` and `rgw` test packages and its `experiments/<case>` packages, plus `*_integration_test.go` in `ceph`, `rbd/mirror`, `internal/debugoverhead` and `internal/capturearchive` | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge` and `capture`, `*_integration_test.go` | Docker only | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
@@ -222,7 +222,8 @@ Optional batches use the `optional` subcommand:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py optional \
-  --batch native_rgw_translation --package ./internal/integration/rgw \
+  --batch native_rgw_translation \
+  --package ./internal/integration/experiments/rgw_sync_policy_translation \
   --directory artifacts/local-native-rgw
 ```
 
@@ -386,7 +387,9 @@ A scenario lives in the test package of its area: `internal/integration/rbd`,
 `internal/integration/cephfs` or `internal/integration/rgw` when it is about
 that service, and `internal/integration` (package `integration_test`) for the
 cluster and everything else. Each package compiles and runs alone, so a change
-in one area does not edit or rebuild the others.
+in one area does not edit or rebuild the others. Cross-build
+characterizations and upstream bug reproducers are the exception; see
+[Experiment cases](#experiment-cases).
 
 Code that tests of more than one of these packages call lives in
 `internal/integration/harness`. Go lets a test of another package see only
@@ -573,6 +576,49 @@ It requires `native_regression`, never compiles under plain `all`, uses the
 ```golang
 //go:build (all || (integration && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_my_regression)))
 ```
+
+### Experiment cases
+
+A test whose assertion characterizes a native behaviour across Ceph builds,
+or reproduces a known upstream defect, is an experiment case: its pass means
+"the native behaviour was recorded" or "the defect is absent", not "the
+fixture works". Each case is its own test package in
+`internal/integration/experiments/<service>_<case>/` (package
+`<service>_<case>_test`), named for the service it belongs to, for example
+`rbd_schedule_remove` or `mon_log_ack_peon`. Ordinary fixture tests and
+established fixture regressions stay in their area's package even when they
+run on several releases; classify by what the assertion means, not by the
+releases it runs on. An assertion about native Ceph behaviour stays a
+characterization when it passes on every supported image, and a release
+guide entry that documents the behaviour does not change that. When one test
+mixes fixture coverage with native characterization, split it by subtest:
+`TestCephFSRemovalKeepsSurvivorAffinity` and `TestRGWExternalKMS` keep the
+fixture parts, and `cephfs_authorization_isolation` and
+`rgw_kms_failure_modes` hold the native ones.
+
+- The case directory holds a `README.md` manual: use case, native contract
+  and trigger, upstream issue and fix links, topology and image roles,
+  resource and time bounds, the runnable command and image inputs, the
+  observations and controls, the meaning of pass, observed bug, not
+  reproduced, unavailable prerequisite and condition not established, and
+  cleanup and limits. It describes the current reproduction, not a diary;
+  logs and full reports stay in issues and artifacts. Upstream Ceph issue and
+  fix links go in this manual; code comments, test messages, commits and pull
+  requests describe the mechanism instead.
+- Its `_test.go` files keep the usual build constraints, `//ci:` lines and
+  batches, and its tier decides which: a cheap deterministic case is a
+  required batch of a non-`short` category, so a pull request runs it only
+  when the case's files change; a case that fails on the unpatched published
+  images is an optional `native_regression` batch that runs only on request
+  (see [Experiment case tiers](ci.md#experiment-case-tiers)). Give the
+  manual the tier and the exact command. A case directory does not make a
+  test manual-only, and moving a case changes its package path, so run
+  [`plan --verify`](#verify-batch-profiles-before-pushing) and update every
+  `--package` that names it.
+- Helpers the case alone uses stay in its `_test.go` files. A helper that the
+  case shares with another package moves to `internal/integration/harness` as
+  usual. A case does not get a bug tag, a weakened ordinary contract or a
+  release-prefix branch because it exists.
 
 ### Release differences
 

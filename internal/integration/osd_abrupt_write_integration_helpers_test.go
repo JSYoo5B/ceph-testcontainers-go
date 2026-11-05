@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -292,7 +293,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 func abruptWitnessOf(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, object, client string) (abruptWitness, bool) {
 	t.Helper()
 	before := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
-	data, err := adminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
+	data, err := harness.AdminSocket(ctx, cluster, daemon, "dump_ops_in_flight")
 	if err != nil {
 		t.Fatal("abrupt in-flight observation", err)
 	}
@@ -360,7 +361,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	} {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := adminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
+			out, err := harness.AdminSocket(ctx, cluster, osd, "config", "get", setting.Name)
 			var reply map[string]string
 			if err == nil && json.Unmarshal(out, &reply) == nil && abruptSameNumber(reply[setting.Name], setting.Value) {
 				break

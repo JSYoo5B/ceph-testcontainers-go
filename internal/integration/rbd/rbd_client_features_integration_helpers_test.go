@@ -2,136 +2,11 @@
 
 package rbd_test
 
-const rbdClientFeatureSentinelScript = `import rados, rbd, sys
-pool, phase = sys.argv[1:]
-with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_mon_op_timeout": "10", "rados_osd_op_timeout": "10"}) as cluster:
-    with cluster.open_ioctx(pool) as io:
-        api = rbd.RBD()
-        for namespace in ["", "foreign"]:
-            io.set_namespace(namespace)
-            expected = ("untouched-namespace:" + namespace).encode() * 4096
-            if phase == "seed":
-                api.create(io, "sentinel", 8 << 20, old_format=False, features=rbd.RBD_FEATURE_LAYERING)
-                with rbd.Image(io, "sentinel") as image:
-                    assert image.write(expected, 0) == len(expected)
-                    image.flush()
-                    original_id = image.id()
-                api.trash_move(io, "sentinel", delay=0)
-                assert api.trash_get(io, original_id)["name"] == "sentinel"
-            else:
-                entries = list(api.trash_list(io))
-                assert len(entries) == 1 and entries[0]["name"] == "sentinel", "purge crossed namespaces"
-                original_id = entries[0]["id"]
-                api.trash_restore(io, original_id, "sentinel")
-                with rbd.Image(io, "sentinel") as image:
-                    assert image.id() == original_id
-                    assert image.read(0, len(expected)) == expected, "foreign sentinel bytes changed"
-                api.remove(io, "sentinel")
-print("foreign/default expired trash and exact bytes preserved")
-`
+import "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 
-const rbdClientFeatureScript = `import contextlib, datetime, errno, hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
-import rados, rbd
-# The native binding converts UTC-labelled expiry through local time.mktime.
-# Pin this consumer's local timezone before any deferred-trash operation.
-os.environ["TZ"] = "UTC"
-time.tzset()
-phase, pool, namespace, entity, keyring, expected_fsid, expected_pool_id = sys.argv[1:]
-expected_pool_id = int(expected_pool_id)
-api = rbd.RBD()
-features = rbd.RBD_FEATURE_LAYERING | rbd.RBD_FEATURE_EXCLUSIVE_LOCK
-payload = bytes((i * 37 + 17) % 251 + 1 for i in range(2 << 20))
-patch = b"changed-child-and-migration-data" * 4096
-proof = {"phase": phase, "fsid": expected_fsid, "pool_id": expected_pool_id}
-
-def require_passphrase_denied(image, fmt, passphrase, label, stage):
-    # Ceph v20.2.4 test_mock_LoadRequest.cc::WrongPassphrase requires -EPERM.
-    # LUKS Header passes crypt_volume_key_get's errno through unchanged; the
-    # Python binding maps it to PermissionError with positive errno.EPERM.
-    # Invalid format/header, timeout, I/O and unsupported algorithms are not
-    # evidence that a passphrase was denied. Never print key/error text.
-    try:
-        image.encryption_load(fmt, passphrase)
-    except rbd.Error as error:
-        error_type, actual = type(error).__name__, getattr(error, "errno", None)
-        if not isinstance(error, rbd.PermissionError) or actual != errno.EPERM:
-            raise AssertionError("unexpected native key rejection: type=%s errno=%s" % (error_type, actual)) from None
-        proof.setdefault("key_denials", []).append({"format": label, "stage": stage, "type": error_type, "errno": actual})
-        return
-    raise AssertionError("native passphrase unexpectedly loaded: " + stage)
-
-@contextlib.contextmanager
-def session():
-    with rados.Rados(conffile="/etc/ceph/ceph.conf", name=entity,
-                     conf={"keyring": keyring, "rados_mon_op_timeout": "10", "rados_osd_op_timeout": "15", "rbd_cache": "false"}) as conn:
-        assert conn.get_fsid() == expected_fsid, "connected to another cluster"
-        with conn.open_ioctx(pool) as io:
-            assert io.get_pool_id() == expected_pool_id, "native pool was replaced"
-            io.set_namespace(namespace)
-            yield conn, io
-
-def create(io, name, data=payload, size=8 << 20):
-    api.create(io, name, size, old_format=False, features=features, order=20)
-    with rbd.Image(io, name) as image:
-        if data:
-            assert image.write(data, 0) == len(data)
-            image.flush()
-        return image.id()
-
-def read(io, name, expected, image_id=None, offset=0):
-    with rbd.Image(io, name) as image:
-        if image_id is not None:
-            assert image.id() == image_id, "same-named image was replaced"
-        assert image.read(offset, len(expected)) == expected, "native image bytes changed"
-
-def directory_group_id(io, name):
-    # cls_rbd keeps each group's id in rbd_group_directory under name_<group>
-    # as an encoded string: a little-endian 32-bit length and the text.
-    key = "name_" + name
-    with rados.ReadOpCtx() as op:
-        values, _ = io.get_omap_vals_by_keys(op, (key,))
-        io.operate_read_op(op, "rbd_group_directory")
-        value = dict(values)[key]
-    assert int.from_bytes(value[:4], "little") == len(value) - 4, "malformed group directory entry"
-    return value[4:].decode()
-
-def group_id(io, group, name):
-    # Squid's binding has no Group.id(). Where it exists, the directory entry
-    # must agree, so the fallback stays proven on the default release.
-    native = directory_group_id(io, name)
-    if hasattr(group, "id"):
-        assert group.id() == native, "group directory id differs from Group.id()"
-    return native
-
-def group_snap_info(io, group, group_name, snap_name, images):
-    # Squid's binding has no get_snap_info: read the state from list_snaps
-    # and member snapshots from each image's group snapshot namespace. Where
-    # get_snap_info exists, both views must name the same image snapshots.
-    state = next(entry["state"] for entry in group.list_snaps() if entry["name"] == snap_name)
-    members = []
-    for image_name in images:
-        with rbd.Image(io, image_name) as image:
-            for entry in image.list_snaps():
-                owner = entry.get("group") or {}
-                if entry["namespace"] == rbd.RBD_SNAP_NAMESPACE_TYPE_GROUP and owner.get("name") == group_name:
-                    members.append({"image_name": image_name, "pool_id": io.get_pool_id(), "snap_id": entry["id"]})
-    if not hasattr(group, "get_snap_info"):
-        return {"state": state, "image_snaps": members, "id": None}
-    info = group.get_snap_info(snap_name)
-    native = sorted((entry["image_name"], entry["snap_id"]) for entry in info["image_snaps"])
-    assert native == sorted((entry["image_name"], entry["snap_id"]) for entry in members), "image group snapshots differ from get_snap_info"
-    assert info["state"] == state, "group snapshot state differs from list_snaps"
-    return info
-
-def absent(io, name):
-    try:
-        with rbd.Image(io, name):
-            pass
-    except rbd.ImageNotFound:
-        return
-    raise AssertionError("image must be absent: " + name)
-
-if phase == "layering-flatten":
+// rbdClientFeatureScript holds the native client recipes whose fixture needs
+// the rbd README lists.
+var rbdClientFeatureScript = harness.RBDClientFeaturePrelude + `if phase == "layering-flatten":
     with session() as (_, io):
         parent_id = create(io, "parent")
         with rbd.Image(io, "parent") as parent:
@@ -393,110 +268,24 @@ elif phase in ["encryption-format-load", "encryption-rekey"]:
         encrypted_ids[label] = image_id
     proof.update(images=encrypted_ids, bytes_per_image=len(payload), raw_plaintext_hidden=True, rekey=phase == "encryption-rekey")
 
-elif phase in ["encryption-clone-flatten", "encryption-clone-restore"]:
-    # Secrets are bytes on purpose: encryption_load2 converts a str secret
-    # into a temporary that it frees before the load, and an equal-length
-    # later secret reuses that memory, so two str secrets fail with EPERM on
-    # Squid, Tentacle and Umbrella while bytes load the same chain. Do not
-    # read that EPERM as unsupported encrypted clones or flatten.
-    fmt, raw_size = rbd.RBD_ENCRYPTION_FORMAT_LUKS2, 64 << 20
-    parent_pass, child_pass = b"temporary-fixture-parent-key", b"temporary-fixture-child-key"
-    expected = patch + payload[len(patch):]
-    if phase == "encryption-clone-flatten":
-        with session() as (_, io):
-            parent_id = create(io, "encrypted-parent", data=None, size=raw_size)
-            with rbd.Image(io, "encrypted-parent") as parent:
-                parent.encryption_format(fmt, parent_pass, rbd.RBD_ENCRYPTION_ALGORITHM_AES256)
-            with rbd.Image(io, "encrypted-parent") as parent:
-                parent.encryption_load(fmt, parent_pass)
-                assert parent.write(payload, 0) == len(payload)
-                parent.flush()
-                parent.create_snap("baseline")
-                parent.protect_snap("baseline")
-            # An unformatted clone inherits the parent's encryption: the parent
-            # secret alone opens it and child writes stay copy-on-write.
-            api.clone(io, "encrypted-parent", "baseline", io, "inherited-child", features=features, order=20)
-            with rbd.Image(io, "inherited-child") as child:
-                child.encryption_load(fmt, parent_pass)
-                assert child.read(0, len(payload)) == payload, "inherited clone lost parent bytes"
-                assert child.write(patch, 0) == len(patch)
-                child.flush()
-                assert child.read(0, len(expected)) == expected
-            api.remove(io, "inherited-child")
-            # A separately formatted clone needs every explicitly formatted
-            # ancestor's secret until it is flattened.
-            api.clone(io, "encrypted-parent", "baseline", io, "encrypted-child", features=features, order=20)
-            with rbd.Image(io, "encrypted-child") as child:
-                child_id = child.id()
-                child.encryption_format(fmt, child_pass, rbd.RBD_ENCRYPTION_ALGORITHM_AES256)
-            with rbd.Image(io, "encrypted-child") as child:
-                require_passphrase_denied(child, fmt, child_pass, "luks2", "child-secret-only-before-flatten")
-            with rbd.Image(io, "encrypted-child") as child:
-                child.encryption_load2([(fmt, child_pass), (fmt, parent_pass)])
-                assert child.read(0, len(payload)) == payload, "formatted clone lost parent bytes"
-                assert child.write(patch, 0) == len(patch)
-                child.flush()
-                # Flatten only while the whole chain is loaded. A raw flatten
-                # copies parent ciphertext the child secret cannot decrypt.
-                child.flatten()
-                try:
-                    child.parent_id()
-                except rbd.ImageNotFound:
-                    pass
-                else:
-                    raise AssertionError("flatten retained parent dependency")
-        with session() as (_, io):
-            with rbd.Image(io, "encrypted-child") as child:
-                require_passphrase_denied(child, fmt, parent_pass, "luks2", "parent-secret-after-flatten")
-            with rbd.Image(io, "encrypted-child") as child:
-                child.encryption_load(fmt, child_pass)
-                assert child.read(0, len(expected)) == expected, "flattened clone bytes changed"
-            with rbd.Image(io, "encrypted-parent") as parent:
-                parent.encryption_load(fmt, parent_pass)
-                assert parent.read(0, len(payload)) == payload, "clone writes reached the parent"
-            with rbd.Image(io, "encrypted-parent") as parent:
-                parent.unprotect_snap("baseline")
-                parent.remove_snap("baseline")
-            api.remove(io, "encrypted-parent")
-        with session() as (_, io):
-            absent(io, "encrypted-parent")
-            with rbd.Image(io, "encrypted-child") as child:
-                assert child.id() == child_id
-                child.encryption_load(fmt, child_pass)
-                assert child.read(0, len(expected)) == expected, "parent removal changed the flattened clone"
-        # encrypted-child stays for the fixture's ExportBackup/RestoreBackup.
-        proof.update(parent_id=parent_id, child_id=child_id, inherited_clone=True, flattened_loaded=True, parent_removed=True)
-    else:
-        with session() as (_, io):
-            with rbd.Image(io, "encrypted-restored") as raw:
-                restored_id = raw.id()
-                assert restored_id != "" and raw.size() == raw_size
-                assert raw.read(0, 6) == b"LUKS\xba\xbe", "restore lost the LUKS header"
-                try:
-                    raw.parent_id()
-                except rbd.ImageNotFound:
-                    pass
-                else:
-                    raise AssertionError("restored image has a parent")
-            with rbd.Image(io, "encrypted-restored") as image:
-                require_passphrase_denied(image, fmt, parent_pass, "luks2", "parent-secret-on-restore")
-            with rbd.Image(io, "encrypted-restored") as image:
-                image.encryption_load(fmt, child_pass)
-                header_size = raw_size - image.size()
-                assert 0 < header_size < raw_size - len(expected)
-                assert image.read(0, len(expected)) == expected, "restored plaintext differs"
-            with rbd.Image(io, "encrypted-restored") as raw:
-                assert raw.read(header_size, 4096) != expected[:4096], "restored raw image contains plaintext"
-            api.remove(io, "encrypted-restored")
-            api.remove(io, "encrypted-child")
-        proof.update(restored_id=restored_id, bytes=len(expected), backup_ciphertext=True)
+elif phase == "encryption-backup-source":
+    # The fixture archives this encrypted image with its own credentials; the
+    # next phase reads the restored copy back as the SUT.
+    with session() as (_, io):
+        source_id = create(io, "encrypted-source", data=None, size=64 << 20)
+        with rbd.Image(io, "encrypted-source") as image:
+            image.encryption_format(rbd.RBD_ENCRYPTION_FORMAT_LUKS2, b"temporary-fixture-backup-key", rbd.RBD_ENCRYPTION_ALGORITHM_AES256)
+        with rbd.Image(io, "encrypted-source") as image:
+            image.encryption_load(rbd.RBD_ENCRYPTION_FORMAT_LUKS2, b"temporary-fixture-backup-key")
+            assert image.write(payload, 0) == len(payload)
+            image.flush()
+    retained = ["encrypted-source"]
+    proof.update(source_id=source_id)
 
-else:
-    raise AssertionError("unknown probe phase: " + phase)
-
-# Only the encrypted clone phase hands an image to the fixture backup step.
-retained = ["encrypted-child"] if phase == "encryption-clone-flatten" else []
-with session() as (_, io):
-    assert sorted(api.list(io)) == retained and list(api.trash_list(io)) == [], "client probe left images/trash behind"
-print(json.dumps(proof, sort_keys=True))
-`
+elif phase == "encryption-backup-restore":
+    restored_id = verify_restored_encryption("encrypted-backup-restored", b"temporary-fixture-backup-key", b"wrong-fixture-backup-key", payload, 64 << 20)
+    with session() as (_, io):
+        api.remove(io, "encrypted-backup-restored")
+        api.remove(io, "encrypted-source")
+    proof.update(restored_id=restored_id, bytes=len(payload), backup_ciphertext=True)
+` + harness.RBDClientFeatureEpilogue

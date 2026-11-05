@@ -1,4 +1,4 @@
-//go:build (all || (integration && multicluster && features && (!ci || (ci_multicluster && (!ci_batch || ci_batch_rgw_sync_fixtures_translation))))) && !native_regression
+//go:build all || (integration && multicluster && features && (!ci || (ci_multicluster && (!ci_batch || ci_batch_rgw_sync_fixtures_translation))))
 
 //ci: timeout=40m job-timeout=50 image-roles=essential,client,rgw
 

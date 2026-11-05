@@ -115,8 +115,8 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				t.Fatalf("schedule cleanup changed inheritance: %s %v", data, err)
 			}
 			harness.CephCommand(t, ctx, source, "rbd", "mirror", "snapshot", "schedule", "remove", pool+"/", "1d")
-			verifyRBDBytes(t, ctx, sourceClient, image, after)
-			verifyRBDBytes(t, ctx, destinationClient, image, after)
+			harness.VerifyRBDBytes(t, ctx, sourceClient, image, after)
+			harness.VerifyRBDBytes(t, ctx, destinationClient, image, after)
 			t.Logf("native rbd_support automatically checkpointed and mirrored 4 MiB changed data after %s; image schedule removed, unrelated pool schedule preserved, both images retained", time.Since(started))
 		})
 	}

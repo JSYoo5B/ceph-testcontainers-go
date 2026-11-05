@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package integration_test
+package mon_log_ack_peon_test
 
 import (
 	"encoding/json"
