@@ -46,7 +46,7 @@ var osdFleetBound = []string{"osdFleetState", "runDir", "startup"}
 // field>; no other function builds an osdFleet; and the fleet's methods use
 // owner only as the owner of an OSD handle they create.
 func TestOSDFleetBindsEachStateOnce(t *testing.T) {
-	bindingAudit{typeName: "osdFleet", constructor: osdFleetBinding, bound: osdFleetBound, singleReturn: true, recv: "f", handles: []string{"OSDContainer"}}.check(t)
+	bindingAudit{typeName: "osdFleet", constructor: osdFleetBinding, bound: osdFleetBound, singleReturn: true, recv: "f", handles: []string{"OSDContainer", "DetachedOSD"}}.check(t)
 }
 
 // ownerStates are the owner state types and fields, each with the one

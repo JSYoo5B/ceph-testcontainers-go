@@ -649,13 +649,20 @@ func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDCont
 	if err != nil {
 		return launch.osd, err
 	}
-	if err := c.osdFleet().startOSD(ctx, launch); err != nil {
-		return launch.osd, err
+	return launch.osd, c.osdFleet().bringUpOSD(ctx, launch)
+}
+
+// bringUpOSD starts a registered OSD, waits until the OSDMap shows it up and
+// in, and assigns its device class. The OSD stays owned when a step fails.
+// The caller holds c.mu.
+func (f osdFleet) bringUpOSD(ctx context.Context, launch osdLaunch) error {
+	if err := f.startOSD(ctx, launch); err != nil {
+		return err
 	}
-	if err := (osdMap{c.conn()}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
-		return launch.osd, err
+	if err := (osdMap{f.conn}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
+		return err
 	}
-	return launch.osd, osdMap{c.conn()}.assignDeviceClass(ctx, launch.osd)
+	return osdMap{f.conn}.assignDeviceClass(ctx, launch.osd)
 }
 
 // osdLaunch is a registered, owned OSD and its immutable creation recipe.
@@ -850,7 +857,15 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 	}
-	if err := c.osdFleet().drainAndPurgeOSD(ctx, osd); err != nil {
+	return c.osdFleet().retireOSD(ctx, osd)
+}
+
+// retireOSD drains and purges osd, whose removal the caller admitted and whose
+// native commands it fenced, terminates its container, discards its storage,
+// releases its device claim and forgets it. A failed step keeps the OSD
+// owned for a retry. The caller holds c.mu.
+func (f osdFleet) retireOSD(ctx context.Context, osd *OSDContainer) error {
+	if err := f.drainAndPurgeOSD(ctx, osd); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -858,17 +873,17 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	}
 	if osd.Container != nil {
 		if err := osd.Terminate(ctx); !onlyMissingHostResource(err) {
-			return fmt.Errorf("terminate %s: %w", name, err)
+			return fmt.Errorf("terminate osd.%d: %w", osd.ID, err)
 		}
 	}
-	if err := c.fleet.stores.discard(ctx, id); err != nil {
+	if err := f.stores.discard(ctx, osd.ID); err != nil {
 		return err
 	}
 	// The container is gone when it was terminated above; a launch that never
 	// created one keeps no claim, and an unconfirmed lost create reply keeps it
 	// for Terminate.
-	c.fleet.deviceClaims.release(id, osd.Container != nil)
-	c.fleet.osdHandles.forget(id)
+	f.deviceClaims.release(osd.ID, osd.Container != nil)
+	f.osdHandles.forget(osd.ID)
 	return nil
 }
 
