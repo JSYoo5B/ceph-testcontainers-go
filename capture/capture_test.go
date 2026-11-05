@@ -782,6 +782,7 @@ func TestStopPreservesFailureCategories(t *testing.T) {
 		target          TargetState
 	}{
 		{"copy canceled", func(f *fakeBackend) { f.copyErr = context.Canceled }, context.Canceled, nil, TargetUnchanged},
+		{"artifact and cancellation", func(f *fakeBackend) { f.copyErr = errors.Join(errCaptureNotRegular, context.Canceled) }, context.Canceled, nil, TargetUnchanged},
 		{"copy deadline", func(f *fakeBackend) { f.copyErr = context.DeadlineExceeded }, context.DeadlineExceeded, nil, TargetUnchanged},
 		{"copy engine", func(f *fakeBackend) { f.copyErr = engineErr }, engineErr, ceph.ErrEnvironmentUnavailable, TargetUnchanged},
 		{"copy missing", func(f *fakeBackend) { f.copyErr = errdefs.ErrNotFound }, errdefs.ErrNotFound, ceph.ErrNativeFailure, TargetUnchanged},

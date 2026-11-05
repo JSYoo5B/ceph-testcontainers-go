@@ -231,6 +231,10 @@ func (f tarFile) Close() error {
 	return errors.Join(errs...)
 }
 
+// errCaptureNotRegular identifies an observed artifact-contract failure,
+// independently of Docker transport errors returned by copy.
+var errCaptureNotRegular = errors.New("the capture file is not a regular file")
+
 func (dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, error) {
 	docker, err := newDockerClient(ctx)
 	if err != nil {
@@ -243,7 +247,7 @@ func (dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, 
 	archive := tar.NewReader(result.Content)
 	header, err := archive.Next()
 	if err == nil && header.Typeflag != tar.TypeReg {
-		err = fmt.Errorf("the capture file is not a regular file")
+		err = errCaptureNotRegular
 	}
 	if err != nil {
 		return nil, errors.Join(err, result.Content.Close(), docker.Close())

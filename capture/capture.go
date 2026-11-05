@@ -61,7 +61,7 @@ var (
 	// ErrFailed reports a capture that did not start, end or deliver as the
 	// contract says: tcpdump exited before readiness or with a nonzero
 	// status, did not end within the stop grace, the target's network
-	// namespace changed, the helper's file is missing, or it is not
+	// namespace changed, the helper's file is missing or non-regular, or it is not
 	// a valid classic pcap. It belongs to ceph.ErrNativeFailure.
 	ErrFailed error = nshelper.Category("the packet capture failed", ceph.ErrNativeFailure)
 )
@@ -760,9 +760,9 @@ func (s *Session) compareTarget(ctx context.Context) (TargetState, error) {
 func (s *Session) retrieve(ctx context.Context) error {
 	content, err := s.backend.copy(ctx, s.helper, capturePath)
 	if err != nil {
-		// A missing capture is an observed capture failure, not a refused
-		// request. Transport failures and cancellation retain their own category.
-		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && errdefs.IsNotFound(err) {
+		// A missing or non-regular capture is an observed artifact failure.
+		// Transport failures and cancellation retain their own category.
+		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (errdefs.IsNotFound(err) || errors.Is(err, errCaptureNotRegular)) {
 			return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
 		}
 		return fmt.Errorf("retrieve the capture file: %w", classifyDocker(ctx, err))
