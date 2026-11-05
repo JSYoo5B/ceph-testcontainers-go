@@ -706,6 +706,40 @@ func TestParseStatistics(t *testing.T) {
 	}
 }
 
+// copyBounded keeps at most the bound and reads only one byte past it, which
+// it returns without writing; a read error at either step is not the end.
+func TestCopyBoundedKeepsTheBoundAndOneByteBeyond(t *testing.T) {
+	streamErr := errors.New("stream interrupted")
+	for name, tc := range map[string]struct {
+		src          io.Reader
+		kept, beyond string
+		rest         string
+		err          error
+	}{
+		"shorter":          {strings.NewReader("abc"), "abc", "", "", nil},
+		"at the bound":     {strings.NewReader("abcde"), "abcde", "", "", nil},
+		"past the bound":   {strings.NewReader("abcdefg"), "abcde", "f", "g", nil},
+		"error while kept": {io.MultiReader(strings.NewReader("ab"), iotest.ErrReader(streamErr)), "ab", "", "", streamErr},
+		"error past bound": {io.MultiReader(strings.NewReader("abcde"), iotest.ErrReader(streamErr)), "abcde", "", "", streamErr},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var dst bytes.Buffer
+			written, beyond, err := copyBounded(&dst, tc.src, 5)
+			if !errors.Is(err, tc.err) || (tc.err == nil) != (err == nil) {
+				t.Fatalf("err = %v, want %v", err, tc.err)
+			}
+			if written != int64(dst.Len()) || dst.String() != tc.kept || string(beyond) != tc.beyond {
+				t.Fatalf("wrote %d %q, beyond %q", written, dst.String(), beyond)
+			}
+			if tc.err == nil {
+				if rest, _ := io.ReadAll(tc.src); string(rest) != tc.rest {
+					t.Fatalf("read past the probe byte: left %q", rest)
+				}
+			}
+		})
+	}
+}
+
 func TestErrorCategories(t *testing.T) {
 	for err, kind := range map[error]error{
 		ErrImageUnsupported: ceph.ErrImageCapability,
