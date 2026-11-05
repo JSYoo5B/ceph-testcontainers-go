@@ -199,4 +199,11 @@ def resolve(name, reference, platform, inspect, attempt, pulls, sleep=None):
     if (not isinstance(repo_digests, list)
             or any(not isinstance(value, str) or REPO_DIGEST.fullmatch(value) is None for value in repo_digests)):
         raise PreparationError(name + " image has invalid registry digest metadata")
-    return {"reference": reference, "image_id": image_id, "repo_digests": repo_digests, "platform": platform}
+    # The pulled reference can be a multi-platform index: its digest is in
+    # repo_digests, while the local image and its recorded os/architecture
+    # are the platform child that Docker selected for this engine.
+    selected = {"os": image["Os"], "architecture": image["Architecture"]}
+    if image.get("Variant"):
+        selected["variant"] = image["Variant"]
+    return {"reference": reference, "image_id": image_id, "repo_digests": repo_digests, "platform": platform,
+            "selected_platform": selected}

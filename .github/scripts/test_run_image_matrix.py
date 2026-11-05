@@ -124,6 +124,9 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(report["images"]["all"]["repo_digests"],
                          [runner.DEFAULT_IMAGE.split("@")[0] + "@sha256:" + "a" * 64])
         self.assertEqual(report["platform"], "linux/arm64")
+        # The index digest and the platform child that Docker selected are
+        # recorded apart.
+        self.assertEqual(report["images"]["all"]["selected_platform"], {"os": "linux", "architecture": "arm64"})
         image_id = report["images"]["all"]["image_id"]
         for name in runner.ROLE_ENV.values():
             self.assertEqual(self.runtime.make_environment[name], image_id)
