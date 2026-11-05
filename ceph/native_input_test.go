@@ -254,11 +254,16 @@ while True:
 	}
 }
 
-// Canceling the call while a write waits for a command that does not read
-// stops the command, fails the write and joins the input work; no marker or
-// registration remains.
+// Canceling the call while a write is in progress on the connection stops
+// the command, fails that write as closed input and joins the input work; no
+// marker or registration remains. The held connection of the fake
+// establishes the interleaving: the write has reached the connection and
+// cannot finish before the cancellation. Writes past MaxInput are covered by
+// TestNativeCommandInputLimit.
 func TestNativeCommandInputCancellationDuringTransfer(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
+	held := make(chan int)
+	target.holdInput = held
 	cluster := nativeCluster()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -267,17 +272,22 @@ func TestNativeCommandInputCancellationDuringTransfer(t *testing.T) {
 	command.Input, command.MaxInput = input, MaxNativeCommandInput
 	done := startNative(ctx, cluster, target, command)
 	pid := target.published(t, "input", "command")
+	chunk := bytes.Repeat([]byte{0x55}, 1<<20)
 	writes := make(chan error, 1)
-	go func() {
-		chunk := bytes.Repeat([]byte{0x55}, 1<<20)
-		for {
-			if err := input.Write(t.Context(), chunk); err != nil {
-				writes <- err
-				return
-			}
+	go func() { writes <- input.Write(t.Context(), chunk) }()
+	select {
+	case n := <-held:
+		if n != len(chunk) {
+			t.Fatalf("the connection got a write of %d bytes, want %d", n, len(chunk))
 		}
-	}()
-	time.Sleep(200 * time.Millisecond)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write did not reach the connection")
+	}
+	select {
+	case err := <-writes:
+		t.Fatalf("the held write returned %v before the cancellation", err)
+	default:
+	}
 	cancel()
 	run := <-done
 	if !errors.Is(run.err, context.Canceled) {
@@ -285,11 +295,14 @@ func TestNativeCommandInputCancellationDuringTransfer(t *testing.T) {
 	}
 	select {
 	case err := <-writes:
-		if !errors.Is(err, ErrNativeInputClosed) && !errors.Is(err, ErrInvalidRequest) {
-			t.Fatalf("the writer ended with %v", err)
+		if !errors.Is(err, ErrNativeInputClosed) || errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("the interrupted write returned %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the writer did not return after the command was canceled")
+		t.Fatal("the interrupted write did not return after the command was canceled")
+	}
+	if err := input.Write(t.Context(), []byte{1}); !errors.Is(err, ErrNativeInputClosed) {
+		t.Fatalf("a write after the cancellation returned %v", err)
 	}
 	gone(t, pid, "command")
 	if markers := target.leftMarkers(t); len(markers) != 0 || registered(cluster) != 0 {
