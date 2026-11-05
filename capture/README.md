@@ -35,6 +35,13 @@ session, err := capture.Start(ctx, monitor, capture.Request{
 	MaxPackets:  10000,
 	Output:      filepath.Join(t.TempDir(), "mon.pcap"),
 })
+if session != nil {
+	t.Cleanup(func() {
+		if _, err := session.Stop(context.Background()); err != nil {
+			t.Errorf("stop capture: %v", err)
+		}
+	})
+}
 if err != nil {
 	t.Fatal(err)
 }
