@@ -223,14 +223,23 @@ func (l authLedger) addClient(ctx context.Context, client *ClientConfig, generat
 	l.authRecords.addSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
-	defer func() {
+	// A keyring that this call cannot remove for sure stays recorded, and
+	// later auth calls remove it again.
+	removeKeyring := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		_, _ = command(cleanupCtx, control, "rm", "-f", keyringPath)
-	}()
+		if _, err := command(cleanupCtx, control, "rm", "-f", keyringPath); err != nil {
+			l.authRecords.addStray(keyringPath, false)
+		}
+	}
 	if err := control.CopyToContainer(ctx, client.keyring, keyringPath, 0o600); err != nil {
+		// Docker may complete the copy after its request failed, also after
+		// the removal below, so later calls remove it again.
+		l.authRecords.addStray(keyringPath, true)
+		removeKeyring()
 		return client, clientOperationError(ctx, "copy fresh Cephx keyring to control container failed", err)
 	}
+	defer removeKeyring()
 	// Supplying our fresh key makes Ceph reject a concurrently created identity
 	// with another key. An auth-add command without -i can silently reuse it.
 	args := append([]string{"auth", "add", entity, "-i", keyringPath}, capArgs...)

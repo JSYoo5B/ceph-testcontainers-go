@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -150,7 +151,8 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 
 func TestClientCreationUsesFreshKeyAndRemovesTemporaryKeyring(t *testing.T) {
 	ctr := &authFixtureContainer{}
-	if _, err := authFixtureCluster(ctr).CreateClient(t.Context(), "reader", ClientCaps{Mon: "allow r"}); err != nil {
+	c := authFixtureCluster(ctr)
+	if _, err := c.CreateClient(t.Context(), "reader", ClientCaps{Mon: "allow r"}); err != nil {
 		t.Fatal(err)
 	}
 	if ctr.copyMode != 0o600 || clientKey(ctr.copied, "client.reader") != "PRIVATE-KEY" || !strings.HasPrefix(ctr.copyPath, "/tmp/tc-client-") {
@@ -167,6 +169,86 @@ func TestClientCreationUsesFreshKeyAndRemovesTemporaryKeyring(t *testing.T) {
 	}
 	if !add || !cleanup {
 		t.Fatal("fresh key input or temporary keyring cleanup is missing")
+	}
+	if strays := c.ledger.authRecords.strayPaths(); len(strays) != 0 {
+		t.Fatalf("a removed temporary keyring stays recorded: %q", strays)
+	}
+}
+
+// removed reports whether a rm -f command after the first skip calls lists
+// path.
+func (ctr *authFixtureContainer) removed(skip int, path string) bool {
+	for _, call := range ctr.calls[skip:] {
+		if len(call) > 2 && call[0] == "rm" && call[1] == "-f" && slices.Contains(call[2:], path) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestClientCreationRetainsAnUnremovedKeyringForLaterCalls substitutes a
+// failing rm -f for the control container's removal of the temporary keyring:
+// the path stays recorded, and the next auth call removes it and forgets it
+// once the removal is confirmed. Native filesystem state is not observed.
+func TestClientCreationRetainsAnUnremovedKeyringForLaterCalls(t *testing.T) {
+	ctr := &authFixtureContainer{removeFailures: 1}
+	c := authFixtureCluster(ctr)
+	client, err := c.CreateClient(t.Context(), "reader", ClientCaps{Mon: "allow r"})
+	if err != nil || client == nil || !client.ready {
+		t.Fatalf("a failed keyring removal changed the creation: %v", err)
+	}
+	keyring := ctr.copyPath
+	if got := c.ledger.authRecords.strayPaths(); !slices.Equal(got, []string{keyring}) {
+		t.Fatalf("stray key files %q, want the unremoved keyring %q", got, keyring)
+	}
+	if c.ledger.authRecords.strays[keyring] {
+		t.Fatal("an unremoved keyring whose copy succeeded is recorded as still copying")
+	}
+	before := len(ctr.calls)
+	if _, err := c.CreateClient(t.Context(), "writer", ClientCaps{Mon: "allow r"}); err != nil {
+		t.Fatal(err)
+	}
+	if !ctr.removed(before, keyring) {
+		t.Fatal("the next auth call did not remove the unremoved keyring again")
+	}
+	if got := c.ledger.authRecords.strayPaths(); len(got) != 0 {
+		t.Fatalf("a confirmed removal left stray key files %q", got)
+	}
+}
+
+// TestClientCreationRetainsAFailedKeyringCopyForLaterCalls substitutes a
+// failing CopyToContainer, after which Docker may still write the file: the
+// path stays recorded as copying although its immediate removal succeeds, so
+// every later auth call removes it again.
+func TestClientCreationRetainsAFailedKeyringCopyForLaterCalls(t *testing.T) {
+	ctr := &authFixtureContainer{copyErr: errors.New("copy PRIVATE-KEY failed")}
+	c := authFixtureCluster(ctr)
+	client, err := c.CreateClient(t.Context(), "reader", ClientCaps{Mon: "allow r"})
+	if err == nil || client == nil || client.created || client.ready {
+		t.Fatalf("a failed keyring copy returned %v, %v, want the unconfirmed partial client and an error", client, err)
+	}
+	if strings.Contains(err.Error(), "PRIVATE-KEY") {
+		t.Fatalf("the copy failure leaks the key: %v", err)
+	}
+	keyring := ctr.copyPath
+	if !ctr.removed(0, keyring) {
+		t.Fatal("the failed copy's keyring was not removed at once")
+	}
+	if got := c.ledger.authRecords.strayPaths(); !slices.Equal(got, []string{keyring}) || !c.ledger.authRecords.strays[keyring] {
+		t.Fatalf("stray key files %q, want the keyring %q recorded as copying", got, keyring)
+	}
+	ctr.copyErr = nil
+	for _, name := range []string{"writer", "auditor"} {
+		before := len(ctr.calls)
+		if _, err := c.CreateClient(t.Context(), name, ClientCaps{Mon: "allow r"}); err != nil {
+			t.Fatal(err)
+		}
+		if !ctr.removed(before, keyring) {
+			t.Fatalf("creating %s did not remove the keyring of the failed copy again", name)
+		}
+	}
+	if got := c.ledger.authRecords.strayPaths(); !slices.Equal(got, []string{keyring}) {
+		t.Fatalf("stray key files %q, want only the copying keyring %q", got, keyring)
 	}
 }
 
@@ -186,11 +268,16 @@ type authFixtureContainer struct {
 	caps     map[string]string
 	// deleted means that auth del removed the identity.
 	deleted bool
+	// copyErr is the error of every CopyToContainer, after which Docker may
+	// still write the file.
+	copyErr error
+	// removeFailures is the number of the next rm -f commands that fail.
+	removeFailures int
 }
 
 func (ctr *authFixtureContainer) CopyToContainer(_ context.Context, content []byte, path string, mode int64) error {
 	ctr.copied, ctr.copyPath, ctr.copyMode = bytes.Clone(content), path, mode
-	return nil
+	return ctr.copyErr
 }
 
 // nativeArgs returns the Ceph command that args run, without the ceph CLI's
@@ -255,6 +342,10 @@ func (ctr *authFixtureContainer) run(args []string) (int, string) {
 	}
 	if strings.Join(failureArgs, " ") == ctr.fail {
 		return 1, "PRIVATE-KEY injected failure"
+	}
+	if args[0] == "rm" && ctr.removeFailures > 0 {
+		ctr.removeFailures--
+		return 1, "PRIVATE-KEY injected removal failure"
 	}
 	switch {
 	case args[0] == "ceph-authtool":
