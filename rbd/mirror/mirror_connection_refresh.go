@@ -27,7 +27,7 @@ import (
 // at most two minutes, bounded by the caller context, including lock waits.
 //
 //purpose:condition
-func (m *Mirror) RefreshMonitorConfig(ctx context.Context) error {
+func (m *Container) RefreshMonitorConfig(ctx context.Context) error {
 	return m.refreshRBDMirrorMonitorConfig(ctx, func(ctx context.Context, cluster *ceph.Container, client testcontainers.Container) error {
 		return cluster.RefreshClientMonitorConfig(ctx, client)
 	})
@@ -42,7 +42,7 @@ type rbdMonitorConfigTarget struct {
 // The callback is private so unit tests can verify link ownership/orchestration
 // without constructing a Ceph cluster. Production always uses the cluster's
 // strict original/native/target FSID and stopped-container archive checks.
-func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func(context.Context, *ceph.Container, testcontainers.Container) error) error {
+func (m *Container) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func(context.Context, *ceph.Container, testcontainers.Container) error) error {
 	if m == nil {
 		return errors.New("RBD mirror fixture is unavailable")
 	}

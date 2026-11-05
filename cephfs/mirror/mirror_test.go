@@ -8,7 +8,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-var _ testcontainers.Container = (*Mirror)(nil)
+var _ testcontainers.Container = (*Container)(nil)
 
 func TestCephFSMirrorDirectoryPolicyValidation(t *testing.T) {
 	base := Config{SourceFilesystem: "source-fs", DestinationFilesystem: "backup-fs"}
@@ -96,7 +96,7 @@ func TestCephFSMirrorPendingImportIdentity(t *testing.T) {
 	}
 	// The state transition must retain an uncertain import after mismatch, then
 	// assign only the server UUID and clear the pending flag on exact recovery.
-	mirror := &Mirror{pendingPeerImport: &expected}
+	mirror := &Container{pendingPeerImport: &expected}
 	if _, err := mirror.reconcilePendingPeer(map[string]json.RawMessage{serverUUID: json.RawMessage(`{"client_name":"client.foreign"}`)}); err == nil {
 		t.Fatal("recovered a foreign peer")
 	}

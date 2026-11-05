@@ -97,11 +97,11 @@ func (d *rbdImageStatusDaemon) Exec(context.Context, []string, ...tcexec.Process
 	return 0, rbdImageStatusStream(d.status), d.statusErr
 }
 
-func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS string) (*Mirror, *rbdImageStatusFixture, *rbdImageStatusFixture, *rbdImageStatusDaemon) {
+func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS string) (*Container, *rbdImageStatusFixture, *rbdImageStatusFixture, *rbdImageStatusDaemon) {
 	t.Helper()
 	source := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("source-local", string(mode), "global-image", true)}
 	destination := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("destination-local", string(mode), "global-image", false), imageStatus: `{"name":"volume","global_id":"global-image","state":"up+replaying","description":"replaying","last_update":"2026-10-07 00:00:00","daemon_service":{"service_id":"22","instance_id":"123","daemon_id":"tc-owned"}}`}
-	link := &Mirror{
+	link := &Container{
 		pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{Pool: "images", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Mode: mode, Scope: ScopeImage, SourceSite: "source", DestinationSite: "destination", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42}}}
 	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)

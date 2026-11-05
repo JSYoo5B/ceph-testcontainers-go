@@ -447,7 +447,7 @@ func TestRBDReceiverWatchConfigAndUnstartedRefusals(t *testing.T) {
 	if w, err := h.m.WatchReceivers(ctx, ceph.WatchConfig{}); w != nil || !errors.Is(err, context.Canceled) || len(h.source.calls)+len(h.destination.calls) != 0 {
 		t.Fatalf("canceled context = %v, %v", w, err)
 	}
-	var nilMirror *Mirror
+	var nilMirror *Container
 	var nilView *Namespace
 	if w, err := nilMirror.WatchReceivers(t.Context(), ceph.WatchConfig{}); w != nil || err == nil {
 		t.Fatal("a nil mirror is not refused")
@@ -491,7 +491,7 @@ func TestRBDReceiverWatchBoundNamespace(t *testing.T) {
 	namespaceBindingAssertReadOnly(t, h)
 }
 
-func requireRBDWatchUnlocked(t *testing.T, m *Mirror, phase string) {
+func requireRBDWatchUnlocked(t *testing.T, m *Container, phase string) {
 	t.Helper()
 	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
 		if !m.mu.TryLock() {

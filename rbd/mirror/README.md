@@ -25,7 +25,11 @@ import rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
    `img` is the daemon image (the destination's `Images.RBDAux`, or an `all`
    image); `cfg` names `Source`, `Destination`, `Pool` and optionally the
    namespaces, `Scope`, `Mode` and the number of daemons. Replication is one
-   way; create a second mirror with the clusters swapped for failback.
+   way; create a second mirror with the clusters swapped for failback. `Run`
+   returns a `*rbdmirror.Container`: it owns the receiver daemon cohort (none
+   with `NoInitialDaemons`) and the setup clients. Its embedded
+   `testcontainers.Container` is only the initial daemon; use `Daemons` for
+   the cohort.
 3. **Enable images**: `EnableImage` in image scope (snapshot or journal mode);
    pool scope enrolls journaled images automatically.
 4. **Run the SUT** against the source image, and take mirror snapshots
@@ -42,7 +46,7 @@ import rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
    `Daemon.Remove`, `AddDaemon`, `Daemon.InterruptPeerLink` and `Rebootstrap`
    change the receiving side for HA and recovery scenarios.
 6. **Clean up**: register the clusters' cleanup first and the mirror's after,
-   so the mirror is terminated first; terminate a non-nil `*Mirror` even after
+   so the mirror is terminated first; terminate a non-nil `*Container` even after
    an error.
 
 ```golang

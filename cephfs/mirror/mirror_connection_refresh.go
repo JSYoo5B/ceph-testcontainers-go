@@ -7,9 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -24,13 +25,13 @@ import (
 // not race this operation.
 //
 //purpose:condition
-func (mirror *Mirror) RefreshMonitorConfig(ctx context.Context) error {
+func (mirror *Container) RefreshMonitorConfig(ctx context.Context) error {
 	return mirror.refreshMonitorConfig(ctx, func(ctx context.Context, client testcontainers.Container) error {
 		return mirror.source.RefreshClientMonitorConfig(ctx, client)
 	})
 }
 
-func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(context.Context, testcontainers.Container) error) error {
+func (mirror *Container) refreshMonitorConfig(ctx context.Context, refresh func(context.Context, testcontainers.Container) error) error {
 	if mirror == nil {
 		return cephFSObserveGuard("CephFS mirror fixture is unavailable")
 	}
@@ -48,7 +49,7 @@ func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(con
 	}
 	var errs []error
 	seen := make(map[string]bool)
-	for _, daemon := range mirror.daemons {
+	for _, daemon := range mirror.roster.daemons {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			break
@@ -89,7 +90,7 @@ func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(con
 // must not race this operation; Ceph provides no value compare-and-swap here.
 //
 //purpose:condition
-func (mirror *Mirror) RefreshPeerMonitorConfig(ctx context.Context) error {
+func (mirror *Container) RefreshPeerMonitorConfig(ctx context.Context) error {
 	return mirror.refreshPeerMonitorConfig(ctx, func(ctx context.Context) (string, error) {
 		observer, err := ceph.Observe(mirror.destination)
 		if err != nil {
@@ -99,7 +100,7 @@ func (mirror *Mirror) RefreshPeerMonitorConfig(ctx context.Context) error {
 	})
 }
 
-func (mirror *Mirror) refreshPeerMonitorConfig(ctx context.Context, addresses func(context.Context) (string, error)) error {
+func (mirror *Container) refreshPeerMonitorConfig(ctx context.Context, addresses func(context.Context) (string, error)) error {
 	if mirror == nil {
 		return cephFSObserveGuard("CephFS mirror fixture is unavailable")
 	}
@@ -193,7 +194,7 @@ func writeCephFSOwnedPeerConfig(ctx context.Context, source *ceph.Container, key
 	return ctx.Err()
 }
 
-func (mirror *Mirror) confirmCephFSRefreshHandle(requirePeer bool) error {
+func (mirror *Container) confirmCephFSRefreshHandle(requirePeer bool) error {
 	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 {
 		return cephFSObserveGuard("CephFS mirror original filesystem identities are unavailable")
 	}
@@ -203,7 +204,7 @@ func (mirror *Mirror) confirmCephFSRefreshHandle(requirePeer bool) error {
 	return nil
 }
 
-func (mirror *Mirror) checkCephFSRefreshFilesystems(ctx context.Context) error {
+func (mirror *Container) checkCephFSRefreshFilesystems(ctx context.Context) error {
 	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read original CephFS bootstrap filesystem", "CephFS original bootstrap filesystem or metadata pool identity differs"); err != nil {
 		return err
 	}
@@ -212,7 +213,7 @@ func (mirror *Mirror) checkCephFSRefreshFilesystems(ctx context.Context) error {
 
 type cephFSRemoteMonitorIdentity struct{ FSID, Addresses string }
 
-func (mirror *Mirror) readCephFSRemoteMonitorIdentity(ctx context.Context, addresses func(context.Context) (string, error)) (cephFSRemoteMonitorIdentity, error) {
+func (mirror *Container) readCephFSRemoteMonitorIdentity(ctx context.Context, addresses func(context.Context) (string, error)) (cephFSRemoteMonitorIdentity, error) {
 	var result cephFSRemoteMonitorIdentity
 	current, err := addresses(ctx)
 	if err != nil {

@@ -652,7 +652,7 @@ func TestRBDNamespaceBindingRebootstrapAttemptInvalidatesAndFreshBind(t *testing
 }
 
 func TestRBDNamespaceBindingUnavailableAndClosedOwner(t *testing.T) {
-	for _, view := range []*Namespace{nil, {}, {owner: &Mirror{}}} {
+	for _, view := range []*Namespace{nil, {}, {owner: &Container{}}} {
 		if status, err := view.ReceiverStatus(t.Context()); err == nil || status.Ready {
 			t.Fatal("zero view provided readiness")
 		}

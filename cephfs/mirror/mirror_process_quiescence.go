@@ -3,11 +3,11 @@ package mirror
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 )
@@ -231,7 +231,7 @@ func validProcessTime(value string) bool {
 	return err == nil && !v.IsZero()
 }
 
-func confirmCephFSOriginalRun(ctx context.Context, w cephFSPeerRemovalWitness) error {
+func confirmCephFSOriginalRun(ctx context.Context, w cephFSRemovalWitness) error {
 	if w.daemon == nil || w.originalProcess == nil || w.originalProcess.containerID != w.containerID || w.originalProcess.originalHandle != w.daemon.Container {
 		return cephFSObserveGuard("original process receipt binding differs")
 	}
@@ -270,8 +270,8 @@ func (r *PeerRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceS
 	if r == nil {
 		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original peer process receipt is unavailable")
 	}
-	return observeCephFSReceiptProcessQuiescence(ctx, r, "", r.checkHandle, func(ctx context.Context) (bool, error) {
-		present, fsPresent, err := r.policy(ctx)
+	return observeCephFSReceiptProcessQuiescence(ctx, &r.cohort, "", r.checkHandle, func(ctx context.Context) (bool, error) {
+		present, fsPresent, err := r.scope.policy(ctx)
 		return !present && !fsPresent && err == nil, err
 	})
 }
@@ -281,10 +281,10 @@ func (r *PeerRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceS
 //
 //purpose:observation
 func (r *DirectoryRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceStatus, error) {
-	if r == nil || r.original == nil {
+	if r == nil || r.scope == nil {
 		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original directory process receipt is unavailable")
 	}
-	return observeCephFSReceiptProcessQuiescence(ctx, r.original, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
+	return observeCephFSReceiptProcessQuiescence(ctx, &r.cohort, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
 		if err := r.peerPolicy(ctx); err != nil {
 			return false, err
 		}
@@ -293,28 +293,29 @@ func (r *DirectoryRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiesc
 	})
 }
 
-func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
-	result := initialCephFSProcessQuiescenceStatus(o, directory)
-	if o == nil || o.mirror == nil || owner == nil || authority == nil {
+func observeCephFSReceiptProcessQuiescence(ctx context.Context, c *cephFSRemovalCohort, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
+	result := initialCephFSProcessQuiescenceStatus(c, directory)
+	if c == nil || c.scope == nil || c.scope.mirror == nil || owner == nil || authority == nil {
 		return result, cephFSObserveGuard("original process receipt owner is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {
+	if err := multicluster.LockObservation(ctx, &c.scope.mirror.mu); err != nil {
 		return result, err
 	}
-	defer o.mirror.mu.Unlock()
-	return observeCephFSReceiptProcessQuiescenceLocked(ctx, o, directory, owner, authority)
+	defer c.scope.mirror.mu.Unlock()
+	return observeCephFSReceiptProcessQuiescenceLocked(ctx, c, directory, owner, authority)
 }
 
-func initialCephFSProcessQuiescenceStatus(o *PeerRemoval, directory string) ProcessQuiescenceStatus {
+func initialCephFSProcessQuiescenceStatus(c *cephFSRemovalCohort, directory string) ProcessQuiescenceStatus {
 	result := ProcessQuiescenceStatus{Directory: directory, Daemons: make(map[string]OriginalProcessStatus)}
-	if o == nil {
+	if c == nil || c.scope == nil {
 		return result
 	}
-	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = o.peerID, o.sourceFilesystem, o.destinationFilesystem
-	result.SourceFilesystemID, result.DestinationFilesystemID = o.sourceID, o.destinationID
-	for _, w := range o.cohort {
+	s := c.scope
+	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = s.peerID, s.sourceFilesystem, s.destinationFilesystem
+	result.SourceFilesystemID, result.DestinationFilesystemID = s.sourceID, s.destinationID
+	for _, w := range c.witnesses {
 		entry := OriginalProcessStatus{ContainerID: w.containerID, StartedAt: w.startedAt, InstanceID: w.instanceID, Evidence: "unobserved"}
 		if w.originalProcess != nil {
 			entry.EngineID = w.originalProcess.engineID
@@ -326,15 +327,15 @@ func initialCephFSProcessQuiescenceStatus(o *PeerRemoval, directory string) Proc
 
 // Called with mirror.mu held. Proof and an explicit acknowledgment decision can
 // share one fixture gate without admitting a local generation change between.
-func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
-	result := initialCephFSProcessQuiescenceStatus(o, directory)
-	if o == nil || o.mirror == nil || owner == nil || authority == nil {
+func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, c *cephFSRemovalCohort, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
+	result := initialCephFSProcessQuiescenceStatus(c, directory)
+	if c == nil || c.scope == nil || c.scope.mirror == nil || owner == nil || authority == nil {
 		return result, cephFSObserveGuard("original process receipt owner is unavailable")
 	}
 	if err := owner(); err != nil {
 		return result, err
 	}
-	if err := validateCephFSProcessCohort(ctx, o); err != nil {
+	if err := c.validateProcesses(ctx); err != nil {
 		return result, err
 	}
 	absent, err := authority(ctx)
@@ -345,18 +346,18 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRem
 	if !absent {
 		return result, ctx.Err()
 	}
-	before, err := o.watchers(ctx)
+	before, err := c.scope.watchers(ctx)
 	if err != nil {
 		return result, err
 	}
 	if err := validateQuiescenceWatchers(before); err != nil {
 		return result, err
 	}
-	first, err := probeCephFSOriginalProcesses(ctx, o, before, &result)
+	first, err := probeCephFSOriginalProcesses(ctx, c, before, &result)
 	if err != nil {
 		return result, err
 	}
-	if err := confirmCephFSOriginalProcessesUnchanged(ctx, o, before, first, &result); err != nil {
+	if err := confirmCephFSOriginalProcessesUnchanged(ctx, c, before, first, &result); err != nil {
 		return result, err
 	}
 	// Policy/owner/context rechecks precede every published per-member success.
@@ -368,7 +369,7 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRem
 	if err := owner(); err != nil {
 		return result, err
 	}
-	if err := validateCephFSProcessCohort(ctx, o); err != nil {
+	if err := c.validateProcesses(ctx); err != nil {
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -387,9 +388,9 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRem
 // probeCephFSOriginalProcesses inspects every original process once, records
 // its task evidence and whether its watcher has retired from before, and
 // returns the probes for the closing comparison.
-func probeCephFSOriginalProcesses(ctx context.Context, o *PeerRemoval, before map[string]string, result *ProcessQuiescenceStatus) (map[string]cephFSOriginalProcessProbe, error) {
+func probeCephFSOriginalProcesses(ctx context.Context, c *cephFSRemovalCohort, before map[string]string, result *ProcessQuiescenceStatus) (map[string]cephFSOriginalProcessProbe, error) {
 	first := make(map[string]cephFSOriginalProcessProbe)
-	for _, w := range o.cohort {
+	for _, w := range c.witnesses {
 		i, err := w.originalProcess.inspect(ctx)
 		if err != nil {
 			return nil, annotateProcessProblem(result, w.name, err)
@@ -409,8 +410,8 @@ func probeCephFSOriginalProcesses(ctx context.Context, o *PeerRemoval, before ma
 
 // confirmCephFSOriginalProcessesUnchanged rereads the watchers and every
 // original process, so that a status assembled across a change is refused.
-func confirmCephFSOriginalProcessesUnchanged(ctx context.Context, o *PeerRemoval, before map[string]string, first map[string]cephFSOriginalProcessProbe, result *ProcessQuiescenceStatus) error {
-	after, err := o.watchers(ctx)
+func confirmCephFSOriginalProcessesUnchanged(ctx context.Context, c *cephFSRemovalCohort, before map[string]string, first map[string]cephFSOriginalProcessProbe, result *ProcessQuiescenceStatus) error {
+	after, err := c.scope.watchers(ctx)
 	if err != nil {
 		return err
 	}
@@ -420,7 +421,7 @@ func confirmCephFSOriginalProcessesUnchanged(ctx context.Context, o *PeerRemoval
 	if !equalCephFSRemovalWatchers(before, after) {
 		return cephFSObserveQuery("original process watcher set changed during observation", nil)
 	}
-	for _, w := range o.cohort {
+	for _, w := range c.witnesses {
 		i, err := w.originalProcess.inspect(ctx)
 		if err != nil {
 			return annotateProcessProblem(result, w.name, err)
@@ -440,35 +441,6 @@ func annotateProcessProblem(result *ProcessQuiescenceStatus, name string, err er
 	}
 	result.Daemons[name] = entry
 	return err
-}
-
-func validateCephFSProcessCohort(ctx context.Context, o *PeerRemoval) error {
-	if o == nil || o.mirror == nil || len(o.cohort) == 0 {
-		return cephFSObserveGuard("original process cohort is empty")
-	}
-	owned := make(map[*Daemon]bool)
-	names, ids, gids := make(map[string]bool), make(map[string]bool), make(map[uint64]bool)
-	for _, w := range o.cohort {
-		gid, err := strconv.ParseUint(w.instanceID, 10, 64)
-		if w.daemon == nil {
-			return cephFSObserveGuard("original daemon identity is unavailable")
-		}
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
-			return err
-		}
-		sameOwner := w.originalProcess != nil && w.originalProcess.originalHandle == w.daemon.Container && w.daemon.originalProcess == w.originalProcess && w.daemon.DaemonName == w.name
-		w.daemon.mu.Unlock()
-		if !sameOwner || w.daemon == nil || w.originalProcess == nil || w.daemon.originalProcess != w.originalProcess || w.daemon.DaemonName != w.name || w.originalProcess.containerID != w.containerID || w.address == "" || !validProcessTime(w.startedAt) || err != nil || gid == 0 || names[w.name] || ids[w.containerID] || gids[gid] || owned[w.daemon] {
-			return cephFSObserveGuard("original process cohort binding or numeric watcher identity differs")
-		}
-		owned[w.daemon], names[w.name], ids[w.containerID], gids[gid] = true, true, true, true
-	}
-	for _, d := range o.mirror.daemons {
-		if !owned[d] {
-			return cephFSObserveGuard("current process membership is outside the original cohort")
-		}
-	}
-	return nil
 }
 
 func validateQuiescenceWatchers(values map[string]string) error {

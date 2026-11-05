@@ -25,7 +25,7 @@ func CephFSDirectoryAdditionAssertStatus(t *testing.T, status cephfsmirror.Direc
 	}
 }
 
-func CephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, directory string, receipt *cephfsmirror.DirectoryAddition) {
+func CephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *cephfsmirror.Container, directory string, receipt *cephfsmirror.DirectoryAddition) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

@@ -19,7 +19,7 @@ import (
 
 // changeMirror edits the scripted native state under the owner gate, which
 // every image read holds while it uses the test doubles.
-func changeMirror(m *Mirror, edit func()) {
+func changeMirror(m *Container, edit func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	edit()
@@ -41,7 +41,7 @@ func newBlockedRead() *blockedRead { return &blockedRead{entered: make(chan stru
 
 // startTestImageWatch watches the unscoped image "volume" of m. With a set
 // block, a read waits until its context ends.
-func startTestImageWatch(t *testing.T, ctx context.Context, m *Mirror, settings watch.Settings, block *blockedRead) (*ImageWatch, *rbdWatchReads) {
+func startTestImageWatch(t *testing.T, ctx context.Context, m *Container, settings watch.Settings, block *blockedRead) (*ImageWatch, *rbdWatchReads) {
 	t.Helper()
 	reads := &rbdWatchReads{}
 	w, err := startImageWatch(ctx, settings, m.checkWatchOpen, func(ctx context.Context) (ImageStatus, error) {
@@ -410,7 +410,7 @@ func TestRBDImageWatchConfigAndUnstartedRefusals(t *testing.T) {
 	if w, err := link.WatchImage(t.Context(), ceph.WatchConfig{}, "volume"); w != nil || err == nil {
 		t.Fatalf("a baseline without a destination = %v, %v", w, err)
 	}
-	var nilMirror *Mirror
+	var nilMirror *Container
 	var nilView *Namespace
 	if w, err := nilMirror.WatchImage(t.Context(), ceph.WatchConfig{}, "volume"); w != nil || err == nil {
 		t.Fatal("a nil mirror is not refused")

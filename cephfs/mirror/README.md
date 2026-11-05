@@ -24,7 +24,12 @@ import cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
    cephfsmirror.WithConfig(cfg))`. `img` is the daemon image (usually
    `FactsOf(source).Images.CephFS`); `cfg` names the two clusters (the embedded
    `*ceph.Container`), the two filesystems and the `Directories` to mirror.
-   Mirroring is one way with one peer per source filesystem.
+   Mirroring is one way with one peer per source filesystem. `Run` returns a
+   `*cephfsmirror.Container`: it owns the daemon cohort (one by default, none
+   with `NoInitialDaemons`) and the manager network attachments, and it
+   coordinates the peer and directory operations. Its embedded
+   `testcontainers.Container` is only the initial daemon; use `Daemons` for
+   the cohort.
 3. **Run the SUT** on the source and take a snapshot of a mirrored directory
    (`mkdir <dir>/.snap/<name>` through the client) as a checkpoint.
 4. **Observe and verify**: `WaitDirectoryReady` (a live daemon owns the
@@ -37,7 +42,7 @@ import cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
    `BeginDirectoryRemoval` and `BeginPeerRemoval`, which prove what the daemons
    did even after a lost reply.
 6. **Clean up**: register the clusters' cleanup first and the mirror's after,
-   so the mirror is terminated first; terminate a non-nil `*Mirror` even after
+   so the mirror is terminated first; terminate a non-nil `*Container` even after
    an error.
 
 ```golang

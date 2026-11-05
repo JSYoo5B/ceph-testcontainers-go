@@ -15,7 +15,7 @@ import (
 // as a stopped member. The event that names the survivor as leader advances
 // the test; it proves election only, not that any image replays. This example
 // is compiled, not run.
-func ExampleMirror_WatchReceivers() {
+func ExampleContainer_WatchReceivers() {
 	ctx := context.Background()
 	source, err := rbd.Run(ctx, ceph.DefaultImage)
 	if source != nil {

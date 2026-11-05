@@ -18,6 +18,9 @@
       "Config.SourceSite field string",
       "Config.Timing field TimingProfile"
     ],
+    "rbd/mirror.Container": [
+      "Container embed testcontainers.Container"
+    ],
     "rbd/mirror.Daemon": [
       "Daemon embed testcontainers.Container",
       "Daemon.ClientName field string",
@@ -53,9 +56,6 @@
       "ImageWatchEvent.Sequence field uint64",
       "ImageWatchEvent.Started field time.Time",
       "ImageWatchEvent.Status field ImageStatus"
-    ],
-    "rbd/mirror.Mirror": [
-      "Mirror embed testcontainers.Container"
     ],
     "rbd/mirror.NamespaceState": [
       "NamespaceState.MirrorUUID field string",

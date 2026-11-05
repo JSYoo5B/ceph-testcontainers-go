@@ -94,13 +94,13 @@ func (control *cephFSRefreshControl) Exec(ctx context.Context, args []string, op
 	return control.cephFSObserverDraftControl.Exec(ctx, args, opts...)
 }
 
-func newCephFSRefreshFixture() (*Mirror, *cephFSRefreshControl, *cephFSRefreshControl) {
+func newCephFSRefreshFixture() (*Container, *cephFSRefreshControl, *cephFSRefreshControl) {
 	mirror, source, destination, _, _ := newCephFSObserverDraft()
 	sourceControl := &cephFSRefreshControl{cephFSObserverDraftControl: source, config: fmt.Sprintf(`{"fsid":%q,"key":"fixture-private-key","mon_host":"v2:old:3300","unknown":{"large":9007199254740993},"extension":[null,true]}`, cephFSRefreshDestinationFSID)}
 	destinationControl := &cephFSRefreshControl{cephFSObserverDraftControl: destination, fsid: cephFSRefreshDestinationFSID}
 	mirror.source = &ceph.Container{Container: sourceControl}
 	mirror.destination = &ceph.Container{Container: destinationControl}
-	mirror.daemons = []*Daemon{
+	mirror.roster.daemons = []*Daemon{
 		{Container: &cephFSMirrorDaemonFake{id: "a"}, DaemonName: "a"},
 		{Container: &cephFSMirrorDaemonFake{id: "b"}, DaemonName: "b"},
 	}
@@ -113,9 +113,9 @@ func cephFSRefreshCurrentAddresses(context.Context) (string, error) {
 
 func TestCephFSRefreshLocalCurrentOwnershipPartialRetryAndNoRuntimeChanges(t *testing.T) {
 	mirror, source, _ := newCephFSRefreshFixture()
-	a, b := mirror.daemons[0], mirror.daemons[1]
+	a, b := mirror.roster.daemons[0], mirror.roster.daemons[1]
 	removed := &cephFSMirrorDaemonFake{id: "removed"}
-	mirror.daemons = append(mirror.daemons,
+	mirror.roster.daemons = append(mirror.roster.daemons,
 		&Daemon{Container: removed, DaemonName: "removed", removed: true},
 		&Daemon{Container: a.Container, DaemonName: "alias"},
 	)
@@ -179,7 +179,7 @@ func TestCephFSRefreshLocalIdentityAndContextGuards(t *testing.T) {
 			mirror, _, _ := newCephFSRefreshFixture()
 			mutex := &mirror.mu
 			if lock == "daemon" {
-				mutex = &mirror.daemons[0].mu
+				mutex = &mirror.roster.daemons[0].mu
 			}
 			mutex.Lock()
 			defer mutex.Unlock()
@@ -207,7 +207,7 @@ func TestCephFSRefreshLocalIdentityAndContextGuards(t *testing.T) {
 	if !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("post-copy peer drift was not rejected")
 	}
-	var nilMirror *Mirror
+	var nilMirror *Container
 	if err := nilMirror.RefreshMonitorConfig(t.Context()); err == nil {
 		t.Fatal("nil fixture accepted refresh")
 	}

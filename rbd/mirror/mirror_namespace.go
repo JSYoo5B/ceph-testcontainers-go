@@ -23,7 +23,7 @@ import (
 type Scope string
 
 const (
-	// ScopeImage enables images one by one, with Mirror.EnableImage or rbd
+	// ScopeImage enables images one by one, with Container.EnableImage or rbd
 	// mirror image enable.
 	ScopeImage Scope = "image"
 	// ScopePool enrolls every image with the journaling feature
@@ -51,7 +51,7 @@ type Policies struct {
 // state; callers compare Scope and RemoteNamespace with their desired fixture.
 //
 //purpose:observation
-func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
+func (m *Container) PolicyStatus(ctx context.Context) (Policies, error) {
 	var status Policies
 	if m == nil {
 		return status, servicehook.Invalid(errors.New("RBD mirror fixture is unavailable"))

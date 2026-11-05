@@ -50,7 +50,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 	harness.ExecCommand(t, ctx, aClient, "rbd", "create", image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
 	before := harness.RBDMultiClusterPayload(size, 41)
 	rbdFanoutWrite(t, ctx, aClient, fsids[0], pool, name, 0, before)
-	for _, link := range []*rbdmirror.Mirror{ab, ac} {
+	for _, link := range []*rbdmirror.Container{ab, ac} {
 		if err := link.EnableImage(ctx, name); err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 		}
 	}
 
-	for _, link := range []*rbdmirror.Mirror{ab, ac} {
+	for _, link := range []*rbdmirror.Container{ab, ac} {
 		if err := link.Stop(ctx, &stopGrace); err != nil {
 			t.Fatal(err)
 		}

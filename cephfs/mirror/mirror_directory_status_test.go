@@ -100,7 +100,7 @@ func (d *cephFSObserverDraftDaemon) Exec(ctx context.Context, args []string, _ .
 	return 0, nil, errors.New("wrong native filesystem/peer admin command")
 }
 
-func newCephFSObserverDraft() (*Mirror, *cephFSObserverDraftControl, *cephFSObserverDraftControl, *cephFSObserverDraftDaemon, *cephFSObserverDraftDaemon) {
+func newCephFSObserverDraft() (*Container, *cephFSObserverDraftControl, *cephFSObserverDraftControl, *cephFSObserverDraftDaemon, *cephFSObserverDraftDaemon) {
 	peer := fmt.Sprintf(`{%q:{"client_name":"client.peer","site_name":"destination-site","fs_name":"destination"}}`, cephFSObserverDraftPeer)
 	source := &cephFSObserverDraftControl{cephFSMirrorNativeControlFake: &cephFSMirrorNativeControlFake{}, filesystemID: 1, metadataPool: 7, peer: peer, mapping: `{"state":"mapped","instance_id":"4262"}`}
 	destination := &cephFSObserverDraftControl{cephFSMirrorNativeControlFake: &cephFSMirrorNativeControlFake{}, filesystemID: 2, metadataPool: 9}
@@ -109,12 +109,12 @@ func newCephFSObserverDraft() (*Mirror, *cephFSObserverDraftControl, *cephFSObse
 	}
 	a := &cephFSObserverDraftDaemon{running: true, session: session("172.20.0.8:0/1234"), replay: `{"/owned":{"state":"idle","last_synced_snap":{"id":120,"name":"checkpoint"},"snaps_synced":1,"snaps_deleted":0,"snaps_renamed":0},"/foreign":null}`}
 	b := &cephFSObserverDraftDaemon{running: true, session: session("172.20.0.9:0/5678"), replay: a.replay}
-	mirror := &Mirror{
+	mirror := &Container{
 		source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
 		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
 		filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
-		ownedDirectories: map[string]bool{"/owned": true}, Directories: []string{"/owned"},
-		daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}},
+		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
+		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
 	}
 	return mirror, source, destination, a, b
 }
@@ -231,7 +231,7 @@ func TestCephFSObserverDraftRejectsReplacedFilesystemAndPeerPolicy(t *testing.T)
 			case "daemon-destination":
 				a.session = strings.Replace(a.session, `"destination-site"`, `"foreign-site"`, 1)
 			case "ownership":
-				delete(mirror.ownedDirectories, "/owned")
+				delete(mirror.directories.owned, "/owned")
 			case "mapping-missing":
 				source.mapping = `{}`
 			}

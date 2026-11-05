@@ -407,7 +407,7 @@ source OSD, with `Peer` set to the mirror daemon's address on the source
 network (from the daemon's `Inspect` and the `NetworkName` field of `ceph.FactsOf(source)`).
 
 Read progress from the mirror status, not from daemon readiness: during a
-snapshot sync, the `rbdmirror.Mirror.ImageStatus` description carries
+snapshot sync, the `rbdmirror.Container.ImageStatus` description carries
 `replay_state` `syncing`, `syncing_percent` and `bytes_per_second`. rbd-mirror
 writes its status only every 30 seconds, so poll over longer windows. After
 `Restore`, compare the destination's bytes with its own client; the status

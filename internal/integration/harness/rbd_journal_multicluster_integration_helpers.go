@@ -14,7 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func RBDJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Mirror {
+func RBDJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Container {
 	t.Helper()
 	image := StaticFacts(source).Images.RBDAux
 	link, err := rbdmirror.Run(ctx, NativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{

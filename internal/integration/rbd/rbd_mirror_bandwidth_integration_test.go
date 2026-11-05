@@ -62,7 +62,7 @@ func (s rbdMirrorSyncStatus) String() string {
 	return out + " updated " + s.LastUpdate
 }
 
-func rbdMirrorSyncState(ctx context.Context, mirror *rbdmirror.Mirror, image string) (rbdMirrorSyncStatus, error) {
+func rbdMirrorSyncState(ctx context.Context, mirror *rbdmirror.Container, image string) (rbdMirrorSyncStatus, error) {
 	status, err := mirror.ImageStatus(ctx, image)
 	if err != nil {
 		return rbdMirrorSyncStatus{}, fmt.Errorf("mirror status of %s: %w", image, err)

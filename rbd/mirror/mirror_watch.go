@@ -42,7 +42,7 @@ var errRBDWatchTerminated = errors.New("terminated")
 // and holds none of them when it returns. A refusal wraps
 // errRBDWatchTerminated and is ceph.ErrInvalidRequest; a lock that ctx
 // outlasts is a query error.
-func (m *Mirror) checkWatchOpen(ctx context.Context, operation string) error {
+func (m *Container) checkWatchOpen(ctx context.Context, operation string) error {
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return rbdReceiverQuery(ctx, "admit "+operation, err)
 	}

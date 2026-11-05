@@ -226,10 +226,10 @@ func TestCephFSManagerNetworkTracksUncertainConnectAndRemovedManagers(t *testing
 }
 
 func TestCephFSManagerReconciliationRefusesUninitializedAndTerminatedMirrors(t *testing.T) {
-	if err := (&Mirror{}).AttachManagers(t.Context()); err == nil {
+	if err := (&Container{}).AttachManagers(t.Context()); err == nil {
 		t.Fatal("uninitialized mirror accepted reconciliation")
 	}
-	mirror := &Mirror{}
+	mirror := &Container{}
 	if err := mirror.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}

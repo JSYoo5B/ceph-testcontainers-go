@@ -91,7 +91,7 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 			t.Run(name, func(t *testing.T) {
 				first := make(chan struct{})
 				var signal sync.Once
-				var mirror *Mirror
+				var mirror *Container
 				var wait func(context.Context) multiClusterWaitRemovalResult
 				if kind == "peer" {
 					r, m, _, _, a, _ := beginPeerRemovalFixture(t)

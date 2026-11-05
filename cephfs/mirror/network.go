@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
@@ -41,7 +40,7 @@ func (daemon *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInte
 	if facts.UsesHostNetwork {
 		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
 	}
-	if !slices.Contains(m.daemons, daemon) || daemon.Container == nil {
+	if !m.roster.has(daemon) || daemon.Container == nil {
 		return nil, servicehook.Invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemon.DaemonName))
 	}
 	return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, facts.NetworkName)

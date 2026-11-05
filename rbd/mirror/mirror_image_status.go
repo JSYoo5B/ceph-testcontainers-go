@@ -44,7 +44,7 @@ type ImageStatus struct {
 // must agree. A non-zero partial observation can accompany an error.
 //
 //purpose:observation
-func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
+func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
 	var result ImageStatus
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return result, err
@@ -72,7 +72,7 @@ func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus
 
 // The original owner's gate is held throughout this bounded read. A non-nil
 // scope belongs to a retained view; it never replaces the owner's config.
-func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
+func (m *Container) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
 	o := m.imageObservation(imageName, scope, witness)
 	source, destination, settled, err := o.readSites(ctx)
 	if err != nil || settled {
@@ -93,7 +93,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 // status it builds. A scoped observation reads a bound namespace's view with
 // its receiver witness; an unscoped one reads the fixture's original pair.
 type rbdImageObservation struct {
-	m                      *Mirror
+	m                      *Container
 	name                   string
 	pool, sourceNS, destNS string
 	mode                   Mode
@@ -103,7 +103,7 @@ type rbdImageObservation struct {
 	result                 ImageStatus
 }
 
-func (m *Mirror) imageObservation(imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) *rbdImageObservation {
+func (m *Container) imageObservation(imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) *rbdImageObservation {
 	o := &rbdImageObservation{m: m, name: imageName, scope: scope, witness: witness,
 		pool: m.pair.config.Pool, sourceNS: m.pair.config.SourceNamespace, destNS: m.pair.config.DestinationNamespace,
 		mode: m.pair.config.Mode, checkIdentities: m.pair.checkObservedIdentities}
@@ -308,7 +308,7 @@ func (o *rbdImageObservation) confirm(ctx context.Context, source, destination r
 // pool, policy or image identity, or an invalid schema, fails immediately.
 //
 //purpose:observation
-func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
+func (m *Container) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return ImageStatus{}, err
 	}

@@ -81,7 +81,7 @@ type rbdReceiverWitness struct {
 // remote mirror UUID: it is a discovery and election check only.
 //
 //purpose:observation
-func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
+func (m *Container) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	status, _, err := m.receiverStatus(ctx, expectedDaemons, nil)
 	return status, err
 }
@@ -97,7 +97,7 @@ func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) 
 // With zero daemons it waits until ctx ends.
 //
 //purpose:observation
-func (m *Mirror) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
+func (m *Container) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if m == nil {
 		return ReceiverStatus{}, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
@@ -147,7 +147,7 @@ func waitRBDReceiverReady(ctx context.Context, interval time.Duration, observe f
 	}
 }
 
-func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (*rbdReceiverWitness, error) {
+func (m *Container) receiverWitness(scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (*rbdReceiverWitness, error) {
 	if m.closed || !m.receiver.setupConfirmed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil || m.receiver.clusters == nil || m.receiver.peer == nil || m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
 		return nil, rbdReceiverGuard("RBD receiver bootstrap capability is unavailable or unconfirmed")
 	}
@@ -197,11 +197,11 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 	return w, nil
 }
 
-func (m *Mirror) receiverStatus(ctx context.Context, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
+func (m *Container) receiverStatus(ctx context.Context, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 	return m.receiverStatusForScope(ctx, nil, names, previous)
 }
 
-func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
+func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 	var result ReceiverStatus
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
@@ -274,7 +274,7 @@ type rbdReceiverNativeObservation struct {
 	problem string
 }
 
-func (m *Mirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness) (rbdReceiverNativeObservation, error) {
+func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness) (rbdReceiverNativeObservation, error) {
 	var result rbdReceiverNativeObservation
 	result.report.ContainerID, result.report.ClientName = member.cid, member.client
 	if err := multicluster.LockObservation(ctx, &member.daemon.mu); err != nil {

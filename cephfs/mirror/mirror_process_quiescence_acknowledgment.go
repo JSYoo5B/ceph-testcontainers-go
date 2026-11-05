@@ -2,8 +2,9 @@ package mirror
 
 import (
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 // ProcessQuiescenceAcknowledgment is the result of one explicit
@@ -26,11 +27,11 @@ func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Process
 	if r == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original peer acknowledgment receipt is unavailable")
 	}
-	return acknowledgeCephFSProcessQuiescence(ctx, r, "", r.checkHandle, func(ctx context.Context) (bool, error) {
-		present, fsPresent, err := r.policy(ctx)
+	return acknowledgeCephFSProcessQuiescence(ctx, &r.cohort, "", r.checkHandle, func(ctx context.Context) (bool, error) {
+		present, fsPresent, err := r.scope.policy(ctx)
 		return !present && !fsPresent && err == nil, err
 	}, func() bool { return r.completed }, func() {
-		r.mirror.peerID = ""
+		r.scope.mirror.peerID = ""
 		r.processQuiescenceAcknowledged = true
 	})
 }
@@ -41,10 +42,10 @@ func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Process
 //
 //purpose:condition
 func (r *DirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
-	if r == nil || r.original == nil {
+	if r == nil || r.scope == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original directory acknowledgment receipt is unavailable")
 	}
-	return acknowledgeCephFSProcessQuiescence(ctx, r.original, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
+	return acknowledgeCephFSProcessQuiescence(ctx, &r.cohort, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
 		if err := r.peerPolicy(ctx); err != nil {
 			return false, err
 		}
@@ -56,32 +57,32 @@ func (r *DirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Pr
 	})
 }
 
-func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error), completed func() bool, commit func()) (ProcessQuiescenceAcknowledgment, error) {
-	result := ProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(o, directory)}
-	if o == nil || o.mirror == nil || owner == nil || authority == nil || completed == nil || commit == nil {
+func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCohort, directory string, owner func() error, authority func(context.Context) (bool, error), completed func() bool, commit func()) (ProcessQuiescenceAcknowledgment, error) {
+	result := ProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(c, directory)}
+	if c == nil || c.scope == nil || c.scope.mirror == nil || owner == nil || authority == nil || completed == nil || commit == nil {
 		return result, cephFSObserveGuard("original process acknowledgment owner is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {
+	if err := multicluster.LockObservation(ctx, &c.scope.mirror.mu); err != nil {
 		return result, err
 	}
-	defer o.mirror.mu.Unlock()
+	defer c.scope.mirror.mu.Unlock()
 	if err := owner(); err != nil {
 		return result, err
 	}
 	if completed() {
 		return result, cephFSObserveGuard("original removal already has native graceful completion")
 	}
-	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, o); err != nil {
+	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, c); err != nil {
 		return result, err
 	}
-	observation, err := observeCephFSReceiptProcessQuiescenceLocked(ctx, o, directory, owner, authority)
+	observation, err := observeCephFSReceiptProcessQuiescenceLocked(ctx, c, directory, owner, authority)
 	result.Observation = observation
 	if err != nil {
 		return result, err
 	}
-	if !observation.PolicyRemoved || !observation.OriginalQuiescent || len(observation.Daemons) != len(o.cohort) {
+	if !observation.PolicyRemoved || !observation.OriginalQuiescent || len(observation.Daemons) != len(c.witnesses) {
 		return result, cephFSObserveQuery("original process acknowledgment proof is incomplete", nil)
 	}
 	for _, entry := range observation.Daemons {
@@ -92,7 +93,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *PeerRemoval, dir
 	if err := owner(); err != nil {
 		return result, err
 	}
-	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, o); err != nil {
+	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, c); err != nil {
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -104,11 +105,11 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *PeerRemoval, dir
 	return result, nil
 }
 
-func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, o *PeerRemoval) error {
-	if len(o.mirror.daemons) != 0 {
+func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, c *cephFSRemovalCohort) error {
+	if len(c.scope.mirror.roster.daemons) != 0 {
 		return cephFSObserveQuery("original process acknowledgment requires explicit owned daemon removal", nil)
 	}
-	for _, w := range o.cohort {
+	for _, w := range c.witnesses {
 		if w.daemon == nil {
 			return cephFSObserveGuard("original process acknowledgment daemon identity is unavailable")
 		}
@@ -143,7 +144,7 @@ func (r *PeerRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context) erro
 	if !r.processQuiescenceAcknowledged {
 		return cephFSObserveGuard("original peer process acknowledgment is unavailable")
 	}
-	present, fsPresent, err := r.policy(ctx)
+	present, fsPresent, err := r.scope.policy(ctx)
 	if err != nil {
 		return err
 	}

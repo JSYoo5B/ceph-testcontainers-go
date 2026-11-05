@@ -61,7 +61,7 @@ func CephFSAssertObservedIdentity(t *testing.T, status, expected cephfsmirror.Di
 	}
 }
 
-func CephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, sourceClient testcontainers.Container, script string, expected cephfsmirror.DirectoryStatus, directory string, checkpoint cephfsmirror.Snapshot) cephfsmirror.DirectoryStatus {
+func CephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *cephfsmirror.Container, sourceClient testcontainers.Container, script string, expected cephfsmirror.DirectoryStatus, directory string, checkpoint cephfsmirror.Snapshot) cephfsmirror.DirectoryStatus {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -83,7 +83,7 @@ func CephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *cephf
 	return status
 }
 
-func CephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.Container, mirror *cephfsmirror.Mirror, directoryCount int, removedPeer string) {
+func CephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.Container, mirror *cephfsmirror.Container, directoryCount int, removedPeer string) {
 	t.Helper()
 	data, err := source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
 	if err != nil {

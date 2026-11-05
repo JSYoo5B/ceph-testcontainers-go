@@ -100,7 +100,7 @@ lists every known difference and what you can observe.
 | RBD mirroring of named namespaces only | The default namespace is put in `init-only` mode. | Squid has no `init-only` mode, so the default namespace is put in `image` mode. | On Squid nothing in the default namespace replicates unless you enable an image explicitly. |
 | RBD namespace mapping | `Config.SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name can be mirrored. | `rbdmirror.Run` returns `ceph.ErrUnsupported`, naming the side whose `rbd` lacks the option, before changing anything when the names differ. |
 | RBD mirror UUID | `rbd mirror pool info` prints `mirror_uuid` and `remote_namespace`. | Neither field is printed. The fixture reads the UUID from the pool's `rbd_mirroring` object and uses the same namespace name as the remote namespace. | None for the typed API. Your own parsing of `rbd mirror pool info` must tolerate the missing fields. |
-| RBD receiver status | The rbd-mirror admin socket's `rbd mirror status` reports `namespace_replayers` with local and remote namespace names. | The default namespace's `image_replayers` sit in the pool entry and named namespaces appear by name only under `namespaces`. | None. `rbdmirror.Mirror.ReceiverStatus` and `WaitReceiverReady` normalize both forms. |
+| RBD receiver status | The rbd-mirror admin socket's `rbd mirror status` reports `namespace_replayers` with local and remote namespace names. | The default namespace's `image_replayers` sit in the pool entry and named namespaces appear by name only under `namespaces`. | None. `rbdmirror.Container.ReceiverStatus` and `WaitReceiverReady` normalize both forms. |
 | RGW sync pipe records | A system-mode pipe has no `user` in its `params`. | Squid records `"user": ""`. | None. Pipe readback accepts the empty value on Squid. |
 | RGW account root as user-mode pipe principal | Objects replicate between buckets owned by the same account. | Squid resolves no source for such a pipe and replicates nothing. Ordinary-user user-mode pipes work. | `multisite.SyncGroup.CreatePipe` returns `ceph.ErrUnsupported`, naming the Squid zone, before changing anything when any zone runs Ceph 19. |
 | RGW user-scope rate limit | A user's policy throttles every request that the user's S3 keys sign. | The gateway stores and reports the policy but never applies it to a request signed with the user's S3 key: the authenticated request user carries no stored user attributes, where the policy lives. A bucket's policy is applied. | `rgw.User.OverrideRateLimit` with `rgw.RateLimitScope{}` returns `ceph.ErrUnsupported`, naming the release, before changing anything when the cluster runs Ceph 19. The bucket scope works on both. |
@@ -203,7 +203,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   daemon joins, the MGR `mirroring` module fails to redistribute directories
   that are already assigned (`'DirectoryState' object is not subscriptable`).
   Failover to a surviving daemon still works. Call
-  `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
+  `cephfsmirror.Container.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - **Every tested release, RBD snapshot copy resumed after a killed
@@ -468,7 +468,7 @@ the retained store and the returned handle are enough to continue.
   `DaemonOptions.WithImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
-- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Container.RebalanceDirectories`.
 - [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `WithTopology`,
   `Config.SetupImage`.
 - [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.

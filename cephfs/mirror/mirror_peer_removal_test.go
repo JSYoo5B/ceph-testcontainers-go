@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -167,7 +166,7 @@ func peerRemovalManagerPeers() string {
 func peerRemovalClusterReader(context.Context) ([2]string, error) {
 	return [2]string{peerRemovalSourceFSID, peerRemovalDestinationFSID}, nil
 }
-func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
+func newPeerRemovalFixture() (*Container, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
 	source := &peerRemovalControlFake{name: "source", fsid: peerRemovalSourceFSID, id: 1, pool: 7, fsPeers: peerRemovalRemotePeers(), managerPeers: peerRemovalManagerPeers(), applyRemoval: true, watchers: "watcher=172.20.0.8:0/1234 client.4262 cookie=1\nwatcher=172.20.0.9:0/5678 client.4266 cookie=2\n"}
 	destination := &peerRemovalControlFake{name: "destination", fsid: peerRemovalDestinationFSID, id: 2, pool: 9, fsPeers: "{}", managerPeers: "{}"}
 	makeDaemon := func(id, address string) *peerRemovalDaemonFake {
@@ -175,14 +174,14 @@ func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalCont
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, ownedDirectories: map[string]bool{"/owned": true}, daemonImage: "unchanged", daemonKeyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}
-	for _, d := range mirror.daemons {
+	mirror := &Container{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
+	for _, d := range mirror.roster.daemons {
 		d.owner = mirror
 		mirror.owned.AddContainer(d)
 	}
 	return mirror, source, destination, a, b
 }
-func beginPeerRemovalFixture(t *testing.T) (*PeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
+func beginPeerRemovalFixture(t *testing.T) (*PeerRemoval, *Container, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
 	t.Helper()
 	m, s, d, a, b := newPeerRemovalFixture()
 	r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
@@ -200,7 +199,7 @@ func drainPeerRemovalDaemons(ds ...*peerRemovalDaemonFake) {
 
 func TestCephFSPeerRemovalProductionCommandUnregisterBarrier(t *testing.T) {
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
-	if s.removals != 1 || m.peerID != "" || len(r.cohort) != 2 {
+	if s.removals != 1 || m.peerID != "" || len(r.cohort.witnesses) != 2 {
 		t.Fatal("original native request/cohort not retained")
 	}
 	a.peer = false
@@ -231,7 +230,7 @@ func TestCephFSPeerRemovalProductionRefusesInvalidPreflightWithoutMutation(t *te
 			reader := peerRemovalClusterReader
 			switch fault {
 			case "zero":
-				m.daemons = nil
+				m.roster.daemons = nil
 			case "stopped":
 				a.state.Running = false
 			case "paused":
@@ -352,7 +351,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 	if s.removals != 1 || len(m.Directories) != 1 {
 		t.Fatal("pending gate mutated native policy")
 	}
-	if err := m.RemovePeer(t.Context(), r.peerID); err != nil || s.removals != 1 {
+	if err := m.RemovePeer(t.Context(), r.scope.peerID); err != nil || s.removals != 1 {
 		t.Fatalf("legacy same-intent retry resent accepted delete: %v", err)
 	}
 	drainPeerRemovalDaemons(a, b)
@@ -363,7 +362,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 		t.Fatal("completed receipt keeps import gate closed")
 	}
 	legacy, ls, _, _, _ := newPeerRemovalFixture()
-	legacy.daemons = nil
+	legacy.roster.daemons = nil
 	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.ops.peerRemoval != nil || legacy.peerID != "" {
 		t.Fatalf("legacy zero-daemon contract changed: %v", err)
 	}
@@ -378,7 +377,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 			case "CID":
 				a.id = strings.Repeat("c", 64)
 			case "daemon-name":
-				m.daemons[0].DaemonName = "changed"
+				m.roster.daemons[0].DaemonName = "changed"
 			case "generation":
 				a.state.StartedAt = "2026-10-07T01:01:00Z"
 			case "session":
@@ -414,7 +413,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 			case "fixture-field":
 				m.DestinationFilesystem = "other"
 			case "cluster":
-				r.readClusters = func(context.Context) ([2]string, error) {
+				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil
 				}
 			case "catalog-null":
@@ -495,8 +494,8 @@ func TestCephFSPeerRemovalProductionContextLocksAndWaitRelease(t *testing.T) {
 			if mutex == "fixture" {
 				m.mu.Lock()
 			} else {
-				m.daemons[0].mu.Lock()
-				unlock = m.daemons[0].mu.Unlock
+				m.roster.daemons[0].mu.Lock()
+				unlock = m.roster.daemons[0].mu.Unlock
 			}
 			defer unlock()
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -536,7 +535,7 @@ func TestCephFSPeerRemovalProductionCleanupRetainsOriginalCohortWithoutAdoptingN
 	if err := daemonNamed(t, m, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.daemons) != 1 || len(r.cohort) != 2 || r.cohort[0].daemon.Container != a || a.terminated != 1 {
+	if len(m.roster.daemons) != 1 || len(r.cohort.witnesses) != 2 || r.cohort.witnesses[0].daemon.Container != a || a.terminated != 1 {
 		t.Fatal("cleanup lost retained original handle")
 	}
 	status, err := r.Status(t.Context())
@@ -562,14 +561,14 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 	if st, err := r.Status(t.Context()); err != nil || !st.Drained {
 		t.Fatal(err)
 	}
-	expected := r.peer
+	expected := r.scope.peer
 	m.pendingPeerImport = &expected
 	var peers map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers); err != nil {
 		t.Fatal(err)
 	}
 	id, err := m.reconcilePendingPeer(peers)
-	if err != nil || id != peerRemovalNewPeer || m.ops.peerGeneration == r.generation {
+	if err != nil || id != peerRemovalNewPeer || m.ops.peerGeneration == r.scope.generation {
 		t.Fatalf("new ownership did not supersede old receipt: %s %v", id, err)
 	}
 	st, err := r.Status(t.Context())
@@ -657,7 +656,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	}
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
-	r.readClusters = func(ctx context.Context) ([2]string, error) {
+	r.scope.readClusters = func(ctx context.Context) ([2]string, error) {
 		_, err := readCephFSRemovalClusterIdentity(ctx, func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
 		return [2]string{}, err
 	}
@@ -665,7 +664,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.ops.peerRemoval != r || s.removals != 1 {
 		t.Fatalf("common failure discarded accepted intent: %+v %v", status, err)
 	}
-	r.readClusters = peerRemovalClusterReader
+	r.scope.readClusters = peerRemovalClusterReader
 	status, err = r.WaitDrained(t.Context())
 	if err != nil || !status.Drained || s.removals != 1 {
 		t.Fatalf("fresh wait could not recover retained intent: %+v %v", status, err)
