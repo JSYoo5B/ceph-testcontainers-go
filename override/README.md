@@ -3,8 +3,9 @@
 Import `github.com/JSYoo5B/ceph-testcontainers-go/override` alongside `ceph` to
 put a running cluster into a policy or admission state that a test needs for a
 while, and to put it back: fence one client session, hold an OSD flag, enable
-or disable an MGR module, lower the full ratios, raise one OSD's debug level,
-set a central configuration entry or change the messenger policy. Overrides
+or disable an MGR module, lower the full ratios, raise the debug level of one
+OSD, MGR or MDS, set a central configuration entry or change the messenger
+policy. Overrides
 build test conditions; they are not a cluster administration tool. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
@@ -19,7 +20,7 @@ build test conditions; they are not a cluster administration tool. See
    | Hold a global OSD flag (`noout`, `nodown`, ...) | `SetOSDFlag` | `OSDFlagHandle` |
    | Enable or disable an MGR module | `SetMGRModule` | `MGRModuleHandle` |
    | Make the cluster (near)full with little data | `SetFullRatios` | `FullRatiosHandle` |
-   | Raise one OSD's runtime debug level | `SetDebugLevel` | `DebugLevelHandle` |
+   | Raise one OSD, MGR or MDS runtime debug level | `SetDebugLevel` | `DebugLevelHandle` |
    | Set one central configuration entry | `SetConfig` | `ConfigHandle` |
    | Change accepted client connection modes | `SetMessengerPolicy` | `MessengerPolicyHandle` |
 
@@ -55,9 +56,18 @@ if err != nil {
 - Overrides verify the stored state, not its effect: a configuration entry can
   be shadowed by local configuration, some options apply only at daemon start,
   and a full-ratio change takes effect only when the OSDs report it.
-- Debug levels are a narrow diagnostic window for one OSD and option around one
-  operation, not a logging default; restore them with a context of their own
-  and register them with `finalize.Finalization.TrackDebugLevel`.
+- Debug levels are a narrow diagnostic window for one daemon and option around
+  one operation, not a logging default; restore them with a context of their
+  own and register them with `finalize.Finalization.TrackDebugLevel`. Each role
+  has two options: `debug_ms` and its own subsystem (`debug_osd`, `debug_mgr`,
+  `debug_mds`). The window follows the daemon's incarnation, not its name: an
+  MDS or MGR that respawns (`ceph mds fail`, `ceph mgr fail`, a changed module
+  set) comes back with a new GID and without the level, and its window ends
+  `target-changed` instead of being restored.
+- Fault settings such as `ms_blackhole_client` are not debug levels. For an
+  ordered daemon-local recipe, compose `SetDebugLevel` with the daemon's admin
+  socket as described in
+  [Ordered runtime settings on one daemon](../docs/guides/fault-injection.md#ordered-runtime-settings-on-one-daemon).
 
 ## Reference
 

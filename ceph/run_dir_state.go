@@ -22,7 +22,7 @@ import (
 //     holds only the feature-client startup lock (ceph/images.go).
 //   - The removed mark of the volume is written by release, which terminate
 //     calls with Container.mu held, and read by shared under the same lock
-//     (adminSocket and osdDebugTarget.set take lockTopology first).
+//     (adminSocket and debugTarget.set take lockTopology first).
 //
 // The guards in run_dir_state_test.go enforce that nothing touches the field
 // outside this type, that the methods call only their pinned collaborators,

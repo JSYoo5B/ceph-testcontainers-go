@@ -18,6 +18,8 @@ package overridehook
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -200,13 +202,16 @@ func BlocklistRemove(ctx context.Context, c *ceph.Container, address string) err
 	return get().BlocklistRemove(ctx, c, address)
 }
 
-// DebugTarget reaches the admin socket of one owned OSD generation. A Set
-// that issued nothing returns an error that has a Changed() bool method:
-// Changed reports a terminal mismatch of the generation.
+// DebugTarget reaches the admin socket of one owned OSD, MGR or MDS
+// incarnation. A Set that issued nothing returns an error that has a
+// Changed() bool method: Changed reports a terminal mismatch of the
+// incarnation.
 type DebugTarget interface {
-	// Generation reports the daemon's current container generation: owned is
-	// false when the cluster no longer owns the same descriptor or has
-	// terminated, and identity is the container ID and start time.
+	// Generation reports the daemon's current incarnation: owned is false
+	// when the cluster no longer owns the same descriptor or has terminated,
+	// and identity is the container ID and start time, followed for a
+	// running MDS or MGR by "/gid=<native GID>" and, for a MGR, its admin
+	// socket identity; see DebugIdentityGID.
 	Generation(ctx context.Context) (owned bool, identity string, running, paused bool, err error)
 	// Get reads the daemon's effective level of option name.
 	Get(ctx context.Context, name string) (string, error)
@@ -226,9 +231,9 @@ type DebugWindows interface {
 	Release(key string, owner any)
 }
 
-// OpenDebugTarget checks that daemon is an OSD that the cluster owns and can
-// run, and returns the target of its admin socket. It waits for the topology
-// lock under ctx and holds no lock when it returns. A terminated cluster
+// OpenDebugTarget checks that daemon is an OSD, MGR or MDS that the cluster
+// owns and can run, and returns the target of its admin socket. It waits for
+// the topology lock under ctx and holds no lock when it returns. A terminated cluster
 // returns the error of Terminated.
 func OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (DebugTarget, error) {
 	target, err := get().OpenDebugTarget(ctx, c, daemon)
@@ -240,6 +245,20 @@ func OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (Deb
 		return nil, errors.New("overridehook: the debug target of package ceph has an unexpected shape")
 	}
 	return t, nil
+}
+
+// DebugIdentityGID returns the native GID that a debug target's identity
+// names, or 0 for an identity without one (an OSD's).
+func DebugIdentityGID(identity string) uint64 {
+	for _, part := range strings.Split(identity, "/")[1:] {
+		if value, ok := strings.CutPrefix(part, "gid="); ok {
+			gid, err := strconv.ParseUint(value, 10, 64)
+			if err == nil {
+				return gid
+			}
+		}
+	}
+	return 0
 }
 
 // DebugWindowRegistry returns the cluster's registry of open debug level

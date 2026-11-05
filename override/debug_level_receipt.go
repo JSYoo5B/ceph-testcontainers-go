@@ -3,9 +3,12 @@ package override
 import "time"
 
 // DebugLevelSetting selects one runtime debug level of one running daemon.
-// Daemon is an owned OSD such as "osd.0"; Name is "debug_ms" or "debug_osd";
-// Level is "N" or "N/M", each from 0 to 99, as Ceph's config set accepts it.
-// Other roles and options are not supported yet.
+// Daemon is an owned OSD, MGR or MDS such as "osd.0", "mgr.a" or the
+// "mds."+MDS.ID of a cephfs.MDS. Name is "debug_ms" or the role's own
+// subsystem: "debug_osd", "debug_mgr" or "debug_mds". Level is "N" or "N/M",
+// each from 0 to 99, as Ceph's config set accepts it. Other roles and options
+// are not supported: fault settings such as ms_blackhole_client are not debug
+// levels, and debug_auth can print keys.
 type DebugLevelSetting struct {
 	Daemon, Name, Level string
 }
@@ -36,9 +39,10 @@ const (
 	// DebugLevelConflict: the daemon showed a level that is neither the
 	// prior nor the window's own, so it was left as it is. Terminal.
 	DebugLevelConflict DebugLevelState = "conflict"
-	// DebugLevelTargetChanged: the daemon's container generation was
-	// stopped, restarted, replaced or removed, or the cluster terminated, so
-	// the window's process is gone and nothing was restored. Terminal.
+	// DebugLevelTargetChanged: the daemon's container was stopped,
+	// restarted, replaced or removed, its MDS or MGR process respawned with
+	// another GID, or the cluster terminated, so the window's process is
+	// gone and nothing was restored. Terminal.
 	DebugLevelTargetChanged DebugLevelState = "target-changed"
 	// DebugLevelUnconfirmed: restoration could not be verified, for example
 	// with a paused daemon or an unavailable socket; Restore may be retried.
@@ -56,14 +60,18 @@ const (
 type DebugLevelReceipt struct {
 	Daemon string `json:"daemon"`
 	Name   string `json:"name"`
-	// Generation is the daemon container's ID and start time that the
-	// window was opened on.
-	Generation string          `json:"generation"`
-	Requested  string          `json:"requested"`
-	Prior      string          `json:"prior"`
-	Applied    string          `json:"applied,omitempty"`
-	Restored   string          `json:"restored,omitempty"`
-	State      DebugLevelState `json:"state"`
+	// Generation is the daemon incarnation that the window was opened on:
+	// the container's ID and start time and, for an MDS or MGR, its native
+	// GID ("/gid=<GID>") and, for a MGR, the identity of its admin socket.
+	Generation string `json:"generation"`
+	// GID is the native GID of an MDS or MGR window's incarnation, and 0 for
+	// an OSD.
+	GID       uint64          `json:"gid,omitempty"`
+	Requested string          `json:"requested"`
+	Prior     string          `json:"prior"`
+	Applied   string          `json:"applied,omitempty"`
+	Restored  string          `json:"restored,omitempty"`
+	State     DebugLevelState `json:"state"`
 	// Reason is the refusal text of a DebugLevelNotApplied window and is
 	// empty for every other state.
 	Reason      string                 `json:"reason,omitempty"`

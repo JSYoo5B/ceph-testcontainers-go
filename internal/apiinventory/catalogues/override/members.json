@@ -2,11 +2,12 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "override",
-  "count": 17,
+  "count": 18,
   "types": {
     "override.DebugLevelReceipt": [
       "DebugLevelReceipt.Applied field string `json:\"applied,omitempty\"`",
       "DebugLevelReceipt.Daemon field string `json:\"daemon\"`",
+      "DebugLevelReceipt.GID field uint64 `json:\"gid,omitempty\"`",
       "DebugLevelReceipt.Generation field string `json:\"generation\"`",
       "DebugLevelReceipt.Name field string `json:\"name\"`",
       "DebugLevelReceipt.Prior field string `json:\"prior\"`",
