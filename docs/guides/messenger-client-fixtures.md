@@ -105,8 +105,9 @@ names.
 `testManagerTransitionReceipt` in
 `internal/integration/manager_transition_integration_helpers_test.go` records
 which daemon took over a MGR failover and which registration belongs to which
-process. Copy it into your tests. It runs with three MONs, two MGRs and no
-OSDs, in three phases:
+process. It uses repository-only test helpers; for a version to copy that uses
+the public API only, see [Recipes outside this module](#recipes-outside-this-module).
+It runs with three MONs, two MGRs and no OSDs, in three phases:
 
 1. Baseline: one available active and one standby. Freeze the FSID, MON
    names, both registrations (name and GID) and both containers' IDs and start
@@ -148,7 +149,9 @@ replaces the first failure with a different run.
 
 `collectAuthFirstFailureBundle` in
 `internal/integration/auth_first_failure_integration_helpers_test.go` is the
-recipe; copy it. Right after the rejection, freeze the FSID, MON names and the
+recipe, written with repository-only test helpers; the public-API version is
+in [Recipes outside this module](#recipes-outside-this-module). Right after
+the rejection, freeze the FSID, MON names and the
 target MGR's name, GID, container ID and start time. Pass them with the
 rejection, your provenance, a held session if any, and your installed tickets
 with opaque run-scoped labels and the epochs their issuer connection showed
@@ -188,6 +191,33 @@ without a wipe), with a native client using a wrong key, plus bundles with an
 exhausted budget and a truncated control. `TestAuthBundleRetainedFailure`
 replays a retained consumer failure, and `TestAuthBundleClassification`
 changes one fact at a time.
+
+### Recipes outside this module
+
+`internal/consumerevidence` writes the three evidence recipes of a Messenger
+client suite against the public API only, so that a consumer can copy them;
+the module exports no recipe. `TestImportsOnlyPublicPackages` keeps it free
+of internal packages, `internal/integration/harness` included. Its command
+`ipcfixture` runs them in a fixture process that a test drives over standard
+input and output, and `TestConsumerEvidenceIPCFixture` runs that process
+natively. The schemas, labels and verdicts in it are the example's; a consumer
+keeps its own.
+
+| Recipe | Inputs | Public primitives | Not natively observable | The consumer's part |
+| --- | --- | --- | --- | --- |
+| Authentication first-failure bundle (`CollectAuthBundle`) | the rejection as recorded; the FSID, MON names and target MGR name and GID, frozen right after it; provenance | `MonitorContainer.AdminSocket` (`mon_status`, `sessions`), `Observer.QuorumStatus`, `Container.Ceph` (`mgr dump`), `Container.Managers` and the handle's `State`, `Container.RunNativeCommand` in `ControlContainer` (`tell <mgr> version`), `diagnostics.Redact` | which rotating-key generation the issuing MON and the verifying MGR used; `debug_auth` would show it by printing the keys | the request and bundle schema, the budget and bounds, the verdict (target `registered`, `changed`, `absent` or `unavailable`), the secrecy check, that the tested authentication runs once and is never replayed |
+| MGR transition receipt (`RecordTransition`) | the owned MGRs and MONs; the MgrMap and each MGR container's ID and start time, frozen before the stop | `Container.Ceph` (`mgr dump`, for its epoch, which `Observer.ManagerStatus` does not carry), `MonitorContainer.AdminSocket` (`sessions`), the MGR handle's `Stop`, `Start` and `State` | every MgrMap epoch: reads sample, so the receipt keeps the distinct maps it read and counts the epochs between them that no read saw | the acceptance rule of a sample, the deadline, which MGR restarts, the retained samples |
+| Native MGR keyring gate of the short-ticket profile (`CheckGate`) | the owned MGRs and MONs; the consumer's label for the moment, such as before the SUT dials and after its failure | `Container.Ceph` (`mgr dump`), `MonitorContainer.AdminSocket` (`sessions`), the MON container's `Logs` for `attempt to reclaim global_id <N>` refusals, `RunNativeCommand` (`tell <active mgr> version`) | the rotating-secret equality between a MGR and the MONs, for the same reason | when the gate runs, the slot classification, that a stale native MGR or a failed native control makes a SUT failure a fixture error rather than product evidence, and that nothing is restarted to clear the condition |
+
+Each read in these recipes has its own bound, records its status and is not
+retried; a read that does not complete is never an observed absence. A
+`(13) Permission denied` line of a MGR counts only when an owned MON refused the
+global ID that the MGR's registration holds (see [MGR MonClients](#mgr-monclients)).
+A fixture without a `testing.TB` ends the cluster with
+[one bounded collection before `Terminate`](contexts-and-cleanup.md#a-fixture-without-a-testingtb).
+Independent Docker checks that the containers, volumes and network are gone
+stay the consumer's evidence; `TestConsumerEvidenceIPCFixture` makes them from
+the driving test, not through the fixture.
 
 ### Authenticating right after a rotating-key wipe
 
@@ -886,6 +916,8 @@ declarations to validated receipts, is documented in
   abort, which is why the 1.5 s profile is optional. With 1.5 s MON tickets on
   Tentacle with AES256K keys, native librados sessions and MGR commands stop
   working within 30 s, so keep native checks in that profile short and early.
+  A gate that tells such a stale native MGR from a SUT failure is in
+  [Recipes outside this module](#recipes-outside-this-module).
 - **Keys.** Each identity has its own keyring; read a key from
   `ClientConfig.ConnectionConfig`.
 - **Stopping a daemon abruptly.** `Stop` sends SIGTERM and waits. Kill a
