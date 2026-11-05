@@ -219,7 +219,7 @@ func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) 
 	// The start has returned, so the topology lock is free now or never. Check
 	// it directly instead of giving cleanup a wall-clock deadline that a slow
 	// (race-instrumented) teardown of the fake cluster can use up.
-	if !servicehook.TryLock(fs.base().Cluster()) {
+	if !testhelper.TestState(fs.base().Cluster()).Mutex.TryLock() {
 		t.Fatal("MDS start left the topology lock held")
 	}
 	servicehook.Unlock(fs.base().Cluster())
