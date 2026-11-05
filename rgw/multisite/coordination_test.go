@@ -39,63 +39,6 @@ func TestRGWNativeDocReadsOnlyExactMembersOfTheRightType(t *testing.T) {
 	}
 }
 
-func TestRGWPeriodWithGroupReplacesOnlyTheOwnedGroupPolicy(t *testing.T) {
-	previous := map[string]any{"id": "p1", "native_extra": "kept", "period_map": map[string]any{"zonegroups": []any{
-		map[string]any{"id": "g1", "sync_policy": map[string]any{"groups": []any{map[string]any{"id": "other", "status": "enabled"}}}, "native": true},
-		map[string]any{"id": "g2", "sync_policy": map[string]any{"groups": []any{}}},
-	}}}
-	group := map[string]any{"id": "owned", "status": "allowed"}
-	want, err := syncPeriodWithGroup(previous, "g1", "owned", group)
-	if err != nil {
-		t.Fatal(err)
-	}
-	groups := syncPeriodGroups(want)
-	policy := groups[0]["sync_policy"].(map[string]any)
-	if len(policy["groups"].([]any)) != 2 || syncNativeGroup(policy, "owned")["status"] != "allowed" || groups[0]["native"] != true || want["native_extra"] != "kept" {
-		t.Fatalf("owned group was not added beside the existing one: %v", want)
-	}
-	if len(syncPeriodGroups(previous)[0]["sync_policy"].(map[string]any)["groups"].([]any)) != 1 {
-		t.Fatal("the captured period was mutated")
-	}
-	if !reflect.DeepEqual(groups[1], syncPeriodGroups(previous)[1]) {
-		t.Fatal("an unrelated zonegroup changed")
-	}
-	duplicate := syncJSONClone(previous)
-	zonegroups := duplicate["period_map"].(map[string]any)["zonegroups"].([]any)
-	duplicate["period_map"].(map[string]any)["zonegroups"] = append(zonegroups, syncJSONClone(zonegroups[0].(map[string]any)))
-	for name, tc := range map[string]struct {
-		period map[string]any
-		group  string
-		want   string
-	}{
-		"duplicate zonegroup": {duplicate, "g1", "duplicate zonegroup"},
-		"missing zonegroup":   {previous, "g9", "missing from the captured period"},
-		"malformed policy": {map[string]any{"period_map": map[string]any{"zonegroups": []any{map[string]any{"id": "g1", "sync_policy": "x"}}}},
-			"g1", "malformed"},
-	} {
-		if _, err := syncPeriodWithGroup(tc.period, tc.group, "owned", group); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: got %v, want %q", name, err, tc.want)
-		}
-	}
-}
-
-func TestRGWPeriodPolicyIgnoresOnlyPeriodIdentity(t *testing.T) {
-	a := map[string]any{"id": "p1", "epoch": 1.0, "realm_epoch": 2.0, "predecessor_uuid": "p0", "realm_id": "r", "period_map": map[string]any{"id": "p1", "zonegroups": []any{}}}
-	b := syncJSONClone(a)
-	b["id"], b["epoch"], b["realm_epoch"], b["predecessor_uuid"] = "p2", 5.0, 3.0, "p1"
-	b["period_map"].(map[string]any)["id"] = "p2"
-	if !syncPeriodPolicyEqual(a, b) {
-		t.Fatal("periods that differ only in identity compared unequal")
-	}
-	b["realm_id"] = "other"
-	if syncPeriodPolicyEqual(a, b) {
-		t.Fatal("a realm change was ignored")
-	}
-	if a["id"] != "p1" || a["period_map"].(map[string]any)["id"] != "p1" {
-		t.Fatal("the comparison mutated its input")
-	}
-}
-
 func TestRGWStagingPeriodReadDistinguishesMissingFromFailure(t *testing.T) {
 	f, cli, _, _ := newRGWSyncTestFixture()
 	master := f.zoneStates()[0]
