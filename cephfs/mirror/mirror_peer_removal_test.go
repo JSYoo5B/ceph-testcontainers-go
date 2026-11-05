@@ -174,8 +174,8 @@ func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalCont
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, ownedDirectories: map[string]bool{"/owned": true}, daemonImage: "unchanged", daemonKeyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}
-	for _, d := range mirror.daemons {
+	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
+	for _, d := range mirror.roster.daemons {
 		d.owner = mirror
 		mirror.owned.AddContainer(d)
 	}
@@ -230,7 +230,7 @@ func TestCephFSPeerRemovalProductionRefusesInvalidPreflightWithoutMutation(t *te
 			reader := peerRemovalClusterReader
 			switch fault {
 			case "zero":
-				m.daemons = nil
+				m.roster.daemons = nil
 			case "stopped":
 				a.state.Running = false
 			case "paused":
@@ -362,7 +362,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 		t.Fatal("completed receipt keeps import gate closed")
 	}
 	legacy, ls, _, _, _ := newPeerRemovalFixture()
-	legacy.daemons = nil
+	legacy.roster.daemons = nil
 	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.ops.peerRemoval != nil || legacy.peerID != "" {
 		t.Fatalf("legacy zero-daemon contract changed: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 			case "CID":
 				a.id = strings.Repeat("c", 64)
 			case "daemon-name":
-				m.daemons[0].DaemonName = "changed"
+				m.roster.daemons[0].DaemonName = "changed"
 			case "generation":
 				a.state.StartedAt = "2026-10-07T01:01:00Z"
 			case "session":
@@ -494,8 +494,8 @@ func TestCephFSPeerRemovalProductionContextLocksAndWaitRelease(t *testing.T) {
 			if mutex == "fixture" {
 				m.mu.Lock()
 			} else {
-				m.daemons[0].mu.Lock()
-				unlock = m.daemons[0].mu.Unlock
+				m.roster.daemons[0].mu.Lock()
+				unlock = m.roster.daemons[0].mu.Unlock
 			}
 			defer unlock()
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -535,7 +535,7 @@ func TestCephFSPeerRemovalProductionCleanupRetainsOriginalCohortWithoutAdoptingN
 	if err := daemonNamed(t, m, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.daemons) != 1 || len(r.cohort.witnesses) != 2 || r.cohort.witnesses[0].daemon.Container != a || a.terminated != 1 {
+	if len(m.roster.daemons) != 1 || len(r.cohort.witnesses) != 2 || r.cohort.witnesses[0].daemon.Container != a || a.terminated != 1 {
 		t.Fatal("cleanup lost retained original handle")
 	}
 	status, err := r.Status(t.Context())

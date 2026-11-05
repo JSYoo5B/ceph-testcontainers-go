@@ -37,7 +37,7 @@ func (c *cephFSRemovalCohort) capture(ctx context.Context) error {
 		return err
 	}
 	ids, names := make(map[string]bool), make(map[string]bool)
-	for _, daemon := range c.scope.mirror.daemons {
+	for _, daemon := range c.scope.mirror.roster.daemons {
 		if daemon == nil {
 			return cephFSObserveGuard("original CephFS peer cohort contains an unavailable daemon")
 		}
@@ -55,7 +55,7 @@ func (c *cephFSRemovalCohort) capture(ctx context.Context) error {
 		ids[w.containerID], names[w.name] = true, true
 		c.witnesses = append(c.witnesses, w)
 	}
-	if c.scope.mirror.originalProcessClientFactory != nil {
+	if c.scope.mirror.roster.observesProcesses() {
 		if err := c.validateProcesses(ctx); err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ func (c *cephFSRemovalCohort) captureDaemon(ctx context.Context, daemon *Daemon,
 	if !normalCephFSRemovalProcess(state) || !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) || daemon.GetContainerID() != w.containerID {
 		return w, cephFSObserveGuard("original CephFS process changed during removal preflight")
 	}
-	if c.scope.mirror.originalProcessClientFactory != nil {
+	if c.scope.mirror.roster.observesProcesses() {
 		if daemon.originalProcess == nil {
 			return w, cephFSObserveGuard("original raw process observer binding is unavailable")
 		}
@@ -169,7 +169,7 @@ func (c *cephFSRemovalCohort) validateProcesses(ctx context.Context) error {
 		}
 		owned[w.daemon], names[w.name], ids[w.containerID], gids[gid] = true, true, true, true
 	}
-	for _, d := range c.scope.mirror.daemons {
+	for _, d := range c.scope.mirror.roster.daemons {
 		if !owned[d] {
 			return cephFSObserveGuard("current process membership is outside the original cohort")
 		}

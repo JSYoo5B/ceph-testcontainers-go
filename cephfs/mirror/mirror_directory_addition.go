@@ -2,7 +2,6 @@ package mirror
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"time"
 
@@ -89,14 +88,14 @@ func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory stri
 	if err != nil || parsed.String() != mirror.peerID || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 {
 		return nil, cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
-	if mirror.ownedDirectories[directory] || mirror.pendingDirectoryRelease[directory] || mirror.ops.directoryGenerations[directory] == ^uint64(0) {
+	if mirror.directories.hasIntent(directory) {
 		return nil, cephFSObserveGuard("CephFS directory addition path already has owned intent")
 	}
 	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory addition", mirror.peerID, readClusters)
 	if err != nil {
 		return nil, err
 	}
-	r := &DirectoryAddition{scope: scope, directory: directory, baseGeneration: mirror.ops.directoryGenerations[directory]}
+	r := &DirectoryAddition{scope: scope, directory: directory, baseGeneration: mirror.directories.generation(directory)}
 	present, err := r.observe(ctx, false)
 	if err != nil {
 		return nil, err
@@ -149,7 +148,7 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 	if r.registered {
 		want = r.generation
 	}
-	if m.ops.directoryGenerations[r.directory] != want || m.ownedDirectories[r.directory] != r.registered || m.pendingDirectoryRelease[r.directory] {
+	if m.directories.generation(r.directory) != want || m.directories.owns(r.directory) != r.registered || m.directories.releasePending(r.directory) {
 		return cephFSObserveGuard("CephFS directory addition original path generation changed")
 	}
 	return nil
@@ -240,18 +239,10 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 			return err
 		}
 		m := r.scope.mirror
-		if !slices.Contains(m.Directories, r.directory) {
-			m.Directories = append(m.Directories, r.directory)
-		}
-		if m.ownedDirectories == nil {
-			m.ownedDirectories = make(map[string]bool)
-		}
-		if m.ops.directoryGenerations == nil {
-			m.ops.directoryGenerations = make(map[string]uint64)
-		}
-		m.ownedDirectories[r.directory] = true
-		m.ops.directoryGenerations[r.directory] = r.baseGeneration + 1
-		r.generation = m.ops.directoryGenerations[r.directory]
+		// checkHandle confirmed the base generation, so the registration
+		// publishes base+1.
+		m.registerDirectory(r.directory, true)
+		r.generation = m.directories.generation(r.directory)
 		r.registered = true
 		return nil
 	}

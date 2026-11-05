@@ -11,7 +11,7 @@ import (
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{Container: daemon, daemons: []*Daemon{daemon}, source: nil}
+	m := &Mirror{Container: daemon, roster: cephFSDaemonRoster{daemons: []*Daemon{daemon}, initial: daemon}, source: nil}
 	daemon.owner = m
 	operations := map[string]func(context.Context) error{
 		"AddDaemon":            func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },
@@ -37,7 +37,7 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	// A new context must enter the same fixture and reach real cleanup.
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if err := daemon.Remove(ctx); err != nil || len(m.daemons) != 0 || !daemon.removed {
+	if err := daemon.Remove(ctx); err != nil || len(m.roster.daemons) != 0 || !daemon.removed {
 		t.Fatalf("fresh CephFS cleanup: %v", err)
 	}
 	if probe.Terminations.Load() != 1 || probe.Execs.Load() != 0 || probe.Stops.Load() != 0 {
@@ -48,11 +48,11 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{daemons: []*Daemon{daemon}}
+	m := &Mirror{roster: cephFSDaemonRoster{daemons: []*Daemon{daemon}}}
 	daemon.owner = m
 	operation := func(ctx context.Context) error { return daemon.Remove(ctx) }
 	clustertest.AssertContextLockQueued(t, &daemon.mu, operation)
-	if probe.Terminations.Load() != 0 || daemon.removed || len(m.daemons) != 1 {
+	if probe.Terminations.Load() != 0 || daemon.removed || len(m.roster.daemons) != 1 {
 		t.Fatal("nested deadline lost cleanup ownership")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)

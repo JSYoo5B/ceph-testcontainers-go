@@ -7,9 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -48,7 +49,7 @@ func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(con
 	}
 	var errs []error
 	seen := make(map[string]bool)
-	for _, daemon := range mirror.daemons {
+	for _, daemon := range mirror.roster.daemons {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			break

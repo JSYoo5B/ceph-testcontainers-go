@@ -202,10 +202,10 @@ func (p *directoryWatchPin) admit(context.Context) error {
 	if m.closed {
 		return directoryWatchEnded{servicehook.Invalid(errors.New("the CephFS mirror has been terminated"))}
 	}
-	if !m.ownedDirectories[p.directory] {
+	if !m.directories.owns(p.directory) {
 		return directoryWatchEnded{cephFSObserveGuard("CephFS mirror does not own the watched directory policy")}
 	}
-	directoryGeneration, peerGeneration := m.ops.directoryGenerations[p.directory], m.ops.peerGeneration
+	directoryGeneration, peerGeneration := m.directories.generation(p.directory), m.ops.peerGeneration
 	if !p.pinned {
 		p.pinned, p.directoryGeneration, p.peerGeneration, p.peerID = true, directoryGeneration, peerGeneration, m.peerID
 		return nil

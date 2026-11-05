@@ -437,14 +437,14 @@ func TestCephFSOriginalProcessSanitizerPreservesCanonicalJoinedCauses(t *testing
 }
 
 func enableProcessDraftBindings(m *Mirror, daemons ...*peerRemovalDaemonFake) []*processRawFake {
-	m.originalProcessClientFactory = func(context.Context) (*mobycl.Client, error) { return nil, nil }
+	m.roster.processClientFactory = func(context.Context) (*mobycl.Client, error) { return nil, nil }
 	var result []*processRawFake
 	for i, d := range daemons {
 		d.state.Status = container.StateRunning
 		d.state.Pid = 42
 		raw := &processRawFake{engineID: "engine-A", id: d.id, state: d.state}
-		b := &cephFSBoundOriginalProcess{docker: raw, originalHandle: m.daemons[i].Container, engineID: raw.engineID, containerID: d.id, creationStartedAt: processDraftStart}
-		m.daemons[i].originalProcess, m.daemons[i].processBindingState = b, "bound"
+		b := &cephFSBoundOriginalProcess{docker: raw, originalHandle: m.roster.daemons[i].Container, engineID: raw.engineID, containerID: d.id, creationStartedAt: processDraftStart}
+		m.roster.daemons[i].originalProcess, m.roster.daemons[i].processBindingState = b, "bound"
 		m.owned.AddCleanup("close draft original process observer", b.close)
 		result = append(result, raw)
 	}
@@ -454,7 +454,7 @@ func enableProcessDraftBindings(m *Mirror, daemons ...*peerRemovalDaemonFake) []
 func TestCephFSOriginalProcessBeginRequiresCompleteOptionalBindingBeforeMutation(t *testing.T) {
 	m, s, _, a, b := newPeerRemovalFixture()
 	raws := enableProcessDraftBindings(m, a, b)
-	m.daemons[1].originalProcess = nil
+	m.roster.daemons[1].originalProcess = nil
 	r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
 	if r != nil || !errors.Is(err, errCephFSObservationGuard) || s.removals != 0 {
 		t.Fatal("partial capability mutated policy")
@@ -471,7 +471,7 @@ func TestCephFSOriginalProcessBeginRejectsSubstitutionAndNumericDuplicate(t *tes
 			enableProcessDraftBindings(m, a, b)
 			if name == "sameCIDHandle" {
 				copy := *a
-				m.daemons[0].Container = &copy
+				m.roster.daemons[0].Container = &copy
 			} else {
 				s.watchers = "watcher=172.20.0.8:0/1234 client.4262 cookie=1\nwatcher=172.20.0.9:0/5678 client.04262 cookie=2\n"
 			}
@@ -495,7 +495,7 @@ func TestCephFSOriginalProcessReceiptRejectsSameCIDHandleSubstitution(t *testing
 	}
 	s.watchers = ""
 	copy := *a
-	m.daemons[0].Container = &copy
+	m.roster.daemons[0].Container = &copy
 	st, err := r.ProcessQuiescence(t.Context())
 	if st.OriginalQuiescent || !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("same-CID handle substitution became original proof")
@@ -549,10 +549,10 @@ func TestCephFSOriginalProcessPeerStopRestartRemovalDoesNotPromoteDrain(t *testi
 	for _, raw := range raws {
 		raw.inspectErr = errdefs.ErrNotFound
 	}
-	for _, d := range m.daemons {
+	for _, d := range m.roster.daemons {
 		d.removed = true
 	}
-	m.daemons = nil
+	m.roster.daemons = nil
 	m.Container = nil
 	s.watchers = ""
 	st, err = r.ProcessQuiescence(t.Context())
@@ -635,7 +635,7 @@ func TestCephFSOriginalProcessWatcherNumericIdentityAndFinalEvidence(t *testing.
 					}
 				}
 			case "foreignMember":
-				m.daemons = append(m.daemons, &Daemon{DaemonName: "foreign"})
+				m.roster.daemons = append(m.roster.daemons, &Daemon{DaemonName: "foreign"})
 			case "FSID":
 				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil
@@ -690,9 +690,9 @@ func TestCephFSOriginalProcessDirectoryAuthorityRemovalAndContract(t *testing.T)
 				s.fsPeers = "{}"
 				s.managerPeers = "{}"
 			case "generation":
-				m.ops.directoryGenerations["/owned"]++
+				m.directories.generations["/owned"]++
 			case "retired":
-				m.daemons = nil
+				m.roster.daemons = nil
 				m.Container = nil
 				for _, raw := range raws {
 					raw.inspectErr = errdefs.ErrNotFound
@@ -770,8 +770,8 @@ func TestCephFSOriginalProcessBusyFixtureAndMemberLocksHaveWatchdog(t *testing.T
 				m.mu.Lock()
 				unlock = m.mu.Unlock
 			} else {
-				m.daemons[0].mu.Lock()
-				unlock = m.daemons[0].mu.Unlock
+				m.roster.daemons[0].mu.Lock()
+				unlock = m.roster.daemons[0].mu.Unlock
 			}
 			locked, joined := true, false
 			done := make(chan error, 1)

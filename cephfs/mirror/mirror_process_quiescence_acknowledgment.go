@@ -106,7 +106,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCoh
 }
 
 func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, c *cephFSRemovalCohort) error {
-	if len(c.scope.mirror.daemons) != 0 {
+	if len(c.scope.mirror.roster.daemons) != 0 {
 		return cephFSObserveQuery("original process acknowledgment requires explicit owned daemon removal", nil)
 	}
 	for _, w := range c.witnesses {

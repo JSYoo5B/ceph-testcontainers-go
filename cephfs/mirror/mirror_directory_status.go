@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/google/uuid"
 )
@@ -82,7 +83,7 @@ func (mirror *Mirror) directoryStatus(ctx context.Context, directory string, adm
 	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.pendingPeerImport != nil || mirror.peerID == "" || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 {
 		return result, cephFSObserveGuard("CephFS mirror filesystem and peer identities are not confirmed")
 	}
-	if !mirror.ownedDirectories[directory] {
+	if !mirror.directories.owns(directory) {
 		return result, cephFSObserveGuard("CephFS mirror does not own this current directory policy")
 	}
 	result = DirectoryStatus{
@@ -167,7 +168,7 @@ func (mirror *Mirror) selectDirectoryDaemon(ctx context.Context, instanceID stri
 		result.DaemonProblems[name] = err.Error()
 		observationErrors = append(observationErrors, err)
 	}
-	for _, daemon := range mirror.daemons {
+	for _, daemon := range mirror.roster.daemons {
 		if daemon == nil {
 			problem("<nil>", cephFSObserveQuery("owned CephFS mirror process is unavailable", nil))
 			continue

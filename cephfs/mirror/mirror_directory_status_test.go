@@ -113,8 +113,8 @@ func newCephFSObserverDraft() (*Mirror, *cephFSObserverDraftControl, *cephFSObse
 		source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
 		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
 		filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
-		ownedDirectories: map[string]bool{"/owned": true}, Directories: []string{"/owned"},
-		daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}},
+		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
+		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
 	}
 	return mirror, source, destination, a, b
 }
@@ -231,7 +231,7 @@ func TestCephFSObserverDraftRejectsReplacedFilesystemAndPeerPolicy(t *testing.T)
 			case "daemon-destination":
 				a.session = strings.Replace(a.session, `"destination-site"`, `"foreign-site"`, 1)
 			case "ownership":
-				delete(mirror.ownedDirectories, "/owned")
+				delete(mirror.directories.owned, "/owned")
 			case "mapping-missing":
 				source.mapping = `{}`
 			}

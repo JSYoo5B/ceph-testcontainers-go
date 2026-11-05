@@ -100,7 +100,7 @@ func newCephFSRefreshFixture() (*Mirror, *cephFSRefreshControl, *cephFSRefreshCo
 	destinationControl := &cephFSRefreshControl{cephFSObserverDraftControl: destination, fsid: cephFSRefreshDestinationFSID}
 	mirror.source = &ceph.Container{Container: sourceControl}
 	mirror.destination = &ceph.Container{Container: destinationControl}
-	mirror.daemons = []*Daemon{
+	mirror.roster.daemons = []*Daemon{
 		{Container: &cephFSMirrorDaemonFake{id: "a"}, DaemonName: "a"},
 		{Container: &cephFSMirrorDaemonFake{id: "b"}, DaemonName: "b"},
 	}
@@ -113,9 +113,9 @@ func cephFSRefreshCurrentAddresses(context.Context) (string, error) {
 
 func TestCephFSRefreshLocalCurrentOwnershipPartialRetryAndNoRuntimeChanges(t *testing.T) {
 	mirror, source, _ := newCephFSRefreshFixture()
-	a, b := mirror.daemons[0], mirror.daemons[1]
+	a, b := mirror.roster.daemons[0], mirror.roster.daemons[1]
 	removed := &cephFSMirrorDaemonFake{id: "removed"}
-	mirror.daemons = append(mirror.daemons,
+	mirror.roster.daemons = append(mirror.roster.daemons,
 		&Daemon{Container: removed, DaemonName: "removed", removed: true},
 		&Daemon{Container: a.Container, DaemonName: "alias"},
 	)
@@ -179,7 +179,7 @@ func TestCephFSRefreshLocalIdentityAndContextGuards(t *testing.T) {
 			mirror, _, _ := newCephFSRefreshFixture()
 			mutex := &mirror.mu
 			if lock == "daemon" {
-				mutex = &mirror.daemons[0].mu
+				mutex = &mirror.roster.daemons[0].mu
 			}
 			mutex.Lock()
 			defer mutex.Unlock()

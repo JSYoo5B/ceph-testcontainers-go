@@ -358,9 +358,9 @@ func TestDirectoryWatchIdentitySubstitutionEndsTheWatch(t *testing.T) {
 		change func(*directoryWatchFixture)
 		want   string
 	}{
-		"policy removed": {func(f *directoryWatchFixture) { delete(f.mirror.ownedDirectories, "/owned") }, "does not own the watched directory policy"},
+		"policy removed": {func(f *directoryWatchFixture) { delete(f.mirror.directories.owned, "/owned") }, "does not own the watched directory policy"},
 		"policy registered again under the same path": {func(f *directoryWatchFixture) {
-			f.mirror.ops.advanceDirectoryGeneration("/owned")
+			f.mirror.registerDirectory("/owned", false)
 		}, "registered again"},
 		"peer replaced by the fixture": {func(f *directoryWatchFixture) {
 			f.mirror.peerID = otherPeer

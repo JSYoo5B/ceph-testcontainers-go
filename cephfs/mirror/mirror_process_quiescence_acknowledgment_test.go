@@ -94,9 +94,9 @@ func TestCephFSProcessQuiescenceAcknowledgmentPeerAcceptanceAndFreshRetry(t *tes
 func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(t *testing.T) {
 	r, m, s, _, raw := beginDirectoryAcknowledgmentFixture(t, true)
 	m.Directories = append(m.Directories, "/other")
-	m.ownedDirectories["/other"] = true
-	m.pendingDirectoryRelease = map[string]bool{"/owned": true, "/other": true}
-	if !m.ownedDirectories["/owned"] || r.requestAcknowledged {
+	m.directories.owned["/other"] = true
+	m.directories.pendingRelease = map[string]bool{"/owned": true, "/other": true}
+	if !m.directories.owned["/owned"] || r.requestAcknowledged {
 		t.Fatal("lost reply fixture did not retain desired path")
 	}
 	removeAcknowledgmentOriginals(t, m, raw)
@@ -105,7 +105,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(
 	if err != nil || !st.Acknowledged || st.Observation.Directory != "/owned" || !st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.ops.guardDirectoryRemovalOverlap() != nil {
 		t.Fatalf("directory alternative terminal decision: %+v %v", st, err)
 	}
-	if slices.Contains(m.Directories, "/owned") || m.ownedDirectories["/owned"] || m.pendingDirectoryRelease["/owned"] || !slices.Contains(m.Directories, "/other") || !m.ownedDirectories["/other"] || !m.pendingDirectoryRelease["/other"] || m.peerID != cephFSObserverDraftPeer {
+	if slices.Contains(m.Directories, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.Directories, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peerID != cephFSObserverDraftPeer {
 		t.Fatal("acknowledgment failed exact desired-state reconciliation")
 	}
 	before := raw[0].inspects
@@ -151,7 +151,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 					t.Fatal(err)
 				}
 			case "inventory-cleared-without-remove":
-				m.daemons = nil
+				m.roster.daemons = nil
 			default:
 				removeAcknowledgmentOriginals(t, m, raw)
 				if fault == "exited-cid" || fault == "later-cid" || fault == "mixed-cid" {
@@ -176,7 +176,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.peerID != r.scope.peerID || m.ops.guardPeerRemovalOverlap() == nil || s.removals != 1 {
 				t.Fatalf("invalid acknowledgment unblocked intent: %+v %v", st, err)
 			}
-			if len(m.daemons) != 0 && len(s.calls) != queries {
+			if len(m.roster.daemons) != 0 && len(s.calls) != queries {
 				t.Fatal("owned inventory refusal queried native authority")
 			}
 			beforeOverlap := len(s.calls)
@@ -298,9 +298,9 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReaddSupersedesBeforeAtte
 			if st, err := r.AcknowledgeProcessQuiescence(t.Context()); err != nil || !st.Acknowledged {
 				t.Fatal(err)
 			}
-			before := m.ops.directoryGenerations["/owned"]
+			before := m.directories.generations["/owned"]
 			s.applyAdd, s.addError = applied, errPeerRemovalTransport
-			if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || !r.superseded || m.ownedDirectories["/owned"] || m.ops.directoryGenerations["/owned"] != before {
+			if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || !r.superseded || m.directories.owned["/owned"] || m.directories.generations["/owned"] != before {
 				t.Fatal("uncertain add reused old acknowledgment or adopted ownership")
 			}
 			if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || !errors.Is(err, errCephFSObservationGuard) || !r.processQuiescenceAcknowledged {
@@ -338,15 +338,15 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReplayAndSuccessfulReadd(
 		}
 		s.pool, s.directories, s.fsPeers, s.managerPeers = oldPool, nil, peerRemovalRemotePeers(), peerRemovalManagerPeers()
 	}
-	before := m.ops.directoryGenerations["/owned"]
-	if err := m.AddDirectory(t.Context(), "/owned"); err != nil || !r.superseded || !m.ownedDirectories["/owned"] || m.ops.directoryGenerations["/owned"] != before+1 {
+	before := m.directories.generations["/owned"]
+	if err := m.AddDirectory(t.Context(), "/owned"); err != nil || !r.superseded || !m.directories.owned["/owned"] || m.directories.generations["/owned"] != before+1 {
 		t.Fatal("new owned registration did not supersede old terminal identity")
 	}
 	if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("old receipt acknowledged new path generation")
 	}
 	// Legacy removal addresses the newly owned path, not the superseded receipt.
-	if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != 2 || m.ownedDirectories["/owned"] {
+	if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != 2 || m.directories.owned["/owned"] {
 		t.Fatalf("new-generation legacy removal was blocked by old receipt: %v", err)
 	}
 }
@@ -389,7 +389,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryFinalAuthorityFailureKeep
 				s.hook = nil
 			}
 			st, err := r.AcknowledgeProcessQuiescence(ctx)
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.ownedDirectories["/owned"] || !slices.Contains(m.Directories, "/owned") || m.ops.guardDirectoryRemovalOverlap() == nil || s.removals != 1 {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.directories.owned["/owned"] || !slices.Contains(m.Directories, "/owned") || m.ops.guardDirectoryRemovalOverlap() == nil || s.removals != 1 {
 				t.Fatalf("failed directory proof changed desired intent: %+v %v", st, err)
 			}
 			if fault == "cancel" && !errors.Is(err, context.Canceled) {

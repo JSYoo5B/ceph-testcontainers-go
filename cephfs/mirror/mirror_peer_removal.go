@@ -91,7 +91,7 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 	if err != nil || parsed.String() != id || parsed == uuid.Nil || id != mirror.peerID {
 		return nil, cephFSObserveGuard("CephFS mirror does not own this original peer")
 	}
-	if len(mirror.daemons) == 0 {
+	if len(mirror.roster.daemons) == 0 {
 		return nil, cephFSObserveGuard("strict CephFS peer removal requires a live owned daemon cohort")
 	}
 	scope, err := mirror.captureOriginalScope(ctx, "CephFS peer removal", id, readClusters)
