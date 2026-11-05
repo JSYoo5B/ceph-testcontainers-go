@@ -134,7 +134,7 @@ func (l *Lease) Watch(ctx context.Context, cfg ceph.WatchConfig) (*LeaseWatch, e
 	if err != nil {
 		return nil, servicehook.Invalid(fmt.Errorf("watch snapshot schedule: %v", err))
 	}
-	return startLeaseWatch(ctx, settings, fmt.Sprintf("watch snapshot schedule %s of %s", l.Repeat, l.Path), l.watchRead)
+	return startLeaseWatch(ctx, settings, fmt.Sprintf("watch snapshot schedule %s of %s", l.owned.repeat, l.owned.path), l.watchRead)
 }
 
 // watchRead is one admitted read of the lease's bound schedule. A refusal
@@ -155,7 +155,7 @@ func (l *Lease) watchRead(ctx context.Context) (Status, error) {
 	case l.added == "":
 		return Status{}, leaseWatchEnded{errors.New("the lease's add was never confirmed: restore the lease")}
 	}
-	listed, err := statuses(ctx, l.filesystem.Volumes(), l.Path)
+	listed, err := statuses(ctx, l.filesystem.Volumes(), l.owned.path)
 	if err != nil {
 		return Status{}, err
 	}

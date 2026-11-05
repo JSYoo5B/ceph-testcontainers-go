@@ -76,11 +76,16 @@ type Status struct {
 // that it added. Restore removes them; the snapshots stay. Retain a non-nil
 // lease returned with an error: the schedule may have been added.
 type Lease struct {
-	// Path, Repeat, Start and Retention are the requested schedule.
+	// Path, Repeat, Start and Retention are copies of the request that Add
+	// accepted, Start in UTC. The lease's operations and Restore use the
+	// schedule and rules that Add recorded, never these fields: changing them
+	// changes neither which schedule the lease owns nor what Restore removes.
 	Path, Repeat string
 	Start        time.Time
 	Retention    map[string]int
 
+	// owned is the schedule that the lease owns, as Add requested it.
+	owned      ownedSchedule
 	filesystem *fsbase.Core
 	// filesystemID is the native FSMap ID of the filesystem when the lease
 	// was added; an operation on a filesystem with another ID is refused.
@@ -97,6 +102,13 @@ type Lease struct {
 	// cleared are the rules whose removal Restore confirmed.
 	cleared  map[string]bool
 	restored bool
+}
+
+// ownedSchedule identifies the native schedule that a lease requested: its
+// directory, its repeat and its requested start, zero when none was given.
+type ownedSchedule struct {
+	path, repeat   string
+	requestedStart time.Time
 }
 
 func validate(schedule Config) error {
@@ -176,6 +188,7 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 		}
 	}
 	lease := &Lease{Path: schedule.Path, Repeat: schedule.Repeat, Start: schedule.Start.UTC(), Retention: maps.Clone(schedule.Retention),
+		owned:      ownedSchedule{schedule.Path, schedule.Repeat, schedule.Start.UTC()},
 		filesystem: fs, filesystemID: fsID, leases: leasesOf(fs.Cluster()), rules: map[string]int{}, cleared: map[string]bool{}}
 	// Two leases of one directory would each take the other's schedule for
 	// their own.
@@ -192,7 +205,7 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 	}
 	args := []string{"fs", "snap-schedule", "add", schedule.Path, schedule.Repeat}
 	if !schedule.Start.IsZero() {
-		args = append(args, lease.Start.Format(nativeTime))
+		args = append(args, lease.owned.requestedStart.Format(nativeTime))
 	}
 	if _, err := fs.Cluster().Ceph(ctx, append(args, "--fs", fs.Name())...); err != nil {
 		// A lost reply may have added it; Restore reads the directory back.
@@ -317,7 +330,7 @@ func leasesOf(c *ceph.Container) *leaseSet {
 func (s *leaseSet) reserve(lease *Lease) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := leaseKey{lease.filesystem, lease.Path}
+	key := leaseKey{lease.filesystem, lease.owned.path}
 	if s.paths[key] != nil {
 		return false
 	}
@@ -329,7 +342,7 @@ func (s *leaseSet) reserve(lease *Lease) bool {
 func (s *leaseSet) release(lease *Lease) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := leaseKey{lease.filesystem, lease.Path}
+	key := leaseKey{lease.filesystem, lease.owned.path}
 	if s.paths[key] == lease {
 		delete(s.paths, key)
 	}
@@ -399,32 +412,37 @@ func parseStatuses(data []byte, dir string) ([]Status, error) {
 // find reads the directory's schedules and returns the lease's: the one with
 // its native start and creation time once bound. Before that, it is the only
 // schedule with the requested repeat and start, a requested start being
-// compared only when one was given. A schedule with the lease's repeat that is
-// not the lease's is ceph.ErrInvalidRequest; none is nil.
+// compared only when one was given. Any schedule with the lease's repeat that
+// is not the lease's is ceph.ErrInvalidRequest, wherever the module lists it
+// and even beside the lease's own; none is nil.
 func (l *Lease) find(ctx context.Context) (*Status, error) {
-	listed, err := statuses(ctx, l.filesystem.Volumes(), l.Path)
+	listed, err := statuses(ctx, l.filesystem.Volumes(), l.owned.path)
 	if err != nil {
 		return nil, err
 	}
 	return l.match(listed)
 }
 
-// match returns the lease's schedule among the directory's, as find does.
+// match returns the lease's schedule among the directory's, as find does. It
+// inspects every listed schedule with the lease's repeat before it accepts
+// one, so the order of the module's list never decides the outcome.
 func (l *Lease) match(statuses []Status) (*Status, error) {
 	var candidates []Status
 	for _, status := range statuses {
-		if status.Schedule != l.Repeat {
+		if status.Schedule != l.owned.repeat {
 			continue
 		}
+		var mine bool
 		if l.added != "" {
-			if status.start == l.start && status.added == l.added {
-				return &status, nil
-			}
-		} else if l.Start.IsZero() || status.Start.Equal(l.Start.Truncate(time.Second)) {
+			mine = status.start == l.start && status.added == l.added
+		} else {
+			mine = l.owned.requestedStart.IsZero() || status.Start.Equal(l.owned.requestedStart.Truncate(time.Second))
+		}
+		if mine {
 			candidates = append(candidates, status)
 			continue
 		}
-		return nil, servicehook.Invalid(fmt.Errorf("the snapshot schedule %s of %s starting %s, added %s, is not the lease's", status.Schedule, l.Path, status.start, status.added))
+		return nil, servicehook.Invalid(fmt.Errorf("the snapshot schedule %s of %s starting %s, added %s, is not the lease's", status.Schedule, l.owned.path, status.start, status.added))
 	}
 	switch len(candidates) {
 	case 0:
@@ -432,7 +450,7 @@ func (l *Lease) match(statuses []Status) (*Status, error) {
 	case 1:
 		return &candidates[0], nil
 	}
-	return nil, servicehook.Invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.Path, len(candidates), l.Repeat))
+	return nil, servicehook.Invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.owned.path, len(candidates), l.owned.repeat))
 }
 
 // Status reads the schedule's state from the snap_schedule module. It
@@ -455,7 +473,7 @@ func (l *Lease) status(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	if status == nil {
-		return Status{}, fmt.Errorf("no snapshot schedule %s of %s", l.Repeat, l.Path)
+		return Status{}, fmt.Errorf("no snapshot schedule %s of %s", l.owned.repeat, l.owned.path)
 	}
 	return *status, nil
 }
@@ -475,13 +493,13 @@ func (l *Lease) Snapshots(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("select the CephFS CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", snapshotListScript, l.filesystem.Name(), l.Path)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", snapshotListScript, l.filesystem.Name(), l.owned.path)
 	if err != nil {
-		return nil, fmt.Errorf("list the snapshots of %s: %w", l.Path, err)
+		return nil, fmt.Errorf("list the snapshots of %s: %w", l.owned.path, err)
 	}
 	var names []string
 	if err := json.Unmarshal(data, &names); err != nil {
-		return nil, fmt.Errorf("decode the snapshots of %s: %w", l.Path, err)
+		return nil, fmt.Errorf("decode the snapshots of %s: %w", l.owned.path, err)
 	}
 	var scheduled []string
 	for _, name := range names {
@@ -543,7 +561,7 @@ func (l *Lease) Restore(ctx context.Context) error {
 		return err
 	}
 	defer done()
-	listed, err := statuses(ctx, l.filesystem.Volumes(), l.Path)
+	listed, err := statuses(ctx, l.filesystem.Volumes(), l.owned.path)
 	if err != nil {
 		return err
 	}
@@ -556,9 +574,9 @@ func (l *Lease) Restore(ctx context.Context) error {
 	}
 	if owned != nil {
 		// The start selects this schedule among those with its repeat.
-		if _, err := l.filesystem.Cluster().Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, owned.start,
+		if _, err := l.filesystem.Cluster().Ceph(ctx, "fs", "snap-schedule", "remove", l.owned.path, l.owned.repeat, owned.start,
 			"--fs", l.filesystem.Name()); err != nil {
-			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.Path, err)
+			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.owned.path, err)
 		}
 		// Bind an unconfirmed add, so the read back looks for this schedule.
 		l.start, l.added = owned.start, owned.added
@@ -566,7 +584,7 @@ func (l *Lease) Restore(ctx context.Context) error {
 			return err
 		}
 		if owned != nil {
-			return fmt.Errorf("the snapshot schedule %s of %s is still listed", l.Repeat, l.Path)
+			return fmt.Errorf("the snapshot schedule %s of %s is still listed", l.owned.repeat, l.owned.path)
 		}
 	}
 	l.restored = true
@@ -592,7 +610,7 @@ func (l *Lease) removeRules(ctx context.Context, statuses []Status, owned *Statu
 			case !ok:
 				l.cleared[period] = true
 			case current != l.rules[period]:
-				return servicehook.Invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, l.rules[period]))
+				return servicehook.Invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.owned.path, current, l.rules[period]))
 			default:
 				remaining = append(remaining, period)
 			}
@@ -601,17 +619,17 @@ func (l *Lease) removeRules(ctx context.Context, statuses []Status, owned *Statu
 			for _, status := range statuses {
 				if owned == nil || status.start != owned.start || status.added != owned.added || status.Schedule != owned.Schedule {
 					return servicehook.Invalid(fmt.Errorf("removing the lease's snapshot retention %v of %s would change the retention of the schedule %s starting %s, which the lease did not add: remove that schedule first",
-						remaining, l.Path, status.Schedule, status.start))
+						remaining, l.owned.path, status.Schedule, status.start))
 				}
 			}
 		}
 		pending = remaining
 	}
 	for _, period := range pending {
-		_, err := l.filesystem.Cluster().Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
+		_, err := l.filesystem.Cluster().Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.owned.path, period,
 			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.Name())
 		if err != nil && (len(statuses) > 0 || !retentionAbsent(err)) {
-			return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
+			return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.owned.path, err)
 		}
 		l.cleared[period] = true
 	}

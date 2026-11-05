@@ -70,6 +70,9 @@ the lifecycle that every Watch shares.
 - Keep a non-nil lease returned with an error and restore it: the schedule may
   have been added before a reply was lost. `Restore` reads the directory back
   on every call and resumes where an earlier call stopped.
+- A lease's `Path`, `Repeat`, `Start` and `Retention` fields are copies of the
+  request. Its operations and `Restore` use the schedule and rules that `Add`
+  recorded, so editing the fields retargets nothing.
 - A lease is bound to the filesystem it was added on: after that filesystem
   is removed or replaced, even by one of the same name, every lease operation
   is refused. Restore the lease before removing the filesystem.

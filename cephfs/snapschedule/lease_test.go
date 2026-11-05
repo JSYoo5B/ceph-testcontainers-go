@@ -529,3 +529,164 @@ func TestLeaseAdmission(t *testing.T) {
 		t.Fatalf("Restore: %v, %s", err, fake.state())
 	}
 }
+
+// reorder lists the fake's schedules in reverse, as a module whose status
+// lists them in another order would.
+func (f *fakeSnapSchedule) reorder() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	slices.Reverse(f.schedules)
+}
+
+// Another schedule of the directory with the lease's repeat is refused
+// wherever the module lists it, before or after the lease's own, by Status,
+// a watch read and Restore, which change nothing; once it is gone the lease's
+// own schedule is accepted again.
+func TestLeaseRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *testing.T) {
+	for name, schedule := range map[string]Config{
+		"default start":   {Path: "/", Repeat: "1h"},
+		"requested start": {Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeSnapSchedule()
+			lease, err := add(t.Context(), snapScheduleFilesystem(fake), schedule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owned := fake.state()
+			fake.native(t, "fs snap-schedule add / 1h 2031-01-01T00:00:00")
+			for _, order := range []string{"owned first", "other first"} {
+				before := fake.state()
+				if _, err := lease.Status(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Errorf("%s: Status = %v", order, err)
+				}
+				var ended leaseWatchEnded
+				if _, err := lease.watchRead(t.Context()); !errors.As(err, &ended) || !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Errorf("%s: watch read = %v", order, err)
+				}
+				if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before || lease.restored {
+					t.Errorf("%s: Restore = %v, %s", order, err, fake.state())
+				}
+				fake.reorder()
+			}
+			fake.native(t, "fs snap-schedule remove / 1h 2031-01-01T00:00:00")
+			if fake.state() != owned {
+				t.Fatalf("the lease's schedule changed: %s", fake.state())
+			}
+			if status, err := lease.watchRead(t.Context()); err != nil || status.Schedule != "1h" {
+				t.Fatalf("the lease's own schedule: %+v, %v", status, err)
+			}
+			if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+				t.Fatalf("Restore: %v, %s", err, fake.state())
+			}
+		})
+	}
+}
+
+// A lease whose add reply was lost takes the only schedule with its repeat and
+// requested start as its own; another one with that repeat is refused in either
+// order and leaves both schedules.
+func TestLeaseAfterALostAddRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *testing.T) {
+	fake := newFakeSnapSchedule()
+	fake.lost["fs snap-schedule add"] = true
+	lease, err := add(t.Context(), snapScheduleFilesystem(fake), Config{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+	if err == nil || lease == nil || lease.added != "" {
+		t.Fatalf("%v, %v", lease, err)
+	}
+	fake.native(t, "fs snap-schedule add / 1h 2031-01-01T00:00:00")
+	for _, order := range []string{"owned first", "other first"} {
+		before := fake.state()
+		if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before {
+			t.Errorf("%s: Restore = %v, %s", order, err, fake.state())
+		}
+		fake.reorder()
+	}
+	fake.native(t, "fs snap-schedule remove / 1h 2031-01-01T00:00:00")
+	if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+		t.Fatalf("Restore: %v, %s", err, fake.state())
+	}
+}
+
+// The lease's operations and Restore use the schedule that Add recorded:
+// editing the exported Path, Repeat or Start retargets nothing, and Restore
+// removes the original schedule and its rules, leaves a schedule at the
+// edited target and releases the original directory.
+func TestLeaseIgnoresEditedDescriptors(t *testing.T) {
+	edits := map[string]func(*Lease){
+		"path":   func(l *Lease) { l.Path = "/different" },
+		"repeat": func(l *Lease) { l.Repeat = "6h" },
+		"start":  func(l *Lease) { l.Start = time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC) },
+		"all": func(l *Lease) {
+			l.Path, l.Repeat, l.Start, l.Retention = "/different", "6h", time.Time{}, map[string]int{"n": 9}
+		},
+	}
+	for _, failure := range []string{"", "fs snap-schedule add", "fs snap-schedule retention add / n"} {
+		for name, edit := range edits {
+			label := name
+			if failure != "" {
+				label += " after a lost reply of " + failure
+			}
+			t.Run(label, func(t *testing.T) {
+				fake := newFakeSnapSchedule()
+				fs := snapScheduleFilesystem(fake)
+				fake.native(t, "fs snap-schedule add /different 6h 2031-01-01T00:00:00")
+				decoy := fake.state()
+				if failure != "" {
+					fake.lost[failure] = true
+				}
+				lease, err := add(t.Context(), fs, leaseSchedule)
+				if (err != nil) != (failure != "") || lease == nil {
+					t.Fatalf("%v, %v", lease, err)
+				}
+				edit(lease)
+				if failure == "" {
+					if status, err := lease.Status(t.Context()); err != nil || status.Path != "/" || status.Schedule != "2h" {
+						t.Fatalf("Status of the edited lease: %+v, %v", status, err)
+					}
+				}
+				if err := lease.Restore(t.Context()); err != nil || !lease.restored {
+					t.Fatalf("Restore of the edited lease: %v", err)
+				}
+				if state := fake.state(); state != decoy {
+					t.Fatalf("after Restore: %s, want only %s", state, decoy)
+				}
+				if n := len(lease.leases.paths); n != 0 {
+					t.Fatalf("Restore left %d reservations", n)
+				}
+				next, err := add(t.Context(), fs, Config{Path: "/", Repeat: "1h"})
+				if err != nil {
+					t.Fatalf("a lease of the original directory: %v", err)
+				}
+				if err := next.Restore(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+// Concurrent Restore calls of one lease remove its schedule and rules once:
+// the lease's mutex orders them, every call succeeds, and the directory is
+// released.
+func TestLeaseConcurrentRestoresRemoveOnce(t *testing.T) {
+	fake := newFakeSnapSchedule()
+	lease, err := add(t.Context(), snapScheduleFilesystem(fake), leaseSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	for range cap(errs) {
+		wg.Go(func() { errs <- lease.Restore(t.Context()) })
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if state := fake.state(); state != "" || !lease.restored || len(lease.leases.paths) != 0 {
+		t.Fatalf("after concurrent Restores: %q, restored %t, %d reservations", state, lease.restored, len(lease.leases.paths))
+	}
+}
