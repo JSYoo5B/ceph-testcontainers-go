@@ -75,7 +75,8 @@ func RedactAdminFailure(err error) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	return redactAdminFailure(err, failure, fatalSignalReport(strings.Split(failure.Reason, "; ")))
+	reason, cut := strings.CutSuffix(failure.Reason, "...")
+	return redactAdminFailure(err, failure, fatalSignalReport(strings.Split(reason, "; "), cut))
 }
 
 // adminRunFailure describes a radosgw-admin run that exited nonzero as
@@ -89,7 +90,7 @@ func adminRunFailure(report supervised.ShellReport) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"))
+	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"), false)
 	output := ""
 	if crash != "" {
 		output = adminOutputShape(report.Stdout, report.StdoutTruncated)
@@ -115,10 +116,20 @@ func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...strin
 var (
 	fatalSignalHeader = regexp.MustCompile(`^\*\*\* Caught signal \(([A-Za-z][A-Za-z -]{0,39})\) \*\*$`)
 	fatalSignalThread = regexp.MustCompile(`^in thread [0-9a-fx]{1,18} thread_name:([!-~]{1,15})$`)
+	frameNumber       = regexp.MustCompile(`^\d{1,3}(?::|$)`)
 	backtraceFrame    = regexp.MustCompile(`^\d{1,3}: ([ -~]+?)(?: \[0x[0-9a-f]{1,16}\])?$`)
 	symbolFrame       = regexp.MustCompile(`^\(([ -~]+)\+(0x[0-9a-f]{1,16})\)$`)
-	fileFrame         = regexp.MustCompile(`^(?:/[!-~]*/)?([!-'*-~]+\([!-'*-~]*\+0x[0-9a-f]{1,16}\))$`)
+	fileFrame         = regexp.MustCompile(`^(?:/[!-~]*/)?([!-'*-.0-~]+\([!-'*-.0-~]*\+0x[0-9a-f]{1,16}\))$`)
+	// A function name without its argument list. Template arguments may
+	// hold spaces and parentheses, never a directory or an address.
+	functionName = regexp.MustCompile(`^[A-Za-z_~][ -'*-.0-Z^-~]*(?:\([ -'*-.0-Z^-~]*\)[ -'*-.0-Z^-~]*)*$`)
+	// A bare symbol, with an empty argument list when it has one.
+	bareSymbol = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_.$@]*)(?:\(\))?$`)
 )
+
+// incompleteFrame stands for a frame that is not one of the complete shapes,
+// as the end of a bounded Reason can be, and ends the backtrace.
+const incompleteFrame = "an incomplete frame"
 
 const (
 	// maxSignalFrames bounds the backtrace frames of a fatal signal report.
@@ -134,8 +145,9 @@ const (
 // signal, the thread and at most maxSignalFrames frames, each a function name
 // with its offset, a file name with its offset or a bare symbol, never an
 // address, a directory or an argument list. It returns "" when lines hold no
-// report. Frames are names from the binary, not data of the request.
-func fatalSignalReport(lines []string) string {
+// report. Frames are names from the binary, not data of the request. When cut
+// is true the last line was cut short, and a frame there is incomplete.
+func fatalSignalReport(lines []string, cut bool) string {
 	start := -1
 	signal := ""
 	for i, line := range lines {
@@ -155,12 +167,23 @@ func fatalSignalReport(lines []string) string {
 		if len(frames) == 0 && i-start > maxFrameGap {
 			break
 		}
+		if cut && i == len(lines)-1 {
+			if (len(frames) > 0 || frameNumber.MatchString(line)) && len(frames) < maxSignalFrames {
+				frames = append(frames, incompleteFrame)
+			}
+			break
+		}
 		if match := backtraceFrame.FindStringSubmatch(line); match != nil {
 			if len(frames) == maxSignalFrames {
 				extra++
 				continue
 			}
-			frames = append(frames, backtraceFrameName(match[1]))
+			name, ok := backtraceFrameName(match[1])
+			if !ok {
+				frames = append(frames, incompleteFrame)
+				break
+			}
+			frames = append(frames, name)
 			continue
 		}
 		if len(frames) > 0 {
@@ -185,28 +208,37 @@ func fatalSignalReport(lines []string) string {
 }
 
 // backtraceFrameName shortens one frame: "(ns::f(args) const+0x1f)" to
-// "ns::f+0x1f" and "/lib64/libc.so.6(+0x3fb30)" to "libc.so.6(+0x3fb30)",
-// bounded by maxFrameBytes.
-func backtraceFrameName(frame string) string {
+// "ns::f+0x1f", "/lib64/libc.so.6(+0x3fb30)" to "libc.so.6(+0x3fb30)" and
+// "main()" to "main", bounded by maxFrameBytes. It reports false for a frame
+// of any other shape, such as one cut inside its name, its argument list, its
+// directory or its address, whose text it never returns.
+func backtraceFrameName(frame string) (string, bool) {
 	if match := symbolFrame.FindStringSubmatch(frame); match != nil {
-		frame = withoutArguments(match[1]) + "+" + match[2]
+		name, ok := withoutArguments(match[1])
+		if !ok || !functionName.MatchString(name) {
+			return "", false
+		}
+		frame = name + "+" + match[2]
 	} else if match := fileFrame.FindStringSubmatch(frame); match != nil {
 		frame = match[1]
+	} else if match := bareSymbol.FindStringSubmatch(frame); match != nil {
+		frame = match[1]
 	} else {
-		frame = withoutArguments(frame)
+		return "", false
 	}
 	if len(frame) > maxFrameBytes {
 		frame = frame[:maxFrameBytes-len("...")] + "..."
 	}
-	return frame
+	return frame, true
 }
 
 // withoutArguments removes the trailing argument list, and a const after it,
-// of a demangled function name.
-func withoutArguments(symbol string) string {
+// of a demangled function name. It reports false when the name has an
+// unbalanced trailing argument list or a parenthesis without one.
+func withoutArguments(symbol string) (string, bool) {
 	symbol = strings.TrimSuffix(symbol, " const")
 	if !strings.HasSuffix(symbol, ")") {
-		return symbol
+		return symbol, !strings.ContainsAny(symbol, "()")
 	}
 	depth := 0
 	for i := len(symbol) - 1; i >= 0; i-- {
@@ -216,11 +248,11 @@ func withoutArguments(symbol string) string {
 		case '(':
 			depth--
 			if depth == 0 {
-				return symbol[:i]
+				return symbol[:i], i > 0
 			}
 		}
 	}
-	return symbol
+	return "", false
 }
 
 // adminOutputShape describes standard output by its size and whether it is

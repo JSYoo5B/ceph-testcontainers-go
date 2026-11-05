@@ -61,7 +61,7 @@ func TestFatalSignalReport(t *testing.T) {
 	const want = "radosgw-admin reported fatal signal Segmentation fault in thread radosgw-admin, backtrace " +
 		"libc.so.6(+0x3fb30) < libc.so.6(+0x8854a) < pthread_cond_clockwait < MonClient::authenticate+0x436 < " +
 		"MonClient::get_monmap_and_config+0x286 < global_init+0x276 < rgw::AppMain::shutdown+0x9f < main < 3 more frames"
-	if got := fatalSignalReport(strings.Split(crashStderr, "\n")); got != want {
+	if got := fatalSignalReport(strings.Split(crashStderr, "\n"), false); got != want {
 		t.Fatalf("report:\n got %q\nwant %q", got, want)
 	}
 	for name, lines := range map[string][]string{
@@ -69,17 +69,17 @@ func TestFatalSignalReport(t *testing.T) {
 		"logged header":     {"  -115> 2026-11-06T01:02:03.457+0000 73c9913528c0 -1 *** Caught signal (Segmentation fault) **", " 1: (f()+0x1) [0x1]"},
 		"unrecognized name": {"*** Caught signal (Segmentation fault; rm -rf) **"},
 	} {
-		if got := fatalSignalReport(lines); got != "" {
+		if got := fatalSignalReport(lines, false); got != "" {
 			t.Errorf("%s: %q", name, got)
 		}
 	}
 	long := "(" + strings.Repeat("x", 300) + "::f(int)+0x1)"
-	got := fatalSignalReport([]string{"*** Caught signal (Aborted) **", "1: " + long + " [0x1]", "unrelated 2: (g()+0x1) [0x2]"})
+	got := fatalSignalReport([]string{"*** Caught signal (Aborted) **", "1: " + long + " [0x1]", "unrelated 2: (g()+0x1) [0x2]"}, false)
 	if !strings.HasPrefix(got, "radosgw-admin reported fatal signal Aborted, backtrace xxx") || len(got) > 200 || strings.Contains(got, "g()") {
 		t.Fatalf("bounded single frame: %q", got)
 	}
 	// Frames that do not follow the header closely are not its backtrace.
-	if got := fatalSignalReport([]string{"*** Caught signal (Bus error) **", "a", "b", "c", "d", "e", "1: (f()+0x1) [0x1]"}); got != "radosgw-admin reported fatal signal Bus error, without a backtrace" {
+	if got := fatalSignalReport([]string{"*** Caught signal (Bus error) **", "a", "b", "c", "d", "e", "1: (f()+0x1) [0x1]"}, false); got != "radosgw-admin reported fatal signal Bus error, without a backtrace" {
 		t.Fatalf("distant frames: %q", got)
 	}
 }
@@ -132,3 +132,82 @@ func TestRedactAdminFailureReadsTheSignalFromTheReason(t *testing.T) {
 		t.Fatalf("redacted: %s", got)
 	}
 }
+
+// frameLeaks are parts of crashStderr that a summary never names: a
+// directory, an address, an argument list and the version.
+var frameLeaks = []string{"/lib64", "/opt", "[0x", "0x73c9", "0x651d", "std::", "(double", "(std", "0123456789abcdef"}
+
+func TestFatalSignalReportRejectsIncompleteFrames(t *testing.T) {
+	for frame, want := range map[string]string{
+		"/opt/example/lib/libfoo.so(+0x12":                                    incompleteFrame,
+		"(global_init(std::vector<char const*, std::allocator<char const*> >": incompleteFrame,
+		"(MonClient::authenticate(double)+0x436) [0x1234":                     incompleteFrame,
+		"(MonClient::authenticate(double)+0x4":                                incompleteFrame,
+		"main() [0x":                                                          incompleteFrame,
+		"(f(int))+0x1)":                                                       incompleteFrame,
+		"opt/example/libfoo.so(+0x12)":                                        incompleteFrame,
+		"(__libc_start_main+0x80)":                                            "__libc_start_main+0x80",
+		"(std::_Function_handler<void (), F>::_M_invoke(std::_Any_data const&)+0x2)": "std::_Function_handler<void (), F>::_M_invoke+0x2",
+	} {
+		got := fatalSignalReport([]string{"*** Caught signal (Aborted) **", "1: " + frame, "2: main()"}, false)
+		wantText := "radosgw-admin reported fatal signal Aborted, backtrace " + want
+		if want != incompleteFrame {
+			wantText += " < main"
+		}
+		if got != wantText {
+			t.Errorf("frame %q:\n got %q\nwant %q", frame, got, wantText)
+		}
+	}
+	// Every cut of the real report, and every placement of the real report
+	// in the bounded Reason, yields complete frames or the marker only.
+	for n := range len(crashStderr) {
+		checkFrameSummary(t, fmt.Sprintf("stderr cut at %d", n), fatalSignalReport(strings.Split(crashStderr[:n], "\n"), false))
+	}
+	header := strings.Index(crashStderr, "*** Caught")
+	for pad := range ceph.MaxNativeFailureReason {
+		stderr := strings.Repeat("p", pad+1) + "\n" + crashStderr[header:]
+		native := servicehook.NativeFailure("radosgw-admin", 139, nil, []byte(stderr))
+		text := RedactAdminFailure(native).Error()
+		checkFrameSummary(t, fmt.Sprintf("Reason padded by %d", pad), text)
+		// A frame at the cut end of the Reason is never named.
+		if strings.HasSuffix(native.Error(), "...") && strings.Contains(text, ", backtrace ") && !strings.Contains(text, incompleteFrame) && !strings.Contains(text, "more frames") {
+			t.Fatalf("Reason padded by %d: no marker for the cut frame: %s", pad, text)
+		}
+	}
+	reason := RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", 139, nil, []byte(strings.Repeat("p", 100)+"\n"+crashStderr[header:]))).Error()
+	if !strings.Contains(reason, " < "+incompleteFrame+"; native output is redacted") {
+		t.Fatalf("bounded Reason: %s", reason)
+	}
+}
+
+func checkFrameSummary(t *testing.T, name, text string) {
+	t.Helper()
+	for _, leaked := range frameLeaks {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("%s exposes %q: %s", name, leaked, text)
+		}
+	}
+	_, frames, ok := strings.Cut(text, ", backtrace ")
+	if !ok {
+		return
+	}
+	frames, _, _ = strings.Cut(frames, "; ")
+	for _, frame := range strings.Split(frames, " < ") {
+		if frame != incompleteFrame && !strings.HasSuffix(frame, " more frames") && !summaryFrames[frame] {
+			t.Fatalf("%s names frame %q not in the report: %s", name, frame, text)
+		}
+	}
+}
+
+// summaryFrames are the frames that the complete report names, and the names
+// that a cut can leave of them.
+var summaryFrames = func() map[string]bool {
+	frames := map[string]bool{}
+	for _, frame := range []string{"libc.so.6(+0x3fb30)", "libc.so.6(+0x8854a)", "pthread_cond_clockwait", "MonClient::authenticate+0x436",
+		"MonClient::get_monmap_and_config+0x286", "global_init+0x276", "rgw::AppMain::shutdown+0x9f", "main", "radosgw-admin(+0x4a1c2f)", "__libc_start_main", "_start"} {
+		for i := 1; i <= len(frame); i++ {
+			frames[frame[:i]] = true
+		}
+	}
+	return frames
+}()
