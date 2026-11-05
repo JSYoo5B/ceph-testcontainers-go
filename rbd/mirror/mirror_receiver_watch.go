@@ -122,7 +122,7 @@ func (w *ReceiverWatch) Stop() error {
 // differences between samples, not a complete history of native elections.
 //
 //purpose:observation
-func (m *Mirror) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, expectedDaemons ...string) (*ReceiverWatch, error) {
+func (m *Container) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, expectedDaemons ...string) (*ReceiverWatch, error) {
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
@@ -138,7 +138,7 @@ func (m *Mirror) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, expec
 
 // WatchReceivers polls this bound namespace pair and reports changes of the
 // original owner's exact owned cohort, the same observation as
-// ReceiverStatus. It behaves as Mirror.WatchReceivers in every other respect,
+// ReceiverStatus. It behaves as Container.WatchReceivers in every other respect,
 // with the bound scope and its selected policies pinned as well; a
 // Rebootstrap attempt or Terminate of the owner ends it. The default
 // WatchConfig.Interval is 5 seconds.
@@ -163,7 +163,7 @@ func (v *Namespace) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, ex
 type rbdReceiverSample func(context.Context, *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error)
 
 // startReceiverWatch runs the one receiver watch lifecycle of both scopes.
-// open is Mirror.checkWatchOpen of the owner in production.
+// open is Container.checkWatchOpen of the owner in production.
 func startReceiverWatch(ctx context.Context, settings watch.Settings, open func(context.Context, string) error, read rbdReceiverSample) (*ReceiverWatch, error) {
 	var witness *rbdReceiverWitness
 	stream, err := watch.Start(ctx, watch.Spec[ReceiverStatus, ReceiverWatchEvent]{

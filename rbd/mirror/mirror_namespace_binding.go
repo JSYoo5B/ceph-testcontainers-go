@@ -12,12 +12,12 @@ import (
 )
 
 // Namespace is a retained read-only binding of already configured
-// namespace policies to one Mirror's original pool, peer and owned cohort.
+// namespace policies to one fixture's original pool, peer and owned cohort.
 // It owns no resources and has no independent daemon or cleanup lifecycle.
 // An actual owner Rebootstrap attempt invalidates this binding permanently;
 // after successful Rebootstrap explicitly BindNamespace again for a new view.
 type Namespace struct {
-	owner *Mirror
+	owner *Container
 	scope rbdReceiverScope
 }
 
@@ -28,7 +28,7 @@ type rbdReceiverScope struct {
 }
 
 type rbdNamespaceBindingIdentity struct {
-	owner                           *Mirror
+	owner                           *Container
 	peer                            *rbdReceiverPeerIdentity
 	clusters                        *rbdReceiverClusterIdentities
 	pools                           *rbdMirrorPoolIdentities
@@ -42,7 +42,7 @@ func (p *rbdMirrorPair) originalReceiverScope() *rbdReceiverScope {
 
 // Called with the original owner's gate held. A scope never redirects ownership
 // and never replaces the owner's configuration, policy capture or mutex.
-func (scope *rbdReceiverScope) guard(m *Mirror) error {
+func (scope *rbdReceiverScope) guard(m *Container) error {
 	if scope == nil || scope.selection[0] != m.pair.config.Pool || scope.policies == nil {
 		return rbdReceiverGuard("RBD receiver scope is unavailable or changed")
 	}
@@ -69,7 +69,7 @@ func (scope *rbdReceiverScope) guard(m *Mirror) error {
 // invalidates them too; bind again after a successful Rebootstrap.
 //
 //purpose:construction
-func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error) {
+func (m *Container) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error) {
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD namespace binding owner is unavailable")
 	}
@@ -197,7 +197,7 @@ func readRBDNamespaceBindingCatalog(ctx context.Context, client testcontainers.C
 	return nil
 }
 
-func (m *Mirror) checkRBDReceiverScopeIdentities(ctx context.Context, scope *rbdReceiverScope) error {
+func (m *Container) checkRBDReceiverScopeIdentities(ctx context.Context, scope *rbdReceiverScope) error {
 	if err := scope.guard(m); err != nil {
 		return err
 	}

@@ -21,7 +21,7 @@ import (
 )
 
 // Receiver readiness and native bytes/checkpoints are separate assertions.
-func RBDMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
+func RBDMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Container, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
 	var result rbdmirrorexpect.ImageEvaluation
@@ -129,7 +129,7 @@ func RBDMultiClusterExec(ctx context.Context, ctr testcontainers.Container, args
 
 // logRBDMirrorImageState records both sites' native view of an image that
 // did not become replay-ready.
-func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool, sourceNamespace, destinationNamespace, name string) {
+func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbdmirror.Container, pool, sourceNamespace, destinationNamespace, name string) {
 	t.Helper()
 	for _, site := range []struct {
 		name, spec string

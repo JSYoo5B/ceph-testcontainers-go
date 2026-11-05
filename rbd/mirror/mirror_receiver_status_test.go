@@ -151,7 +151,7 @@ func (d *receiverTestDaemon) Exec(ctx context.Context, args []string, _ ...tcexe
 }
 
 type receiverHarness struct {
-	m                   *Mirror
+	m                   *Container
 	source, destination *receiverTestClient
 	daemons             []*receiverTestDaemon
 }
@@ -175,7 +175,7 @@ func newReceiverHarness(t *testing.T, sourceNS, destinationNS string, count int)
 			site.client.policies["images/"+site.ns] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: receiverReplacementUUID, RemoteNamespace: stringPointer(site.remote)}
 		}
 	}
-	m := &Mirror{pair: rbdMirrorPair{sourceClient: h.source, destinationClient: h.destination, config: Config{Pool: "images", SourceSite: "source", DestinationSite: "destination", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Scope: ScopeImage, Mode: ModeSnapshot, Source: &ceph.Container{Container: h.source}, Destination: &ceph.Container{Container: h.destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 84}}, receiver: rbdReceiverPeer{setupConfirmed: true, generation: 1}}
+	m := &Container{pair: rbdMirrorPair{sourceClient: h.source, destinationClient: h.destination, config: Config{Pool: "images", SourceSite: "source", DestinationSite: "destination", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Scope: ScopeImage, Mode: ModeSnapshot, Source: &ceph.Container{Container: h.source}, Destination: &ceph.Container{Container: h.destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 84}}, receiver: rbdReceiverPeer{setupConfirmed: true, generation: 1}}
 	m.pair.policyIdentities = &rbdMirrorPolicyIdentities{source: rbdMirrorSitePolicyIdentity{base: h.source.policies["images"], selected: h.source.policies[rbdMirrorNamespaceSpec("images", sourceNS)]}, destination: rbdMirrorSitePolicyIdentity{base: h.destination.policies["images"], selected: h.destination.policies[rbdMirrorNamespaceSpec("images", destinationNS)]}}
 	m.receiver.clusters = &rbdReceiverClusterIdentities{source: receiverSourceFSID, destination: receiverDestinationFSID, sourceCluster: m.pair.config.Source, destinationCluster: m.pair.config.Destination}
 	m.receiver.peer = &rbdReceiverPeerIdentity{generation: 1, uuid: receiverPeerUUID, site: "source", client: receiverPeerClient, sourceMirrorUUID: receiverSourceUUID}

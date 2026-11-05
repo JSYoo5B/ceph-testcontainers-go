@@ -57,7 +57,7 @@ func (c *rbdConnectionRefreshArchive) CopyToContainer(ctx context.Context, conte
 }
 
 type rbdConnectionRefreshFixture struct {
-	link                         *Mirror
+	link                         *Container
 	source, destination          *rbdNamespacePolicyFixture
 	clients                      []*rbdConnectionRefreshArchive
 	sourceCluster, targetCluster *ceph.Container

@@ -25,7 +25,7 @@ func rbdScenarioSeed(t *testing.T, ctx context.Context, client testcontainers.Co
 	return data
 }
 
-func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbdmirror.Mirror) {
+func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbdmirror.Container) {
 	t.Helper()
 	grace := 3 * time.Second
 	if err := link.Stop(ctx, &grace); err != nil {
@@ -33,7 +33,7 @@ func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbdmirror.Mirror) 
 	}
 }
 
-func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbdmirror.Mirror, image string) {
+func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbdmirror.Container, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
@@ -78,7 +78,7 @@ func rbdScenarioRequireSnapshotAbsent(t *testing.T, ctx context.Context, client 
 	}
 }
 
-func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool string) {
+func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbdmirror.Container, pool string) {
 	t.Helper()
 	var info struct{ Peers []json.RawMessage }
 	if err := json.Unmarshal(harness.RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {

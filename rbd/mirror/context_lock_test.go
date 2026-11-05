@@ -11,7 +11,7 @@ import (
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{Container: daemon, roster: rbdDaemonRoster{daemons: []*Daemon{daemon}, initialName: "a"}, pair: rbdMirrorPair{sourceClient: probe, destinationClient: probe}}
+	m := &Container{Container: daemon, roster: rbdDaemonRoster{daemons: []*Daemon{daemon}, initialName: "a"}, pair: rbdMirrorPair{sourceClient: probe, destinationClient: probe}}
 	daemon.owner = m
 	operations := map[string]func(context.Context) error{
 		"AddDaemon":         func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },
@@ -44,7 +44,7 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{roster: rbdDaemonRoster{daemons: []*Daemon{daemon}}}
+	m := &Container{roster: rbdDaemonRoster{daemons: []*Daemon{daemon}}}
 	daemon.owner = m
 	operation := func(ctx context.Context) error { return daemon.Remove(ctx) }
 	clustertest.AssertContextLockQueued(t, &daemon.mu, operation)

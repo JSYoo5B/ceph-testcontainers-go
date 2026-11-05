@@ -13,7 +13,7 @@ or uses cgo.
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `ClientConfig.WithIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
 | `radosgw-admin` | `rgw.Gateway.Admin`, or `multisite.Fixture.ZoneAdmin` | The gateway or the zone's setup client |
-| `rbd` on either side of a mirror link | `rbdmirror.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
+| `rbd` on either side of a mirror link | `rbdmirror.Container.SourceRBD`, `DestinationRBD` | The link's setup clients |
 | A daemon's admin socket command | `AdminSocket`, `ceph tell`, or `ceph --admin-daemon` | Control container or daemon container |
 | A read-only snapshot for failure analysis | `diagnostics.Collect(ctx, cluster, config)` | Docker API and the control container |
 
@@ -114,7 +114,7 @@ These commands do not give usable JSON:
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `Observer.ObjectWatchers` |
 | `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.SyncGroup.BucketSyncStatus`, `WaitBucketSyncReady` |
 | `radosgw-admin sync status` | The comparison with remote logs appears only in the text output | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
-| `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Mirror.PolicyStatus` |
+| `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Container.PolicyStatus` |
 
 ## Bounded commands with confirmed cleanup
 
@@ -492,7 +492,7 @@ out, err = exec(ctx, cephfsMirror.Daemons()[0], "ceph", "--admin-daemon",
 ```
 
 Prefer the typed observers when they cover your case:
-`rbdmirror.Daemon.Status`, `rbdmirror.Mirror.ReceiverStatus`, `ImageStatus`,
+`rbdmirror.Daemon.Status`, `rbdmirror.Container.ReceiverStatus`, `ImageStatus`,
 `cephfsmirror.Container.DirectoryStatus`.
 
 ### Observing Cephx keys from the daemon side
@@ -731,7 +731,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `radosgw-admin role`, `role-policy` or `role-trust-policy` changes to a role that `CreateRole` created | `Role.Remove`, which refuses a replaced or edited role and leaves it as it is | `Gateway.CreateRole`, `Role.Remove`; put the role back as created before `Remove` |
 | `radosgw-admin ratelimit set`/`enable`/`disable` on a user or bucket scope held by a rate-limit handle | `User.OverrideRateLimit`, whose `Restore` refuses an outside edit | `User.OverrideRateLimit` |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
-| `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
+| `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Container` operations, which compare captured policies | `rbdmirror.Container` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `NetworkConfig.WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 

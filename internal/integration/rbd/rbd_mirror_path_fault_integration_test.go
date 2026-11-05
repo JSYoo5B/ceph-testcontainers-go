@@ -164,7 +164,7 @@ type rbdMirrorProgress struct {
 
 // rbdMirrorSnapshotProgress reads the destination's mirror status of image
 // and decodes the JSON after "replaying, " in its description.
-func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbdmirror.Mirror, image string) rbdMirrorProgress {
+func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbdmirror.Container, image string) rbdMirrorProgress {
 	t.Helper()
 	progress, err := rbdMirrorImageProgress(ctx, mirror, image)
 	if err != nil {
@@ -174,7 +174,7 @@ func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbdmir
 }
 
 // rbdMirrorImageProgress is rbdMirrorSnapshotProgress that returns its error.
-func rbdMirrorImageProgress(ctx context.Context, mirror *rbdmirror.Mirror, image string) (rbdMirrorProgress, error) {
+func rbdMirrorImageProgress(ctx context.Context, mirror *rbdmirror.Container, image string) (rbdMirrorProgress, error) {
 	status, err := mirror.ImageStatus(ctx, image)
 	if err != nil {
 		return rbdMirrorProgress{}, fmt.Errorf("mirror status of %s: %w", image, err)

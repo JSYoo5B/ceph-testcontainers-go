@@ -78,7 +78,7 @@ func RBDReceiverNativePolicy(t *testing.T, ctx context.Context, client testconta
 	return RBDReceiverIndependentPolicy{*native.Mode, *native.MirrorUUID, *native.Remote, site}
 }
 
-func RBDReceiverNativeElection(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, status rbdmirror.ReceiverStatus, identity RBDReceiverIndependentIdentity, mapping [2]string) {
+func RBDReceiverNativeElection(t *testing.T, ctx context.Context, link *rbdmirror.Container, status rbdmirror.ReceiverStatus, identity RBDReceiverIndependentIdentity, mapping [2]string) {
 	t.Helper()
 	peer := "uuid: " + identity.PeerUUID + " cluster: " + identity.Site + " client: " + identity.Client
 	var actualIDs, leaderMembers []string

@@ -117,7 +117,7 @@ func (w *ImageWatch) Stop() error {
 // verify the destination data or the application's checkpoint separately.
 //
 //purpose:observation
-func (m *Mirror) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageName string) (*ImageWatch, error) {
+func (m *Container) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageName string) (*ImageWatch, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (m *Mirror) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageName
 }
 
 // WatchImage polls one image pair of this bound namespace pair, the same
-// observation as ImageStatus. It behaves as Mirror.WatchImage in every other
+// observation as ImageStatus. It behaves as Container.WatchImage in every other
 // respect, and pins as Namespace.WaitReplayReady does the original owner's
 // cohort at the baseline and the source image's mode when first observed: an
 // added, removed or replaced owned daemon, a changed mode, a changed selected
@@ -158,7 +158,7 @@ func (v *Namespace) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageN
 }
 
 // startImageWatch runs the one image watch lifecycle of both scopes. open is
-// Mirror.checkWatchOpen of the owner in production.
+// Container.checkWatchOpen of the owner in production.
 func startImageWatch(ctx context.Context, settings watch.Settings, open func(context.Context, string) error, read func(context.Context) (ImageStatus, error)) (*ImageWatch, error) {
 	var pins rbdImageContinuity
 	stream, err := watch.Start(ctx, watch.Spec[ImageStatus, ImageWatchEvent]{

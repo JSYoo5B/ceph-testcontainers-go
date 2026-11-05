@@ -68,7 +68,7 @@ func RBDScenarioWaitTransmitPeer(t *testing.T, parent context.Context, command f
 	}
 }
 
-func RBDScenarioPeer(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool string) string {
+func RBDScenarioPeer(t *testing.T, ctx context.Context, link *rbdmirror.Container, pool string) string {
 	t.Helper()
 	var info struct{ Peers []struct{ UUID string } }
 	if err := json.Unmarshal(RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {
@@ -80,7 +80,7 @@ func RBDScenarioPeer(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, 
 	return info.Peers[0].UUID
 }
 
-func RBDScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Mirror {
+func RBDScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Container {
 	t.Helper()
 	image := StaticFacts(source).Images.RBDAux
 	link, err := rbdmirror.Run(ctx, NativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{

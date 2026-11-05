@@ -77,10 +77,10 @@ Every fixture package is a Testcontainers for Go module with one
 on `ceph`: their `Container` embeds `*ceph.Container`, and their options can be
 passed to `ceph.Run` together. The two-cluster fixtures start their daemons as
 Testcontainers containers on two existing clusters: `rbd/mirror` and
-`cephfs/mirror` return a `*Mirror` that embeds the first mirror daemon's
-`testcontainers.Container`, and `rgw/multisite` returns a `*Fixture` whose
-`Source` and `Destination` gateways are containers, while the `Fixture` itself
-embeds none. `fault`, `override`, `capture`, `ceph/diagnostics` and
+`cephfs/mirror` return a `*Container` that owns the whole daemon cohort and
+embeds the first mirror daemon's `testcontainers.Container`, and
+`rgw/multisite` returns a `*Fixture` whose `Source` and `Destination` gateways
+are containers, while the `Fixture` itself embeds none. `fault`, `override`, `capture`, `ceph/diagnostics` and
 `ceph/finalize` start no fixture of their own; they act on or observe containers that already
 exist.
 

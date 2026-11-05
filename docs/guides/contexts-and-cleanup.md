@@ -45,12 +45,12 @@ shorten:
 
 | Operation | Bound |
 | --- | --- |
-| `rbdmirror.Mirror.WaitReplayReady`, `WaitReceiverReady` | 4 minutes |
+| `rbdmirror.Container.WaitReplayReady`, `WaitReceiverReady` | 4 minutes |
 | `multisite.Fixture.WaitSyncReady`, `SyncGroup.WaitBucketSyncReady`, `SyncGroup.WaitBucketPolicyReady` | 4 minutes |
 | `cephfsmirror.Container.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
 | `cephfsmirror.DirectoryRemoval.WaitReleased`, `cephfsmirror.PeerRemoval.WaitDrained` | 2 minutes |
-| `rbdmirror.Mirror.ReceiverStatus`, `BindNamespace` | 30 seconds |
-| `rbdmirror.Mirror.RefreshMonitorConfig` | 2 minutes |
+| `rbdmirror.Container.ReceiverStatus`, `BindNamespace` | 30 seconds |
+| `rbdmirror.Container.RefreshMonitorConfig` | 2 minutes |
 | `cephfsmirror.Run` waiting for the MGR `mirroring` module | 90 seconds |
 | `diagnostics.Collect` | `diagnostics.Config.Timeout` (1 minute by default) |
 
@@ -195,8 +195,8 @@ Watch takes a `ceph.WatchConfig` and has the same lifecycle:
 | `quiesce.Set.Watch` | native state, version, timeout and expiration of one quiesce set, until a terminal state | FSMap ID, the set ID, its members and the version `Start` confirmed | 1s |
 | `snapschedule.Lease.Watch` | active state, created and pruned counts, first and last snapshot times and retention of one schedule | FSMap ID and the schedule's native start and creation time | 5s |
 | `session.Watch` | admission, native state and removal of the selected client sessions, from samples bracketed by two reads of the active-rank holders | FSMap ID | 2s |
-| `mirror.Mirror.WatchReceivers` and `Namespace.WatchReceivers` (RBD) | receiver membership, instances and leader agreement | the receiver cohort, peer and policies | 5s |
-| `mirror.Mirror.WatchImage` and `Namespace.WatchImage` (RBD) | replay state and receiver assignment of one image pair | source image ID, global ID and the destination once enrolled | 5s |
+| `mirror.Container.WatchReceivers` and `Namespace.WatchReceivers` (RBD) | receiver membership, instances and leader agreement | the receiver cohort, peer and policies | 5s |
+| `mirror.Container.WatchImage` and `Namespace.WatchImage` (RBD) | replay state and receiver assignment of one image pair | source image ID, global ID and the destination once enrolled | 5s |
 | `mirror.Container.WatchDirectory` (CephFS) | assignment, sync state and last synced snapshot of one directory | filesystems, peer and the directory policy | 5s |
 | `multisite.Fixture.WatchSync` (RGW) | metadata sync and the selected sources' data sync of one zone | realm, zonegroup and zone IDs and the committed period | 5s |
 | `multisite.SyncGroup.WatchBucketSync` (RGW) | the bucket checkpoint of one pipe between two zones | the group's policy, both bucket instances and the committed period | 5s |
@@ -314,7 +314,7 @@ terminated". `ceph.FactsOf` and the descriptor getters still answer.
 | Resource | How to clean it up |
 | --- | --- |
 | Containers attached with `WithClient` or `ClientConfig.WithIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
-| `rbdmirror.Mirror`, `cephfsmirror.Container`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
+| `rbdmirror.Container`, `cephfsmirror.Container`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
 | Handles from the package function `fault.InterruptLink` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |
 | Diagnostics reports | They may contain log lines with secrets; review before sharing. |
@@ -357,7 +357,7 @@ if err != nil {
 }
 ```
 
-`rbdmirror.Mirror` and `cephfsmirror.Container` embed a container handle, so
+`rbdmirror.Container` and `cephfsmirror.Container` embed a container handle, so
 `testcontainers.CleanupContainer` accepts them. `multisite.Fixture` does not; clean
 it up with `t.Cleanup`:
 

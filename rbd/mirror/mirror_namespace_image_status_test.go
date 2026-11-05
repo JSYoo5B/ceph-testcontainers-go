@@ -612,7 +612,7 @@ func TestRBDNamespaceImageObserverRejectsUnavailableBeforeNative(t *testing.T) {
 			t.Fatal("unsafe name reached native CLI")
 		}
 	}
-	for _, view := range []*Namespace{nil, {}, {owner: &Mirror{}}} {
+	for _, view := range []*Namespace{nil, {}, {owner: &Container{}}} {
 		if s, e := view.ImageStatus(t.Context(), "volume"); e == nil || s.ReplayReady {
 			t.Fatal("unavailable image view accepted")
 		}

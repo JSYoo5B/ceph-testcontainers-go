@@ -15,7 +15,7 @@ import (
 // owned daemon; the event that reports it replay-ready again advances the
 // test. The event does not attest that a write arrived: compare the
 // destination data afterwards. This example is compiled, not run.
-func ExampleMirror_WatchImage() {
+func ExampleContainer_WatchImage() {
 	ctx := context.Background()
 	source, err := rbd.Run(ctx, ceph.DefaultImage)
 	if source != nil {

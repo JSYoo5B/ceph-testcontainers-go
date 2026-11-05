@@ -89,12 +89,14 @@ type Config struct {
 	NoInitialDaemons bool
 }
 
-// Mirror owns its daemons and setup CLI containers, not the Ceph clusters.
-// The embedded Container is the initial daemon's compatibility handle. Its
-// Stop and Start affect only that daemon. Removing it clears the handle without
-// assigning another daemon. Use Daemons for current membership. Terminate
-// removes all owned runtime containers, including partially created or
-// previously removed daemons.
+// Container is the fixture that Run returns. It owns a cohort of rbd-mirror
+// daemons, which may be empty, and its setup CLI containers, not the Ceph
+// clusters. The embedded testcontainers.Container is the initial daemon's
+// handle only: it is nil with Config.NoInitialDaemons until the first
+// AddDaemon, its Stop and Start affect only that daemon, and removing that
+// daemon clears it without assigning another. Use Daemons for current
+// membership. Terminate removes all owned runtime containers, including
+// partially created or previously removed daemons.
 //
 // The typed methods serialize on the fixture's lock, so they do not interleave
 // on one fixture; the waits release it between polls. SourceRBD and
@@ -103,7 +105,7 @@ type Config struct {
 // removal, extra namespace policies). Such commands are the caller's own native
 // writes; the typed methods detect and refuse changes to the policies captured
 // at setup.
-type Mirror struct {
+type Container struct {
 	testcontainers.Container
 	// pair is the mirrored source/destination pair, its setup clients and the
 	// native pool and policy identities captured for it.
@@ -121,7 +123,7 @@ type Mirror struct {
 // and setup clients are fixed once setup has started them; the identities are
 // captured during setup, and later operations refuse a pair whose native pools
 // or policies no longer match them. Its methods run while the caller holds
-// Mirror.mu, or during setup before the fixture is shared.
+// Container.mu, or during setup before the fixture is shared.
 type rbdMirrorPair struct {
 	config                          Config
 	sourceClient, destinationClient testcontainers.Container
@@ -135,7 +137,7 @@ type rbdMirrorPair struct {
 
 // rbdReceiverPeer is the destination's receiving peer as setup recorded it:
 // both clusters' identities, the peer and its generation, which Rebootstrap
-// advances, and whether setup completed. It is guarded by Mirror.mu.
+// advances, and whether setup completed. It is guarded by Container.mu.
 type rbdReceiverPeer struct {
 	clusters       *rbdReceiverClusterIdentities
 	peer           *rbdReceiverPeerIdentity
@@ -145,7 +147,7 @@ type rbdReceiverPeer struct {
 
 // rbdDaemonRoster is the fixture's daemon membership and the launch settings
 // every new daemon shares. The first daemon added is the initial one, which
-// also backs the fixture's embedded container. It is guarded by Mirror.mu.
+// also backs the fixture's embedded container. It is guarded by Container.mu.
 type rbdDaemonRoster struct {
 	image       string
 	opts        []testcontainers.ContainerCustomizer
@@ -164,7 +166,7 @@ type Daemon struct {
 	// ClientName is the daemon's own Cephx user on the destination,
 	// client.rbd-mirror.tc-<uuid>.
 	ClientName                                                  string
-	owner                                                       *Mirror
+	owner                                                       *Container
 	mu                                                          sync.Mutex
 	terminated                                                  bool
 	receiverHandle                                              testcontainers.Container
@@ -286,7 +288,7 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // info does not print it.
 //
 //purpose:construction
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
@@ -328,7 +330,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, fmt.Errorf("preflight RBD mirror pools/namespaces: %w", err)
 	}
-	mirror := &Mirror{pair: rbdMirrorPair{config: config, poolIdentities: identities}, roster: rbdDaemonRoster{image: image, opts: slices.Clone(opts)}, receiver: rbdReceiverPeer{clusters: receiverClusters}}
+	mirror := &Container{pair: rbdMirrorPair{config: config, poolIdentities: identities}, roster: rbdDaemonRoster{image: image, opts: slices.Clone(opts)}, receiver: rbdReceiverPeer{clusters: receiverClusters}}
 	sourceClient, err := multicluster.RunClient(ctx, sourceImage, config.Source, destinationFacts.NetworkName, &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
@@ -366,7 +368,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 // fixture, even if they replay the same pool.
 //
 //purpose:observation
-func (m *Mirror) Daemons() []*Daemon {
+func (m *Container) Daemons() []*Daemon {
 	if m == nil {
 		return nil
 	}
@@ -386,7 +388,7 @@ func (m *Mirror) Daemons() []*Daemon {
 // non-nil daemon becomes the embedded compatibility handle.
 //
 //purpose:construction,condition
-func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
+func (m *Container) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable")
 	}
@@ -548,7 +550,7 @@ func validateRBDMirrorDaemonName(name string) error {
 // Namespace views must be bound again.
 //
 //purpose:condition
-func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
+func (m *Container) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
@@ -691,7 +693,7 @@ func matchingRBDMirrorPeer(info []byte, site, fsid, mirrorUUID string) (rbdMirro
 // are passed without shell interpolation; use --format json for state queries.
 //
 //purpose:native
-func (m *Mirror) SourceRBD(ctx context.Context, args ...string) ([]byte, error) {
+func (m *Container) SourceRBD(ctx context.Context, args ...string) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror source setup client is unavailable")
 	}
@@ -702,7 +704,7 @@ func (m *Mirror) SourceRBD(ctx context.Context, args ...string) ([]byte, error) 
 // promote/demote images, request resync, and inspect or remove explicit peers.
 //
 //purpose:native
-func (m *Mirror) DestinationRBD(ctx context.Context, args ...string) ([]byte, error) {
+func (m *Container) DestinationRBD(ctx context.Context, args ...string) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror destination setup client is unavailable")
 	}
@@ -830,7 +832,7 @@ func (p *rbdMirrorPair) reconcileImportedPeer(ctx context.Context, bootstrap rbd
 // quiesce their application before changing an existing image's mirroring.
 //
 //purpose:construction
-func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
+func (m *Container) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
 		return servicehook.Invalid(errors.New("RBD mirror source setup client is unavailable"))
 	}
@@ -894,7 +896,7 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 // their image data, and the mirroring/auth configuration written during setup.
 //
 //purpose:lifetime
-func (m *Mirror) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+func (m *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if m == nil {
 		return nil
 	}

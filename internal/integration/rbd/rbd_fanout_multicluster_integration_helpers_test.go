@@ -80,7 +80,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 	return cluster, client
 }
 
-func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *rbdmirror.Mirror {
+func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *rbdmirror.Container {
 	t.Helper()
 	image := harness.StaticFacts(a).Images.RBDAux
 	link, err := rbdmirror.Run(ctx, harness.NativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{
