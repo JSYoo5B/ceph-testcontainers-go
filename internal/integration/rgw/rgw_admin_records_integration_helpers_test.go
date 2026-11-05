@@ -38,7 +38,7 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 				Enabled bool `json:"enabled"`
 			} `json:"bucket_quota"`
 		}
-		data := rgwBackendAdmin(t, ctx, gateway, "bucket", "stats", "--bucket", bucket)
+		data := harness.RGWBackendAdmin(t, ctx, gateway, "bucket", "stats", "--bucket", bucket)
 		if json.Unmarshal(data, &native) != nil || native.ID == "" || native.Name != bucket || native.Owner != owner.ID() || native.Quota.Enabled {
 			t.Fatal("rate-limit fixture bucket identity/quota prerequisite changed")
 		}
@@ -57,12 +57,12 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 	}
 	readLimit := func(bucket string) rgwRecordsRatePolicy {
 		t.Helper()
-		response := rgwBackendSigned(t, ctx, operator, "s3", http.MethodGet, path(bucket, url.Values{}), nil, nil)
-		rgwBackendRequire(t, response, http.StatusOK)
+		response := harness.RGWBackendSigned(t, ctx, operator, "s3", http.MethodGet, path(bucket, url.Values{}), nil, nil)
+		harness.RGWBackendRequire(t, response, http.StatusOK)
 		var native struct {
 			Policy *rgwRecordsRatePolicy `json:"bucket_ratelimit"`
 		}
-		if json.Unmarshal(response.body, &native) != nil || native.Policy == nil {
+		if json.Unmarshal(response.Body, &native) != nil || native.Policy == nil {
 			t.Fatal("decode native individual bucket rate-limit policy")
 		}
 		return *native.Policy
@@ -72,9 +72,9 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 		t.Fatal("fresh rate-limit recipe refuses an already-enabled bucket policy")
 	}
 	policy := rgwRecordsRatePolicy{Enabled: true, ReadOps: 1}
-	rgwRecordsAccessDenied(t, rgwBackendSigned(t, ctx, noCaps, "s3", http.MethodGet, path(limited, url.Values{}), nil, nil))
+	rgwRecordsAccessDenied(t, harness.RGWBackendSigned(t, ctx, noCaps, "s3", http.MethodGet, path(limited, url.Values{}), nil, nil))
 	for _, denied := range []harness.S3HTTPClient{noCaps, operator} {
-		rgwRecordsAccessDenied(t, rgwBackendSigned(t, ctx, denied, "s3", http.MethodPost, path(limited, policy.values()), nil, nil))
+		rgwRecordsAccessDenied(t, harness.RGWBackendSigned(t, ctx, denied, "s3", http.MethodPost, path(limited, policy.values()), nil, nil))
 	}
 	if readLimit(limited) != before || readLimit(outside) != outsideBefore {
 		t.Fatal("denied bucket rate-limit write changed native policies")
@@ -83,20 +83,20 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 	if readBucketID(limited) != limitedID || readBucketID(outside) != outsideID {
 		t.Fatal("rate-limit mutation refuses replaced native buckets")
 	}
-	rgwBackendRequire(t, rgwBackendSigned(t, ctx, operator, "s3", http.MethodPost, path(limited, policy.values()), nil, nil), http.StatusOK)
+	harness.RGWBackendRequire(t, harness.RGWBackendSigned(t, ctx, operator, "s3", http.MethodPost, path(limited, policy.values()), nil, nil), http.StatusOK)
 	if readLimit(limited) != policy || readLimit(outside) != outsideBefore {
 		t.Fatal("individual bucket rate-limit readback/sibling isolation failed")
 	}
 	rgwRecordsWait(t, ctx, "native bucket SlowDown rejection", func(callCtx context.Context) bool {
-		response := rgwBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+limited+"/kept", nil, nil)
-		if response.code == http.StatusOK {
-			if !bytes.Equal(response.body, payload) {
+		response := harness.RGWBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+limited+"/kept", nil, nil)
+		if response.Code == http.StatusOK {
+			if !bytes.Equal(response.Body, payload) {
 				t.Fatal("rate-limit admitted read changed owned object bytes")
 			}
 			return false
 		}
-		if response.code != http.StatusServiceUnavailable || rgwRecordsErrorCode(response.body) != "SlowDown" {
-			t.Fatalf("rate-limit negative control was not native 503 SlowDown: status=%d code=%s (body redacted)", response.code, rgwRecordsErrorCode(response.body))
+		if response.Code != http.StatusServiceUnavailable || rgwRecordsErrorCode(response.Body) != "SlowDown" {
+			t.Fatalf("rate-limit negative control was not native 503 SlowDown: status=%d code=%s (body redacted)", response.Code, rgwRecordsErrorCode(response.Body))
 		}
 		return true
 	})
@@ -112,15 +112,15 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 	rgwRecordsRequireCaps(t, ctx, gateway, operatorUser, "read,write")
 	// Restore every native field, not merely enabled=false. Zero disables the
 	// corresponding dimension; Tentacle has only read/write ops and bytes.
-	rgwBackendRequire(t, rgwBackendSigned(t, ctx, operator, "s3", http.MethodPost, path(limited, before.values()), nil, nil), http.StatusOK)
+	harness.RGWBackendRequire(t, harness.RGWBackendSigned(t, ctx, operator, "s3", http.MethodPost, path(limited, before.values()), nil, nil), http.StatusOK)
 	if readLimit(limited) != before || readLimit(outside) != outsideBefore {
 		t.Fatal("rate-limit did not restore exact prior native policies")
 	}
 	for range 3 {
-		response := rgwBackendWaitStatus(t, ctx, func(callCtx context.Context) rgwBackendResponse {
-			return rgwBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+limited+"/kept", nil, nil)
+		response := harness.RGWBackendWaitStatus(t, ctx, func(callCtx context.Context) harness.RGWBackendResponse {
+			return harness.RGWBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+limited+"/kept", nil, nil)
 		}, http.StatusOK)
-		if !bytes.Equal(response.body, payload) {
+		if !bytes.Equal(response.Body, payload) {
 			t.Fatal("rate-limit restore did not recover exact object bytes")
 		}
 	}
@@ -128,7 +128,7 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 		client.Request(t, ctx, http.MethodDelete, "/"+bucket+"/kept", nil, http.StatusNoContent)
 		client.Request(t, ctx, http.MethodDelete, "/"+bucket, nil, http.StatusNoContent)
 	}
-	rgwBackendAdmin(t, ctx, gateway, "caps", "rm", "--uid", operatorUser.ID(), "--caps", "usage=write;ratelimit=write")
+	harness.RGWBackendAdmin(t, ctx, gateway, "caps", "rm", "--uid", operatorUser.ID(), "--caps", "usage=write;ratelimit=write")
 	rgwRecordsRequireCaps(t, ctx, gateway, operatorUser, "read")
 	t.Log("native bucket rate-limit: caps-gated read/write, exact Tentacle policy readback, actual 503 SlowDown on owned reads, same-principal sibling admission, full native policy restore and repeated exact-byte recovery; scoped S3 cleanup")
 }
@@ -188,10 +188,10 @@ func rgwRecordsErrorCode(body []byte) string {
 	return failure.Error.Code
 }
 
-func rgwRecordsAccessDenied(t *testing.T, response rgwBackendResponse) {
+func rgwRecordsAccessDenied(t *testing.T, response harness.RGWBackendResponse) {
 	t.Helper()
-	rgwBackendRequire(t, response, http.StatusForbidden)
-	if rgwRecordsErrorCode(response.body) != "AccessDenied" {
+	harness.RGWBackendRequire(t, response, http.StatusForbidden)
+	if rgwRecordsErrorCode(response.Body) != "AccessDenied" {
 		t.Fatal("AdminOps negative control was not native AccessDenied")
 	}
 }

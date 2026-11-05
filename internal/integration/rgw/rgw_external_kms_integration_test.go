@@ -10,9 +10,10 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
-// TestRGWExternalKMS runs SSE-KMS and SSE-S3 against a caller-owned Vault over
-// verified HTTPS on both legs. Docker cannot disconnect a host-network
-// endpoint, so the KMS reachability fault runs on a bridge only.
+// TestRGWExternalKMS runs the external-KMS recipe of the rgw README: SSE-KMS
+// and SSE-S3 configured against a caller-owned Vault over verified HTTPS on
+// both legs, with a per-gateway trust file. The native KMS failure modes are
+// the rgw_kms_failure_modes experiment case.
 func TestRGWExternalKMS(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	for _, mode := range harness.NetworkModes(t, "bridge") {

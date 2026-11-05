@@ -105,7 +105,7 @@ func TestRGWBackendAuditProofRequiresCompletedVaultTransactions(t *testing.T) {
 		{name: "missing identity", audit: event("request", "", "tc/data/allowed", "", true, false), invalid: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			counts, err := rgwBackendVaultAuditProof(test.audit)
+			counts, err := harness.RGWBackendVaultAuditProof(test.audit)
 			if (err != nil) != test.invalid || counts["tc/data/allowed"] != test.allowed || counts["tc/data/denied"] != test.denied {
 				t.Fatalf("completed read evidence: counts=%v error=%v", counts, err)
 			}
@@ -116,12 +116,12 @@ func TestRGWBackendAuditProofRequiresCompletedVaultTransactions(t *testing.T) {
 func TestRGWBackendStatusProbeReceivesBoundedContext(t *testing.T) {
 	parent, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	rgwBackendWaitStatus(t, parent, func(probe context.Context) rgwBackendResponse {
+	harness.RGWBackendWaitStatus(t, parent, func(probe context.Context) harness.RGWBackendResponse {
 		deadline, bounded := probe.Deadline()
 		if !bounded || time.Until(deadline) > time.Second || probe == parent {
 			t.Fatal("status probe did not receive its bounded child context")
 		}
-		return rgwBackendResponse{code: http.StatusOK}
+		return harness.RGWBackendResponse{Code: http.StatusOK}
 	}, http.StatusOK)
 }
 

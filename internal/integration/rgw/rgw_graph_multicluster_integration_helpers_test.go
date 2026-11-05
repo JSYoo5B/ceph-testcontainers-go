@@ -6,11 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"

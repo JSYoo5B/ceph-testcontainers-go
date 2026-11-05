@@ -87,7 +87,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 			addWriteCaps := func() {
 				t.Helper()
 				rgwRecordsRequireCaps(t, ctx, gateway, users[2], "read")
-				rgwBackendAdmin(t, ctx, gateway, "caps", "add", "--uid", users[2].ID(), "--caps", "usage=write;ratelimit=write")
+				harness.RGWBackendAdmin(t, ctx, gateway, "caps", "add", "--uid", users[2].ID(), "--caps", "usage=write;ratelimit=write")
 				rgwRecordsRequireCaps(t, ctx, gateway, users[2], "read,write")
 			}
 			payload := bytes.Repeat([]byte("native-owned-usage-payload\n"), 2048)
@@ -101,14 +101,14 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 			readUsage := func(callCtx context.Context, uid string) rgwRecordsUsage {
 				t.Helper()
 				query := url.Values{"format": {"json"}, "uid": {uid}, "show-entries": {"true"}, "show-summary": {"true"}}
-				response := rgwBackendSigned(t, callCtx, operator, "s3", http.MethodGet, "/admin/usage?"+query.Encode(), nil, nil)
-				rgwBackendRequire(t, response, http.StatusOK)
-				return rgwRecordsDecodeUsage(t, response.body, uid)
+				response := harness.RGWBackendSigned(t, callCtx, operator, "s3", http.MethodGet, "/admin/usage?"+query.Encode(), nil, nil)
+				harness.RGWBackendRequire(t, response, http.StatusOK)
+				return rgwRecordsDecodeUsage(t, response.Body, uid)
 			}
 			usagePath := "/admin/usage?" + url.Values{"format": {"json"}, "uid": {users[0].ID()}}.Encode()
-			rgwRecordsAccessDenied(t, rgwBackendSigned(t, ctx, noCaps, "s3", http.MethodGet, usagePath, nil, nil))
+			rgwRecordsAccessDenied(t, harness.RGWBackendSigned(t, ctx, noCaps, "s3", http.MethodGet, usagePath, nil, nil))
 			// The same valid read credential must be denied a destructive trim.
-			rgwRecordsAccessDenied(t, rgwBackendSigned(t, ctx, operator, "s3", http.MethodDelete, usagePath, nil, nil))
+			rgwRecordsAccessDenied(t, harness.RGWBackendSigned(t, ctx, operator, "s3", http.MethodDelete, usagePath, nil, nil))
 			var otherBefore map[string]rgwRecordsCounters
 			rgwRecordsWait(t, ctx, "owned native usage flush", func(callCtx context.Context) bool {
 				first := readUsage(callCtx, users[0].ID())
@@ -136,7 +136,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 			// uid is always explicit. Never send remove-all=true or an unscoped
 			// trim, even though this recipe owns the disposable cluster.
 			trimQuery := url.Values{"format": {"json"}, "uid": {users[0].ID()}, "remove-all": {"false"}}
-			rgwBackendRequire(t, rgwBackendSigned(t, ctx, operator, "s3", http.MethodDelete, "/admin/usage?"+trimQuery.Encode(), nil, nil), http.StatusOK)
+			harness.RGWBackendRequire(t, harness.RGWBackendSigned(t, ctx, operator, "s3", http.MethodDelete, "/admin/usage?"+trimQuery.Encode(), nil, nil), http.StatusOK)
 			stable = 0
 			rgwRecordsWait(t, ctx, "scoped native usage trim", func(callCtx context.Context) bool {
 				first := readUsage(callCtx, users[0].ID())
@@ -155,7 +155,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 			// Restore only the owned operator's write bits to exercise the rate
 			// limit's independent read/write capability contract below.
 			rgwRecordsRequireCaps(t, ctx, gateway, users[2], "read,write")
-			rgwBackendAdmin(t, ctx, gateway, "caps", "rm", "--uid", users[2].ID(), "--caps", "usage=write;ratelimit=write")
+			harness.RGWBackendAdmin(t, ctx, gateway, "caps", "rm", "--uid", users[2].ID(), "--caps", "usage=write;ratelimit=write")
 			rgwRecordsRequireCaps(t, ctx, gateway, users[2], "read")
 			rgwRecordsRateLimit(t, ctx, gateway, users[0], users[2], clients[0], operator, noCaps, payload, addWriteCaps)
 			// Successful S3 cleanup can emit new usage. Remaining records belong

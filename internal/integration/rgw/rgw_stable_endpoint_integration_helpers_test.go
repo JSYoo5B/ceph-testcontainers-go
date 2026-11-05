@@ -110,8 +110,8 @@ func testRGWStableEndpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	authority := newRGWTestAuthority(t)
-	material := authority.issue(t)
+	authority := harness.NewRGWTestAuthority(t)
+	material := authority.Issue(t)
 	gateways := make([]*rgw.Gateway, 2)
 	backends := make([]string, 2)
 	for i, name := range []string{"stable-a", "stable-b"} {
@@ -139,7 +139,7 @@ func testRGWStableEndpoint(t *testing.T) {
 	}
 	stable := newStableEndpoint(t, backends...)
 	probe := buildS3Probe(t, ctx, stable.URL(), gateways[0].Region)
-	ca := authority.file(t)
+	ca := authority.File(t)
 	const bucket, object = "tc-stable-endpoint", "data"
 	payload := "bytes written through gateway A and read through gateway B"
 	run := func(operation, data string) s3ProbeResult {

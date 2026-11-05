@@ -79,7 +79,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	}
 	readPolicy := func(args ...string) map[string]any {
 		t.Helper()
-		return decodePolicy(rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "get"}, args...)...))
+		return decodePolicy(harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "get"}, args...)...))
 	}
 	bucketScope := func(bucket string) []string { return []string{"--ratelimit-scope", "bucket", "--bucket", bucket} }
 	userScope := []string{"--ratelimit-scope", "user", "--uid", users[0].ID()}
@@ -100,7 +100,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 				} `json:"attrs"`
 			} `json:"data"`
 		}
-		if json.Unmarshal(rgwBackendAdmin(t, ctx, gateway, "metadata", "get", "user:"+users[0].ID()), &metadata) != nil ||
+		if json.Unmarshal(harness.RGWBackendAdmin(t, ctx, gateway, "metadata", "get", "user:"+users[0].ID()), &metadata) != nil ||
 			metadata.Data.UserID != users[0].ID() || metadata.Data.Attrs == nil {
 			t.Fatal("decode native user metadata")
 		}
@@ -135,52 +135,52 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	equalUserPolicy := func(a, b userPolicy) bool { return a.unset == b.unset && equalPolicy(a.policy, b.policy) }
 	// A disabled, non-default prior policy, so restoration must put back
 	// every field rather than merely disable the override's policy.
-	rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-write-ops", "1000", "--max-read-bytes", "1048576"}, bucketScope(limited)...)...)
+	harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-write-ops", "1000", "--max-read-bytes", "1048576"}, bucketScope(limited)...)...)
 	limitedBefore, controlBefore, userBefore := readPolicy(bucketScope(limited)...), readPolicy(bucketScope(control)...), readUserPolicy()
 	if limitedBefore["enabled"] != false || limitedBefore["max_write_ops"] != float64(1000) {
 		t.Fatalf("prior native bucket policy was not stored: %v", limitedBefore)
 	}
 
-	get := func(callCtx context.Context, client harness.S3HTTPClient, bucket string) rgwBackendResponse {
-		return rgwBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+bucket+"/kept", nil, nil)
+	get := func(callCtx context.Context, client harness.S3HTTPClient, bucket string) harness.RGWBackendResponse {
+		return harness.RGWBackendSigned(t, callCtx, client, "s3", http.MethodGet, "/"+bucket+"/kept", nil, nil)
 	}
-	put := func(callCtx context.Context, client harness.S3HTTPClient, bucket string) rgwBackendResponse {
-		return rgwBackendSigned(t, callCtx, client, "s3", http.MethodPut, "/"+bucket+"/kept", payload, nil)
+	put := func(callCtx context.Context, client harness.S3HTTPClient, bucket string) harness.RGWBackendResponse {
+		return harness.RGWBackendSigned(t, callCtx, client, "s3", http.MethodPut, "/"+bucket+"/kept", payload, nil)
 	}
 	// waitSlowDown polls until the gateway rejects with native 503 SlowDown,
 	// checking that every admitted request still did its work.
-	waitSlowDown := func(operation string, probe func(context.Context) rgwBackendResponse) {
+	waitSlowDown := func(operation string, probe func(context.Context) harness.RGWBackendResponse) {
 		t.Helper()
 		rgwRecordsWait(t, ctx, operation, func(callCtx context.Context) bool {
 			response := probe(callCtx)
 			switch {
-			case response.code == http.StatusOK:
-				if strings.HasPrefix(response.operation, http.MethodGet+" ") && !bytes.Equal(response.body, payload) {
+			case response.Code == http.StatusOK:
+				if strings.HasPrefix(response.Operation, http.MethodGet+" ") && !bytes.Equal(response.Body, payload) {
 					t.Fatalf("%s: admitted read changed the object", operation)
 				}
 				return false
-			case response.code == http.StatusServiceUnavailable && rgwRecordsErrorCode(response.body) == "SlowDown":
+			case response.Code == http.StatusServiceUnavailable && rgwRecordsErrorCode(response.Body) == "SlowDown":
 				return true
 			}
-			t.Fatalf("%s: status=%d code=%s, want 200 or 503 SlowDown (body redacted)", operation, response.code, rgwRecordsErrorCode(response.body))
+			t.Fatalf("%s: status=%d code=%s, want 200 or 503 SlowDown (body redacted)", operation, response.Code, rgwRecordsErrorCode(response.Body))
 			return false
 		})
 	}
-	requireAdmitted := func(operation string, probe func(context.Context) rgwBackendResponse) {
+	requireAdmitted := func(operation string, probe func(context.Context) harness.RGWBackendResponse) {
 		t.Helper()
 		for range 3 {
 			response := probe(ctx)
-			rgwBackendRequire(t, response, http.StatusOK)
-			if strings.HasPrefix(response.operation, http.MethodGet+" ") && !bytes.Equal(response.body, payload) {
+			harness.RGWBackendRequire(t, response, http.StatusOK)
+			if strings.HasPrefix(response.Operation, http.MethodGet+" ") && !bytes.Equal(response.Body, payload) {
 				t.Fatalf("%s: read changed the object", operation)
 			}
 		}
 	}
-	waitAdmitted := func(probe func(context.Context) rgwBackendResponse) {
+	waitAdmitted := func(probe func(context.Context) harness.RGWBackendResponse) {
 		t.Helper()
 		for range 3 {
-			response := rgwBackendWaitStatus(t, ctx, probe, http.StatusOK)
-			if strings.HasPrefix(response.operation, http.MethodGet+" ") && !bytes.Equal(response.body, payload) {
+			response := harness.RGWBackendWaitStatus(t, ctx, probe, http.StatusOK)
+			if strings.HasPrefix(response.Operation, http.MethodGet+" ") && !bytes.Equal(response.Body, payload) {
 				t.Fatal("read after Restore changed the object")
 			}
 		}
@@ -202,32 +202,32 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		!equalPolicy(readPolicy(bucketScope(control)...), controlBefore) || !equalUserPolicy(readUserPolicy(), userBefore) {
 		t.Fatalf("native readback of the bucket override: %v", applied)
 	}
-	waitSlowDown("bucket read SlowDown", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
+	waitSlowDown("bucket read SlowDown", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, limited) })
 	// Writes to the throttled bucket stay admitted (unlimited dimension), and
 	// so do reads of the SUT's control bucket and of another user's bucket.
-	requireAdmitted("write to the throttled bucket", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, limited) })
-	requireAdmitted("control bucket read", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, control) })
-	requireAdmitted("other user read", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, other, otherBucket) })
+	requireAdmitted("write to the throttled bucket", func(callCtx context.Context) harness.RGWBackendResponse { return put(callCtx, sut, limited) })
+	requireAdmitted("control bucket read", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, control) })
+	requireAdmitted("other user read", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, other, otherBucket) })
 
 	if second, err := users[0].OverrideRateLimit(ctx, rgw.RateLimitScope{Bucket: limited}, read); err == nil || second.Restore(ctx) != nil {
 		t.Fatal("an overlapping override of the same bucket was not refused")
 	}
 	// An outside edit is refused instead of overwritten.
-	rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "5"}, bucketScope(limited)...)...)
+	harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "5"}, bucketScope(limited)...)...)
 	if err := change.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("Restore after an outside edit: %v, want ceph.ErrInvalidRequest", err)
 	}
 	if policy := readPolicy(bucketScope(limited)...); policy["max_read_ops"] != float64(5) {
 		t.Fatalf("a refused Restore changed the outside policy: %v", policy)
 	}
-	rgwBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "1"}, bucketScope(limited)...)...)
+	harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "1"}, bucketScope(limited)...)...)
 	if err := change.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if restored := readPolicy(bucketScope(limited)...); !equalPolicy(restored, limitedBefore) || !equalPolicy(readPolicy(bucketScope(control)...), controlBefore) {
 		t.Fatalf("Restore did not put back the exact prior policy: %v, want %v", restored, limitedBefore)
 	}
-	waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
+	waitAdmitted(func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, limited) })
 
 	t.Log("user scope: writes the SUT signs throttled")
 	write := rgw.RateLimit{Enabled: true, MaxWriteOps: 1}
@@ -251,7 +251,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		if err := userChange.Restore(ctx); err != nil {
 			t.Fatalf("Restore of a refused user override: %v", err)
 		}
-		requireAdmitted("write after a refused user override", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
+		requireAdmitted("write after a refused user override", func(callCtx context.Context) harness.RGWBackendResponse { return put(callCtx, sut, control) })
 	} else {
 		if err != nil {
 			t.Fatal(err)
@@ -259,9 +259,9 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		if policy := readPolicy(userScope...); policy["enabled"] != true || policy["max_write_ops"] != float64(1) || policy["max_read_ops"] != float64(0) {
 			t.Fatalf("native readback of the user override: %v", policy)
 		}
-		waitSlowDown("user write SlowDown", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
-		requireAdmitted("user read", func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, control) })
-		requireAdmitted("other user write", func(callCtx context.Context) rgwBackendResponse { return put(callCtx, other, otherBucket) })
+		waitSlowDown("user write SlowDown", func(callCtx context.Context) harness.RGWBackendResponse { return put(callCtx, sut, control) })
+		requireAdmitted("user read", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, control) })
+		requireAdmitted("other user write", func(callCtx context.Context) harness.RGWBackendResponse { return put(callCtx, other, otherBucket) })
 		if err := userChange.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -280,7 +280,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 		} else if !equalUserPolicy(restored, userBefore) {
 			t.Fatalf("Restore did not put back the exact prior user policy: %+v, want %+v", restored, userBefore)
 		}
-		waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return put(callCtx, sut, control) })
+		waitAdmitted(func(callCtx context.Context) harness.RGWBackendResponse { return put(callCtx, sut, control) })
 	}
 
 	t.Log("bucket scope: a bucket the SUT replaces is refused")
@@ -306,7 +306,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	if policy := readPolicy(bucketScope(limited)...); !equalPolicy(policy, fresh) || policy["enabled"] != false {
 		t.Fatalf("a refused Restore changed the new bucket's policy: %v", policy)
 	}
-	waitAdmitted(func(callCtx context.Context) rgwBackendResponse { return get(callCtx, sut, limited) })
+	waitAdmitted(func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, limited) })
 	userResult := "503 SlowDown on the user scope"
 	if userBefore.unset {
 		userResult += " from an unset policy, restored to the stored native default"
