@@ -12,6 +12,7 @@
 package testhelper
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ type unitHooks interface {
 	UnitState(c *ceph.Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int)
 	UnitSetClosed(c *ceph.Container, closed bool)
 	UnitSetControlPlane(c *ceph.Container, control testcontainers.Container)
+	UnitSwapFeatureClient(ctx context.Context, c *ceph.Container, current, next testcontainers.Container) (bool, error)
 	UnitSetConfig(c *ceph.Container, config []byte)
 	UnitSetKeyring(c *ceph.Container, keyring []byte)
 	UnitSetCephVersion(c *ceph.Container, version string)
@@ -155,6 +157,18 @@ func TestSetClosed(c *ceph.Container, closed bool) { get().UnitSetClosed(c, clos
 //testdouble:unit-seam-client
 func TestSetControlPlane(c *ceph.Container, control testcontainers.Container) {
 	get().UnitSetControlPlane(c, control)
+}
+
+// TestSwapFeatureClient publishes next as a cluster's started client
+// container (the one ClientContainer returns for a separate client image)
+// when current is still the published one, and reports whether it did. It
+// takes the client's startup lock itself, so it may be used on a live
+// cluster; it does nothing for an aggregate image, whose client is the
+// control-plane container.
+//
+//testdouble:unit-seam-client
+func TestSwapFeatureClient(ctx context.Context, c *ceph.Container, current, next testcontainers.Container) (bool, error) {
+	return get().UnitSwapFeatureClient(ctx, c, current, next)
 }
 
 // TestSetConfig replaces a cluster's recorded bootstrap configuration. It takes

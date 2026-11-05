@@ -231,8 +231,9 @@ func isTopologyAcquire(call *ast.CallExpr) bool {
 // TestFeatureClientStateCallersHoldTheStartupLockInOrder guards the callers:
 // a function that uses a "mu held" method has taken toolkit.lock before and
 // releases it after, never takes Container.mu once it holds it, and Terminate
-// takes the topology lock before the startup lock. Only terminate and
-// featureClient.startedContainer may hold it.
+// takes the topology lock before the startup lock. Only terminate,
+// featureClient.startedContainer and the unit seam's UnitSwapFeatureClient
+// may hold it.
 func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 	holders := map[string]bool{}
 	var problems []string
@@ -301,10 +302,42 @@ func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 			}
 		}
 	}
-	if len(holders) != 2 || !holders["terminate"] || !holders["startedContainer"] {
+	if len(holders) != 3 || !holders["terminate"] || !holders["startedContainer"] || !holders["UnitSwapFeatureClient"] {
 		problems = append(problems, "the holders of the startup lock changed: "+join(slices.Sorted(maps.Keys(holders))))
 	}
 	if len(problems) != 0 {
 		t.Fatalf("feature client lock discipline: %v", problems)
+	}
+}
+
+// TestUnitSwapFeatureClientPublishesOnlyOverTheCurrentClient keeps the unit
+// seam a compare-and-swap of a started client: ClientContainer returns the
+// replacement, a stale current or an unstarted client changes nothing, and a
+// swap back restores the original.
+func TestUnitSwapFeatureClientPublishesOnlyOverTheCurrentClient(t *testing.T) {
+	original := &monitorLifecycleDaemon{}
+	next := &monitorLifecycleDaemon{}
+	c := terminableToolkit(original)
+	if swapped, err := (unitAccess{}).UnitSwapFeatureClient(t.Context(), c, next, original); swapped || err != nil {
+		t.Fatalf("a stale current was replaced: %t %v", swapped, err)
+	}
+	if swapped, err := (unitAccess{}).UnitSwapFeatureClient(t.Context(), c, original, next); !swapped || err != nil {
+		t.Fatalf("the current client was not replaced: %t %v", swapped, err)
+	}
+	if got, err := c.ClientContainer(t.Context()); got != next || err != nil {
+		t.Fatalf("ClientContainer after the swap = %v, %v", got, err)
+	}
+	if swapped, err := (unitAccess{}).UnitSwapFeatureClient(t.Context(), c, next, original); !swapped || err != nil {
+		t.Fatalf("the original client was not restored: %t %v", swapped, err)
+	}
+	if got, err := c.ClientContainer(t.Context()); got != original || err != nil {
+		t.Fatalf("ClientContainer after the restore = %v, %v", got, err)
+	}
+	unstarted := terminableFacts()
+	if swapped, err := (unitAccess{}).UnitSwapFeatureClient(t.Context(), unstarted, nil, next); swapped || err != nil {
+		t.Fatalf("an unstarted client was published: %t %v", swapped, err)
+	}
+	if got, _ := unstarted.toolkit.snapshot(t.Context()); got != nil {
+		t.Fatalf("an unstarted cluster published %v", got)
 	}
 }
