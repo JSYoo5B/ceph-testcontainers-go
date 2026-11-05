@@ -24,10 +24,11 @@ SCHEMA = "ceph-structural-review/v1"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 GLOBAL_INPUTS = {"go.mod", "go.sum", ".golangci.yml", "internal/tools/lintcalibration/golangci.yml"}
 # Repository-only Go code: integration tests with their harness and fixtures,
-# test helpers, and development/analysis tools. No library package imports
+# test helpers, the consumer example that an integration test runs, and
+# development/analysis tools. No library package imports
 # them; test_structural_review.py checks that against `go list -deps`.
 TEST_ONLY_DIRS = ("internal/integration", "internal/clusteraccess", "internal/clustertest",
-                  "internal/testhelper", "internal/debugoverhead")
+                  "internal/testhelper", "internal/debugoverhead", "internal/consumerevidence")
 TOOL_DIRS = ("internal/tools", "internal/apiinventory", ".github")
 TOOL_FILES = {".golangci.yml", "Makefile", ".gitignore"}
 # Inputs that change how the library itself builds or which packages exist.
