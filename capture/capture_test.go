@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -86,6 +87,7 @@ type fakeBackend struct {
 	selfEnded       bool // tcpdump ended at its packet limit before Stop
 	file            []byte
 	copyErr         error
+	copyReader      io.ReadCloser // explicit stream failure supplied by retrieval tests
 	removeErrs      []error
 	running         bool
 	exitCode        int
@@ -202,6 +204,9 @@ func (f *fakeBackend) signal(_ context.Context, _ string, signal string) error {
 func (f *fakeBackend) copy(context.Context, string, string) (io.ReadCloser, error) {
 	if f.copyErr != nil {
 		return nil, f.copyErr
+	}
+	if f.copyReader != nil {
+		return f.copyReader, nil
 	}
 	return io.NopCloser(bytes.NewReader(f.file)), nil
 }
@@ -761,5 +766,66 @@ func TestSettleKeepsReportWithError(t *testing.T) {
 	report, _ := value.(Report)
 	if !errors.Is(err, ErrFailed) || report.End != EndKilled || !report.HelperRemoved {
 		t.Fatalf("report %+v, err %v: a killed capture must still report and be removed", report, err)
+	}
+}
+
+// The existing backend fake isolates copy/open, stream and target-inspection
+// failures; tcpdump otherwise stops successfully and the session still runs
+// its cleanup path. These checks distinguish one cause from joined failures.
+func TestStopPreservesFailureCategories(t *testing.T) {
+	engineErr := errors.New("engine connection lost")
+	streamErr := errors.New("stream interrupted")
+	cases := []struct {
+		name            string
+		change          func(*fakeBackend)
+		cause, category error
+		target          TargetState
+	}{
+		{"copy canceled", func(f *fakeBackend) { f.copyErr = context.Canceled }, context.Canceled, nil, TargetUnchanged},
+		{"copy deadline", func(f *fakeBackend) { f.copyErr = context.DeadlineExceeded }, context.DeadlineExceeded, nil, TargetUnchanged},
+		{"copy engine", func(f *fakeBackend) { f.copyErr = engineErr }, engineErr, ceph.ErrEnvironmentUnavailable, TargetUnchanged},
+		{"copy missing", func(f *fakeBackend) { f.copyErr = errdefs.ErrNotFound }, errdefs.ErrNotFound, ceph.ErrNativeFailure, TargetUnchanged},
+		{"stream canceled", func(f *fakeBackend) { f.copyReader = io.NopCloser(iotest.ErrReader(context.Canceled)) }, context.Canceled, nil, TargetUnchanged},
+		{"stream failed", func(f *fakeBackend) { f.copyReader = io.NopCloser(iotest.ErrReader(streamErr)) }, streamErr, nil, TargetUnchanged},
+		{"target canceled", func(f *fakeBackend) { f.targetErr = context.Canceled }, context.Canceled, nil, TargetUnknown},
+		{"target deadline", func(f *fakeBackend) { f.targetErr = context.DeadlineExceeded }, context.DeadlineExceeded, nil, TargetUnknown},
+		{"target engine", func(f *fakeBackend) { f.targetErr = engineErr }, engineErr, ceph.ErrEnvironmentUnavailable, TargetUnknown},
+	}
+	categories := []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeBackend()
+			session, err := start(context.Background(), f, fakeTarget{}, request(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.change(f)
+			report, err := session.Stop(context.Background())
+			if !errors.Is(err, tc.cause) {
+				t.Fatalf("lost cause %v: %v", tc.cause, err)
+			}
+			for _, category := range categories {
+				if got, want := errors.Is(err, category), category == tc.category; got != want {
+					t.Errorf("category %v: got %t, want %t: %v", category, got, want, err)
+				}
+			}
+			if !report.HelperRemoved || report.End != EndStopped || report.Target != tc.target {
+				t.Fatalf("unexpected outcome: %+v", report)
+			}
+		})
+	}
+}
+
+func TestStopJoinsIndependentCaptureAndTransportFailures(t *testing.T) {
+	f := newFakeBackend()
+	session, err := start(context.Background(), f, fakeTarget{}, request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.termStatus = 1
+	f.copyErr = errors.New("engine connection lost")
+	report, err := session.Stop(context.Background())
+	if !errors.Is(err, ceph.ErrNativeFailure) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || !report.HelperRemoved {
+		t.Fatalf("independent failures were not retained: %+v, %v", report, err)
 	}
 }
