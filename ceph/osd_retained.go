@@ -254,18 +254,27 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 		}
 		osd.detachRemoved = true
 	}
-	if _, err := c.osdFleet().removalOSDState(ctx, id); err != nil {
+	return c.osdFleet().parkDetached(ctx, osd, fsid)
+}
+
+// parkDetached checks that osd, whose container detachOSD removed, is still
+// the owned native OSD and that its retained store records its identity in
+// the cluster fsid, and then parks it as a detached OSD that Reopen can start
+// again. The caller holds c.mu.
+func (f osdFleet) parkDetached(ctx context.Context, osd *OSDContainer, fsid string) (*DetachedOSD, error) {
+	id := osd.ID
+	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return nil, err
 	}
-	store, err := c.fleet.stores.retainedStore(ctx, id)
+	store, err := f.stores.retainedStore(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if err := store.matches(id, osd.nativeUUID, fsid); err != nil {
 		return nil, err
 	}
-	detached := &DetachedOSD{cluster: c, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, image: osd.image, store: store}
-	c.fleet.osdHandles.park(id, detached)
+	detached := &DetachedOSD{cluster: f.owner, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, image: osd.image, store: store}
+	f.osdHandles.park(id, detached)
 	return detached, nil
 }
 
@@ -285,15 +294,8 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD, plan o
 	if detached.cluster != c {
 		return nil, invalidRequest("the detached OSD belongs to another cluster")
 	}
-	id := detached.id
-	if detached.reopened || c.fleet.osdHandles.detachedOf(id) != detached {
-		return nil, invalid(fmt.Errorf("osd.%d was already reopened", id))
-	}
-	if c.fleet.osdHandles.get(id) != nil {
-		return nil, fmt.Errorf("osd.%d is owned by another handle", id)
-	}
-	if !c.fleet.stores.hasVolume() {
-		return nil, errors.New("OSD volume storage is unavailable")
+	if err := c.osdFleet().checkReopenable(detached); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -310,21 +312,48 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD, plan o
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	detached.reopened = true
 	image := detached.image
 	if plan.imageSet {
 		image = plan.image
 	}
-	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: image}
-	c.fleet.osdHandles.unpark(id, osd)
-	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
-	if err := c.osdFleet().startOSD(ctx, launch); err != nil {
+	return c.osdFleet().reopenDetached(ctx, detached, image)
+}
+
+// checkReopenable refuses a detached OSD that is not the one parked under its
+// ID, whose ID another handle owns, or whose cluster has no volume storage
+// left. The caller holds c.mu.
+func (f osdFleet) checkReopenable(detached *DetachedOSD) error {
+	id := detached.id
+	if detached.reopened || f.osdHandles.detachedOf(id) != detached {
+		return invalid(fmt.Errorf("osd.%d was already reopened", id))
+	}
+	if f.osdHandles.get(id) != nil {
+		return fmt.Errorf("osd.%d is owned by another handle", id)
+	}
+	if !f.stores.hasVolume() {
+		return errors.New("OSD volume storage is unavailable")
+	}
+	return nil
+}
+
+// reopenDetached consumes detached, which passed checkReopenable and the
+// reopen preflight, and owns a new handle under its ID: it starts the OSD from
+// image on its retained store, waits until it is up and checks that the
+// native OSD still has its identity. The new handle stays owned when a step
+// fails. The caller holds c.mu.
+func (f osdFleet) reopenDetached(ctx context.Context, detached *DetachedOSD, image string) (*OSDContainer, error) {
+	id := detached.id
+	detached.reopened = true
+	osd := &OSDContainer{ID: id, owner: f.owner, nativeUUID: detached.osdUUID, placement: detached.placement, image: image}
+	f.osdHandles.unpark(id, osd)
+	launch := osdLaunch{osd: osd, recipe: f.launchRecipe(osd, []byte(detached.store.keyring))}
+	if err := f.startOSD(ctx, launch); err != nil {
 		return osd, err
 	}
-	if err := (osdMap{c.conn()}).waitUp(ctx, []int{id}); err != nil {
+	if err := (osdMap{f.conn}).waitUp(ctx, []int{id}); err != nil {
 		return osd, err
 	}
-	if _, err := c.osdFleet().removalOSDState(ctx, id); err != nil {
+	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return osd, err
 	}
 	return osd, nil

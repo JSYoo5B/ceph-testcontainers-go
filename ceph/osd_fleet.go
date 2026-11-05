@@ -8,8 +8,9 @@ import (
 )
 
 // osdFleet runs the steps of an OSD's lifecycle: registration and storage,
-// the launch recipe and start, the removal preflight, drain and purge, and
-// the reopen preflight of a detached OSD. It owns the OSD state those steps
+// the launch recipe, start and bring-up, the removal preflight, drain, purge
+// and retirement, the parking of a detached OSD and its reopen preflight and
+// restart. It owns the OSD state those steps
 // change (osdFleetState: the handle registry, the memory and volume storage,
 // the device claims), held in Container.fleet, and binds it to what the steps
 // read: the command transport, the settings, the run directory, the startup
@@ -28,8 +29,9 @@ type osdFleet struct {
 	runDir   *runDirState
 	startup  *startupIdentity
 	settings options
-	// owner is the cluster that the handles registerOSD creates belong to;
-	// the fleet records it in OSDContainer.owner and calls nothing on it.
+	// owner is the cluster that the handles the fleet creates belong to; the
+	// fleet records it in OSDContainer.owner and DetachedOSD.cluster and
+	// calls nothing on it.
 	owner        *Container
 	facts        func() ClusterFacts
 	keyArgs      func(CephxCipher) ([]string, error)

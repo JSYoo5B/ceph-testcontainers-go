@@ -16,7 +16,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -109,7 +108,7 @@ func timingFixture(t *testing.T) (*Filesystem, *timingControl) {
 		daemon := &MDS{Container: container, ID: name, FilesystemName: "fixture"}
 		daemon.identity = &cephFSMDSIdentity{fleet: fs.fleet(), native: fs.base().Native(), descriptor: daemon, container: container, name: name, cid: container.id, confirmed: true}
 		fs.mds.roster.daemons = append(fs.mds.roster.daemons, daemon)
-		servicehook.SetService(cluster, "mds."+name, container)
+		testhelper.TestRecordService(cluster, "mds."+name, container)
 		if index == 0 {
 			fs.Container = container
 		}

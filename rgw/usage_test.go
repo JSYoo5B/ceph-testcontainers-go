@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"math"
 	"slices"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -54,7 +55,7 @@ func newRGWUsageFixture(id string, stats string) (*Gateway, *rgwUsageTestContain
 	g, base := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: rgwUsageUserFixture(id)}, rgwAdminResponse{data: stats}, rgwAdminResponse{data: rgwUsageUserFixture(id)})
 	f := &rgwUsageTestContainer{rgwAdminTestContainer: base}
 	g.Container = f
-	servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), f)
+	testhelper.TestRecordService(g.base().Cluster(), rgwServiceName(g.config), f)
 	user := rgwAdminOwnedTestUser(g)
 	user.base().ID = id
 	return g, f, user
@@ -130,7 +131,7 @@ func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContaine
 	}
 	f := &rgwUsageAccountContainer{AccountContainer: base, statsRaw: rgwUsageFixture}
 	g.Container = f
-	servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), f)
+	testhelper.TestRecordService(g.base().Cluster(), rgwServiceName(g.config), f)
 	f.Calls = nil
 	return g, f, account, user
 }
@@ -229,7 +230,7 @@ func TestRGWUserUsageRefusesUnownedOrReplacedGatewayBeforeNative(t *testing.T) {
 		"same CID foreign handle": func(g *Gateway, user *User) { g.Container = &rgwAdminTestContainer{id: "gateway"} },
 		"typed nil gateway":       func(g *Gateway, user *User) { g.Container = (*rgwAdminTestContainer)(nil) },
 		"typed nil service": func(g *Gateway, user *User) {
-			servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), (*rgwAdminTestContainer)(nil))
+			testhelper.TestRecordService(g.base().Cluster(), rgwServiceName(g.config), (*rgwAdminTestContainer)(nil))
 		},
 		"changed declared scope": func(g *Gateway, user *User) {
 			user.base().Origin = testOrigin(g.base().Cluster(), Config{Zone: "foreign"})
@@ -375,7 +376,7 @@ func TestRGWUserUsageGatewayFinalGuardDiscardsCounters(t *testing.T) {
 	g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 	f.hook = func(_ context.Context, _ []string, index int) {
 		if index == 2 {
-			servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), &rgwAdminTestContainer{id: "gateway"})
+			testhelper.TestRecordService(g.base().Cluster(), rgwServiceName(g.config), &rgwAdminTestContainer{id: "gateway"})
 		}
 	}
 	usage, err := user.Usage(t.Context())

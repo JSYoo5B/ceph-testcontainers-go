@@ -233,25 +233,14 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 	return ""
 }
 
-// Services returns a copy of the service containers. The caller holds the
-// cluster mutex.
-func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
-	return c.members.roster.serviceCopy()
-}
-
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
-	client.revoked = revoked
 	if revoked {
-		client.owner.ledger.authRecords.confirmKey(client.name, "")
+		client.owner.authLedger().clientDeleted(client)
+		return
 	}
-}
-
-// SetService records a service container the cluster owns and terminates.
-// The caller holds the cluster mutex.
-func (serviceHooks) SetService(c *Container, name string, ctr testcontainers.Container) {
-	c.members.roster.setService(name, ctr)
+	client.revoked = false
 }
 
 // SettleClient settles the client's identity and refuses a descriptor that is

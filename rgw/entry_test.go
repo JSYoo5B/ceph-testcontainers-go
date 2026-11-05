@@ -3,15 +3,15 @@ package rgw
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -102,7 +102,7 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 			control := &clustertest.NativeCallCounter{}
 			cluster := testCluster(control, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
 			clustertest.AssertContextLockQueued(t, testhelper.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
-			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
+			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(testhelper.TestServices(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
 				t.Fatal("queued caller created containers, port leases or gateway inventory")
 			}
 		})

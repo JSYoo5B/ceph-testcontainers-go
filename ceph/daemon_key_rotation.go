@@ -196,9 +196,11 @@ type rotationRun struct {
 	marker, execID string
 }
 
-// rotateDaemonKey implements RotateKey, which documents the behavior. The caller
-// checks the handle under the topology lock.
-func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (err error) {
+// rotateDaemonKey implements RotateKey, which documents the behavior. It
+// admits the call: the cluster is open, the handle is owned and current, and
+// the topology names the daemon's container and keyring files. The auth
+// ledger runs the rotation itself.
+func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) error {
 	kind, id := handle.daemonRef()
 	daemon := kind + "." + id
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -217,7 +219,15 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if err != nil {
 		return err
 	}
-	if err := c.authLedger().stopEarlierAuthCommands(ctx, daemon); err != nil {
+	return c.authLedger().rotateDaemon(ctx, daemon, ctr, keyrings)
+}
+
+// rotateDaemon gives the admitted daemon, whose container is ctr and whose
+// keyring files are keyrings, a new key: it settles what earlier calls left,
+// stages the pending key, hands it to the running daemon and its keyring
+// files, and commits it. The caller holds c.mu.
+func (l authLedger) rotateDaemon(ctx context.Context, daemon string, ctr testcontainers.Container, keyrings []string) (err error) {
+	if err := l.stopEarlierAuthCommands(ctx, daemon); err != nil {
 		return err
 	}
 	state, err := ctr.State(ctx)
@@ -227,11 +237,11 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if !state.Running || state.Paused {
 		return fmt.Errorf("daemon %s must be running to receive a new key", daemon)
 	}
-	if err := c.authLedger().settleEarlierRotation(ctx, daemon, daemonIdentity(ctr, state)); err != nil {
+	if err := l.settleEarlierRotation(ctx, daemon, daemonIdentity(ctr, state)); err != nil {
 		return err
 	}
 
-	call := &authCall{l: c.authLedger(), entity: daemon}
+	call := &authCall{l: l, entity: daemon}
 	defer func() {
 		// Whatever the outcome, no MON mutation of this call may apply later
 		// unless the daemon's fence records it.
@@ -241,9 +251,9 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 			err = errors.Join(err, settleErr)
 		}
 	}()
-	r := daemonRotation{l: c.authLedger(), call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
+	r := daemonRotation{l: l, call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
 
-	before, err := authStore{c.conn()}.keys(ctx, "get", daemon)
+	before, err := authStore{l.conn}.keys(ctx, "get", daemon)
 	if err != nil {
 		return err
 	}
@@ -254,7 +264,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if err != nil {
 		return err
 	}
-	if err := c.authLedger().writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
+	if err := l.writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
 		return r.abandon(ctx, next, err)
 	}
 	control, keyPath, err := r.stageKeyFile(ctx, next)
@@ -270,7 +280,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 
 // daemonRotation is one RotateKey call on an owned daemon after its admission:
 // the daemon, its container and keyring files, and the authCall that collects
-// the call's MON mutations. Its methods are the phases of rotateDaemonKey and
+// the call's MON mutations. Its methods are the phases of rotateDaemon and
 // run inside its critical section. The caller holds c.mu.
 type daemonRotation struct {
 	l        authLedger

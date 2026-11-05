@@ -43,6 +43,8 @@ type unitHooks interface {
 	UnitSetCephFSImage(c *ceph.Container, image string)
 	UnitReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer)
 	UnitOSDCount(c *ceph.Container) int
+	UnitServices(c *ceph.Container) map[string]testcontainers.Container
+	UnitRecordService(c *ceph.Container, name string, ctr testcontainers.Container)
 	UnitClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
 	UnitApply(opts ...ceph.Option) ([]servicehook.Bootstrap, error)
 	UnitPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []servicehook.Bootstrap, error)
@@ -121,6 +123,25 @@ func TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer) {
 //
 //testdouble:unit-seam-client
 func TestOSDCount(c *ceph.Container) int { return get().UnitOSDCount(c) }
+
+// TestServices returns a copy of the service containers the cluster value
+// owns. It takes no lock: hold the mutex that TestState exposes, or use a
+// cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
+func TestServices(c *ceph.Container) map[string]testcontainers.Container {
+	return get().UnitServices(c)
+}
+
+// TestRecordService records ctr as the named service container of the cluster
+// value, which Terminate then stops, without the admission of a service
+// start. It takes no lock: hold the mutex that TestState exposes, or use a
+// cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
+func TestRecordService(c *ceph.Container, name string, ctr testcontainers.Container) {
+	get().UnitRecordService(c, name, ctr)
+}
 
 // TestSetClosed sets or clears a cluster's closed flag. It takes no lock: hold
 // the mutex that TestState exposes, or use a cluster no other goroutine uses.

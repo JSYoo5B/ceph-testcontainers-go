@@ -3,13 +3,13 @@ package rgw
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -18,7 +18,7 @@ import (
 func testCluster(control testcontainers.Container, config testhelper.TestConfig, services map[string]testcontainers.Container) *ceph.Container {
 	c := testhelper.TestCluster(control, config)
 	for name, ctr := range services {
-		servicehook.SetService(c, name, ctr)
+		testhelper.TestRecordService(c, name, ctr)
 	}
 	return c
 }

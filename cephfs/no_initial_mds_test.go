@@ -213,7 +213,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	c, n := newColdMDSFixture()
 	customizers := 0
 	fs, err := startFilesystem(t.Context(), c, retained, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers++; return nil }))
-	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(c)) != 0 || customizers != 0 || fs.config.ActiveMDS != 1 || fs.mds.coldMDS == nil || fs.mds.coldMDS.attempted || fs.mds.coldMDS.fsid != coldMDSFixtureFSID || fs.mds.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.mds.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "cephfs") != "selected-mds-image" {
+	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(testhelper.TestServices(c)) != 0 || customizers != 0 || fs.config.ActiveMDS != 1 || fs.mds.coldMDS == nil || fs.mds.coldMDS.attempted || fs.mds.coldMDS.fsid != coldMDSFixtureFSID || fs.mds.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.mds.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "cephfs") != "selected-mds-image" {
 		t.Fatalf("cold constructor did not retain exact zero topology/pool0: fs=%+v err=%v customizers=%d", fs, err, customizers)
 	}
 	if got := Filesystems(c); len(got) != 1 || got[0] != fs {
@@ -520,7 +520,7 @@ func coldMDSTestService(t *testing.T, fs *Filesystem, n *coldMDSFixture, worker 
 		}
 		servicehook.Lock(fs.base().Cluster())
 		if worker != nil {
-			servicehook.SetService(fs.base().Cluster(), name, worker)
+			testhelper.TestRecordService(fs.base().Cluster(), name, worker)
 		}
 		servicehook.Unlock(fs.base().Cluster())
 		if active {
@@ -560,7 +560,7 @@ func TestNoInitialMDSFirstPublicationAndOrdinaryScaling(t *testing.T) {
 		t.Fatal("ordinary same-count scale launched replacement")
 	}
 	testhelper.TestReplaceOSDs(c, nil)
-	if err := c.Terminate(t.Context()); err != nil || worker.removes != 1 || len(servicehook.Services(c)) != 0 {
+	if err := c.Terminate(t.Context()); err != nil || worker.removes != 1 || len(testhelper.TestServices(c)) != 0 {
 		t.Fatalf("first owned MDS cleanup: %v removes=%d", err, worker.removes)
 	}
 }
@@ -582,7 +582,7 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 				if fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.base().Cluster(), "mds.cold-target-0") != worker {
 					t.Fatal("nonnil partial handle was lost")
 				}
-			} else if fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(fs.base().Cluster())) != 0 {
+			} else if fs.Container != nil || len(fs.MDSs()) != 0 || len(testhelper.TestServices(fs.base().Cluster())) != 0 {
 				t.Fatal("nil partial gained owned resource")
 			}
 			before := n.mutationCount()
@@ -590,7 +590,7 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 				t.Fatalf("partial first daemon was automatically retried: %v", err)
 			}
 			testhelper.TestReplaceOSDs(fs.base().Cluster(), nil)
-			if err := fs.base().Cluster().Terminate(t.Context()); err != nil || len(servicehook.Services(fs.base().Cluster())) != 0 || worker.removes != btoi(withHandle) {
+			if err := fs.base().Cluster().Terminate(t.Context()); err != nil || len(testhelper.TestServices(fs.base().Cluster())) != 0 || worker.removes != btoi(withHandle) {
 				t.Fatalf("partial cleanup lost handle: %v removes=%d", err, worker.removes)
 			}
 		})

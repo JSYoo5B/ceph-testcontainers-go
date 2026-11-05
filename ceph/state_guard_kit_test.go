@@ -546,8 +546,8 @@ func checkBoundLiteral(lit *ast.CompositeLit, typeName string, bound []string) [
 }
 
 // checkOwnerUse checks that the methods of a binding type, whose receiver is
-// named recv, select recv.owner only as the owner of a new handle literal of
-// one of handles.
+// named recv, select recv.owner only as the owner (the owner or cluster
+// field) of a new handle literal of one of handles.
 func checkOwnerUse(file string, fn *ast.FuncDecl, recv string, handles ...string) []string {
 	var problems []string
 	allowed := map[*ast.SelectorExpr]bool{}
@@ -561,7 +561,7 @@ func checkOwnerUse(file string, fn *ast.FuncDecl, recv string, handles ...string
 		}
 		for _, elt := range lit.Elts {
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
-				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "owner" {
+				if key, ok := kv.Key.(*ast.Ident); ok && (key.Name == "owner" || key.Name == "cluster") {
 					if sel, ok := kv.Value.(*ast.SelectorExpr); ok {
 						allowed[sel] = true
 					}

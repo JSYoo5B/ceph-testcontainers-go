@@ -46,7 +46,7 @@ var osdFleetBound = []string{"osdFleetState", "runDir", "startup"}
 // field>; no other function builds an osdFleet; and the fleet's methods use
 // owner only as the owner of an OSD handle they create.
 func TestOSDFleetBindsEachStateOnce(t *testing.T) {
-	bindingAudit{typeName: "osdFleet", constructor: osdFleetBinding, bound: osdFleetBound, singleReturn: true, recv: "f", handles: []string{"OSDContainer"}}.check(t)
+	bindingAudit{typeName: "osdFleet", constructor: osdFleetBinding, bound: osdFleetBound, singleReturn: true, recv: "f", handles: []string{"OSDContainer", "DetachedOSD"}}.check(t)
 }
 
 // ownerStates are the owner state types and fields, each with the one
@@ -57,12 +57,19 @@ var ownerStates = map[string]string{
 	"authLedgerState": "Container.authLedger", "ledger": "Container.authLedger",
 }
 
+// strictOwnerStates are the owner state fields whose inner fields are not
+// reached through the cluster either: the auth records are changed only by
+// the methods of an authLedger, so c.ledger.authRecords is refused outside
+// Container.authLedger.
+var strictOwnerStates = map[string]bool{"ledger": true}
+
 // TestOwnerStatesAreNamedOnlyByTheirConstructors guards that the owner states
 // stay owned: production code names Container.fleet, members or ledger, or
 // their types (as a selector, a literal key or a literal type), only in that
 // owner's constructor, so no other code takes the
 // whole state, copies it or replaces it. A use of a field inside a state
-// (c.fleet.osdHandles) is pinned by that field's own guard.
+// (c.fleet.osdHandles) is pinned by that field's own guard, except for the
+// states in strictOwnerStates.
 func TestOwnerStatesAreNamedOnlyByTheirConstructors(t *testing.T) {
 	var problems []string
 	named := map[string]int{}
@@ -88,7 +95,7 @@ func TestOwnerStatesAreNamedOnlyByTheirConstructors(t *testing.T) {
 				case *ast.SelectorExpr:
 					// A field is named on the cluster; the owner views reach
 					// their state through the embedded type, not by name.
-					if _, isType := ownerStateFields[n.Sel.Name]; isType || isContainerReceiver(n.X) && !inner[n] {
+					if _, isType := ownerStateFields[n.Sel.Name]; isType || isContainerReceiver(n.X) && (!inner[n] || strictOwnerStates[n.Sel.Name]) {
 						name = n.Sel.Name
 					}
 				case *ast.KeyValueExpr:

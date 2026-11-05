@@ -141,18 +141,18 @@ func TestMemberRosterSortedServicesAndCopy(t *testing.T) {
 // fixtureService is a distinct service container for the roster tests.
 type fixtureService struct{ testcontainers.Container }
 
-// TestServiceHooksReachTheRoster pins that the hooks for the service packages
-// and the roster are the same state.
+// TestServiceHooksReachTheRoster pins that the hooks for the service packages,
+// the unit-test seam and the roster are the same state.
 func TestServiceHooksReachTheRoster(t *testing.T) {
 	c := &Container{}
-	hooks := serviceHooks{}
+	hooks, unit := serviceHooks{}, unitAccess{}
 	ctr := &fixtureService{}
-	hooks.SetService(c, "rgw", ctr)
+	unit.UnitRecordService(c, "rgw", ctr)
 	if hooks.Service(c, "rgw") != ctr || c.members.roster.service("rgw") != ctr {
-		t.Fatal("SetService did not reach the roster")
+		t.Fatal("UnitRecordService did not reach the roster")
 	}
-	if got := hooks.Services(c); len(got) != 1 || got["rgw"] != ctr {
-		t.Fatalf("Services = %v", got)
+	if got := unit.UnitServices(c); len(got) != 1 || got["rgw"] != ctr {
+		t.Fatalf("UnitServices = %v", got)
 	}
 	hooks.DeleteService(c, "rgw")
 	if c.members.roster.hasService("rgw") {
@@ -262,12 +262,12 @@ func TestMemberRosterMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 // memberRosterCallers pins every function that uses the roster or sits
 // between such a function and its lock (see stateCaller).
 var memberRosterCallers = map[string]stateCaller{
-	"Service":         {"hook", []string{"service"}},
-	"openDebugTarget": {"takes", []string{"manager", "service"}},
-	"ownedLocked":     {"holds", []string{"service"}},
-	"SetService":      {"hook", []string{"setService"}},
-	"DeleteService":   {"hook", []string{"dropService"}},
-	"Services":        {"hook", []string{"serviceCopy"}},
+	"Service":           {"hook", []string{"service"}},
+	"openDebugTarget":   {"takes", []string{"manager", "service"}},
+	"ownedLocked":       {"holds", []string{"service"}},
+	"UnitRecordService": {"hook", []string{"setService"}},
+	"DeleteService":     {"hook", []string{"dropService"}},
+	"UnitServices":      {"hook", []string{"serviceCopy"}},
 
 	"serviceContainers":  {"takes", []string{"sortedServices"}},
 	"Managers":           {"takes", []string{"eachManager", "managerCount"}},

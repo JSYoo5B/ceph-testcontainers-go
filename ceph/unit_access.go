@@ -136,6 +136,23 @@ func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 // goroutine uses.
 func (unitAccess) UnitOSDCount(c *Container) int { return c.fleet.osdHandles.count() }
 
+// UnitServices returns a copy of the service containers a cluster value
+// owns. The caller holds the mutex that UnitState exposes, or owns a cluster
+// no other goroutine uses.
+func (unitAccess) UnitServices(c *Container) map[string]testcontainers.Container {
+	return c.members.roster.serviceCopy()
+}
+
+// UnitRecordService records ctr as the named service container of a cluster
+// value, which Terminate then stops, without the admission of a service
+// start. The caller holds the mutex that UnitState exposes, or owns a cluster
+// no other goroutine uses.
+//
+//testdouble:unit-seam
+func (unitAccess) UnitRecordService(c *Container, name string, ctr testcontainers.Container) {
+	c.members.roster.setService(name, ctr)
+}
+
 // UnitClientState returns a client identity's owner and lifecycle flags.
 func (unitAccess) UnitClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {
 	return client.owner, client.created, client.ready, client.revoked

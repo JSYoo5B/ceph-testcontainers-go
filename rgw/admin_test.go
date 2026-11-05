@@ -6,11 +6,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -254,7 +255,7 @@ func TestRGWOwnedUserGuardsClusterScopeAndReplacedKeys(t *testing.T) {
 	// Ownership belongs to the Ceph scope: once the creating gateway is
 	// removed, the handle runs through a replacement in the same scope.
 	replacement := &rgwAdminTestContainer{id: "replacement", responses: []rgwAdminResponse{{data: native}}}
-	servicehook.SetService(gateway.base().Cluster(), "rgw:replacement", replacement)
+	testhelper.TestRecordService(gateway.base().Cluster(), "rgw:replacement", replacement)
 	delete(gateways(gateway.base().Cluster()).byName, gateway.config.Name)
 	registerTestGateway(testGateway(gateway.base().Cluster(), replacement, Config{Name: "replacement", Realm: "a", Zonegroup: "b", Zone: "c"}))
 	if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() || len(replacement.calls) != 1 {
@@ -281,7 +282,7 @@ func TestRGWHandleSkipsUnexecutableGatewaysInItsScope(t *testing.T) {
 			first, firstCtr := newRGWAdminTestGateway(Config{Name: "a-first", Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
 			tc.set(firstCtr)
 			second := &rgwAdminTestContainer{id: "second", responses: []rgwAdminResponse{{data: native}}}
-			servicehook.SetService(first.base().Cluster(), rgwServiceName(Config{Name: "b-second"}), second)
+			testhelper.TestRecordService(first.base().Cluster(), rgwServiceName(Config{Name: "b-second"}), second)
 			registerTestGateway(testGateway(first.base().Cluster(), second, Config{Name: "b-second", Realm: scope.Realm, Zonegroup: scope.Zonegroup, Zone: scope.Zone}))
 			user := rgwAdminOwnedTestUser(first)
 			if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() {
