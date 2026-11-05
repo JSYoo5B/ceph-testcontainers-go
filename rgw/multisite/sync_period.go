@@ -159,55 +159,6 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 	return nil
 }
 
-// syncPeriodGroups returns the period's zonegroup documents. They are
-// returned as plain maps because callers compare them with reflect.DeepEqual
-// against documents read elsewhere, which a named map type would never equal.
-func syncPeriodGroups(period map[string]any) []map[string]any {
-	groups := nativeDoc(period).object("period_map").objects("zonegroups")
-	result := make([]map[string]any, len(groups))
-	for i, group := range groups {
-		result[i] = group
-	}
-	return result
-}
-
-func syncPeriodWithGroup(previous map[string]any, groupID, id string, group map[string]any) (map[string]any, error) {
-	want := syncJSONClone(previous)
-	found := false
-	for _, nativeGroup := range syncPeriodGroups(want) {
-		if nativeGroup["id"] != groupID {
-			continue
-		}
-		if found {
-			return nil, errors.New("RGW period has duplicate zonegroup identity")
-		}
-		found = true
-		policy, err := syncPolicyFromDocument(nativeGroup)
-		if err != nil {
-			return nil, err
-		}
-		nativeGroup["sync_policy"] = syncPolicyReplace(policy, id, group)
-	}
-	if !found {
-		return nil, errors.New("RGW owned zonegroup is missing from the captured period")
-	}
-	return want, nil
-}
-
-func syncPeriodPolicy(period map[string]any) map[string]any {
-	policy := syncJSONClone(period)
-	for _, key := range []string{"id", "epoch", "realm_epoch", "predecessor_uuid"} {
-		delete(policy, key)
-	}
-	if periodMap, ok := policy["period_map"].(map[string]any); ok {
-		delete(periodMap, "id")
-	}
-	return policy
-}
-func syncPeriodPolicyEqual(a, b map[string]any) bool {
-	return reflect.DeepEqual(syncPeriodPolicy(a), syncPeriodPolicy(b))
-}
-
 // Get the exact native staging object. errno 2 with empty stdout denotes a
 // missing object; malformed output and all other failures remain failures.
 func (f *Fixture) syncStagingPeriod(ctx context.Context, master *rgwZoneState) (map[string]any, error) {

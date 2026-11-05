@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
-	"io"
 	"reflect"
 	"slices"
 	"strings"
@@ -842,120 +841,6 @@ func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, stri
 		}
 	}
 	return []string{"--flow-type", "directional", "--flow-id", source + "-to-" + dest, "--source-zone-id", source, "--dest-zone-id", dest}, map[string]any{"source_zone": source, "dest_zone": dest}, "directional", nil
-}
-
-func syncJSON(data []byte) (map[string]any, error) {
-	var value map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if decoder.Decode(&value) != nil || value == nil {
-		return nil, errors.New("decode RGW native sync configuration")
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return nil, errors.New("RGW native sync configuration has trailing output")
-	}
-	return value, nil
-}
-func syncJSONClone(value map[string]any) map[string]any {
-	data, _ := json.Marshal(value)
-	copy, _ := syncJSON(data)
-	return copy
-}
-func syncStrings(values []string) []any {
-	result := make([]any, len(values))
-	for i, v := range values {
-		result[i] = v
-	}
-	return result
-}
-func syncPolicyFromDocument(doc map[string]any) (map[string]any, error) {
-	if doc["sync_policy"] == nil {
-		return map[string]any{"groups": []any{}}, nil
-	}
-	policy, ok := doc["sync_policy"].(map[string]any)
-	if !ok {
-		return nil, errors.New("RGW native sync policy is malformed")
-	}
-	groups, ok := policy["groups"].([]any)
-	if !ok {
-		return nil, errors.New("RGW native sync groups are malformed")
-	}
-	seen := map[string]bool{}
-	for _, v := range groups {
-		group, ok := v.(map[string]any)
-		id, _ := group["id"].(string)
-		if !ok || id == "" || seen[id] {
-			return nil, errors.New("RGW native sync group identity is malformed or duplicated")
-		}
-		seen[id] = true
-	}
-	return policy, nil
-}
-func syncNativeGroup(policy map[string]any, id string) map[string]any {
-	return nativeDoc(policy).identified("groups", id)
-}
-func syncPolicyReplace(policy map[string]any, id string, group map[string]any) map[string]any {
-	copy := syncJSONClone(policy)
-	groups, _ := copy["groups"].([]any)
-	groups = slices.DeleteFunc(groups, func(v any) bool { g, _ := v.(map[string]any); return g["id"] == id })
-	if group != nil {
-		groups = append(groups, syncJSONClone(group))
-	}
-	slices.SortFunc(groups, func(a, b any) int {
-		left, _ := a.(map[string]any)
-		right, _ := b.(map[string]any)
-		return strings.Compare(fmt.Sprint(left["id"]), fmt.Sprint(right["id"]))
-	})
-	copy["groups"] = groups
-	return copy
-}
-func syncGroupEmpty(g map[string]any) bool {
-	flows, _ := g["data_flow"].(map[string]any)
-	pipes, _ := g["pipes"].([]any)
-	return flows != nil && len(flows) == 0 && pipes != nil && len(pipes) == 0
-}
-func syncNativePipe(g map[string]any, id string) map[string]any {
-	return nativeDoc(g).identified("pipes", id)
-}
-func syncGroupWithoutPipe(g map[string]any, id string) map[string]any {
-	copy := syncJSONClone(g)
-	pipes, _ := copy["pipes"].([]any)
-	copy["pipes"] = slices.DeleteFunc(pipes, func(v any) bool { p, _ := v.(map[string]any); return p["id"] == id })
-	return copy
-}
-func syncFlowPresent(g map[string]any, key string, flow map[string]any) bool {
-	data, _ := g["data_flow"].(map[string]any)
-	flows, _ := data[key].([]any)
-	return slices.ContainsFunc(flows, func(v any) bool {
-		f, _ := v.(map[string]any)
-		if key == "symmetrical" {
-			return f["id"] == flow["id"]
-		}
-		return reflect.DeepEqual(f, flow)
-	})
-}
-func syncFlowMatches(g map[string]any, key string, flow map[string]any) bool {
-	data, _ := g["data_flow"].(map[string]any)
-	flows, _ := data[key].([]any)
-	return slices.ContainsFunc(flows, func(v any) bool { return reflect.DeepEqual(v, flow) })
-}
-func syncGroupWithoutFlow(g map[string]any, key string, flow map[string]any) map[string]any {
-	copy := syncJSONClone(g)
-	data, _ := copy["data_flow"].(map[string]any)
-	flows, _ := data[key].([]any)
-	flows = slices.DeleteFunc(flows, func(v any) bool {
-		f, _ := v.(map[string]any)
-		if key == "symmetrical" {
-			return f["id"] == flow["id"]
-		}
-		return reflect.DeepEqual(f, flow)
-	})
-	if len(flows) == 0 {
-		delete(data, key)
-	} else {
-		data[key] = flows
-	}
-	return copy
 }
 
 // fixture returns the fixture that created g, refusing a nil or unowned handle.
