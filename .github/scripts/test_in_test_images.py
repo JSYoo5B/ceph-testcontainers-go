@@ -29,6 +29,7 @@ class Engine:
         (module / "config.go").write_text('package config\n\nconst ReaperDefaultImage = "' + REAPER + '"\n')
         self.module = module.parents[1]
         self.analysis = []
+        self.architecture = "x86_64"
         self.missing = set()
         self.pulls = {}
         self.commands = []
@@ -43,14 +44,14 @@ class Engine:
         if command[:3] == ["go", "list", "-m"]:
             return subprocess.CompletedProcess(command, 0, str(self.module) + "\n", "")
         if command[:2] == ["docker", "info"]:
-            return subprocess.CompletedProcess(command, 0, json.dumps({"OSType": "linux", "Architecture": "x86_64"}), "")
+            return subprocess.CompletedProcess(command, 0, json.dumps({"OSType": "linux", "Architecture": self.architecture}), "")
         if command[:3] == ["docker", "image", "inspect"]:
             reference = command[-1]
             if reference in self.missing:
                 return subprocess.CompletedProcess(command, 1, "[]", "Error: No such image: " + reference)
             return subprocess.CompletedProcess(command, 0, json.dumps([{
                 "Id": "sha256:" + format(abs(hash(reference)), "x").rjust(64, "0")[:64], "Os": "linux",
-                "Architecture": "amd64", "RepoDigests": []}]), "")
+                "Architecture": {"x86_64": "amd64", "aarch64": "arm64"}[self.architecture], "RepoDigests": []}]), "")
         if command[:2] == ["docker", "pull"]:
             reference = command[-1]
             results = self.pulls.get(reference) or [(0, "pulled\n")]
@@ -71,11 +72,11 @@ class PreparationTests(unittest.TestCase):
         self.compile_report("./internal/integration", ["TestAuthCiphers", "TestOther"])
         self.output = self.root / "test-images"
 
-    def compile_report(self, package, tests, passed=True):
+    def compile_report(self, package, tests, passed=True, goarch="amd64"):
         self.compile.mkdir(exist_ok=True)
         report = {"passed": passed, "profile": {"package": package, "tags": "integration,ci"}}
         if passed:
-            report["binary"] = {"tests": tests}
+            report["binary"] = {"tests": tests, "build_key": {"goos": "linux", "goarch": goarch}}
         (self.compile / "compile-report.json").write_text(json.dumps(report))
 
     def use(self, kind, reference="", tests=("TestAuthCiphers",), position="harness/x.go:1", role_fallback=None):
@@ -150,6 +151,32 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(summary["skipped"], [])
         analysis = next(command for command in self.engine.commands if command[:2] == ["go", "run"])
         self.assertNotIn("-with", analysis)
+
+    def test_analysis_follows_the_binary_platform_and_refuses_another_engine(self):
+        self.compile_report("./internal/integration", ["TestA"], goarch="arm64")
+        self.engine.architecture = "aarch64"
+        code, summary = self.run_preparation()
+        self.assertEqual(code, 0, summary)
+        self.assertEqual((summary["build_platform"], summary["platform"]), ("linux/arm64", "linux/arm64"))
+        analysis = next(command for command in self.engine.commands if command[:2] == ["go", "run"])
+        self.assertEqual((analysis[analysis.index("-goos") + 1], analysis[analysis.index("-goarch") + 1]),
+                         ("linux", "arm64"))
+        # An arm64 binary on an amd64 engine would run emulated.
+        self.engine.architecture = "x86_64"
+        self.output = self.root / "emulated"
+        code, summary = self.run_preparation()
+        self.assertEqual(code, 1)
+        self.assertIn("emulation is not native evidence", summary["error"])
+        self.assertNotIn("reaper", summary)
+        for key in ({"goos": "linux"}, {"goos": "darwin", "goarch": "arm64"}, {"goos": "linux", "goarch": "386"}):
+            with self.subTest(build_key=key):
+                report = json.loads((self.compile / "compile-report.json").read_text())
+                report["binary"]["build_key"] = key
+                (self.compile / "compile-report.json").write_text(json.dumps(report))
+                self.output = self.root / ("platform-" + str(len(key)) + key.get("goarch", "none") + key["goos"])
+                code, summary = self.run_preparation()
+                self.assertEqual(code, 1)
+                self.assertIn("no supported GOOS and GOARCH", summary["error"])
 
     def test_matrix_selection_narrows_the_analysed_tests(self):
         self.compile_report("./internal/integration", ["TestA", "TestB"])

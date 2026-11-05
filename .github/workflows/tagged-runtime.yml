@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       category:
-        description: Source-owned required category, explicit optional profile, representative (the source-owned representative batches of every category), or selected (the profiles input)
+        description: Source-owned required category, explicit optional profile, representative (the source-owned representative batches of every category), architecture (the source-owned cohort of the goarch input), or selected (the profiles input)
         required: true
         type: string
       check_name:
@@ -67,6 +67,10 @@ on:
         description: Comma-separated registered ceph_bug_<id> tags (docs/guides/bug-compatibility.md); empty selects every ordinary path. Plan refuses an invalid selection before any runtime job starts
         default: ''
         type: string
+      goarch:
+        description: Native target architecture of the plan and of every runtime job's runner. Another architecture than amd64 runs only its source-owned cohort (category architecture)
+        default: amd64
+        type: string
       save_caches:
         description: Save a missing module or build cache from Plan. A caller whose checkout is not trusted at the cache scope it saves into, such as an issue_comment run of a pull request head, passes false
         default: true
@@ -87,7 +91,9 @@ env:
 jobs:
   plan:
     name: Plan
-    runs-on: ubuntu-24.04
+    # The Plan job warms the build cache that the runtime jobs restore, so
+    # it runs on their architecture.
+    runs-on: ${{ inputs.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -127,7 +133,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          key: go-build-${{ runner.os }}${{ runner.arch != 'X64' && format('-{0}', runner.arch) || '' }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Discover only this workflow family from source tags
         id: plan
         env:
@@ -145,17 +151,20 @@ jobs:
           # the same input as an argument; no environment variable that Go
           # or the planner reads carries it.
           SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
+          SCENARIO_GOARCH: ${{ inputs.goarch }}
         run: |
-          if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+          if [ "$SCENARIO_CATEGORY" = architecture ]; then
+            python3 .github/scripts/tag_scenarios.py plan --architecture-cohort --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+          elif [ "$SCENARIO_CATEGORY" = optional ]; then
+            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ "$SCENARIO_CATEGORY" = selected ]; then
-            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ "$SCENARIO_CATEGORY" = representative ]; then
-            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ -n "$SCENARIO_SELECT_DECLARATIONS" ]; then
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
@@ -181,7 +190,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          key: go-build-${{ runner.os }}${{ runner.arch != 'X64' && format('-{0}', runner.arch) || '' }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Save family plan
         if: always()
         uses: actions/upload-artifact@v7
@@ -202,7 +211,9 @@ jobs:
     needs: plan
     # A changed-file selection can be empty; the plan artifact records why.
     if: needs.plan.outputs.count != '0'
-    runs-on: ubuntu-24.04
+    # The Plan job gave every entry its native architecture; the compile
+    # step refuses a runner of another one.
+    runs-on: ${{ matrix.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: ${{ matrix.job_timeout }}
     strategy:
       fail-fast: false
@@ -233,7 +244,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          key: go-build-${{ runner.os }}${{ runner.arch != 'X64' && format('-{0}', runner.arch) || '' }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Prepare Go modules
         id: modules
         env:
@@ -252,7 +263,8 @@ jobs:
           # recomputed profile with other tags fails before building.
           SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
           SCENARIO_PROFILE_TAGS: ${{ matrix.tags }}
-        run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --directory artifacts/scenario/compile
+          SCENARIO_GOARCH: ${{ matrix.goarch }}
+        run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --goarch "$SCENARIO_GOARCH" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --directory artifacts/scenario/compile
       # Skip cleanup only for an exact qualified workload/image cohort with
       # enough headroom on every actual Docker storage filesystem.
       - name: Prepare runner storage
@@ -280,6 +292,7 @@ jobs:
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
           digests: ${{ inputs.role_digests }}
+          platform: linux/${{ matrix.goarch }}
       # Every batch, Docker-only ones included: Ryuk and each image that the
       # compiled tests name besides their roles, found in the source and
       # pulled before the tests with bounded retries of registry transport

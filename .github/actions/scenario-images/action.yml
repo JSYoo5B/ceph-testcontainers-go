@@ -13,6 +13,9 @@ inputs:
   digests:
     description: Comma-separated role=sha256:<digest> overrides of the published role indexes; empty uses checked-in pins
     default: ''
+  platform:
+    description: The planned native platform; preparation fails on a Docker engine of another one
+    default: linux/amd64
 runs:
   using: composite
   steps:
@@ -23,11 +26,12 @@ runs:
         SCENARIO_RELEASE: ${{ inputs.release }}
         SCENARIO_ROLES: ${{ inputs.roles }}
         SCENARIO_DIGESTS: ${{ inputs.digests }}
+        SCENARIO_PLATFORM: ${{ inputs.platform }}
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
           --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
           --roles "$SCENARIO_ROLES" --digests "$SCENARIO_DIGESTS" \
-          --platform linux/amd64 --github-env "$GITHUB_ENV" \
+          --platform "$SCENARIO_PLATFORM" --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images
         printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES" >> "$GITHUB_ENV"
     - name: Save selected image identities

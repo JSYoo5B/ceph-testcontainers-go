@@ -43,6 +43,14 @@ NETWORK_SCOPES = ("default", "all")
 # Themes of the representative set (//ci: representative=<theme>) that the
 # periodic campaign repeats; the set must cover every theme.
 REPRESENTATIVE_THEMES = ("topology", "auth", "mirroring", "recovery", "flaky")
+# Native target architectures of a plan. Every required category runs on
+# the default; another architecture runs only the batches whose //ci: line
+# declares it (architecture=<goarch>), its qualification cohort, so the
+# default architecture's acceptance stays independently attributable.
+GOOS = "linux"
+DEFAULT_GOARCH = "amd64"
+ARCHITECTURE_COHORTS = ("arm64",)
+GOARCHES = (DEFAULT_GOARCH, *ARCHITECTURE_COHORTS)
 # Bounds of one representative campaign: repetitions of each batch, matrix
 # jobs (GitHub allows 256 per matrix) and summed job-timeout minutes.
 MAX_REPETITIONS = 10
@@ -328,7 +336,7 @@ def parse_metadata(file):
         if word.count("=") != 1:
             raise ValueError(file["path"] + ": malformed CI metadata")
         key, value = word.split("=", 1)
-        if (key not in ("timeout", "job-timeout", "checker", "case", "image-roles", "representative")
+        if (key not in ("timeout", "job-timeout", "checker", "case", "image-roles", "representative", "architecture")
                 or key in values or not value):
             raise ValueError(file["path"] + ": unknown, duplicate or empty CI metadata")
         values[key] = value
@@ -362,6 +370,9 @@ def parse_metadata(file):
     representative = values.get("representative", "")
     if representative and representative not in REPRESENTATIVE_THEMES:
         raise ValueError(file["path"] + ": representative takes one of " + ", ".join(REPRESENTATIVE_THEMES))
+    architecture = values.get("architecture", "")
+    if architecture and architecture not in ARCHITECTURE_COHORTS:
+        raise ValueError(file["path"] + ": architecture takes one of " + ", ".join(ARCHITECTURE_COHORTS))
     image_roles = None
     if "image-roles" in values:
         roles = values["image-roles"].split(",")
@@ -371,7 +382,8 @@ def parse_metadata(file):
                              + ",".join(IMAGE_ROLES) + ", essential included")
         image_roles = ",".join(role for role in IMAGE_ROLES if role in roles)
     return {"timeout": values["timeout"], "job_timeout": job_timeout,
-            "checker": checker, "case": case, "image_roles": image_roles, "representative": representative}
+            "checker": checker, "case": case, "image_roles": image_roles, "representative": representative,
+            "architecture": architecture}
 
 
 def checker_case(checker, network, kind, path="checker"):
@@ -690,6 +702,32 @@ def select_representative_plan(plan):
             "selected_profiles": len(selected)}
 
 
+def select_architecture_plan(plan, goarch):
+    """The qualification cohort of a native architecture other than the
+    default: the batches that declare it, across categories.
+
+    The cohort claims only its own batches on that architecture; the
+    category workflows keep the default architecture's acceptance."""
+    if goarch not in ARCHITECTURE_COHORTS:
+        raise ValueError("an architecture cohort needs one of " + ", ".join(ARCHITECTURE_COHORTS)
+                         + "; " + DEFAULT_GOARCH + " acceptance is the ordinary categories")
+    selected = [profile for profile in plan["include"] if profile.get("architecture") == goarch]
+    if not selected:
+        raise ValueError("no batch declares the " + goarch + " architecture cohort")
+    if any(profile["category"] == "code" for profile in selected):
+        raise ValueError("a code batch cannot be an architecture cohort")
+    return {**plan, "coverage_scope": "architecture", "include": selected, "required_include": plan["include"],
+            "selected_scope": "architecture", "selected_profiles": len(selected)}
+
+
+def target_matrix(entries, goarch):
+    """Each matrix entry with the native architecture its job must build and
+    run on; the compile phase refuses a runner of another architecture."""
+    if goarch not in GOARCHES:
+        raise ValueError("unsupported target architecture " + str(goarch))
+    return [{**entry, "goarch": goarch} for entry in entries]
+
+
 def repeat_matrix(entries, repetitions):
     """Each matrix entry once per repetition, with its repetition ID.
 
@@ -929,7 +967,7 @@ def changed_comparison(base, root=ROOT, requested_head=""):
                      "comparison_range": comparison_range}
 
 
-def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTEGRATION_ROOT):
+def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTEGRATION_ROOT, goarch=DEFAULT_GOARCH):
     """Run internal/tools/batchselect for batches of one integration package,
     with the shared harness in the same graph.
 
@@ -941,7 +979,7 @@ def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTE
         path.write_text(json.dumps(batches))
         command = [str(tool)] if tool else ["go", "run", "-mod=readonly", "./internal/tools/batchselect"]
         command += ["-root", str(root), "-base", base, "-package", package, "-with", ",".join(INTEGRATION_HARNESS),
-                    "-batches", str(path)]
+                    "-goos", GOOS, "-goarch", goarch, "-batches", str(path)]
         if head:
             command += ["-head", head, "-repo", str(ROOT)]
         result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
@@ -951,7 +989,7 @@ def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTE
     return json.loads(result.stdout)
 
 
-def declaration_selection(profiles, base, root=ROOT, runner=None):
+def declaration_selection(profiles, base, root=ROOT, runner=None, goarch=DEFAULT_GOARCH):
     """Advisory selection of profiles by declaration reachability.
 
     It is recorded beside the plan and never changes which profiles run.
@@ -959,7 +997,7 @@ def declaration_selection(profiles, base, root=ROOT, runner=None):
     counts as selected with the reason."""
     runner = runner or run_batchselect
     packages = sorted({profile["package"] for profile in profiles if integration_package(profile["package"])})
-    record = {"advisory": True, "base": base, "packages": packages, "fallback": [],
+    record = {"advisory": True, "base": base, "goos": GOOS, "goarch": goarch, "packages": packages, "fallback": [],
               "changed_declarations": [], "selected": {}, "excluded": {}}
     batches, unavailable = {}, ""
     try:
@@ -968,7 +1006,7 @@ def declaration_selection(profiles, base, root=ROOT, runner=None):
         for package in packages:
             analysed = [profile for profile in profiles if profile["package"] == package]
             result = runner([{"id": profile["id"], "tags": profile["tags"]} for profile in analysed], base, root,
-                            package=package)
+                            package=package, goarch=goarch)
             found = {batch["id"]: batch for batch in result.get("batches", [])}
             if sorted(found) != sorted(profile["id"] for profile in analysed):
                 raise ValueError("declaration selection does not report every analysed profile of " + package)
@@ -1052,6 +1090,8 @@ def discover_optional(catalog, bugs=NO_BUGS):
                    "tags": native_tags("optional", batch, capabilities, selected_bugs), **parse_metadata(file)}
         if profile["representative"]:
             raise ValueError(file["path"] + ": an optional batch cannot be representative")
+        if profile["architecture"]:
+            raise ValueError(file["path"] + ": an optional batch cannot be an architecture cohort")
         if not any_bug_branch(file, set(profile["tags"].split(",")), bugs):
             raise ValueError(file["path"] + ": declared optional profile excludes its file")
         if any_bug_branch(file, {"all"}, bugs):
@@ -1612,13 +1652,40 @@ def prepare_modules(directory, root=ROOT):
     return report
 
 
-def compile_profile(plan, category, batch, package, directory, root=ROOT, profile_tags=None):
+def native_platform(root=ROOT):
+    """The host and target platform of this job's Go toolchain."""
+    result = subprocess.run(["go", "env", "-json", "GOHOSTOS", "GOHOSTARCH", "GOOS", "GOARCH"], cwd=root, text=True,
+                            capture_output=True, timeout=60, env=go_environment())
+    if result.returncode:
+        raise ValueError("go env failed: " + result.stderr.strip())
+    values = json.loads(result.stdout)
+    return {"host": values["GOHOSTOS"] + "/" + values["GOHOSTARCH"], "target": values["GOOS"] + "/" + values["GOARCH"]}
+
+
+def target_platform(goarch, root=ROOT, platform=None):
+    """Refuse a job whose Go toolchain does not natively build the planned
+    architecture. A cross-compiled or emulated binary is other evidence."""
+    if goarch not in GOARCHES:
+        raise ValueError("unsupported target architecture " + str(goarch))
+    observed = platform or native_platform(root)
+    planned = GOOS + "/" + goarch
+    if observed["host"] != planned or observed["target"] != planned:
+        raise ValueError("planned native " + planned + " but this runner's Go toolchain is host " + observed["host"]
+                         + ", target " + observed["target"])
+    return {"planned": planned, **observed}
+
+
+def compile_profile(plan, category, batch, package, directory, root=ROOT, profile_tags=None, goarch=None,
+                    platform=None):
+    """Compile one profile's test binary. With goarch, the planned native
+    architecture, a runner of another architecture builds nothing."""
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
     if len(matches) != 1:
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
     matrix_tags(profile, profile_tags)
+    target = target_platform(goarch, root, platform) if goarch is not None else None
     directory.mkdir(parents=True, exist_ok=False)
     binary = (directory / binary_name(profile["package"])).resolve()
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o", str(binary), profile["package"]]
@@ -1628,6 +1695,8 @@ def compile_profile(plan, category, batch, package, directory, root=ROOT, profil
     classification = "compiled" if passed else "compile-timeout" if outcome["timed_out"] else "compile-failure"
     report = {"schema": SCHEMA, "profile": profile, "command": command, **outcome,
               "go_environment": dict(GO_EXECUTION_ENV)}
+    if target is not None:
+        report["platform"] = target
     if passed:
         # The receipt lets run --binary execute this binary instead of
         # building again; without it the binary is not reusable.
@@ -1696,6 +1765,12 @@ def main(argv=None):
             command.add_argument("--optional", action="store_true")
             command.add_argument("--representative", action="store_true",
                                  help="Select the representative batches of every category")
+            command.add_argument("--goarch", choices=GOARCHES, default=DEFAULT_GOARCH,
+                                 help="Native target architecture of the plan: its source analysis and every "
+                                      "matrix entry's runner")
+            command.add_argument("--architecture-cohort", action="store_true",
+                                 help="Select the batches that declare --goarch, an architecture other than "
+                                      + DEFAULT_GOARCH)
             command.add_argument("--repetitions", type=int, default=1,
                                  help="Run each matrix entry this many times (representative only)")
             command.add_argument("--batch")
@@ -1724,6 +1799,9 @@ def main(argv=None):
         command.add_argument("--batch", required=True)
         command.add_argument("--package")
         command.add_argument("--directory", required=True, type=Path)
+        if name == "compile":
+            command.add_argument("--goarch", choices=GOARCHES,
+                                 help="The plan's native target architecture; refuse a runner of another one")
         if name == "run":
             command.add_argument("--tests", default="",
                                  help="Comma-separated tests that declare network modes; run only these")
@@ -1765,6 +1843,15 @@ def main(argv=None):
                                   or args.select_declarations):
                 raise ValueError("plan --profiles excludes --category, --optional, --representative, --verify "
                                  "and selections")
+            if args.architecture_cohort and (args.optional or args.representative or args.profiles
+                                             or args.category is not None or args.verify
+                                             or args.changed_files is not None or args.changed_since
+                                             or args.select_declarations):
+                raise ValueError("plan --architecture-cohort excludes --category, --optional, --representative, "
+                                 "--profiles, --verify and selections")
+            if args.goarch != DEFAULT_GOARCH and not args.architecture_cohort:
+                raise ValueError("plan --goarch " + args.goarch + " requires --architecture-cohort: another "
+                                 "architecture runs only its declared cohort")
             if args.repetitions != 1 and not args.representative:
                 raise ValueError("plan --repetitions requires --representative")
             if not 1 <= args.repetitions <= MAX_REPETITIONS:
@@ -1819,7 +1906,7 @@ def main(argv=None):
         elif args.command == "compile":
             selected_plan = discover_optional(catalog, bugs) if args.category == "optional" else plan
             report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory,
-                                     profile_tags=args.profile_tags)
+                                     profile_tags=args.profile_tags, goarch=args.goarch)
         elif args.command == "code":
             profiles = [profile for profile in plan["include"] if profile["category"] == "code"]
             if not profiles:
@@ -1842,11 +1929,14 @@ def main(argv=None):
                 elif args.representative:
                     report = select_representative_plan(plan)
                     report["repetitions"] = args.repetitions
+                elif args.architecture_cohort:
+                    report = select_architecture_plan(plan, args.goarch)
                 else:
                     report = select_required_plan(plan, args.category)
                     if args.select_declarations:
                         # Advisory unless applied: recorded, the matrix stays as is.
-                        selection = declaration_selection(report["include"], args.select_declarations)
+                        selection = declaration_selection(report["include"], args.select_declarations,
+                                                          goarch=args.goarch)
                         report["declaration_selection"] = selection
                         if args.apply_declarations:
                             report = apply_declaration_selection(report, selection)
@@ -1863,6 +1953,7 @@ def main(argv=None):
                         # The source filter affects workflow execution only;
                         # verification always proves the whole required suite.
                         report["compiled_coverage"] = verify(catalog, plan, optional=discover_optional(catalog, bugs))
+                report["goos"], report["goarch"] = GOOS, args.goarch
             else:
                 report = verify(catalog, plan, optional=discover_optional(catalog, bugs))
             if args.output is not None:
@@ -1873,7 +1964,7 @@ def main(argv=None):
             if args.command == "plan" and args.github_output is not None:
                 runtime = network_matrix([profile for profile in report["include"] if profile["category"] != "code"],
                                          args.networks)
-                runtime = repeat_matrix(runtime, args.repetitions)
+                runtime = target_matrix(repeat_matrix(runtime, args.repetitions), args.goarch)
                 if args.dispatch_output is not None:
                     args.dispatch_output.parent.mkdir(parents=True, exist_ok=True)
                     args.dispatch_output.write_text(json.dumps(

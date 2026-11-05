@@ -145,10 +145,12 @@ def snapshot(available, total=100 * GIB, verified=True, other=None):
     rows = [fs(1, available)]
     if other is not None:
         rows.append(fs(2, other, False))
-    return {"layout": {"verified": verified, "reasons": []}, "filesystems": rows}
+    return {"layout": {"verified": verified, "reasons": []}, "filesystems": rows,
+            "engine": {"platform": "linux/amd64", "architecture": "x86_64"}}
 
 
-BUDGET = {"runtime_bytes": 4 * GIB, "image_prepare_bytes": 8 * GIB, "minimum_free_inodes": 100000}
+BUDGET = {"runtime_bytes": 4 * GIB, "image_prepare_bytes": 8 * GIB, "minimum_free_inodes": 100000,
+          "platform": "linux/amd64"}
 
 
 class PreparationTests(unittest.TestCase):
@@ -176,6 +178,27 @@ class PreparationTests(unittest.TestCase):
                 self.assertTrue(report["passed"])
                 self.assertEqual((report["decision"], report["reason"]), ("reclaim", reason))
                 self.assertEqual((calls, report["reclamation_seconds"]), ([True], 73))
+
+    def test_another_engine_platform_cannot_use_an_amd64_cohort_budget(self):
+        # The same free space that lets the amd64 cohort skip cleanup: on an
+        # arm64 engine the budget is refused and the conservative path runs.
+        arm = lambda available: dict(snapshot(available), engine={"platform": "linux/arm64", "architecture": "aarch64"})
+        with tempfile.TemporaryDirectory() as directory:
+            calls, states = [], iter([arm(60 * GIB), arm(60 * GIB)])
+            report = storage.prepare(directory, BUDGET, snapshot=lambda: next(states),
+                                     reclaim=lambda: calls.append(True) or {"seconds": 5, "removed": []},
+                                     reclaim_supplemental=lambda: self.fail("standard cleanup already suffices"))
+            self.assertTrue(report["passed"])
+            self.assertEqual((report["qualified"], report["budget_refused"]), (False, "engine-platform-differs"))
+            self.assertEqual((report["decision"], report["reason"], calls), ("reclaim", "unknown-workload", [True]))
+            self.assertEqual(report["headroom"]["qualification"], "conservative-minimum-only")
+            ready = storage.ready(Path(directory) / "ready", BUDGET, snapshot=lambda: arm(60 * GIB))
+            self.assertEqual((ready["budget_refused"], ready["headroom"]["qualification"]),
+                             ("engine-platform-differs", "conservative-minimum-only"))
+        with tempfile.TemporaryDirectory() as directory:
+            ready = storage.ready(directory, BUDGET, snapshot=lambda: snapshot(60 * GIB))
+            self.assertNotIn("budget_refused", ready)
+            self.assertEqual(ready["headroom"]["qualification"], "measured-cohort")
 
     def test_headroom_lost_after_a_skip_fails_without_supplemental_deletion(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -335,6 +358,25 @@ class SnapshotTests(unittest.TestCase):
                 ready = storage.ready(Path(directory) / "ready", BUDGET, snapshot=observe)
                 self.assertEqual(ready["passed"], available >= 34)
                 self.assertEqual([r["required_bytes"] for r in ready["headroom"]["requirements"]], [34 * GIB] * 2)
+
+    def test_only_a_measured_engine_platform_verifies_the_layout(self):
+        from types import SimpleNamespace
+        def observe(architecture):
+            def run(command):
+                if command[:2] == ["docker", "info"]:
+                    return json.dumps({"DockerRootDir": "/docker", "OSType": "linux", "Architecture": architecture})
+                return json.dumps([{"Endpoints": {"docker": {"Host": "unix:///var/run/docker.sock"}}}])
+            return storage.storage_snapshot(run, lambda path: statvfs(100 * GIB, 80 * GIB),
+                                            lambda path: SimpleNamespace(st_dev=1), {},
+                                            lambda info, runner: {"roots": ["/docker"], "verified": True, "reasons": []})
+        for architecture, platform, verified in (("x86_64", "linux/amd64", True), ("aarch64", "linux/arm64", False),
+                                                 ("arm64", "linux/arm64", False), ("riscv64", "linux/riscv64", False)):
+            with self.subTest(architecture=architecture):
+                observed = observe(architecture)
+                self.assertEqual(observed["engine"]["platform"], platform)
+                self.assertEqual(observed["engine"]["architecture"], architecture)
+                self.assertEqual(observed["layout"]["verified"], verified)
+                self.assertEqual("docker-platform-not-qualified" in observed["layout"]["reasons"], not verified)
 
     def test_devices_are_deduplicated_and_remote_context_cannot_authorize_skip(self):
         from types import SimpleNamespace

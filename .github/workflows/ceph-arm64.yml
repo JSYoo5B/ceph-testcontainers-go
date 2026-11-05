@@ -1,0 +1,59 @@
+name: Ceph arm64
+
+# Native Linux ARM64 qualification of the source-owned arm64 cohort: the
+# batches whose //ci: line declares architecture=arm64 (cluster startup,
+# helper and tool execution, native observation and bounded cleanup), on a
+# GitHub-hosted native ARM64 runner with the arm64 children of the published
+# role images. It never runs the ordinary category matrix on ARM64, and the
+# amd64 workflows do not depend on it. A pull request runs it only when it
+# changes the planner, image or storage preparation, the runtime template,
+# the bootstrap scripts or the cohort's helper; Ceph periodic does not.
+on:
+  schedule:
+    - cron: '37 5 * * 3'
+  pull_request:
+    paths:
+      - '.github/workflows/ceph-arm64.yml'
+      - '.github/workflows/tagged-runtime.yml'
+      - '.github/actions/**'
+      - '.github/ceph-role-images.json'
+      - '.github/runner-storage.json'
+      - '.github/scripts/tag_scenarios.py'
+      - '.github/scripts/in_test_images.py'
+      - '.github/scripts/registry_pull.py'
+      - '.github/scripts/run_image_matrix.py'
+      - '.github/scripts/runner_storage.py'
+      - '.github/scripts/runner_storage_layout.py'
+      - '.github/scripts/check_runtime_cleanup.py'
+      - 'internal/tools/batchselect/**'
+      - 'ceph/internal/scripts/**'
+      - 'ceph/images.go'
+      - 'ceph/daemon_image.go'
+      - 'ceph/service_bootstrap.go'
+      - 'ceph/startup_identity.go'
+      - 'fault/network*.go'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact commit to qualify; empty uses the dispatched branch
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    name: Scenarios
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: architecture
+      goarch: arm64
+      check_name: Ceph arm64
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}

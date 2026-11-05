@@ -312,3 +312,32 @@ func TestSelectBatchesWithCompanion(t *testing.T) {
 		})
 	}
 }
+
+// The target architecture decides which files a batch builds, so the same
+// change selects a batch for one GOARCH and not for another. A caller that
+// analyses arm64 work must say so; the analysis has no default platform.
+func TestSelectBatchesFollowsTargetArchitecture(t *testing.T) {
+	dir := fixture(t)
+	add(t, dir, "pkg/arch_a_test.go", "//go:build all || (ci && ci_batch_a)\n\npackage pkg_test\n\n"+
+		"import \"testing\"\n\nfunc TestArch(t *testing.T) {\n\tif archHelper() == \"\" {\n\t\tt.Fatal(\"arch\")\n\t}\n}\n")
+	for _, arch := range []string{"amd64", "arm64"} {
+		add(t, dir, "pkg/arch_"+arch+"_test.go", "//go:build all || ci\n\npackage pkg_test\n\n"+
+			"func archHelper() string { return \""+arch+"\" }\n")
+	}
+	run(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+		"commit", "-q", "-m", "architecture files")
+	edit(t, dir, "pkg/arch_arm64_test.go", `return "arm64"`, `return "arm" + "64"`)
+	for arch, want := range map[string][]string{"amd64": {}, "arm64": {"a"}} {
+		t.Run(arch, func(t *testing.T) {
+			out, err := selectBatches(options{root: dir, base: "HEAD", pattern: "./pkg", unionTags: "all",
+				goos: "linux", goarch: arch, batches: []batchSpec{
+					{ID: "a", Tags: "ci,ci_batch_a"}, {ID: "b", Tags: "ci,ci_batch_b"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := selected(out); !slices.Equal(got, want) || len(out.Fallback) > 0 {
+				t.Fatalf("selected %v with fallback %q, want %v", got, out.Fallback, want)
+			}
+		})
+	}
+}
