@@ -55,7 +55,7 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !syncPeriodPolicyEqual(current, g.state.period) && !syncPeriodPolicyEqual(current, want) {
+	if !syncPeriodPolicyOwned(current, g.state.period, want) {
 		return errors.New("RGW current period changed outside this owned sync group")
 	}
 	if err := f.checkStoredZonegroups(ctx, master, want); err != nil {
@@ -105,7 +105,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 	if err != nil {
 		return nil, err
 	}
-	if staging != nil && !syncPeriodPolicyEqual(staging, current) && !syncPeriodPolicyEqual(staging, want) {
+	if staging != nil && !syncPeriodPolicyOwned(staging, current, want) {
 		return nil, multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
 	}
 	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")

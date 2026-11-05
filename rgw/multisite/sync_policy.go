@@ -215,9 +215,9 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 	if err != nil {
 		return g, err
 	}
-	created := syncNativeGroup(after, config.ID)
-	if created == nil || created["status"] != string(config.Status) || !syncGroupEmpty(created) || !reflect.DeepEqual(before, syncPolicyReplace(after, config.ID, nil)) {
-		return g, errors.New("RGW fresh sync group readback or unrelated policy differs")
+	created, err := syncFreshGroup(before, after, config.ID, config.Status)
+	if err != nil {
+		return g, err
 	}
 	g.state.group, g.state.confirmed = created, true
 	return g, nil
@@ -241,7 +241,7 @@ func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error
 			return nil, nil, multisiteInvalid(errors.New("RGW sync flow already exists"))
 		}
 		return append([]string{"sync", "group", "flow", "create", "--group-id", g.ID()}, args...), func(after map[string]any) error {
-			if !syncFlowMatches(after, key, flow) || !reflect.DeepEqual(before, syncGroupWithoutFlow(after, key, flow)) {
+			if !syncFlowAdded(before, after, key, flow) {
 				return errors.New("RGW sync flow readback or unrelated group policy differs")
 			}
 			return nil
@@ -310,8 +310,7 @@ func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 			return nil, nil, err
 		}
 		return args, func(after map[string]any) error {
-			pipe := syncNativePipe(after, config.ID)
-			if !reflect.DeepEqual(pipe, expected) || !reflect.DeepEqual(before, syncGroupWithoutPipe(after, config.ID)) {
+			if !syncPipeAdded(before, after, config.ID, expected) {
 				return errors.New("RGW sync pipe readback or unrelated group policy differs")
 			}
 			return nil
@@ -336,23 +335,14 @@ func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error 
 		return multisiteInvalid(errors.New("invalid RGW sync pipe ID or prefix"))
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
-		want := syncJSONClone(before)
-		pipe := syncNativePipe(want, id)
-		if pipe == nil {
-			return nil, nil, multisiteInvalid(errors.New("RGW sync pipe is absent from owned group"))
-		}
-		params, _ := pipe["params"].(map[string]any)
-		source, _ := params["source"].(map[string]any)
-		filter, _ := source["filter"].(map[string]any)
-		if filter == nil {
-			return nil, nil, errors.New("RGW native pipe source filter is missing")
+		want, err := syncGroupWithPipePrefix(before, id, prefix)
+		if err != nil {
+			return nil, nil, err
 		}
 		args := []string{"sync", "group", "pipe", "modify", "--group-id", g.ID(), "--pipe-id", id}
 		if prefix == "" {
-			delete(filter, "prefix")
 			args = append(args, "--prefix-rm")
 		} else {
-			filter["prefix"] = prefix
 			args = append(args, "--prefix", prefix)
 		}
 		return args, func(after map[string]any) error {
@@ -408,8 +398,7 @@ func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error
 		return errors.New("invalid RGW sync group status")
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
-		want := syncJSONClone(before)
-		want["status"] = string(status)
+		want := syncGroupWithStatus(before, status)
 		return []string{"sync", "group", "modify", "--group-id", g.ID(), "--status", string(status)}, func(after map[string]any) error {
 			if !reflect.DeepEqual(want, after) {
 				return errors.New("RGW group status update changed unrelated policy")
@@ -582,19 +571,9 @@ func (g *SyncGroup) reconcile(ctx context.Context, master *rgwZoneState) (bool, 
 	if err != nil {
 		return false, err
 	}
-	if reflect.DeepEqual(actual, pending.beforePolicy) {
-		if group := syncNativeGroup(actual, g.ID()); group != nil && pending.check(group) == nil {
-			g.state.group, g.state.pending = group, nil
-			return true, nil
-		}
-		return false, nil
-	}
-	group := syncNativeGroup(actual, g.ID())
-	if group == nil || !reflect.DeepEqual(syncPolicyReplace(actual, g.ID(), nil), syncPolicyReplace(pending.beforePolicy, g.ID(), nil)) {
-		return false, errors.New("RGW pending mutation readback contains unrelated sync policy changes")
-	}
-	if err := pending.check(group); err != nil {
-		return false, errors.New("RGW pending mutation differs from its exact owned intent")
+	group, err := syncPendingOutcome(actual, pending.beforePolicy, g.ID(), pending.check)
+	if err != nil || group == nil {
+		return false, err
 	}
 	g.state.group, g.state.pending = group, nil
 	return true, nil

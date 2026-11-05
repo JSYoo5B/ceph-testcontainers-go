@@ -188,3 +188,85 @@ func syncPeriodPolicy(period map[string]any) map[string]any {
 func syncPeriodPolicyEqual(a, b map[string]any) bool {
 	return reflect.DeepEqual(syncPeriodPolicy(a), syncPeriodPolicy(b))
 }
+
+// syncFreshGroup returns the group id of after when it is a fresh empty group
+// with status and after differs from before only by that group.
+func syncFreshGroup(before, after map[string]any, id string, status SyncGroupStatus) (map[string]any, error) {
+	created := syncNativeGroup(after, id)
+	if created == nil || created["status"] != string(status) || !syncGroupEmpty(created) || !reflect.DeepEqual(before, syncPolicyReplace(after, id, nil)) {
+		return nil, errors.New("RGW fresh sync group readback or unrelated policy differs")
+	}
+	return created, nil
+}
+
+// syncGroupWithStatus returns a copy of group with status.
+func syncGroupWithStatus(group map[string]any, status SyncGroupStatus) map[string]any {
+	want := syncJSONClone(group)
+	want["status"] = string(status)
+	return want
+}
+
+// syncGroupWithPipePrefix returns a copy of group whose pipe id selects prefix;
+// an empty prefix removes the member. A pipe absent from group is a refused
+// request; a present pipe without a source filter object is a native document
+// the fixture cannot edit.
+func syncGroupWithPipePrefix(group map[string]any, id, prefix string) (map[string]any, error) {
+	want := syncJSONClone(group)
+	pipe := syncNativePipe(want, id)
+	if pipe == nil {
+		return nil, multisiteInvalid(errors.New("RGW sync pipe is absent from owned group"))
+	}
+	filter := nativeDoc(pipe).object("params").object("source").object("filter")
+	if filter == nil {
+		return nil, errors.New("RGW native pipe source filter is missing")
+	}
+	if prefix == "" {
+		delete(filter, "prefix")
+	} else {
+		filter["prefix"] = prefix
+	}
+	return want, nil
+}
+
+// syncFlowAdded reports whether after holds exactly flow under key and is
+// otherwise before.
+func syncFlowAdded(before, after map[string]any, key string, flow map[string]any) bool {
+	return syncFlowMatches(after, key, flow) && reflect.DeepEqual(before, syncGroupWithoutFlow(after, key, flow))
+}
+
+// syncPipeAdded reports whether after holds exactly pipe as its pipe id and is
+// otherwise before.
+func syncPipeAdded(before, after map[string]any, id string, pipe map[string]any) bool {
+	return reflect.DeepEqual(syncNativePipe(after, id), pipe) && reflect.DeepEqual(before, syncGroupWithoutPipe(after, id))
+}
+
+// syncPendingOutcome classifies the policy actual read after a pending
+// mutation of group id that started from before and whose exact intent is
+// check. It returns the confirmed group when the mutation took effect, nil
+// with no error when actual is still before (the mutation has not been
+// applied), and an error when actual changed anything else or changed the
+// group differently from the intent.
+func syncPendingOutcome(actual, before map[string]any, id string, check func(map[string]any) error) (map[string]any, error) {
+	group := syncNativeGroup(actual, id)
+	if reflect.DeepEqual(actual, before) {
+		// An idempotent intent can already hold in the unchanged policy.
+		if group != nil && check(group) == nil {
+			return group, nil
+		}
+		return nil, nil
+	}
+	if group == nil || !reflect.DeepEqual(syncPolicyReplace(actual, id, nil), syncPolicyReplace(before, id, nil)) {
+		return nil, errors.New("RGW pending mutation readback contains unrelated sync policy changes")
+	}
+	if err := check(group); err != nil {
+		return nil, errors.New("RGW pending mutation differs from its exact owned intent")
+	}
+	return group, nil
+}
+
+// syncPeriodPolicyOwned reports whether period has the policy of previous,
+// the last owned publication, or of want, the owned change. Any other policy
+// is an edit this fixture does not own and must not overwrite.
+func syncPeriodPolicyOwned(period, previous, want map[string]any) bool {
+	return syncPeriodPolicyEqual(period, previous) || syncPeriodPolicyEqual(period, want)
+}
