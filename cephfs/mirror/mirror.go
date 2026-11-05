@@ -1350,7 +1350,7 @@ func (mirror *Mirror) RemovePeer(ctx context.Context, id string) error {
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
-	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.peerID == id && !mirror.ops.peerRemoval.completed {
+	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.scope.peerID == id && !mirror.ops.peerRemoval.completed {
 		if mirror.ops.peerRemoval.processQuiescenceAcknowledged {
 			return mirror.ops.peerRemoval.confirmAcknowledgedProcessPolicy(ctx)
 		}

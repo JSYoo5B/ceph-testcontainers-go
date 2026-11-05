@@ -184,7 +184,7 @@ func TestCephFSDirectoryAdditionPendingOverlapIncludesRemovalRetryShortcuts(t *t
 				t.Fatal("missing pending intent")
 			}
 			// Terminal receipts make only the pre-shortcut addition gate refuse.
-			m.ops.peerRemoval = &PeerRemoval{mirror: m, peerID: m.peerID, completed: true}
+			m.ops.peerRemoval = &PeerRemoval{scope: &cephFSOriginalScope{mirror: m, peerID: m.peerID}, completed: true}
 			m.ops.directoryRemoval = &DirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
 			beforeCalls := len(s.calls)
 			beforeAdds, beforeRemovals := s.adds, s.removals
@@ -264,7 +264,7 @@ func TestCephFSDirectoryAdditionOriginalOwnerAndGenerationGuards(t *testing.T) {
 			case "pending-release":
 				m.pendingDirectoryRelease = map[string]bool{"/added": true}
 			case "cluster":
-				r.original.readClusters = func(context.Context) ([2]string, error) {
+				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalNewPeer, peerRemovalDestinationFSID}, nil
 				}
 			case "native-fs":
@@ -493,7 +493,7 @@ func TestCephFSDirectoryAdditionReadOnlyStatusHasBoundedDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := 0
-	r.original.readClusters = func(ctx context.Context) ([2]string, error) {
+	r.scope.readClusters = func(ctx context.Context) ([2]string, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok || time.Until(deadline) > 30*time.Second || time.Until(deadline) < 20*time.Second {
 			t.Fatal("Status lacks default bounded deadline")
@@ -667,14 +667,14 @@ func TestCephFSDirectoryAdditionStalePeerRemovalRetryPreservesNewAddition(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			old := &PeerRemoval{mirror: m, source: m.source, destination: m.destination, peerID: peerRemovalNewPeer, generation: 0, readClusters: peerRemovalClusterReader, cohort: []cephFSPeerRemovalWitness{{}}}
+			old := &PeerRemoval{scope: &cephFSOriginalScope{mirror: m, source: m.source, destination: m.destination, peerID: peerRemovalNewPeer, generation: 0, readClusters: peerRemovalClusterReader}, cohort: cephFSRemovalCohort{witnesses: []cephFSRemovalWitness{{}}}}
 			m.ops.peerRemoval = old
 			before := len(s.calls)
 			if operation == "legacy" {
-				err = m.RemovePeer(t.Context(), old.peerID)
+				err = m.RemovePeer(t.Context(), old.scope.peerID)
 			} else {
 				var same *PeerRemoval
-				same, err = m.BeginPeerRemoval(t.Context(), old.peerID)
+				same, err = m.BeginPeerRemoval(t.Context(), old.scope.peerID)
 				if same != old {
 					t.Fatal("stale retry replaced retained old receipt")
 				}

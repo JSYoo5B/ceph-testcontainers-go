@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -200,7 +199,7 @@ func drainPeerRemovalDaemons(ds ...*peerRemovalDaemonFake) {
 
 func TestCephFSPeerRemovalProductionCommandUnregisterBarrier(t *testing.T) {
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
-	if s.removals != 1 || m.peerID != "" || len(r.cohort) != 2 {
+	if s.removals != 1 || m.peerID != "" || len(r.cohort.witnesses) != 2 {
 		t.Fatal("original native request/cohort not retained")
 	}
 	a.peer = false
@@ -352,7 +351,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 	if s.removals != 1 || len(m.Directories) != 1 {
 		t.Fatal("pending gate mutated native policy")
 	}
-	if err := m.RemovePeer(t.Context(), r.peerID); err != nil || s.removals != 1 {
+	if err := m.RemovePeer(t.Context(), r.scope.peerID); err != nil || s.removals != 1 {
 		t.Fatalf("legacy same-intent retry resent accepted delete: %v", err)
 	}
 	drainPeerRemovalDaemons(a, b)
@@ -414,7 +413,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 			case "fixture-field":
 				m.DestinationFilesystem = "other"
 			case "cluster":
-				r.readClusters = func(context.Context) ([2]string, error) {
+				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil
 				}
 			case "catalog-null":
@@ -536,7 +535,7 @@ func TestCephFSPeerRemovalProductionCleanupRetainsOriginalCohortWithoutAdoptingN
 	if err := daemonNamed(t, m, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.daemons) != 1 || len(r.cohort) != 2 || r.cohort[0].daemon.Container != a || a.terminated != 1 {
+	if len(m.daemons) != 1 || len(r.cohort.witnesses) != 2 || r.cohort.witnesses[0].daemon.Container != a || a.terminated != 1 {
 		t.Fatal("cleanup lost retained original handle")
 	}
 	status, err := r.Status(t.Context())
@@ -562,14 +561,14 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 	if st, err := r.Status(t.Context()); err != nil || !st.Drained {
 		t.Fatal(err)
 	}
-	expected := r.peer
+	expected := r.scope.peer
 	m.pendingPeerImport = &expected
 	var peers map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers); err != nil {
 		t.Fatal(err)
 	}
 	id, err := m.reconcilePendingPeer(peers)
-	if err != nil || id != peerRemovalNewPeer || m.ops.peerGeneration == r.generation {
+	if err != nil || id != peerRemovalNewPeer || m.ops.peerGeneration == r.scope.generation {
 		t.Fatalf("new ownership did not supersede old receipt: %s %v", id, err)
 	}
 	st, err := r.Status(t.Context())
@@ -657,7 +656,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	}
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
-	r.readClusters = func(ctx context.Context) ([2]string, error) {
+	r.scope.readClusters = func(ctx context.Context) ([2]string, error) {
 		_, err := readCephFSRemovalClusterIdentity(ctx, func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
 		return [2]string{}, err
 	}
@@ -665,7 +664,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.ops.peerRemoval != r || s.removals != 1 {
 		t.Fatalf("common failure discarded accepted intent: %+v %v", status, err)
 	}
-	r.readClusters = peerRemovalClusterReader
+	r.scope.readClusters = peerRemovalClusterReader
 	status, err = r.WaitDrained(t.Context())
 	if err != nil || !status.Drained || s.removals != 1 {
 		t.Fatalf("fresh wait could not recover retained intent: %+v %v", status, err)

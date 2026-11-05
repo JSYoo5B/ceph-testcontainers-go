@@ -511,7 +511,7 @@ func TestCephFSOriginalProcessReceiptBaselineCanFollowPreBeginRestart(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.cohort[0].startedAt != processDraftLater || r.cohort[0].originalProcess.creationStartedAt != processDraftStart {
+	if r.cohort.witnesses[0].startedAt != processDraftLater || r.cohort.witnesses[0].originalProcess.creationStartedAt != processDraftStart {
 		t.Fatal("creation/run provenance confused")
 	}
 }
@@ -637,7 +637,7 @@ func TestCephFSOriginalProcessWatcherNumericIdentityAndFinalEvidence(t *testing.
 			case "foreignMember":
 				m.daemons = append(m.daemons, &Daemon{DaemonName: "foreign"})
 			case "FSID":
-				r.readClusters = func(context.Context) ([2]string, error) {
+				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil
 				}
 			}

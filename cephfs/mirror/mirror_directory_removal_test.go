@@ -472,14 +472,14 @@ func TestCephFSDirectoryRemovalProductionRechecksPolicyAndSessions(t *testing.T)
 func TestCephFSDirectoryRemovalProductionCommonGuardRetainsFreshRetry(t *testing.T) {
 	r, m, s, _, a, _ := beginDirectoryRemovalFixture(t)
 	a.stats = `{}`
-	r.original.readClusters = func(context.Context) ([2]string, error) {
+	r.scope.readClusters = func(context.Context) ([2]string, error) {
 		return [2]string{}, errors.Join(cephFSObserveGuard("original-template quorum unavailable"), errPeerRemovalTransport)
 	}
 	st, err := r.WaitReleased(t.Context())
 	if st.Released || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.ops.directoryRemoval != r || s.removals != 1 {
 		t.Fatalf("common original attestation failure erased intent: %+v %v", st, err)
 	}
-	r.original.readClusters = peerRemovalClusterReader
+	r.scope.readClusters = peerRemovalClusterReader
 	st, err = r.WaitReleased(t.Context())
 	if err != nil || !st.Released {
 		t.Fatalf("fresh same-original environment failed retry: %+v %v", st, err)
@@ -528,7 +528,7 @@ func TestCephFSDirectoryRemovalProductionSchemaIdentityAndCohortFailClosed(t *te
 			case "foreign-watcher":
 				s.watchers += "watcher=172.20.0.10:0/999 client.999 cookie=3\n"
 			case "FSID":
-				r.original.readClusters = func(context.Context) ([2]string, error) {
+				r.scope.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil
 				}
 			case "filesystem":
