@@ -71,7 +71,7 @@ func runTestContainer(t *testing.T, ctx context.Context, req testcontainers.Cont
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			if err := testcontainers.TerminateContainer(ctr, testcontainers.StopContext(cleanupCtx)); err != nil {
+			if err := testcontainers.TerminateContainer(ctr, testcontainers.StopContext(cleanupCtx), testcontainers.StopTimeout(0)); err != nil {
 				t.Errorf("remove a capture test container: %v", err)
 			}
 		})
