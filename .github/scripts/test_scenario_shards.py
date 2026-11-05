@@ -127,6 +127,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     COMMAND = "ci-command.yml"
     # The scratch-device research probe (#7): its own paths only, no scenarios.
     BLOCK_FAULT_PROBE = "block-fault-probe.yml"
+    # The native ARM64 qualification of the source-owned arm64 cohort.
+    ARM64 = "ceph-arm64.yml"
     PERIODIC_SCHEDULE = "41 4 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
 
@@ -294,7 +296,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, "structural-review.yml", "structural-collect.yml", *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, self.ARM64, "structural-review.yml",
+                    "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         probe = self.workflows[self.BLOCK_FAULT_PROBE]
         self.assertIn("\non:\n  pull_request:\n    paths:\n", probe)
@@ -456,6 +459,69 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertRegex(optional, r"(?m)^  workflow_dispatch:")
         self.assertNotRegex(optional, r"(?m)^  (?:push|pull_request|workflow_call):")
         self.assertNotIn("concurrency:", optional)
+
+    def test_arm64_cohort_runs_natively_outside_the_ordinary_matrix(self):
+        workflow = self.workflows[self.ARM64]
+        self.assertRegex(workflow, r"(?m)^name: Ceph arm64$")
+        triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(re.findall(r"(?m)^  ([a-z_]+):", triggers), ["schedule", "pull_request", "workflow_dispatch"])
+        self.assertNotIn("CI_RELEASE_PHASE", workflow)
+        self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
+        callers = [job for job in self.jobs[self.ARM64].values() if "uses: ./.github/workflows/tagged-runtime.yml" in job]
+        self.assertEqual(len(callers), 1)
+        self.assertEqual(len(self.jobs[self.ARM64]), 1)
+        caller = callers[0]
+        self.assertEqual(scalar(caller.split("    with:", 1)[0], "name"), "Scenarios")
+        self.assertEqual((scalar(caller, "category"), scalar(caller, "goarch"), scalar(caller, "check_name")),
+                         ("architecture", "arm64", "Ceph arm64"))
+        # Its cohort comes from the source, never from the workflow.
+        for key in ("profiles", "optional_batch", "release", "storage_policy", "networks"):
+            self.assertNotRegex(caller, r"(?m)^      " + key + ":")
+        # Every pull request path is a file or tree that exists, so that a
+        # rename cannot silently stop the trial on changes that matter.
+        paths = re.findall(r"(?m)^      - '([^']+)'$", triggers.split("  pull_request:\n", 1)[1].split("  workflow_dispatch:", 1)[0])
+        self.assertIn(".github/workflows/" + self.ARM64, paths)
+        self.assertIn(".github/workflows/tagged-runtime.yml", paths)
+        tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        for path in paths:
+            with self.subTest(path=path):
+                pattern = self.github_glob(path)
+                self.assertTrue(any(pattern.match(name) for name in tracked + [".github/workflows/" + self.ARM64]))
+        # No other caller runs a non-default architecture.
+        for name, body in self.workflows.items():
+            if name not in (self.ARM64, "tagged-runtime.yml"):
+                self.assertNotRegex(body, r"(?m)^      goarch:", name)
+
+    def test_runtime_template_propagates_one_target_architecture(self):
+        plan, runtime = self.jobs["tagged-runtime.yml"]["plan"], self.jobs["tagged-runtime.yml"]["runtime"]
+        inputs = dict(blocks(self.workflows["tagged-runtime.yml"].split("\npermissions:", 1)[0], r"^      ([\w-]+):$"))
+        self.assertEqual(scalar(inputs["goarch"], "default"), "amd64")
+        runner = "'ubuntu-24.04-arm' || 'ubuntu-24.04' }}"
+        self.assertEqual(scalar(plan, "runs-on"), "${{ inputs.goarch == 'arm64' && " + runner)
+        self.assertEqual(scalar(runtime, "runs-on"), "${{ matrix.goarch == 'arm64' && " + runner)
+        planning = engine_step(steps(plan), "plan")
+        self.assertEqual(scalar(planning, "SCENARIO_GOARCH"), "${{ inputs.goarch }}")
+        commands = [shlex.split(line) for line in run_command(planning).splitlines() if "tag_scenarios.py plan" in line]
+        self.assertEqual(len(commands), 6)
+        for command in commands:
+            self.assertEqual(command[command.index("--goarch") + 1], "$SCENARIO_GOARCH")
+        cohort = engine_command(steps(plan), "plan", "--architecture-cohort")
+        self.assertNotIn("--category", cohort)
+        self.assertIn('if [ "$SCENARIO_CATEGORY" = architecture ]; then', planning)
+        runtime_steps = steps(runtime)
+        compiled = engine_step(runtime_steps, "compile")
+        command = engine_command(runtime_steps, "compile")
+        self.assertEqual(command[command.index("--goarch") + 1], "$SCENARIO_GOARCH")
+        self.assertEqual(scalar(compiled, "SCENARIO_GOARCH"), "${{ matrix.goarch }}")
+        prepared = next(step for step in runtime_steps if "uses: ./.github/actions/scenario-images" in step)
+        self.assertEqual(scalar(prepared, "platform"), "linux/${{ matrix.goarch }}")
+        # The amd64 build cache key stays the one Code checks shares; another
+        # architecture's objects get their own key.
+        workflow = self.workflows["tagged-runtime.yml"]
+        keys = re.findall(r"key: (go-build-.*)$", workflow, re.M)
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(set(keys), {"go-build-${{ runner.os }}${{ runner.arch != 'X64' && format('-{0}', runner.arch) "
+                                     "|| '' }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}"})
 
     def test_short_storage_control_only_changes_explicit_dispatches(self):
         caller = self.jobs["ceph-short.yml"]["scenarios"]
