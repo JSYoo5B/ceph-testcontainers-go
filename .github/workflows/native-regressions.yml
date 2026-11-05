@@ -12,6 +12,7 @@ on:
           - native_shuffle
           - mon_log_ack
           - rbd_demote_restart
+          - rgw_conditional_writes
           - failure_archive
       rgw_image:
         description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
