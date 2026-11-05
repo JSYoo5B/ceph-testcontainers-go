@@ -153,7 +153,10 @@ type UserInfo struct {
 //
 // A failure keeps a *ceph.NativeFailure with the exit code and errno but no
 // reason, so errors.Is(err, fs.ErrNotExist) works; run the same command with
-// Exec to see the native text.
+// Exec to see the native text. When radosgw-admin reports a fatal signal, the
+// error text also names the signal, its thread and the first backtrace
+// frames, and says how many bytes of standard output it wrote and whether
+// they are one complete JSON document, never what they say.
 //
 //purpose:native
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
