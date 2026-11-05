@@ -5,8 +5,8 @@
 // dropped, or that any protocol message in it is valid.
 //
 // The helper meets contract 1 of the packet-capture extension of
-// ceph-testcontainers-images. No helper image is published yet, so callers
-// always name the image; the package never selects one by itself.
+// ceph-testcontainers-images. Callers explicitly select a helper image that
+// meets that contract; the package never selects one by itself.
 package capture
 
 import (
@@ -61,7 +61,7 @@ var (
 	// ErrFailed reports a capture that did not start, end or deliver as the
 	// contract says: tcpdump exited before readiness or with a nonzero
 	// status, did not end within the stop grace, the target's network
-	// namespace changed, or the helper's file could not be copied or is not
+	// namespace changed, the helper's file is missing or non-regular, or it is not
 	// a valid classic pcap. It belongs to ceph.ErrNativeFailure.
 	ErrFailed error = nshelper.Category("the packet capture failed", ceph.ErrNativeFailure)
 )
@@ -591,9 +591,11 @@ func (s *Session) removeHelper(ctx context.Context) error {
 //
 // The report is returned also with an error. The error joins ErrFailed for
 // a capture that failed, was killed, ended early on its own, lost its target
-// or delivered a file that is not valid classic pcap, and a removal error. A
-// capture that ended at MaxPackets is not an error; its End says so. After a removal error
-// Stop can be called again; it returns the same report.
+// or delivered a file that is not valid classic pcap, and a removal error.
+// Docker and stream errors retain their causes; a failed retrieval alone does
+// not imply ErrFailed. A capture that ended at MaxPackets is not an error; its
+// End says so. After a removal error Stop can be called again; it returns the
+// same report.
 //
 //purpose:evidence,lifetime
 func (s *Session) Stop(ctx context.Context) (Report, error) {
@@ -642,8 +644,10 @@ func (s *Session) finish(ctx context.Context) error {
 		s.report.Stderr = string(stderr)
 		s.report.Statistics = parseStatistics(stderr)
 	}
-	s.report.Target = s.compareTarget(ctx)
-	if s.report.Target != TargetUnchanged {
+	s.report.Target, err = s.compareTarget(ctx)
+	if err != nil {
+		problems = append(problems, err)
+	} else if s.report.Target != TargetUnchanged {
 		problems = append(problems, fmt.Errorf("%w: the target is %s since the capture became ready; the file covers only the namespace it joined", ErrFailed, s.report.Target))
 	}
 	if err := s.retrieve(ctx); err != nil {
@@ -738,17 +742,17 @@ func (s *Session) settleSelfEnd() error {
 	return fmt.Errorf("%w: tcpdump ended before Stop with %d of %d packets", ErrFailed, s.report.File.Packets, s.request.MaxPackets)
 }
 
-func (s *Session) compareTarget(ctx context.Context) TargetState {
+func (s *Session) compareTarget(ctx context.Context) (TargetState, error) {
 	current, err := s.backend.target(ctx, s.report.ContainerID, s.request.Network)
 	switch {
-	case err != nil && errdefs.IsNotFound(err):
-		return TargetGone
+	case err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && errdefs.IsNotFound(err):
+		return TargetGone, nil
 	case err != nil:
-		return TargetUnknown
+		return TargetUnknown, classifyDocker(ctx, fmt.Errorf("inspect the capture target: %w", err))
 	case sameGeneration(s.target, current):
-		return TargetUnchanged
+		return TargetUnchanged, nil
 	}
-	return TargetChanged
+	return TargetChanged, nil
 }
 
 // retrieve copies the helper's file into Output, at most one byte past the
@@ -756,7 +760,12 @@ func (s *Session) compareTarget(ctx context.Context) TargetState {
 func (s *Session) retrieve(ctx context.Context) error {
 	content, err := s.backend.copy(ctx, s.helper, capturePath)
 	if err != nil {
-		return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, classifyDocker(ctx, err))
+		// A missing or non-regular capture is an observed artifact failure.
+		// Transport failures and cancellation retain their own category.
+		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (errdefs.IsNotFound(err) || errors.Is(err, errCaptureNotRegular)) {
+			return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
+		}
+		return fmt.Errorf("retrieve the capture file: %w", classifyDocker(ctx, err))
 	}
 	output, err := os.OpenFile(s.request.Output, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
@@ -777,7 +786,7 @@ func (s *Session) retrieve(ctx context.Context) error {
 	}
 	s.report.RetrievedBytes = written
 	if err := errors.Join(copyErr, content.Close(), output.Close()); err != nil {
-		return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
+		return fmt.Errorf("retrieve the capture file: %w", err)
 	}
 	s.report.Retrieved = true
 	s.report.RetrievedSHA256 = fmt.Sprintf("%x", digest.Sum(nil))

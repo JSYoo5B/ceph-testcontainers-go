@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
@@ -309,5 +310,66 @@ func TestDockerBackendReportsAnUnavailableClient(t *testing.T) {
 	}
 	if _, err := (dockerBackend{}).copy(t.Context(), "helper", "/capture/capture.pcap"); !errors.Is(err, unavailable) {
 		t.Fatalf("copy: %v", err)
+	}
+}
+
+// The fake Engine serves real tar responses to dockerBackend.copy; retrieve
+// must distinguish an observed invalid artifact from an Engine failure.
+func TestRetrieveClassifiesDockerArchiveArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		kind     byte
+		status   int
+		category error
+	}{
+		{"regular", tar.TypeReg, http.StatusOK, nil},
+		{"symlink", tar.TypeSymlink, http.StatusOK, ceph.ErrNativeFailure},
+		{"directory", tar.TypeDir, http.StatusOK, ceph.ErrNativeFailure},
+		{"hardlink", tar.TypeLink, http.StatusOK, ceph.ErrNativeFailure},
+		{"engine failure", tar.TypeReg, http.StatusInternalServerError, ceph.ErrEnvironmentUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := withFakeEngine(t)
+			data := pcapFile(128, 60)
+			archive := engineArchive(t, tc.kind, string(data))
+			engine.set("GET /containers/helper/archive", func(w http.ResponseWriter, r *http.Request) {
+				if tc.status != http.StatusOK {
+					http.Error(w, "engine unavailable", tc.status)
+					return
+				}
+				w.Header().Set("X-Docker-Container-Path-Stat", encodedPathStat(t, 0o644))
+				w.Header().Set("Content-Type", "application/x-tar")
+				_, _ = w.Write(archive)
+			})
+			req := request(t)
+			const original = "untouched output"
+			if err := os.WriteFile(req.Output, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			session := &Session{backend: dockerBackend{}, helper: "helper", request: req, report: Report{MaxBytes: req.maxBytes()}}
+			err := session.retrieve(t.Context())
+			if (err == nil) != (tc.category == nil) {
+				t.Fatalf("unexpected retrieval error: %v", err)
+			}
+			for _, category := range []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure} {
+				if errors.Is(err, category) != (category == tc.category) {
+					t.Errorf("unexpected category %v: %v", category, err)
+				}
+			}
+			if errors.Is(err, ErrFailed) != (tc.category == ceph.ErrNativeFailure) {
+				t.Errorf("unexpected capture failure classification: %v", err)
+			}
+			got, readErr := os.ReadFile(req.Output)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if tc.category == nil {
+				if !session.report.Retrieved || session.report.File.Status != FileValid || !bytes.Equal(got, data) {
+					t.Fatalf("valid capture not retrieved: %+v", session.report)
+				}
+			} else if session.report.Retrieved || string(got) != original {
+				t.Fatalf("failed retrieval changed the output: %+v", session.report)
+			}
+		})
 	}
 }
