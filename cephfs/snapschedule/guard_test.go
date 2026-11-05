@@ -123,16 +123,16 @@ func TestLeaseSetKeysDirectoriesByFilesystem(t *testing.T) {
 	first := snapScheduleFilesystem(fake)
 	set := leasesOf(first.Cluster())
 	recreated := fsbase.NewCore(fsbase.Params{Cluster: first.Cluster(), Name: "tc"})
-	a := &Lease{Path: "/", filesystem: first, leases: set}
-	b := &Lease{Path: "/", filesystem: recreated, leases: set}
-	if !set.reserve(a) || !set.reserve(b) || set.reserve(&Lease{Path: "/", filesystem: first, leases: set}) {
+	a := &Lease{owned: ownedSchedule{path: "/"}, filesystem: first, leases: set}
+	b := &Lease{owned: ownedSchedule{path: "/"}, filesystem: recreated, leases: set}
+	if !set.reserve(a) || !set.reserve(b) || set.reserve(&Lease{owned: ownedSchedule{path: "/"}, filesystem: first, leases: set}) {
 		t.Fatal("leases are not kept per filesystem and directory")
 	}
 	if leasesOf(first.Cluster()) != set {
 		t.Fatal("the cluster's lease set is not stable")
 	}
 	a.release()
-	if !set.reserve(&Lease{Path: "/", filesystem: first, leases: set}) || set.paths[leaseKey{recreated, "/"}] != b {
+	if !set.reserve(&Lease{owned: ownedSchedule{path: "/"}, filesystem: first, leases: set}) || set.paths[leaseKey{recreated, "/"}] != b {
 		t.Fatal("release freed another filesystem's directory or kept its own")
 	}
 }

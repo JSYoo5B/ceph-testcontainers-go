@@ -606,3 +606,61 @@ func TestLeaseAfterALostAddRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *test
 		t.Fatalf("Restore: %v, %s", err, fake.state())
 	}
 }
+
+// The lease's operations and Restore use the schedule that Add recorded:
+// editing the exported Path, Repeat or Start retargets nothing, and Restore
+// removes the original schedule and its rules, leaves a schedule at the
+// edited target and releases the original directory.
+func TestLeaseIgnoresEditedDescriptors(t *testing.T) {
+	edits := map[string]func(*Lease){
+		"path":   func(l *Lease) { l.Path = "/different" },
+		"repeat": func(l *Lease) { l.Repeat = "6h" },
+		"start":  func(l *Lease) { l.Start = time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC) },
+		"all": func(l *Lease) {
+			l.Path, l.Repeat, l.Start, l.Retention = "/different", "6h", time.Time{}, map[string]int{"n": 9}
+		},
+	}
+	for _, failure := range []string{"", "fs snap-schedule add", "fs snap-schedule retention add / n"} {
+		for name, edit := range edits {
+			label := name
+			if failure != "" {
+				label += " after a lost reply of " + failure
+			}
+			t.Run(label, func(t *testing.T) {
+				fake := newFakeSnapSchedule()
+				fs := snapScheduleFilesystem(fake)
+				fake.native(t, "fs snap-schedule add /different 6h 2031-01-01T00:00:00")
+				decoy := fake.state()
+				if failure != "" {
+					fake.lost[failure] = true
+				}
+				lease, err := add(t.Context(), fs, leaseSchedule)
+				if (err != nil) != (failure != "") || lease == nil {
+					t.Fatalf("%v, %v", lease, err)
+				}
+				edit(lease)
+				if failure == "" {
+					if status, err := lease.Status(t.Context()); err != nil || status.Path != "/" || status.Schedule != "2h" {
+						t.Fatalf("Status of the edited lease: %+v, %v", status, err)
+					}
+				}
+				if err := lease.Restore(t.Context()); err != nil || !lease.restored {
+					t.Fatalf("Restore of the edited lease: %v", err)
+				}
+				if state := fake.state(); state != decoy {
+					t.Fatalf("after Restore: %s, want only %s", state, decoy)
+				}
+				if n := len(lease.leases.paths); n != 0 {
+					t.Fatalf("Restore left %d reservations", n)
+				}
+				next, err := add(t.Context(), fs, Config{Path: "/", Repeat: "1h"})
+				if err != nil {
+					t.Fatalf("a lease of the original directory: %v", err)
+				}
+				if err := next.Restore(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
