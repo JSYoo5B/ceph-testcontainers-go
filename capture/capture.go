@@ -745,7 +745,7 @@ func (s *Session) settleSelfEnd() error {
 func (s *Session) compareTarget(ctx context.Context) (TargetState, error) {
 	current, err := s.backend.target(ctx, s.report.ContainerID, s.request.Network)
 	switch {
-	case err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && errdefs.IsNotFound(err):
+	case err != nil && observed(ctx, err) && errdefs.IsNotFound(err):
 		return TargetGone, nil
 	case err != nil:
 		return TargetUnknown, classifyDocker(ctx, fmt.Errorf("inspect the capture target: %w", err))
@@ -755,41 +755,77 @@ func (s *Session) compareTarget(ctx context.Context) (TargetState, error) {
 	return TargetChanged, nil
 }
 
-// retrieve copies the helper's file into Output, at most one byte past the
-// bound, and checks it.
+// observed reports whether a failed Docker call is an engine answer about
+// the resource rather than an interrupted call. Cancellation takes precedence:
+// a canceled or expired ctx, or a cancellation or deadline anywhere in err,
+// keeps the error out of any artifact or target verdict joined with it.
+func observed(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// classifyRetrieval classifies a failure to open the helper's file. A missing
+// or non-regular capture is an observed artifact failure; transport failures
+// and cancellation retain their own category.
+func classifyRetrieval(ctx context.Context, err error) error {
+	if observed(ctx, err) && (errdefs.IsNotFound(err) || errors.Is(err, errCaptureNotRegular)) {
+		return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
+	}
+	return fmt.Errorf("retrieve the capture file: %w", classifyDocker(ctx, err))
+}
+
+// copyBounded copies at most limit bytes of src to dst. When it copied limit
+// bytes it reads one byte more and returns it as beyond, without writing it:
+// a nonempty beyond only shows that src is longer than limit. The end of src
+// is not an error; any other read or write error is returned.
+func copyBounded(dst io.Writer, src io.Reader, limit int64) (written int64, beyond []byte, err error) {
+	written, err = io.Copy(dst, io.LimitReader(src, limit))
+	if err != nil || written != limit {
+		return written, nil, err
+	}
+	extra := make([]byte, 1)
+	n, err := io.ReadFull(src, extra)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return written, extra[:n], err
+	}
+	return written, extra[:n], nil
+}
+
+// retrieve delivers the helper's file into Output and checks it.
 func (s *Session) retrieve(ctx context.Context) error {
+	beyond, err := s.deliver(ctx)
+	if err != nil {
+		return err
+	}
+	return s.checkOutput(beyond)
+}
+
+// deliver copies the helper's file into Output, at most MaxBytes of it, and
+// records the delivered bytes. It returns the byte past the bound when the
+// helper's file has one. Retrieved is set only after the copy and both
+// closes succeed.
+func (s *Session) deliver(ctx context.Context) ([]byte, error) {
 	content, err := s.backend.copy(ctx, s.helper, capturePath)
 	if err != nil {
-		// A missing or non-regular capture is an observed artifact failure.
-		// Transport failures and cancellation retain their own category.
-		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (errdefs.IsNotFound(err) || errors.Is(err, errCaptureNotRegular)) {
-			return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
-		}
-		return fmt.Errorf("retrieve the capture file: %w", classifyDocker(ctx, err))
+		return nil, classifyRetrieval(ctx, err)
 	}
 	output, err := os.OpenFile(s.request.Output, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
-		return errors.Join(fmt.Errorf("open the capture output: %w", err), content.Close())
+		return nil, errors.Join(fmt.Errorf("open the capture output: %w", err), content.Close())
 	}
 	digest := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(content, s.report.MaxBytes))
-	// One byte past the bound only shows that the helper's file is larger;
-	// it is passed to the check but not kept.
-	var beyond []byte
-	if copyErr == nil && written == s.report.MaxBytes {
-		extra := make([]byte, 1)
-		n, err := io.ReadFull(content, extra)
-		if err != nil && !errors.Is(err, io.EOF) {
-			copyErr = err
-		}
-		beyond = extra[:n]
-	}
+	written, beyond, copyErr := copyBounded(io.MultiWriter(output, digest), content, s.report.MaxBytes)
 	s.report.RetrievedBytes = written
 	if err := errors.Join(copyErr, content.Close(), output.Close()); err != nil {
-		return fmt.Errorf("retrieve the capture file: %w", err)
+		return nil, fmt.Errorf("retrieve the capture file: %w", err)
 	}
 	s.report.Retrieved = true
 	s.report.RetrievedSHA256 = fmt.Sprintf("%x", digest.Sum(nil))
+	return beyond, nil
+}
+
+// checkOutput checks the structure of Output followed by beyond, so that a
+// helper's file past the bound is reported as such, and records the verdict.
+func (s *Session) checkOutput(beyond []byte) error {
 	delivered, err := os.Open(s.request.Output)
 	if err != nil {
 		return fmt.Errorf("check the capture file: %w", err)
