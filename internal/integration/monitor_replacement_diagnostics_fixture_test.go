@@ -696,7 +696,7 @@ func awaitWhileHeld[T any](t *testing.T, real *ceph.Container, limit time.Durati
 	go func() { done <- work() }()
 	select {
 	case result := <-done:
-		if servicehook.TryLock(real) {
+		if testhelper.TestState(real).Mutex.TryLock() {
 			servicehook.Unlock(real)
 			t.Fatal("the topology mutex was released before the collection returned")
 		}

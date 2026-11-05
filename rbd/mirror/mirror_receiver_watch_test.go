@@ -505,7 +505,7 @@ func requireRBDWatchUnlocked(t *testing.T, m *Container, phase string) {
 			d.mu.Unlock()
 		}
 		for _, cluster := range []*ceph.Container{m.pair.config.Source, m.pair.config.Destination} {
-			if !servicehook.TryLock(cluster) {
+			if !testhelper.TestState(cluster).Mutex.TryLock() {
 				m.mu.Unlock()
 				t.Fatalf("the watch kept a cluster topology lock %s", phase)
 			}

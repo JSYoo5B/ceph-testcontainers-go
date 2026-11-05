@@ -327,7 +327,7 @@ func TestRGWTenantAndAccountRootValidation(t *testing.T) {
 	if _, err := g.CreateUser(ctx, UserConfig{ID: "cancelled", Account: account}); !errors.Is(err, context.Canceled) || len(f.Calls) != 0 {
 		t.Fatal("canceled account root creation reached native command")
 	}
-	if !servicehook.TryLock(g.base().Cluster()) {
+	if !testhelper.TestState(g.base().Cluster()).Mutex.TryLock() {
 		t.Fatal("canceled root creation retained the cluster mutex")
 	}
 	servicehook.Unlock(g.base().Cluster())

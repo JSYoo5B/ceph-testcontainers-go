@@ -123,7 +123,7 @@ func TestRGWAdminRunsWithoutTheClusterMutex(t *testing.T) {
 	gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `{}`})
 	cluster := gwbase.Of(gateway).Cluster()
 	ctr.onExec = func() {
-		if !servicehook.TryLock(cluster) {
+		if !testhelper.TestState(cluster).Mutex.TryLock() {
 			t.Error("Admin held the cluster mutex while radosgw-admin ran")
 			return
 		}

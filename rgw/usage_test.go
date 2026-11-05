@@ -335,7 +335,7 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 		t.Fatal("held owner worker exceeded watchdog")
 	}
 	unlock.Do(func() { servicehook.Unlock(g.base().Cluster()) })
-	if !servicehook.TryLock(g.base().Cluster()) {
+	if !testhelper.TestState(g.base().Cluster()).Mutex.TryLock() {
 		t.Fatal("usage worker retained owner gate")
 	}
 	servicehook.Unlock(g.base().Cluster())
@@ -423,7 +423,7 @@ func TestRGWUserUsageHeldControlDeadlineReleasesOwnerAndDoesNotReadStats(t *test
 	if slices.ContainsFunc(f.Calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
 		t.Fatal("held control gate reached stats")
 	}
-	if !servicehook.TryLock(g.base().Cluster()) {
+	if !testhelper.TestState(g.base().Cluster()).Mutex.TryLock() {
 		t.Fatal("queued native scope retained owner gate")
 	}
 	servicehook.Unlock(g.base().Cluster())

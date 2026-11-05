@@ -70,7 +70,6 @@ type hooks interface {
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 	StartService(ctx context.Context, c *ceph.Container, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	StartupTimeout(c *ceph.Container) time.Duration
-	TryLock(c *ceph.Container) bool
 	Unlock(c *ceph.Container)
 }
 
@@ -263,9 +262,6 @@ func StartService(ctx context.Context, c *ceph.Container, name, image string, op
 
 // StartupTimeout bounds one fixture operation.
 func StartupTimeout(c *ceph.Container) time.Duration { return get().StartupTimeout(c) }
-
-// TryLock holds the cluster mutex if it is free.
-func TryLock(c *ceph.Container) bool { return get().TryLock(c) }
 
 // Unlock releases the cluster mutex.
 func Unlock(c *ceph.Container) { get().Unlock(c) }
