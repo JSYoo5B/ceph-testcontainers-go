@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rbd",
-  "count": 20,
+  "count": 19,
   "types": {
     "rbd.Container": [
       "Container embed *ceph.Container"
@@ -27,9 +27,6 @@
       "ImmutableObjectCache.MaxSize field int64",
       "ImmutableObjectCache.Path field string",
       "ImmutableObjectCache.Socket field string"
-    ],
-    "rbd.ImmutableObjectCacheLease": [
-      "ImmutableObjectCacheLease.Config field ImmutableObjectCache"
     ],
     "rbd.ImmutableObjectCacheStatus": [
       "ImmutableObjectCacheStatus.CachedBytes field int64",

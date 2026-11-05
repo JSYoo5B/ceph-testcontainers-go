@@ -119,7 +119,7 @@ func TestImmutableObjectCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	harness.ExecCommand(t, ctx, client, "sh", "-c", `test ! -e "$0" && test ! -e "$1" && test -z "$(ls /var/run/ceph | grep immutable-object-cache)"`,
-		lease.Config.Path, lease.Config.Socket)
+		lease.Config().Path, lease.Config().Socket)
 	t.Logf("pid %d cached %d objects (%d bytes) with %d RADOS reads, %d status reads after the first client read; a second read added none; after Stop the client read the same data from RADOS; Restore removed the socket and cache",
 		first.PID, first.CachedObjects, first.CachedBytes, first.RADOSReads, cached.Attempts)
 }

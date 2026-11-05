@@ -2,7 +2,6 @@ package rbd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -72,8 +71,9 @@ type ImmutableObjectCacheStatus struct {
 // stopped. To count cache use, read Status.RADOSReads: rados df read
 // counters lag behind and do not show it.
 type ImmutableObjectCacheLease struct {
-	// Config is the request with its defaults filled in.
-	Config ImmutableObjectCache
+	// config is the request with its defaults filled in, fixed at the start:
+	// Status, Stop, Restore and ClientOptions act on its path and socket.
+	config ImmutableObjectCache
 
 	mu          sync.Mutex
 	client      testcontainers.Container
@@ -138,7 +138,10 @@ status)
         echo running=0
     fi
     if test -d "$path"; then
-        find "$path" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { print "files=" n + 0; print "bytes=" b + 0 }'
+        echo dir=1
+        find "$path" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { printf "files=%d\nbytes=%.0f\n", n, b }'
+    else
+        echo dir=0
     fi
     ;;
 stop)
@@ -187,43 +190,43 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 	if err != nil {
 		return nil, err
 	}
-	state, err := immutableObjectCacheOp(ctx, client, "inspect", config.Path, config.Socket)
+	state, err := inspectImmutableObjectCache(ctx, client, config)
 	if err != nil {
 		return nil, fmt.Errorf("inspect the immutable object cache container: %w", err)
 	}
 	switch {
-	case state["binary"] != "1":
+	case !state.binary:
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "ceph-immutable-object-cache",
 			Err: errors.New("the client container has no ceph-immutable-object-cache executable")}
-	case state["plugin"] != "1":
+	case !state.plugin:
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "librbd parent_cache plugin",
 			Err: errors.New("the client container has no librbd parent_cache plugin")}
-	case state["socket"] != "0":
+	case state.socket:
 		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache socket %s already exists", config.Socket))
-	case state["path"] != "none" && state["path"] != "empty":
+	case state.path != "none" && state.path != "empty":
 		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache path %s is not an absent or empty directory", config.Path))
 	}
 	token := uuid.NewString()[:8]
 	lease := &ImmutableObjectCacheLease{
-		Config:      config,
+		config:      config,
 		client:      client,
 		adminSocket: path.Join(path.Dir(config.Socket), "immutable-object-cache-"+token+".asok"),
 		pidFile:     path.Join(path.Dir(config.Socket), "immutable-object-cache-"+token+".pid"),
-		createdPath: state["path"] == "none",
+		createdPath: state.path == "none",
 	}
-	started, err := immutableObjectCacheOp(ctx, client, "start", config.ID, config.Path, config.Socket,
-		strconv.FormatInt(config.MaxSize, 10), lease.adminSocket, lease.pidFile)
+	started, err := lease.start(ctx)
 	if err != nil {
-		// The daemon may run; the lease can still stop and remove it.
+		// The daemon may run; the lease can still stop and remove it, and
+		// finds it by its PID file.
 		return lease, fmt.Errorf("start the immutable object cache: %w", err)
 	}
-	lease.pid, _ = strconv.Atoi(started["pid"])
-	if started["ready"] == "1" {
+	lease.pid = started.pid
+	if started.ready {
 		return lease, nil
 	}
 	cause := errors.New("the daemon did not open its socket")
-	if code := started["exit"]; code != "0" {
-		cause = fmt.Errorf("the daemon exited with status %s", code)
+	if started.exit != 0 {
+		cause = fmt.Errorf("the daemon exited with status %d", started.exit)
 	}
 	failure := &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "start the immutable object cache", Err: cause}
 	if err := lease.restore(context.WithoutCancel(ctx)); err != nil {
@@ -267,6 +270,15 @@ func cleanAbsolute(p string) bool {
 	return strings.HasPrefix(p, "/") && path.Clean(p) == p && !strings.ContainsAny(p, "\x00\r\n")
 }
 
+// Config returns a copy of the configuration that the lease started the
+// daemon with, its defaults filled in. It is descriptive only: changing the
+// copy changes nothing that the lease's methods act on.
+//
+//purpose:handoff
+func (l *ImmutableObjectCacheLease) Config() ImmutableObjectCache {
+	return l.config
+}
+
 // ClientOptions returns the Ceph options that make a librbd client in the
 // lease's container use the cache, for a ceph.conf section, the rbd CLI
 // (as --name=value) or rados.Rados(conf=...).
@@ -276,7 +288,7 @@ func (l *ImmutableObjectCacheLease) ClientOptions() map[string]string {
 	return map[string]string{
 		"rbd_parent_cache_enabled":    "true",
 		"rbd_plugins":                 "parent_cache",
-		"immutable_object_cache_sock": l.Config.Socket,
+		"immutable_object_cache_sock": l.config.Socket,
 	}
 }
 
@@ -295,25 +307,11 @@ func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObject
 }
 
 func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObjectCacheStatus, error) {
-	values, err := immutableObjectCacheOp(ctx, l.client, "status", strconv.Itoa(l.pid), l.Config.Socket, l.adminSocket, l.Config.Path, l.pidFile)
+	out, err := immutableObjectCacheOp(ctx, l.client, "status", strconv.Itoa(l.pid), l.config.Socket, l.adminSocket, l.config.Path, l.pidFile)
 	if err != nil {
 		return ImmutableObjectCacheStatus{}, fmt.Errorf("read the immutable object cache: %w", err)
 	}
-	status := ImmutableObjectCacheStatus{Running: values["running"] == "1", PID: l.pid}
-	status.CachedObjects, _ = strconv.Atoi(values["files"])
-	status.CachedBytes, _ = strconv.ParseInt(values["bytes"], 10, 64)
-	if status.Running {
-		var perf struct {
-			Objecter struct {
-				OpR uint64 `json:"op_r"`
-			} `json:"objecter"`
-		}
-		if err := json.Unmarshal([]byte(values["perf"]), &perf); err != nil {
-			return status, fmt.Errorf("parse the immutable object cache counters: %w", err)
-		}
-		status.RADOSReads = perf.Objecter.OpR
-	}
-	return status, nil
+	return parseImmutableObjectCacheStatus(out, l.pid)
 }
 
 // Stop stops the daemon, with SIGTERM and then SIGKILL, and keeps the cache
@@ -335,11 +333,15 @@ func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
 
 // stop finds the daemon by its PID file when the start was not confirmed.
 func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
-	values, err := immutableObjectCacheOp(ctx, l.client, "stop", strconv.Itoa(l.pid), l.Config.Socket, l.pidFile)
+	out, err := immutableObjectCacheOp(ctx, l.client, "stop", strconv.Itoa(l.pid), l.config.Socket, l.pidFile)
 	if err != nil {
 		return fmt.Errorf("stop the immutable object cache: %w", err)
 	}
-	if values["stopped"] != "1" {
+	stopped, err := parseImmutableObjectCacheFlag(out, "stopped")
+	if err != nil {
+		return err
+	}
+	if !stopped {
 		return &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "stop the immutable object cache",
 			Err: errors.New("the daemon still runs after SIGKILL")}
 	}
@@ -373,24 +375,28 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 	if l.createdPath {
 		created = "1"
 	}
-	values, err := immutableObjectCacheOp(ctx, l.client, "remove", l.Config.Path, l.Config.Socket, l.adminSocket, l.pidFile, created)
-	if err != nil || values["removed"] != "1" {
-		return errors.Join(errors.New("remove the immutable object cache files"), err)
+	out, err := immutableObjectCacheOp(ctx, l.client, "remove", l.config.Path, l.config.Socket, l.adminSocket, l.pidFile, created)
+	if err != nil {
+		return fmt.Errorf("remove the immutable object cache files: %w", err)
+	}
+	removed, err := parseImmutableObjectCacheFlag(out, "removed")
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return errors.New("remove the immutable object cache files: the script did not confirm the removal")
 	}
 	l.complete = true
 	return nil
 }
 
-func immutableObjectCacheOp(ctx context.Context, client testcontainers.Container, op string, args ...string) (map[string]string, error) {
+// immutableObjectCacheOp runs one operation of immutableObjectCacheScript and
+// returns its key=value lines, unvalidated: each operation's parser checks
+// the fields it needs.
+func immutableObjectCacheOp(ctx context.Context, client testcontainers.Container, op string, args ...string) (immutableObjectCacheOutput, error) {
 	out, err := multicluster.Exec(ctx, client, append([]string{"sh", "-c", immutableObjectCacheScript, "sh", op}, args...)...)
 	if err != nil {
-		return nil, err
+		return immutableObjectCacheOutput{}, err
 	}
-	values := map[string]string{}
-	for _, line := range strings.Split(string(out), "\n") {
-		if key, value, ok := strings.Cut(line, "="); ok {
-			values[key] = value
-		}
-	}
-	return values, nil
+	return immutableObjectCacheOutput{op: op, out: out}, nil
 }
