@@ -376,3 +376,56 @@ func TestFinish(t *testing.T) {
 		}
 	}
 }
+
+// A log with many refusals keeps one line per refused session, so repeated
+// refusals of earlier MonClients never push out the current GID's refusal;
+// more distinct sessions than the gate keeps is an error, never a short list.
+func TestScanRefusalsKeepsEveryRefusedSession(t *testing.T) {
+	line := func(entity string, id int) string {
+		return fmt.Sprintf("2026-10-14T23:52:03.512+0000 7ff7ec39b640  0 cephx server %s:  attempt to reclaim global_id %d using bad ticket", entity, id)
+	}
+	var repeated []string
+	for range 2 * maxRefusedSessions {
+		repeated = append(repeated, line("mgr.a", 4179))
+	}
+	repeated = append(repeated, line("mgr.a", 14263))
+	found, err := scanRefusals("a", strings.NewReader(strings.Join(repeated, "\n")+"\n"), 1<<20)
+	if err != nil || len(found) != 2 || found[1].GlobalID != 14263 {
+		t.Fatalf("repeated refusals then the current GID: %+v, %v", found, err)
+	}
+	var distinct []string
+	for id := range maxRefusedSessions {
+		distinct = append(distinct, line("client.admin", 100+id))
+	}
+	distinct = append(distinct, line("mgr.a", 14263))
+	if found, err := scanRefusals("a", strings.NewReader(strings.Join(distinct, "\n")+"\n"), 1<<20); err == nil || queryStatus(err) == StatusComplete {
+		t.Fatalf("%d distinct refused sessions returned %d without an error", maxRefusedSessions+1, len(found))
+	}
+}
+
+// A failed MgrMap read before the sessions stays in the queries, so a gate
+// whose bracket was never established is incomplete even when the sessions
+// and the later MgrMap read succeed.
+func TestSampleOneMapKeepsAFailedFirstRead(t *testing.T) {
+	failed := ManagerMap{Query: Query{Name: "mgr dump", Status: StatusFailed, Error: "context deadline exceeded"}, Standbys: []Registration{}}
+	complete := managerMap(t, restoredDump)
+	reads := []ManagerMap{failed, complete}
+	read := func() ManagerMap {
+		next := reads[0]
+		reads = reads[1:]
+		return next
+	}
+	receipt := gateCase(t)
+	monitors := receipt.Monitors
+	receipt.Map, receipt.Monitors, receipt.Queries = sampleOneMap(read, func() []MonitorSessions { return monitors })
+	if len(reads) != 0 || len(receipt.Queries) != 1 || receipt.Queries[0].Complete() {
+		t.Fatalf("failed first read: %d reads left, queries %+v", len(reads), receipt.Queries)
+	}
+	if receipt = EvaluateGate(receipt, []string{"a", "b"}); receipt.Complete || receipt.Daemons != nil {
+		t.Fatalf("a gate without its first MgrMap read is complete: %+v", receipt)
+	}
+	reads = []ManagerMap{complete, complete}
+	if _, _, queries := sampleOneMap(read, func() []MonitorSessions { return monitors }); len(queries) != 0 {
+		t.Fatalf("a matching bracket left queries %+v", queries)
+	}
+}

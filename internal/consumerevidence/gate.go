@@ -84,14 +84,22 @@ type GateReceipt struct {
 	FixtureError       string            `json:"fixture_error,omitempty"`
 }
 
-// scanRefusals returns the reclaim refusals of one MON log, reading at most
-// limit bytes and keeping at most 64 lines. A log longer than limit is an
-// error, since a refusal past it would be missed.
+// maxRefusedSessions bounds the distinct refused entity and global ID pairs
+// that one MON log scan keeps.
+const maxRefusedSessions = 64
+
+// scanRefusals returns the reclaim refusals of one MON log, one line for each
+// distinct entity and global ID, reading at most limit bytes. Repeated
+// refusals of one pair keep its first line, since the gate classifies pairs.
+// A log longer than limit, or with more than maxRefusedSessions distinct
+// pairs, is an error rather than a shorter list: a refusal that was not kept
+// must not read as absent.
 func scanRefusals(monitor string, logs io.Reader, limit int64) ([]Refusal, error) {
 	counted := &io.LimitedReader{R: logs, N: limit + 1}
 	scanner := bufio.NewScanner(counted)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	var found []Refusal
+	seen := map[Session]bool{}
 	for scanner.Scan() {
 		match := monitorReclaimRefusal.FindStringSubmatch(strings.TrimSuffix(scanner.Text(), "\r"))
 		if match == nil {
@@ -101,9 +109,15 @@ func scanRefusals(monitor string, logs io.Reader, limit int64) ([]Refusal, error
 		if err != nil {
 			return nil, fmt.Errorf("%w: global_id %q", errMalformed, match[2])
 		}
-		if len(found) < 64 {
-			found = append(found, Refusal{Monitor: monitor, Entity: match[1], GlobalID: id, Line: match[0]})
+		key := Session{Entity: match[1], GlobalID: id}
+		if seen[key] {
+			continue
 		}
+		if len(found) == maxRefusedSessions {
+			return nil, fmt.Errorf("%w: more than %d refused sessions", errOversized, maxRefusedSessions)
+		}
+		seen[key] = true
+		found = append(found, Refusal{Monitor: monitor, Entity: match[1], GlobalID: id, Line: match[0]})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -209,19 +223,9 @@ func CheckGate(ctx context.Context, cluster *ceph.Container, label string, bound
 		return receipt, fmt.Errorf("list MGRs: %w", err)
 	}
 	owned := daemonNames(managers, func(m *ceph.ManagerContainer) string { return m.DaemonName })
-	for sample := 1; ; sample++ {
-		before := readManagerMap(ctx, cluster, bounds.Query)
-		receipt.Monitors = readSessions(ctx, monitors, bounds.Query)
-		receipt.Map = readManagerMap(ctx, cluster, bounds.Query)
-		if !before.Query.Complete() || !receipt.Map.Query.Complete() || before.same(receipt.Map) {
-			break
-		}
-		if sample == 3 {
-			receipt.Queries = append(receipt.Queries, Query{Name: "one MgrMap around the sessions", Status: StatusFailed,
-				Error: fmt.Sprintf("the MgrMap moved from epoch %d to %d during each of %d samples", before.Epoch, receipt.Map.Epoch, sample)})
-			break
-		}
-	}
+	receipt.Map, receipt.Monitors, receipt.Queries = sampleOneMap(
+		func() ManagerMap { return readManagerMap(ctx, cluster, bounds.Query) },
+		func() []MonitorSessions { return readSessions(ctx, monitors, bounds.Query) })
 	var queries []Query
 	receipt.Refusals, queries = readRefusals(ctx, monitors, bounds)
 	receipt.Queries = append(receipt.Queries, queries...)
@@ -238,6 +242,31 @@ func CheckGate(ctx context.Context, cluster *ceph.Container, label string, bound
 		return receipt, errors.New("native MGR keyring gate is incomplete")
 	}
 	return receipt, nil
+}
+
+// sampleOneMap reads the MgrMap, the sessions and the MgrMap again, taking
+// another sample (at most three) while the two maps differ. It returns the
+// second map, the sessions and the queries that make the bracket incomplete:
+// a failed read on either side is kept, so a bracket that was never
+// established cannot leave a gate complete.
+func sampleOneMap(readMap func() ManagerMap, readSessions func() []MonitorSessions) (ManagerMap, []MonitorSessions, []Query) {
+	queries := []Query{}
+	for sample := 1; ; sample++ {
+		before := readMap()
+		sessions := readSessions()
+		after := readMap()
+		if !before.Query.Complete() {
+			queries = append(queries, Query{Name: "MgrMap before the sessions", Status: before.Query.Status, Error: before.Query.Error})
+		}
+		if !before.Query.Complete() || !after.Query.Complete() || before.same(after) {
+			return after, sessions, queries
+		}
+		if sample == 3 {
+			queries = append(queries, Query{Name: "one MgrMap around the sessions", Status: StatusFailed,
+				Error: fmt.Sprintf("the MgrMap moved from epoch %d to %d during each of %d samples", before.Epoch, after.Epoch, sample)})
+			return after, sessions, queries
+		}
+	}
 }
 
 // tellVersion runs "ceph tell target version" in the control container as a
