@@ -77,6 +77,42 @@ if report.End != capture.EndStopped || report.File.Status != capture.FileValid {
   stops it. A pcap holds payloads and identifiers that redaction does not
   sanitize; keep it only where the test deliberately retains it.
 
+## Restarting the target
+
+A session never follows a restart, so evidence around a deliberate restart of
+the captured peer is a sequence of sessions that the caller composes, one per
+target generation. `TestCaptureAcrossTargetRestart`
+(`capture_restart_integration_test.go`) is the runnable recipe, with a client
+in the engine host's network namespace.
+
+- Keep the first session running through the restart. It ends with its
+  generation, usually as `EndFailed` once tcpdump reports that the interface
+  disappeared, with `Report.Target` `TargetChanged` and an `ErrFailed` error
+  from `Stop`. Its file still holds, and the report still checks, the traffic
+  captured before the restart. Then `Start` a new session on the same
+  container.
+- Nothing the new generation sends or accepts before the next `Start`
+  returns is captured. When the handshake after the restart matters, keep it
+  from happening earlier: let the target's entrypoint wait at a gate that every
+  start re-arms (the recipe uses a FIFO in a tmpfs) and open it after `Start`
+  returns, or hold the client until then. A target whose entrypoint the caller
+  does not own, such as a daemon of `ceph.Run`, can only be gated at the
+  client. Without a gate the handshake may be in no segment.
+- Keep every segment's order, `Report` and error, also those of a segment that
+  ended with its generation. `ContainerID` names the target, and
+  `TargetStartedAt` with `SandboxID` the generation: the next generation can
+  reuse the namespace inode, so `Namespace` alone does not tell them apart.
+  The report also keeps the timing, filter, interface, bounds and tcpdump's
+  counters (a missing counter means unknown drops, not zero). Record the time
+  from the restart request to the next segment's `ReadyAt` as uncovered.
+  Segments are separate files; concatenating them does not make an
+  uninterrupted capture.
+- A containerized client on the same bridge is a stable observer: one capture
+  of the client's namespace spans the peer's restart in one file and one
+  generation. It observes the client's endpoint, so it fits only when the
+  client may be a container. A client on the engine host has no namespace that
+  this package captures, and capturing the host bridge is outside it.
+
 ## Reference
 
 The full contract of every type and function is in go doc:
