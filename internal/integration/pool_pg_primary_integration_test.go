@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_default))))
 
-//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs,rgw
+//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs,rgw architecture=arm64
 
 package integration_test
 
