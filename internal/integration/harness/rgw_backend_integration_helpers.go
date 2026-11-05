@@ -131,21 +131,21 @@ func RGWBackendVaultAuditProof(data []byte) (map[string]int, error) {
 			continue
 		}
 		if event.Request.ID == "" {
-			return nil, errors.New("Vault key read audit is missing native request identity (redacted)")
+			return nil, errors.New("the Vault key read audit is missing native request identity (redacted)")
 		}
 		if event.Type == "request" {
 			if _, duplicate := requests[event.Request.ID]; duplicate {
-				return nil, errors.New("Vault key read audit has duplicate native request identity (redacted)")
+				return nil, errors.New("the Vault key read audit has duplicate native request identity (redacted)")
 			}
 			requests[event.Request.ID] = event
 			continue
 		}
 		if event.Type != "response" {
-			return nil, errors.New("Vault key read audit has unknown native entry type (redacted)")
+			return nil, errors.New("the Vault key read audit has unknown native entry type (redacted)")
 		}
 		request, exists := requests[event.Request.ID]
 		if !exists || request.Request != event.Request || responses[event.Request.ID] {
-			return nil, errors.New("Vault key read response lacks a unique matching request (redacted)")
+			return nil, errors.New("the Vault key read response lacks a unique matching request (redacted)")
 		}
 		responses[event.Request.ID] = true
 		if event.Request.Path == "tc/data/allowed" {

@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -355,7 +354,7 @@ func (vault *RGWKMSVault) Token(t *testing.T, ctx context.Context, policy string
 		} `json:"auth"`
 	}
 	if json.Unmarshal(created, &auth) != nil || auth.Auth.Token == "" || !slices.Equal(auth.Auth.Policies, []string{policy}) {
-		t.Fatal(errors.New("Vault did not issue a token with exactly the requested policy"))
+		t.Fatal("Vault did not issue a token with exactly the requested policy")
 	}
 	return auth.Auth.Token
 }
