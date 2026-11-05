@@ -310,7 +310,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(report["compiled_coverage"], {"passed": True})
         # A batch without network modes is one entry, as before the axis.
         self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": "",
-                                              "repetition": "1", "artifact_suffix": ""}
+                                              "repetition": "1", "artifact_suffix": "", "goarch": "amd64"}
                                              for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "environment")
         self.assertFalse(matrix["include"][0]["requires_ceph"])
@@ -350,6 +350,84 @@ class TagPlannerTests(unittest.TestCase):
             engine.discover([first, second])
         second["metadata"] = first["metadata"]
         self.assertEqual(engine.discover([first, second])["include"][0]["representative"], "flaky")
+
+    def architecture_catalog(self):
+        """One arm64 cohort batch and one ordinary batch."""
+        cohort = fixture(path="internal/integration/cohort_test.go", tests=("TestCohort",), batch="cohort")
+        cohort["metadata"] = ["timeout=20m job-timeout=35 architecture=arm64"]
+        return [cohort, fixture()]
+
+    def test_architecture_cohort_is_declared_in_source_and_claims_only_its_batches(self):
+        catalog = self.architecture_catalog()
+        plan = engine.discover(catalog)
+        selected = engine.select_architecture_plan(plan, "arm64")
+        self.assertEqual([profile["batch"] for profile in selected["include"]], ["cohort"])
+        self.assertEqual((selected["coverage_scope"], selected["selected_scope"]), ("architecture", "architecture"))
+        # The required universe stays whole; the cohort claims only a part.
+        self.assertEqual(len(selected["required_include"]), 2)
+        self.assertEqual({profile["architecture"] for profile in plan["include"]}, {"arm64", ""})
+        with self.assertRaisesRegex(ValueError, "amd64 acceptance is the ordinary categories"):
+            engine.select_architecture_plan(plan, "amd64")
+        with self.assertRaisesRegex(ValueError, "no batch declares the arm64"):
+            engine.select_architecture_plan(engine.discover(catalog[1:]), "arm64")
+        for value in ("amd64", "aarch64", "arm64,amd64"):
+            with self.subTest(architecture=value), self.assertRaisesRegex(ValueError, "architecture takes one of"):
+                catalog[0]["metadata"] = ["timeout=20m job-timeout=35 architecture=" + value]
+                engine.discover(catalog)
+        # Like a budget, every file of a batch declares the same cohort.
+        first, second = fixture(), fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
+        first["metadata"] = ["timeout=20m job-timeout=35 architecture=arm64"]
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            engine.discover([first, second])
+
+    def test_plan_names_its_target_architecture_in_the_plan_and_every_entry(self):
+        catalog = self.architecture_catalog()
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            for arguments, goarch, batches in ((["--architecture-cohort", "--goarch", "arm64"], "arm64", ["cohort"]),
+                                               (["--category", "short"], "amd64", ["basic", "cohort"])):
+                output, github = Path(temporary) / (goarch + ".json"), Path(temporary) / (goarch + "-output")
+                self.assertEqual(engine.main(["plan", *arguments, "--output", str(output),
+                                              "--github-output", str(github)]), 0, arguments)
+                report = json.loads(output.read_text())
+                matrix = json.loads(github_outputs(github)["matrix"])["include"]
+                self.assertEqual((report["goos"], report["goarch"]), ("linux", goarch))
+                self.assertEqual(sorted(entry["batch"] for entry in matrix), batches)
+                self.assertEqual({entry["goarch"] for entry in matrix}, {goarch})
+            # Another architecture runs only its declared cohort, and the
+            # cohort excludes every other selection.
+            for arguments in (["--category", "short", "--goarch", "arm64"], ["--goarch", "arm64"],
+                              ["--architecture-cohort"], ["--architecture-cohort", "--goarch", "arm64", "--category", "short"],
+                              ["--architecture-cohort", "--goarch", "arm64", "--representative"],
+                              ["--architecture-cohort", "--goarch", "arm64", "--profiles", "short-basic"],
+                              ["--architecture-cohort", "--goarch", "arm64", "--verify"],
+                              ["--goarch", "riscv64", "--architecture-cohort"]):
+                with self.subTest(arguments=arguments):
+                    try:
+                        code = engine.main(["plan", *arguments])
+                    except SystemExit as error:  # argparse refuses an unknown architecture
+                        code = error.code
+                    self.assertIn(code, (1, 2))
+        with self.assertRaisesRegex(ValueError, "unsupported target architecture"):
+            engine.target_matrix([{"id": "x"}], "386")
+
+    def test_compile_refuses_a_runner_that_does_not_natively_build_the_planned_architecture(self):
+        plan = engine.discover(self.architecture_catalog())
+        native = {"host": "linux/arm64", "target": "linux/arm64"}
+        self.assertEqual(engine.target_platform("arm64", platform=native), {"planned": "linux/arm64", **native})
+        for observed in ({"host": "linux/amd64", "target": "linux/amd64"},
+                         # Cross-compiled with GOARCH=arm64 on an amd64 host.
+                         {"host": "linux/amd64", "target": "linux/arm64"},
+                         {"host": "darwin/arm64", "target": "darwin/arm64"}):
+            with self.subTest(observed=observed), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "compile"
+                with patch.object(engine, "bounded_go", side_effect=AssertionError("built")):
+                    with self.assertRaisesRegex(ValueError, "planned native linux/arm64"):
+                        engine.compile_profile(plan, "short", "cohort", None, directory, goarch="arm64",
+                                               platform=observed)
+                self.assertFalse(directory.exists())
+        with self.assertRaisesRegex(ValueError, "unsupported target architecture"):
+            engine.target_platform("386", platform=native)
 
     def test_repetitions_give_each_attempt_its_own_job_and_artifacts_but_one_profile_id(self):
         plan = engine.select_representative_plan(engine.discover(self.representative_catalog()))
@@ -512,7 +590,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(report["selected_batch"], "native_rgw_translation")
         # A batch without network modes is one entry, as before the axis.
         self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": "",
-                                              "repetition": "1", "artifact_suffix": ""}
+                                              "repetition": "1", "artifact_suffix": "", "goarch": "amd64"}
                                              for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "optional")
         self.assertFalse(any(key.startswith("required_") for key in report))
@@ -618,8 +696,8 @@ class TagPlannerTests(unittest.TestCase):
         one, two = (profile["id"] for profile in plan["include"])
         calls = []
 
-        def tool(batches, base, root, package):
-            calls.append((batches, base, package))
+        def tool(batches, base, root, package, goarch):
+            calls.append((batches, base, package, goarch))
             return {"merge_base": "abc", "fallback": [], "changed_declarations": ["x_test.go: func helper"],
                     "batches": [{"id": one, "selected": True, "reason": "func TestOne reaches func helper"},
                                 {"id": two, "selected": False, "reason": "none of 1 roots reaches a changed declaration"}]}
@@ -632,7 +710,7 @@ class TagPlannerTests(unittest.TestCase):
             report = json.loads(output.read_text())
             matrix = json.loads(github_outputs(github)["matrix"])
         self.assertEqual(calls, [([{"id": profile["id"], "tags": profile["tags"]} for profile in plan["include"]],
-                                  "origin/main", "./internal/integration")])
+                                  "origin/main", "./internal/integration", "amd64")])
         # Advisory: both batches still run.
         self.assertEqual([entry["batch"] for entry in matrix["include"]], ["one", "two"])
         self.assertEqual([profile["batch"] for profile in report["include"]], ["one", "two"])
@@ -689,7 +767,7 @@ class TagPlannerTests(unittest.TestCase):
         ids = {profile["package"]: profile["id"] for profile in profiles}
         calls = []
 
-        def tool(batches, base, root, package):
+        def tool(batches, base, root, package, goarch):
             calls.append(package)
             if package == "./internal/integration/rgw":
                 return {"merge_base": "abc", "fallback": ["go.mod changed"],
@@ -720,12 +798,12 @@ class TagPlannerTests(unittest.TestCase):
         profiles = engine.discover(catalog)["include"]
         ids = {profile["batch"]: profile["id"] for profile in profiles}
         for runner, reason in (
-                (lambda batches, base, root, package: {"fallback": ["go.mod changed"], "batches": [
+                (lambda batches, base, root, package, goarch: {"fallback": ["go.mod changed"], "batches": [
                     {"id": ids["one"], "selected": True, "reason": "every batch: go.mod changed"}]},
                  "every batch: go.mod changed"),
-                (lambda batches, base, root, package: {"fallback": [], "batches": []}, "analysis unavailable"),
-                (lambda batches, base, root, package: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
-                (lambda batches, base, root, package: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
+                (lambda batches, base, root, package, goarch: {"fallback": [], "batches": []}, "analysis unavailable"),
+                (lambda batches, base, root, package, goarch: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
+                (lambda batches, base, root, package, goarch: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
                  "analysis unavailable")):
             with self.subTest(reason=reason):
                 selection = engine.declaration_selection(profiles, "main", runner=runner)
@@ -749,6 +827,11 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(command[command.index("-repo") + 1], str(engine.ROOT))
             self.assertEqual(command[command.index("-package") + 1], "./internal/integration")
             self.assertEqual(command[command.index("-with") + 1], "internal/integration/harness")
+            # batchselect has no default platform; the plan's is explicit.
+            self.assertEqual((command[command.index("-goos") + 1], command[command.index("-goarch") + 1]),
+                             ("linux", "amd64"))
+            engine.run_batchselect([], "base", goarch="arm64")
+            self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("-goarch") + 1], "arm64")
             engine.run_batchselect([], "base", tool="/bin/tool")
             self.assertEqual(run.call_args.args[0][0], "/bin/tool")
             self.assertNotIn("-head", run.call_args.args[0])
