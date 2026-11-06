@@ -224,11 +224,15 @@ func localImageID(t *testing.T, ctx context.Context, docker *mobycl.Client, imag
 }
 
 // runMGRImageCluster starts a one-OSD cluster from images with managers
-// initial MGRs and registers its cleanup.
+// initial MGRs, none when managers is 0, and registers its cleanup.
 func runMGRImageCluster(t *testing.T, ctx context.Context, images ceph.ImageSet, managers int) (*ceph.Container, error) {
 	t.Helper()
+	config := ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(managers)
+	if managers == 0 {
+		config = config.WithNoInitialManagers()
+	}
 	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), harness.FunctionalOSDConfig(t),
-		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(managers)), ceph.WithStartupTimeout(3*time.Minute))
+		ceph.WithClusterConfig(config), ceph.WithStartupTimeout(3*time.Minute))
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}
@@ -582,4 +586,114 @@ func testMGRImageConsumerModule(t *testing.T) {
 	if err := enabled.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// otherRelease is a release that differs from release, for an image that
+// claims to be of another release than the cluster.
+func otherRelease(release string) string {
+	if release == "19.2.5" {
+		return "20.2.4"
+	}
+	return "19.2.5"
+}
+
+// assertNoManagerEntered requires that no MGR identity exists, that the MGR
+// map has neither an active MGR nor a standby, and that no container of the
+// cluster was ever created from image: neither a daemon nor a release probe
+// that was left behind.
+func assertNoManagerEntered(t *testing.T, ctx context.Context, docker *mobycl.Client, cluster *ceph.Container, owner, image string) {
+	t.Helper()
+	var mgrMap struct {
+		ActiveName string `json:"active_name"`
+		ActiveGID  uint64 `json:"active_gid"`
+		Standbys   []struct {
+			Name string `json:"name"`
+		} `json:"standbys"`
+	}
+	dump := execOutput(t, ctx, cluster, "ceph", "mgr", "dump", "--format", "json")
+	if err := json.Unmarshal([]byte(dump), &mgrMap); err != nil {
+		t.Fatalf("decode mgr dump: %v %s", err, dump)
+	}
+	if mgrMap.ActiveName != "" || mgrMap.ActiveGID != 0 || len(mgrMap.Standbys) != 0 {
+		t.Fatalf("a MGR of the mismatched image registered: %+v", mgrMap)
+	}
+	var auth struct {
+		AuthDump []struct {
+			Entity string `json:"entity"`
+		} `json:"auth_dump"`
+	}
+	listing := execOutput(t, ctx, cluster, "ceph", "auth", "ls", "--format", "json")
+	if err := json.Unmarshal([]byte(listing), &auth); err != nil {
+		t.Fatalf("decode auth ls: %v", err)
+	}
+	for _, identity := range auth.AuthDump {
+		if strings.HasPrefix(identity.Entity, "mgr.") {
+			t.Fatalf("the refused MGR identity %s exists", identity.Entity)
+		}
+	}
+	listed, err := docker.ContainerList(ctx, mobycl.ContainerListOptions{All: true, Filters: make(mobycl.Filters).Add("label", clusterutil.OwnerLabel+"="+owner).Add("ancestor", image)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 0 {
+		t.Fatalf("%d containers of the cluster run the mismatched MGR image", len(listed.Items))
+	}
+	if managers := clusteraccess.Managers(t, cluster); len(managers) != 0 {
+		t.Fatalf("the cluster owns %d MGRs of the mismatched image", len(managers))
+	}
+}
+
+// testMGRImageOtherReleaseNeverStarts is the release gate of the MGR slot: an
+// image whose ceph-mgr reports another release than the cluster is refused by
+// the release probe before any MGR identity, key or daemon exists, for the
+// initial manager of Run and for AddManager on a cluster without managers.
+// The image is the official image with a ceph-mgr wrapper that claims another
+// release for --version and runs the real daemon otherwise, so that a
+// manager started before the gate would register.
+func testMGRImageOtherReleaseNeverStarts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	docker := mgrImageDocker(t, ctx)
+	images := harness.IntegrationImageSet(t)
+	official := officialMGRImage(t, ctx, docker, essentialBase(images))
+	claimed := otherRelease(imageRelease(t, ctx, official))
+	wrapper := "#!/bin/sh\nif [ \"$1\" = --version ]; then\n\techo \"ceph version " + claimed + " (0000000000000000000000000000000000000000) other (stable)\"\n\texit 0\nfi\nexec /usr/bin/ceph-mgr.real \"$@\"\n"
+	mismatched := buildMGRTestImage(t, ctx, docker, official,
+		"RUN mv /usr/bin/ceph-mgr /usr/bin/ceph-mgr.real\nCOPY ceph-mgr /usr/bin/ceph-mgr\nRUN chmod 0755 /usr/bin/ceph-mgr\n",
+		map[string]string{"ceph-mgr": wrapper})
+	images.MGR = mismatched
+	want := "MGR image Ceph release " + claimed + " differs from core "
+
+	cluster, err := runMGRImageCluster(t, ctx, images, 1)
+	if err == nil || cluster == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run with a MGR image of release %s: %v", claimed, err)
+	}
+	t.Logf("Run refused the initial MGR: %v", err)
+	assertNoManagerEntered(t, ctx, docker, cluster, clusterOwner(t, ctx, docker, cluster), mismatched)
+	if err := cluster.Terminate(context.WithoutCancel(ctx)); err != nil {
+		t.Fatal(err)
+	}
+
+	cluster, err = runMGRImageCluster(t, ctx, images, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := cluster.AddManager(ctx, "a")
+	if err == nil || mgr != nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("AddManager with a MGR image of release %s: %+v %v", claimed, mgr, err)
+	}
+	t.Logf("AddManager refused the MGR: %v", err)
+	owner := clusterOwner(t, ctx, docker, cluster)
+	assertNoManagerEntered(t, ctx, docker, cluster, owner, mismatched)
+	// The explicit per-daemon override keeps its unchecked contract: the same
+	// image starts and registers.
+	overridden, err := cluster.AddManager(ctx, "b", ceph.DaemonOptions{}.WithImage(mismatched))
+	if err != nil || overridden.Image() != mismatched {
+		t.Fatalf("an explicit per-daemon image was release-checked: %v", err)
+	}
+	waitManagers(t, ctx, cluster, []string{"b"}, "b")
+	if err := cluster.Terminate(context.WithoutCancel(ctx)); err != nil {
+		t.Fatal(err)
+	}
+	assertClusterContainersGone(t, ctx, docker, owner)
 }

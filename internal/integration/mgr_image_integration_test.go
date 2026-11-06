@@ -17,3 +17,7 @@ func TestMGRImageWithoutEssentialManager(t *testing.T) {
 func TestMGRImageConsumerModule(t *testing.T) {
 	testMGRImageConsumerModule(t)
 }
+
+func TestMGRImageOtherReleaseNeverStarts(t *testing.T) {
+	testMGRImageOtherReleaseNeverStarts(t)
+}
