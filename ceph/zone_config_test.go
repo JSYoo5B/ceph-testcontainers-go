@@ -158,3 +158,40 @@ func TestPoolFailureDomainZone(t *testing.T) {
 		t.Fatalf("one zone holds two zone replicas: %v", err)
 	}
 }
+
+// Without zones the cluster's own members are unchanged and a caller's zone
+// is refused; with zones an undeclared zone is refused, and a placed
+// container carries its zone label and the enrollment hooks.
+func TestZoneCustomizers(t *testing.T) {
+	plain := &Container{}
+	req := testcontainers.GenericContainerRequest{}
+	if err := plain.zoneMember("a", "osd.0")(&req); err != nil || len(req.Labels) != 0 || len(req.LifecycleHooks) != 0 {
+		t.Fatalf("a cluster without zones changed its member: %+v %v", req.ContainerRequest, err)
+	}
+	if err := plain.zoneAttachment()(&req); err != nil || len(req.LifecycleHooks) != 0 {
+		t.Fatalf("a cluster without zones changed a client: %v", err)
+	}
+	if err := plain.WithZone("a")(&req); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("WithZone without zones: %v", err)
+	}
+	zoned := &Container{settings: options{zones: zoneSettings{names: []string{"a", "b"}, quorum: "a"}}, boundary: &zoneBoundary{}}
+	if err := zoned.WithZone("c")(&req); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("an undeclared zone: %v", err)
+	}
+	placed := testcontainers.GenericContainerRequest{}
+	if err := zoned.WithZone("b")(&placed); err != nil {
+		t.Fatal(err)
+	}
+	if placed.Labels[zoneLabel] != "b" || len(placed.LifecycleHooks) != 1 ||
+		len(placed.LifecycleHooks[0].PostStarts) != 1 || len(placed.LifecycleHooks[0].PreStops) != 1 || len(placed.LifecycleHooks[0].PreTerminates) != 1 {
+		t.Fatalf("WithZone placed %+v with hooks %+v", placed.Labels, placed.LifecycleHooks)
+	}
+	member := testcontainers.GenericContainerRequest{}
+	if err := zoned.quorumMember("mgr.a")(&member); err != nil || member.Labels[zoneLabel] != "a" || member.Labels[zoneMemberLabel] != "mgr.a" {
+		t.Fatalf("a quorum member: %+v %v", member.Labels, err)
+	}
+	// A caller's WithZone after the quorum default places a service daemon.
+	if err := zoned.WithZone("b")(&member); err != nil || member.Labels[zoneLabel] != "b" {
+		t.Fatalf("WithZone did not override the quorum zone: %+v %v", member.Labels, err)
+	}
+}
