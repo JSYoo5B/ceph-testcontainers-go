@@ -165,7 +165,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
+	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.monitorImage(daemon)}
 	c.members.roster.addMonitor(name, mon)
 	join := monitorJoin{name: name, config: []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", "")), key: key, monmap: monmap}
 	if err := c.startJoiningMonitor(ctx, mon, join); err != nil {
@@ -791,9 +791,13 @@ func monitorConfigComment(line string) (int, error) {
 // active ownership away from an existing MGR.
 // With AddressDualStack it then checks the active MGR's advertised addresses
 // and fails with ErrUnsupported when one family has no concrete address.
-// DaemonOptions.WithImage starts this one MGR from another image; the default is the
-// essential image. Options are validated before the topology lock is taken or
-// any identity is created.
+// The MGR starts from the cluster's MGR image, ClusterFacts.Images.MGR
+// (ImageSet.MGR, the essential image by default); DaemonOptions.WithImage starts
+// this one MGR from another image instead. A MGR started from a cluster MGR
+// image other than the essential image whose ceph-mgr reports another release
+// than ClusterFacts.CephVersion fails after its container started; the
+// returned handle stays owned, so remove it or terminate the cluster. Options
+// are validated before the topology lock is taken or any identity is created.
 //
 // It never forces the active role away from a running manager, and success
 // does not mean every MGR module is ready; use Observer.WaitMGRModuleReady or
@@ -818,7 +822,7 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	mgr, err := c.monitorTopology().startManager(ctx, name, c.settings.daemonImage(daemon))
+	mgr, err := c.monitorTopology().startManager(ctx, name, c.managerLaunch(daemon))
 	if err != nil {
 		return mgr, err
 	}
@@ -831,10 +835,13 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	return mgr, nil
 }
 
-// startManager creates the identity of a new MGR and starts its container,
-// but does not wait for the MGR to register. The caller holds c.mu. The
-// returned MGR is nil when the error came before it was owned.
-func (t monitorTopology) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
+// startManager creates the identity of a new MGR and starts its container from
+// launch.image, but does not wait for the MGR to register. With a
+// launch.release it then requires the container's ceph-mgr to report that
+// release. The caller holds c.mu. The returned MGR is nil when the error came
+// before it was owned.
+func (t monitorTopology) startManager(ctx context.Context, name string, launch managerLaunch) (*ManagerContainer, error) {
+	image := launch.image
 	if t.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
@@ -880,7 +887,28 @@ func (t monitorTopology) startManager(ctx context.Context, name, image string) (
 	if name == "a" {
 		t.roster.recordInitialManager(mgr.Container)
 	}
+	if err == nil && launch.release != "" {
+		err = checkManagerRelease(ctx, mgr.Container, launch.release)
+	}
 	return mgr, err
+}
+
+// checkManagerRelease requires the ceph-mgr of a started MGR container to
+// report release. A module added to a MGR image does not make another Ceph
+// release acceptable.
+func checkManagerRelease(ctx context.Context, ctr testcontainers.Container, release string) error {
+	output, err := command(ctx, ctr, "ceph-mgr", "--version")
+	if err != nil {
+		return fmt.Errorf("read MGR image release: %w", err)
+	}
+	version, err := parseCephVersion(string(output))
+	if err != nil {
+		return fmt.Errorf("read MGR image release: %w", err)
+	}
+	if version != release {
+		return fmt.Errorf("MGR image Ceph release %s differs from core %s", version, release)
+	}
+	return nil
 }
 
 // waitManagerRegistered waits until the MGR is the available active MGR or a

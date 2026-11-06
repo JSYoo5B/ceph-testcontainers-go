@@ -26,9 +26,12 @@ type DaemonOptions struct {
 }
 
 // WithImage starts the one new daemon from image instead of the cluster's
-// essential image. The image must contain the daemon's binary and the tools the
-// fixture's startup scripts use, as the essential image does; nothing here checks its
-// release or compatibility with the running cluster.
+// image for that daemon: the essential image for a MON, the MGR image of the
+// cluster's ImageSet (Essential unless the set's MGR selects another) for a
+// MGR. It takes precedence over that selection for this daemon only. The image
+// must contain the daemon's binary and the tools the fixture's startup scripts
+// use, as the essential image does; nothing here checks its release or
+// compatibility with the running cluster.
 //
 // The override belongs to that daemon: Stop and Start keep the container, and
 // the daemon's handle reports it with Image. It does not change ClusterFacts,
@@ -44,8 +47,9 @@ type DaemonOptions struct {
 // ClusterFacts.Images and ClusterFacts.CephVersion, and the images recorded in
 // a finalization manifest or verification report, keep describing the cluster
 // and its first MON; the diagnostics archive records each container's image
-// from Docker. A client container is still refused when its release differs
-// from ClusterFacts.CephVersion. This is a building block: no mixed-version or
+// from Docker. A client container, and a MGR started from the cluster's MGR
+// image, are still refused when their release differs from
+// ClusterFacts.CephVersion. This is a building block: no mixed-version or
 // upgrade combination is claimed to work.
 //
 //purpose:construction
@@ -73,13 +77,36 @@ func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 	return resolved, nil
 }
 
-// daemonImage returns the image the new daemon starts from: its override, or
-// the cluster's essential image.
-func (o options) daemonImage(daemon DaemonOptions) string {
+// monitorImage returns the image a new MON starts from: its override, or the
+// cluster's essential image.
+func (o options) monitorImage(daemon DaemonOptions) string {
 	if daemon.imageSet {
 		return daemon.image
 	}
 	return o.essentialImage
+}
+
+// managerLaunch is the image a new MGR starts from and the release its
+// ceph-mgr must report. An empty release checks nothing.
+type managerLaunch struct {
+	image, release string
+}
+
+// managerLaunch resolves the image of a new MGR. The precedence is the
+// DaemonOptions.WithImage override, then the cluster's MGR image, which is the
+// essential image unless ImageSet.MGR selects another. The override is an
+// explicit mixed-version building block and is never release-checked; a
+// cluster MGR image other than the essential image must report the release of
+// the first MON.
+func (c *Container) managerLaunch(daemon DaemonOptions) managerLaunch {
+	if daemon.imageSet {
+		return managerLaunch{image: daemon.image}
+	}
+	image := c.settings.effectiveImages().MGR
+	if image == "" || image == c.settings.essentialImage {
+		return managerLaunch{image: c.settings.essentialImage}
+	}
+	return managerLaunch{image: image, release: c.staticFacts().CephVersion}
 }
 
 // runDaemon starts the container of a new MON or MGR from image.
@@ -102,7 +129,8 @@ func (m *MonitorContainer) Image() string {
 }
 
 // Image returns the image this MGR container was started from: the
-// DaemonOptions.WithImage override, or the cluster's essential image.
+// DaemonOptions.WithImage override, or the cluster's MGR image,
+// ClusterFacts.Images.MGR.
 //
 //purpose:observation
 func (m *ManagerContainer) Image() string {
