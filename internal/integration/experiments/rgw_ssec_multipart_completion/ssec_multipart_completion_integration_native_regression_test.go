@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,19 +65,6 @@ type ssecCase struct {
 func (c *ssecCase) signed(t *testing.T, ctx context.Context, method, path string, payload []byte, headers http.Header) harness.RGWBackendResponse {
 	t.Helper()
 	return harness.RGWBackendSigned(t, ctx, c.client, "s3", method, path, payload, headers)
-}
-
-// ssecFailure is the S3 error of a refused request; Message attributes a
-// refusal to the native check that made it.
-type ssecFailure struct {
-	Code    string `xml:"Code"`
-	Message string `xml:"Message"`
-}
-
-func ssecError(body []byte) ssecFailure {
-	var f ssecFailure
-	_ = xml.Unmarshal(body, &f)
-	return f
 }
 
 // ssecUpload is one multipart upload of the case with a single part.
@@ -164,17 +152,12 @@ func (c *ssecCase) start(t *testing.T, key string, data []byte, initHeaders, par
 	return u
 }
 
-// ssecCompletion is the native answer to a CompleteMultipartUpload.
-type ssecCompletion struct {
-	Code           int
-	Failure        ssecFailure
-	ETag           string
-	ChecksumSHA256 string
-}
-
 // complete sends CompleteMultipartUpload for u with headers. A 200 whose
-// body carries an S3 error counts as a refusal. A refused upload is aborted
-// at once, so a failed completion is never reused by another step.
+// body is an S3 Error document counts as a failed completion, with its HTTP
+// status kept. A failed upload is aborted at once, so a failed completion
+// is never reused by another step; a 200 that is neither a result nor an
+// error is aborted too, and its key is kept for cleanup in case it was
+// completed, before the test fails.
 func (c *ssecCase) complete(t *testing.T, u ssecUpload, headers http.Header) ssecCompletion {
 	t.Helper()
 	path := ssecBucket + "/" + u.key
@@ -185,30 +168,26 @@ func (c *ssecCase) complete(t *testing.T, u ssecUpload, headers http.Header) sse
 	}
 	body.WriteString("</Part></CompleteMultipartUpload>")
 	done := c.signed(t, c.ctx, http.MethodPost, path+"?uploadId="+url.QueryEscape(u.id), []byte(body.String()), headers)
-	result := ssecCompletion{Code: done.Code}
-	if done.Code == http.StatusOK && bytes.Contains(done.Body, []byte("<Error>")) {
-		result.Code = 0
-	}
-	if result.Code == http.StatusOK {
-		var parsed struct {
-			XMLName        xml.Name `xml:"CompleteMultipartUploadResult"`
-			ETag           string   `xml:"ETag"`
-			ChecksumSHA256 string   `xml:"ChecksumSHA256"`
-		}
-		if err := xml.Unmarshal(done.Body, &parsed); err != nil || parsed.ETag == "" {
-			t.Fatalf("completion of %s answered 200 without a CompleteMultipartUploadResult: %v", path, err)
-		}
-		result.ETag, result.ChecksumSHA256 = parsed.ETag, parsed.ChecksumSHA256
+	result, unclassified := ssecClassifyCompletion(done.Code, done.Body)
+	switch {
+	case unclassified != nil:
+		c.objects[u.key] = true
+		aborted := c.signed(t, c.ctx, http.MethodDelete, path+"?uploadId="+url.QueryEscape(u.id), nil, nil)
+		harness.RGWBackendRequire(t, aborted, http.StatusNoContent, http.StatusNotFound)
+		delete(c.uploads, u.id)
+	case result.completed():
 		delete(c.uploads, u.id)
 		c.objects[u.key] = true
-	} else {
-		result.Failure = ssecError(done.Body)
+	default:
 		aborted := c.signed(t, c.ctx, http.MethodDelete, path+"?uploadId="+url.QueryEscape(u.id), nil, nil)
 		harness.RGWBackendRequire(t, aborted, http.StatusNoContent)
 		delete(c.uploads, u.id)
 	}
-	t.Logf("RGW_SSEC upload=%s complete status=%d code=%s message=%q etag=%s checksum-sha256=%q",
-		u.id, done.Code, result.Failure.Code, result.Failure.Message, result.ETag, result.ChecksumSHA256)
+	t.Logf("RGW_SSEC upload=%s complete status=%d embedded-error=%t code=%s message=%q etag=%s checksum-sha256=%q",
+		u.id, result.Status, result.Embedded, result.Failure.Code, result.Failure.Message, result.ETag, result.ChecksumSHA256)
+	if unclassified != nil {
+		t.Fatalf("completion of %s: %v", path, unclassified)
+	}
 	return result
 }
 
@@ -251,12 +230,17 @@ func (c *ssecCase) requireAbsent(t *testing.T, key string, k ssecKey) {
 }
 
 // cleanup aborts every upload and deletes every object the test still owns,
-// then the bucket. Failures are reported as cleanup failures, separately
-// from the behavioural result.
-func (c *ssecCase) cleanup(t *testing.T) {
+// then the bucket, when buckets (the ones the test created) holds it.
+// Failures are reported as cleanup failures, separately from the
+// behavioural result.
+func (c *ssecCase) cleanup(t *testing.T, buckets []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	failed := false
+	if !slices.Contains(buckets, ssecBucket) {
+		t.Logf("RGW_SSEC cleanup buckets=0 uploads=%d objects=%d failed=false", len(c.uploads), len(c.objects))
+		return
+	}
 	for id, key := range c.uploads {
 		if r := c.signed(t, ctx, http.MethodDelete, ssecBucket+"/"+key+"?uploadId="+url.QueryEscape(id), nil, nil); r.Code != http.StatusNoContent {
 			t.Errorf("RGW_SSEC cleanup failed: abort upload %s of %s: %d", id, key, r.Code)
@@ -273,7 +257,7 @@ func (c *ssecCase) cleanup(t *testing.T) {
 		t.Errorf("RGW_SSEC cleanup failed: delete bucket: %d %s", r.Code, harness.RGWBackendErrorCode(r.Body))
 		failed = true
 	}
-	t.Logf("RGW_SSEC cleanup uploads=%d objects=%d failed=%t", len(c.uploads), len(c.objects), failed)
+	t.Logf("RGW_SSEC cleanup buckets=%d uploads=%d objects=%d failed=%t", len(buckets), len(c.uploads), len(c.objects), failed)
 }
 
 // ssecCompositeSHA256 is the checksum S3 reports for a completed multipart
@@ -330,8 +314,9 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 	c := &ssecCase{ctx: ctx, uploads: map[string]string{}, objects: map[string]bool{},
 		client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region,
 			HTTP: &http.Client{Transport: transport, Timeout: 30 * time.Second}}}
-	harness.RGWBackendRequire(t, c.signed(t, ctx, http.MethodPut, ssecBucket, nil, nil), http.StatusOK)
-	t.Cleanup(func() { c.cleanup(t) })
+	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, ssecBucket); err != nil {
+		t.Fatal(err)
+	}
 
 	payload := func(name string) []byte {
 		return bytes.Repeat([]byte("ssec multipart "+name+" payload\n"), 512)
@@ -341,8 +326,8 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 	t.Run("unencrypted-control", func(t *testing.T) {
 		data := payload("plain")
 		u := c.start(t, "plain", data, nil, nil, false)
-		if done := c.complete(t, u, nil); done.Code != http.StatusOK {
-			t.Fatalf("unencrypted completion: status %d %s", done.Code, done.Failure.Code)
+		if done := c.complete(t, u, nil); !done.completed() {
+			t.Fatalf("unencrypted completion: status %d embedded-error %t %s", done.Status, done.Embedded, done.Failure.Code)
 		}
 		c.requireBytes(t, "plain", nil, data)
 	})
@@ -350,8 +335,8 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 	t.Run("no-checksum-correct-key", func(t *testing.T) {
 		data := payload("correct key")
 		u := c.start(t, "no-checksum-correct-key", data, owner.headers(), owner.headers(), false)
-		if done := c.complete(t, u, owner.headers()); done.Code != http.StatusOK {
-			t.Fatalf("completion with the correct key: status %d %s %q", done.Code, done.Failure.Code, done.Failure.Message)
+		if done := c.complete(t, u, owner.headers()); !done.completed() {
+			t.Fatalf("completion with the correct key: status %d embedded-error %t %s %q", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
 		}
 		c.requireEncryptedAtRest(t, "no-checksum-correct-key", owner, data)
 	})
@@ -362,8 +347,8 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		done := c.complete(t, u, other.headers())
 		// The other key is well formed and its MD5 is correct, so only the
 		// comparison with the stored key MD5 can refuse it.
-		if done.Code != http.StatusBadRequest || done.Failure.Code != "InvalidArgument" || !strings.Contains(done.Failure.Message, "MD5") {
-			t.Fatalf("completion with another valid key: status %d %s %q, want 400 InvalidArgument from the key MD5 check", done.Code, done.Failure.Code, done.Failure.Message)
+		if done.Status != http.StatusBadRequest || done.Failure.Code != "InvalidArgument" || !strings.Contains(done.Failure.Message, "MD5") {
+			t.Fatalf("completion with another valid key: status %d embedded-error %t %s %q, want 400 InvalidArgument from the key MD5 check", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
 		}
 		c.requireAbsent(t, "no-checksum-wrong-key", owner)
 	})
@@ -372,9 +357,9 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		data := payload("omitted key")
 		u := c.start(t, "no-checksum-omitted-key", data, owner.headers(), owner.headers(), false)
 		done := c.complete(t, u, nil)
-		if done.Code != http.StatusOK {
+		if !done.completed() {
 			c.requireAbsent(t, "no-checksum-omitted-key", owner)
-			t.Fatalf("completion of an SSE-C upload without a checksum and without the customer key: status %d %s %q, S3 wants 200", done.Code, done.Failure.Code, done.Failure.Message)
+			t.Fatalf("completion of an SSE-C upload without a checksum and without the customer key: status %d embedded-error %t %s %q, S3 wants a completed 200", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
 		}
 		c.requireEncryptedAtRest(t, "no-checksum-omitted-key", owner, data)
 	})
@@ -383,8 +368,8 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		data := payload("sha256 omitted key")
 		u := c.start(t, "sha256-omitted-key", data, owner.headers(), owner.headers(), true)
 		done := c.complete(t, u, nil)
-		if done.Code != http.StatusBadRequest || done.Failure.Code != "InvalidArgument" {
-			t.Fatalf("completion of a SHA256 SSE-C upload without the customer key: status %d %s %q, want 400 InvalidArgument", done.Code, done.Failure.Code, done.Failure.Message)
+		if done.Status != http.StatusBadRequest || done.Failure.Code != "InvalidArgument" {
+			t.Fatalf("completion of a SHA256 SSE-C upload without the customer key: status %d embedded-error %t %s %q, want 400 InvalidArgument", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
 		}
 		c.requireAbsent(t, "sha256-omitted-key", owner)
 	})
@@ -393,8 +378,8 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		data := payload("sha256 correct key")
 		u := c.start(t, "sha256-correct-key", data, owner.headers(), owner.headers(), true)
 		done := c.complete(t, u, owner.headers())
-		if done.Code != http.StatusOK {
-			t.Fatalf("completion of a SHA256 SSE-C upload with the correct key: status %d %s %q", done.Code, done.Failure.Code, done.Failure.Message)
+		if !done.completed() {
+			t.Fatalf("completion of a SHA256 SSE-C upload with the correct key: status %d embedded-error %t %s %q", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
 		}
 		if want := ssecCompositeSHA256(t, u.partSHA256); done.ChecksumSHA256 != want {
 			t.Errorf("completion checksum %q, want the composite SHA-256 %q", done.ChecksumSHA256, want)
