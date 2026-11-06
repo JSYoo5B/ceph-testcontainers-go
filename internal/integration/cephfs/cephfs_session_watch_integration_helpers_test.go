@@ -332,7 +332,8 @@ func (w *rankOneSessionWatch) awaitRemoval(t *testing.T, ctx context.Context, cl
 // check requires, over the whole log, consecutive sequence numbers, gaps
 // without sessions, one rebaseline (rank 1 at the takeover), no addition,
 // and changes and removals only of the four baseline sessions, each removed
-// once and only after its client was evicted or closed. It logs the counts
+// once and only by a sample that completed after its client was evicted or
+// closed. A sample that overlaps the action may show it. It logs the counts
 // and the read times.
 func (w *rankOneSessionWatch) check(t *testing.T) {
 	t.Helper()
@@ -341,6 +342,7 @@ func (w *rankOneSessionWatch) check(t *testing.T) {
 	since := map[uint64]time.Time{w.departing: w.evicted, w.retained: w.finished}
 	removed := map[sessionWatchKey]bool{}
 	var coherent, gapped []time.Duration
+	overlapping := 0
 	for _, event := range events {
 		if event.Kind == ceph.WatchGap {
 			gapped = append(gapped, event.Finished.Sub(event.Started))
@@ -358,8 +360,14 @@ func (w *rankOneSessionWatch) check(t *testing.T) {
 			changed = append(changed, change.Session)
 		}
 		for _, s := range changed {
-			if _, ok := w.sessions[sessionWatchKeyOf(s)]; !ok || event.Started.Before(since[s.ID]) {
-				t.Fatalf("session watch event %d changed or removed %+v before its client was evicted or closed: %+v", event.Sequence, s, event)
+			if _, ok := w.sessions[sessionWatchKeyOf(s)]; !ok {
+				t.Fatalf("session watch event %d changed or removed %+v, not a baseline session: %+v", event.Sequence, s, event)
+			}
+			switch sampleOrderOf(event.Started, event.Finished, since[s.ID]) {
+			case sampleBeforeAction:
+				t.Fatalf("session watch event %d changed or removed %+v in a sample completed before its client was evicted or closed: %+v", event.Sequence, s, event)
+			case sampleOverlapsAction:
+				overlapping++
 			}
 		}
 		for _, s := range event.Removed {
@@ -369,8 +377,36 @@ func (w *rankOneSessionWatch) check(t *testing.T) {
 			removed[sessionWatchKeyOf(s)] = true
 		}
 	}
-	t.Logf("CEPHFS_SESSION_WATCH rank1 takeover: %d events, %d gaps, rank 1 rebaselined at event %d; coherent reads %s, gap reads %s",
-		len(events), gaps, w.takeover.Sequence, readTimes(coherent), readTimes(gapped))
+	t.Logf("CEPHFS_SESSION_WATCH rank1 takeover: %d events, %d gaps, rank 1 rebaselined at event %d; %d session changes from samples overlapping their action; coherent reads %s, gap reads %s",
+		len(events), gaps, w.takeover.Sequence, overlapping, readTimes(coherent), readTimes(gapped))
+}
+
+// sampleOrder places a sample's read interval against the start of an action.
+type sampleOrder int
+
+const (
+	// sampleBeforeAction: the sample completed before the action started (or
+	// the action never started), so it cannot show the action's effect.
+	sampleBeforeAction sampleOrder = iota
+	// sampleOverlapsAction: the sample started before the action and completed
+	// after it began. Its roster and per-rank reads run across the action, so
+	// a later read may already show the effect.
+	sampleOverlapsAction
+	// sampleAfterAction: the sample started once the action had started.
+	sampleAfterAction
+)
+
+// sampleOrderOf places the sample read from started to finished against an
+// action that started at action; a zero action has not started.
+func sampleOrderOf(started, finished, action time.Time) sampleOrder {
+	switch {
+	case action.IsZero() || !finished.After(action):
+		return sampleBeforeAction
+	case started.Before(action):
+		return sampleOverlapsAction
+	default:
+		return sampleAfterAction
+	}
 }
 
 // readTimes renders the count, minimum, median and maximum of durations.

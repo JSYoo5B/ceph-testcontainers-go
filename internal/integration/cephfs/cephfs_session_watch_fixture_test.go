@@ -6,9 +6,34 @@ package cephfs_test
 
 import (
 	"testing"
+	"time"
 
 	cephfssession "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/session"
 )
+
+func TestSampleOrderOf(t *testing.T) {
+	action := time.Date(2026, 11, 6, 3, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) time.Time { return action.Add(d) }
+	for _, c := range []struct {
+		name              string
+		started, finished time.Time
+		action            time.Time
+		want              sampleOrder
+	}{
+		// The sample began just before the eviction, and its rank query saw
+		// the removal after the eviction had started.
+		{"overlapping", at(-300 * time.Millisecond), at(200 * time.Millisecond), action, sampleOverlapsAction},
+		{"after", at(time.Millisecond), at(400 * time.Millisecond), action, sampleAfterAction},
+		{"started with the action", action, at(400 * time.Millisecond), action, sampleAfterAction},
+		{"completed before", at(-500 * time.Millisecond), at(-time.Millisecond), action, sampleBeforeAction},
+		{"completed as the action started", at(-500 * time.Millisecond), action, action, sampleBeforeAction},
+		{"action not started", at(-500 * time.Millisecond), at(time.Second), time.Time{}, sampleBeforeAction},
+	} {
+		if got := sampleOrderOf(c.started, c.finished, c.action); got != c.want {
+			t.Errorf("%s: sampleOrderOf = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
 
 func TestListsOpenSessions(t *testing.T) {
 	session := func(rank int, id uint64, address string) cephfssession.Session {
