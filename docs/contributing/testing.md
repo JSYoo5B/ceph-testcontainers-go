@@ -249,7 +249,11 @@ binds the engine host's `/dev`. The test holds the key and passes it to
 node gets an `error` table, the mapping closes), checks that a start of the OSD
 fails, that a missing or wrong key is refused without a mapping or a header
 change, then unlocks with the right key and requires the original OSD ID, UUID,
-store, device number and acknowledged bytes. The OSD has no separate DB or WAL
+store, device number and acknowledged bytes. The release removes a mapping or
+loop only while it still has the DM UUID, device number or backing inode the
+test recorded when it created it, and keeps anything that only shares the
+test's name; `TestEncryptedBlockStoreKeepsACollidingMapping` creates such a
+mapping first and checks that it survives. The OSD has no separate DB or WAL
 device, so BlueFS shares the encrypted main device; the OSD data directory in
 its container (keyring, fsid, `block` link) is not encrypted. The key is an
 external test secret, not ceph-volume `--dmcrypt` provisioning or lockbox key
@@ -262,7 +266,7 @@ Outside the tag runner:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,osd_encrypted_store -count=1 -v -timeout=30m \
-  -run '^TestEncryptedBlockDeviceOSD$' ./internal/integration
+  -run '^TestEncryptedBlock(DeviceOSD|StoreKeepsACollidingMapping)$' ./internal/integration
 ```
 
 ### Running tests in parallel
