@@ -101,10 +101,12 @@ version listings.
    `Suspended`; each key is a single latest version with the non-null version
    ID returned while versioning was enabled; the DELETE writes a null delete
    marker.
-4. Effects: after every write a fresh signed GET reads the key. An accepted
-   write must read back its exact bytes, and a refused one must leave the key
-   unchanged (or absent); either violation fails the step at once as a
-   different defect. A wrong status fails the step, and the sequence goes on
+4. Effects: after every write a fresh signed GET reads the key, and a 200
+   must carry a quoted strong ETag, since the next `If-Match` step sends it
+   as its validator (`TestCondValidator` in the pure batch covers the
+   accepted forms). An accepted write must read back its exact bytes, and a
+   refused one must leave the key unchanged (or absent); either violation
+   fails the step at once as a different defect. A wrong status fails the step, and the sequence goes on
    from the state the GET shows.
 5. The final version listing must keep the version written while versioning
    was enabled, not latest, and show one latest null entry consistent with
@@ -128,7 +130,8 @@ version listings.
   `existing-if-match` (put) and at the multipart create-once control (the
   duplicate completion answers 200).
 - **Condition not established:** versioning does not read back as set, a key
-  has no non-null version ID, or the DELETE writes no null delete marker. The
+  has no non-null version ID, a GET answers 200 without a quoted strong ETag,
+  or the DELETE writes no null delete marker. The
   test fails with `condition not established`.
 
 ## Cleanup and limits

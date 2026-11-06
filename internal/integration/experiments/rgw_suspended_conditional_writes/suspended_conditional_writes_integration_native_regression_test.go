@@ -19,9 +19,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
-// condWrongETag is a well-formed ETag that no object written by the test has.
-const condWrongETag = `"00000000000000000000000000000000"`
-
 // condResult is the native answer to one conditional write.
 type condResult struct {
 	Code    int
@@ -54,7 +51,13 @@ func (c condCase) get(t *testing.T, path string) condObject {
 	r := c.signed(t, http.MethodGet, path, nil, nil)
 	switch {
 	case r.Code == http.StatusOK:
-		return condObject{Data: r.Body, ETag: r.Headers.Get("ETag"), VersionID: r.Headers.Get("X-Amz-Version-Id")}
+		etag := r.Headers.Get("ETag")
+		if !condValidator(etag) {
+			// Every If-Match step uses the ETag of the last GET, so a
+			// missing one would credit an unconditional write.
+			t.Fatalf("condition not established: fresh GET %s returned ETag %q, not a quoted strong validator", path, etag)
+		}
+		return condObject{Data: r.Body, ETag: etag, VersionID: r.Headers.Get("X-Amz-Version-Id")}
 	case r.Code == http.StatusNotFound && harness.RGWBackendErrorCode(r.Body) == "NoSuchKey":
 		return condObject{}
 	default:
