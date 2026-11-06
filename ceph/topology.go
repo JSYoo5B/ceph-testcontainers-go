@@ -840,10 +840,13 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 // launch.image, but does not wait for the MGR to register. With a
 // launch.release it first requires the image's ceph-mgr to report that
 // release, before any identity, key or MGR container exists, so that a
-// mismatched image never runs the daemon. The caller holds c.mu. The returned
-// MGR is nil when the error came before it was owned.
+// mismatched image never runs the daemon, and then creates the MGR container
+// from the image ID that passed that check rather than from launch.image, so
+// that a reference moved in between cannot run another image with the MGR key.
+// The handle keeps launch.image. The caller holds c.mu. The returned MGR is nil
+// when the error came before it was owned.
 func (t monitorTopology) startManager(ctx context.Context, name string, launch managerLaunch) (*ManagerContainer, error) {
-	image := launch.image
+	image, daemonImage := launch.image, launch.image
 	if t.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
@@ -872,7 +875,7 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 		return nil, fmt.Errorf("manager %s is already registered", name)
 	}
 	if launch.release != "" {
-		if err := t.probeManagerRelease(ctx, launch); err != nil {
+		if daemonImage, err = t.probeManagerRelease(ctx, launch); err != nil {
 			return nil, err
 		}
 	}
@@ -885,7 +888,7 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 	if err := t.osds.clearSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = t.runDaemon(ctx, image, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
+	mgr.Container, err = t.runDaemon(ctx, daemonImage, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
@@ -898,11 +901,11 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 }
 
 // probeManagerRelease requires the ceph-mgr of launch.image to report
-// launch.release. It runs ceph-mgr --version in a short-lived idle container of
-// the image that gets no keyring, cluster configuration or run directory, and
-// removes it; the cluster's owner label lets Terminate remove it when that
-// removal fails.
-func (t monitorTopology) probeManagerRelease(ctx context.Context, launch managerLaunch) (err error) {
+// launch.release and returns the ID of the image that reported it. It runs
+// ceph-mgr --version in a short-lived idle container of the image that gets no
+// keyring, cluster configuration or run directory, and removes it; the
+// cluster's owner label lets Terminate remove it when that removal fails.
+func (t monitorTopology) probeManagerRelease(ctx context.Context, launch managerLaunch) (imageID string, err error) {
 	probe, err := t.runDaemon(ctx, launch.image, t.osds.startup.ownedLabel(), WithIdleEntrypoint())
 	if probe != nil {
 		defer func() {
@@ -912,9 +915,19 @@ func (t monitorTopology) probeManagerRelease(ctx context.Context, launch manager
 		}()
 	}
 	if err != nil {
-		return fmt.Errorf("start MGR image release probe: %w", err)
+		return "", fmt.Errorf("start MGR image release probe: %w", err)
 	}
-	return checkManagerRelease(ctx, probe, launch.release)
+	if err := checkManagerRelease(ctx, probe, launch.release); err != nil {
+		return "", err
+	}
+	inspect, err := probe.Inspect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read MGR image release probe image ID: %w", err)
+	}
+	if inspect == nil || inspect.Image == "" {
+		return "", errors.New("read MGR image release probe image ID: Docker reported none")
+	}
+	return inspect.Image, nil
 }
 
 // checkManagerRelease requires the ceph-mgr of a container to report release.

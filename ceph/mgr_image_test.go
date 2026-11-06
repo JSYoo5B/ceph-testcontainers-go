@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -118,6 +119,10 @@ func TestManagerLaunchPrecedence(t *testing.T) {
 type mgrImageControl struct {
 	*noInitialManagerControl
 	registered []string
+	// imageIDs maps an image reference to the ID of the image it names, as
+	// the local Docker image store would; a test moves a reference by
+	// changing its entry.
+	imageIDs map[string]string
 }
 
 func (c *mgrImageControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -142,12 +147,12 @@ func (c *mgrImageControl) Exec(ctx context.Context, args []string, opts ...tcexe
 	return c.noInitialManagerControl.Exec(ctx, args, opts...)
 }
 
-// mgrImageDaemon is a container that the fixture started from image: a
-// release probe or a MGR daemon. It answers ceph-mgr --version with its
-// release.
+// mgrImageDaemon is a container that the fixture started from image, the
+// reference it was created with, which resolved to the image id: a release
+// probe or a MGR daemon. It answers ceph-mgr --version with its release.
 type mgrImageDaemon struct {
 	testcontainers.Container
-	image, release string
+	image, id, release string
 	// daemon is set when the container runs mgr.sh, and keyring when it
 	// receives a MGR keyring.
 	daemon, keyring bool
@@ -161,6 +166,10 @@ func (d *mgrImageDaemon) Exec(_ context.Context, args []string, _ ...tcexec.Proc
 		return 0, noInitialOSDStream(fmt.Sprintf("ceph version %s (0000000000000000000000000000000000000000) tentacle (stable)\n", d.release)), nil
 	}
 	return 1, noInitialOSDStream("unexpected MGR container command"), nil
+}
+
+func (d *mgrImageDaemon) Inspect(context.Context) (*container.InspectResponse, error) {
+	return &container.InspectResponse{Image: d.id}, nil
 }
 
 func (d *mgrImageDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
@@ -181,8 +190,10 @@ func mgrImageRequest(image string, opts []testcontainers.ContainerCustomizer) (t
 
 // mgrImageFixture is a cluster of the essential image "core" and the given
 // image set whose containers report the release that releases names for
-// their image (20.2.4 by default). started lists every container the cluster
-// started, probes and MGR daemons, in order.
+// their image ID (20.2.4 by default). A reference resolves through
+// control.imageIDs, by default to "sha256:" and the reference; a reference
+// that starts with "sha256:" is an ID. started lists every container the
+// cluster started, probes and MGR daemons, in order.
 func mgrImageFixture(t *testing.T, set ImageSet, releases map[string]string) (*Container, *mgrImageControl, *[]*mgrImageDaemon) {
 	t.Helper()
 	normalized, err := set.normalized()
@@ -190,7 +201,7 @@ func mgrImageFixture(t *testing.T, set ImageSet, releases map[string]string) (*C
 		t.Fatal(err)
 	}
 	cluster, base := noInitialManagerFixture()
-	control := &mgrImageControl{noInitialManagerControl: base}
+	control := &mgrImageControl{noInitialManagerControl: base, imageIDs: map[string]string{}}
 	cluster.Container = control
 	cluster.settings.essentialImage, cluster.settings.imageSet = normalized.Essential, &normalized
 	cluster.bootstrap.cephVersion = "20.2.4"
@@ -200,11 +211,21 @@ func mgrImageFixture(t *testing.T, set ImageSet, releases map[string]string) (*C
 		if err != nil {
 			return nil, err
 		}
-		release := releases[image]
+		id := control.imageIDs[image]
+		if id == "" {
+			id = image
+			if !strings.HasPrefix(image, "sha256:") {
+				id = "sha256:" + image
+			}
+		}
+		release := releases[id]
+		if release == "" {
+			release = releases[strings.TrimPrefix(id, "sha256:")]
+		}
 		if release == "" {
 			release = "20.2.4"
 		}
-		daemon := &mgrImageDaemon{image: image, release: release, daemon: slices.Contains(req.Entrypoint, "/tc/mgr.sh")}
+		daemon := &mgrImageDaemon{image: image, id: id, release: release, daemon: slices.Contains(req.Entrypoint, "/tc/mgr.sh")}
 		for _, file := range req.Files {
 			daemon.keyring = daemon.keyring || file.ContainerFilePath == "/etc/ceph/mgr.keyring"
 		}
@@ -252,8 +273,10 @@ func TestMGRImageAppliesToInitialAndAddedManagers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Each MGR of the slot image is preceded by its release probe; the
-	// override is not probed, and no MGR daemon runs a release check itself.
+	// Each MGR of the slot image is preceded by its release probe and is
+	// created from the image ID that the probe checked; the override is not
+	// probed and keeps its reference, and no MGR daemon runs a release check
+	// itself.
 	var sequence []string
 	for _, ctr := range *started {
 		kind := "probe:"
@@ -265,7 +288,7 @@ func TestMGRImageAppliesToInitialAndAddedManagers(t *testing.T) {
 		}
 		sequence = append(sequence, kind+ctr.image)
 	}
-	want := []string{"probe:official", "mgr:official", "probe:official", "mgr:official", "probe:official", "mgr:official", "mgr:per-daemon"}
+	want := []string{"probe:official", "mgr:sha256:official", "probe:official", "mgr:sha256:official", "probe:official", "mgr:sha256:official", "mgr:per-daemon"}
 	if !slices.Equal(sequence, want) {
 		t.Fatalf("started %v, want %v", sequence, want)
 	}
@@ -400,4 +423,75 @@ func (*missingMGRDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption
 func (d *missingMGRDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
 	d.terminations++
 	return nil
+}
+
+// A MGR image reference that moves to another image after its release probe,
+// as a rebuild or retag of a local image between the two Docker creates
+// would, does not change the image of the MGR daemon: the daemon is created
+// from the image ID that passed the probe, so the MGR key never reaches an
+// unchecked image, while the handle and the cluster facts keep the requested
+// reference.
+func TestMGRImageDaemonRunsTheProbedImage(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(fmt.Sprintf("initial=%t", initial), func(t *testing.T) {
+			cluster, control, started := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, map[string]string{"sha256:rebuilt": "19.2.5"})
+			probed := cluster.daemonRunner
+			cluster.daemonRunner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+				ctr, err := probed(ctx, image, opts...)
+				if daemon, ok := ctr.(*mgrImageDaemon); ok && !daemon.daemon {
+					control.imageIDs["official"] = "sha256:rebuilt"
+				}
+				return ctr, err
+			}
+			var mgr *ManagerContainer
+			var err error
+			if initial {
+				cluster.settings.managers = 1
+				err = cluster.startInitialManagers(t.Context())
+				mgr = cluster.members.roster.manager("a")
+			} else {
+				mgr, err = cluster.AddManager(t.Context(), "a")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			daemons, probes := mgrImageStarts(t, *started)
+			if len(probes) != 1 || probes[0].image != "official" || probes[0].id != "sha256:official" {
+				t.Fatalf("probes %+v", probes)
+			}
+			if len(daemons) != 1 || daemons[0].image != probes[0].id || daemons[0].id != "sha256:official" || !daemons[0].keyring {
+				t.Fatalf("the MGR daemon ran image %q (%q) after the probe checked %q", daemons[0].image, daemons[0].id, probes[0].id)
+			}
+			if mgr == nil || mgr.Image() != "official" {
+				t.Fatalf("handle %+v reports another image than requested", mgr)
+			}
+			facts, err := FactsOf(cluster)
+			if err != nil || facts.Images.MGR != "official" {
+				t.Fatalf("facts report MGR image %q: %v", facts.Images.MGR, err)
+			}
+		})
+	}
+}
+
+// A release probe that cannot report the image it ran refuses the MGR, since
+// the daemon could not be bound to the checked image.
+func TestMGRImageProbeWithoutImageIDRefusesTheManager(t *testing.T) {
+	cluster, control, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+	probe := &uninspectableMGRProbe{mgrImageDaemon{image: "official", release: "20.2.4"}}
+	cluster.daemonRunner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		return probe, nil
+	}
+	mgr, err := cluster.AddManager(t.Context(), "a")
+	if err == nil || !strings.Contains(err.Error(), "read MGR image release probe image ID") || mgr != nil {
+		t.Fatalf("a probe without an image ID admitted the MGR: %v %+v", err, mgr)
+	}
+	if probe.terminations != 1 || len(control.registered) != 0 {
+		t.Fatalf("probe terminations=%d keys %v", probe.terminations, control.registered)
+	}
+}
+
+type uninspectableMGRProbe struct{ mgrImageDaemon }
+
+func (*uninspectableMGRProbe) Inspect(context.Context) (*container.InspectResponse, error) {
+	return nil, errors.New("inspect refused")
 }

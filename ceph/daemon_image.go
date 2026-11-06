@@ -130,7 +130,9 @@ func (m *MonitorContainer) Image() string {
 
 // Image returns the image this MGR container was started from: the
 // DaemonOptions.WithImage override, or the cluster's MGR image,
-// ClusterFacts.Images.MGR.
+// ClusterFacts.Images.MGR, as the reference it was requested by. A MGR of a
+// cluster MGR image other than the essential image runs the image ID that its
+// release check accepted, which the reference may no longer name.
 //
 //purpose:observation
 func (m *ManagerContainer) Image() string {
