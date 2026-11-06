@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,54 +43,32 @@ const (
 
 // encEnv is one cluster whose only OSD runs on the keeper's linear node over
 // a LUKS2 crypt mapping. The key lives only in this process and reaches the
-// keeper on standard input. rec is what the test holds of the chain; pending
-// are keeper execs whose exit the test did not see.
+// keeper on standard input.
 type encEnv struct {
-	docker            *mobycl.Client
-	keeper            testcontainers.Container
-	node, crypt, file string
-	loop              string
-	rec               encChainRecord
-	pending           []string
-	baseline          []encNodeSeen // /dev/mapper before the run
-	cluster           *ceph.Container
-	osd               *ceph.OSDContainer
-	client            testcontainers.Container
-	device            faulthook.BlockDevice
+	*encKeeper
+	docker  *mobycl.Client
+	keeper  testcontainers.Container
+	file    string
+	loop    string
+	cluster *ceph.Container
+	osd     *ceph.OSDContainer
+	client  testcontainers.Container
+	device  faulthook.BlockDevice
 }
 
-// exec runs one keeper action and remembers an exec whose exit it did not see.
-func (e *encEnv) exec(ctx context.Context, input []byte, action string, args ...string) ([]byte, []byte, int, error) {
-	out, errOut, code, err := encExec(ctx, e.docker, e.keeper.GetContainerID(), input, append([]string{"python3", "-I", "-c", encKeeperScript, action}, args...)...)
-	var unsettled *encUnsettled
-	if errors.As(err, &unsettled) {
-		e.pending = append(e.pending, unsettled.ExecID)
-	}
-	return out, errOut, code, err
+// encDockerKeeper runs keeper actions as Docker execs in the keeper.
+type encDockerKeeper struct {
+	docker *mobycl.Client
+	id     string
 }
 
-// try runs one keeper action with input as its standard input and returns
-// its receipt, or why there is none.
-func (e *encEnv) try(ctx context.Context, input []byte, action string, args ...string) (encReply, error) {
-	out, errOut, code, err := e.exec(ctx, input, action, args...)
-	if err != nil || code != 0 {
-		return encReply{}, fmt.Errorf("keeper %s: exit %d %w: %s %s", action, code, err, out, errOut)
-	}
-	r, err := parseEncReply(out, action)
-	if err != nil {
-		return r, fmt.Errorf("%w: %s", err, out)
-	}
-	return r, nil
+func (k encDockerKeeper) Run(ctx context.Context, input []byte, action string, args ...string) ([]byte, []byte, int, error) {
+	return encExec(ctx, k.docker, k.id, input, append([]string{"python3", "-I", "-c", encKeeperScript, action}, args...)...)
 }
 
-// do is try that fails the test unless the keeper printed a receipt.
-func (e *encEnv) do(t *testing.T, ctx context.Context, input []byte, action string, args ...string) encReply {
-	t.Helper()
-	r, err := e.try(ctx, input, action, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
+func (k encDockerKeeper) Running(ctx context.Context, execID string) (bool, error) {
+	inspected, err := k.docker.ExecInspect(ctx, execID, mobycl.ExecInspectOptions{})
+	return err == nil && inspected.Running, err
 }
 
 // encExec runs argv in a container with input written to its standard input,
@@ -137,38 +114,6 @@ func (s encHijacked) Read(p []byte) (int, error)  { return s.h.Reader.Read(p) }
 func (s encHijacked) Write(p []byte) (int, error) { return s.h.Conn.Write(p) }
 func (s encHijacked) CloseWrite() error           { return s.h.CloseWrite() }
 func (s encHijacked) Close() error                { return s.h.Conn.Close() }
-
-// settle waits, within ctx and at most a minute, for every unsettled keeper
-// exec to exit, and reports whether all of them did.
-func (e *encEnv) settle(ctx context.Context) (bool, string) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	states := make([]encExecState, 0, len(e.pending))
-	for _, id := range e.pending {
-		s := encExecState{ID: id, Running: true}
-		for s.Running && s.Err == "" {
-			inspected, err := e.docker.ExecInspect(ctx, id, mobycl.ExecInspectOptions{})
-			switch {
-			case err != nil:
-				s.Err = err.Error()
-			case !inspected.Running:
-				s.Running = false
-			default:
-				select {
-				case <-ctx.Done():
-					s.Err = "still running at the deadline"
-				case <-time.After(time.Second):
-				}
-			}
-		}
-		states = append(states, s)
-	}
-	ok, detail := judgeEncSettled(states)
-	if ok {
-		e.pending = nil
-	}
-	return ok, detail
-}
 
 // encOSDMapEntry is the OSD's row of the OSDMap.
 type encOSDMapEntry struct {
@@ -426,45 +371,6 @@ func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attach
 	return out
 }
 
-// unlinkNodes unlinks the /dev/mapper nodes of mappings the test removed,
-// which a removal by DM UUID leaves behind, and then requires /dev/mapper to
-// hold no stale node.
-func (e *encEnv) unlinkNodes(ctx context.Context, removed []encNode) (map[string]any, error) {
-	out := map[string]any{"removed_mappings": removed}
-	before, err := e.try(ctx, nil, "nodes", "-")
-	if err != nil {
-		return out, err
-	}
-	unlink, refused := judgeEncNodeRemoval(removed, before.Nodes)
-	out["refused"] = refused
-	if len(unlink) > 0 {
-		r, err := e.try(ctx, nil, "unnode", encUnnodeArgs(unlink)...)
-		out["unnode"] = r.Unnode
-		if err != nil {
-			return out, err
-		}
-		for _, u := range r.Unnode {
-			if u.Outcome != "removed" && u.Outcome != "gone" {
-				refused = append(refused, u.Name+": "+u.Outcome+" "+u.Error)
-			}
-		}
-	}
-	after, err := e.try(ctx, nil, "nodes", "-")
-	if err != nil {
-		return out, err
-	}
-	out["after"] = after.Nodes
-	clean, detail := judgeEncNodesClean([]string{e.node, e.crypt}, e.baseline, after.Nodes)
-	out["clean"] = detail
-	switch {
-	case len(refused) > 0:
-		return out, fmt.Errorf("nodes kept: %s; %s", strings.Join(refused, "; "), detail)
-	case !clean:
-		return out, errors.New(detail)
-	}
-	return out, nil
-}
-
 func encDash(s string) string {
 	if s == "" {
 		return "-"
@@ -503,7 +409,11 @@ func startEncKeeper(t *testing.T, ctx context.Context, keeperImage string) (*enc
 			h.NetworkMode = "none"
 		}))
 	name := "tcenc-" + hex.EncodeToString(encRandom(t, 4))
-	e := &encEnv{docker: docker.Client, keeper: keeper, node: name, crypt: name + "-crypt", file: encKeeperDir + "/" + name}
+	id := ""
+	if keeper != nil {
+		id = keeper.GetContainerID()
+	}
+	e := &encEnv{encKeeper: newEncKeeper(encDockerKeeper{docker: docker.Client, id: id}, name), docker: docker.Client, keeper: keeper, file: encKeeperDir + "/" + name}
 	if keeper != nil {
 		t.Cleanup(func() {
 			if e.rec.held() || len(e.pending) > 0 {
@@ -845,29 +755,15 @@ func TestEncryptedBlockStoreKeepsACollidingMapping(t *testing.T) {
 			uuid := "TC-ENC-COLLIDE-" + hex.EncodeToString(encRandom(t, 4))
 			// Cleanups run in reverse: the chain's release, then the
 			// colliding mapping, then the keeper. The colliding mapping is
-			// found by its UUID, so it is removed even when its creation
-			// receipt was lost or could not be read back.
+			// found by its UUID once no keeper exec may still be running, so
+			// it is removed even when its creation receipt was lost.
 			t.Cleanup(func() {
-				cleanup, done := context.WithTimeout(context.Background(), time.Minute)
+				cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer done()
-				seen, err := e.try(cleanup, nil, "observe", name, uuid, e.crypt+"-unused", "-", "-")
-				switch {
-				case err != nil || seen.SeenNode == nil || seen.SeenNode.Error != "":
-					t.Errorf("the colliding mapping %s could not be inspected; kept: %v %+v", uuid, err, seen.SeenNode)
-					return
-				case !seen.SeenNode.Exists:
-					return
-				}
-				number := seen.SeenNode.Number
-				r, err := e.try(cleanup, nil, "remove", uuid, number, "-", "-", "-", "-", "-", "-", "-")
-				if err != nil || r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
-					t.Errorf("remove the colliding mapping %s: %v %+v", uuid, err, r.ReleaseNode)
-					return
-				}
-				nodes, err := e.unlinkNodes(cleanup, []encNode{{Name: name, Number: number}})
-				t.Logf("ENCRYPTED_STORE_COLLISION_NODES %s", encJSON(nodes))
+				out, err := e.removeForeign(cleanup, name, uuid)
+				t.Logf("ENCRYPTED_STORE_COLLISION_CLEANUP %s", encJSON(out))
 				if err != nil {
-					t.Errorf("the colliding mapping's node: %v", err)
+					t.Error(err)
 				}
 			})
 			theirs := e.do(t, ctx, nil, "foreign", name, uuid)

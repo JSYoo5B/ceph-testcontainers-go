@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -759,5 +761,142 @@ func TestEncAcquisitionKeepsTheUUIDOfAnUninspectedStep(t *testing.T) {
 	}
 	if rec, why := encNodeAcquired(encReply{Action: "linear", RC: encIntPtr(0), LookupError: "dmsetup info: permission denied"}, "TC-ENC-n-1"); rec != (encDMRecord{UUID: "TC-ENC-n-1"}) || why == "" {
 		t.Errorf("an uninspected create: %+v %q", rec, why)
+	}
+}
+
+// encFakeHost is an engine host's device-mapper state as the cleanup paths
+// see it through the keeper: mappings by DM UUID, /dev/mapper block nodes by
+// name, and keeper execs. A removal by UUID leaves the node, as it does
+// without udev. A "foreign" create loses its receipt and lands only when the
+// test closes land, so the test decides when the remote create finishes.
+type encFakeHost struct {
+	mu       sync.Mutex
+	mappings map[string][2]string // UUID -> name, number
+	nodes    map[string]string    // name -> number
+	running  map[string]bool
+	observed int
+	land     chan struct{}
+	landed   chan struct{}
+	polled   chan struct{}
+	pollOnce sync.Once
+}
+
+func newEncFakeHost() *encFakeHost {
+	return &encFakeHost{mappings: map[string][2]string{}, nodes: map[string]string{}, running: map[string]bool{},
+		land: make(chan struct{}), landed: make(chan struct{}), polled: make(chan struct{})}
+}
+
+func (h *encFakeHost) Running(_ context.Context, id string) (bool, error) {
+	h.pollOnce.Do(func() { close(h.polled) })
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running[id], nil
+}
+
+func (h *encFakeHost) Run(_ context.Context, _ []byte, action string, args ...string) ([]byte, []byte, int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := encReply{Action: action}
+	switch action {
+	case "foreign":
+		name, uuid := args[0], args[1]
+		h.running["exec-1"] = true
+		go func() {
+			<-h.land
+			h.mu.Lock()
+			h.mappings[uuid], h.nodes[name] = [2]string{name, "252:7"}, "252:7"
+			h.running["exec-1"] = false
+			h.mu.Unlock()
+			close(h.landed)
+		}()
+		return nil, nil, -1, &encUnsettled{ExecID: "exec-1", Err: errors.New("exec stream closed: context deadline exceeded")}
+	case "observe":
+		h.observed++
+		m, ok := h.mappings[args[1]]
+		r.SeenNode = &encDMSeen{Exists: ok}
+		if ok {
+			r.SeenNode.Name, r.SeenNode.UUID, r.SeenNode.Number, r.SeenNode.Table = m[0], args[1], m[1], "0 1 error"
+		}
+	case "remove":
+		r.ReleaseNode = &encOutcome{Outcome: "gone"}
+		if m, ok := h.mappings[args[0]]; ok && m[1] == args[1] {
+			delete(h.mappings, args[0])
+			r.ReleaseNode.Outcome = "removed"
+		}
+	case "nodes":
+		for name, number := range h.nodes {
+			n := encNodeSeen{Name: name, Kind: "block", Number: number}
+			for _, m := range h.mappings {
+				if m[1] == number {
+					n.Live, n.DMName = true, m[0]
+				}
+			}
+			r.Nodes = append(r.Nodes, n)
+		}
+	case "unnode":
+		for i := 0; i+1 < len(args); i += 2 {
+			o := encOutcome{Name: args[i], Outcome: "gone"}
+			if number, ok := h.nodes[args[i]]; ok && number == args[i+1] {
+				delete(h.nodes, args[i])
+				o.Outcome = "removed"
+			}
+			r.Unnode = append(r.Unnode, o)
+		}
+	default:
+		return nil, []byte("fake host: unexpected action " + action), 2, nil
+	}
+	data, _ := json.Marshal(r)
+	return data, nil, 0, nil
+}
+
+func TestEncRemoveForeignWaitsForACreateWhoseReceiptWasLost(t *testing.T) {
+	host := newEncFakeHost()
+	k := newEncKeeper(host, "n")
+	k.settlePoll = time.Millisecond
+	if _, err := k.try(t.Context(), nil, "foreign", "n", "TC-ENC-COLLIDE-1"); err == nil || len(k.pending) != 1 {
+		t.Fatalf("the create's lost receipt: %v, pending %v", err, k.pending)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := k.removeForeign(t.Context(), "n", "TC-ENC-COLLIDE-1")
+		done <- err
+	}()
+	var err error
+	select {
+	case <-host.polled:
+		// The cleanup is waiting for the exec: let the create land now.
+		close(host.land)
+		err = <-done
+	case err = <-done:
+		// The cleanup decided without waiting; the create lands after it.
+		close(host.land)
+		<-host.landed
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if err != nil || len(host.mappings) != 0 || len(host.nodes) != 0 || len(k.pending) != 0 {
+		t.Fatalf("after the cleanup: err %v, mappings %v, nodes %v, pending %v", err, host.mappings, host.nodes, k.pending)
+	}
+}
+
+func TestEncRemoveForeignKeepsTheUUIDWhileTheCreateMayRun(t *testing.T) {
+	host := newEncFakeHost()
+	defer close(host.land)
+	k := newEncKeeper(host, "n")
+	// The create never lands within the budget: a poll interval far beyond
+	// it makes the deadline, not a sleep, end the wait.
+	k.settleBudget, k.settlePoll = time.Millisecond, time.Hour
+	if _, err := k.try(t.Context(), nil, "foreign", "n", "TC-ENC-COLLIDE-1"); err == nil {
+		t.Fatal("the create's receipt was not lost")
+	}
+	out, err := k.removeForeign(t.Context(), "n", "TC-ENC-COLLIDE-1")
+	host.mu.Lock()
+	observed := host.observed
+	host.mu.Unlock()
+	if err == nil || !strings.Contains(err.Error(), "TC-ENC-COLLIDE-1 is kept") || out["unsettled"] == nil {
+		t.Errorf("an inconclusive wait: %v %v", err, out)
+	}
+	if observed != 0 || !slices.Equal(k.pending, []string{"exec-1"}) {
+		t.Errorf("observed %d times while the create may run; pending %v", observed, k.pending)
 	}
 }

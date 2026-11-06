@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 )
@@ -1161,4 +1164,177 @@ func judgeEncNodesClean(names []string, baseline, after []encNodeSeen) (bool, st
 		return false, "this run left " + strings.Join(left, ", ") + "; " + detail
 	}
 	return true, "nothing of this run left; " + detail
+}
+
+// encKeeperRunner runs one keeper action and reports whether an exec it
+// started is still running. A run whose exit it did not see returns an
+// *encUnsettled. The keeper container runs actions as Docker execs; the
+// regression tests of the cleanup paths use a small in-memory host.
+type encKeeperRunner interface {
+	Run(ctx context.Context, input []byte, action string, args ...string) ([]byte, []byte, int, error)
+	Running(ctx context.Context, execID string) (bool, error)
+}
+
+// encKeeper is the test's side of the keeper: the run's mapping names, what
+// the test holds of its chain, the keeper execs whose exit it did not see and
+// the /dev/mapper baseline taken before the run.
+type encKeeper struct {
+	runner      encKeeperRunner
+	node, crypt string
+	rec         encChainRecord
+	pending     []string
+	baseline    []encNodeSeen
+	// settleBudget bounds a wait for unsettled execs; settlePoll is the
+	// interval between two inspections of one.
+	settleBudget, settlePoll time.Duration
+}
+
+func newEncKeeper(runner encKeeperRunner, name string) *encKeeper {
+	return &encKeeper{runner: runner, node: name, crypt: name + "-crypt", settleBudget: time.Minute, settlePoll: time.Second}
+}
+
+// exec runs one keeper action and remembers an exec whose exit it did not see.
+func (k *encKeeper) exec(ctx context.Context, input []byte, action string, args ...string) ([]byte, []byte, int, error) {
+	out, errOut, code, err := k.runner.Run(ctx, input, action, args...)
+	var unsettled *encUnsettled
+	if errors.As(err, &unsettled) {
+		k.pending = append(k.pending, unsettled.ExecID)
+	}
+	return out, errOut, code, err
+}
+
+// try runs one keeper action with input as its standard input and returns
+// its receipt, or why there is none.
+func (k *encKeeper) try(ctx context.Context, input []byte, action string, args ...string) (encReply, error) {
+	out, errOut, code, err := k.exec(ctx, input, action, args...)
+	if err != nil || code != 0 {
+		return encReply{}, fmt.Errorf("keeper %s: exit %d %w: %s %s", action, code, err, out, errOut)
+	}
+	r, err := parseEncReply(out, action)
+	if err != nil {
+		return r, fmt.Errorf("%w: %s", err, out)
+	}
+	return r, nil
+}
+
+// do is try that fails the test unless the keeper printed a receipt.
+func (k *encKeeper) do(t *testing.T, ctx context.Context, input []byte, action string, args ...string) encReply {
+	t.Helper()
+	r, err := k.try(ctx, input, action, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// settle waits, within ctx and the settle budget, for every unsettled keeper
+// exec to exit, and reports whether all of them did. Every observation that
+// a cleanup decides on comes after it: while an exec may still be running,
+// what it creates or removes can still change.
+func (k *encKeeper) settle(ctx context.Context) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, k.settleBudget)
+	defer cancel()
+	states := make([]encExecState, 0, len(k.pending))
+	for _, id := range k.pending {
+		s := encExecState{ID: id, Running: true}
+		for s.Running && s.Err == "" {
+			running, err := k.runner.Running(ctx, id)
+			switch {
+			case err != nil:
+				s.Err = err.Error()
+			case !running:
+				s.Running = false
+			default:
+				select {
+				case <-ctx.Done():
+					s.Err = "still running at the deadline"
+				case <-time.After(k.settlePoll):
+				}
+			}
+		}
+		states = append(states, s)
+	}
+	ok, detail := judgeEncSettled(states)
+	if ok {
+		k.pending = nil
+	}
+	return ok, detail
+}
+
+// unlinkNodes unlinks the /dev/mapper nodes of mappings the test removed,
+// which a removal by DM UUID leaves behind, and then requires /dev/mapper to
+// hold nothing of this run. It looks only once no keeper exec may still run.
+func (k *encKeeper) unlinkNodes(ctx context.Context, removed []encNode) (map[string]any, error) {
+	out := map[string]any{"removed_mappings": removed}
+	if ok, detail := k.settle(ctx); !ok {
+		out["unsettled"] = detail
+		return out, fmt.Errorf("nodes not inspected while a keeper exec may still run: %s", detail)
+	}
+	before, err := k.try(ctx, nil, "nodes", "-")
+	if err != nil {
+		return out, err
+	}
+	unlink, refused := judgeEncNodeRemoval(removed, before.Nodes)
+	out["refused"] = refused
+	if len(unlink) > 0 {
+		r, err := k.try(ctx, nil, "unnode", encUnnodeArgs(unlink)...)
+		out["unnode"] = r.Unnode
+		if err != nil {
+			return out, err
+		}
+		for _, u := range r.Unnode {
+			if u.Outcome != "removed" && u.Outcome != "gone" {
+				refused = append(refused, u.Name+": "+u.Outcome+" "+u.Error)
+			}
+		}
+	}
+	after, err := k.try(ctx, nil, "nodes", "-")
+	if err != nil {
+		return out, err
+	}
+	out["after"] = after.Nodes
+	clean, detail := judgeEncNodesClean([]string{k.node, k.crypt}, k.baseline, after.Nodes)
+	out["clean"] = detail
+	switch {
+	case len(refused) > 0:
+		return out, fmt.Errorf("nodes kept: %s; %s", strings.Join(refused, "; "), detail)
+	case !clean:
+		return out, errors.New(detail)
+	}
+	return out, nil
+}
+
+// removeForeign removes the colliding mapping that the collision control
+// created under name with DM UUID uuid, and its node. Its creation may have
+// lost its receipt while the create still ran in the keeper, so it waits for
+// unsettled execs before it looks: an observation during that create could
+// see an absence just before the mapping appears. While that wait is
+// inconclusive, or the mapping cannot be inspected, the UUID is kept and
+// reported, never concluded absent.
+func (k *encKeeper) removeForeign(ctx context.Context, name, uuid string) (map[string]any, error) {
+	out := map[string]any{"uuid": uuid}
+	if ok, detail := k.settle(ctx); !ok {
+		out["unsettled"] = detail
+		return out, fmt.Errorf("the colliding mapping %s is kept: %s", uuid, detail)
+	}
+	seen, err := k.try(ctx, nil, "observe", name, uuid, k.crypt+"-unused", "-", "-")
+	switch {
+	case err != nil || seen.SeenNode == nil || seen.SeenNode.Error != "":
+		return out, fmt.Errorf("the colliding mapping %s could not be inspected; kept: %v %+v", uuid, err, seen.SeenNode)
+	case !seen.SeenNode.Exists:
+		out["outcome"] = "absent"
+		return out, nil
+	}
+	number := seen.SeenNode.Number
+	r, err := k.try(ctx, nil, "remove", uuid, number, "-", "-", "-", "-", "-", "-", "-")
+	out["removed"] = r.ReleaseNode
+	if err != nil || r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
+		return out, fmt.Errorf("remove the colliding mapping %s: %v %+v", uuid, err, r.ReleaseNode)
+	}
+	nodes, err := k.unlinkNodes(ctx, []encNode{{Name: name, Number: number}})
+	out["nodes"] = nodes
+	if err != nil {
+		return out, fmt.Errorf("the colliding mapping's node: %w", err)
+	}
+	return out, nil
 }
