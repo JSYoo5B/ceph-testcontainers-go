@@ -10,6 +10,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -532,5 +535,218 @@ func TestEncNodesUnlinkOnlyTheRemovedMappingsStaleNode(t *testing.T) {
 		if ok, _ := judgeEncNodesClean([]string{"n", "n-crypt"}, append(slices.Clone(host), s)); ok {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// encFakeDM is a dmsetup, cryptsetup and losetup on PATH that answer each
+// call of a kind with the next scripted reply (info: "ok NAME|UUID|MAJ|MIN|OPEN",
+// "absent" or "denied"; remove and create: "ok", "busy" or "exists"), so
+// that the keeper script runs as it does in the keeper, against kernel
+// answers that a real host gives only by accident. The script's /sys and
+// /dev/mapper reads go to an empty directory. It runs the keeper script
+// itself, unchanged.
+type encFakeDM struct {
+	t    *testing.T
+	dir  string
+	root string
+}
+
+const encFakeTool = `#!/bin/sh
+dir=$(dirname "$0")
+kind=other
+for a in "$@"; do
+  case "$a" in info|remove|create|table|suspend|load|resume) kind=$a; break;; esac
+done
+echo "$(basename "$0") $*" >> "$dir/calls"
+next() {
+  f="$dir/$1"
+  [ -s "$f" ] || { echo "fake: no scripted $1 reply" >&2; exit 99; }
+  line=$(head -n 1 "$f"); tail -n +2 "$f" > "$f.t"; mv "$f.t" "$f"
+  echo "$line"
+}
+case "$(basename "$0")" in
+dmsetup) ;;
+blockdev) echo 1048576; exit 0;;
+*) exit 0;;
+esac
+case $kind in
+info)
+  r=$(next info) || exit 99
+  case "$r" in
+  ok\ *) echo "${r#ok }";;
+  absent) echo "Device does not exist." >&2; echo "Command failed." >&2; exit 1;;
+  *) echo "/dev/mapper/control: open failed: Permission denied" >&2; exit 1;;
+  esac;;
+remove|create)
+  r=$(next $kind) || exit 99
+  case "$r" in
+  ok) ;;
+  exists) echo "device-mapper: create ioctl failed: Device or resource busy" >&2; exit 1;;
+  *) echo "device-mapper: remove ioctl failed: Device or resource busy" >&2; exit 1;;
+  esac;;
+table) echo "0 8 linear 252:4 0";;
+esac
+`
+
+// encFakeKeeperPrelude redirects the script's /dev/mapper and /sys reads to
+// an empty directory and runs it with the remaining arguments.
+const encFakeKeeperPrelude = `import builtins, os, sys, time
+root = os.environ["ENC_FAKE_ROOT"]
+def tr(p):
+    p = os.fspath(p) if not isinstance(p, int) else p
+    if isinstance(p, str) and (p.startswith("/dev/mapper") or p.startswith("/sys/")):
+        return root + p
+    return p
+for name in ("stat", "lstat", "listdir", "unlink"):
+    f = getattr(os, name)
+    setattr(os, name, (lambda f: lambda p, *a, **k: f(tr(p), *a, **k))(f))
+_open = builtins.open
+builtins.open = lambda p, *a, **k: _open(tr(p), *a, **k)
+time.sleep = lambda s: None
+script = _open(sys.argv[1]).read()
+sys.argv = ["keeper"] + sys.argv[2:]
+exec(compile(script, "keeper", "exec"), {"__name__": "__main__"})
+`
+
+func newEncFakeDM(t *testing.T) *encFakeDM {
+	t.Helper()
+	dir, root := t.TempDir(), t.TempDir()
+	for _, tool := range []string{"dmsetup", "cryptsetup", "losetup", "blockdev"} {
+		if err := os.WriteFile(filepath.Join(dir, tool), []byte(encFakeTool), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range []string{"dev/mapper", "sys/dev/block/252:5/holders", "sys/dev/block/252:4/holders"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &encFakeDM{t: t, dir: dir, root: root}
+}
+
+// script queues the replies of one kind of dmsetup call.
+func (f *encFakeDM) script(kind string, replies ...string) {
+	f.t.Helper()
+	if err := os.WriteFile(filepath.Join(f.dir, kind), []byte(strings.Join(replies, "\n")+"\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// run runs one keeper action and returns its receipt.
+func (f *encFakeDM) run(action string, args ...string) encReply {
+	f.t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		f.t.Fatal("the keeper script regression tests need python3:", err)
+	}
+	scriptPath, preludePath := filepath.Join(f.dir, "keeper.py"), filepath.Join(f.dir, "prelude.py")
+	for path, data := range map[string]string{scriptPath: encKeeperScript, preludePath: encFakeKeeperPrelude} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	cmd := exec.CommandContext(f.t.Context(), python, append([]string{"-I", preludePath, scriptPath, action}, args...)...)
+	cmd.Env = []string{"PATH=" + f.dir + string(os.PathListSeparator) + "/usr/bin:/bin", "ENC_FAKE_ROOT=" + f.root}
+	out, err := cmd.Output()
+	if err != nil {
+		var stderr []byte
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			stderr = ee.Stderr
+		}
+		f.t.Fatalf("keeper %s: %v: %s %s", action, err, out, stderr)
+	}
+	r, err := parseEncReply(out, action)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return r
+}
+
+func TestEncKeeperKeepsAMappingWhoseLookupFailed(t *testing.T) {
+	const live = "ok n|TC-ENC-n-1|252|5|0"
+
+	t.Run("failed remove, then failed inspection", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", live, "denied")
+		f.script("remove", "busy")
+		r := f.run("remove", "TC-ENC-n-1", "252:5", "-", "-", "-", "-", "-", "-", "-")
+		if r.ReleaseNode == nil || r.ReleaseNode.Outcome != "unknown" {
+			t.Fatalf("release of a mapping that could not be inspected: %+v", r.ReleaseNode)
+		}
+		rec, seen := encChainFixture()
+		own := judgeEncOwnership(rec, seen)
+		if left := encReleased(rec, own, r); left.Node != rec.Node {
+			t.Errorf("the record was cleared: %+v", left.Node)
+		}
+		if nodes := encRemovedNodes(rec, own, r, "n", "n-crypt"); len(nodes) != 0 {
+			t.Errorf("the node of a mapping that may exist was offered for unlinking: %v", nodes)
+		}
+	})
+	t.Run("failed remove, then confirmed absence", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", live, "absent")
+		f.script("remove", "busy")
+		if r := f.run("remove", "TC-ENC-n-1", "252:5", "-", "-", "-", "-", "-", "-", "-"); r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
+			t.Fatalf("a mapping confirmed absent: %+v", r.ReleaseNode)
+		}
+	})
+	t.Run("inspection fails before the remove", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "denied")
+		if r := f.run("remove", "TC-ENC-n-1", "252:5", "-", "-", "-", "-", "-", "-", "-"); r.ReleaseNode == nil || r.ReleaseNode.Outcome != "unknown" {
+			t.Fatalf("an uninspected mapping: %+v", r.ReleaseNode)
+		}
+	})
+	t.Run("close", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "ok n-crypt|CRYPT-LUKS2-aa-n-crypt|252|4|0", "denied")
+		f.script("remove", "busy")
+		if r := f.run("close", "CRYPT-LUKS2-aa-n-crypt", "252:4"); r.Closed || r.Error == "" {
+			t.Fatalf("close of a mapping that could not be inspected: %+v", r)
+		}
+	})
+	t.Run("retarget", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "denied")
+		if r := f.run("retarget", "TC-ENC-n-1", "252:5", "error"); r.Error == "" || len(r.Table) != 0 {
+			t.Fatalf("retarget of an uninspected node: %+v", r)
+		}
+	})
+	t.Run("linear lookup after the create", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "ok n-crypt|CRYPT-LUKS2-aa-n-crypt|252|4|1", "denied")
+		f.script("create", "ok")
+		r := f.run("linear", "n", "TC-ENC-n-1", "CRYPT-LUKS2-aa-n-crypt", "252:4")
+		if r.LookupError == "" {
+			t.Fatalf("a create whose node could not be inspected: %+v", r)
+		}
+	})
+	t.Run("open lookup", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "denied", "denied")
+		r := f.run("open", "/dev/loop3", "n-crypt")
+		if r.LookupError == "" {
+			t.Fatalf("an open whose mapping could not be inspected: %+v", r)
+		}
+	})
+	t.Run("collision control mapping", func(t *testing.T) {
+		f := newEncFakeDM(t)
+		f.script("info", "denied")
+		f.script("create", "ok")
+		if r := f.run("foreign", "n", "TC-ENC-COLLIDE-1"); r.LookupError == "" {
+			t.Fatalf("a colliding mapping that could not be inspected: %+v", r)
+		}
+	})
+}
+
+func TestEncAcquisitionKeepsTheUUIDOfAnUninspectedStep(t *testing.T) {
+	luks := "0e1c1f9a-1111-2222-3333-444455556666"
+	loop := encLoopRecord{Loop: "/dev/loop3", Number: "7:3", BackDev: "0:51", Inode: 2}
+	r := encReply{Action: "open", RC: encIntPtr(0), LookupError: "dmsetup info: permission denied"}
+	if rec, why := encCryptAcquired(r, luks, "n-crypt", loop); rec != (encDMRecord{UUID: encCryptDMUUID(luks, "n-crypt")}) || why == "" {
+		t.Errorf("an uninspected open: %+v %q", rec, why)
+	}
+	if rec, why := encNodeAcquired(encReply{Action: "linear", RC: encIntPtr(0), LookupError: "dmsetup info: permission denied"}, "TC-ENC-n-1"); rec != (encDMRecord{UUID: "TC-ENC-n-1"}) || why == "" {
+		t.Errorf("an uninspected create: %+v %q", rec, why)
 	}
 }

@@ -841,26 +841,37 @@ func TestEncryptedBlockStoreKeepsACollidingMapping(t *testing.T) {
 				name = e.crypt
 			}
 			uuid := "TC-ENC-COLLIDE-" + hex.EncodeToString(encRandom(t, 4))
-			theirs := e.do(t, ctx, nil, "foreign", name, uuid)
-			if theirs.RC == nil || *theirs.RC != 0 || theirs.UUID != uuid || theirs.Number == "" {
-				t.Fatalf("colliding mapping: %+v", theirs)
-			}
 			// Cleanups run in reverse: the chain's release, then the
-			// colliding mapping, then the keeper.
+			// colliding mapping, then the keeper. The colliding mapping is
+			// found by its UUID, so it is removed even when its creation
+			// receipt was lost or could not be read back.
 			t.Cleanup(func() {
 				cleanup, done := context.WithTimeout(context.Background(), time.Minute)
 				defer done()
-				r, err := e.try(cleanup, nil, "remove", uuid, theirs.Number, "-", "-", "-", "-", "-", "-", "-")
+				seen, err := e.try(cleanup, nil, "observe", name, uuid, e.crypt+"-unused", "-", "-")
+				switch {
+				case err != nil || seen.SeenNode == nil || seen.SeenNode.Error != "":
+					t.Errorf("the colliding mapping %s could not be inspected; kept: %v %+v", uuid, err, seen.SeenNode)
+					return
+				case !seen.SeenNode.Exists:
+					return
+				}
+				number := seen.SeenNode.Number
+				r, err := e.try(cleanup, nil, "remove", uuid, number, "-", "-", "-", "-", "-", "-", "-")
 				if err != nil || r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
 					t.Errorf("remove the colliding mapping %s: %v %+v", uuid, err, r.ReleaseNode)
 					return
 				}
-				nodes, err := e.unlinkNodes(cleanup, []encNode{{Name: name, Number: theirs.Number}})
+				nodes, err := e.unlinkNodes(cleanup, []encNode{{Name: name, Number: number}})
 				t.Logf("ENCRYPTED_STORE_COLLISION_NODES %s", encJSON(nodes))
 				if err != nil {
 					t.Errorf("the colliding mapping's node: %v", err)
 				}
 			})
+			theirs := e.do(t, ctx, nil, "foreign", name, uuid)
+			if theirs.RC == nil || *theirs.RC != 0 || theirs.UUID != uuid || theirs.Number == "" {
+				t.Fatalf("colliding mapping: %s", encJSON(theirs))
+			}
 			t.Cleanup(func() {
 				cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer done()

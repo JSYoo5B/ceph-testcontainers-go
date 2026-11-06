@@ -84,6 +84,7 @@ def mapping(*select):
     return {"exists": True, "name": f[0], "uuid": f[1], "number": "%s:%s" % (f[2], f[3]), "open": int(f[4])}
 
 def exists(name):
+    # Only for observations: an unreadable answer counts as not present.
     return mapping(name)["exists"]
 
 def opened(name):
@@ -104,17 +105,24 @@ def redact(table):
     return " ".join(f)
 
 def owned(uuid, num):
-    # The mapping with DM UUID uuid while it still has number num; otherwise
-    # why not. A UUID is unique on the host, the number tells a mapping
-    # created again under the same UUID.
+    # The mapping with DM UUID uuid while it still has number num, or None
+    # and why not: "gone" when its absence is confirmed, "unknown: ..." when
+    # it could not be inspected (never an absence), else the identity change.
+    # A UUID is unique on the host, the number tells a mapping created again
+    # under the same UUID.
     m = mapping("-u", uuid)
     if m.get("error"):
-        return None, m["error"]
+        return None, "unknown: " + m["error"]
     if not m["exists"]:
         return None, "gone"
     if m["number"] != num:
         return None, "%s now has number %s, not %s" % (uuid, m["number"], num)
     return m, ""
+
+def unowned(why):
+    if why == "gone":
+        return {"outcome": "gone"}
+    return {"outcome": "unknown" if why.startswith("unknown: ") else "refused", "error": why}
 
 def loopinfo(loop):
     # LOOP_GET_STATUS64: the backing file's device and inode, read at once
@@ -172,13 +180,20 @@ def release_dm(uuid, num):
         return {"outcome": "skipped"}
     m, why = owned(uuid, num)
     if m is None:
-        return {"outcome": "gone"} if why == "gone" else {"outcome": "refused", "error": why}
+        return unowned(why)
     if m["open"] != 0 or holders(num) != []:
         return {"outcome": "held", "error": "open %d, holders %s" % (m["open"], holders(num))}
     err = ""
     for attempt in range(10):
         rc, _, err = run("dmsetup", "remove", "--verifyudev", "-u", uuid)
-        if rc == 0 or not mapping("-u", uuid)["exists"]:
+        if rc == 0:
+            return {"outcome": "removed"}
+        after = mapping("-u", uuid)
+        if after.get("error"):
+            # A failed removal and a failed inspection say nothing about
+            # whether the mapping still exists.
+            return {"outcome": "unknown", "error": "dmsetup remove: %s; %s" % (err, after["error"])}
+        if not after["exists"]:
             return {"outcome": "removed"}
         time.sleep(0.5)
     return {"outcome": "failed", "error": "dmsetup remove: " + err}
@@ -211,18 +226,28 @@ def node_entry(name):
         st = os.lstat(path)
     except FileNotFoundError:
         return None
+    except OSError as err:
+        return {"name": name, "kind": "unknown", "error": str(err)}
     e = {"name": name}
     if stat.S_ISLNK(st.st_mode):
         e["kind"] = "symlink"
     elif stat.S_ISBLK(st.st_mode):
         num = "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
         e["kind"], e["number"] = "block", num
-        e["live"] = os.path.exists("/sys/dev/block/" + num)
+        try:
+            os.stat("/sys/dev/block/" + num)
+            e["live"] = True
+        except FileNotFoundError:
+            e["live"] = False
+        except OSError as err:
+            e["error"] = "/sys/dev/block/%s: %s" % (num, err)
         try:
             with open("/sys/dev/block/%s/dm/name" % num) as f:
                 e["dm_name"] = f.read().strip()
-        except OSError:
+        except FileNotFoundError:
             e["dm_name"] = ""
+        except OSError as err:
+            e["error"] = "/sys/dev/block/%s/dm/name: %s" % (num, err)
     elif stat.S_ISCHR(st.st_mode):
         e["kind"] = "char"
     else:
@@ -266,10 +291,14 @@ elif action == "format":
     out.update(header(arg))
 elif action == "open":
     name = sys.argv[3]
-    out["existed"] = exists(name)
+    before = mapping(name)
+    out["existed"] = before["exists"]
     rc, _, err = run("cryptsetup", "open", "--type", "luks2", "--key-file", "-", arg, name, data=key())
     out["rc"], out["message"] = rc, err
     m = mapping(name)
+    lookup = [x["error"] for x in (before, m) if x.get("error")]
+    if lookup:
+        out["lookup_error"] = "; ".join(lookup)
     out["mapped"] = m["exists"]
     if m["exists"]:
         out["uuid"], out["number"] = m["uuid"], m["number"]
@@ -290,7 +319,9 @@ elif action == "linear":
         if rc != 0:
             out["error"] = "dmsetup create: " + err
         m = mapping("-u", uuid)
-        if m["exists"]:
+        if m.get("error"):
+            out["lookup_error"] = m["error"]
+        elif m["exists"]:
             node = "/dev/mapper/" + m["name"]
             out["uuid"], out["path"], out["number"] = m["uuid"], node, m["number"]
             out["bytes"] = int(run("blockdev", "--getsize64", node)[1])
@@ -330,9 +361,10 @@ elif action == "stack":
 elif action == "close":
     m, why = owned(arg, sys.argv[3])
     if m is None:
-        out["closed"] = why == "gone"
+        r = unowned(why)
+        out["closed"] = r["outcome"] == "gone"
         if not out["closed"]:
-            out["error"] = "not the recorded mapping: " + why
+            out["error"] = "%s: %s" % (r["outcome"], why)
     else:
         out["open_before"], out["holders_before"] = m["open"], holders(m["number"])
         r = release_dm(arg, sys.argv[3])
@@ -357,7 +389,9 @@ elif action == "foreign":
     if rc != 0:
         out["error"] = "dmsetup create: " + err
     m = mapping("-u", sys.argv[3])
-    if m["exists"]:
+    if m.get("error"):
+        out["lookup_error"] = m["error"]
+    elif m["exists"]:
         out["uuid"], out["number"] = m["uuid"], m["number"]
 elif action == "observe":
     node_uuid, crypt, crypt_uuid, loop = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
@@ -370,11 +404,18 @@ elif action == "remove":
     out["release_node"] = release_dm(node_uuid, node_num)
     out["release_crypt"] = release_dm(crypt_uuid, crypt_num)
     out["release_loop"] = release_loop(loop, loop_num, loop_dev, loop_ino)
+    try:
+        present = path != "-" and os.lstat(path) is not None
+    except FileNotFoundError:
+        present = False
+    except OSError as err:
+        present = None
+        out["release_file"] = {"outcome": "unknown", "error": str(err)}
     if path == "-":
         out["release_file"] = {"outcome": "skipped"}
-    elif not os.path.exists(path):
+    elif present is False:
         out["release_file"] = {"outcome": "gone"}
-    else:
+    elif present:
         rc, listed, err = run("losetup", "-j", path)
         if rc != 0 or listed != "":
             out["release_file"] = {"outcome": "held", "error": "loops %r %s" % (listed, err)}
@@ -390,7 +431,7 @@ elif action == "unnode":
         r = {"name": name}
         if e is None:
             r["outcome"] = "gone"
-        elif e["kind"] != "block" or e["number"] != num or e["live"]:
+        elif e.get("error") or e["kind"] != "block" or e["number"] != num or e["live"]:
             r["outcome"], r["error"] = "refused", "%s is %s" % (name, json.dumps(e))
         else:
             os.unlink("/dev/mapper/" + name)
@@ -485,6 +526,9 @@ type encReply struct {
 	// nodes, unnode
 	Nodes  []encNodeSeen `json:"nodes,omitempty"`
 	Unnode []encOutcome  `json:"unnode,omitempty"`
+	// LookupError is a failed inspection after open, linear or foreign: the
+	// step may have created a mapping that the keeper could not read back.
+	LookupError string `json:"lookup_error,omitempty"`
 }
 
 // encNodeSeen is one entry of the host's /dev/mapper: its kind and, for a
@@ -496,6 +540,7 @@ type encNodeSeen struct {
 	Number string `json:"number,omitempty"`
 	Live   bool   `json:"live,omitempty"`
 	DMName string `json:"dm_name,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // encDMSeen is the live state of one device-mapper layer: the mapping the
@@ -787,6 +832,10 @@ func encLoopAcquired(r encReply) (encLoopRecord, bool) {
 // the test's loop. A mapping that already had the name is someone else's.
 func encCryptAcquired(r encReply, luksUUID, name string, loop encLoopRecord) (encDMRecord, string) {
 	switch {
+	case r.LookupError != "" && luksUUID != "":
+		// The open may have created the mapping: keep its UUID, without a
+		// number, so that the release looks for it.
+		return encDMRecord{UUID: encCryptDMUUID(luksUUID, name)}, "the mapping could not be inspected: " + r.LookupError
 	case r.RC == nil || *r.RC != 0 || !r.Mapped:
 		return encDMRecord{}, fmt.Sprintf("not opened: %s", r.Message)
 	case r.Existed:
@@ -803,6 +852,8 @@ func encCryptAcquired(r encReply, luksUUID, name string, loop encLoopRecord) (en
 // created it with the UUID the test gave it.
 func encNodeAcquired(r encReply, uuid string) (encDMRecord, string) {
 	switch {
+	case r.LookupError != "":
+		return encDMRecord{UUID: uuid}, "the node could not be inspected: " + r.LookupError
 	case r.RC == nil || *r.RC != 0 || r.Error != "":
 		return encDMRecord{}, "not created: " + r.Error
 	case r.UUID != uuid || r.Number == "":
@@ -1060,6 +1111,8 @@ func judgeEncNodeRemoval(removed []encNode, seen []encNodeSeen) ([]encNode, []st
 		}
 		s := seen[i]
 		switch {
+		case s.Error != "":
+			refused = append(refused, fmt.Sprintf("%s could not be inspected: %s", n.Name, s.Error))
 		case s.Kind != "block":
 			refused = append(refused, fmt.Sprintf("%s is a %s, not the removed mapping's node", n.Name, s.Kind))
 		case s.Number != n.Number:
