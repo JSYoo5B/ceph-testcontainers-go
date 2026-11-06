@@ -41,7 +41,11 @@ type VerificationConfig struct {
 	// mirror daemons, that are verified like the cluster's own. Verification
 	// never adopts them.
 	AdditionalContainers []diagnostics.Target
-	// RedactValues removes additional opaque secrets from the report.
+	// RedactValues removes additional opaque secrets from the report and
+	// the archived lines. Each value must be one line: log lines are masked
+	// one at a time, so a value with a line break could never match and its
+	// parts would stay readable on consecutive lines. Such a value is
+	// refused.
 	RedactValues []string
 	// ArchiveLogs keeps every line of the window that the log check reads,
 	// events or not, redacted and in the order received, and the failure
@@ -449,7 +453,9 @@ func verificationDefaults(config VerificationConfig) VerificationConfig {
 }
 
 // checkVerificationBounds refuses a name, timeout, limit, container
-// description or redaction value outside its range.
+// description or redaction value outside its range, and a redaction value
+// with a line break, which the line-by-line masking of log lines cannot
+// match.
 func checkVerificationBounds(config VerificationConfig) error {
 	switch {
 	case !verificationName(config.Name):
@@ -460,6 +466,8 @@ func checkVerificationBounds(config VerificationConfig) error {
 		return errors.New("limits out of range")
 	case len(config.Logs) > maxVerificationRules || len(config.Crashes) > maxVerificationRules:
 		return fmt.Errorf("more than %d expectations of one kind", maxVerificationRules)
+	case slices.ContainsFunc(config.RedactValues, func(value string) bool { return strings.ContainsAny(value, "\r\n") }):
+		return errors.New("redaction value must be one line; log lines are masked one at a time")
 	}
 	return evidence.CheckCollectionInputs(config.AdditionalContainers, config.RedactValues)
 }

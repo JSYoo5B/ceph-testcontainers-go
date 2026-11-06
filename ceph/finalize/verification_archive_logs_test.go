@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // With ArchiveLogs, an evaluation keeps every line of the window, events or
@@ -374,6 +377,48 @@ func TestVerificationArchiveLogsWithholdASecretEndingACutLine(t *testing.T) {
 	}
 	if len(report.Logs.Findings) != 1 || report.Logs.Findings[0].Text != want {
 		t.Errorf("findings %+v", report.Logs.Findings)
+	}
+}
+
+// A redaction value with a line break is refused before the verification
+// is activated: log lines are masked one at a time, so its parts on
+// consecutive lines would each stay readable in the archived lines. The
+// failure archive then holds no lines of that verification and no part of
+// the value.
+func TestVerificationArchiveLogsRefuseAMultilineSecret(t *testing.T) {
+	stamp := func(after time.Duration) string { return verifyStart.Add(after).Format(time.RFC3339Nano) }
+	const first, second = "opaqueAlphaPart", "opaqueBetaPart"
+	fx, vfx := verifyFinalization(t, Config{Archive: true})
+	config := VerificationConfig{Name: "archived", ArchiveLogs: true, RedactValues: []string{first + "\n" + second}}
+	_, err := fx.Verify(t.Context(), config)
+	if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "redaction value must be one line") {
+		t.Errorf("Verify err = %v, want a refusal of the multiline value", err)
+	}
+	vfx.docker.containers["osd0"].rawLogs = slices.Concat(
+		diagnosticsFrame(2, stamp(time.Minute)+" "+first+"\n"),
+		diagnosticsFrame(2, stamp(2*time.Minute)+" "+second+"\n"),
+	)
+	fx.tb.Errorf("the test failed")
+	fx.run()
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives %v, errors %v", archives, fx.tb.errors)
+	}
+	entries, err := os.ReadDir(archives[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(archives[0], entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(entry.Name(), "verification-") {
+			t.Errorf("the archive holds %s", entry.Name())
+		}
+		if strings.Contains(string(data), first) || strings.Contains(string(data), second) {
+			t.Errorf("%s holds a part of the multiline value", entry.Name())
+		}
 	}
 }
 
