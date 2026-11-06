@@ -900,16 +900,26 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 	return mgr, err
 }
 
+// managerProbeRemovalTimeout bounds the removal of a MGR image release probe.
+// The removal does not end with the caller's context, so that a cancelled
+// start still removes the probe, but it must not hold the topology lock
+// without bound when the Docker engine stalls; Terminate removes a probe that
+// is left behind by the cluster's owner label.
+var managerProbeRemovalTimeout = 30 * time.Second
+
 // probeManagerRelease requires the ceph-mgr of launch.image to report
 // launch.release and returns the ID of the image that reported it. It runs
 // ceph-mgr --version in a short-lived idle container of the image that gets no
-// keyring, cluster configuration or run directory, and removes it; the
-// cluster's owner label lets Terminate remove it when that removal fails.
+// keyring, cluster configuration or run directory, and removes it within
+// managerProbeRemovalTimeout; the cluster's owner label lets Terminate remove
+// it when that removal fails.
 func (t monitorTopology) probeManagerRelease(ctx context.Context, launch managerLaunch) (imageID string, err error) {
 	probe, err := t.runDaemon(ctx, launch.image, t.osds.startup.ownedLabel(), WithIdleEntrypoint())
 	if probe != nil {
 		defer func() {
-			if terminateErr := probe.Terminate(context.WithoutCancel(ctx)); terminateErr != nil {
+			removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managerProbeRemovalTimeout)
+			defer cancel()
+			if terminateErr := probe.Terminate(removeCtx); terminateErr != nil {
 				err = errors.Join(err, fmt.Errorf("remove MGR image release probe: %w", terminateErr))
 			}
 		}()

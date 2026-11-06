@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -494,4 +495,88 @@ type uninspectableMGRProbe struct{ mgrImageDaemon }
 
 func (*uninspectableMGRProbe) Inspect(context.Context) (*container.InspectResponse, error) {
 	return nil, errors.New("inspect refused")
+}
+
+// The removal of a release probe is bounded by managerProbeRemovalTimeout,
+// not only by the caller's context: a removal that waits until its context
+// ends, as a stalled Docker engine does, returns after that bound, the
+// topology lock is released, and the removal error is reported with the
+// probe's result. A start whose own context is cancelled still removes the
+// probe under that bound.
+func TestMGRImageProbeRemovalIsBounded(t *testing.T) {
+	previous := managerProbeRemovalTimeout
+	managerProbeRemovalTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { managerProbeRemovalTimeout = previous })
+	for name, release := range map[string]string{"passing probe": "20.2.4", "refusing probe": "19.2.5"} {
+		t.Run(name, func(t *testing.T) {
+			cluster, control, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+			probe := &stalledMGRProbe{mgrImageDaemon: mgrImageDaemon{image: "official", id: "sha256:official", release: release}}
+			cluster.daemonRunner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+				return probe, nil
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := cluster.AddManager(context.Background(), "a")
+				done <- err
+			}()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("a stalled probe removal held the start past its bound")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "remove MGR image release probe") {
+				t.Fatalf("stalled probe removal: %v", err)
+			}
+			if release != "20.2.4" && !strings.Contains(err.Error(), "differs from core") {
+				t.Fatalf("the probe result was lost: %v", err)
+			}
+			if !probe.deadline || len(control.registered) != 0 || cluster.members.roster.managerCount() != 0 {
+				t.Fatalf("removal deadline=%t keys %v managers=%d", probe.deadline, control.registered, cluster.members.roster.managerCount())
+			}
+			if !cluster.mu.TryLock() {
+				t.Fatal("the topology lock is still held")
+			}
+			cluster.mu.Unlock()
+		})
+	}
+	cluster, _, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+	probe := &stalledMGRProbe{mgrImageDaemon: mgrImageDaemon{image: "official", id: "sha256:official", release: "20.2.4"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cluster.daemonRunner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		cancel()
+		return probe, nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := cluster.AddManager(ctx, "a")
+		done <- err
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled probe removal held a cancelled start past its bound")
+	}
+	if err == nil || probe.removals != 1 || !probe.deadline || !probe.waited {
+		t.Fatalf("cancelled start: %v removals=%d deadline=%t waited=%t", err, probe.removals, probe.deadline, probe.waited)
+	}
+}
+
+// stalledMGRProbe is a release probe whose removal waits until its context
+// ends and fails with the context's error. It records whether that context had
+// a deadline and whether the removal waited for it rather than seeing an
+// already cancelled context.
+type stalledMGRProbe struct {
+	mgrImageDaemon
+	removals         int
+	deadline, waited bool
+}
+
+func (p *stalledMGRProbe) Terminate(ctx context.Context, _ ...testcontainers.TerminateOption) error {
+	p.removals++
+	_, p.deadline = ctx.Deadline()
+	p.waited = ctx.Err() == nil
+	<-ctx.Done()
+	return ctx.Err()
 }
