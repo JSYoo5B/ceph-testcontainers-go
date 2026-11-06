@@ -526,9 +526,10 @@ func (s *state) probeActive(ctx context.Context, observer *ceph.Observer, paths 
 // certificate or key that was changed after Start and a listener option or
 // module state that the override handles find changed; it then continues with
 // the other steps and returns the joined errors, and a later Restore retries
-// what failed. A deleted account is not an error. The module's own records,
-// such as its access database and session-token signing key, stay. Restore
-// is idempotent.
+// what failed. When it disables the module it returns once the MGR map no
+// longer advertises the dashboard service. A deleted account is not an
+// error. The module's own records, such as its access database and
+// session-token signing key, stay. Restore is idempotent.
 //
 //purpose:construction,handoff,lifetime
 func (d *Dashboard) Restore(ctx context.Context) error {
@@ -583,6 +584,8 @@ func (s *state) restore(ctx context.Context) error {
 	if len(errs) == 0 && s.module != nil {
 		if err := restoreModule(ctx, s.module); err != nil {
 			errs = append(errs, err)
+		} else if err := waitServiceWithdrawn(ctx, s.cluster); err != nil {
+			errs = append(errs, err)
 		} else {
 			s.module = nil
 		}
@@ -615,6 +618,45 @@ func restoreModule(ctx context.Context, module *override.MGRModuleHandle) error 
 		select {
 		case <-ctx.Done():
 			return errors.Join(ctx.Err(), err)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// waitServiceWithdrawn waits, when the restored module is disabled, until
+// the MGR map no longer advertises the dashboard service. The map keeps the
+// service of a disabled module until the respawned active manager reports
+// again, which takes seconds on Squid.
+func waitServiceWithdrawn(ctx context.Context, c *ceph.Container) error {
+	observer, err := ceph.Observe(c)
+	if err != nil {
+		return err
+	}
+	var last error
+	for {
+		modules, err := observer.MGRModules(ctx)
+		if err == nil {
+			enabled := false
+			for _, module := range modules {
+				if module.Name == "dashboard" {
+					enabled = module.Enabled
+				}
+			}
+			if enabled {
+				return nil
+			}
+			var services map[string]string
+			if services, err = observer.ManagerServices(ctx); err == nil {
+				if _, found := services["dashboard"]; !found {
+					return nil
+				}
+				err = errors.New("the MGR map still advertises the dashboard service")
+			}
+		}
+		last = err
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), last)
 		case <-time.After(2 * time.Second):
 		}
 	}
