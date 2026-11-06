@@ -893,6 +893,15 @@ bytes through the device and through librbd. It skips when the engine kernel
 has no loaded NBD driver or no `/dev/nbd` nodes, and never loads a module. It
 has been run on Docker Desktop, whose kernel has NBD built in.
 
+`zone_boundary` (`TestZoneBoundaryRegionalCluster`,
+`TestZoneBoundaryTwoSubnetRouting`) splits one cluster into two logical
+availability zones behind caller-owned routers on its public and cluster
+bridges, qualifies the boundary's round trips with netem, partitions it and
+reads the data back after recovery, and records whether the engine forwards
+between two Docker bridges through a container. Its helpers and routers run
+with `NET_ADMIN` and namespaced sysctls; see
+[A routed boundary between logical zones](../guides/fault-injection.md#a-routed-boundary-between-logical-zones).
+
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
