@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "dashboard",
-  "count": 23,
+  "count": 24,
   "entries": [
     {
       "current": "dashboard.Config",
@@ -54,6 +54,14 @@
       "signature": "func() string",
       "receiver": "Dashboard",
       "proposed": "dashboard.Dashboard.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.HostEndpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Dashboard",
+      "proposed": "dashboard.Dashboard.HostEndpoint",
       "decision": "baseline"
     },
     {

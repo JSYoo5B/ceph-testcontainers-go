@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -66,6 +67,19 @@ func RGWBackendRequire(t *testing.T, response RGWBackendResponse, allowed ...int
 	t.Helper()
 	if !slices.Contains(allowed, response.Code) {
 		t.Fatalf("native protocol %s status=%d want=%v code=%s (body redacted)", response.Operation, response.Code, allowed, RGWBackendErrorCode(response.Body))
+	}
+}
+
+// RGWBackendBucketCreator returns the creation step of RGWOwnBuckets for
+// client: a signed PUT of the bucket, which counts as created only when RGW
+// answers 200. bucket is a name or the path /name.
+func RGWBackendBucketCreator(t *testing.T, ctx context.Context, client S3HTTPClient) func(bucket string) error {
+	return func(bucket string) error {
+		r := RGWBackendSigned(t, ctx, client, "s3", http.MethodPut, "/"+strings.TrimPrefix(bucket, "/"), nil, nil)
+		if r.Code != http.StatusOK {
+			return fmt.Errorf("status %d code %s", r.Code, RGWBackendErrorCode(r.Body))
+		}
+		return nil
 	}
 }
 

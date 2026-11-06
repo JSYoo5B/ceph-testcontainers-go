@@ -171,6 +171,41 @@ These affect commands or client libraries you run yourself, not the typed API:
   ignores `If-Match` and `If-None-Match`: a second create-once completion of
   the same key answers 200. Tentacle 20.2.4 and Umbrella 21.2.0 accept
   quoted ETags and evaluate both headers on the completion.
+- **Tentacle 20.2.4, SSE-C multipart completion without the key.**
+  `CompleteMultipartUpload` of an SSE-C upload without an additional
+  checksum answers 400 `InvalidArgument` unless it repeats the
+  customer-key headers; S3 does not require them there. An upload with the
+  `SHA256` checksum algorithm needs the key on every release, and a wrong key
+  is refused. Tentacle 20.2.5 and Umbrella 21.2.0 complete without the key.
+  Squid 19.2.5 completes without it too, but also accepts a wrong key there
+  and echoes no part checksum. See `TestRGWSSECMultipartCompletion` (optional
+  `native_regression` batch `rgw_ssec_completion`, experiment case
+  [`rgw_ssec_multipart_completion`](../../internal/integration/experiments/rgw_ssec_multipart_completion/README.md)).
+- **Tentacle 20.2.4, empty `x-amz-server-side-encryption`.** A PUT whose
+  header is present with an empty value is treated as if the header were
+  absent: it answers 200 and writes an unencrypted object (a new version over
+  an existing key). Tentacle 20.2.5 and Umbrella 21.2.0 refuse it with 400
+  `InvalidArgument`, like an invalid algorithm. Squid 19.2.5 refuses an
+  invalid algorithm with 400 `InvalidRequest`. See `TestRGWEmptySSEHeader`
+  (batch `rgw_empty_sse_header`, experiment case
+  [`rgw_empty_sse_header`](../../internal/integration/experiments/rgw_empty_sse_header/README.md)).
+- **Squid 19.2.5 and Tentacle 20.2.4, `x-amz-expiration` on a versioned
+  bucket.** GET and HEAD report the `NoncurrentVersionExpiration` days of the
+  matching rule, for a plain request as well as for an explicit `versionId`,
+  instead of the current-version `Expiration` (or no header). Tentacle 20.2.5
+  and Umbrella 21.2.0 report only `Expiration`, and nothing for an explicit
+  version. See `TestRGWLifecycleExpirationHeader` (batch
+  `rgw_expiration_header`, experiment case
+  [`rgw_lifecycle_expiration_header`](../../internal/integration/experiments/rgw_lifecycle_expiration_header/README.md)).
+- **Tentacle 20.2.4, copies of compressed objects to an uncompressed storage
+  class.** A copy that decompresses the data (for example from a zlib
+  `STANDARD` class to an uncompressed one) is accounted with the compressed
+  length: the bucket index `accounted_size`, the listed `Size` and the
+  bucket statistics' `size` are too small, while GET returns every byte.
+  Tentacle 20.2.5 and Umbrella 21.2.0 account the logical length; Squid
+  19.2.5 keeps the copy compressed. See `TestRGWCompressedCopyAccounting`
+  (batch `rgw_compressed_copy`, experiment case
+  [`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)).
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).

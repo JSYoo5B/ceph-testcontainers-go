@@ -153,6 +153,9 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 	if settings.hostAddressSet && !settings.hostNetwork {
 		return options{}, invalidRequest("NetworkConfig.WithHostAddress requires WithHostNetwork")
 	}
+	if settings.hostNetwork && settings.managerPorts != nil {
+		return options{}, invalidRequest("WithManagerPorts requires bridge mode: in host mode the managers listen on the host's ports")
+	}
 	if settings.hostNetwork && settings.separateClusterNetwork {
 		return options{}, invalidRequest("NetworkConfig.WithSeparateClusterNetwork requires bridge mode")
 	}
