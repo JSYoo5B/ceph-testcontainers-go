@@ -208,9 +208,9 @@ func requireRule(t *testing.T, r expRequest, rule expRule) {
 	}
 }
 
-// cleanup deletes every version and delete marker in the test's buckets,
-// then their lifecycle configuration and the buckets.
-func (c expCase) cleanup(t *testing.T, buckets ...string) {
+// cleanup deletes every version and delete marker in buckets, the ones the
+// test created, then their lifecycle configuration and the buckets.
+func (c expCase) cleanup(t *testing.T, buckets []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	failed := false
@@ -283,10 +283,9 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 	c := expCase{ctx: ctx, client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
 
 	const noncurrentOnly, both = "/tc-exp-noncurrent-only", "/tc-exp-current-and-noncurrent"
-	for _, bucket := range []string{noncurrentOnly, both} {
-		harness.RGWBackendRequire(t, c.signed(t, ctx, http.MethodPut, bucket, nil, nil), http.StatusOK)
+	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, noncurrentOnly, both); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.cleanup(t, noncurrentOnly, both) })
 
 	// writeKey writes two versions of bucket/docs/key and returns the older
 	// and the current one.

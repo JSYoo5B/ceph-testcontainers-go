@@ -137,7 +137,9 @@ func requireRefused(t *testing.T, name string, r sseResult, control sseFailure) 
 	}
 }
 
-func (c *sseCase) cleanup(t *testing.T, buckets ...string) {
+// cleanup deletes the versions the test owns in each bucket of buckets, the
+// ones the test created, and then the bucket.
+func (c *sseCase) cleanup(t *testing.T, buckets []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	failed := false
@@ -168,7 +170,7 @@ func (c *sseCase) cleanup(t *testing.T, buckets ...string) {
 			failed = true
 		}
 	}
-	t.Logf("RGW_SSE cleanup objects=%d failed=%t", len(c.objects), failed)
+	t.Logf("RGW_SSE cleanup buckets=%d objects=%d failed=%t", len(buckets), len(c.objects), failed)
 }
 
 // requireWireHeader sends the empty-header PUT through the same signer and
@@ -236,9 +238,9 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 	requireWireHeader(t, c.client)
 
 	const bucket, versioned = "/tc-sse-empty", "/tc-sse-empty-versioned"
-	harness.RGWBackendRequire(t, c.signed(t, ctx, http.MethodPut, bucket, nil, nil), http.StatusOK)
-	harness.RGWBackendRequire(t, c.signed(t, ctx, http.MethodPut, versioned, nil, nil), http.StatusOK)
-	t.Cleanup(func() { c.cleanup(t, bucket, versioned) })
+	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, bucket, versioned); err != nil {
+		t.Fatal(err)
+	}
 	c.requireNoDefaultEncryption(t, bucket)
 	c.requireNoDefaultEncryption(t, versioned)
 
