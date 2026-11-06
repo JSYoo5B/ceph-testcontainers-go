@@ -189,8 +189,20 @@ func TestParseHistoricOpsRefusesIncompleteDumps(t *testing.T) {
 			t.Errorf("%s: parsed", name)
 		}
 	}
-	dump, err := parseHistoricOps([]byte(`{"size": 1000, "duration": 600, "ops": [{"description": "osd_repop(client.1.0:1 2.3 e12/10)", "initiated_at": "2026-11-06T02:08:24.421401+0000"}]}`))
-	if err != nil || dump.Total != 1 || dump.Opaque != 1 || dump.Parsed != 0 {
-		t.Fatalf("an opaque entry: %+v %v", dump, err)
+	for _, description := range []string{
+		"osd_repop(client.1.0:1 2.3 e12/10)",
+		// Malformed MOSDOp descriptions: no hobject, an empty one, no op
+		// list, and the reqid and pgid separated by more than one space.
+		"osd_op(client.4172.0:1 1.2 [read] snapc 0=[])",
+		"osd_op(client.4172.0:1 1.2  [read] snapc 0=[])",
+		"osd_op(client.4172.0:1 1.2 2:4a5b6c7d:::copy-src:head snapc 0=[])",
+		"osd_op(client.4172.0:1  1.2 2:4a5b6c7d:::copy-src:head [read] snapc 0=[])",
+		"osd_op(client.4172.0:1 1.2 2:4a5b6c7d:::copy-src:head [read snapc 0=[])",
+	} {
+		raw := fmt.Appendf(nil, `{"size": 1000, "duration": 600, "ops": [{"description": %q, "initiated_at": "2026-11-06T02:08:24.421401+0000"}]}`, description)
+		dump, err := parseHistoricOps(raw)
+		if err != nil || dump.Total != 1 || dump.Opaque != 1 || dump.Parsed != 0 {
+			t.Errorf("%q: want one opaque entry, got %+v %v", description, dump, err)
+		}
 	}
 }

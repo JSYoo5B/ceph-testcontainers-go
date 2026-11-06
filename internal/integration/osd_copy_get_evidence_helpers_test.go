@@ -117,12 +117,25 @@ func parseOSDOpDescription(description string) historicOp {
 		op.ReqID, op.Entity, op.PG, op.Undecoded = reqid, entity, pg, true
 		return op
 	}
-	open := strings.Index(body, " [")
-	closing := strings.Index(body, "] snapc ")
-	if open < 0 || closing < open {
+	// The hobject follows "<reqid> <pgid> ", and the op list follows it.
+	// A description without the hobject, or with its fields in another
+	// order, stays opaque instead of slicing outside it.
+	start := strings.Index(body, reqid+" "+pg+" ")
+	if start != 0 {
 		return op
 	}
-	object, ok := hobjectName(strings.TrimSpace(body[len(reqid)+1+len(pg)+1 : open]))
+	start = len(reqid) + 1 + len(pg) + 1
+	open := strings.Index(body[start:], " [")
+	if open < 0 {
+		return op
+	}
+	open += start
+	closing := strings.Index(body[open:], "] snapc ")
+	if closing < 0 {
+		return op
+	}
+	closing += open
+	object, ok := hobjectName(strings.TrimSpace(body[start:open]))
 	if !ok {
 		return op
 	}
