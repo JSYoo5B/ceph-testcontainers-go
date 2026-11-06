@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -163,6 +164,221 @@ func TestJudgeEncReadbackNeedsEveryAcknowledgedDigest(t *testing.T) {
 	}
 	if ok, _ := judgeEncReadback(ledger[1:], map[string]string{}); ok {
 		t.Error("a ledger without an acknowledged write was accepted")
+	}
+}
+
+func TestEncLowerReadsOnlyOneTargetTables(t *testing.T) {
+	for table, want := range map[string]string{
+		"0 1048576 linear 252:1 0": "252:1",
+		"0 1048576 linear 252:1 8": "",
+		"0 1048576 error":          "error",
+		"0 1048576 error ":         "error",
+		"0 1048576 crypt aes-xts-plain64 <redacted> 0 7:0 32768": "7:0",
+		"0 8 linear 252:1 0\n8 8 linear 252:2 0":                 "",
+		"0 1048576 zero":                                         "",
+		"":                                                       "",
+		"0 1048576 crypt aes-xts-plain64 <redacted> 0 7:0 32768 1 allow_discards": "7:0",
+	} {
+		if got := encLower(table); got != want {
+			t.Errorf("encLower(%q) = %q, want %q", table, got, want)
+		}
+	}
+}
+
+func TestEncAcquisitionRecordsOnlyWhatTheStepCreated(t *testing.T) {
+	loop := encLoopRecord{Loop: "/dev/loop3", Number: "7:3", BackDev: "0:51", Inode: 2}
+	luks := "0e1c1f9a-1111-2222-3333-444455556666"
+	uuid := encCryptDMUUID(luks, "n-crypt")
+	if uuid != "CRYPT-LUKS2-0e1c1f9a111122223333444455556666-n-crypt" {
+		t.Fatalf("crypt DM UUID %q", uuid)
+	}
+	opened := func() encReply {
+		return encReply{Action: "open", RC: encIntPtr(0), Mapped: true, UUID: uuid, Number: "252:4",
+			Table: "0 1048576 crypt aes-xts-plain64 <redacted> 0 7:3 32768"}
+	}
+	if rec, why := encCryptAcquired(opened(), luks, "n-crypt", loop); why != "" || rec != (encDMRecord{UUID: uuid, Number: "252:4"}) {
+		t.Fatalf("own open: %+v %s", rec, why)
+	}
+	for name, mutate := range map[string]func(*encReply){
+		"cryptsetup failed":              func(r *encReply) { r.RC = encIntPtr(5) },
+		"no exit status":                 func(r *encReply) { r.RC = nil },
+		"nothing mapped":                 func(r *encReply) { r.Mapped = false },
+		"the name existed before":        func(r *encReply) { r.RC, r.Existed = encIntPtr(5), true },
+		"existed, reported success":      func(r *encReply) { r.Existed = true },
+		"another mapping has the name":   func(r *encReply) { r.UUID = "TC-ENC-COLLIDE-1" },
+		"another header under that name": func(r *encReply) { r.UUID = encCryptDMUUID("99999999-1111-2222-3333-444455556666", "n-crypt") },
+		"maps another loop":              func(r *encReply) { r.Table = "0 1048576 crypt aes-xts-plain64 <redacted> 0 7:4 32768" },
+	} {
+		r := opened()
+		mutate(&r)
+		if rec, why := encCryptAcquired(r, luks, "n-crypt", loop); rec != (encDMRecord{}) || why == "" {
+			t.Errorf("%s: recorded %+v", name, rec)
+		}
+	}
+	if rec, _ := encCryptAcquired(opened(), "", "n-crypt", loop); rec != (encDMRecord{}) {
+		t.Errorf("recorded without the header's UUID: %+v", rec)
+	}
+
+	linear := encReply{Action: "linear", RC: encIntPtr(0), UUID: "TC-ENC-n-1", Number: "252:5"}
+	if rec, why := encNodeAcquired(linear, "TC-ENC-n-1"); why != "" || rec != (encDMRecord{UUID: "TC-ENC-n-1", Number: "252:5"}) {
+		t.Fatalf("own node: %+v %s", rec, why)
+	}
+	busy := encReply{Action: "linear", RC: encIntPtr(1), Error: "dmsetup create: Device or resource busy"}
+	if rec, _ := encNodeAcquired(busy, "TC-ENC-n-1"); rec != (encDMRecord{}) {
+		t.Errorf("a refused create was recorded: %+v", rec)
+	}
+	other := linear
+	other.UUID = "TC-ENC-COLLIDE-1"
+	if rec, _ := encNodeAcquired(other, "TC-ENC-n-1"); rec != (encDMRecord{}) {
+		t.Errorf("another mapping's UUID was recorded: %+v", rec)
+	}
+
+	created := encReply{Action: "create", File: "/tc-enc/n", Loop: "/dev/loop3", LoopNumber: "7:3", BackDev: "0:51", Inode: 2}
+	if rec, ok := encLoopAcquired(created); !ok || rec != loop {
+		t.Fatalf("own loop: %+v", rec)
+	}
+	created.Error = "loop identity"
+	if _, ok := encLoopAcquired(created); ok {
+		t.Error("a loop without a verified identity was recorded")
+	}
+}
+
+// encChainFixture is a fully built chain and the observe receipt of it.
+func encChainFixture() (encChainRecord, encReply) {
+	rec := encChainRecord{
+		File:  "/tc-enc/n",
+		Loop:  encLoopRecord{Loop: "/dev/loop3", Number: "7:3", BackDev: "0:51", Inode: 2},
+		Crypt: encDMRecord{UUID: "CRYPT-LUKS2-aa-n-crypt", Number: "252:4"},
+		Node:  encDMRecord{UUID: "TC-ENC-n-1", Number: "252:5"},
+	}
+	seen := encReply{Action: "observe",
+		SeenNode: &encDMSeen{Exists: true, Name: "n", UUID: "TC-ENC-n-1", Number: "252:5", Open: encIntPtr(0),
+			Table: "0 1048576 linear 252:4 0", NameUUID: "TC-ENC-n-1"},
+		SeenCrypt: &encDMSeen{Exists: true, Name: "n-crypt", UUID: "CRYPT-LUKS2-aa-n-crypt", Number: "252:4", Open: encIntPtr(1),
+			Table: "0 1048576 crypt aes-xts-plain64 <redacted> 0 7:3 32768", NameUUID: "CRYPT-LUKS2-aa-n-crypt"},
+		SeenLoop: &encLoopSeen{Attached: true, Number: "7:3", BackDev: "0:51", Inode: 2, Holders: []string{"dm-4"}},
+	}
+	return rec, seen
+}
+
+func TestJudgeEncOwnershipRemovesOnlyRecordedIdentities(t *testing.T) {
+	rec, seen := encChainFixture()
+	own := judgeEncOwnership(rec, seen)
+	if own.Node.Verdict != encLayerOwned || own.Crypt.Verdict != encLayerOwned || own.Loop.Verdict != encLayerOwned {
+		t.Fatalf("own chain: %+v", own)
+	}
+	want := []string{"TC-ENC-n-1", "252:5", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}
+	if got := encRemoveArgs(rec, own); !slices.Equal(got, want) {
+		t.Fatalf("remove args %v, want %v", got, want)
+	}
+
+	cases := []struct {
+		name              string
+		mutate            func(*encChainRecord, *encReply)
+		node, crypt, loop string
+		args              []string
+	}{
+		{"node name collision: never recorded, the name is another mapping's",
+			func(r *encChainRecord, s *encReply) {
+				r.Node = encDMRecord{}
+				s.SeenNode = &encDMSeen{Exists: true, Name: "n", UUID: "TC-ENC-COLLIDE-1", Number: "252:6", Table: "0 1 error", NameUUID: "TC-ENC-COLLIDE-1"}
+				s.SeenCrypt.Open = encIntPtr(0)
+			},
+			encLayerForeign, encLayerOwned, encLayerOwned,
+			[]string{"-", "-", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"crypt name collision: never recorded, the name is another mapping's",
+			func(r *encChainRecord, s *encReply) {
+				r.Node, r.Crypt = encDMRecord{}, encDMRecord{}
+				s.SeenNode = &encDMSeen{}
+				s.SeenCrypt = &encDMSeen{Exists: true, Name: "n-crypt", UUID: "TC-ENC-COLLIDE-2", Number: "252:6", Table: "0 1 error", NameUUID: "TC-ENC-COLLIDE-2"}
+				s.SeenLoop.Holders = nil
+			},
+			encLayerNone, encLayerForeign, encLayerOwned,
+			[]string{"-", "-", "-", "-", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"node created again under the recorded UUID",
+			func(_ *encChainRecord, s *encReply) { s.SeenNode.Number = "252:7" },
+			encLayerReplaced, encLayerOwned, encLayerOwned,
+			[]string{"-", "-", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"node gone, its name reused by another mapping",
+			func(_ *encChainRecord, s *encReply) {
+				s.SeenNode = &encDMSeen{NameUUID: "TC-ENC-COLLIDE-3"}
+			},
+			encLayerGone, encLayerOwned, encLayerOwned,
+			[]string{"-", "-", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"node maps a device the test did not put under it",
+			func(_ *encChainRecord, s *encReply) { s.SeenNode.Table = "0 1048576 linear 252:9 0" },
+			encLayerRetargeted, encLayerOwned, encLayerOwned,
+			[]string{"-", "-", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"locked store: node on the error table, crypt closed",
+			func(r *encChainRecord, s *encReply) {
+				r.Crypt = encDMRecord{}
+				s.SeenNode.Table = "0 1048576 error"
+				s.SeenCrypt = &encDMSeen{}
+				s.SeenLoop.Holders = nil
+			},
+			encLayerOwned, encLayerNone, encLayerOwned,
+			[]string{"TC-ENC-n-1", "252:5", "-", "-", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"node created, its receipt lost: identified by its UUID",
+			func(r *encChainRecord, _ *encReply) { r.Node.Number = "" },
+			encLayerOwned, encLayerOwned, encLayerOwned,
+			want},
+		{"crypt maps another loop",
+			func(_ *encChainRecord, s *encReply) {
+				s.SeenCrypt.Table = "0 1048576 crypt aes-xts-plain64 <redacted> 0 7:8 32768"
+			},
+			encLayerRetargeted, encLayerRetargeted, encLayerOwned,
+			[]string{"-", "-", "-", "-", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+		{"loop now backs another file",
+			func(_ *encChainRecord, s *encReply) { s.SeenLoop.Inode = 9 },
+			encLayerOwned, encLayerOwned, encLayerReplaced,
+			[]string{"TC-ENC-n-1", "252:5", "CRYPT-LUKS2-aa-n-crypt", "252:4", "-", "-", "-", "-", "/tc-enc/n"}},
+		{"keeper could not read the node",
+			func(_ *encChainRecord, s *encReply) { s.SeenNode = &encDMSeen{Error: "dmsetup info: timeout"} },
+			encLayerUnknown, encLayerOwned, encLayerOwned,
+			[]string{"-", "-", "CRYPT-LUKS2-aa-n-crypt", "252:4", "/dev/loop3", "7:3", "0:51", "2", "/tc-enc/n"}},
+	}
+	for _, c := range cases {
+		rec, seen := encChainFixture()
+		c.mutate(&rec, &seen)
+		own := judgeEncOwnership(rec, seen)
+		if own.Node.Verdict != c.node || own.Crypt.Verdict != c.crypt || own.Loop.Verdict != c.loop {
+			t.Errorf("%s: %+v, want node %s crypt %s loop %s", c.name, own, c.node, c.crypt, c.loop)
+			continue
+		}
+		if got := encRemoveArgs(rec, own); !slices.Equal(got, c.args) {
+			t.Errorf("%s: remove args %v, want %v", c.name, got, c.args)
+		}
+	}
+	if own := judgeEncOwnership(encChainRecord{}, encReply{Action: "observe"}); own.Node.Verdict != encLayerUnknown || own.Crypt.Verdict != encLayerUnknown || own.Loop.Verdict != encLayerNone {
+		t.Errorf("an empty receipt: %+v", own)
+	}
+}
+
+func TestEncReleasedKeepsEveryLayerThatWasNotRemoved(t *testing.T) {
+	rec, seen := encChainFixture()
+	own := judgeEncOwnership(rec, seen)
+	removed := func(n, c, l, f string) encReply {
+		return encReply{Action: "remove", ReleaseNode: &encOutcome{Outcome: n}, ReleaseCrypt: &encOutcome{Outcome: c},
+			ReleaseLoop: &encOutcome{Outcome: l}, ReleaseFile: &encOutcome{Outcome: f}}
+	}
+	if left := encReleased(rec, own, removed("removed", "removed", "removed", "removed")); left.held() {
+		t.Fatalf("a released chain is still held: %+v", left)
+	}
+	left := encReleased(rec, own, removed("held", "held", "held", "held"))
+	if left != rec {
+		t.Errorf("a held chain was forgotten: %+v", left)
+	}
+	left = encReleased(rec, own, removed("removed", "refused", "held", "held"))
+	if left.Node != (encDMRecord{}) || left.Crypt != rec.Crypt || left.Loop != rec.Loop || left.File != rec.File {
+		t.Errorf("a refused crypt mapping: %+v", left)
+	}
+	// A layer the judge did not find owned is never forgotten because the
+	// keeper says it is gone: the keeper did not look for it.
+	_, foreign := encChainFixture()
+	foreign.SeenNode = &encDMSeen{Exists: true, Name: "n", UUID: "TC-ENC-COLLIDE-1", Number: "252:6", Table: "0 1 error"}
+	replaced := judgeEncOwnership(rec, foreign)
+	if left := encReleased(rec, replaced, removed("skipped", "held", "held", "held")); left.Node != rec.Node {
+		t.Errorf("a replaced node was forgotten: %+v", left)
 	}
 }
 

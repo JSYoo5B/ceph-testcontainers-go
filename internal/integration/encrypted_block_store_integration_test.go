@@ -44,13 +44,14 @@ const (
 
 // encEnv is one cluster whose only OSD runs on the keeper's linear node over
 // a LUKS2 crypt mapping. The key lives only in this process and reaches the
-// keeper on standard input. pending are keeper execs whose exit the test did
-// not see.
+// keeper on standard input. rec is what the test holds of the chain; pending
+// are keeper execs whose exit the test did not see.
 type encEnv struct {
 	docker            *mobycl.Client
 	keeper            testcontainers.Container
 	node, crypt, file string
 	loop              string
+	rec               encChainRecord
 	pending           []string
 	cluster           *ceph.Container
 	osd               *ceph.OSDContainer
@@ -361,44 +362,197 @@ func (e *encEnv) chainEvidence(ctx context.Context, osdID string) (faulthook.Cha
 	return ev, nil
 }
 
-// release removes what the test created of the chain. It waits for
-// unsettled keeper execs first, and keeps all of the chain while one may still
-// be running. A chain whose node was given to the OSD is released only when
-// the cluster's claim table and the keeper's evidence both raise no
-// objection; otherwise all of it is kept.
-func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attached bool) (map[string]any, bool) {
+// release removes what the test holds of the chain, and nothing else. It
+// waits for unsettled keeper execs first. A chain whose node was given to the
+// OSD is released only when the cluster's claim table and the keeper's
+// evidence both raise no objection. Each recorded layer is then removed only
+// while it still has its recorded identity; a mapping that only has the
+// test's name is reported and kept. Whatever is not released stays recorded,
+// and the keeper with it.
+func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attached bool) map[string]any {
 	out := map[string]any{"node": e.node}
 	if ok, detail := e.settle(ctx); !ok {
 		out["unsettled"] = detail
 		t.Errorf("the chain %s is retained: %s", e.node, detail)
-		return out, false
+		return out
 	}
-	if attached {
+	if !e.rec.held() {
+		return out
+	}
+	if attached && e.rec.Node.UUID != "" {
 		outcome, detail := faulthook.JudgeDeviceChain(ctx, e.cluster, e.device, e.node, func(ctx context.Context) (faulthook.ChainEvidence, error) {
 			return e.chainEvidence(ctx, osdID)
 		})
 		out["verdict"], out["detail"] = outcome, detail
 		if outcome != faulthook.ChainClear {
 			t.Errorf("the OSD's device chain %s is retained: %s: %s", e.node, outcome, detail)
-			return out, false
+			return out
 		}
 	}
-	raw, _, code, err := e.exec(ctx, nil, "remove", e.node, e.crypt, e.file)
-	r, perr := parseEncReply(raw, "remove")
-	out["removed"] = r
-	if err != nil || code != 0 || perr != nil || !r.NodeGone || !r.CryptGone || !r.LoopReleased || !r.FileRemoved {
-		t.Errorf("release of chain %s: exit %d %v %v %s", e.node, code, err, perr, raw)
-		return out, false
+	loop := e.rec.Loop.Loop
+	if loop == "" {
+		loop = "-"
 	}
-	return out, true
+	seen, err := e.try(ctx, nil, "observe", e.node, encDash(e.rec.Node.UUID), e.crypt, encDash(e.rec.Crypt.UUID), loop)
+	if err != nil {
+		t.Errorf("the chain %s is retained: %v", e.node, err)
+		return out
+	}
+	own := judgeEncOwnership(e.rec, seen)
+	out["ownership"] = own
+	for name, l := range map[string]encLayer{"node": own.Node, "crypt": own.Crypt} {
+		if l.Verdict == encLayerForeign {
+			t.Logf("the %s name is kept for its owner: %s", name, l.Detail)
+		}
+	}
+	removed, err := e.try(ctx, nil, "remove", encRemoveArgs(e.rec, own)...)
+	out["removed"] = removed
+	if err != nil {
+		t.Errorf("release of chain %s: %v", e.node, err)
+		return out
+	}
+	e.rec = encReleased(e.rec, own, removed)
+	if e.rec.held() {
+		out["retained"] = e.rec
+		t.Errorf("the chain %s is retained: %+v, ownership %+v, removal %s", e.node, e.rec, own, encOutcomes(removed))
+	}
+	return out
+}
+
+func encDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func encOutcomes(r encReply) string {
+	return encJSON([]*encOutcome{r.ReleaseNode, r.ReleaseCrypt, r.ReleaseLoop, r.ReleaseFile})
+}
+
+func encJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
+}
+
+// startEncKeeper starts the keeper, which runs the client role image (it
+// ships cryptsetup) and sees the engine host's /dev, and checks that the
+// kernel has the targets the chain needs. DM_DISABLE_UDEV makes
+// libdevmapper create and remove the nodes itself instead of waiting for a
+// udev it cannot reach. The keeper is terminated at cleanup only when the
+// test holds nothing of its chain any more.
+func startEncKeeper(t *testing.T, ctx context.Context, keeperImage string) (*encEnv, encReply) {
+	t.Helper()
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = docker.Close() })
+	keeper, err := testcontainers.Run(ctx, keeperImage, testcontainers.WithEntrypoint("sleep", "infinity"),
+		testcontainers.WithEnv(map[string]string{"DM_DISABLE_UDEV": "1"}),
+		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
+			h.Privileged = true
+			h.Binds = append(h.Binds, "/dev:/dev")
+			h.Tmpfs = map[string]string{encKeeperDir: "size=" + strconv.FormatInt(encPayloadBytes+encHeaderBytes+(64<<20), 10) + ",mode=0700", "/run/cryptsetup": "size=1m,mode=0700"}
+			h.NetworkMode = "none"
+		}))
+	name := "tcenc-" + hex.EncodeToString(encRandom(t, 4))
+	e := &encEnv{docker: docker.Client, keeper: keeper, node: name, crypt: name + "-crypt", file: encKeeperDir + "/" + name}
+	if keeper != nil {
+		t.Cleanup(func() {
+			if e.rec.held() || len(e.pending) > 0 {
+				t.Errorf("block device keeper %s kept: it still holds %+v, unsettled execs %v", keeper.GetContainerID(), e.rec, e.pending)
+				return
+			}
+			if err := keeper.Terminate(context.Background()); err != nil {
+				t.Error("block device keeper cleanup", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	admit := e.do(t, ctx, nil, "admit", "-")
+	autoload := os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted"
+	for _, target := range []string{"linear", "error"} {
+		if !slices.Contains(admit.Targets, target) {
+			t.Fatalf("encrypted OSD store refused: the device-mapper %s target is not registered", target)
+		}
+	}
+	if !slices.Contains(admit.Targets, "crypt") && !autoload {
+		t.Fatal("encrypted OSD store refused: the device-mapper crypt target is not registered on the engine host; load dm_crypt there first, the test does not load modules")
+	}
+	return e, admit
+}
+
+// build makes the chain bottom up: the backing file and loop, the LUKS2
+// header, the crypt mapping and the OSD's linear node. Each layer is recorded
+// only once the keeper confirms that this step created it, with the identity
+// the release checks; a failure leaves exactly those layers recorded.
+func (e *encEnv) build(ctx context.Context, key []byte) (encHeader, encReply, error) {
+	e.rec.File = e.file
+	created, err := e.try(ctx, nil, "create", e.file, strconv.FormatInt(encPayloadBytes+encHeaderBytes, 10))
+	if err != nil {
+		return encHeader{}, encReply{}, err
+	}
+	loop, ok := encLoopAcquired(created)
+	if !ok {
+		return encHeader{}, encReply{}, fmt.Errorf("backing loop: %s", encJSON(created))
+	}
+	e.rec.Loop, e.loop = loop, loop.Loop
+	formatted, err := e.try(ctx, key, "format", e.loop)
+	if err != nil {
+		return encHeader{}, encReply{}, err
+	}
+	header := encHeaderOf(formatted)
+	if formatted.Error != "" || !header.known() || header.Offset != encHeaderBytes {
+		return header, encReply{}, fmt.Errorf("LUKS2 format: %s", encJSON(formatted))
+	}
+	if err := e.open(ctx, key, header); err != nil {
+		return header, encReply{}, fmt.Errorf("crypt mapping: %w", err)
+	}
+	uuid := "TC-ENC-" + e.node + "-" + hex.EncodeToString(encRandomBytes(4))
+	e.rec.Node = encDMRecord{UUID: uuid}
+	linear, err := e.try(ctx, nil, "linear", e.node, uuid, e.rec.Crypt.UUID, e.rec.Crypt.Number)
+	if err != nil {
+		return header, linear, err
+	}
+	node, why := encNodeAcquired(linear, uuid)
+	e.rec.Node = node
+	if why != "" || linear.Bytes != encPayloadBytes {
+		return header, linear, fmt.Errorf("OSD node: %s: %s", why, encJSON(linear))
+	}
+	return header, linear, nil
+}
+
+// open opens the crypt mapping with key and records it when this open
+// created it with the test's header.
+func (e *encEnv) open(ctx context.Context, key []byte, header encHeader) error {
+	e.rec.Crypt = encDMRecord{UUID: encCryptDMUUID(header.UUID, e.crypt)}
+	opened, err := e.try(ctx, key, "open", e.loop, e.crypt)
+	if err != nil {
+		return err
+	}
+	crypt, why := encCryptAcquired(opened, header.UUID, e.crypt, e.rec.Loop)
+	e.rec.Crypt = crypt
+	switch {
+	case why != "":
+		return fmt.Errorf("%s: %s", why, encJSON(opened))
+	case opened.Bytes != encPayloadBytes || encHeaderOf(opened) != header:
+		return fmt.Errorf("opened %d bytes, header %+v: %s", opened.Bytes, encHeaderOf(opened), encJSON(opened))
+	}
+	return nil
 }
 
 func encRandom(t *testing.T, n int) []byte {
 	t.Helper()
+	return encRandomBytes(n)
+}
+
+// encRandomBytes is n random bytes; crypto/rand.Read never fails.
+func encRandomBytes(n int) []byte {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
+	_, _ = rand.Read(b)
 	return b
 }
 
@@ -430,60 +584,15 @@ func encRandom(t *testing.T, n int) []byte {
 func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = docker.Close() })
 	image, opts := harness.IntegrationImages(t)
-	keeperImage := harness.NativeClientImage(t, image)
 	receipt := map[string]any{"payload_bytes": encPayloadBytes}
 	defer func() {
 		data, _ := json.Marshal(receipt)
 		t.Logf("ENCRYPTED_STORE_RECEIPT %s", data)
 	}()
-
-	// The keeper runs the client role image, which ships cryptsetup, and sees
-	// the engine host's /dev. DM_DISABLE_UDEV makes libdevmapper create and
-	// remove the nodes itself instead of waiting for a udev it cannot reach.
-	keeper, err := testcontainers.Run(ctx, keeperImage, testcontainers.WithEntrypoint("sleep", "infinity"),
-		testcontainers.WithEnv(map[string]string{"DM_DISABLE_UDEV": "1"}),
-		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
-			h.Privileged = true
-			h.Binds = append(h.Binds, "/dev:/dev")
-			h.Tmpfs = map[string]string{encKeeperDir: "size=" + strconv.FormatInt(encPayloadBytes+encHeaderBytes+(64<<20), 10) + ",mode=0700", "/run/cryptsetup": "size=1m,mode=0700"}
-			h.NetworkMode = "none"
-		}))
-	released := false
-	if keeper != nil {
-		t.Cleanup(func() {
-			if !released {
-				t.Errorf("block device keeper %s kept: its chain was not released", keeper.GetContainerID())
-				return
-			}
-			if err := keeper.Terminate(context.Background()); err != nil {
-				t.Error("block device keeper cleanup", err)
-			}
-		})
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "tcenc-" + hex.EncodeToString(encRandom(t, 4))
-	e := &encEnv{docker: docker.Client, keeper: keeper, node: name, crypt: name + "-crypt", file: encKeeperDir + "/" + name}
-	released = true // nothing exists yet
-
-	admit := e.do(t, ctx, nil, "admit", "-")
-	autoload := os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted"
-	receipt["admission"] = map[string]any{"kernel": admit.Kernel, "targets": admit.Targets, "cryptsetup": admit.Cryptsetup, "autoload_allowed": autoload}
-	for _, target := range []string{"linear", "error"} {
-		if !slices.Contains(admit.Targets, target) {
-			t.Fatalf("encrypted OSD store refused: the device-mapper %s target is not registered", target)
-		}
-	}
-	if !slices.Contains(admit.Targets, "crypt") && !autoload {
-		t.Fatal("encrypted OSD store refused: the device-mapper crypt target is not registered on the engine host; load dm_crypt there first, the test does not load modules")
-	}
+	e, admit := startEncKeeper(t, ctx, harness.NativeClientImage(t, image))
+	receipt["admission"] = map[string]any{"kernel": admit.Kernel, "targets": admit.Targets, "cryptsetup": admit.Cryptsetup,
+		"autoload_allowed": os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted"}
 
 	key, wrong := encRandom(t, encKeyBytes), encRandom(t, encKeyBytes)
 	var cluster *ceph.Container
@@ -493,32 +602,15 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer done()
-		out, ok := e.release(t, cleanup, osdID, attached)
-		released = ok
-		data, _ := json.Marshal(out)
+		data, _ := json.Marshal(e.release(t, cleanup, osdID, attached))
 		t.Logf("ENCRYPTED_STORE_RELEASE_RECEIPT %s", data)
 	})
 
-	// The chain, bottom up. Each receipt names what exists, so a failure
-	// leaves only the parts that cleanup then removes.
-	released = false
-	created := e.do(t, ctx, nil, "create", e.file, strconv.FormatInt(encPayloadBytes+encHeaderBytes, 10))
-	if created.Error != "" || created.Loop == "" {
-		t.Fatalf("backing loop: %+v", created)
-	}
-	e.loop = created.Loop
-	formatted := e.do(t, ctx, key, "format", e.loop)
-	header := encHeaderOf(formatted)
-	if formatted.Error != "" || !header.known() || header.Offset != encHeaderBytes {
-		t.Fatalf("LUKS2 format: %+v", formatted)
-	}
-	opened := e.do(t, ctx, key, "open", e.loop, e.crypt)
-	if opened.RC == nil || *opened.RC != 0 || !opened.Mapped || opened.Bytes != encPayloadBytes {
-		t.Fatalf("crypt mapping: %+v", opened)
-	}
-	linear := e.do(t, ctx, nil, "linear", e.node, e.crypt, "TC-ENC-"+e.node)
-	if linear.Error != "" || linear.Path == "" || linear.Bytes != encPayloadBytes {
-		t.Fatalf("OSD node: %+v", linear)
+	// The chain, bottom up. Each layer is recorded once it exists, so a
+	// failure leaves only the parts that cleanup then removes.
+	header, linear, err := e.build(ctx, key)
+	if err != nil {
+		t.Fatal(err)
 	}
 	major, minor, ok := strings.Cut(linear.Number, ":")
 	maj, err1 := strconv.ParseUint(major, 10, 32)
@@ -529,7 +621,7 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	e.device = faulthook.BlockDevice{HostPath: linear.Path, Major: uint32(maj), Minor: uint32(mnr), SizeBytes: linear.Bytes}
 	stack := e.do(t, ctx, nil, "stack", e.node, e.crypt, e.loop, e.file)
 	verdict, detail := judgeEncStack(stack, linear.Number)
-	receipt["chain"] = map[string]any{"loop": created.LoopNumber, "header": header, "crypt": opened.Number, "node": linear.Number, "stack": verdict, "detail": detail,
+	receipt["chain"] = map[string]any{"loop": e.rec.Loop.Number, "header": header, "crypt": e.rec.Crypt, "node": e.rec.Node, "stack": verdict, "detail": detail,
 		"crypt_table": stack.CryptTable}
 	if verdict != encStacked {
 		t.Fatalf("stack: %s", detail)
@@ -609,10 +701,13 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal("stop the OSD:", err)
 	}
-	retarget := e.do(t, ctx, nil, "retarget", e.node, "error")
-	closed := e.do(t, ctx, nil, "close", e.crypt)
+	retarget := e.do(t, ctx, nil, "retarget", e.rec.Node.UUID, e.rec.Node.Number, "error")
+	closed := e.do(t, ctx, nil, "close", e.rec.Crypt.UUID, e.rec.Crypt.Number)
+	if closed.Closed {
+		e.rec.Crypt = encDMRecord{}
+	}
 	receipt["lock"] = map[string]any{"table": retarget.Table, "close": closed}
-	if retarget.Error != "" || !strings.HasSuffix(retarget.Table, " error") || closed.Error != "" || !closed.Closed {
+	if retarget.Error != "" || encLower(retarget.Table) != "error" || closed.Error != "" || !closed.Closed {
 		t.Fatalf("lock: table %q %s, close %+v", retarget.Table, retarget.Error, closed)
 	}
 
@@ -631,7 +726,10 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 		name  string
 		input []byte
 	}{{"missing", nil}, {"wrong", wrong}} {
+		e.rec.Crypt = encDMRecord{UUID: encCryptDMUUID(header.UUID, e.crypt)}
 		r := e.do(t, ctx, attempt.input, "open", e.loop, e.crypt)
+		// A mapping that this open created is the test's, whatever the verdict.
+		e.rec.Crypt, _ = encCryptAcquired(r, header.UUID, e.crypt, e.rec.Loop)
 		v, d := judgeEncRefusal(r, header)
 		refusals[attempt.name] = map[string]any{"verdict": v, "detail": d}
 		if v != encRefused {
@@ -643,11 +741,10 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 
 	// Unlock with the right key, map the node over the mapping again and
 	// start the same OSD container.
-	reopened := e.do(t, ctx, key, "open", e.loop, e.crypt)
-	if reopened.RC == nil || *reopened.RC != 0 || !reopened.Mapped || reopened.Existed || encHeaderOf(reopened) != header {
-		t.Fatalf("reopen with the right key: %+v", reopened)
+	if err := e.open(ctx, key, header); err != nil {
+		t.Fatalf("reopen with the right key: %v", err)
 	}
-	back := e.do(t, ctx, nil, "retarget", e.node, e.crypt)
+	back := e.do(t, ctx, nil, "retarget", e.rec.Node.UUID, e.rec.Node.Number, e.rec.Crypt.UUID, e.rec.Crypt.Number)
 	if back.Error != "" {
 		t.Fatalf("map the node over the reopened mapping: %+v", back)
 	}
@@ -662,7 +759,7 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	verdict, detail = judgeEncStack(stack, linear.Number)
 	reopenedIdentity, view := e.identity(t, ctx)
 	same, sameDetail := judgeEncIdentity(original, reopenedIdentity)
-	unlock := map[string]any{"crypt": reopened.Number, "stack": verdict, "detail": detail, "up_from": [2]int{before.UpFrom, upAgain.UpFrom},
+	unlock := map[string]any{"crypt": e.rec.Crypt, "stack": verdict, "detail": detail, "up_from": [2]int{before.UpFrom, upAgain.UpFrom},
 		"identity": reopenedIdentity, "same": same, "same_detail": sameDetail, "attachment": view}
 	receipt["unlock"] = unlock
 	if verdict != encStacked || !same {
@@ -672,4 +769,74 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	post := e.write(t, ctx, "after-unlock", marker)
 	unlock["readback_post"] = e.readback(t, ctx, post)
 	unlock["readback_all"] = e.readback(t, ctx, append(slices.Clone(ledger), post...))
+}
+
+// TestEncryptedBlockStoreKeepsACollidingMapping shows that the release of
+// the chain removes only what the test created. Before the chain is built,
+// the test creates a one-sector error mapping, with a DM UUID of its own,
+// under the name that the OSD's node or the crypt mapping is to get. Building
+// the chain then fails at that layer without recording it, the release
+// removes the layers that were built and keeps the colliding mapping with its
+// UUID and number, and the test then removes that mapping by its UUID.
+func TestEncryptedBlockStoreKeepsACollidingMapping(t *testing.T) {
+	image, _ := harness.IntegrationImages(t)
+	keeperImage := harness.NativeClientImage(t, image)
+	for _, layer := range []string{"node", "crypt"} {
+		t.Run(layer, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+			defer cancel()
+			e, _ := startEncKeeper(t, ctx, keeperImage)
+			name := e.node
+			if layer == "crypt" {
+				name = e.crypt
+			}
+			uuid := "TC-ENC-COLLIDE-" + hex.EncodeToString(encRandom(t, 4))
+			theirs := e.do(t, ctx, nil, "foreign", name, uuid)
+			if theirs.RC == nil || *theirs.RC != 0 || theirs.UUID != uuid || theirs.Number == "" {
+				t.Fatalf("colliding mapping: %+v", theirs)
+			}
+			// Cleanups run in reverse: the chain's release, then the
+			// colliding mapping, then the keeper.
+			t.Cleanup(func() {
+				cleanup, done := context.WithTimeout(context.Background(), time.Minute)
+				defer done()
+				r, err := e.try(cleanup, nil, "remove", uuid, theirs.Number, "-", "-", "-", "-", "-", "-", "-")
+				if err != nil || r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
+					t.Errorf("remove the colliding mapping %s: %v %+v", uuid, err, r.ReleaseNode)
+				}
+			})
+			t.Cleanup(func() {
+				cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer done()
+				e.release(t, cleanup, "", false)
+			})
+
+			_, _, err := e.build(ctx, encRandom(t, encKeyBytes))
+			if err == nil {
+				t.Fatalf("the chain was built over the colliding %s mapping", layer)
+			}
+			t.Logf("build refused: %v", err)
+			if (layer == "node" && e.rec.Node != encDMRecord{}) || (layer == "crypt" && e.rec.Crypt != encDMRecord{}) {
+				t.Fatalf("the colliding mapping was recorded as the test's: %+v", e.rec)
+			}
+			if !e.rec.held() || e.rec.Loop.Loop == "" {
+				t.Fatalf("nothing of the chain was built before the collision: %+v", e.rec)
+			}
+			out := e.release(t, ctx, "", false)
+			data, _ := json.Marshal(out)
+			t.Logf("ENCRYPTED_STORE_COLLISION_RELEASE %s", data)
+			own, _ := out["ownership"].(encOwnership)
+			collided := own.Node
+			if layer == "crypt" {
+				collided = own.Crypt
+			}
+			if collided.Verdict != encLayerForeign || e.rec.held() {
+				t.Fatalf("release: the %s layer is %+v, still held %+v", layer, collided, e.rec)
+			}
+			seen := e.do(t, ctx, nil, "observe", name, uuid, e.crypt+"-unused", "-", "-")
+			if s := seen.SeenNode; s == nil || !s.Exists || s.UUID != uuid || s.Number != theirs.Number || encLower(s.Table) != "error" {
+				t.Fatalf("the colliding mapping did not survive the release: %+v", s)
+			}
+		})
+	}
 }

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -28,18 +30,30 @@ import (
 // It never prints key material: a crypt table's key field is replaced before
 // the table is reported, and cryptsetup's own messages name no key.
 //
+// The host's device-mapper names are shared with everything else on the
+// engine host, so a name alone never identifies the test's mapping. Every
+// action that changes or removes a mapping takes the DM UUID and device
+// number the test recorded when it created the mapping, and acts on that UUID
+// only while it still has that number; a loop is detached only while it still
+// backs the recorded inode. "-" stands for a layer the test does not hold.
+//
 //	admit -                         kernel release, registered targets, cryptsetup version
-//	create FILE BYTES               backing file and loop device
+//	create FILE BYTES               backing file and loop device, with their identity
 //	format LOOP                     LUKS2 header on the loop, key on stdin
 //	open LOOP CRYPT                 open the crypt mapping, key (possibly none) on stdin
 //	header LOOP                     LUKS UUID and digest of the header area
-//	linear NODE CRYPT UUID          the OSD's linear node over the crypt mapping
-//	retarget NODE error|CRYPT       load an error table, or a linear table over CRYPT
+//	linear NODE UUID CUUID CNUM     the OSD's linear node, with DM UUID UUID, over the crypt mapping
+//	retarget NUUID NNUM error       load an error table into the node
+//	retarget NUUID NNUM CUUID CNUM  load a linear table over the crypt mapping
 //	stack NODE CRYPT LOOP FILE      what each layer maps and who holds it
-//	close CRYPT                     close the crypt mapping once nothing holds it
+//	close CUUID CNUM                close the crypt mapping once nothing holds it
 //	scan PATH MARKER                count a hex marker's occurrences in a device or file
-//	remove NODE CRYPT FILE          release whatever of the chain still exists
-const encKeeperScript = `import hashlib, json, os, subprocess, sys, time
+//	foreign NAME UUID               a one-sector error mapping (a collision control)
+//	observe NODE NUUID CRYPT CUUID LOOP
+//	                                the live identity of each layer and of the mappings named NODE and CRYPT
+//	remove NUUID NNUM CUUID CNUM LOOP LNUM LDEV LINO FILE
+//	                                release the recorded layers that still have their identity
+const encKeeperScript = `import errno, fcntl, hashlib, json, os, struct, subprocess, sys, time
 
 def run(*argv, data=None):
     r = subprocess.run(argv, input=data, capture_output=True, timeout=120)
@@ -49,12 +63,24 @@ def number(path):
     st = os.stat(path)
     return "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
 
+def mapping(*select):
+    # The mapping that select (a name, or "-u", UUID) names: its name, DM
+    # UUID, number and open count, or exists False; an unreadable answer is
+    # an error, never an absence.
+    rc, out, err = run("dmsetup", "info", "-c", "--noheadings", "--separator", "|", "-o", "name,uuid,major,minor,open", *select)
+    if rc != 0:
+        return {"exists": False} if "does not exist" in err else {"exists": False, "error": "dmsetup info: " + err}
+    f = out.split("|")
+    if len(f) != 5:
+        return {"exists": False, "error": "dmsetup info: %r" % out}
+    return {"exists": True, "name": f[0], "uuid": f[1], "number": "%s:%s" % (f[2], f[3]), "open": int(f[4])}
+
 def exists(name):
-    return run("dmsetup", "info", name)[0] == 0
+    return mapping(name)["exists"]
 
 def opened(name):
-    rc, out, _ = run("dmsetup", "info", "-c", "--noheadings", "-o", "open", name)
-    return int(out) if rc == 0 and out.strip().isdigit() else None
+    m = mapping(name)
+    return m["open"] if m["exists"] else None
 
 def holders(num):
     try:
@@ -68,6 +94,39 @@ def redact(table):
     if len(f) >= 5 and f[2] == "crypt":
         f[4] = "<redacted>"
     return " ".join(f)
+
+def owned(uuid, num):
+    # The mapping with DM UUID uuid while it still has number num; otherwise
+    # why not. A UUID is unique on the host, the number tells a mapping
+    # created again under the same UUID.
+    m = mapping("-u", uuid)
+    if m.get("error"):
+        return None, m["error"]
+    if not m["exists"]:
+        return None, "gone"
+    if m["number"] != num:
+        return None, "%s now has number %s, not %s" % (uuid, m["number"], num)
+    return m, ""
+
+def loopinfo(loop):
+    # LOOP_GET_STATUS64: the backing file's device and inode, read at once
+    # from the kernel (sysfs and losetup lag a detach).
+    try:
+        num = number(loop)
+        fd = os.open(loop, os.O_RDONLY)
+    except OSError as e:
+        return {"error": "%s: %s" % (loop, e)}
+    try:
+        buf = fcntl.ioctl(fd, 0x4C05, bytes(232))
+    except OSError as e:
+        if e.errno == errno.ENXIO:
+            return {"attached": False, "number": num}
+        return {"error": "%s: %s" % (loop, e)}
+    finally:
+        os.close(fd)
+    dev, ino = struct.unpack_from("=QQ", buf)
+    return {"attached": True, "number": num, "back_dev": "%d:%d" % (os.major(dev), os.minor(dev)), "inode": ino,
+            "holders": holders(num)}
 
 def header(loop):
     rc, uuid, _ = run("cryptsetup", "luksUUID", loop)
@@ -88,6 +147,56 @@ def header(loop):
 def key():
     return sys.stdin.buffer.read()
 
+def seen(name, uuid):
+    # The recorded mapping (by UUID) or, when none is recorded, the mapping
+    # that has the name; name_uuid is whoever has the name now.
+    by_name = mapping(name)
+    out = mapping("-u", uuid) if uuid != "-" else dict(by_name)
+    out["name_uuid"] = by_name.get("uuid", "") if by_name["exists"] else ""
+    if by_name.get("error"):
+        out.setdefault("error", by_name["error"])
+    if out["exists"]:
+        out["table"] = redact(run("dmsetup", "table", out["name"])[1])
+    return out
+
+def release_dm(uuid, num):
+    if uuid == "-":
+        return {"outcome": "skipped"}
+    m, why = owned(uuid, num)
+    if m is None:
+        return {"outcome": "gone"} if why == "gone" else {"outcome": "refused", "error": why}
+    if m["open"] != 0 or holders(num) != []:
+        return {"outcome": "held", "error": "open %d, holders %s" % (m["open"], holders(num))}
+    err = ""
+    for attempt in range(10):
+        rc, _, err = run("dmsetup", "remove", "--verifyudev", "-u", uuid)
+        if rc == 0 or not mapping("-u", uuid)["exists"]:
+            return {"outcome": "removed"}
+        time.sleep(0.5)
+    return {"outcome": "failed", "error": "dmsetup remove: " + err}
+
+def release_loop(loop, num, dev, ino):
+    if loop == "-":
+        return {"outcome": "skipped"}
+    li = loopinfo(loop)
+    if li.get("error"):
+        return {"outcome": "refused", "error": li["error"]}
+    if not li["attached"]:
+        return {"outcome": "gone"}
+    if (li["number"], li["back_dev"], li["inode"]) != (num, dev, int(ino)):
+        return {"outcome": "refused", "error": "%s is %s backing %s inode %d, not %s backing %s inode %s" % (
+            loop, li["number"], li["back_dev"], li["inode"], num, dev, ino)}
+    if li["holders"] != []:
+        # A held loop would only be marked for a lazy detach.
+        return {"outcome": "held", "error": "holders %s" % li["holders"]}
+    rc, _, err = run("losetup", "-d", loop)
+    for attempt in range(20):
+        li = loopinfo(loop)
+        if not li.get("error") and (not li["attached"] or (li["back_dev"], li["inode"]) != (dev, int(ino))):
+            return {"outcome": "removed"}
+        time.sleep(0.25)
+    return {"outcome": "failed", "error": "losetup -d: rc %d %s" % (rc, err)}
+
 action, arg = sys.argv[1], sys.argv[2]
 out = {"action": action}
 if action == "admit":
@@ -101,12 +210,20 @@ elif action == "create":
     path, size = arg, int(sys.argv[3])
     with open(path, "xb") as f:
         f.truncate(size)
+    st = os.stat(path)
     out["file"] = path
     rc, loop, err = run("losetup", "--find", "--show", path)
     if rc != 0:
         out["error"] = "losetup: " + err
     else:
-        out["loop"], out["loop_number"] = loop, number(loop)
+        out["loop"] = loop
+        li = loopinfo(loop)
+        if li.get("error") or not li["attached"]:
+            out["error"] = "loop identity: %s" % li
+        elif (li["back_dev"], li["inode"]) != ("%d:%d" % (os.major(st.st_dev), os.minor(st.st_dev)), st.st_ino):
+            out["error"] = "%s backs %s inode %d, not %s" % (loop, li["back_dev"], li["inode"], path)
+        else:
+            out["loop_number"], out["back_dev"], out["inode"] = li["number"], li["back_dev"], li["inode"]
 elif action == "format":
     rc, _, err = run("cryptsetup", "luksFormat", "--batch-mode", "--type", "luks2", "--cipher", "aes-xts-plain64",
                      "--key-size", "512", "--hash", "sha256", "--pbkdf", "pbkdf2", "--pbkdf-force-iterations", "1000",
@@ -120,40 +237,51 @@ elif action == "open":
     out["existed"] = exists(name)
     rc, _, err = run("cryptsetup", "open", "--type", "luks2", "--key-file", "-", arg, name, data=key())
     out["rc"], out["message"] = rc, err
-    out["mapped"] = exists(name)
-    if out["mapped"]:
-        node = "/dev/mapper/" + name
-        out["number"] = number(node)
-        out["bytes"] = int(run("blockdev", "--getsize64", node)[1] or 0)
+    m = mapping(name)
+    out["mapped"] = m["exists"]
+    if m["exists"]:
+        out["uuid"], out["number"] = m["uuid"], m["number"]
+        out["table"] = redact(run("dmsetup", "table", name)[1])
+        out["bytes"] = int(run("blockdev", "--getsize64", "/dev/mapper/" + name)[1] or 0)
     out.update(header(arg))
 elif action == "header":
     out.update(header(arg))
 elif action == "linear":
-    crypt, uuid = sys.argv[3], sys.argv[4]
-    lower = number("/dev/mapper/" + crypt)
-    sectors = int(run("blockdev", "--getsz", "/dev/mapper/" + crypt)[1])
-    rc, _, err = run("dmsetup", "create", "--verifyudev", arg, "--uuid", uuid, "--table", "0 %d linear %s 0" % (sectors, lower))
-    out["rc"] = rc
-    if rc != 0:
-        out["error"] = "dmsetup create: " + err
-    elif exists(arg):
-        node = "/dev/mapper/" + arg
-        out["path"], out["number"] = node, number(node)
-        out["bytes"] = int(run("blockdev", "--getsize64", node)[1])
-elif action == "retarget":
-    target = sys.argv[3]
-    rc, size, err = run("blockdev", "--getsz", "/dev/mapper/" + arg)
-    sectors = int(size)
-    table = "0 %d error" % sectors if target == "error" else "0 %d linear %s 0" % (sectors, number("/dev/mapper/" + target))
-    steps = []
-    for argv in (("dmsetup", "suspend", "--noudevsync", arg), ("dmsetup", "load", "--noudevsync", arg, "--table", table),
-                 ("dmsetup", "resume", "--noudevsync", arg)):
-        rc, _, err = run(*argv)
-        steps.append({"step": argv[1], "rc": rc})
+    uuid, cuuid, cnum = sys.argv[3], sys.argv[4], sys.argv[5]
+    crypt, why = owned(cuuid, cnum)
+    if crypt is None:
+        out["error"] = "crypt mapping: " + why
+    else:
+        sectors = int(run("blockdev", "--getsz", "/dev/mapper/" + crypt["name"])[1])
+        rc, _, err = run("dmsetup", "create", "--verifyudev", arg, "--uuid", uuid, "--table", "0 %d linear %s 0" % (sectors, cnum))
+        out["rc"] = rc
         if rc != 0:
-            out["error"] = "dmsetup %s: %s" % (argv[1], err)
-            break
-    out["steps"], out["table"] = steps, run("dmsetup", "table", arg)[1]
+            out["error"] = "dmsetup create: " + err
+        m = mapping("-u", uuid)
+        if m["exists"]:
+            node = "/dev/mapper/" + m["name"]
+            out["uuid"], out["path"], out["number"] = m["uuid"], node, m["number"]
+            out["bytes"] = int(run("blockdev", "--getsize64", node)[1])
+elif action == "retarget":
+    node, why = owned(arg, sys.argv[3])
+    target = sys.argv[4]
+    lower = None
+    if node is not None and target != "error":
+        lower, why = owned(target, sys.argv[5])
+    if node is None or (target != "error" and lower is None):
+        out["error"] = "not the recorded mapping: " + why
+    else:
+        sectors = int(run("dmsetup", "table", "-u", arg)[1].split()[1])
+        table = "0 %d error" % sectors if target == "error" else "0 %d linear %s 0" % (sectors, lower["number"])
+        steps = []
+        for argv in (("dmsetup", "suspend", "--noudevsync", node["name"]), ("dmsetup", "load", "--noudevsync", node["name"], "--table", table),
+                     ("dmsetup", "resume", "--noudevsync", node["name"])):
+            rc, _, err = run(*argv)
+            steps.append({"step": argv[1], "rc": rc})
+            if rc != 0:
+                out["error"] = "dmsetup %s: %s" % (argv[1], err)
+                break
+        out["steps"], out["table"] = steps, run("dmsetup", "table", "-u", arg)[1]
 elif action == "stack":
     crypt, loop, path = sys.argv[3], sys.argv[4], sys.argv[5]
     out["node_table"] = run("dmsetup", "table", arg)[1]
@@ -168,22 +296,17 @@ elif action == "stack":
     out["loop_holders"] = holders(out["loop_number"])
     out["file"] = path
 elif action == "close":
-    if not exists(arg):
-        out["closed"] = True
+    m, why = owned(arg, sys.argv[3])
+    if m is None:
+        out["closed"] = why == "gone"
+        if not out["closed"]:
+            out["error"] = "not the recorded mapping: " + why
     else:
-        num = number("/dev/mapper/" + arg)
-        out["open_before"], out["holders_before"] = opened(arg), holders(num)
-        if out["open_before"] != 0 or out["holders_before"] != []:
-            out["error"] = "the crypt mapping is still held"
-        else:
-            for attempt in range(10):
-                rc, _, err = run("cryptsetup", "close", arg)
-                if rc == 0 or not exists(arg):
-                    break
-                time.sleep(0.5)
-            out["attempts"], out["closed"] = attempt + 1, not exists(arg)
-            if not out["closed"]:
-                out["error"] = "cryptsetup close: " + err
+        out["open_before"], out["holders_before"] = m["open"], holders(m["number"])
+        r = release_dm(arg, sys.argv[3])
+        out["closed"] = r["outcome"] in ("removed", "gone")
+        if not out["closed"]:
+            out["error"] = "%s: %s" % (r["outcome"], r.get("error", ""))
 elif action == "scan":
     marker, count, tail = bytes.fromhex(sys.argv[3]), 0, b""
     with open(arg, "rb") as f:
@@ -196,40 +319,36 @@ elif action == "scan":
             # Keep less than one marker, so a match is never counted twice.
             tail = data[-(len(marker) - 1):]
     out["path"], out["count"] = arg, count
+elif action == "foreign":
+    rc, _, err = run("dmsetup", "create", "--verifyudev", arg, "--uuid", sys.argv[3], "--table", "0 1 error")
+    out["rc"] = rc
+    if rc != 0:
+        out["error"] = "dmsetup create: " + err
+    m = mapping("-u", sys.argv[3])
+    if m["exists"]:
+        out["uuid"], out["number"] = m["uuid"], m["number"]
+elif action == "observe":
+    node_uuid, crypt, crypt_uuid, loop = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+    out["seen_node"], out["seen_crypt"] = seen(arg, node_uuid), seen(crypt, crypt_uuid)
+    out["seen_loop"] = loopinfo(loop) if loop != "-" else {"attached": False}
 elif action == "remove":
-    crypt, path = sys.argv[3], sys.argv[4]
-    if exists(arg):
-        if opened(arg) != 0:
-            out["error"] = "the OSD's node is still open"
+    node_uuid, node_num, crypt_uuid, crypt_num, loop, loop_num, loop_dev, loop_ino, path = sys.argv[2:11]
+    # Top down: a layer is removed only once nothing holds it, so a kept
+    # layer keeps everything under it.
+    out["release_node"] = release_dm(node_uuid, node_num)
+    out["release_crypt"] = release_dm(crypt_uuid, crypt_num)
+    out["release_loop"] = release_loop(loop, loop_num, loop_dev, loop_ino)
+    if path == "-":
+        out["release_file"] = {"outcome": "skipped"}
+    elif not os.path.exists(path):
+        out["release_file"] = {"outcome": "gone"}
+    else:
+        rc, listed, err = run("losetup", "-j", path)
+        if rc != 0 or listed != "":
+            out["release_file"] = {"outcome": "held", "error": "loops %r %s" % (listed, err)}
         else:
-            rc, _, err = run("dmsetup", "remove", "--verifyudev", arg)
-            if rc != 0:
-                out["error"] = "dmsetup remove: " + err
-    out["node_gone"] = not exists(arg)
-    if out["node_gone"] and exists(crypt):
-        num = number("/dev/mapper/" + crypt)
-        if opened(crypt) != 0 or holders(num) != []:
-            out["error"] = "the crypt mapping is still held"
-        else:
-            for attempt in range(10):
-                if run("cryptsetup", "close", crypt)[0] == 0 or not exists(crypt):
-                    break
-                time.sleep(0.5)
-    out["crypt_gone"] = not exists(crypt)
-    # The file is unlinked only after its loops are detached, so a missing
-    # file has no loop left.
-    out["loop_released"] = not os.path.exists(path)
-    if out["node_gone"] and out["crypt_gone"] and os.path.exists(path):
-        rc, listed, _ = run("losetup", "--list", "--noheadings", "--output", "NAME", "-j", path)
-        for loop in listed.split():
-            rc, _, err = run("losetup", "-d", loop)
-            if rc != 0:
-                out["error"] = "losetup -d: " + err
-        rc, listed, _ = run("losetup", "-j", path)
-        out["loop_released"] = rc == 0 and listed == ""
-        if out["loop_released"]:
             os.unlink(path)
-    out["file_removed"] = not os.path.exists(path)
+            out["release_file"] = {"outcome": "removed"}
 else:
     raise SystemExit("unknown action " + action)
 print(json.dumps(out))`
@@ -282,10 +401,13 @@ type encReply struct {
 	File         string   `json:"file,omitempty"`
 	Loop         string   `json:"loop,omitempty"`
 	LoopNumber   string   `json:"loop_number,omitempty"`
+	BackDev      string   `json:"back_dev,omitempty"`
+	Inode        uint64   `json:"inode,omitempty"`
 	RC           *int     `json:"rc,omitempty"`
 	Message      string   `json:"message,omitempty"`
 	Existed      bool     `json:"existed,omitempty"`
 	Mapped       bool     `json:"mapped,omitempty"`
+	UUID         string   `json:"uuid,omitempty"`
 	Path         string   `json:"path,omitempty"`
 	Number       string   `json:"number,omitempty"`
 	Bytes        int64    `json:"bytes,omitempty"`
@@ -302,12 +424,49 @@ type encReply struct {
 	LoopBacking  *string  `json:"loop_backing,omitempty"`
 	LoopHolders  []string `json:"loop_holders,omitempty"`
 	Closed       bool     `json:"closed,omitempty"`
-	Attempts     int      `json:"attempts,omitempty"`
 	Count        *int     `json:"count,omitempty"`
-	NodeGone     bool     `json:"node_gone,omitempty"`
-	CryptGone    bool     `json:"crypt_gone,omitempty"`
-	LoopReleased bool     `json:"loop_released,omitempty"`
-	FileRemoved  bool     `json:"file_removed,omitempty"`
+	// observe
+	SeenNode  *encDMSeen   `json:"seen_node,omitempty"`
+	SeenCrypt *encDMSeen   `json:"seen_crypt,omitempty"`
+	SeenLoop  *encLoopSeen `json:"seen_loop,omitempty"`
+	// remove
+	ReleaseNode  *encOutcome `json:"release_node,omitempty"`
+	ReleaseCrypt *encOutcome `json:"release_crypt,omitempty"`
+	ReleaseLoop  *encOutcome `json:"release_loop,omitempty"`
+	ReleaseFile  *encOutcome `json:"release_file,omitempty"`
+}
+
+// encDMSeen is the live state of one device-mapper layer: the mapping the
+// test recorded, looked up by its DM UUID, or, when none is recorded, the
+// mapping that has the test's name. NameUUID is the DM UUID of whatever has
+// the name now.
+type encDMSeen struct {
+	Exists   bool   `json:"exists"`
+	Name     string `json:"name,omitempty"`
+	UUID     string `json:"uuid,omitempty"`
+	Number   string `json:"number,omitempty"`
+	Open     *int   `json:"open,omitempty"`
+	Table    string `json:"table,omitempty"`
+	NameUUID string `json:"name_uuid"`
+	Error    string `json:"error,omitempty"`
+}
+
+// encLoopSeen is the kernel's view of the recorded loop device.
+type encLoopSeen struct {
+	Attached bool     `json:"attached"`
+	Number   string   `json:"number,omitempty"`
+	BackDev  string   `json:"back_dev,omitempty"`
+	Inode    uint64   `json:"inode,omitempty"`
+	Holders  []string `json:"holders,omitempty"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// encOutcome is what the keeper did with one recorded layer: removed, gone
+// (already absent), skipped (not recorded), held, refused (its identity
+// changed) or failed.
+type encOutcome struct {
+	Outcome string `json:"outcome"`
+	Error   string `json:"error,omitempty"`
 }
 
 func parseEncReply(raw []byte, action string) (encReply, error) {
@@ -496,6 +655,234 @@ func judgeEncReadback(ledger []encLedgerEntry, read map[string]string) (bool, st
 		return false, "no acknowledged write"
 	}
 	return true, fmt.Sprintf("%d acknowledged objects intact", acked)
+}
+
+// encDMRecord is a device-mapper layer the test created: the DM UUID it gave
+// the node, or that cryptsetup derives from the test's own LUKS header, and
+// the number the kernel gave it. The UUID is recorded before the step that
+// creates the mapping and the number once the keeper confirms it, so a step
+// whose receipt was lost leaves a UUID without a number. The zero value is a
+// layer the test does not hold.
+type encDMRecord struct{ UUID, Number string }
+
+// encLoopRecord is the loop the test attached: its node, its number and the
+// device and inode of the backing file it was attached to.
+type encLoopRecord struct {
+	Loop, Number, BackDev string
+	Inode                 uint64
+}
+
+// encChainRecord is what the test holds of its chain. The release acts only
+// on what is recorded here, and only while the live layer still has the
+// recorded identity.
+type encChainRecord struct {
+	File        string
+	Loop        encLoopRecord
+	Crypt, Node encDMRecord
+}
+
+func (r encChainRecord) held() bool { return r != encChainRecord{} }
+
+// encCryptDMUUID is the DM UUID that cryptsetup gives a LUKS2 mapping: the
+// LUKS UUID without dashes and the mapping name. The LUKS UUID is that of the
+// test's own header, so no mapping the test did not open carries it.
+func encCryptDMUUID(luksUUID, name string) string {
+	return "CRYPT-LUKS2-" + strings.ReplaceAll(luksUUID, "-", "") + "-" + name
+}
+
+// encLower is the device that a one-target table maps: the lower device of a
+// linear target at offset 0 or of a crypt target, "error" for an error
+// target, and "" for anything else.
+func encLower(table string) string {
+	if strings.Contains(strings.TrimSpace(table), "\n") {
+		return ""
+	}
+	f := strings.Fields(table)
+	switch {
+	case len(f) == 5 && f[2] == "linear" && f[4] == "0":
+		return f[3]
+	case len(f) >= 8 && f[2] == "crypt":
+		return f[6]
+	case len(f) == 3 && f[2] == "error":
+		return "error"
+	}
+	return ""
+}
+
+// encLoopAcquired is the loop of a create receipt, once the keeper read its
+// identity from the kernel.
+func encLoopAcquired(r encReply) (encLoopRecord, bool) {
+	if r.Error != "" || r.Loop == "" || r.LoopNumber == "" || r.BackDev == "" || r.Inode == 0 {
+		return encLoopRecord{}, false
+	}
+	return encLoopRecord{Loop: r.Loop, Number: r.LoopNumber, BackDev: r.BackDev, Inode: r.Inode}, true
+}
+
+// encCryptAcquired is the crypt mapping of an open receipt, when that open
+// created it: cryptsetup succeeded, no mapping of the name existed before,
+// and the live mapping of the name has the UUID of the test's header and maps
+// the test's loop. A mapping that already had the name is someone else's.
+func encCryptAcquired(r encReply, luksUUID, name string, loop encLoopRecord) (encDMRecord, string) {
+	switch {
+	case r.RC == nil || *r.RC != 0 || !r.Mapped:
+		return encDMRecord{}, fmt.Sprintf("not opened: %s", r.Message)
+	case r.Existed:
+		return encDMRecord{}, "a mapping of that name existed before the open"
+	case luksUUID == "" || r.UUID != encCryptDMUUID(luksUUID, name):
+		return encDMRecord{}, fmt.Sprintf("DM UUID %q is not that of the test's header", r.UUID)
+	case loop.Number == "" || encLower(r.Table) != loop.Number:
+		return encDMRecord{}, fmt.Sprintf("table %q does not map the test's loop %s", r.Table, loop.Number)
+	}
+	return encDMRecord{UUID: r.UUID, Number: r.Number}, ""
+}
+
+// encNodeAcquired is the linear node of a linear receipt, when the keeper
+// created it with the UUID the test gave it.
+func encNodeAcquired(r encReply, uuid string) (encDMRecord, string) {
+	switch {
+	case r.RC == nil || *r.RC != 0 || r.Error != "":
+		return encDMRecord{}, "not created: " + r.Error
+	case r.UUID != uuid || r.Number == "":
+		return encDMRecord{}, fmt.Sprintf("the node has DM UUID %q, number %q", r.UUID, r.Number)
+	}
+	return encDMRecord{UUID: uuid, Number: r.Number}, ""
+}
+
+// Ownership verdicts of one layer at release.
+const (
+	encLayerOwned      = "owned"      // the recorded layer with its recorded identity: it is released
+	encLayerNone       = "none"       // never acquired, and nothing has the test's name
+	encLayerForeign    = "foreign"    // never acquired; the name belongs to a mapping the test did not create
+	encLayerGone       = "gone"       // acquired and no longer present
+	encLayerReplaced   = "replaced"   // the recorded UUID or loop now has another identity
+	encLayerRetargeted = "retargeted" // the recorded mapping maps a device the test did not put under it
+	encLayerUnknown    = "unknown"    // the keeper could not read it
+)
+
+// encLayer is the ownership verdict of one layer and, when it is owned, the
+// number the keeper must still find before it removes it.
+type encLayer struct {
+	Verdict, Detail, Number string
+}
+
+// judgeEncDM decides whether a device-mapper layer is the test's to remove:
+// a recorded one must still have its DM UUID and number (a UUID without a
+// number is a creation whose receipt was lost; the test-generated UUID alone
+// identifies it), and must map one of lowers. A layer the test never
+// recorded is never removed, whatever has its name.
+func judgeEncDM(rec encDMRecord, seen *encDMSeen, lowers ...string) encLayer {
+	switch {
+	case seen == nil:
+		return encLayer{Verdict: encLayerUnknown, Detail: "not observed"}
+	case seen.Error != "":
+		return encLayer{Verdict: encLayerUnknown, Detail: seen.Error}
+	case rec.UUID == "" && seen.Exists:
+		return encLayer{Verdict: encLayerForeign, Detail: fmt.Sprintf("%s is %s (DM UUID %q), which the test did not create", seen.Name, seen.Number, seen.UUID)}
+	case rec.UUID == "":
+		return encLayer{Verdict: encLayerNone}
+	case !seen.Exists && seen.NameUUID != "":
+		return encLayer{Verdict: encLayerGone, Detail: fmt.Sprintf("%s is gone; its name now has DM UUID %q", rec.UUID, seen.NameUUID)}
+	case !seen.Exists:
+		return encLayer{Verdict: encLayerGone, Detail: rec.UUID + " is gone"}
+	case seen.UUID != rec.UUID || (rec.Number != "" && seen.Number != rec.Number):
+		return encLayer{Verdict: encLayerReplaced, Detail: fmt.Sprintf("%s is %s, recorded %s %s", seen.UUID, seen.Number, rec.UUID, rec.Number)}
+	case !slices.Contains(lowers, encLower(seen.Table)):
+		return encLayer{Verdict: encLayerRetargeted, Detail: fmt.Sprintf("%s maps %q, not one of %v", rec.UUID, seen.Table, lowers)}
+	}
+	detail := rec.UUID + " " + seen.Number
+	if rec.Number == "" {
+		detail += ", identified by its UUID after a lost receipt"
+	}
+	return encLayer{Verdict: encLayerOwned, Detail: detail, Number: seen.Number}
+}
+
+// judgeEncLoop decides whether the recorded loop is the test's to detach: it
+// must still be attached to the recorded backing file.
+func judgeEncLoop(rec encLoopRecord, seen *encLoopSeen) encLayer {
+	switch {
+	case rec.Loop == "":
+		return encLayer{Verdict: encLayerNone}
+	case seen == nil:
+		return encLayer{Verdict: encLayerUnknown, Detail: "not observed"}
+	case seen.Error != "":
+		return encLayer{Verdict: encLayerUnknown, Detail: seen.Error}
+	case !seen.Attached:
+		return encLayer{Verdict: encLayerGone, Detail: rec.Loop + " is detached"}
+	case seen.Number != rec.Number || seen.BackDev != rec.BackDev || seen.Inode != rec.Inode:
+		return encLayer{Verdict: encLayerReplaced, Detail: fmt.Sprintf("%s is %s backing %s inode %d, recorded %s backing %s inode %d",
+			rec.Loop, seen.Number, seen.BackDev, seen.Inode, rec.Number, rec.BackDev, rec.Inode)}
+	}
+	return encLayer{Verdict: encLayerOwned, Detail: rec.Loop + " " + rec.Number, Number: rec.Number}
+}
+
+// encOwnership is the verdict of each layer of the chain.
+type encOwnership struct {
+	Node  encLayer `json:"node"`
+	Crypt encLayer `json:"crypt"`
+	Loop  encLayer `json:"loop"`
+}
+
+// judgeEncOwnership judges each layer of an observe receipt against the
+// record. The crypt mapping must map the recorded loop, and the node either
+// the error table of a locked store or the crypt mapping when that is owned.
+func judgeEncOwnership(rec encChainRecord, r encReply) encOwnership {
+	var own encOwnership
+	own.Loop = judgeEncLoop(rec.Loop, r.SeenLoop)
+	own.Crypt = judgeEncDM(rec.Crypt, r.SeenCrypt, rec.Loop.Number)
+	lowers := []string{"error"}
+	if own.Crypt.Verdict == encLayerOwned {
+		lowers = append(lowers, own.Crypt.Number)
+	}
+	own.Node = judgeEncDM(rec.Node, r.SeenNode, lowers...)
+	return own
+}
+
+// encRemoveArgs are the arguments of the keeper's remove action: each owned
+// layer with the identity the keeper must still find, and "-" for every other
+// layer, which the keeper does not touch.
+func encRemoveArgs(rec encChainRecord, own encOwnership) []string {
+	args := make([]string, 0, 9)
+	for _, l := range []struct {
+		layer encLayer
+		uuid  string
+	}{{own.Node, rec.Node.UUID}, {own.Crypt, rec.Crypt.UUID}} {
+		if l.layer.Verdict == encLayerOwned {
+			args = append(args, l.uuid, l.layer.Number)
+		} else {
+			args = append(args, "-", "-")
+		}
+	}
+	if own.Loop.Verdict == encLayerOwned {
+		args = append(args, rec.Loop.Loop, rec.Loop.Number, rec.Loop.BackDev, strconv.FormatUint(rec.Loop.Inode, 10))
+	} else {
+		args = append(args, "-", "-", "-", "-")
+	}
+	if rec.File == "" {
+		return append(args, "-")
+	}
+	return append(args, rec.File)
+}
+
+// encReleased is the record after a remove receipt: a layer that was removed
+// or found gone is no longer held; every other layer stays recorded, so the
+// chain and its keeper are kept and reported.
+func encReleased(rec encChainRecord, own encOwnership, r encReply) encChainRecord {
+	done := func(verdict string, o *encOutcome) bool {
+		return verdict == encLayerGone || (verdict == encLayerOwned && o != nil && (o.Outcome == "removed" || o.Outcome == "gone"))
+	}
+	if done(own.Node.Verdict, r.ReleaseNode) {
+		rec.Node = encDMRecord{}
+	}
+	if done(own.Crypt.Verdict, r.ReleaseCrypt) {
+		rec.Crypt = encDMRecord{}
+	}
+	if done(own.Loop.Verdict, r.ReleaseLoop) {
+		rec.Loop = encLoopRecord{}
+	}
+	if r.ReleaseFile != nil && (r.ReleaseFile.Outcome == "removed" || r.ReleaseFile.Outcome == "gone") {
+		rec.File = ""
+	}
+	return rec
 }
 
 // encStream is an attached exec stream: the multiplexed output to read and
