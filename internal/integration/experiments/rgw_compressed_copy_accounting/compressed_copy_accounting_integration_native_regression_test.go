@@ -173,7 +173,8 @@ func (c *ccCase) observe(t *testing.T, bucket string) ccObservation {
 }
 
 // copyObject copies source to bucket/obj with headers and requires a
-// CopyObjectResult without an embedded error.
+// CopyObjectResult. A 200 whose body is an S3 Error document, in any
+// namespace, fails with that error's code and message.
 func (c *ccCase) copyObject(t *testing.T, source, bucket string, headers http.Header) {
 	t.Helper()
 	h := headers.Clone()
@@ -184,12 +185,18 @@ func (c *ccCase) copyObject(t *testing.T, source, bucket string, headers http.He
 	r := c.signed(t, c.ctx, http.MethodPut, "/"+bucket+"/"+ccObject, nil, h)
 	t.Logf("RGW_CC copy source=%s dest=%s/%s storage-class=%q status=%d code=%s", source, bucket, ccObject, h.Get("X-Amz-Storage-Class"), r.Code, harness.RGWBackendErrorCode(r.Body))
 	harness.RGWBackendRequire(t, r, http.StatusOK)
-	var result struct {
-		XMLName xml.Name `xml:"CopyObjectResult"`
-		ETag    string   `xml:"ETag"`
+	classified, err := harness.RGWClassifyResultBody(r.Body, "CopyObjectResult")
+	if err != nil {
+		t.Fatalf("copy to %s answered 200 with an unclassified body: %v", bucket, err)
 	}
-	if bytes.Contains(r.Body, []byte("<Error>")) || xml.Unmarshal(r.Body, &result) != nil || result.ETag == "" {
-		t.Fatalf("copy to %s answered 200 without a CopyObjectResult", bucket)
+	if classified.Error {
+		t.Fatalf("copy to %s answered 200 with an embedded S3 error %s %q", bucket, classified.Code, classified.Message)
+	}
+	var result struct {
+		ETag string `xml:"ETag"`
+	}
+	if err := xml.Unmarshal(r.Body, &result); err != nil || result.ETag == "" {
+		t.Fatalf("copy to %s answered a CopyObjectResult without an ETag (%v)", bucket, err)
 	}
 }
 
@@ -269,7 +276,9 @@ func (c *ccCase) traceCopies(t *testing.T) []string {
 	return lines
 }
 
-func (c *ccCase) cleanup(t *testing.T, buckets ...string) {
+// cleanup deletes the object and then each bucket of buckets, the ones the
+// test created.
+func (c *ccCase) cleanup(t *testing.T, buckets []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	failed := false
@@ -328,11 +337,10 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		plainControl  = "tc-cc-copy-plain-control"
 		storageHeader = "X-Amz-Storage-Class"
 	)
-	buckets := []string{source, plainSource, uncompressed, compressed, plainControl}
-	for _, bucket := range buckets {
-		harness.RGWBackendRequire(t, c.signed(t, ctx, http.MethodPut, "/"+bucket, nil, nil), http.StatusOK)
+	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) },
+		source, plainSource, uncompressed, compressed, plainControl); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.cleanup(t, buckets...) })
 
 	var payload bytes.Buffer
 	for i := 0; payload.Len() < 1<<20; i++ {
