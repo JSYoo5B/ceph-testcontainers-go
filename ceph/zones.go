@@ -21,9 +21,10 @@ type ZoneLayout struct {
 	QuorumZone string
 	// Zones are sorted by name.
 	Zones []Zone
-	// Routes are the /32 routes in the members' network namespaces, sorted
-	// by member and destination. A member and its peers in the same zone
-	// have none between them.
+	// Routes are the /32 routes the boundary recorded in the members'
+	// network namespaces, sorted by member and destination. A member and its
+	// peers in the same zone have none between them. A route the caller
+	// installed is not listed, and the boundary never replaces or removes it.
 	Routes []ZoneRoute
 	// DownReporters is mon_osd_min_down_reporters and ReporterSubtree is
 	// mon_osd_reporter_subtree_level: a MON marks an OSD down only after
@@ -33,8 +34,10 @@ type ZoneLayout struct {
 	DownReporters   int
 	ReporterSubtree string
 	// Unzoned names the containers on the cluster's bridges that are neither
-	// a router nor a member enrolled for its current start. They reach every
-	// zone directly; fault.ApplyZoneProfile refuses to shape while there is one.
+	// a router nor a member whose enrollment for its current start completed.
+	// They reach every zone directly, or through the routes a partial
+	// enrollment lacks; fault.ApplyZoneProfile refuses to shape while there
+	// is one.
 	Unzoned []string
 }
 
@@ -76,8 +79,11 @@ type ZoneRoute struct {
 // every start the container is enrolled as a member: a route agent with
 // NET_ADMIN joins its network namespace and the boundary installs its routes
 // and its peers' routes to it; when it stops they are removed. A start
-// fails when its enrollment does. A cluster without zones refuses it, and so
-// does an undeclared zone.
+// fails when its enrollment does, also when a member already has a /32 route
+// of its own to an address the boundary routes, which it does not replace.
+// Such a container stays in ZoneLayout.Unzoned until a retried Start of it
+// completes the enrollment. A cluster without zones refuses it, and so does
+// an undeclared zone.
 //
 //purpose:construction,handoff
 func (c *Container) WithZone(zone string) testcontainers.CustomizeRequestOption {

@@ -30,6 +30,12 @@ const (
 // zoneExecTimeout bounds one command in a router or a route agent.
 const zoneExecTimeout = time.Minute
 
+// zoneRouteProtocol is the routing protocol number of every route the
+// boundary installs. With the destination, the gateway and the device it
+// identifies a route the boundary owns: a route without it is the caller's,
+// and the boundary neither replaces nor removes it.
+const zoneRouteProtocol = "157"
+
 // zoneBoundary is the routed boundary between the zones of one cluster: a
 // management bridge for the routers, one router per zone attached to every
 // plane, and for every member one route agent in its network namespace with
@@ -87,19 +93,30 @@ type zoneEndpoint struct {
 	addrs          map[NetworkPlane]netip.Addr
 }
 
-// zoneRouteRecord is one installed route: through via on plane.
+// zoneRouteRecord is one route the boundary installed or tried to install:
+// through via on plane's device dev, with zoneRouteProtocol.
 type zoneRouteRecord struct {
 	plane NetworkPlane
 	via   netip.Addr
+	dev   string
 }
 
-// zoneRouteOp changes the route to dest in holder's namespace: through via,
-// or, with an invalid via, its removal.
+// zoneRouteOp installs the route to dest through via on plane in holder's
+// namespace or, with remove, removes the boundary's route recorded as via
+// and dev.
 type zoneRouteOp struct {
 	holder string
 	plane  NetworkPlane
 	dest   netip.Addr
 	via    netip.Addr
+	dev    string
+	remove bool
+}
+
+// removal is the operation that removes the route of record to dest in
+// holder's namespace.
+func (r zoneRouteRecord) removal(holder string, dest netip.Addr) zoneRouteOp {
+	return zoneRouteOp{holder: holder, plane: r.plane, dest: dest, via: r.via, dev: r.dev, remove: true}
 }
 
 // newZoneBoundary starts the boundary of a cluster whose bridges exist: the
@@ -392,7 +409,7 @@ func (b *zoneBoundary) dropMember(ctx context.Context, id string) error {
 		}
 		for _, addr := range member.endpoint.addrs {
 			if record, found := peer.routes[addr]; found {
-				ops = append(ops, zoneRouteOp{holder: other, plane: record.plane, dest: addr})
+				ops = append(ops, record.removal(other, addr))
 			}
 		}
 	}
@@ -428,7 +445,8 @@ func (b *zoneBoundary) withdraw(ctx context.Context, ctr testcontainers.Containe
 
 // applyRoutes runs ops, grouped by holder in one command each. A route is
 // recorded before it is installed, so close removes a failed or uncertain
-// installation, and forgotten only after its removal succeeded.
+// installation, and forgotten only after its removal succeeded. Neither
+// touches a route the boundary does not own (see zoneRouteCommand).
 func (b *zoneBoundary) applyRoutes(ctx context.Context, ops []zoneRouteOp) error {
 	byHolder := map[string][]zoneRouteOp{}
 	for _, op := range ops {
@@ -443,17 +461,18 @@ func (b *zoneBoundary) applyRoutes(ctx context.Context, ops []zoneRouteOp) error
 		}
 		var script []string
 		for _, op := range byHolder[holder] {
-			if op.via.IsValid() {
-				member.routes[op.dest] = zoneRouteRecord{plane: op.plane, via: op.via}
+			if !op.remove {
+				op.dev = member.ifaces[op.plane]
+				member.routes[op.dest] = zoneRouteRecord{plane: op.plane, via: op.via, dev: op.dev}
 			}
-			script = append(script, zoneRouteCommand(op, member.ifaces[op.plane]))
+			script = append(script, zoneRouteCommand(op))
 		}
 		if _, err := b.exec(ctx, member.agent, "sh", "-ec", strings.Join(script, "\n")); err != nil {
 			errs = append(errs, fmt.Errorf("routes of %s: %w", member.endpoint.name, err))
 			continue
 		}
 		for _, op := range byHolder[holder] {
-			if !op.via.IsValid() {
+			if op.remove {
 				delete(member.routes, op.dest)
 			}
 		}
@@ -461,21 +480,31 @@ func (b *zoneBoundary) applyRoutes(ctx context.Context, ops []zoneRouteOp) error
 	return errors.Join(errs...)
 }
 
-// zoneRouteCommand is the shell command of op on device dev. A removal
-// succeeds when no route to the destination is left.
-func zoneRouteCommand(op zoneRouteOp, dev string) string {
+// zoneRouteCommand is the shell command of op. An installation adds the
+// route with zoneRouteProtocol when no route to the destination is in the
+// main table, succeeds when the only one is the boundary's own, as on a retry,
+// and fails when any other is there: the boundary neither replaces nor
+// shadows a caller's route. A removal deletes only a route that still matches
+// the boundary's record, destination, gateway, device and protocol, and
+// succeeds when none is left; a route that someone replaced or removed is no
+// longer the boundary's and stays.
+func zoneRouteCommand(op zoneRouteOp) string {
 	dest := op.dest.String() + "/32"
-	if op.via.IsValid() {
-		return "ip route replace " + dest + " via " + op.via.String() + " dev " + dev
+	owned := dest + " via " + op.via.String() + " dev " + op.dev + " proto " + zoneRouteProtocol
+	if op.remove {
+		return "ip route del " + owned + " 2>/dev/null || true; test -z \"$(ip -o -4 route show exact " + owned + ")\""
 	}
-	return "ip route del " + dest + " 2>/dev/null || true; test -z \"$(ip -o -4 route show " + dest + ")\""
+	return "n=$(ip -o -4 route show exact " + dest + " | wc -l); o=$(ip -o -4 route show exact " + owned + " | wc -l); " +
+		"if [ $n -eq 0 ]; then ip route add " + owned + "; " +
+		"elif [ $n -ne $o ]; then echo \"a route to " + dest + " that the zone boundary does not own is in place: $(ip -o -4 route show exact " + dest + ")\" >&2; exit 1; fi"
 }
 
 // planZoneEnrollment returns the routes that enrolling joining needs: in its
 // own namespace one per address of every member of another zone on a plane
-// both share, through its zone's router; in every other member one to each of
-// joining's shared addresses, through that member's router when the zones
-// differ and a removal when they are the same. It refuses a zone without a
+// both share, through its zone's router, and in every member of another zone
+// one to each of joining's shared addresses, through that member's router.
+// Members of the same zone reach each other on the bridge and get no route.
+// It refuses a zone without a
 // router, a router without an address on a plane it serves and an address
 // that two members or a member and a router share.
 func planZoneEnrollment(joining zoneEndpoint, members []zoneEndpoint, routers map[string]map[NetworkPlane]netip.Addr) (own, peers []zoneRouteOp, err error) {
@@ -521,7 +550,6 @@ func planZoneEnrollment(joining zoneEndpoint, members []zoneEndpoint, routers ma
 				continue
 			}
 			if peer.zone == joining.zone {
-				peers = append(peers, zoneRouteOp{holder: peer.id, plane: plane, dest: joining.addrs[plane]})
 				continue
 			}
 			ownVia, err := via(joining.zone, plane, joining.name)
@@ -566,24 +594,6 @@ func interfaceWithAddress(out string, addr netip.Addr) (string, error) {
 	}
 }
 
-// routesThrough returns the lines of `ip -o -4 route show` whose gateway is
-// one of vias: the routes a boundary left behind.
-func routesThrough(out string, vias []netip.Addr) []string {
-	var left []string
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		for i := 0; i+1 < len(fields); i++ {
-			if fields[i] != "via" {
-				continue
-			}
-			if addr, err := netip.ParseAddr(fields[i+1]); err == nil && slices.Contains(vias, addr) {
-				left = append(left, strings.TrimSpace(line))
-			}
-		}
-	}
-	return left
-}
-
 func (b *zoneBoundary) exec(ctx context.Context, ctr testcontainers.Container, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, zoneExecTimeout)
 	defer cancel()
@@ -592,8 +602,9 @@ func (b *zoneBoundary) exec(ctx context.Context, ctr testcontainers.Container, a
 }
 
 // router returns the router of zone after checking that every container on
-// the plane's bridge is an enrolled member of its current start or a router:
-// any other container would reach the other zones directly.
+// the plane's bridge is a router or a member completely enrolled for its
+// current start: any other container, a partial enrollment included, would
+// reach the other zones directly.
 func (b *zoneBoundary) router(ctx context.Context, zone string, plane NetworkPlane) (testcontainers.Container, string, error) {
 	if b == nil {
 		return nil, "", invalidRequest("the cluster has no zones: use WithZoneConfig")
@@ -662,11 +673,12 @@ func (b *zoneBoundary) unzonedLocked(ctx context.Context) ([]string, error) {
 }
 
 // close releases the boundary before the cluster's containers are removed:
-// the routes it installed, checking that no route through a router is left,
-// the agents, the routers and the management bridge, and then checks that no
-// container or network with the boundary's label is left. Network shaping on
-// the routers is restored before, by the fault registry. A failed step keeps
-// what it could not release for a retried Terminate.
+// the routes it installed, checking that no route with zoneRouteProtocol is
+// left, the agents, the routers and the management bridge, and then checks
+// that no container or network with the boundary's label is left. A route of
+// the caller stays. Network shaping on the routers is restored before, by the
+// fault registry. A failed step keeps what it could not release for a retried
+// Terminate.
 func (b *zoneBoundary) close(ctx context.Context) []error {
 	if b == nil {
 		return nil
@@ -678,10 +690,6 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 		return nil // Released by an earlier Terminate.
 	}
 	var errs []error
-	var vias []netip.Addr
-	for _, router := range b.routers {
-		vias = append(vias, slices.Collect(maps.Values(router.addrs))...)
-	}
 	for _, id := range slices.Sorted(maps.Keys(b.enrolled)) {
 		member := b.enrolled[id]
 		if member.agent == nil {
@@ -693,20 +701,20 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 		if live && len(member.routes) > 0 {
 			var ops []zoneRouteOp
 			for dest, record := range member.routes {
-				ops = append(ops, zoneRouteOp{holder: id, plane: record.plane, dest: dest})
+				ops = append(ops, record.removal(id, dest))
 			}
 			slices.SortFunc(ops, func(a, b zoneRouteOp) int { return a.dest.Compare(b.dest) })
 			if err := b.applyRoutes(ctx, ops); err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			out, err := b.exec(ctx, member.agent, "ip", "-o", "-4", "route", "show")
+			left, err := b.exec(ctx, member.agent, "ip", "-o", "-4", "route", "show", "proto", zoneRouteProtocol)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("routes of %s: %w", member.endpoint.name, err))
 				continue
 			}
-			if left := routesThrough(out, vias); len(left) > 0 {
-				errs = append(errs, fmt.Errorf("%s keeps routes through the boundary: %v", member.endpoint.name, left))
+			if left != "" {
+				errs = append(errs, fmt.Errorf("%s keeps routes of the zone boundary: %s", member.endpoint.name, left))
 				continue
 			}
 		}

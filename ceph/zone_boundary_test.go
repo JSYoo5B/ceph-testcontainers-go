@@ -38,6 +38,9 @@ func TestPlanZoneEnrollmentRoutesEveryCrossZonePacketThroughOneRouter(t *testing
 	got := func(ops []zoneRouteOp) []string {
 		var out []string
 		for _, op := range ops {
+			if op.remove {
+				t.Fatalf("enrollment planned a removal %+v", op)
+			}
 			out = append(out, op.holder+" "+string(op.plane)+" "+op.dest.String()+" via "+op.via.String())
 		}
 		return out
@@ -52,14 +55,13 @@ func TestPlanZoneEnrollmentRoutesEveryCrossZonePacketThroughOneRouter(t *testing
 	if g := got(own); !slices.Equal(g, wantOwn) {
 		t.Fatalf("own routes %v, want %v", g, wantOwn)
 	}
-	// Zone a reaches it through zone a's router; the same-zone peer gets a
-	// removal of any stale route.
+	// Zone a reaches it through zone a's router. The same-zone peer gets
+	// nothing, not even a removal: a route it has to the joining address is
+	// not the boundary's.
 	wantPeers := []string{
 		"mon public 10.0.0.5 via 10.0.0.250",
 		"osd0 cluster 10.1.0.5 via 10.1.0.250",
 		"osd0 public 10.0.0.5 via 10.0.0.250",
-		"osd1 cluster 10.1.0.5 via invalid IP",
-		"osd1 public 10.0.0.5 via invalid IP",
 	}
 	if g := got(peers); !slices.Equal(g, wantPeers) {
 		t.Fatalf("peer routes %v, want %v", g, wantPeers)
@@ -85,14 +87,33 @@ func TestPlanZoneEnrollmentRefusesAmbiguousAddresses(t *testing.T) {
 	}
 }
 
+// TestZoneRouteCommands pins the ownership rules of the route commands: an
+// installation adds with the boundary's protocol and refuses any other route
+// to the destination instead of replacing it; a removal deletes only the
+// recorded gateway, device and protocol. The kernel's matching of these
+// selectors is exercised natively by TestRegionalZoneTopology.
 func TestZoneRouteCommands(t *testing.T) {
-	install := zoneRouteOp{dest: netip.MustParseAddr("10.0.0.5"), via: netip.MustParseAddr("10.0.0.250")}
-	if got := zoneRouteCommand(install, "eth0"); got != "ip route replace 10.0.0.5/32 via 10.0.0.250 dev eth0" {
-		t.Fatalf("install: %s", got)
+	record := zoneRouteRecord{plane: PublicNetworkPlane, via: netip.MustParseAddr("10.0.0.250"), dev: "eth0"}
+	dest := netip.MustParseAddr("10.0.0.5")
+	owned := "10.0.0.5/32 via 10.0.0.250 dev eth0 proto 157"
+	install := zoneRouteCommand(zoneRouteOp{dest: dest, via: record.via, dev: record.dev})
+	for _, want := range []string{
+		"n=$(ip -o -4 route show exact 10.0.0.5/32 | wc -l)",
+		"o=$(ip -o -4 route show exact " + owned + " | wc -l)",
+		"if [ $n -eq 0 ]; then ip route add " + owned + ";",
+		"elif [ $n -ne $o ]; then",
+		"exit 1; fi",
+	} {
+		if !strings.Contains(install, want) {
+			t.Errorf("install %q lacks %q", install, want)
+		}
 	}
-	removal := zoneRouteCommand(zoneRouteOp{dest: netip.MustParseAddr("10.0.0.5")}, "eth0")
-	if !strings.HasPrefix(removal, "ip route del 10.0.0.5/32") || !strings.Contains(removal, `test -z "$(ip -o -4 route show 10.0.0.5/32)"`) {
-		t.Fatalf("a removal must check that no route is left: %s", removal)
+	if strings.Contains(install, "replace") {
+		t.Errorf("install %q replaces a route it does not own", install)
+	}
+	removal := zoneRouteCommand(record.removal("x", dest))
+	if want := "ip route del " + owned + " 2>/dev/null || true; test -z \"$(ip -o -4 route show exact " + owned + ")\""; removal != want {
+		t.Errorf("removal %q, want %q", removal, want)
 	}
 }
 
@@ -115,7 +136,7 @@ func TestZoneMemberAdmittedOnlyWhenCompleteForItsStart(t *testing.T) {
 	}
 }
 
-func TestZoneInterfaceAndLeftoverRouteParsers(t *testing.T) {
+func TestZoneInterfaceParser(t *testing.T) {
 	addrs := "1: lo    inet 127.0.0.1/8 scope host lo\n42: eth0@if43    inet 10.0.0.5/16 brd 10.0.255.255 scope global eth0\n44: eth1@if45    inet 10.1.0.5/16 scope global eth1"
 	if iface, err := interfaceWithAddress(addrs, netip.MustParseAddr("10.1.0.5")); err != nil || iface != "eth1" {
 		t.Fatalf("interface %q %v", iface, err)
@@ -125,11 +146,6 @@ func TestZoneInterfaceAndLeftoverRouteParsers(t *testing.T) {
 	}
 	if _, err := interfaceWithAddress(addrs+"\n46: eth2    inet 10.1.0.5/16 scope global eth2", netip.MustParseAddr("10.1.0.5")); err == nil {
 		t.Fatal("an address on two interfaces was accepted")
-	}
-	routes := "default via 10.0.0.1 dev eth0\n10.0.0.0/16 dev eth0 proto kernel scope link src 10.0.0.5\n10.0.0.4 via 10.0.0.250 dev eth0"
-	left := routesThrough(routes, []netip.Addr{netip.MustParseAddr("10.0.0.250")})
-	if len(left) != 1 || left[0] != "10.0.0.4 via 10.0.0.250 dev eth0" {
-		t.Fatalf("leftover routes %v", left)
 	}
 }
 
