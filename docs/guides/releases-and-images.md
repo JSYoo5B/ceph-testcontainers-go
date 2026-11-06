@@ -362,7 +362,12 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   or container exists, so the daemon never runs: `Run` returns the partial
   cluster without that manager, and `AddManager` returns no handle. A missing
   `ceph-mgr` is `ceph.ErrImageCapability`. Adding modules does not make another
-  release acceptable.
+  release acceptable. The manager container is then created from the image ID
+  that the probe checked, so rebuilding or retagging the image in between does
+  not start an unchecked image; `ManagerContainer.Image` and
+  `ClusterFacts.Images.MGR` keep the reference as given. The probe's removal is
+  bounded (30 seconds) even when the start's context is cancelled, and a
+  removal failure fails that start; `Terminate` removes a probe left behind.
 - `ClusterFacts.Images.MGR` reports the resolved image and is never empty;
   finalization manifests and verification reports record it with the other
   roles. MGR containers are never recreated: `Stop` and `Start` keep the
