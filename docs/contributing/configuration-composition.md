@@ -102,8 +102,11 @@ variadic is the only place for configuration.
   option together with an image set and fails if either is dropped.
 - **The `img` argument with an image set.** It is not a second image input: empty
   or equal to the set's Essential (after `All` expansion) is accepted and
-  anything else is `ErrInvalidRequest` before effects. Without an image set the
-  argument is the aggregate image.
+  anything else, including the set's MGR image, is `ErrInvalidRequest` before
+  effects. Without an image set the argument is the aggregate image.
+- **The MGR default.** MGR is the one role with a default: empty, it resolves
+  to Essential (after `All` expansion), and `All` may be combined with MGR. It
+  is a written rule of `ImageSet`, not a fallback, and no other role gets one.
 - **Composition (rules 1 to 5).** The zero value selects nothing. An explicit set
   is a selection: an explicit empty set is refused, not read as unspecified. At
   most one `WithImageOptions` in the variadic selects a set; a second selection
