@@ -18,10 +18,14 @@ import (
 // network for a host-network cluster). It reads its request as JSON from
 // standard input, so the password never appears in arguments, and prints one
 // JSON report. It never follows a redirect: a standby answers 303 with the
-// active manager's URL. The presented certificate is compared by its SHA-256
-// fingerprint, not verified against a CA, because the trust anchor is the
-// caller's and the fixture only checks that the listener serves the
-// certificate it installed.
+// active manager's URL. Every connection completes its TLS handshake and
+// compares the presented certificate with the installed one by its SHA-256
+// fingerprint before it writes a request, so no password or session token
+// reaches a listener that presents another certificate, including one that
+// changes its certificate between requests. After the first mismatch the
+// probe makes no further request. The certificate is not verified against a
+// CA, because the trust anchor is the caller's and the fixture only checks
+// that the listener serves the certificate it installed.
 const probeScript = `import hashlib, http.client, json, socket, ssl, sys, urllib.parse
 req = json.load(sys.stdin)
 url = urllib.parse.urlsplit(req["url"])
@@ -32,14 +36,19 @@ def conn():
     ctx.verify_mode = ssl.CERT_NONE
     return http.client.HTTPSConnection(url.hostname, url.port or 443, timeout=req["timeout"], context=ctx)
 def call(method, path, body=None, token=None):
+    if "mismatch" in report:
+        return {"error": "skipped after a certificate mismatch"}
     c = conn()
     try:
+        c.connect()
+        presented = hashlib.sha256(c.sock.getpeercert(True)).hexdigest()
+        if presented != req["fingerprint"]:
+            report["mismatch"] = presented
+            return {"error": "certificate mismatch"}
         headers = {"Accept": "application/vnd.ceph.api.v1.0+json", "Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
         c.request(method, path, body=None if body is None else json.dumps(body), headers=headers)
-        if "fingerprint" not in report:
-            report["fingerprint"] = hashlib.sha256(c.sock.getpeercert(True)).hexdigest()
         r = c.getresponse()
         return {"status": r.status, "location": r.getheader("Location") or "", "body": r.read(65536).decode("utf-8", "replace")}
     except socket.timeout:
@@ -68,12 +77,20 @@ json.dump(report, sys.stdout)
 
 // probeRequest is the standard input of probeScript.
 type probeRequest struct {
-	URL      string   `json:"url"`
-	Username string   `json:"username"`
-	Password string   `json:"password"`
-	Wrong    string   `json:"wrong"`
-	Paths    []string `json:"paths"`
-	Timeout  float64  `json:"timeout"`
+	URL         string   `json:"url"`
+	Fingerprint string   `json:"fingerprint"`
+	Username    string   `json:"username"`
+	Password    string   `json:"password"`
+	Wrong       string   `json:"wrong"`
+	Paths       []string `json:"paths"`
+	Timeout     float64  `json:"timeout"`
+}
+
+// newProbeRequest encodes the standard input of probeScript: the probe
+// accepts only a listener that presents the certificate with fingerprint
+// want, logs in as username and GETs paths with the session token.
+func newProbeRequest(url, want, username, password string, paths []string) ([]byte, error) {
+	return json.Marshal(probeRequest{URL: url, Fingerprint: want, Username: username, Password: password, Wrong: password + "-wrong", Paths: paths, Timeout: probeTimeout.Seconds()})
 }
 
 // probeResult is one HTTP exchange of probeScript.
@@ -85,14 +102,17 @@ type probeResult struct {
 	Error    string `json:"error"`
 }
 
-// probeReport is the output of probeScript. Token is the session token of the
-// owned account, which the fixture registers as a secret and never returns.
+// probeReport is the output of probeScript. Mismatch is the fingerprint of
+// the first certificate other than the installed one that a connection was
+// presented, empty when every connection was presented the installed one.
+// Token is the session token of the owned account, which the fixture
+// registers as a secret and never returns.
 type probeReport struct {
-	Fingerprint string        `json:"fingerprint"`
-	Rejected    probeResult   `json:"rejected"`
-	Login       probeResult   `json:"login"`
-	Token       string        `json:"token"`
-	Results     []probeResult `json:"results"`
+	Mismatch string        `json:"mismatch"`
+	Rejected probeResult   `json:"rejected"`
+	Login    probeResult   `json:"login"`
+	Token    string        `json:"token"`
+	Results  []probeResult `json:"results"`
 }
 
 // result returns the exchange of path.
@@ -109,9 +129,10 @@ func (r probeReport) result(path string) (probeResult, bool) {
 const probeTimeout = 20 * time.Second
 
 // runProbe runs probeScript against url with the account's credentials and
-// GETs paths with the session token.
-func runProbe(ctx context.Context, c *ceph.Container, url, username, password string, paths ...string) (probeReport, error) {
-	request, err := json.Marshal(probeRequest{URL: url, Username: username, Password: password, Wrong: password + "-wrong", Paths: paths, Timeout: probeTimeout.Seconds()})
+// GETs paths with the session token, on connections that present the
+// certificate with fingerprint want.
+func runProbe(ctx context.Context, c *ceph.Container, url, want, username, password string, paths ...string) (probeReport, error) {
+	request, err := newProbeRequest(url, want, username, password, paths)
 	if err != nil {
 		return probeReport{}, err
 	}
@@ -143,7 +164,7 @@ func decodeProbeReport(data []byte) (probeReport, error) {
 	return report, nil
 }
 
-// fingerprint is the SHA-256 of a DER certificate, as probeScript reports it.
+// fingerprint is the SHA-256 of a DER certificate, as probeScript compares it.
 func fingerprint(der []byte) string {
 	sum := sha256.Sum256(der)
 	return hex.EncodeToString(sum[:])
@@ -156,14 +177,14 @@ type summary struct {
 }
 
 // checkReadiness judges one probe of the account against the active manager:
-// the listener presents the installed certificate, a wrong password is
-// refused, the right one logs in, and /api/summary is answered by active.
-func checkReadiness(report probeReport, want, active string) error {
+// every connection was presented the installed certificate, a wrong password
+// is refused, the right one logs in, and /api/summary is answered by active.
+func checkReadiness(report probeReport, active string) error {
 	switch {
+	case report.Mismatch != "":
+		return errors.New("dashboard listener presents a certificate other than the installed one")
 	case report.Rejected.Error != "":
 		return fmt.Errorf("dashboard listener unreachable: %s", report.Rejected.Error)
-	case report.Fingerprint != want:
-		return errors.New("dashboard listener presents a certificate other than the installed one")
 	case report.Rejected.Status == 303:
 		return errors.New("dashboard listener is a standby that redirects to the active manager")
 	case report.Rejected.Status != 400 && report.Rejected.Status != 401:

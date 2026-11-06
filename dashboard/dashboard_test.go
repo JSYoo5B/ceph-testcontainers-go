@@ -123,17 +123,17 @@ func TestFormattingHidesSecrets(t *testing.T) {
 // summaryBody is GET /api/summary of a 20.2.4 manager, shortened.
 const summaryBody = `{"health_status": "HEALTH_WARN", "mgr_id": "a", "mgr_host": "https://172.18.0.3:8443/", "have_mon_connection": true}`
 
-func readyReport(leaf string) probeReport {
-	return probeReport{Fingerprint: leaf, Rejected: probeResult{Status: 400, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
+func readyReport() probeReport {
+	return probeReport{Rejected: probeResult{Status: 400, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
 		Login: probeResult{Status: 201}, Token: "token", Results: []probeResult{{Path: summaryPath, Status: 200, Body: summaryBody}}}
 }
 
 func TestCheckReadiness(t *testing.T) {
-	if err := checkReadiness(readyReport("leaf"), "leaf", "a"); err != nil {
+	if err := checkReadiness(readyReport(), "a"); err != nil {
 		t.Fatal(err)
 	}
 	cases := map[string]func(*probeReport){
-		"other certificate": func(r *probeReport) { r.Fingerprint = "other" },
+		"other certificate": func(r *probeReport) { r.Mismatch = "other" },
 		"unreachable": func(r *probeReport) {
 			r.Rejected = probeResult{Error: "ConnectionRefusedError: [Errno 111] Connection refused"}
 		},
@@ -146,19 +146,19 @@ func TestCheckReadiness(t *testing.T) {
 		"summary refused": func(r *probeReport) { r.Results[0].Status = 401 },
 	}
 	for name, change := range cases {
-		report := readyReport("leaf")
+		report := readyReport()
 		change(&report)
-		if err := checkReadiness(report, "leaf", "a"); err == nil {
+		if err := checkReadiness(report, "a"); err == nil {
 			t.Errorf("%s passed", name)
 		}
 	}
-	if err := checkReadiness(readyReport("leaf"), "leaf", "b"); err == nil || !strings.Contains(err.Error(), "mgr.a") {
+	if err := checkReadiness(readyReport(), "b"); err == nil || !strings.Contains(err.Error(), "mgr.a") {
 		t.Fatalf("summary of another manager: %v", err)
 	}
 }
 
 func TestDecodeProbeReport(t *testing.T) {
-	report, err := decodeProbeReport([]byte(`{"results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "fingerprint": "ab", "rejected": {"status": 400}, "login": {"status": 201}, "token": "t"}`))
+	report, err := decodeProbeReport([]byte(`{"results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "rejected": {"status": 400}, "login": {"status": 201}, "token": "t"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

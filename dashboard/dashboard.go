@@ -417,12 +417,14 @@ func (d *Dashboard) Credentials() (username, password string) {
 
 // Endpoint returns the HTTPS URL of the active manager's Dashboard, as the
 // MGR map advertises it, once that listener passed the readiness check: it
-// presents the installed certificate, it refuses the account with a wrong
-// password, it accepts the account's password, and GET /api/summary with the
-// session token is answered by the manager that the MGR map names active. A
-// standby answers with a redirect to the active manager, which the check
-// refuses, so the call waits, within the cluster's startup timeout, until a
-// failover settles.
+// presents the installed certificate on every connection of the check, it
+// refuses the account with a wrong password, it accepts the account's
+// password, and GET /api/summary with the session token is answered by the
+// manager that the MGR map names active. The check compares the certificate
+// of each connection before it sends a password or the session token, and
+// sends nothing more after a mismatch. A standby answers with a redirect to
+// the active manager, which the check refuses, so the call waits, within the
+// cluster's startup timeout, until a failover settles.
 //
 // The URL is the one the MGR map advertises: in bridge mode the active
 // manager's address on the cluster network, in host mode the cluster's
@@ -496,12 +498,12 @@ func (s *state) probeActive(ctx context.Context, observer *ceph.Observer, paths 
 	if !strings.HasPrefix(url, "https://") {
 		return "", probeReport{}, fmt.Errorf("the MGR map advertises a dashboard service that is not HTTPS: %s", url)
 	}
-	report, err := runProbe(ctx, s.cluster, url, s.username, s.password, append([]string{summaryPath}, paths...)...)
+	report, err := runProbe(ctx, s.cluster, url, s.leaf, s.username, s.password, append([]string{summaryPath}, paths...)...)
 	if err != nil {
 		return "", probeReport{}, err
 	}
 	s.registry.addSecret(report.Token)
-	if err := checkReadiness(report, s.leaf, status.ActiveName); err != nil {
+	if err := checkReadiness(report, status.ActiveName); err != nil {
 		return "", report, fmt.Errorf("%s: %w", url, err)
 	}
 	// The MGR map is read again: an active manager that changed during the
