@@ -1,0 +1,177 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "dashboard",
+  "count": 23,
+  "entries": [
+    {
+      "current": "dashboard.Config",
+      "kind": "type",
+      "proposed": "dashboard.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard",
+      "kind": "type",
+      "proposed": "dashboard.Dashboard",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.AddGateway",
+      "kind": "method",
+      "signature": "func(ctx context.Context, gateway *rgw.Gateway) (*GatewayLink, error)",
+      "receiver": "*Dashboard",
+      "proposed": "dashboard.Dashboard.AddGateway",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.Credentials",
+      "kind": "method",
+      "signature": "func() (username, password string)",
+      "receiver": "*Dashboard",
+      "proposed": "dashboard.Dashboard.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.Endpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Dashboard",
+      "proposed": "dashboard.Dashboard.Endpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Dashboard",
+      "proposed": "dashboard.Dashboard.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Dashboard",
+      "proposed": "dashboard.Dashboard.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Dashboard",
+      "proposed": "dashboard.Dashboard.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Dashboard.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Dashboard",
+      "proposed": "dashboard.Dashboard.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.ErrGatewayRefused",
+      "kind": "var",
+      "proposed": "dashboard.ErrGatewayRefused",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.ErrGatewayUnreachable",
+      "kind": "var",
+      "proposed": "dashboard.ErrGatewayUnreachable",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayAdminCaps",
+      "kind": "const",
+      "proposed": "dashboard.GatewayAdminCaps",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink",
+      "kind": "type",
+      "proposed": "dashboard.GatewayLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink.Check",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*GatewayLink",
+      "proposed": "dashboard.GatewayLink.Check",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "GatewayLink",
+      "proposed": "dashboard.GatewayLink.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*GatewayLink",
+      "proposed": "dashboard.GatewayLink.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "GatewayLink",
+      "proposed": "dashboard.GatewayLink.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.GatewayLink.User",
+      "kind": "method",
+      "signature": "func() *rgw.User",
+      "receiver": "*GatewayLink",
+      "proposed": "dashboard.GatewayLink.User",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.Start",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, cfg Config) (*Dashboard, error)",
+      "proposed": "dashboard.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.TLSConfig",
+      "kind": "type",
+      "proposed": "dashboard.TLSConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.TLSConfig.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "TLSConfig",
+      "proposed": "dashboard.TLSConfig.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.TLSConfig.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "TLSConfig",
+      "proposed": "dashboard.TLSConfig.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "dashboard.TLSConfig.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "TLSConfig",
+      "proposed": "dashboard.TLSConfig.String",
+      "decision": "baseline"
+    }
+  ]
+}
