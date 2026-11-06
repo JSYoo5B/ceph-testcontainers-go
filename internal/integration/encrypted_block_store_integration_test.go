@@ -411,12 +411,57 @@ func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attach
 		t.Errorf("release of chain %s: %v", e.node, err)
 		return out
 	}
+	gone := encRemovedNodes(e.rec, own, removed, e.node, e.crypt)
 	e.rec = encReleased(e.rec, own, removed)
 	if e.rec.held() {
 		out["retained"] = e.rec
 		t.Errorf("the chain %s is retained: %+v, ownership %+v, removal %s", e.node, e.rec, own, encOutcomes(removed))
 	}
+	nodes, err := e.unlinkNodes(ctx, gone)
+	out["nodes"] = nodes
+	if err != nil {
+		t.Errorf("the nodes of chain %s: %v", e.node, err)
+	}
 	return out
+}
+
+// unlinkNodes unlinks the /dev/mapper nodes of mappings the test removed,
+// which a removal by DM UUID leaves behind, and then requires /dev/mapper to
+// hold no stale node.
+func (e *encEnv) unlinkNodes(ctx context.Context, removed []encNode) (map[string]any, error) {
+	out := map[string]any{"removed_mappings": removed}
+	before, err := e.try(ctx, nil, "nodes", "-")
+	if err != nil {
+		return out, err
+	}
+	unlink, refused := judgeEncNodeRemoval(removed, before.Nodes)
+	out["refused"] = refused
+	if len(unlink) > 0 {
+		r, err := e.try(ctx, nil, "unnode", encUnnodeArgs(unlink)...)
+		out["unnode"] = r.Unnode
+		if err != nil {
+			return out, err
+		}
+		for _, u := range r.Unnode {
+			if u.Outcome != "removed" && u.Outcome != "gone" {
+				refused = append(refused, u.Name+": "+u.Outcome+" "+u.Error)
+			}
+		}
+	}
+	after, err := e.try(ctx, nil, "nodes", "-")
+	if err != nil {
+		return out, err
+	}
+	out["after"] = after.Nodes
+	clean, detail := judgeEncNodesClean([]string{e.node, e.crypt}, after.Nodes)
+	out["clean"] = detail
+	switch {
+	case len(refused) > 0:
+		return out, fmt.Errorf("nodes kept: %s; %s", strings.Join(refused, "; "), detail)
+	case !clean:
+		return out, errors.New(detail)
+	}
+	return out, nil
 }
 
 func encDash(s string) string {
@@ -703,10 +748,15 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	}
 	retarget := e.do(t, ctx, nil, "retarget", e.rec.Node.UUID, e.rec.Node.Number, "error")
 	closed := e.do(t, ctx, nil, "close", e.rec.Crypt.UUID, e.rec.Crypt.Number)
+	var closedNodes map[string]any
 	if closed.Closed {
+		gone := []encNode{{Name: e.crypt, Number: e.rec.Crypt.Number}}
 		e.rec.Crypt = encDMRecord{}
+		if closedNodes, err = e.unlinkNodes(ctx, gone); err != nil {
+			t.Fatalf("the closed crypt mapping's node: %v", err)
+		}
 	}
-	receipt["lock"] = map[string]any{"table": retarget.Table, "close": closed}
+	receipt["lock"] = map[string]any{"table": retarget.Table, "close": closed, "nodes": closedNodes}
 	if retarget.Error != "" || encLower(retarget.Table) != "error" || closed.Error != "" || !closed.Closed {
 		t.Fatalf("lock: table %q %s, close %+v", retarget.Table, retarget.Error, closed)
 	}
@@ -803,6 +853,12 @@ func TestEncryptedBlockStoreKeepsACollidingMapping(t *testing.T) {
 				r, err := e.try(cleanup, nil, "remove", uuid, theirs.Number, "-", "-", "-", "-", "-", "-", "-")
 				if err != nil || r.ReleaseNode == nil || r.ReleaseNode.Outcome != "removed" {
 					t.Errorf("remove the colliding mapping %s: %v %+v", uuid, err, r.ReleaseNode)
+					return
+				}
+				nodes, err := e.unlinkNodes(cleanup, []encNode{{Name: name, Number: theirs.Number}})
+				t.Logf("ENCRYPTED_STORE_COLLISION_NODES %s", encJSON(nodes))
+				if err != nil {
+					t.Errorf("the colliding mapping's node: %v", err)
 				}
 			})
 			t.Cleanup(func() {
@@ -836,6 +892,10 @@ func TestEncryptedBlockStoreKeepsACollidingMapping(t *testing.T) {
 			seen := e.do(t, ctx, nil, "observe", name, uuid, e.crypt+"-unused", "-", "-")
 			if s := seen.SeenNode; s == nil || !s.Exists || s.UUID != uuid || s.Number != theirs.Number || encLower(s.Table) != "error" {
 				t.Fatalf("the colliding mapping did not survive the release: %+v", s)
+			}
+			listed := e.do(t, ctx, nil, "nodes", "-")
+			if !slices.Contains(listed.Nodes, encNodeSeen{Name: name, Kind: "block", Number: theirs.Number, Live: true, DMName: name}) {
+				t.Fatalf("the colliding mapping's node did not survive the release: %+v", listed.Nodes)
 			}
 		})
 	}

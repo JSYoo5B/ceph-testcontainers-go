@@ -479,3 +479,58 @@ func TestEncUnsettledNamesARunningExec(t *testing.T) {
 		}
 	}
 }
+
+func TestEncNodesUnlinkOnlyTheRemovedMappingsStaleNode(t *testing.T) {
+	rec, seen := encChainFixture()
+	own := judgeEncOwnership(rec, seen)
+	removed := encReply{Action: "remove", ReleaseNode: &encOutcome{Outcome: "removed"}, ReleaseCrypt: &encOutcome{Outcome: "removed"}}
+	if got := encRemovedNodes(rec, own, removed, "n", "n-crypt"); !slices.Equal(got, []encNode{{"n", "252:5"}, {"n-crypt", "252:4"}}) {
+		t.Fatalf("removed nodes %v", got)
+	}
+	held := removed
+	held.ReleaseCrypt = &encOutcome{Outcome: "held"}
+	if got := encRemovedNodes(rec, own, held, "n", "n-crypt"); !slices.Equal(got, []encNode{{"n", "252:5"}}) {
+		t.Errorf("a held crypt mapping's node was offered: %v", got)
+	}
+	_, foreign := encChainFixture()
+	foreign.SeenNode = &encDMSeen{Exists: true, Name: "n", UUID: "TC-ENC-COLLIDE-1", Number: "252:6", Table: "0 1 error"}
+	never := rec
+	never.Node = encDMRecord{}
+	if got := encRemovedNodes(never, judgeEncOwnership(never, foreign), encReply{ReleaseNode: &encOutcome{Outcome: "skipped"}, ReleaseCrypt: &encOutcome{Outcome: "removed"}}, "n", "n-crypt"); !slices.Equal(got, []encNode{{"n-crypt", "252:4"}}) {
+		t.Errorf("a foreign node was offered: %v", got)
+	}
+
+	stale := encNodeSeen{Name: "n", Kind: "block", Number: "252:5"}
+	unlink, refused := judgeEncNodeRemoval([]encNode{{"n", "252:5"}, {"gone", "252:9"}}, []encNodeSeen{stale})
+	if !slices.Equal(unlink, []encNode{{"n", "252:5"}}) || len(refused) != 0 {
+		t.Fatalf("stale own node: unlink %v refused %v", unlink, refused)
+	}
+	for name, s := range map[string]encNodeSeen{
+		"another number":        {Name: "n", Kind: "block", Number: "252:7"},
+		"number live again":     {Name: "n", Kind: "block", Number: "252:5", Live: true, DMName: "other"},
+		"a symlink of the name": {Name: "n", Kind: "symlink"},
+		"a character device":    {Name: "n", Kind: "char"},
+	} {
+		if unlink, refused := judgeEncNodeRemoval([]encNode{{"n", "252:5"}}, []encNodeSeen{s}); len(unlink) != 0 || len(refused) != 1 {
+			t.Errorf("%s: unlink %v refused %v", name, unlink, refused)
+		}
+	}
+
+	host := []encNodeSeen{{Name: "control", Kind: "char"}, {Name: "vg-lv", Kind: "symlink"}}
+	if ok, d := judgeEncNodesClean([]string{"n", "n-crypt"}, host); !ok {
+		t.Fatalf("host entries only: %s", d)
+	}
+	if ok, d := judgeEncNodesClean([]string{"n", "n-crypt"}, append(slices.Clone(host), encNodeSeen{Name: "n", Kind: "block", Number: "252:6", Live: true, DMName: "n"})); !ok {
+		t.Errorf("a live mapping that shares the name: %s", d)
+	}
+	for name, s := range map[string]encNodeSeen{
+		"stale own node":            stale,
+		"stale node of another run": {Name: "tcenc-old", Kind: "block", Number: "252:2"},
+		"node of another device":    {Name: "n", Kind: "block", Number: "252:2", Live: true, DMName: "other"},
+		"own name as a symlink":     {Name: "n-crypt", Kind: "symlink"},
+	} {
+		if ok, _ := judgeEncNodesClean([]string{"n", "n-crypt"}, append(slices.Clone(host), s)); ok {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

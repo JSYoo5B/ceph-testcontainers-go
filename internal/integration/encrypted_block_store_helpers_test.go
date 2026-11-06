@@ -53,7 +53,15 @@ import (
 //	                                the live identity of each layer and of the mappings named NODE and CRYPT
 //	remove NUUID NNUM CUUID CNUM LOOP LNUM LDEV LINO FILE
 //	                                release the recorded layers that still have their identity
-const encKeeperScript = `import errno, fcntl, hashlib, json, os, struct, subprocess, sys, time
+//	nodes -                         every entry of /dev/mapper and the device behind it
+//	unnode NAME NUM [NAME NUM ...]  unlink a /dev/mapper block node of number NUM that no device has
+//
+// Without udev, libdevmapper unlinks /dev/mapper/NAME only when the removal
+// names the mapping; a removal by DM UUID leaves the node file. The test
+// unlinks the node of each mapping it removed (unnode), and only while that
+// node is a block node with the removed mapping's number and no device has
+// that number any more.
+const encKeeperScript = `import errno, fcntl, hashlib, json, os, stat, struct, subprocess, sys, time
 
 def run(*argv, data=None):
     r = subprocess.run(argv, input=data, capture_output=True, timeout=120)
@@ -196,6 +204,30 @@ def release_loop(loop, num, dev, ino):
             return {"outcome": "removed"}
         time.sleep(0.25)
     return {"outcome": "failed", "error": "losetup -d: rc %d %s" % (rc, err)}
+
+def node_entry(name):
+    path = "/dev/mapper/" + name
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    e = {"name": name}
+    if stat.S_ISLNK(st.st_mode):
+        e["kind"] = "symlink"
+    elif stat.S_ISBLK(st.st_mode):
+        num = "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
+        e["kind"], e["number"] = "block", num
+        e["live"] = os.path.exists("/sys/dev/block/" + num)
+        try:
+            with open("/sys/dev/block/%s/dm/name" % num) as f:
+                e["dm_name"] = f.read().strip()
+        except OSError:
+            e["dm_name"] = ""
+    elif stat.S_ISCHR(st.st_mode):
+        e["kind"] = "char"
+    else:
+        e["kind"] = "other"
+    return e
 
 action, arg = sys.argv[1], sys.argv[2]
 out = {"action": action}
@@ -349,6 +381,22 @@ elif action == "remove":
         else:
             os.unlink(path)
             out["release_file"] = {"outcome": "removed"}
+elif action == "nodes":
+    out["nodes"] = [e for e in (node_entry(n) for n in sorted(os.listdir("/dev/mapper"))) if e]
+elif action == "unnode":
+    results = []
+    for name, num in zip(sys.argv[2::2], sys.argv[3::2]):
+        e = node_entry(name)
+        r = {"name": name}
+        if e is None:
+            r["outcome"] = "gone"
+        elif e["kind"] != "block" or e["number"] != num or e["live"]:
+            r["outcome"], r["error"] = "refused", "%s is %s" % (name, json.dumps(e))
+        else:
+            os.unlink("/dev/mapper/" + name)
+            r["outcome"] = "removed"
+        results.append(r)
+    out["unnode"] = results
 else:
     raise SystemExit("unknown action " + action)
 print(json.dumps(out))`
@@ -434,6 +482,20 @@ type encReply struct {
 	ReleaseCrypt *encOutcome `json:"release_crypt,omitempty"`
 	ReleaseLoop  *encOutcome `json:"release_loop,omitempty"`
 	ReleaseFile  *encOutcome `json:"release_file,omitempty"`
+	// nodes, unnode
+	Nodes  []encNodeSeen `json:"nodes,omitempty"`
+	Unnode []encOutcome  `json:"unnode,omitempty"`
+}
+
+// encNodeSeen is one entry of the host's /dev/mapper: its kind and, for a
+// block node, its number, whether a device has that number and the name of
+// the device-mapper device that has it.
+type encNodeSeen struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Number string `json:"number,omitempty"`
+	Live   bool   `json:"live,omitempty"`
+	DMName string `json:"dm_name,omitempty"`
 }
 
 // encDMSeen is the live state of one device-mapper layer: the mapping the
@@ -465,6 +527,7 @@ type encLoopSeen struct {
 // (already absent), skipped (not recorded), held, refused (its identity
 // changed) or failed.
 type encOutcome struct {
+	Name    string `json:"name,omitempty"`
 	Outcome string `json:"outcome"`
 	Error   string `json:"error,omitempty"`
 }
@@ -954,4 +1017,87 @@ func judgeEncSettled(states []encExecState) (bool, string) {
 		}
 	}
 	return true, fmt.Sprintf("%d unsettled execs exited", len(states))
+}
+
+// encNode is the /dev/mapper node of a mapping the test removed: its name
+// and the number the mapping had.
+type encNode struct{ Name, Number string }
+
+// encRemovedNodes are the nodes of the recorded device-mapper layers that a
+// remove receipt shows removed or already gone, with the number each had.
+func encRemovedNodes(rec encChainRecord, own encOwnership, r encReply, node, crypt string) []encNode {
+	var nodes []encNode
+	for _, l := range []struct {
+		name   string
+		layer  encLayer
+		rec    encDMRecord
+		result *encOutcome
+	}{{node, own.Node, rec.Node, r.ReleaseNode}, {crypt, own.Crypt, rec.Crypt, r.ReleaseCrypt}} {
+		number := l.layer.Number
+		if number == "" {
+			number = l.rec.Number
+		}
+		removed := l.layer.Verdict == encLayerOwned && l.result != nil && (l.result.Outcome == "removed" || l.result.Outcome == "gone")
+		if number != "" && (removed || l.layer.Verdict == encLayerGone) {
+			nodes = append(nodes, encNode{Name: l.name, Number: number})
+		}
+	}
+	return nodes
+}
+
+// judgeEncNodeRemoval decides which nodes of removed mappings may be
+// unlinked: the entry of that name must be a block node with the removed
+// mapping's number that no device has any more. A symlink, a node of another
+// number or a node whose number a device has again is not the test's to
+// unlink; it is refused and reported.
+func judgeEncNodeRemoval(removed []encNode, seen []encNodeSeen) ([]encNode, []string) {
+	var unlink []encNode
+	var refused []string
+	for _, n := range removed {
+		i := slices.IndexFunc(seen, func(s encNodeSeen) bool { return s.Name == n.Name })
+		if i < 0 {
+			continue
+		}
+		s := seen[i]
+		switch {
+		case s.Kind != "block":
+			refused = append(refused, fmt.Sprintf("%s is a %s, not the removed mapping's node", n.Name, s.Kind))
+		case s.Number != n.Number:
+			refused = append(refused, fmt.Sprintf("%s is %s, the removed mapping was %s", n.Name, s.Number, n.Number))
+		case s.Live:
+			refused = append(refused, fmt.Sprintf("%s: a device has %s again (%q)", n.Name, s.Number, s.DMName))
+		default:
+			unlink = append(unlink, n)
+		}
+	}
+	return unlink, refused
+}
+
+// encUnnodeArgs are the unnode arguments for nodes.
+func encUnnodeArgs(nodes []encNode) []string {
+	args := make([]string, 0, 2*len(nodes))
+	for _, n := range nodes {
+		args = append(args, n.Name, n.Number)
+	}
+	return args
+}
+
+// judgeEncNodesClean requires /dev/mapper to hold no stale block node: each
+// one must be the node of a live device-mapper device of the same name. A
+// node of the test's names may only remain as the node of such a live device
+// (a mapping that only shares the name).
+func judgeEncNodesClean(names []string, seen []encNodeSeen) (bool, string) {
+	var stale []string
+	for _, s := range seen {
+		switch {
+		case s.Kind == "block" && (!s.Live || s.DMName != s.Name):
+			stale = append(stale, fmt.Sprintf("%s (%s, device %q)", s.Name, s.Number, s.DMName))
+		case s.Kind != "block" && slices.Contains(names, s.Name):
+			stale = append(stale, fmt.Sprintf("%s (a %s)", s.Name, s.Kind))
+		}
+	}
+	if len(stale) > 0 {
+		return false, "stale /dev/mapper entries: " + strings.Join(stale, ", ")
+	}
+	return true, fmt.Sprintf("%d entries, none stale", len(seen))
 }
