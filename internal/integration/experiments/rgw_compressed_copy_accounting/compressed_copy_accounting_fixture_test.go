@@ -13,9 +13,11 @@ import (
 )
 
 // ownBuckets runs harness.RGWOwnBuckets in a subtest whose creation of
-// failAt fails (failAt empty: none fails), stopping the subtest there as
-// the native cases do, and returns the creations attempted and the buckets
-// passed to teardown (nil when teardown never ran).
+// failAt fails (failAt empty: none fails) and returns the creations
+// attempted and the buckets passed to teardown (nil when teardown never
+// ran). The subtest ends right after the call, so its cleanups run as they
+// do when a native case stops at a failed creation; it passes rather than
+// skips, since the tag runner rejects a skipped pure test.
 func ownBuckets(t *testing.T, failAt string, names ...string) (attempted, tornDown []string) {
 	t.Helper()
 	create := func(bucket string) error {
@@ -29,9 +31,6 @@ func ownBuckets(t *testing.T, failAt string, names ...string) (attempted, tornDo
 		err := harness.RGWOwnBuckets(t, create, func(created []string) { tornDown = append([]string{}, created...) }, names...)
 		if (err != nil) != (failAt != "") {
 			t.Errorf("RGWOwnBuckets error %v with failAt %q", err, failAt)
-		}
-		if err != nil {
-			t.SkipNow()
 		}
 	})
 	return attempted, tornDown
