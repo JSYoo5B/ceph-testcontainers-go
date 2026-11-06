@@ -546,6 +546,18 @@ unexpected), with the unexpected ones first and `OmittedFindings` beyond
 `Required`, `MinCount`, `MaxCount`, `Matched`, `Satisfied`) and the `Gaps`
 (`finalize.VerificationGap`: `Source`, `Reason`).
 
+A log line's redacted text, which expectations match and findings and the
+archived lines keep, is redacted one line at a time with two additions that
+per-line redaction alone would miss. A private key block is followed across
+the lines of each source's stream: what lies between its `BEGIN` and `END`
+delimiters becomes `[REDACTED PRIVATE KEY]` on every line, also when the read
+ends inside the block, and an `END` whose `BEGIN` was not read (on a line
+before the window, without a timestamp, or past the 64 KiB cut of a long
+line) withholds the same way every line of that stream since the previous
+`END`. A truncated line, whose rest was not read, withholds a tail that is the
+start of a secret, such as a `RedactValues` entry, and ends in `[REDACTED]`
+instead, so that a cut cannot leave all of a secret but its last characters.
+
 Each check's `finalize.VerificationOutcome`, and the report's, which is the worse
 of the two:
 
