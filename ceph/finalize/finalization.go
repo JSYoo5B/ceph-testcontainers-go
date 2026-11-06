@@ -1,6 +1,7 @@
 package finalize
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -560,6 +561,9 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	f.mu.Unlock()
 	for i, report := range verifications {
 		m.Files = append(m.Files, f.writeReport(directory, fmt.Sprintf("verification-%d-%s.json", i+1, artifactName(report.Name)), report))
+		if report.archiveLogs {
+			m.Files = append(m.Files, f.writeLogLines(directory, fmt.Sprintf("verification-%d-%s-logs.jsonl", i+1, artifactName(report.Name)), report.logLines))
+		}
 	}
 	f.mu.Lock()
 	captureReports := slices.Clone(f.captureReports)
@@ -630,6 +634,30 @@ func (f *Finalization) writeReport(directory, name string, report any) finalizat
 		return file
 	}
 	file.Bytes = len(data) + 1
+	return file
+}
+
+// writeLogLines writes the lines that a verification kept, one JSON object
+// per line, in the order received.
+func (f *Finalization) writeLogLines(directory, name string, lines []verificationLogLine) finalizationFile {
+	file := finalizationFile{Name: name}
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	encoder.SetEscapeHTML(false)
+	var err error
+	for _, line := range lines {
+		if err = encoder.Encode(line); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = f.writeFile(filepath.Join(directory, name), data.Bytes())
+	}
+	if err != nil {
+		file.Error = f.redact(err.Error())
+		return file
+	}
+	file.Bytes = data.Len()
 	return file
 }
 

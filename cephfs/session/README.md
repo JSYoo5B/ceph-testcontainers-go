@@ -169,9 +169,10 @@ if err := required.Restore(ctx); err != nil {
   A rank whose holder changed since the previous coherent sample is listed in
   `Rebaselined`: its sessions are reported, not diffed, so a client that does
   not come back after a takeover shows as missing from `Sessions`, not in
-  `Removed`. The ranks are listed one after another, so a multi-rank sample
-  is not atomic. Native tests cover one rank; the multi-rank rules are unit
-  tested.
+  `Removed`. With two active ranks, a takeover of rank 1 rebaselines rank 1
+  only, and rank 0 keeps reporting its changes. The ranks are listed one
+  after another, so a multi-rank sample is not atomic. Native tests cover
+  one and two active ranks; more ranks are unit tested.
 - A removal means only that the daemon that listed the session no longer
   does. It does not say why, and it is not proof of blocklisting, flushed
   data or a client that stopped; read the blocklist and the client's own

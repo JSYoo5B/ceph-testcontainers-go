@@ -41,8 +41,18 @@ type VerificationConfig struct {
 	// mirror daemons, that are verified like the cluster's own. Verification
 	// never adopts them.
 	AdditionalContainers []diagnostics.Target
-	// RedactValues removes additional opaque secrets from the report.
+	// RedactValues removes additional opaque secrets from the report and
+	// the archived lines. Each value must be one line: log lines are masked
+	// one at a time, so a value with a line break could never match and its
+	// parts would stay readable on consecutive lines. Such a value is
+	// refused.
 	RedactValues []string
+	// ArchiveLogs keeps every line of the window that the log check reads,
+	// events or not, redacted and in the order received, and the failure
+	// archive writes them next to the report. They have the log check's
+	// coverage: its gaps (a restarted, removed or rotating source, the
+	// MaxLogBytes limit, a cut stream) apply to them as well.
+	ArchiveLogs bool
 }
 
 // LogEvent is the kind of a log line that verification evaluates. Lines of
@@ -255,6 +265,24 @@ type VerificationReport struct {
 	LogExpectations   []LogExpectation   `json:"log_expectations"`
 	CrashExpectations []CrashExpectation `json:"crash_expectations"`
 	Notes             []string           `json:"notes"`
+
+	// logLines are the lines that ArchiveLogs keeps for the archive.
+	logLines    []verificationLogLine
+	archiveLogs bool
+}
+
+// verificationLogLine is one line of the window as the failure archive keeps
+// it with ArchiveLogs: its source, the stream, Docker's timestamp and the
+// redacted line without that timestamp.
+type verificationLogLine struct {
+	Source      string `json:"source"`
+	ContainerID string `json:"container_id,omitempty"`
+	Stream      string `json:"stream"`
+	Time        string `json:"time"`
+	Text        string `json:"text"`
+	// Truncated marks a line whose rest was not read: one longer than 64
+	// KiB, or the last line of a stream that MaxLogBytes or an error ended.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // VerificationWindow is the observed interval, on the Docker engine's clock.
@@ -282,6 +310,9 @@ type VerificationSource struct {
 	LogDriver    string `json:"log_driver,omitempty"`
 	// LogBytes counts the log stream bytes read in the window.
 	LogBytes int64 `json:"log_bytes"`
+	// LogLines counts the lines of the window read from the stream, events
+	// or not.
+	LogLines int `json:"log_lines"`
 	// BaselineCrashes are the crash IDs that were present at activation.
 	BaselineCrashes []string `json:"baseline_crashes"`
 }
@@ -422,7 +453,9 @@ func verificationDefaults(config VerificationConfig) VerificationConfig {
 }
 
 // checkVerificationBounds refuses a name, timeout, limit, container
-// description or redaction value outside its range.
+// description or redaction value outside its range, and a redaction value
+// with a line break, which the line-by-line masking of log lines cannot
+// match.
 func checkVerificationBounds(config VerificationConfig) error {
 	switch {
 	case !verificationName(config.Name):
@@ -433,6 +466,8 @@ func checkVerificationBounds(config VerificationConfig) error {
 		return errors.New("limits out of range")
 	case len(config.Logs) > maxVerificationRules || len(config.Crashes) > maxVerificationRules:
 		return fmt.Errorf("more than %d expectations of one kind", maxVerificationRules)
+	case slices.ContainsFunc(config.RedactValues, func(value string) bool { return strings.ContainsAny(value, "\r\n") }):
+		return errors.New("redaction value must be one line; log lines are masked one at a time")
 	}
 	return evidence.CheckCollectionInputs(config.AdditionalContainers, config.RedactValues)
 }
@@ -720,6 +755,7 @@ type verificationObservation struct {
 	sources  []VerificationSource
 	logs     []verificationEvent
 	crashes  []verificationEvent
+	lines    []verificationLogLine
 	logGaps  []VerificationGap
 	crashGap []VerificationGap
 	// gaps apply to both checks.
@@ -817,12 +853,18 @@ var verificationNotes = []string{
 	"The bug compatibility selection is a build property that the library does not see.",
 }
 
+const archivedLogsNote = "With ArchiveLogs, the failure archive keeps every line of the window that the log check read, events or not, in verification-<n>-<name>-logs.jsonl, in the order received; the log check's gaps apply to those lines as well, and a source without lines there was not read."
+
 func (v *Verification) evaluate(o *verificationObservation) *VerificationReport {
 	b := v.baseline
 	report := &VerificationReport{SchemaVersion: 1, Name: v.name, Cluster: v.cluster, Images: v.images,
 		Window:          VerificationWindow{Phase: "test", StartedAt: b.start, EndedAt: o.end, EvaluatedAt: v.now()},
 		Sources:         o.sources,
-		LogExpectations: slices.Clone(v.config.Logs), CrashExpectations: slices.Clone(v.config.Crashes), Notes: slices.Clone(verificationNotes)}
+		LogExpectations: slices.Clone(v.config.Logs), CrashExpectations: slices.Clone(v.config.Crashes), Notes: slices.Clone(verificationNotes),
+		logLines: o.lines, archiveLogs: v.config.ArchiveLogs}
+	if v.config.ArchiveLogs {
+		report.Notes = append(report.Notes, archivedLogsNote)
+	}
 	if report.Sources == nil {
 		report.Sources = []VerificationSource{}
 	}

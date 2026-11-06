@@ -440,7 +440,10 @@ func activeRank(status *cephfs.FilesystemStatus, rank int) (cephfs.MDSStatus, bo
 // daemon starts again and must rejoin as a standby, a separate condition from
 // the client's recovery. This proves reconnect of a client whose data was
 // fsynced before the failure; it does not cover replay of an outstanding
-// request.
+// request. With two ranks, a session watch of this client and a second one
+// must keep both across the takeover, rebaselining only rank 1, and must
+// remove the second's sessions on both ranks once it is evicted and this
+// client's once it unmounts.
 func runCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
@@ -549,6 +552,13 @@ func runCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...test
 		rankZero = cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
 	}
 	rawBefore := cephFSRawSession(t, ctx, cluster, old.Name, baseline.Client)
+	// With two ranks, a session watch follows this client and a second one
+	// across the takeover of rank 1, the second's eviction and this one's
+	// unmount.
+	var watched *rankOneSessionWatch
+	if failover == cephFSRankOneTakeover {
+		watched = startRankOneSessionWatch(t, ctx, cluster, fs, "/pinned", rankZero, session)
+	}
 	t.Logf("CEPHFS_RETAINED baseline fscid=%d rank%d mds=%s gid=%d cid=%s client=%d pid=%d address=%s inode=%d raw: %s",
 		before.FilesystemID, failedRank, old.Name, old.GID, cid, baseline.Client, baseline.PID, session.Address, baseline.Inode, cephFSRawSessionSummary(rawBefore))
 
@@ -599,6 +609,9 @@ func runCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...test
 			t.Fatalf("rank 0 changed from %+v while rank %d failed: %+v", untouched, failedRank, after)
 		}
 	}
+	if watched != nil {
+		watched.takenOver(t, ctx, untouched, current)
+	}
 
 	actor.Open(t, ctx, "act")
 	acted := actor.Receipt(t, ctx, 2)
@@ -647,11 +660,23 @@ func runCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...test
 		cephFSWaitForPinnedSubtree(t, ctx, cluster, fs, "/pinned", failedRank)
 	}
 	rawAfter := cephFSRawSession(t, ctx, cluster, current.Name, baseline.Client)
+	if watched != nil {
+		watched.evict(t, ctx, cluster, untouched)
+		watched.finishing()
+	}
 	actor.Open(t, ctx, "finish")
-	if closed := actor.Receipt(t, ctx, 3); !closed.Closed || closed.PID != baseline.PID {
+	closed := actor.Receipt(t, ctx, 3)
+	if !closed.Closed || closed.PID != baseline.PID {
 		t.Fatalf("closing receipt = %+v", closed)
 	}
 	actor.Wait(t, ctx)
+	if watched != nil {
+		// The watch's removals follow a clean close.
+		if closed.CloseErrno != 0 {
+			t.Fatalf("the retained client did not close and unmount: %+v", closed)
+		}
+		watched.unmounted(t, ctx, cluster)
+	}
 	sum := sha256.Sum256(want)
 	t.Logf("CEPHFS_RETAINED %s fscid=%d rank%d %s/%d -> %s/%d after %s, killed cid=%s client=%d pid=%d address=%s inode=%d sha256=%x reader=%d raw: %s",
 		failover, after.FilesystemID, failedRank, old.Name, old.GID, current.Name, current.GID, recovered.Round(time.Second), cid, baseline.Client, baseline.PID, retained.Address, baseline.Inode, sum, independent.Client, cephFSRawSessionSummary(rawAfter))
