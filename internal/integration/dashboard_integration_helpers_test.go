@@ -181,7 +181,7 @@ func (c dashboardConsumer) summaryManager(t *testing.T, ctx context.Context, bas
 }
 
 // hostDashboardRequest is the test's host-side Dashboard client with the test
-// CA, for a host-network cluster whose listener is on the host.
+// CA, at a host-network listener or a bridge-mode manager's published port.
 func hostDashboardRequest(t *testing.T, ctx context.Context, ca *dashboardCA, base, method, path, token string, body any) dashboardReply {
 	t.Helper()
 	client := &http.Client{
@@ -221,6 +221,28 @@ func hostDashboardRequest(t *testing.T, ctx context.Context, ca *dashboardCA, ba
 		t.Fatal(err)
 	}
 	return dashboardReply{Status: response.StatusCode, Location: response.Header.Get("Location"), Body: string(data)}
+}
+
+// hostDashboardLogin logs in from the test process at base and requires the
+// summary to be answered by the manager active.
+func hostDashboardLogin(t *testing.T, ctx context.Context, ca *dashboardCA, base, username, password, active string) {
+	t.Helper()
+	if reply := hostDashboardRequest(t, ctx, ca, base, "POST", "/api/auth", "", map[string]string{"username": username, "password": password + "x"}); reply.Status != 400 {
+		t.Fatalf("host-side login with a wrong password: HTTP %d", reply.Status)
+	}
+	reply := hostDashboardRequest(t, ctx, ca, base, "POST", "/api/auth", "", map[string]string{"username": username, "password": password})
+	if reply.Status != 201 {
+		t.Fatalf("host-side login: HTTP %d", reply.Status)
+	}
+	var hostToken struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(reply.Body), &hostToken); err != nil {
+		t.Fatal(err)
+	}
+	if reply := hostDashboardRequest(t, ctx, ca, base, "GET", "/api/summary", hostToken.Token, nil); reply.Status != 200 || !strings.Contains(reply.Body, `"mgr_id": "`+active+`"`) {
+		t.Fatalf("host-side summary: HTTP %d", reply.Status)
+	}
 }
 
 // dashboardState is the cluster state the Dashboard fixture may change: the
@@ -381,21 +403,15 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	if _, err := cluster.Ceph(ctx, "osd", "pool", "get", "tc-dashboard-denied", "size"); err == nil {
 		t.Fatal("the refused pool exists")
 	}
-	if host {
-		reply := hostDashboardRequest(t, ctx, ca, endpoint, "POST", "/api/auth", "", map[string]string{"username": username, "password": password})
-		if reply.Status != 201 {
-			t.Fatalf("host-side login: HTTP %d", reply.Status)
-		}
-		var hostToken struct {
-			Token string `json:"token"`
-		}
-		if err := json.Unmarshal([]byte(reply.Body), &hostToken); err != nil {
-			t.Fatal(err)
-		}
-		if reply := hostDashboardRequest(t, ctx, ca, endpoint, "GET", "/api/summary", hostToken.Token, nil); reply.Status != 200 || !strings.Contains(reply.Body, `"mgr_id": "`+active+`"`) {
-			t.Fatalf("host-side summary: HTTP %d", reply.Status)
-		}
+	hostEndpoint, err := d.HostEndpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if host != (hostEndpoint == endpoint) {
+		t.Fatalf("host-side endpoint %s, advertised %s (host network %t)", hostEndpoint, endpoint, host)
+	}
+	hostDashboardLogin(t, ctx, ca, hostEndpoint, username, password, active)
+	t.Logf("DASHBOARD host-side endpoint %s of mgr.%s: login and summary from the test process", hostEndpoint, active)
 	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || len(status.Standbys) != 1 {
 		t.Fatalf("manager status %+v %v", status, err)
@@ -427,6 +443,15 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 		t.Fatalf("the earlier token reached mgr.%s, want mgr.%s", got, promoted)
 	}
 	t.Logf("DASHBOARD failover mgr.%s -> mgr.%s: endpoint %s -> %s; the session token of mgr.%s is accepted by mgr.%s", active, promoted, endpoint, failover, active, promoted)
+	hostFailover, err := d.HostEndpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostFailover == hostEndpoint || host != (hostFailover == failover) {
+		t.Fatalf("host-side endpoint after the failover %s, before %s, advertised %s", hostFailover, hostEndpoint, failover)
+	}
+	hostDashboardLogin(t, ctx, ca, hostFailover, username, password, promoted)
+	t.Logf("DASHBOARD host-side failover mgr.%s -> mgr.%s: %s -> %s, login and summary from the test process", active, promoted, hostEndpoint, hostFailover)
 
 	// An outside edit of the certificate is refused and left as it is.
 	other := ca.leaf(t, 3)
@@ -540,6 +565,10 @@ func testDashboardRGWGateway(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	// This bridge-mode cluster's managers publish no port.
+	if got, err := d.HostEndpoint(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("HostEndpoint without WithManagerPorts: %q, %v", got, err)
 	}
 	beforeLink := readDashboardState(t, ctx, cluster)
 	link, err := d.AddGateway(ctx, gateway)

@@ -37,8 +37,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    topology. Settings are grouped values, each passed through one option:
    `WithClusterConfig` (MON/MGR/OSD counts, OSD layout, CRUSH root, pool
    defaults, initial pools), `WithOSDStorage`, `WithMonitorStorage`, `WithNetworkConfig`,
-   `WithImageOptions`, plus `WithAuth`, `WithConfigFile`, `WithHostNetwork` and
-   `WithStartupTimeout`. Contradictory options fail before anything is created.
+   `WithImageOptions`, plus `WithAuth`, `WithConfigFile`, `WithHostNetwork`,
+   `WithManagerPorts` and `WithStartupTimeout`. Contradictory options fail before anything is created.
    For small functional OSDs, select
    `OSDStorage{}.WithStartupBenchmark(OSDBenchmarkSkip)` explicitly;
    [OSD startup calibration](../docs/guides/osd-startup-benchmark.md) explains
@@ -122,8 +122,9 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   default: every manager runs the essential image unless `ImageSet.MGR`
   selects another, such as the official image or one with additional modules. See
   [Releases and images](../docs/guides/releases-and-images.md).
-- **Networks.** Bridge mode by default: only MON `a` (and RGW gateways)
-  publishes ports, so native
+- **Networks.** Bridge mode by default: only MON `a` (and RGW gateways, and
+  the MGRs with `WithManagerPorts` for a host-side client of a module
+  listener such as the Dashboard) publishes ports, so native
   RADOS, RBD and CephFS clients run in a `WithClient` container. Host mode lets
   a process on a Linux Docker host connect directly. IPv6, dual-stack and a
   separate cluster network are bridge-mode options.

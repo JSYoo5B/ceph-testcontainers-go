@@ -2,6 +2,8 @@ package ceph
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -58,6 +60,9 @@ type options struct {
 	clusterSet clusterField
 	// zones is the ZoneConfig group; see zoneSettings.
 	zones zoneSettings
+	// managerPorts are the TCP ports every bridge-mode MGR container
+	// publishes (WithManagerPorts); nil publishes none.
+	managerPorts []int
 }
 
 const hostPortAttempts = 5
@@ -88,6 +93,56 @@ func WithHostNetwork() Option {
 		o.hostNetwork = true
 		return nil
 	}
+}
+
+// WithManagerPorts publishes the listed TCP ports of every MGR container,
+// the initial ones and those of AddManager, on ports the Docker engine
+// selects, so that a process on the Docker host reaches a MGR module listener
+// such as the Dashboard's (dashboard.Dashboard.HostEndpoint). Without it a
+// bridge-mode MGR publishes no port and only containers on the cluster network
+// reach its listeners. Docker cannot publish a port of a created container,
+// so the ports are fixed for the cluster's lifetime. Read a manager's mapped
+// port with its handle's MappedPort; a stopped manager has none and a started
+// one may get another. The ports must be the ones the module listens on in
+// the container: WithManagerPorts does not configure a module.
+//
+// A port outside 1 to 65535, a repeated port, an empty list, a second
+// WithManagerPorts and the combination with WithHostNetwork, where the
+// managers share the host's ports, are refused.
+//
+//purpose:construction,handoff
+func WithManagerPorts(ports ...int) Option {
+	return func(o *options) error {
+		if o.managerPorts != nil {
+			return fmt.Errorf("manager ports set by more than one WithManagerPorts")
+		}
+		if len(ports) == 0 {
+			return fmt.Errorf("WithManagerPorts needs at least one port")
+		}
+		for i, port := range ports {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("manager port %d is outside 1 to 65535", port)
+			}
+			if slices.Contains(ports[:i], port) {
+				return fmt.Errorf("manager port %d is listed twice", port)
+			}
+		}
+		o.managerPorts = slices.Clone(ports)
+		return nil
+	}
+}
+
+// managerExposedPorts returns the container ports every MGR container
+// publishes: those of WithManagerPorts, in bridge mode.
+func (o options) managerExposedPorts() []string {
+	if o.hostNetwork {
+		return nil
+	}
+	ports := make([]string, 0, len(o.managerPorts))
+	for _, port := range o.managerPorts {
+		ports = append(ports, strconv.Itoa(port)+"/tcp")
+	}
+	return ports
 }
 
 // OSDObjectStore names the object store that OSDs keep their data in.

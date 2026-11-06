@@ -15,9 +15,11 @@ import (
 func TestDashboardOwnedHTTPS(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		t.Run(mode.Name, func(t *testing.T) {
-			var opts []testcontainers.ContainerCustomizer
+			// A bridge-mode manager publishes the Dashboard port for the
+			// host-side consumer.
+			opts := []testcontainers.ContainerCustomizer{ceph.WithManagerPorts(8443)}
 			if mode.Host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = []testcontainers.ContainerCustomizer{ceph.WithHostNetwork()}
 			}
 			testDashboardOwnedHTTPS(t, opts...)
 		})

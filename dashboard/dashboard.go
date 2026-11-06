@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	neturl "net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -22,6 +24,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
+	"github.com/moby/moby/api/types/network"
 )
 
 // TLSConfig is the certificate the Dashboard listener presents: a PEM
@@ -149,9 +152,11 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
 // host port on the cluster's public address, because the managers share the
 // host's ports; a manager added later uses the module's default port 8443.
 // The ports are reserved and released just before the module binds them, so
-// a port another process takes in between fails the readiness check. In bridge mode the listener is the manager's container address
-// on the cluster network with port 8443, which containers on that network
-// reach; the managers publish no host port.
+// a port another process takes in between fails the readiness check. In
+// bridge mode the listener is the manager's container address on the cluster
+// network with port 8443, which containers on that network reach; a process
+// on the Docker host reaches it through the host port that
+// ceph.WithManagerPorts(8443) publishes, at the URL of HostEndpoint.
 //
 // The module's enabled state and the listener options are held through
 // override handles, so a second Start on the same cluster, or an
@@ -429,7 +434,8 @@ func (d *Dashboard) Credentials() (username, password string) {
 // The URL is the one the MGR map advertises: in bridge mode the active
 // manager's address on the cluster network, in host mode the cluster's
 // public address and the manager's own port. A failover changes it; call
-// Endpoint again after one. The check runs from the control container.
+// Endpoint again after one. The check runs from the control container. A
+// process on the Docker host of a bridge-mode cluster uses HostEndpoint.
 //
 //purpose:observation,handoff
 func (d *Dashboard) Endpoint(ctx context.Context) (string, error) {
@@ -462,12 +468,12 @@ func (s *state) endpoint(ctx context.Context, report *probeReport, paths ...stri
 	}
 	var last error
 	for {
-		url, current, err := s.probeActive(ctx, observer, paths...)
+		listener, current, err := s.probeActive(ctx, observer, paths...)
 		if err == nil {
 			if report != nil {
 				*report = current
 			}
-			return url, nil
+			return listener.url, nil
 		}
 		last = err
 		select {
@@ -478,44 +484,217 @@ func (s *state) endpoint(ctx context.Context, report *probeReport, paths ...stri
 	}
 }
 
+// activeListener is the listener that passed a readiness check: the URL the
+// MGR map advertised and the active manager it named during the check.
+type activeListener struct {
+	url     string
+	manager string
+	gid     uint64
+}
+
 // probeActive probes the URL the MGR map advertises for the active manager.
-func (s *state) probeActive(ctx context.Context, observer *ceph.Observer, paths ...string) (string, probeReport, error) {
+func (s *state) probeActive(ctx context.Context, observer *ceph.Observer, paths ...string) (activeListener, probeReport, error) {
 	status, err := observer.ManagerStatus(ctx)
 	if err != nil {
-		return "", probeReport{}, err
+		return activeListener{}, probeReport{}, err
 	}
 	if !status.Available || status.ActiveName == "" {
-		return "", probeReport{}, errors.New("no active manager")
+		return activeListener{}, probeReport{}, errors.New("no active manager")
 	}
 	services, err := observer.ManagerServices(ctx)
 	if err != nil {
-		return "", probeReport{}, err
+		return activeListener{}, probeReport{}, err
 	}
 	url, ok := services["dashboard"]
 	if !ok {
-		return "", probeReport{}, errors.New("the MGR map advertises no dashboard service")
+		return activeListener{}, probeReport{}, errors.New("the MGR map advertises no dashboard service")
 	}
 	if !strings.HasPrefix(url, "https://") {
-		return "", probeReport{}, fmt.Errorf("the MGR map advertises a dashboard service that is not HTTPS: %s", url)
+		return activeListener{}, probeReport{}, fmt.Errorf("the MGR map advertises a dashboard service that is not HTTPS: %s", url)
 	}
 	report, err := runProbe(ctx, s.cluster, url, s.leaf, s.username, s.password, append([]string{summaryPath}, paths...)...)
 	if err != nil {
-		return "", probeReport{}, err
+		return activeListener{}, probeReport{}, err
 	}
 	s.registry.addSecret(report.Token)
 	if err := checkReadiness(report, status.ActiveName); err != nil {
-		return "", report, fmt.Errorf("%s: %w", url, err)
+		return activeListener{}, report, fmt.Errorf("%s: %w", url, err)
 	}
 	// The MGR map is read again: an active manager that changed during the
 	// probe was not the one checked.
+	listener := activeListener{url: url, manager: status.ActiveName, gid: status.ActiveGID}
+	if err := sameActive(ctx, observer, listener); err != nil {
+		return activeListener{}, report, err
+	}
+	return listener, report, nil
+}
+
+// sameActive fails when the MGR map no longer names the manager of listener
+// active.
+func sameActive(ctx context.Context, observer *ceph.Observer, listener activeListener) error {
 	again, err := observer.ManagerStatus(ctx)
 	if err != nil {
-		return "", report, err
+		return err
 	}
-	if again.ActiveName != status.ActiveName || again.ActiveGID != status.ActiveGID {
-		return "", report, errors.New("the active manager changed during the readiness check")
+	if again.ActiveName != listener.manager || again.ActiveGID != listener.gid {
+		return errors.New("the active manager changed during the readiness check")
 	}
-	return url, report, nil
+	return nil
+}
+
+// HostEndpoint returns the HTTPS URL at which a process on the Docker host,
+// such as the test process or a SUT that runs there, reaches the active
+// manager's Dashboard. It runs the readiness check of Endpoint first, then
+// connects from the calling process to the returned URL and requires the
+// listener to present the installed certificate; that connection sends no
+// request.
+//
+// In bridge mode the URL is the Docker host and the host port that Docker
+// mapped to the advertised port of the active manager's container, so the
+// cluster must have been started with ceph.WithManagerPorts(8443), the
+// module's port; without it HostEndpoint fails with ceph.ErrInvalidRequest.
+// Every manager publishes its own host port, so a failover changes the URL:
+// call HostEndpoint again after one. A standby's redirect names the active
+// manager's container address, which the host may not reach, so the SUT
+// follows the new HostEndpoint instead of the redirect. The host name differs
+// from the advertised one; the SUT verifies the certificate's name, as with
+// Endpoint, for example with the TLS server name. In host mode the URL is the
+// one Endpoint returns.
+//
+//purpose:observation,handoff
+func (d *Dashboard) HostEndpoint(ctx context.Context) (string, error) {
+	if d == nil || d.state == nil {
+		return "", errors.New("dashboard is unavailable")
+	}
+	if err := d.ready(); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(d.cluster))
+	defer cancel()
+	facts, err := ceph.FactsOf(d.cluster)
+	if err != nil {
+		return "", err
+	}
+	observer, err := ceph.Observe(d.cluster)
+	if err != nil {
+		return "", err
+	}
+	var last error
+	for {
+		target, err := d.probeHost(ctx, observer, facts.UsesHostNetwork)
+		if err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
+			return target, err
+		}
+		last = err
+		select {
+		case <-ctx.Done():
+			return "", errors.Join(ctx.Err(), last)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// probeHost runs the readiness check, translates the advertised URL to the
+// active manager's published host port in bridge mode, and checks from the
+// calling process that the URL presents the installed certificate.
+func (s *state) probeHost(ctx context.Context, observer *ceph.Observer, hostNetwork bool) (string, error) {
+	listener, _, err := s.probeActive(ctx, observer)
+	if err != nil {
+		return "", err
+	}
+	target := listener.url
+	if !hostNetwork {
+		if target, err = s.publishedURL(ctx, listener); err != nil {
+			return "", err
+		}
+	}
+	if err := presentsCertificate(ctx, target, s.leaf); err != nil {
+		return "", fmt.Errorf("%s: %w", target, err)
+	}
+	if err := sameActive(ctx, observer, listener); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// publishedURL is listener's URL with the Docker host and the host port of
+// the active manager's container.
+func (s *state) publishedURL(ctx context.Context, listener activeListener) (string, error) {
+	managers, err := s.cluster.Managers(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, manager := range managers {
+		if manager.DaemonName != listener.manager {
+			continue
+		}
+		inspect, err := manager.Inspect(ctx)
+		if err != nil {
+			return "", fmt.Errorf("inspect mgr.%s: %w", manager.DaemonName, err)
+		}
+		host, err := manager.Host(ctx)
+		if err != nil {
+			return "", err
+		}
+		var ports network.PortMap
+		if inspect.NetworkSettings != nil {
+			ports = inspect.NetworkSettings.Ports
+		}
+		return hostURL(listener.url, host, ports)
+	}
+	return "", &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: hostEndpointOp,
+		Err: fmt.Errorf("the active manager mgr.%s is not a manager of the cluster's fixture, so its published ports are unknown", listener.manager)}
+}
+
+const hostEndpointOp = "dashboard host endpoint"
+
+// hostURL replaces the host and port of the advertised URL with host and the
+// host port that ports binds to the advertised TCP port.
+func hostURL(advertised, host string, ports network.PortMap) (string, error) {
+	parsed, err := neturl.Parse(advertised)
+	if err != nil || parsed.Port() == "" {
+		return "", fmt.Errorf("the advertised dashboard URL %q names no port", advertised)
+	}
+	port, err := network.ParsePort(parsed.Port() + "/tcp")
+	if err != nil {
+		return "", fmt.Errorf("the advertised dashboard URL %q: %w", advertised, err)
+	}
+	for _, binding := range ports[port] {
+		if binding.HostPort != "" {
+			parsed.Host = net.JoinHostPort(host, binding.HostPort)
+			return parsed.String(), nil
+		}
+	}
+	return "", &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: hostEndpointOp,
+		Err: fmt.Errorf("the active manager publishes no host port for %s; start the cluster with ceph.WithManagerPorts(%d)", port, port.Num())}
+}
+
+// presentsCertificate connects to the HTTPS URL target and requires the
+// listener to present the certificate whose SHA-256 fingerprint is want. It
+// sends no request. The chain is not verified, for the reason given at
+// probeScript.
+func presentsCertificate(ctx context.Context, target, want string) error {
+	parsed, err := neturl.Parse(target)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	dialer := &tls.Dialer{Config: &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 || fingerprint(state.PeerCertificates[0].Raw) != want {
+				return errors.New("the listener presents another certificate than the installed one")
+			}
+			return nil
+		},
+	}}
+	conn, err := dialer.DialContext(ctx, "tcp", parsed.Host)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 // Restore removes the gateway link of AddGateway, if any, deletes the owned
