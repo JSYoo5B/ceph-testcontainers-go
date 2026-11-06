@@ -127,13 +127,7 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 	if got := copied("copy-chunked"); got != source {
 		t.Fatalf("the chunked copy differs: %s, source %s", got, source)
 	}
-	ops, err := osd.AdminSocket(ctx, "dump_historic_ops")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if chunks := strings.Count(string(ops), "copy-get max 32768"); chunks < size/32768 {
-		t.Fatalf("the copy used %d copy-get chunks of 32768 bytes, want at least %d: %.4096s", chunks, size/32768, ops)
-	}
+	copyGetChunks(t, ctx, osd, "copy-src", "copy-chunked", 32768, size/32768)
 	if err := copyFrom.apply(ctx, "osd_debug_inject_copyfrom_error", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -350,6 +344,41 @@ func osdLogSince(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, mark
 		t.Fatalf("the OSD log shrank from %d to %d bytes", mark, len(log))
 	}
 	return log[mark:]
+}
+
+// copyGetChunks reads the OSD's operation history until it attributes at
+// least want copy-get chunks of chunk bytes to the one copy-from of source to
+// destination. It only reads: the copy ran once and its destination is not
+// written again. The OSD moves a finished operation into its history
+// asynchronously, so a dump taken right after the client's reply can lack the
+// whole copy (on Tentacle 20.2.4 the copy appeared up to about 0.4 s after
+// it); a history without the copy's entries is read again for a bounded
+// time. A history that shows another chunk size or an ambiguous copy fails at
+// once. A failure logs the parse counts and every entry relevant to the probe
+// objects.
+func copyGetChunks(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, source, destination string, chunk, want int) {
+	t.Helper()
+	var last error
+	seen, err := harness.Observe(ctx, 30*time.Second, 15*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (copyGetEvidence, bool, error) {
+		raw, err := osd.AdminSocket(probeCtx, "dump_historic_ops")
+		if err != nil {
+			return copyGetEvidence{}, false, err
+		}
+		dump, err := parseHistoricOps(raw)
+		if err != nil {
+			return copyGetEvidence{}, false, err
+		}
+		evidence, err := attributeCopyGets(dump, source, destination, chunk, want)
+		if last = nil; errors.Is(err, errCopyGetIncomplete) {
+			last = err
+			return evidence, false, nil
+		}
+		return evidence, err == nil, err
+	})
+	if err != nil {
+		t.Fatalf("copy-get chunks of %s after %d reads in %s: %v: %s", destination, seen.Attempts, seen.Elapsed, errors.Join(err, last), seen.Value)
+	}
+	t.Logf("OSD_COPY_GET_EVIDENCE reads=%d elapsed=%s %s", seen.Attempts, seen.Elapsed.Round(time.Millisecond), seen.Value)
 }
 
 // waitInjector waits until the restarted OSD answers on its admin socket and
