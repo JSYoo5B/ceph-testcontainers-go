@@ -519,7 +519,7 @@ func testDashboardEssentialMGRRefused(t *testing.T) {
 	t.Logf("DASHBOARD essential MGR image refused: %v", err)
 }
 
-// testDashboardRGWGateway wires an owned gateway into the Dashboard and
+// testDashboardRGWGateway wires an owned gateway with TLS into the Dashboard and
 // checks that the Dashboard reports the fixture's own user and bucket, that a
 // refused identity and an unreachable gateway are attributed while the
 // Dashboard itself stays ready, the failover, and the removal.
@@ -527,11 +527,13 @@ func testDashboardRGWGateway(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	cluster, client := startOfficialMGRCluster(t, ctx, 2)
-	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "dash"})
+	ca := newDashboardCA(t)
+	// A gateway with TLS also serves plain HTTP, which the Dashboard uses.
+	gatewayTLS := ca.leaf(t, 4)
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "dash", TLS: &rgw.TLSConfig{CertificatePEM: gatewayTLS.CertificatePEM, PrivateKeyPEM: gatewayTLS.PrivateKeyPEM}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca := newDashboardCA(t)
 	d, err := dashboard.Start(ctx, cluster, dashboard.Config{TLS: ca.leaf(t, 2)})
 	if d != nil {
 		restoreDashboardOnCleanup(t, d)
@@ -637,6 +639,21 @@ func testDashboardRGWGateway(t *testing.T) {
 	waitDashboardRGW(t, ctx, consumer, failover, consumer.login(t, ctx, failover, username, password, 201), bucket, owner.ID())
 	t.Logf("DASHBOARD RGW link persists across the failover mgr.%s -> mgr.%s at %s", active, promoted, failover)
 
+	// An outside edit of the link's key is refused and left as it is; the
+	// link's user is still removed, and a later Remove finishes once the
+	// key is back.
+	linkAccess, _, err := link.User().CreationKey().Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDashboardCommand(t, ctx, cluster, []byte("TCOUTSIDEEDIT"), "dashboard", "set-rgw-api-access-key", "-i", "-")
+	if err := link.Remove(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("Remove after an outside key edit: %v", err)
+	}
+	if got := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "dashboard", "get-rgw-api-access-key"))); got != "TCOUTSIDEEDIT" {
+		t.Fatal("the refused Remove changed the outside access key")
+	}
+	runDashboardCommand(t, ctx, cluster, []byte(linkAccess), "dashboard", "set-rgw-api-access-key", "-i", "-")
 	if err := link.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +676,7 @@ func testDashboardRGWGateway(t *testing.T) {
 	if err := d.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("DASHBOARD RGW link removed: user %s gone, keys restored; owner data intact", linkUser)
+	t.Logf("DASHBOARD RGW link removed: an outside key edit refused, then user %s gone, keys restored; owner data intact", linkUser)
 }
 
 // waitDashboardRGW waits until the Dashboard lists bucket with its owner.
