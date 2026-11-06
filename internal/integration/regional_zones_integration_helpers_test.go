@@ -17,6 +17,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -937,4 +938,242 @@ func testRegionalZoneFailedSetup(t *testing.T) {
 		t.Fatalf("the bystander with the boundary label key was touched: %+v %v", state, err)
 	}
 	t.Logf("the failed setup created %d labelled resources; Terminate released them and the bridges, and left the bystander", len(during)-len(before))
+}
+
+// testRegionalZoneRouteOwnership checks that the boundary owns only its own
+// routes and admits a member only once its enrollment completed. A zone a
+// client and a zone b client each get a caller /32 route to a new zone b
+// client while it starts, before its enrollment: the zone b route is within
+// the zone and stays, the zone a route conflicts with the boundary's route
+// there, so the enrollment fails on the peer routes. The new client is then
+// unzoned and ApplyZoneProfile refuses to shape. Once the caller removed the
+// conflicting route, a retried Start completes the enrollment and installs
+// the boundary's route. The caller then replaces that route, and the removal
+// of the client leaves the caller's route in place.
+func testRegionalZoneRouteOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
+	defer cancel()
+	cluster := harness.NewRegionalCluster(t, ceph.Run,
+		ceph.WithZoneConfig(harness.RegionalZoneConfig(t)),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()),
+		ceph.WithStartupTimeout(4*time.Minute))
+	clientA := harness.RegionalClient(t, ctx, cluster, "a")
+	clientB := harness.RegionalClient(t, ctx, cluster, "b")
+	editorA := regionalRouteEditor(t, ctx, "client-a", clientA.GetContainerID())
+	editorB := regionalRouteEditor(t, ctx, "client-b", clientB.GetContainerID())
+	layout, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routerA := harness.ZoneRouter(t, layout, "a")
+	publicA, _ := harness.ZoneMemberByContainer(t, layout, clientA.GetContainerID())
+
+	// The caller's routes go in while the new client starts, before the
+	// boundary's hook enrolls it; the hook runs again on a retried Start.
+	var joining netip.Addr
+	callerRoutes := func(ctx context.Context, ctr testcontainers.Container) error {
+		if joining.IsValid() {
+			return nil
+		}
+		addr, err := regionalAddressOnBridgeOf(ctx, ctr, clientA, publicA.PublicAddress)
+		if err != nil {
+			return err
+		}
+		joining = addr
+		for _, editor := range []testcontainers.Container{editorA, editorB} {
+			if err := regionalCallerRoute(ctx, editor, "add", joining); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	image, _ := harness.IntegrationImages(t)
+	joiner, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image),
+		testcontainers.WithAdditionalLifecycleHooks(testcontainers.ContainerLifecycleHooks{PostStarts: []testcontainers.ContainerHook{callerRoutes}}),
+		cluster.WithClient(), cluster.WithZone("b"), ceph.WithIdleEntrypoint())
+	if joiner != nil {
+		testcontainers.CleanupContainer(t, joiner)
+	}
+	if err == nil {
+		t.Fatal("a zone b client joined although a zone a member has a caller route to it")
+	}
+	if joiner == nil || !strings.Contains(err.Error(), "does not own") {
+		t.Fatalf("the conflicting enrollment failed with %v, want the refusal of a route the boundary does not own", err)
+	}
+	t.Logf("enrollment refused on the peer routes: %v", err)
+	name := regionalContainerName(t, ctx, joiner)
+
+	// A partial enrollment is not a member and keeps the boundary closed to
+	// faults; both caller routes are as the caller left them.
+	partial, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(partial.Unzoned, func(u string) bool { return strings.HasPrefix(u, name+" ") }) {
+		t.Fatalf("the partially enrolled %s is not unzoned: %v", name, partial.Unzoned)
+	}
+	for _, zone := range partial.Zones {
+		for _, member := range zone.Members {
+			if member.ContainerID == joiner.GetContainerID() {
+				t.Fatalf("the partially enrolled %s is a member of zone %s", name, zone.Name)
+			}
+		}
+	}
+	profile := fault.NetworkProfile{HelperImage: harness.NetemImage(t), Delay: regionalOneWay, Plane: ceph.PublicNetworkPlane}
+	lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+	if lease != nil {
+		if restoreErr := lease.Restore(ctx); restoreErr != nil {
+			t.Errorf("restore the zone a profile: %v", restoreErr)
+		}
+	}
+	if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), name) {
+		t.Fatalf("ApplyZoneProfile with the partially enrolled %s: %v, want a refusal naming it", name, err)
+	}
+	t.Logf("ApplyZoneProfile refused while %s is partially enrolled: %v", name, err)
+	for _, editor := range []struct {
+		name string
+		ctr  testcontainers.Container
+	}{{"client-a", editorA}, {"client-b", editorB}} {
+		if got := regionalRoutesTo(t, ctx, editor.ctr, joining); len(got) != 1 || !strings.Contains(got[0], "proto static") || strings.Contains(got[0], " via ") {
+			t.Fatalf("%s has routes %q to %v, want only the caller's route", editor.name, got, joining)
+		}
+	}
+
+	// Without the conflict a retried Start completes the enrollment.
+	if err := regionalCallerRoute(ctx, editorA, "del", joining); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.Start(ctx); err != nil {
+		t.Fatalf("retry the enrollment of %s: %v", name, err)
+	}
+	complete, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(complete.Unzoned) != 0 {
+		t.Fatalf("unzoned after the retried enrollment: %v", complete.Unzoned)
+	}
+	if _, zone := harness.ZoneMemberByContainer(t, complete, joiner.GetContainerID()); zone != "b" {
+		t.Fatalf("%s joined zone %s, want b", name, zone)
+	}
+	got := regionalRoutesTo(t, ctx, editorA, joining)
+	if len(got) != 1 || !strings.Contains(got[0], "via "+routerA.PublicAddress.String()) || !strings.Contains(got[0], "proto 157") {
+		t.Fatalf("client-a has routes %q to %v, want only the boundary's route via the zone a router %v", got, joining, routerA.PublicAddress)
+	}
+	if got := regionalRoutesTo(t, ctx, editorB, joining); len(got) != 1 || !strings.Contains(got[0], "proto static") {
+		t.Fatalf("client-b has routes %q to %v, want only the caller's route", got, joining)
+	}
+	lease, err = fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+	if err != nil {
+		t.Fatalf("ApplyZoneProfile after the completed enrollment: %v", err)
+	}
+	if err := lease.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("retried Start enrolled %s: client-a routes it via the zone a router, client-b keeps its own route, and the boundary shapes again", name)
+
+	// A route the caller replaced is no longer the boundary's: the removal of
+	// the client leaves it.
+	if err := regionalCallerRoute(ctx, editorA, "replace", joining); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, editor := range []struct {
+		name string
+		ctr  testcontainers.Container
+	}{{"client-a", editorA}, {"client-b", editorB}} {
+		if got := regionalRoutesTo(t, ctx, editor.ctr, joining); len(got) != 1 || !strings.Contains(got[0], "proto static") || strings.Contains(got[0], " via ") {
+			t.Fatalf("after the removal of %s, %s has routes %q to %v, want only the caller's route", name, editor.name, got, joining)
+		}
+		if err := regionalCallerRoute(ctx, editor.ctr, "del", joining); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range after.Routes {
+		if route.Destination == joining || route.Member == name {
+			t.Fatalf("the removed %s keeps a route record %+v", name, route)
+		}
+	}
+	t.Logf("removing %s left the caller's replaced route in client-a and its own route in client-b", name)
+}
+
+// regionalRouteEditor starts a helper with NET_ADMIN in the network
+// namespace of id, to play the caller that owns routes there.
+func regionalRouteEditor(t *testing.T, ctx context.Context, name, id string) testcontainers.Container {
+	t.Helper()
+	ctr, err := testcontainers.Run(ctx, harness.NetemImage(t), ceph.WithIdleEntrypoint(),
+		testcontainers.WithConfigModifier(func(config *container.Config) { config.User = "0:0" }),
+		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
+			host.NetworkMode = container.NetworkMode("container:" + id)
+			host.CapDrop = []string{"ALL"}
+			host.CapAdd = []string{"NET_ADMIN"}
+		}))
+	if ctr != nil {
+		testcontainers.CleanupContainer(t, ctr)
+	}
+	if err != nil {
+		t.Fatalf("start the route editor of %s: %v", name, err)
+	}
+	return ctr
+}
+
+// regionalCallerRoute adds, replaces or deletes the caller's route to dest:
+// a direct route on the device that reaches dest, with protocol static.
+func regionalCallerRoute(ctx context.Context, editor testcontainers.Container, verb string, dest netip.Addr) error {
+	script := `dev=$(ip -o -4 route get "$1" | sed -n 's/.* dev \([^ ]*\).*/\1/p'); ip route "$2" "$1/32" dev "$dev" proto static`
+	code, out, err := regionalExec(ctx, editor, "sh", "-ec", script, "sh", dest.String(), verb)
+	if err != nil || code != 0 {
+		return fmt.Errorf("ip route %s %v/32 as the caller: exit %d %v: %s", verb, dest, code, err, out)
+	}
+	return nil
+}
+
+// regionalRoutesTo lists the main table's routes to exactly dest/32.
+func regionalRoutesTo(t *testing.T, ctx context.Context, editor testcontainers.Container, dest netip.Addr) []string {
+	t.Helper()
+	code, out, err := regionalExec(ctx, editor, "ip", "-o", "-4", "route", "show", "exact", dest.String()+"/32")
+	if err != nil || code != 0 {
+		t.Fatalf("list the routes to %v: exit %d %v: %s", dest, code, err, out)
+	}
+	if out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
+}
+
+// regionalAddressOnBridgeOf returns ctr's address on the bridge where peer
+// has addr.
+func regionalAddressOnBridgeOf(ctx context.Context, ctr, peer testcontainers.Container, addr netip.Addr) (netip.Addr, error) {
+	peerInfo, err := peer.Inspect(ctx)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	info, err := ctr.Inspect(ctx)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	for name, endpoint := range peerInfo.NetworkSettings.Networks {
+		if endpoint.IPAddress.Unmap() != addr {
+			continue
+		}
+		if own := info.NetworkSettings.Networks[name]; own != nil && own.IPAddress.IsValid() {
+			return own.IPAddress.Unmap(), nil
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("container %.12s is not on the bridge of %v", ctr.GetContainerID(), addr)
+}
+
+func regionalContainerName(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
+	t.Helper()
+	info, err := ctr.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimPrefix(info.Name, "/")
 }

@@ -13,3 +13,7 @@ func TestRegionalZoneTopology(t *testing.T) {
 func TestRegionalZoneFailedSetup(t *testing.T) {
 	testRegionalZoneFailedSetup(t)
 }
+
+func TestRegionalZoneRouteOwnership(t *testing.T) {
+	testRegionalZoneRouteOwnership(t)
+}
