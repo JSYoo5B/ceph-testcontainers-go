@@ -11,6 +11,7 @@ import (
 )
 
 func TestCephFSCloneCancellationAndPartialCleanup(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testCephFSCloneCancellationAndPartialCleanup(t, host) })
