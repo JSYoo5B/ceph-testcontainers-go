@@ -530,7 +530,10 @@ netfilter enabled this applies to bridged traffic too. Creating zone bridges
 with `com.docker.network.bridge.gateway_mode_ipv4` set to `nat-unprotected`
 or `routed` lets a router forward packets addressed to those bridges, but the
 cluster's daemons advertise only their address on the cluster's own bridges.
-`TestZoneBoundaryTwoSubnetRouting` records what an engine does. Nothing here
+`TestZoneBoundaryTwoSubnetRouting` records what an engine does in each mode.
+It skips a mode that the engine refuses as unknown and records it as
+unavailable with no probe run; any other failure to create a bridge fails the
+test, so a skipped mode is never mistaken for a dropped path. Nothing here
 is physically independent: one kernel, one CPU pool and one disk serve both
 zones.
 
