@@ -484,6 +484,56 @@ which shapes only the packets one zone's gateway sends to another zone's
 gateway. The peer zone then stops receiving changes while it still pulls its
 own.
 
+## A routed boundary between logical zones
+
+The fixture has no zone topology. A test can still split one cluster's
+endpoints into logical availability zones and send every packet between them
+through a boundary it owns, by composing public APIs with a few Docker
+operations of its own.
+`TestZoneBoundaryRegionalCluster` (`internal/integration`, optional batch
+`zone_boundary`) is the worked example.
+
+- **Placement.** Put each zone's OSDs in their own CRUSH rack with
+  `ClusterConfig.WithInitialOSDs`, and give the pool a `rack` failure domain,
+  so its replicas span the zones. MONs, MGRs and clients are assigned to a
+  zone by the test; the single MON's zone holds the quorum and the control
+  CLI.
+- **Routers.** Start one container per zone that forwards what leaves that
+  zone (`net.ipv4.ip_forward=1`), and attach it to the cluster's public and,
+  with `WithSeparateClusterNetwork`, cluster bridges (`ceph.FactsOf` names
+  them). Start it on a bridge of its own with
+  `net.ipv4.conf.all.send_redirects=0` and `net.ipv4.conf.default.send_redirects=0`
+  and attach the cluster bridges afterwards: their interfaces then inherit 0.
+  A router forwards back out of the interface the packet came in on, and an
+  ICMP redirect would send the peer around it.
+- **Routes.** In every endpoint's network namespace, add one `/32` route per
+  address of every endpoint in the other zone, through its own zone's router
+  on that plane. The route is added from a helper started with
+  `NetworkMode: container:<id>` and only `NET_ADMIN`; the endpoint keeps its
+  image and capabilities. Check every lookup with `ip route get`, and check
+  that each bridge has no endpoint outside the zones: such a container reaches
+  the other zone directly.
+- **Faults.** `fault.ApplyLinkProfile` on a router's bridge shapes what leaves
+  one zone on one plane, and nothing else, so each direction is configured
+  once and the round trip gains the sum of both directions. A `Loss` of 100
+  on both routers partitions the zones while same-zone paths keep working.
+  Restore the leases before removing the routers.
+- **Teardown.** Remove the routes, then the helpers, the routers and their
+  bridge, and check that no route through a router address and no labelled
+  container or network is left, also when setup stopped half-way.
+
+The zones share each bridge's subnet. Routing between two Docker bridges
+through a container instead does not work for Ceph's addresses on Docker 28
+and later: in the default `nat` gateway mode the engine drops a packet that
+reaches a bridge other than its destination's, and with the host's bridge
+netfilter enabled this applies to bridged traffic too. Creating zone bridges
+with `com.docker.network.bridge.gateway_mode_ipv4` set to `nat-unprotected`
+or `routed` lets a router forward packets addressed to those bridges, but the
+cluster's daemons advertise only their address on the cluster's own bridges.
+`TestZoneBoundaryTwoSubnetRouting` records what an engine does. Nothing here
+is physically independent: one kernel, one CPU pool and one disk serve both
+zones.
+
 ## Dropping or delaying messages
 
 Ceph's messenger fault options, set with `override.SetConfig`, make a daemon
