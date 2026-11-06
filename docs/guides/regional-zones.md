@@ -61,6 +61,18 @@ defer lease.Restore(ctx)
   within a zone packets go directly. Before a member stops or is removed, the
   other members' routes to it and its agent are removed. The daemon images
   stay unchanged.
+- **Route ownership.** The boundary's routes carry routing protocol 157, and
+  the boundary owns a route by its destination, gateway, device and that
+  protocol. It never replaces or shadows another /32 route: enrollment fails
+  when a member already has a route of its own to an address the boundary
+  needs to route, and leaves the routes members have within their zone alone.
+  It removes only a route that still matches its record, so a route that the
+  caller replaced or removed in the meantime stays as the caller left it.
+- **Partial enrollment.** A member is a member only once its agent, its own
+  routes and the other members' routes to it are in place. Until then it is
+  listed in `Unzoned`, and a retried start of the same container (for example
+  `Start` after the cause of the failure is removed) completes the enrollment
+  with what is already installed.
 - **Observation.** `Container.Zones` returns the zones with their routers and
   members (name, container, address on each plane), the installed routes, the
   containers on the bridges without a zone (`Unzoned`), and Ceph's
@@ -79,8 +91,9 @@ OSD. The lease and its restoration are those of `ApplyNetworkProfile`, and
 Terminate restores a held lease before it releases the boundary.
 
 `ApplyZoneProfile` refuses to shape while any container on the plane's bridge
-is neither a router nor an enrolled member: such a container reaches every
-zone directly. A path within a zone is not at the boundary; use
+is neither a router nor a completely enrolled member: such a container
+reaches every zone directly, or through the routes a partial enrollment
+lacks. A path within a zone is not at the boundary; use
 `fault.ApplyNetworkProfile` with a `Peer` on the member's own endpoint for it.
 
 ## Expected Ceph behavior
@@ -103,12 +116,12 @@ Every router, agent and the management bridge carry the cluster's owner label
 and `org.testcontainers.ceph.zone.boundary`. Every route is recorded before it
 is installed, so a failed or uncertain installation is still removed.
 Terminate, after the fault registry and before any daemon, removes the
-recorded routes, checks that no route through a router is left, removes the
-agents, the routers and the management bridge, and checks that no container
-or network with the boundary's label is left. A step that fails keeps what
-it could not release for a retried Terminate. A Run that fails while the
-boundary starts returns the partial cluster, whose Terminate releases what was
-created.
+recorded routes, checks that no route with the boundary's protocol is left,
+leaves the caller's routes, removes the agents, the routers and the management
+bridge, and checks that no container or network with the boundary's label is
+left. A step that fails keeps what it could not release for a retried
+Terminate. A Run that fails while the boundary starts returns the partial
+cluster, whose Terminate releases what was created.
 
 ## Limits of one Docker engine
 
