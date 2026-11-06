@@ -905,7 +905,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         choices = re.findall(r"(?m)^          - ([a-z0-9_]+)$", workflow)
         self.assertEqual(sorted(choices), ["failure_archive", "mon_log_ack", "native_rgw_translation",
                                            "native_shuffle", "rbd_demote_restart",
-                                           "rgw_conditional_writes"])
+                                           "rgw_compressed_copy", "rgw_conditional_writes",
+                                           "rgw_empty_sse_header", "rgw_expiration_header",
+                                           "rgw_ssec_completion"])
         # Every choice is an optional profile that no required plan selects;
         # the reproducers among them compile only with native_regression.
         for choice in choices:

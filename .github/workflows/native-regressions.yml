@@ -13,6 +13,10 @@ on:
           - mon_log_ack
           - rbd_demote_restart
           - rgw_conditional_writes
+          - rgw_ssec_completion
+          - rgw_empty_sse_header
+          - rgw_expiration_header
+          - rgw_compressed_copy
           - failure_archive
       rgw_image:
         description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
