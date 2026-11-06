@@ -331,10 +331,17 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 	case generation.logRotation != "":
 		w.logGap(target.source, fmt.Sprintf("the json-file driver rotates at max-size %s and can drop lines", generation.logRotation))
 	default:
-		read, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, w.redact, func(e verificationEvent) {
+		var keep func(verificationLogLine)
+		if w.config.ArchiveLogs {
+			keep = func(line verificationLogLine) {
+				line.Source, line.ContainerID = source.Source, source.ContainerID
+				w.o.lines = append(w.o.lines, line)
+			}
+		}
+		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, w.redact, func(e verificationEvent) {
 			w.o.logs = append(w.o.logs, e)
-		})
-		source.LogBytes = read
+		}, keep)
+		source.LogBytes, source.LogLines = read, lines
 		if err != nil {
 			w.logGap(target.source, err.Error())
 		}
@@ -444,10 +451,12 @@ func dockerTimestamp(t time.Time) string {
 const maxVerificationLine = 64 << 10
 
 // readVerificationLogs streams the container's log lines from start to end
-// with Docker's timestamps and emits each line that is an event. It returns
-// the bytes read and an error when the stream could not be read in full,
-// exceeded MaxLogBytes, or held a line without a valid timestamp.
-func readVerificationLogs(ctx context.Context, docker verificationDocker, target verificationTarget, tty bool, start, end time.Time, config VerificationConfig, redact func(string) string, emit func(verificationEvent)) (int64, error) {
+// with Docker's timestamps and emits each line that is an event. keep, when
+// not nil, receives every line of the window in the order received. It
+// returns the bytes read, the lines of the window and an error when the
+// stream could not be read in full, exceeded MaxLogBytes, or held a line
+// without a valid timestamp.
+func readVerificationLogs(ctx context.Context, docker verificationDocker, target verificationTarget, tty bool, start, end time.Time, config VerificationConfig, redact func(string) string, emit func(verificationEvent), keep func(verificationLogLine)) (int64, int, error) {
 	options := mobycl.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true, Since: dockerTimestamp(start)}
 	if !end.IsZero() {
 		options.Until = dockerTimestamp(end)
@@ -456,18 +465,19 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	defer cancel()
 	reader, err := docker.ContainerLogs(opCtx, target.id, options)
 	if err != nil {
-		return 0, errors.Join(err, opCtx.Err())
+		return 0, 0, errors.Join(err, opCtx.Err())
 	}
 	defer func() { _ = reader.Close() }()
 	stop := context.AfterFunc(opCtx, func() { _ = reader.Close() })
 	defer stop()
 	counted := &countingReader{r: io.LimitReader(reader, config.MaxLogBytes+1)}
-	malformed, outside, cut, unrecognized := 0, 0, 0, 0
-	line := func(data []byte, truncated bool) {
-		if truncated {
+	malformed, outside, cut, unrecognized, lines := 0, 0, 0, 0, 0
+	line := func(stream string, data []byte, long, ended bool) {
+		if long {
 			// The rest of the line was not read, whatever its prefix holds.
 			cut++
 		}
+		truncated := long || ended
 		stamp, text, _ := strings.Cut(string(data), " ")
 		when, err := time.Parse(time.RFC3339Nano, stamp)
 		if err != nil {
@@ -479,6 +489,10 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 			return
 		}
 		raw := strings.TrimRight(text, "\r")
+		lines++
+		if keep != nil {
+			keep(verificationLogLine{Stream: stream, Time: when.UTC().Format(time.RFC3339Nano), Text: redact(raw), Truncated: truncated})
+		}
 		kind, _, _, unclassified := classifyVerificationLine(raw)
 		if unclassified {
 			unrecognized++
@@ -495,10 +509,12 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		e.truncated = e.truncated || truncated
 		emit(e)
 	}
-	stdout, stderr := &verificationLines{emit: line}, &verificationLines{emit: line}
+	stdout, stderr := &verificationLines{stream: "stdout", emit: line}, &verificationLines{stream: "stderr", emit: line}
 	err = evidence.DemuxLogs(counted, tty, stdout, stderr)
-	stdout.flush()
-	stderr.flush()
+	// A stream that the limit or an error ended can stop inside a line.
+	ended := err != nil || counted.n > config.MaxLogBytes
+	stdout.finish(ended)
+	stderr.finish(ended)
 	read := min(counted.n, config.MaxLogBytes)
 	if counted.n > config.MaxLogBytes {
 		// The limit ended the stream, whatever the reader made of that.
@@ -513,15 +529,16 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	if cut > 0 {
 		err = errors.Join(err, fmt.Errorf("%d log lines are longer than %d bytes; their rest was not read", cut, maxVerificationLine))
 	}
-	return read, errors.Join(err, opCtx.Err())
+	return read, lines, errors.Join(err, opCtx.Err())
 }
 
 // verificationLines splits a stream into lines of at most
 // maxVerificationLine bytes.
 type verificationLines struct {
+	stream    string
 	line      []byte
 	truncated bool
-	emit      func([]byte, bool)
+	emit      func(string, []byte, bool, bool)
 }
 
 func (l *verificationLines) Write(data []byte) (int, error) {
@@ -549,7 +566,16 @@ func (l *verificationLines) Write(data []byte) (int, error) {
 
 func (l *verificationLines) flush() {
 	if len(l.line) > 0 || l.truncated {
-		l.emit(l.line, l.truncated)
+		l.emit(l.stream, l.line, l.truncated, false)
+	}
+	l.line, l.truncated = l.line[:0], false
+}
+
+// finish emits the line still pending at the end of the stream; ended marks
+// a stream that stopped early, so that a pending line may lack its rest.
+func (l *verificationLines) finish(ended bool) {
+	if len(l.line) > 0 || l.truncated {
+		l.emit(l.stream, l.line, l.truncated, ended)
 	}
 	l.line, l.truncated = l.line[:0], false
 }
