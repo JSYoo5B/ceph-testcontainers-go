@@ -915,9 +915,7 @@ func zoneTwoSubnets(t *testing.T, docker *testcontainers.DockerClient, image, mo
 		bridge, err := newBridge(mode)
 		switch {
 		case zoneGatewayModeUnavailable(mode, err):
-			outcome := zoneTwoSubnetOutcome{Mode: mode, Unavailable: err}
-			t.Logf("two-subnet record: %s", outcome)
-			t.Skipf("two-subnet record: %s", outcome)
+			t.Skipf("two-subnet record: %s", zoneTwoSubnetOutcome{Mode: mode, Unavailable: err})
 		case err != nil:
 			t.Fatalf("create the zone %s bridge in gateway mode %s: %v", zone, mode, err)
 		}
