@@ -87,6 +87,20 @@ func (m *zoneMemberState) enrolledFor(startedAt string) bool {
 	return m != nil && m.complete && m.agent != nil && m.startedAt == startedAt
 }
 
+// routable reports whether routes can be installed in m's namespace: it has
+// an agent and knows the interface of each of its addresses.
+func (m *zoneMemberState) routable() bool {
+	if m == nil || m.agent == nil {
+		return false
+	}
+	for plane := range m.endpoint.addrs {
+		if m.ifaces[plane] == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // zoneEndpoint is a container of the planes and its zone.
 type zoneEndpoint struct {
 	id, name, zone string
@@ -348,11 +362,15 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 	return nil
 }
 
-// endpointsExcept lists the members other than id, sorted by name.
+// endpointsExcept lists the members other than id that can hold routes,
+// sorted by name. A partial enrollment without an agent or without the
+// interface of every address is left out, so that it does not fail the
+// enrollment of another member: its own retry installs the routes between
+// them in both directions.
 func (b *zoneBoundary) endpointsExcept(id string) []zoneEndpoint {
 	var out []zoneEndpoint
 	for other, member := range b.enrolled {
-		if other != id {
+		if other != id && member.routable() {
 			out = append(out, member.endpoint)
 		}
 	}

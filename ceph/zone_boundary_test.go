@@ -167,3 +167,27 @@ func TestReporterSubtreesCountTheZonesReporters(t *testing.T) {
 		}
 	}
 }
+
+// TestZonePeersLeaveOutMembersThatCannotHoldRoutes pins that a partial
+// enrollment without an agent or an interface is not planned as a peer, so
+// it does not fail another member's enrollment, while a partial enrollment
+// that can hold routes is.
+func TestZonePeersLeaveOutMembersThatCannotHoldRoutes(t *testing.T) {
+	agent := &testcontainers.DockerContainer{}
+	addrs := zoneAddrs("10.0.0.2", "10.1.0.2")
+	both := map[NetworkPlane]string{PublicNetworkPlane: "eth0", ClusterNetworkPlane: "eth1"}
+	b := &zoneBoundary{enrolled: map[string]*zoneMemberState{
+		"self":      {endpoint: zoneEndpoint{id: "self", name: "self", addrs: addrs}, agent: agent, ifaces: both},
+		"complete":  {endpoint: zoneEndpoint{id: "complete", name: "complete", addrs: addrs}, agent: agent, ifaces: both, complete: true},
+		"routesdue": {endpoint: zoneEndpoint{id: "routesdue", name: "routesdue", addrs: addrs}, agent: agent, ifaces: both},
+		"noagent":   {endpoint: zoneEndpoint{id: "noagent", name: "noagent", addrs: addrs}, ifaces: both},
+		"noiface":   {endpoint: zoneEndpoint{id: "noiface", name: "noiface", addrs: addrs}, agent: agent, ifaces: map[NetworkPlane]string{PublicNetworkPlane: "eth0"}},
+	}}
+	var got []string
+	for _, ep := range b.endpointsExcept("self") {
+		got = append(got, ep.name)
+	}
+	if want := []string{"complete", "routesdue"}; !slices.Equal(got, want) {
+		t.Fatalf("peers %v, want %v", got, want)
+	}
+}
