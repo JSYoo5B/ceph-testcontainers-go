@@ -355,11 +355,13 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   `AddManager` call, then `ImageSet.MGR`, then Essential. The override is the
   explicit per-daemon building block and is not checked.
 - The MGR image must be of the cluster's release. When it is not the
-  essential image, the module runs `ceph-mgr --version` in each manager it
-  starts from it and fails that start when the release differs from
-  `ClusterFacts.CephVersion`; a missing `ceph-mgr` is `ceph.ErrImageCapability`.
-  The manager stays owned: `Run` returns the partial cluster, `AddManager` the
-  handle, and `Terminate` removes it. Adding modules does not make another
+  essential image, every manager start first runs `ceph-mgr --version` in a
+  short-lived probe container of that image, which gets no keyring or cluster
+  configuration and is removed afterwards. When the release differs from
+  `ClusterFacts.CephVersion` the start fails before the manager's identity, key
+  or container exists, so the daemon never runs: `Run` returns the partial
+  cluster without that manager, and `AddManager` returns no handle. A missing
+  `ceph-mgr` is `ceph.ErrImageCapability`. Adding modules does not make another
   release acceptable.
 - `ClusterFacts.Images.MGR` reports the resolved image and is never empty;
   finalization manifests and verification reports record it with the other
