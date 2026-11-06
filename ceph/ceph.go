@@ -173,6 +173,9 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 	if settings.osdVolumeStorage && (settings.osdMemorySize != 0 || settings.osdObjectStore == OSDMemStore) {
 		return options{}, invalidRequest("OSDStorage.WithVolume requires classic BlueStore and cannot be combined with OSDStorage.WithInMemory")
 	}
+	if err := validateZones(settings); err != nil {
+		return options{}, classify(ErrInvalidRequest, fmt.Errorf("configure ceph zones: %w", err))
+	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
@@ -627,6 +630,9 @@ func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDCont
 	}
 	config, err := normalizeOSDConfig(resolveOSDDefaults(c.settings, plan.placement))
 	if err != nil {
+		return nil, err
+	}
+	if err := c.settings.zones.checkOSDZone(config.Zone); err != nil {
 		return nil, err
 	}
 	image := c.settings.essentialImage

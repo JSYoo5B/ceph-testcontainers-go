@@ -56,6 +56,8 @@ type options struct {
 	// clusterSet records which ClusterConfig fields a carrier already set, so a
 	// second carrier setting the same field is refused.
 	clusterSet clusterField
+	// zones is the ZoneConfig group; see zoneSettings.
+	zones zoneSettings
 }
 
 const hostPortAttempts = 5
