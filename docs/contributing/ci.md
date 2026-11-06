@@ -871,6 +871,15 @@ gh workflow run "Native regressions" --ref main -f batch=native_rgw_translation 
   -f rgw_image=ghcr.io/example/ceph-rgw:patched
 ```
 
+`cephfs_fscrypt` (`TestCephFSFscrypt`) is a sixth optional experiment case,
+[`cephfs_fscrypt`](../../internal/integration/experiments/cephfs_fscrypt/README.md),
+that passes on the published images. Its client containers mount CephFS
+with the engine's kernel and with `ceph-fuse` and get `CAP_SYS_ADMIN` and
+`apparmor=unconfined`; the kernel subtest also needs a host kernel that has
+the ceph filesystem type registered. It refuses, naming the missing
+requirement, and never loads a module or skips. Outside the tag runner,
+build it with `go test -tags all,cephfs_fscrypt`.
+
 The other optional batches are not experiment cases:
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
@@ -910,6 +919,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | cheap, deterministic characterization of fixed defects | 104 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `targeted` |
 | `rbd_encrypted_clone_flatten` (`topology/rbd_encrypted_clone_flatten`) | cheap, deterministic characterization | 75 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rbd_encrypted_clone_flatten [on <release>]` | `rotate` may draw it | `targeted` |
 | `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
+| `cephfs_fscrypt` (`optional/cephfs_fscrypt`) | privileged client containers and a host kernel module; passes on the published images | 46 s; 51 s on 19.2.5, 55 s on 21.2.0 | 30m | never | `/ci run cephfs_fscrypt [on <release>]` | never | no |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | deliberately failing reproducer | 35 s (fails in the suspended subtests); 36 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `batch=rgw_conditional_writes` |
