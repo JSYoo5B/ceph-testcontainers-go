@@ -60,15 +60,25 @@ type zoneRouter struct {
 	ifaces map[NetworkPlane]string
 }
 
-// zoneMemberState is one enrolled container: its identity, the start it was
-// enrolled for, its address and interface on each plane, its route agent and
-// the routes installed in its namespace, by destination.
+// zoneMemberState is one tracked container: its identity, the start it is
+// tracked for, its address and interface on each plane, its route agent and
+// the routes installed in its namespace, by destination. A member is tracked
+// from its first enrollment step, so close releases a partial enrollment, but
+// it is a member of its zone only once complete: after its agent, its own
+// routes and the other members' routes to it are all in place.
 type zoneMemberState struct {
 	endpoint  zoneEndpoint
 	startedAt string
 	ifaces    map[NetworkPlane]string
 	agent     testcontainers.Container
 	routes    map[netip.Addr]zoneRouteRecord
+	complete  bool
+}
+
+// enrolledFor reports whether m is a complete enrollment of the start at
+// startedAt. A partial enrollment or one of an earlier start is not.
+func (m *zoneMemberState) enrolledFor(startedAt string) bool {
+	return m != nil && m.complete && m.agent != nil && m.startedAt == startedAt
 }
 
 // zoneEndpoint is a container of the planes and its zone.
@@ -226,7 +236,9 @@ type zoneInspection struct {
 // zone through its own zone's router, and in every other member a route to
 // it through that member's router, or, within the zone, no route. It runs on
 // every start, because a start gives the container a new network namespace,
-// and does nothing for a start it already enrolled.
+// and does nothing for a start it already enrolled completely. A failed step
+// leaves the member tracked but not admitted (see unzonedLocked), and a retry
+// for the same start resumes it.
 func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container) error {
 	if b == nil {
 		return nil
@@ -255,37 +267,46 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 	if name == "" {
 		name = info.name
 	}
-	if previous := b.enrolled[id]; previous != nil {
-		if previous.startedAt == info.startedAt && previous.agent != nil {
-			return nil
+	member := b.enrolled[id]
+	switch {
+	case member.enrolledFor(info.startedAt):
+		return nil
+	case member != nil && member.startedAt == info.startedAt:
+		// A retry of a partial enrollment of this start: the namespace keeps
+		// the agent and the routes already installed, and installing them
+		// again is a no-op.
+	default:
+		if member != nil {
+			// The previous start's namespace and its routes are gone.
+			if err := b.dropMember(ctx, id); err != nil {
+				return err
+			}
 		}
-		// The previous start's namespace and its routes are gone.
-		if err := b.dropMember(ctx, id); err != nil {
+		if err := b.dropStaleMembers(ctx, id, addrs); err != nil {
 			return err
 		}
+		member = &zoneMemberState{endpoint: zoneEndpoint{id: id, name: name, zone: zone, addrs: addrs}, startedAt: info.startedAt,
+			ifaces: map[NetworkPlane]string{}, routes: map[netip.Addr]zoneRouteRecord{}}
+		b.enrolled[id] = member
 	}
-	if err := b.dropStaleMembers(ctx, id, addrs); err != nil {
-		return err
+	if member.agent == nil {
+		agent, err := runContainer(ctx, b.settings.helperImage,
+			WithIdleEntrypoint(),
+			testcontainers.WithLabels(b.labels()),
+			testcontainers.WithConfigModifier(func(config *container.Config) { config.User = "0:0" }),
+			testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
+				host.NetworkMode = container.NetworkMode("container:" + id)
+				host.CapDrop = []string{"ALL"}
+				host.CapAdd = []string{"NET_ADMIN"}
+			}))
+		if agent != nil {
+			member.agent = agent
+		}
+		if err != nil {
+			return fmt.Errorf("start the route agent of %s: %w", name, err)
+		}
 	}
-	joining := zoneEndpoint{id: id, name: name, zone: zone, addrs: addrs}
-	member := &zoneMemberState{endpoint: joining, startedAt: info.startedAt, ifaces: map[NetworkPlane]string{}, routes: map[netip.Addr]zoneRouteRecord{}}
-	b.enrolled[id] = member
-	agent, err := runContainer(ctx, b.settings.helperImage,
-		WithIdleEntrypoint(),
-		testcontainers.WithLabels(b.labels()),
-		testcontainers.WithConfigModifier(func(config *container.Config) { config.User = "0:0" }),
-		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
-			host.NetworkMode = container.NetworkMode("container:" + id)
-			host.CapDrop = []string{"ALL"}
-			host.CapAdd = []string{"NET_ADMIN"}
-		}))
-	if agent != nil {
-		member.agent = agent
-	}
-	if err != nil {
-		return fmt.Errorf("start the route agent of %s: %w", name, err)
-	}
-	out, err := b.exec(ctx, agent, "ip", "-o", "-4", "addr", "show")
+	out, err := b.exec(ctx, member.agent, "ip", "-o", "-4", "addr", "show")
 	if err != nil {
 		return fmt.Errorf("route agent of %s: %w", name, err)
 	}
@@ -296,14 +317,18 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 		}
 		member.ifaces[plane] = iface
 	}
-	own, peers, err := planZoneEnrollment(joining, b.endpointsExcept(id), b.routerAddrs())
+	own, peers, err := planZoneEnrollment(member.endpoint, b.endpointsExcept(id), b.routerAddrs())
 	if err != nil {
 		return err
 	}
 	if err := b.applyRoutes(ctx, own); err != nil {
 		return err
 	}
-	return b.applyRoutes(ctx, peers)
+	if err := b.applyRoutes(ctx, peers); err != nil {
+		return err
+	}
+	member.complete = true
+	return nil
 }
 
 // endpointsExcept lists the members other than id, sorted by name.
@@ -601,7 +626,9 @@ func (b *zoneBoundary) router(ctx context.Context, zone string, plane NetworkPla
 }
 
 // unzonedLocked lists the containers on the planes' bridges that are neither
-// a router nor a member enrolled for its current start. The caller holds mu.
+// a router nor a member completely enrolled for its current start: a partial
+// enrollment, whose missing routes would let it reach another zone directly,
+// is listed. The caller holds mu.
 func (b *zoneBoundary) unzonedLocked(ctx context.Context) ([]string, error) {
 	known := map[string]bool{}
 	for _, router := range b.routers {
@@ -617,13 +644,12 @@ func (b *zoneBoundary) unzonedLocked(ctx context.Context) ([]string, error) {
 			if known[id] {
 				continue
 			}
-			member := b.enrolled[id]
-			if member != nil && member.agent != nil {
+			if member := b.enrolled[id]; member.enrolledFor(member.startedAt) {
 				_, info, err := b.inspectEndpoint(ctx, id)
 				if err != nil {
 					return nil, err
 				}
-				if info.startedAt == member.startedAt {
+				if member.enrolledFor(info.startedAt) {
 					known[id] = true
 					continue
 				}

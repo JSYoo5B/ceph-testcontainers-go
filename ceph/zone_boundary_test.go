@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 func zoneAddrs(public, cluster string) map[NetworkPlane]netip.Addr {
@@ -91,6 +93,25 @@ func TestZoneRouteCommands(t *testing.T) {
 	removal := zoneRouteCommand(zoneRouteOp{dest: netip.MustParseAddr("10.0.0.5")}, "eth0")
 	if !strings.HasPrefix(removal, "ip route del 10.0.0.5/32") || !strings.Contains(removal, `test -z "$(ip -o -4 route show 10.0.0.5/32)"`) {
 		t.Fatalf("a removal must check that no route is left: %s", removal)
+	}
+}
+
+func TestZoneMemberAdmittedOnlyWhenCompleteForItsStart(t *testing.T) {
+	agent := &testcontainers.DockerContainer{}
+	for _, tc := range []struct {
+		name   string
+		member *zoneMemberState
+		want   bool
+	}{
+		{"untracked", nil, false},
+		{"agent started, routes pending", &zoneMemberState{startedAt: "t1", agent: agent}, false},
+		{"complete", &zoneMemberState{startedAt: "t1", agent: agent, complete: true}, true},
+		{"complete for an earlier start", &zoneMemberState{startedAt: "t0", agent: agent, complete: true}, false},
+		{"agent removed", &zoneMemberState{startedAt: "t1", complete: true}, false},
+	} {
+		if got := tc.member.enrolledFor("t1"); got != tc.want {
+			t.Errorf("%s: admitted %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

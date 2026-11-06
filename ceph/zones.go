@@ -239,7 +239,7 @@ func (b *zoneBoundary) layout(ctx context.Context) (ZoneLayout, error) {
 				PublicAddress: router.addrs[PublicNetworkPlane], ClusterAddress: router.addrs[ClusterNetworkPlane]}
 		}
 		for _, member := range b.enrolled {
-			if member.endpoint.zone == name && member.agent != nil {
+			if member.endpoint.zone == name && member.enrolledFor(member.startedAt) {
 				zone.Members = append(zone.Members, member.endpoint.view())
 			}
 		}
