@@ -1135,22 +1135,30 @@ func encUnnodeArgs(nodes []encNode) []string {
 	return args
 }
 
-// judgeEncNodesClean requires /dev/mapper to hold no stale block node: each
-// one must be the node of a live device-mapper device of the same name. A
-// node of the test's names may only remain as the node of such a live device
-// (a mapping that only shares the name).
-func judgeEncNodesClean(names []string, seen []encNodeSeen) (bool, string) {
-	var stale []string
-	for _, s := range seen {
+// judgeEncNodesClean decides the cleanup of /dev/mapper for this run: no
+// entry may remain under the run's names (its node and crypt mapping names,
+// random per run) except the node of a live device-mapper device of that
+// name, which is a mapping that only shares the name. Stale block nodes under
+// other names are not this run's: they are reported as residue, split into
+// those already in the baseline taken before the run and new ones, and never
+// fail the run.
+func judgeEncNodesClean(names []string, baseline, after []encNodeSeen) (bool, string) {
+	var left, unchanged, appeared []string
+	for _, s := range after {
+		stale := s.Kind == "block" && s.Error == "" && (!s.Live || s.DMName != s.Name)
 		switch {
-		case s.Kind == "block" && (!s.Live || s.DMName != s.Name):
-			stale = append(stale, fmt.Sprintf("%s (%s, device %q)", s.Name, s.Number, s.DMName))
-		case s.Kind != "block" && slices.Contains(names, s.Name):
-			stale = append(stale, fmt.Sprintf("%s (a %s)", s.Name, s.Kind))
+		case slices.Contains(names, s.Name) && (s.Error != "" || s.Kind != "block" || stale):
+			left = append(left, fmt.Sprintf("%s (%s %s, device %q %s)", s.Name, s.Kind, s.Number, s.DMName, s.Error))
+		case !stale:
+		case slices.Contains(baseline, s):
+			unchanged = append(unchanged, s.Name)
+		default:
+			appeared = append(appeared, s.Name)
 		}
 	}
-	if len(stale) > 0 {
-		return false, "stale /dev/mapper entries: " + strings.Join(stale, ", ")
+	detail := fmt.Sprintf("%d entries; residue of other runs: %d unchanged %v, %d new %v", len(after), len(unchanged), unchanged, len(appeared), appeared)
+	if len(left) > 0 {
+		return false, "this run left " + strings.Join(left, ", ") + "; " + detail
 	}
-	return true, fmt.Sprintf("%d entries, none stale", len(seen))
+	return true, "nothing of this run left; " + detail
 }

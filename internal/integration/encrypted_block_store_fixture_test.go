@@ -520,19 +520,30 @@ func TestEncNodesUnlinkOnlyTheRemovedMappingsStaleNode(t *testing.T) {
 	}
 
 	host := []encNodeSeen{{Name: "control", Kind: "char"}, {Name: "vg-lv", Kind: "symlink"}}
-	if ok, d := judgeEncNodesClean([]string{"n", "n-crypt"}, host); !ok {
+	old := encNodeSeen{Name: "tcenc-old", Kind: "block", Number: "252:2"}
+	names := []string{"n", "n-crypt"}
+	with := func(base []encNodeSeen, more ...encNodeSeen) []encNodeSeen {
+		return append(slices.Clone(base), more...)
+	}
+	if ok, d := judgeEncNodesClean(names, host, host); !ok {
 		t.Fatalf("host entries only: %s", d)
 	}
-	if ok, d := judgeEncNodesClean([]string{"n", "n-crypt"}, append(slices.Clone(host), encNodeSeen{Name: "n", Kind: "block", Number: "252:6", Live: true, DMName: "n"})); !ok {
+	if ok, d := judgeEncNodesClean(names, with(host, old), with(host, old)); !ok || !strings.Contains(d, "1 unchanged [tcenc-old]") {
+		t.Errorf("unchanged residue of an earlier run: %t %s", ok, d)
+	}
+	if ok, d := judgeEncNodesClean(names, host, with(host, old)); !ok || !strings.Contains(d, "1 new [tcenc-old]") {
+		t.Errorf("new residue under another name is reported, not this run's: %t %s", ok, d)
+	}
+	if ok, d := judgeEncNodesClean(names, host, with(host, encNodeSeen{Name: "n", Kind: "block", Number: "252:6", Live: true, DMName: "n"})); !ok {
 		t.Errorf("a live mapping that shares the name: %s", d)
 	}
 	for name, s := range map[string]encNodeSeen{
-		"stale own node":            stale,
-		"stale node of another run": {Name: "tcenc-old", Kind: "block", Number: "252:2"},
-		"node of another device":    {Name: "n", Kind: "block", Number: "252:2", Live: true, DMName: "other"},
-		"own name as a symlink":     {Name: "n-crypt", Kind: "symlink"},
+		"stale node of this run":            stale,
+		"this run's name on another device": {Name: "n", Kind: "block", Number: "252:2", Live: true, DMName: "other"},
+		"this run's name as a symlink":      {Name: "n-crypt", Kind: "symlink"},
+		"this run's node uninspected":       {Name: "n", Kind: "block", Number: "252:5", Error: "permission denied"},
 	} {
-		if ok, _ := judgeEncNodesClean([]string{"n", "n-crypt"}, append(slices.Clone(host), s)); ok {
+		if ok, _ := judgeEncNodesClean(names, with(host, old), with(host, old, s)); ok {
 			t.Errorf("%s accepted", name)
 		}
 	}

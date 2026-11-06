@@ -53,6 +53,7 @@ type encEnv struct {
 	loop              string
 	rec               encChainRecord
 	pending           []string
+	baseline          []encNodeSeen // /dev/mapper before the run
 	cluster           *ceph.Container
 	osd               *ceph.OSDContainer
 	client            testcontainers.Container
@@ -453,7 +454,7 @@ func (e *encEnv) unlinkNodes(ctx context.Context, removed []encNode) (map[string
 		return out, err
 	}
 	out["after"] = after.Nodes
-	clean, detail := judgeEncNodesClean([]string{e.node, e.crypt}, after.Nodes)
+	clean, detail := judgeEncNodesClean([]string{e.node, e.crypt}, e.baseline, after.Nodes)
 	out["clean"] = detail
 	switch {
 	case len(refused) > 0:
@@ -518,6 +519,7 @@ func startEncKeeper(t *testing.T, ctx context.Context, keeperImage string) (*enc
 		t.Fatal(err)
 	}
 	admit := e.do(t, ctx, nil, "admit", "-")
+	e.baseline = e.do(t, ctx, nil, "nodes", "-").Nodes
 	autoload := os.Getenv("RUNNER_ENVIRONMENT") == "github-hosted"
 	for _, target := range []string{"linear", "error"} {
 		if !slices.Contains(admit.Targets, target) {
