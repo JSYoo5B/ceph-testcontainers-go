@@ -1,0 +1,23 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "dashboard",
+  "count": 7,
+  "types": {
+    "dashboard.Config": [
+      "Config.Role field string",
+      "Config.TLS field TLSConfig",
+      "Config.Username field string"
+    ],
+    "dashboard.Dashboard": [
+      "Dashboard embed *state"
+    ],
+    "dashboard.GatewayLink": [
+      "GatewayLink embed *linkState"
+    ],
+    "dashboard.TLSConfig": [
+      "TLSConfig.CertificatePEM field []byte",
+      "TLSConfig.PrivateKeyPEM field []byte"
+    ]
+  }
+}
