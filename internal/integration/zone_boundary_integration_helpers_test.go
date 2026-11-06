@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
@@ -390,11 +392,12 @@ func actingZones(acting []int, zoneOf map[int]string) (map[string][]int, error) 
 }
 
 // classifyTwoSubnetPath names what a routed probe across two Docker bridges
-// observed.
+// observed. Only a probe that ran can be dropped; one that did not run is
+// "not executed".
 func classifyTwoSubnetPath(r zoneRTT) string {
 	switch {
 	case r.Requested == 0:
-		return "not probed"
+		return "not executed"
 	case r.OK == r.Requested:
 		return "forwarded"
 	case r.OK == 0:
@@ -402,4 +405,33 @@ func classifyTwoSubnetPath(r zoneRTT) string {
 	default:
 		return "partly forwarded"
 	}
+}
+
+// zoneGatewayModeUnavailable reports whether err is the engine refusing a
+// bridge gateway mode it does not know. The bridge driver rejects such a mode
+// as an invalid parameter whose message ends with "(unknown gateway mode
+// <mode>)". Every other failure to create a bridge, such as an exhausted
+// address pool or an API timeout, is a setup error and not an observation
+// about the mode.
+func zoneGatewayModeUnavailable(mode string, err error) bool {
+	return err != nil && mode != "" && cerrdefs.IsInvalidArgument(err) &&
+		strings.Contains(err.Error(), "(unknown gateway mode "+mode+")")
+}
+
+// zoneTwoSubnetOutcome is the record of one zone bridge gateway mode in the
+// two-subnet probe. Unavailable holds the engine's refusal of the mode, and
+// then no probe ran. Otherwise both routed probes ran and their results are
+// the observation.
+type zoneTwoSubnetOutcome struct {
+	Mode                           string
+	Unavailable                    error
+	ZoneAddressed, SharedAddressed zoneRTT
+}
+
+func (o zoneTwoSubnetOutcome) String() string {
+	if o.Unavailable != nil {
+		return fmt.Sprintf("gateway mode %s: unavailable, the engine refused the mode (%v); zone-addressed and shared-addressed probes not executed", o.Mode, o.Unavailable)
+	}
+	return fmt.Sprintf("gateway mode %s: probes executed; zone-addressed through the router %s (%s); shared-addressed through the router %s (%s)",
+		o.Mode, classifyTwoSubnetPath(o.ZoneAddressed), o.ZoneAddressed, classifyTwoSubnetPath(o.SharedAddressed), o.SharedAddressed)
 }

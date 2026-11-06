@@ -5,12 +5,17 @@
 package integration_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"math"
 	"net/netip"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	cerrdefs "github.com/containerd/errdefs"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
@@ -195,6 +200,39 @@ func TestZoneProbeAndRTT(t *testing.T) {
 	}
 	if got := classifyTwoSubnetPath(summary(1, 1, 1)); got != "forwarded" {
 		t.Fatal(got)
+	}
+}
+
+func TestZoneTwoSubnetGatewayModeAndRecord(t *testing.T) {
+	// The bridge driver's refusal, as the engine client returns it for a 400.
+	refusal := func(mode string) error {
+		return fmt.Errorf("%w: Error response from daemon: failed to parse com.docker.network.bridge.gateway_mode_ipv4 value: %s (unknown gateway mode %s)",
+			cerrdefs.ErrInvalidArgument, mode, mode)
+	}
+	if !zoneGatewayModeUnavailable("routed", refusal("routed")) {
+		t.Fatal("did not recognize the engine refusing the requested gateway mode")
+	}
+	for name, err := range map[string]error{
+		"no error":         nil,
+		"another mode":     refusal("nat-unprotected"),
+		"pool exhaustion":  fmt.Errorf("%w: Error response from daemon: all predefined address pools have been fully subnetted", cerrdefs.ErrInvalidArgument),
+		"API timeout":      fmt.Errorf("create bridge: %w", context.DeadlineExceeded),
+		"unclassified 500": errors.New("Error response from daemon: failed to parse com.docker.network.bridge.gateway_mode_ipv4 value: nat (unknown gateway mode nat)"),
+	} {
+		if zoneGatewayModeUnavailable("nat", err) {
+			t.Errorf("%s: treated as an unavailable gateway mode: %v", name, err)
+		}
+	}
+	if got := classifyTwoSubnetPath(zoneRTT{}); got != "not executed" {
+		t.Fatalf("a probe that did not run is %q", got)
+	}
+	unavailable := zoneTwoSubnetOutcome{Mode: "routed", Unavailable: refusal("routed")}.String()
+	if !strings.Contains(unavailable, "unavailable") || !strings.Contains(unavailable, "not executed") || strings.Contains(unavailable, "dropped") {
+		t.Fatalf("unavailable record: %s", unavailable)
+	}
+	executed := zoneTwoSubnetOutcome{Mode: "nat", ZoneAddressed: zoneRTT{Requested: 5}, SharedAddressed: zoneRTT{Requested: 5}}.String()
+	if !strings.Contains(executed, "probes executed") || !strings.Contains(executed, "dropped (0/5)") || strings.Contains(executed, "not executed") {
+		t.Fatalf("executed record: %s", executed)
 	}
 }
 
