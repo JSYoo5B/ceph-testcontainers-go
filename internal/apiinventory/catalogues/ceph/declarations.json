@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 303,
+  "count": 314,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -524,6 +524,22 @@
       "signature": "func(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
       "receiver": "*Container",
       "proposed": "ceph.Container.WithClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WithZone",
+      "kind": "method",
+      "signature": "func(zone string) testcontainers.CustomizeRequestOption",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WithZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Zones",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ZoneLayout, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Zones",
       "decision": "baseline"
     },
     {
@@ -2141,6 +2157,67 @@
       "kind": "function",
       "signature": "func(timeout time.Duration) Option",
       "proposed": "ceph.WithStartupTimeout",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithZoneConfig",
+      "kind": "function",
+      "signature": "func(zones ZoneConfig) Option",
+      "proposed": "ceph.WithZoneConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Zone",
+      "kind": "type",
+      "proposed": "ceph.Zone",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneConfig",
+      "kind": "type",
+      "proposed": "ceph.ZoneConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneConfig.WithHelperImage",
+      "kind": "method",
+      "signature": "func(image string) ZoneConfig",
+      "receiver": "ZoneConfig",
+      "proposed": "ceph.ZoneConfig.WithHelperImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneConfig.WithQuorumZone",
+      "kind": "method",
+      "signature": "func(name string) ZoneConfig",
+      "receiver": "ZoneConfig",
+      "proposed": "ceph.ZoneConfig.WithQuorumZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneConfig.WithZones",
+      "kind": "method",
+      "signature": "func(names ...string) ZoneConfig",
+      "receiver": "ZoneConfig",
+      "proposed": "ceph.ZoneConfig.WithZones",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneEndpoint",
+      "kind": "type",
+      "proposed": "ceph.ZoneEndpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneLayout",
+      "kind": "type",
+      "proposed": "ceph.ZoneLayout",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ZoneRoute",
+      "kind": "type",
+      "proposed": "ceph.ZoneRoute",
       "decision": "baseline"
     }
   ]

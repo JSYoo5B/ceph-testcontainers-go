@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault",
-  "count": 50,
+  "count": 51,
   "entries": [
     {
       "current": "fault.AllPackets",
@@ -29,6 +29,13 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error)",
       "proposed": "fault.ApplyNetworkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ApplyZoneProfile",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, zone string, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "proposed": "fault.ApplyZoneProfile",
       "decision": "baseline"
     },
     {
