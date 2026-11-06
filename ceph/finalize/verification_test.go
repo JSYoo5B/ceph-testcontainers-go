@@ -803,6 +803,8 @@ func TestVerificationConfigValidation(t *testing.T) {
 		"crash invalid signature":  func(c *VerificationConfig) { c.Crashes[0].Signature = "[" },
 		"crash daemon newline":     func(c *VerificationConfig) { c.Crashes[0].Daemon = "osd.0\n" },
 		"too many redactions":      func(c *VerificationConfig) { c.RedactValues = make([]string, 129) },
+		"redaction with newline":   func(c *VerificationConfig) { c.RedactValues = []string{"a\nb"} },
+		"redaction with return":    func(c *VerificationConfig) { c.RedactValues = []string{"a\rb"} },
 		"invalid container": func(c *VerificationConfig) {
 			c.AdditionalContainers = []diagnostics.Target{{Role: "x\ny"}}
 		},
@@ -830,6 +832,7 @@ func TestVerificationConfigRefusalMessages(t *testing.T) {
 		"verification: too many additional containers or redaction values":                     func(c *VerificationConfig) { c.RedactValues = make([]string, 129) },
 		"verification: invalid container description":                                          func(c *VerificationConfig) { c.AdditionalContainers = []diagnostics.Target{{Role: "x\ny"}} },
 		"verification: redaction value exceeds 4096 bytes":                                     func(c *VerificationConfig) { c.RedactValues = []string{strings.Repeat("x", 4097)} },
+		"verification: redaction value must be one line; log lines are masked one at a time":   func(c *VerificationConfig) { c.RedactValues = []string{"a\r\nb"} },
 		"verification: log expectation name must be one non-empty line of at most 128 bytes":   func(c *VerificationConfig) { c.Logs[0].Name = "" },
 		"verification: crash expectation name must be one non-empty line of at most 128 bytes": func(c *VerificationConfig) { c.Crashes[0].Name = "" },
 		`verification: expectation name "l" is used twice`:                                     func(c *VerificationConfig) { c.Crashes[0].Name = "l" },
