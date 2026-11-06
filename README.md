@@ -61,6 +61,9 @@ Documentation for a published release is available at its Git tag.
     notification queues of SUT-created topics.
   - [`rgw/multisite`](rgw/multisite/README.md): realms, zonegroups and zones,
     period transfer, sync status and sync policy.
+- [`dashboard`](dashboard/README.md): the Ceph Dashboard of a cluster whose
+  managers ship it, with an owned HTTPS listener and account, and the Object
+  Gateway pages of one owned gateway.
 - [`fault`](fault/README.md): container pause, network delay, loss, rate,
   packet faults and endpoint interruption on existing fixtures.
   [`fault/blockio`](fault/blockio/README.md) prepares an owned disposable OSD
