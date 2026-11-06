@@ -85,6 +85,12 @@ if err != nil {
 - Clients: no kernel or FUSE mount. Clients are userspace libraries in Linux
   containers, or the test process with host networking on a Linux Docker host.
   The fixture's own libcephfs probes appear briefly in `session.List`.
+- Encrypted (fscrypt) directories: the SUT sets the policy and holds the key;
+  the fixture adds no encryption API. The kernel client decodes only AES CephX
+  keys, so a cluster for it needs `ceph.WithAuth(ceph.AuthConfig{KeyType:
+  ceph.CipherAES})` on 20.2.4 and later. `ceph-fuse` supports fscrypt only from
+  21.2.0, where the MDS also requires MDS caps `allow *`. See the
+  [fscrypt experiment case](../internal/integration/experiments/cephfs_fscrypt/README.md).
 - MDS: names, keys, entrypoint and networking are fixed; each MDS has a
   128 MiB cache. Damaged-metadata recovery, multi-rank replacement and
   `MDS.AddReplacement` with standbys are not provided.
