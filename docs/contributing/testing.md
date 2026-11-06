@@ -63,6 +63,7 @@ in `/proc/config.gz`. Observed with kernel 7.0.14-linuxkit (arm64):
 | --- | --- | --- |
 | netem, `prio`, u32 | built in | network fault tests run |
 | loop, device-mapper `linear` and `error` | built in | `TestBlockDeviceFault` runs its attachment, error and recovery windows; `TestBlockDeviceControlSupervision` runs entirely |
+| device-mapper `crypt` | built in | `TestEncryptedBlockDeviceOSD` (optional batch `osd_encrypted_store`) is eligible by configuration; it has not been run there |
 | device-mapper `delay` and `flakey` | not built | the delay window of `TestBlockDeviceFault` is recorded as not eligible; it runs on GitHub-hosted runners |
 | FUSE | built in | `TestCephFSFuseMount` runs |
 | NBD | built in | `TestDesktopRBDOverNBD` (optional batch `desktop_capabilities`) maps an RBD image through `rbd-nbd` |
@@ -255,8 +256,9 @@ external test secret, not ceph-volume `--dmcrypt` provisioning or lockbox key
 retrieval. The engine host's kernel must have the device-mapper `crypt` target
 registered (`modprobe dm_crypt` on the host); the test reads the registered
 targets first and fails naming the target, and never loads a module, except
-that a GitHub-hosted runner may load it on demand. Docker Desktop was not
-checked. Outside the tag runner:
+that a GitHub-hosted runner may load it on demand. The Docker Desktop kernel
+builds the target in (table above), but the test has not been run there.
+Outside the tag runner:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,osd_encrypted_store -count=1 -v -timeout=30m \
