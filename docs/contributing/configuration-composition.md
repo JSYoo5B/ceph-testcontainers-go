@@ -233,8 +233,8 @@ an OSD zone needs zones. A container's zone is not a `Run` setting:
 
 ### What stays a function
 
-Docker and container execution policy (`WithHostNetwork`, `WithIdleEntrypoint`,
-`WithStartupTimeout`) stays a testcontainers-style `WithX`. `WithConfigFile`
+Docker and container execution policy (`WithHostNetwork`, `WithManagerPorts`,
+`WithIdleEntrypoint`, `WithStartupTimeout`) stays a testcontainers-style `WithX`. `WithConfigFile`
 follows the `WithConfigFile` convention of testcontainers-go modules, and
 `WithAuth` already carries one `AuthConfig` value. Each value group has exactly
 one carrier, so no setting has two spellings.

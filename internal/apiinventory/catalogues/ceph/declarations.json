@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 314,
+  "count": 315,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -2129,6 +2129,13 @@
       "kind": "function",
       "signature": "func(config ImageOptions) Option",
       "proposed": "ceph.WithImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithManagerPorts",
+      "kind": "function",
+      "signature": "func(ports ...int) Option",
+      "proposed": "ceph.WithManagerPorts",
       "decision": "baseline"
     },
     {

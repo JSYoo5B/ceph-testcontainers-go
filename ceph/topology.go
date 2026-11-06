@@ -892,7 +892,8 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(t.settings.startupTimeout))},
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(t.settings.startupTimeout)),
+		testcontainers.WithExposedPorts(t.settings.managerExposedPorts()...)},
 		t.osds.runDir.mounts()...)...)
 	if name == "a" {
 		t.roster.recordInitialManager(mgr.Container)
