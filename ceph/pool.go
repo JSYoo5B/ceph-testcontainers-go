@@ -19,8 +19,8 @@ import (
 // Name uses letters, digits, '_', '.' and '-' and must not start with '.' or
 // '-'. Replicas is 1 to 10 and must be zero for an erasure-coded pool. MinSize
 // is 1 to Replicas for a replicated pool and K to K+M for an erasure-coded one.
-// FailureDomain puts each replica or shard in a distinct osd, host or rack
-// bucket. For RBD pools that need rbd pool init, use rbd.WithPools or
+// FailureDomain puts each replica or shard in a distinct osd, host, rack or
+// zone bucket. For RBD pools that need rbd pool init, use rbd.WithPools or
 // rbd.InitPool.
 type PoolConfig struct {
 	Name        string
@@ -28,7 +28,8 @@ type PoolConfig struct {
 	Replicas    int
 	MinSize     int
 	Application string
-	// FailureDomain selects distinct osd, host or rack buckets. Empty uses osd.
+	// FailureDomain selects distinct osd, host, rack or zone buckets. Empty
+	// uses osd.
 	FailureDomain string
 	// CRUSHRoot selects the hierarchy root; empty uses the cluster's default
 	// root, which is default unless ClusterConfig.WithDefaultCRUSHRoot selects another.
@@ -251,6 +252,8 @@ func (r *osdRegistry) placementDomains(config PoolConfig) int {
 			domain = placement.Host
 		case "rack":
 			domain = placement.Rack
+		case "zone":
+			domain = placement.Zone
 		}
 		if domain != "" {
 			domains[domain] = struct{}{}
@@ -271,8 +274,8 @@ func normalizePoolConfig(config PoolConfig) (PoolConfig, error) {
 	if config.FailureDomain == "" {
 		config.FailureDomain = "osd"
 	}
-	if config.FailureDomain != "osd" && config.FailureDomain != "host" && config.FailureDomain != "rack" {
-		return config, invalid(errors.New("pool failure domain must be osd, host or rack"))
+	if config.FailureDomain != "osd" && config.FailureDomain != "host" && config.FailureDomain != "rack" && config.FailureDomain != "zone" {
+		return config, invalid(errors.New("pool failure domain must be osd, host, rack or zone"))
 	}
 	if config.CRUSHRoot == "" {
 		config.CRUSHRoot = "default"

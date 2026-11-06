@@ -127,9 +127,14 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   RADOS, RBD and CephFS clients run in a `WithClient` container. Host mode lets
   a process on a Linux Docker host connect directly. IPv6, dual-stack and a
   separate cluster network are bridge-mode options.
-- **Placement is logical.** All daemons share one Docker engine; CRUSH hosts and
-  racks test placement rules, not physical failure tolerance, and OSD files are
-  sparse, so fullness is simulated with full ratios.
+- **Placement is logical.** All daemons share one Docker engine; CRUSH hosts,
+  racks and zones test placement rules, not physical failure tolerance, and OSD
+  files are sparse, so fullness is simulated with full ratios.
+- **Regional zones.** `WithZoneConfig` places one cluster's daemons and clients
+  in logical availability zones with an owned routed boundary between them,
+  which `fault.ApplyZoneProfile` delays or cuts and `Container.Zones` reports;
+  `Container.WithZone` places a client or service daemon. See
+  [Regional zones](../docs/guides/regional-zones.md).
 - **Fixture defaults** differ from a stock cluster (small pools, PG
   autoscaling off, replica-1 pools allowed, faster MGR stats); the
   [configuration guide](../docs/guides/ceph-configuration.md#fixture-defaults-that-differ-from-a-stock-cluster)
@@ -155,6 +160,7 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   [host networking](../docs/guides/host-network.md),
   [Messenger client fixtures](../docs/guides/messenger-client-fixtures.md),
   [native commands](../docs/guides/native-commands.md),
+  [regional zones](../docs/guides/regional-zones.md),
   [releases and images](../docs/guides/releases-and-images.md).
 
 `observer.ServiceContainers(ctx)` copies the tracked optional-service handles

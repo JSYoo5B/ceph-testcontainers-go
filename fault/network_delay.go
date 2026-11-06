@@ -2251,3 +2251,50 @@ func (dockerNetemBackend) run(ctx context.Context, helper testcontainers.Contain
 func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Container, label, marker string) error {
 	return supervised.Cancel(ctx, helper, label, marker)
 }
+
+// ApplyZoneProfile applies netem shaping at the boundary of a cluster with
+// zones (ceph.WithZoneConfig): to the packets that leave zone on delay.Plane,
+// which the zone's router forwards and only those. Every other zone's traffic,
+// and traffic within any zone, keeps its path. To delay or cut both
+// directions between two zones, apply a profile to each zone; one lease per
+// router and plane never shapes a packet twice, and the router's counters
+// attribute each direction. A Loss of 100 partitions the boundary in that
+// direction. With a Peer or Peers only the packets to those addresses are
+// shaped, as by ApplyNetworkProfile. The direction is the zone's egress, so
+// Direction must stay Outbound.
+//
+// It refuses a cluster without zones, an unknown zone or plane, and, while
+// any container on the plane's bridge is neither a router nor a member
+// enrolled for its current start, the shaping itself: such a container
+// would reach the other zones directly (see ceph.ZoneLayout.Unzoned). The
+// helper checks, the refusals and the errors are those of
+// ApplyNetworkProfile, and so are the lease and its restoration: Terminate
+// restores a held lease first, before the boundary is released.
+//
+//purpose:condition
+func ApplyZoneProfile(ctx context.Context, c *ceph.Container, zone string, delay NetworkProfile) (*NetworkProfileLease, error) {
+	if err := validateNetworkDelay(delay); err != nil {
+		return nil, err
+	}
+	if delay.Direction != Outbound {
+		return nil, nshelper.InvalidRequest("a zone profile shapes the zone's egress: Direction must be Outbound, apply a profile to the other zone for its direction")
+	}
+	if c == nil {
+		return nil, nshelper.InvalidRequest("a zone profile requires a cluster")
+	}
+	router, name, err := faulthook.ZoneRouter(ctx, c, zone, delay.Plane)
+	if err != nil {
+		return nil, err
+	}
+	token, err := reserveNetworkDelay(ctx, c, name, router.GetContainerID())
+	if err != nil {
+		return nil, err
+	}
+	backend := dockerNetemBackend{label: faulthook.OwnedLabel(c)}
+	lease, err := applyNetworkDelay(ctx, backend, router.GetContainerID(), name, delay, false)
+	if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
+		native, _ := faulthook.Terminated()
+		return lease, errors.Join(err, native, lease.Restore(ctx))
+	}
+	return lease, err
+}

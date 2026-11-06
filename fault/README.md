@@ -29,6 +29,8 @@ after the cluster.
    - `fault.ApplyNetworkProfile`: delay, drop, rate-limit, reorder, duplicate
      or corrupt the packets a container sends, optionally only to selected
      peers (opt-in netem helper, `fault.NetemHelperImage`).
+   - `fault.ApplyZoneProfile`: the same profile at the boundary of a cluster
+     with zones (`ceph.WithZoneConfig`), on what leaves one zone.
    - `fault.InjectObjectDataError`: make one replica of an object return a
      read error to scrub and recovery.
    - `fault.InterruptLink` / `fault.ApplyLinkProfile`: the same on a bridge the
@@ -75,6 +77,10 @@ if err != nil {
   each peer container's endpoint) or both, and `Phase: ConnectionSetup` only
   TCP connection setup, so existing sessions keep working while new
   connections fail.
+- Zone boundary: `ApplyZoneProfile` shapes what one zone's router forwards,
+  so one profile per zone covers each direction once; it refuses to shape
+  while a container on the bridge belongs to no zone. See
+  [Regional zones](../docs/guides/regional-zones.md).
 - Opt-in helpers: network profiles need an image that meets
   [netem contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
   (`fault.NetemHelperImage` is the published one) and an engine that grants it

@@ -61,6 +61,9 @@ func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcon
 		if err != nil {
 			return err
 		}
+		if err := c.zoneAttachment()(req); err != nil {
+			return err
+		}
 		return testcontainers.WithFiles(
 			textFile("/etc/ceph/ceph.conf", config, 0o644),
 			textFile(client.KeyringPath(), bytes.Clone(client.keyring), 0o600),

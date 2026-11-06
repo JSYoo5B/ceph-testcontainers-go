@@ -201,6 +201,7 @@ var osdRegistryCallers = map[string]stateCaller{
 	"waitForClean":                     {"takes", []string{"count"}},
 	"OSDs":                             {"takes", []string{"sorted"}},
 	"CreatePool":                       {"takes", []string{"placementDomains"}},
+	"Zones":                            {"takes", []string{"each"}},
 	"SetIn":                            {"takes", []string{"current", "ownedState"}},
 	"applyPGPrimaryLocked":             {"holds", []string{"current"}},
 	"diagnosticOSDs":                   {"holds", []string{"each"}},

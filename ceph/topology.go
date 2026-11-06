@@ -64,7 +64,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if c.controlPlane.current() != nil {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.startup.ownedLabel(),
+	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember("control"), c.startup.ownedLabel(),
 		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
 		c.runDir.mounts()...)...)
@@ -272,7 +272,7 @@ func (c *Container) monitorJoinOptions(join monitorJoin, ports []int) []testcont
 		opts = append(opts, keepMonitorAddress(c.staticFacts().NetworkName))
 	}
 	opts = append(opts, c.runDir.mounts()...)
-	return append(opts, c.startup.ownedLabel())
+	return append(opts, c.quorumMember("mon."+join.name), c.startup.ownedLabel())
 }
 
 // removeMonitor implements MonitorContainer.Remove, which documents the behavior. The caller
@@ -888,7 +888,7 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 	if err := t.osds.clearSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = t.runDaemon(ctx, daemonImage, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
+	mgr.Container, err = t.runDaemon(ctx, daemonImage, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.quorumMember("mgr." + name), t.osds.startup.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
