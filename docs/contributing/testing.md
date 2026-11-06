@@ -121,6 +121,7 @@ python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 | `goceph` | The Linux go-ceph consumer test. Not part of `all`. |
 | `cephfs_fuse` | The `ceph-fuse` mount and fcntl lock tests. Not part of `all`. |
 | `cephfs_fscrypt` | The CephFS fscrypt experiment case (kernel and `ceph-fuse` clients). Not part of `all`. |
+| `osd_encrypted_store` | The OSD on a test-owned LUKS2 dm-crypt backing store (`TestEncryptedBlockDeviceOSD`). Not part of `all`. |
 | `role_images` | Constrained role-image routing tests. Not part of `all`. |
 | `debug_overhead`, `debug_ms_window` | Debug-level overhead measurements in `internal/debugoverhead`. Not part of `all`. |
 | `capture_archive` | The native capture-archive test in `internal/capturearchive`. Not part of `all`. |
@@ -128,12 +129,12 @@ python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 
 Most constraints begin with `all || (...)`, so `all` overrides capability and
 CI tags there: `-tags=all,ci,ci_short` filters nothing. The exceptions are
-optional and opt-in files (`native_regression`, `cephfs_fuse`, `cephfs_fscrypt`, most
-`ci_optional` batches), which add their own tag and are not selected by `all`,
-and recovery tests split into a parent file and per-batch copies (for example
-`rbd_receiver_readiness`): the parent drops out under any CI batch and the
-copies need their exact batch tags. To run one batch, use the
-[tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` tag is unrelated
+optional and opt-in files (`native_regression`, `cephfs_fuse`, `cephfs_fscrypt`,
+`osd_encrypted_store`, most `ci_optional` batches), which add their own tag and
+are not selected by `all`, and recovery tests split into a parent file and
+per-batch copies (for example `rbd_receiver_readiness`): the parent drops out
+under any CI batch and the copies need their exact batch tags. To run one
+batch, use the [tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` tag is unrelated
 to the Ceph `all` role image.
 
 `ceph_bug_` tags for [bug-ID compatibility](../guides/bug-compatibility.md) are not test
@@ -228,8 +229,8 @@ python3 .github/scripts/tag_scenarios.py optional \
   --directory artifacts/local-native-rgw
 ```
 
-Other optional batches include `native_shuffle`, `cephfs_fuse` and
-`cephfs_fscrypt`. The native
+Other optional batches include `native_shuffle`, `cephfs_fuse`,
+`cephfs_fscrypt` and `osd_encrypted_store`. The native
 batches assert behaviour that the unpatched default image lacks, so they fail
 there; they exist to verify a patched image. `cephfs_fuse` needs `/dev/fuse`,
 `CAP_SYS_ADMIN` and `apparmor=unconfined`, which a rootful engine whose kernel
@@ -237,6 +238,30 @@ has FUSE allows: a Linux Docker Engine, or Docker Desktop (see
 [Native regressions](ci.md#native-regressions)). `cephfs_fscrypt` needs the same
 privileges and, for its kernel subtest, a host kernel with the ceph filesystem
 type already registered.
+
+`osd_encrypted_store` (`TestEncryptedBlockDeviceOSD` in `internal/integration`)
+runs one BlueStore OSD on a linear device-mapper node over a LUKS2 dm-crypt
+mapping of a loop device whose backing file lives on a privileged keeper's
+tmpfs. The keeper runs the client role image, which ships `cryptsetup`, and
+binds the engine host's `/dev`. The test holds the key and passes it to
+`cryptsetup` on standard input only. It locks the store (the OSD stops, the
+node gets an `error` table, the mapping closes), checks that a start of the OSD
+fails, that a missing or wrong key is refused without a mapping or a header
+change, then unlocks with the right key and requires the original OSD ID, UUID,
+store, device number and acknowledged bytes. The OSD has no separate DB or WAL
+device, so BlueFS shares the encrypted main device; the OSD data directory in
+its container (keyring, fsid, `block` link) is not encrypted. The key is an
+external test secret, not ceph-volume `--dmcrypt` provisioning or lockbox key
+retrieval. The engine host's kernel must have the device-mapper `crypt` target
+registered (`modprobe dm_crypt` on the host); the test reads the registered
+targets first and fails naming the target, and never loads a module, except
+that a GitHub-hosted runner may load it on demand. Docker Desktop was not
+checked. Outside the tag runner:
+
+```sh
+CGO_ENABLED=0 go test -tags all,osd_encrypted_store -count=1 -v -timeout=30m \
+  -run '^TestEncryptedBlockDeviceOSD$' ./internal/integration
+```
 
 ### Running tests in parallel
 
