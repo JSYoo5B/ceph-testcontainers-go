@@ -527,7 +527,7 @@ not suppress the test's own checks.
 | `MaxLogBytes` | 32 MiB | 256 MiB | Log stream bytes of the window per container. |
 | `MaxFindings` | 256 | 4096 | Findings kept per check. |
 | `AdditionalContainers` | none | 64 | Caller-owned daemon containers, such as mirror daemons; never adopted. |
-| `RedactValues` | none | 128 | Additional secrets to remove from the report. |
+| `RedactValues` | none | 128 | Additional secrets to remove from the report and the archived lines; each one line of at most 4096 bytes. |
 | `ArchiveLogs` | off | | Keep every line of the window that the log check reads for the failure archive. |
 
 `finalize.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
@@ -559,6 +559,12 @@ start of a secret, such as a `RedactValues` entry, together with every whole
 secret on the line, and ends in `[REDACTED]` instead, so that a cut cannot
 leave all of a secret but its last characters, even when the secret ends the
 line and its last characters are also its start.
+
+Because log lines are redacted one at a time, a `RedactValues` entry with a
+line break (`\n` or `\r`) could never match, and its parts on consecutive
+lines would each stay readable in the findings and the archived lines.
+`Finalization.Verify` refuses such an entry with `ceph.ErrInvalidRequest`, with
+or without `ArchiveLogs`, and starts no verification.
 
 Each check's `finalize.VerificationOutcome`, and the report's, which is the worse
 of the two:
