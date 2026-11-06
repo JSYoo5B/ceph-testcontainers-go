@@ -842,7 +842,9 @@ func zonePartialTeardown(t *testing.T, ctx context.Context, docker *testcontaine
 // Docker 28 and later drop packets addressed to a container on another bridge
 // in nat mode, before they reach the router when the host's bridge netfilter
 // is enabled; the outcome is recorded, not asserted. The direct path and the
-// router's own reachability are asserted as controls.
+// router's own reachability are asserted as controls. A mode the engine
+// refuses as unknown is recorded as unavailable and its subtest is skipped
+// with no probe executed; any other failure to create a bridge fails.
 func TestZoneBoundaryTwoSubnetRouting(t *testing.T) {
 	image := harness.NetemImage(t)
 	docker, err := testcontainers.NewDockerClientWithOpts(t.Context())
@@ -873,7 +875,7 @@ func zoneTwoSubnets(t *testing.T, docker *testcontainers.DockerClient, image, mo
 	labels := map[string]string{zoneBoundaryLabel: "two-subnet-" + strings.ReplaceAll(mode, "-", "") + "-" + fmt.Sprint(time.Now().UnixNano())}
 	// testcontainers' network.New drops driver options, so the bridges are
 	// created through the engine API with testcontainers' labels for Ryuk.
-	newBridge := func(gatewayMode string) *zoneBridge {
+	newBridge := func(gatewayMode string) (*zoneBridge, error) {
 		t.Helper()
 		all := testcontainers.GenericLabels()
 		for k, v := range labels {
@@ -886,8 +888,7 @@ func zoneTwoSubnets(t *testing.T, docker *testcontainers.DockerClient, image, mo
 		name := "zone-two-subnet-" + uuid.NewString()
 		created, err := docker.NetworkCreate(ctx, name, mobycl.NetworkCreateOptions{Driver: "bridge", Options: options, Labels: all})
 		if err != nil {
-			t.Logf("gateway mode %s: the engine refused a bridge with it: %v", mode, err)
-			return nil
+			return nil, err
 		}
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -903,15 +904,26 @@ func zoneTwoSubnets(t *testing.T, docker *testcontainers.DockerClient, image, mo
 		if got := inspection.Network.Options["com.docker.network.bridge.gateway_mode_ipv4"]; got != gatewayMode {
 			t.Fatalf("bridge %s has gateway mode %q, want %q", name, got, gatewayMode)
 		}
-		return &zoneBridge{ID: created.ID, Name: name}
+		return &zoneBridge{ID: created.ID, Name: name}, nil
 	}
-	shared, zoneA, zoneB := newBridge(""), newBridge(mode), newBridge(mode)
-	if shared == nil {
-		t.Fatal("the engine refused a default bridge")
+	shared, err := newBridge("")
+	if err != nil {
+		t.Fatalf("create the shared bridge: %v", err)
 	}
-	if zoneA == nil || zoneB == nil {
-		return
+	zoneBridgeFor := func(zone string) *zoneBridge {
+		t.Helper()
+		bridge, err := newBridge(mode)
+		switch {
+		case zoneGatewayModeUnavailable(mode, err):
+			outcome := zoneTwoSubnetOutcome{Mode: mode, Unavailable: err}
+			t.Logf("two-subnet record: %s", outcome)
+			t.Skipf("two-subnet record: %s", outcome)
+		case err != nil:
+			t.Fatalf("create the zone %s bridge in gateway mode %s: %v", zone, mode, err)
+		}
+		return bridge
 	}
+	zoneA, zoneB := zoneBridgeFor("A"), zoneBridgeFor("B")
 	start := func(name string, on *zoneBridge, host func(*container.HostConfig)) testcontainers.Container {
 		t.Helper()
 		ctr, err := testcontainers.Run(ctx, image, network.WithNetworkName([]string{name}, on.Name), ceph.WithIdleEntrypoint(),
@@ -1010,6 +1022,7 @@ while True:
 	sharedAddressed := probe(ea, ebShared)
 	rxAfter := harness.ExecOutput(t, ctx, router, "cat", "/sys/class/net/eth0/statistics/rx_packets")
 	t.Logf("gateway mode %s: endpoint A shared %s zone %s, endpoint B shared %s zone %s, router %s and %s", mode, eaShared, eaZone, ebShared, ebZone, routerA, routerB)
-	t.Logf("gateway mode %s: zone-addressed %s through the router: %s (%s); shared-addressed %s through the router: %s (%s); router zone A rx packets %s -> %s -> %s",
-		mode, ebZone, classifyTwoSubnetPath(zoneAddressed), zoneAddressed, ebShared, classifyTwoSubnetPath(sharedAddressed), sharedAddressed, rxBefore, rxMid, rxAfter)
+	t.Logf("gateway mode %s: zone-addressed destination %s, shared-addressed destination %s; router zone A rx packets %s -> %s -> %s",
+		mode, ebZone, ebShared, rxBefore, rxMid, rxAfter)
+	t.Logf("two-subnet record: %s", zoneTwoSubnetOutcome{Mode: mode, ZoneAddressed: zoneAddressed, SharedAddressed: sharedAddressed})
 }
