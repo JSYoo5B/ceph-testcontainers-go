@@ -63,7 +63,9 @@ finalization.Check("pool still clean", observer.WaitForClean)
   manifest.
 - The archive holds a manifest and the reports of `diagnostics.Collect` and
   `diagnostics.CollectCrashMetadata`, configured through `Config.Diagnostics`
-  and `Config.CrashMetadata`, plus verification and capture reports. The
+  and `Config.CrashMetadata`, plus verification and capture reports. A
+  verification with `ArchiveLogs` adds every line of its window that its log
+  check read, where the diagnostics keep only a log tail. The
   finalization of a passing run collects nothing. By default it goes into the
   test's `ArtifactDir`, which `go test` keeps only with `-artifacts`.
 - A verification that is unexpected or incomplete fails the test. It never

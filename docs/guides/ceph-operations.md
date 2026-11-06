@@ -323,6 +323,7 @@ test never share one:
 | `diagnostics.json` | The `diagnostics.Report`, absent when the collector returned none. |
 | `crash-metadata.json` | The `diagnostics.CrashMetadataReport`, absent when the collector returned none. |
 | `verification-<n>-<name>.json` | The `finalize.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
+| `verification-<n>-<name>-logs.jsonl` | With `ArchiveLogs`, every line of that verification's window that its log check read, one JSON object per line (see [Verify](#verify)). |
 | `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#Finalization.Capture) that returned one, numbered by registration order. |
 | `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
@@ -410,7 +411,8 @@ OSD replacement.
 Limits:
 
 - The reports are a snapshot during finalization: observations are not
-  atomic, and log tails are not continuous history.
+  atomic, and log tails are not continuous history. A verification with
+  `ArchiveLogs` keeps the whole window of its covered sources instead.
 - No crash records is not proof that a daemon never crashed. A container
   removed earlier took its records along.
 - Nothing runs after a forced process exit, a Go test timeout panic or a lost
@@ -526,13 +528,14 @@ not suppress the test's own checks.
 | `MaxFindings` | 256 | 4096 | Findings kept per check. |
 | `AdditionalContainers` | none | 64 | Caller-owned daemon containers, such as mirror daemons; never adopted. |
 | `RedactValues` | none | 128 | Additional secrets to remove from the report. |
+| `ArchiveLogs` | off | | Keep every line of the window that the log check reads for the failure archive. |
 
 `finalize.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
 `Window` (`finalize.VerificationWindow`: `Phase` `test`, `StartedAt` and
 `EndedAt` on the engine's clock, `EvaluatedAt`), the `Sources`
 (`finalize.VerificationSource`: `Source`, `Role`, `Name`, `ContainerID`,
-`ImageID`, `StartedAt`, `RestartCount`, `State`, `LogDriver`, `LogBytes` and
-the `BaselineCrashes`), the effective `LogExpectations` and
+`ImageID`, `StartedAt`, `RestartCount`, `State`, `LogDriver`, `LogBytes`,
+`LogLines` and the `BaselineCrashes`), the effective `LogExpectations` and
 `CrashExpectations`, `Notes` on its scope, and one `finalize.VerificationCheck`
 each for `Logs` and `Crashes`. A check has its `Outcome`, the `Permitted`
 and `Unexpected` counts, `Findings` (`finalize.VerificationFinding`: `Source`,
@@ -561,6 +564,23 @@ missing, unreadable, cut off or holds rejected metadata; a new crash without
 its done marker; a container added after the activation; more than 128
 containers; an unknown end of the window, or an engine clock that did not
 advance since the activation; and an expired context.
+
+With `ArchiveLogs`, an evaluation also keeps every line of the window that the
+log check reads, events or not, and the failure archive writes them to
+`verification-<n>-<name>-logs.jsonl` next to the report, in the order
+received. Each object has the `source` (as the report names it),
+`container_id`, `stream` (`stdout` or `stderr`), Docker's `time`, the
+redacted `text` without that timestamp, and `truncated` for a line whose
+rest was not read: one longer than 64 KiB, or the last line of a stream that
+`MaxLogBytes` or an error ended. The source's `LogLines` in the report counts
+its lines. The lines have the log check's coverage, and its gaps apply to
+them: a restarted, removed or rotating source, or one with another log
+driver, keeps no lines, and a source over `MaxLogBytes` keeps the prefix that
+was read. Lines outside the window and lines without a valid timestamp are
+not kept. The file holds what was received, not a record of every Ceph
+emission, and repeated lines stay repeated (the MON writes a cluster log
+entry more than once). A passing test writes no archive, so its lines are
+not kept anywhere, and the file stays only as long as the archive directory.
 
 Limits:
 
