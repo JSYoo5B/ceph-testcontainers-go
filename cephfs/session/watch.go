@@ -169,9 +169,10 @@ func (w *Watcher) Stop() error {
 // each rank held it throughout, since a daemon instance never returns to a
 // rank under the same GID, but the two reads are not one atomic snapshot.
 // Polling misses a session that opens and closes between reads, and
-// intermediate states that last shorter than the interval. The multi-rank
-// rules are exercised by unit tests only; native tests use one rank. The
-// watch never evicts, blocklists or otherwise changes a session.
+// intermediate states that last shorter than the interval. Native tests
+// cover one and two active ranks; more ranks follow the same rules but are
+// exercised by unit tests only. The watch never evicts, blocklists or
+// otherwise changes a session.
 //
 //purpose:observation
 func Watch(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, clients ...uint64) (*Watcher, error) {

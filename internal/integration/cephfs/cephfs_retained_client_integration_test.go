@@ -32,7 +32,9 @@ func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
 }
 
 // With two active ranks, the standby takes over rank 1, where the client's
-// file lives in a pinned directory, while rank 0 keeps its daemon.
+// file lives in a pinned directory, while rank 0 keeps its daemon. A session
+// watch rebaselines rank 1 without removing a session, and then removes the
+// sessions of an evicted client and of the unmounted one on both ranks.
 func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	runCephFSRetainedClient(t, cephFSRankOneTakeover)
