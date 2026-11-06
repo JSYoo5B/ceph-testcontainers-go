@@ -100,8 +100,11 @@ username, password := d.Credentials()
   signing key (`mgr/dashboard/accessdb_v2`, `mgr/dashboard/jwt_secret`) after
   `Restore`; they hold no fixture account.
 - **Object Gateway.** The Dashboard finds its gateway in the service map, so
-  `AddGateway` needs the gateway to be the cluster's only RGW daemon and to
-  serve plain HTTP; a gateway with TLS is refused. The link creates its own RGW
+  `AddGateway` needs the gateway to be the cluster's only RGW daemon. The
+  Dashboard connects to the first frontend port the gateway advertises, its
+  plain-HTTP listener, which a gateway with `rgw.TLSConfig` serves too; the
+  Dashboard's `RGW_API_SSL_VERIFY` option is not involved and stays as it is.
+  The link creates its own RGW
   user with `GatewayAdminCaps` (`users=read;buckets=read;metadata=read`, the
   least that lists users and buckets) and stores its key in the cluster-wide
   `RGW_API_ACCESS_KEY` and `RGW_API_SECRET_KEY` manager options, so every

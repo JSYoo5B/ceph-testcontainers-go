@@ -67,18 +67,20 @@ func (l GatewayLink) String() string {
 // GoString formats the link like String.
 func (l GatewayLink) GoString() string { return l.String() }
 
-// AddGateway makes the Dashboard manage gateway, an owned plain-HTTP gateway
-// of the Dashboard's cluster that is the only RGW daemon in the cluster's
-// service map. It creates a dedicated RGW user with GatewayAdminCaps through
+// AddGateway makes the Dashboard manage gateway, an owned gateway of the
+// Dashboard's cluster that is the only RGW daemon in the cluster's service
+// map. It creates a dedicated RGW user with GatewayAdminCaps through
 // gateway, stores its key as the Dashboard's RGW API access and secret key
 // (cluster-wide manager options, so every manager uses them after a
 // failover), and returns once Check passes.
 //
 // The Dashboard selects its gateway from the service map, not from a URL, so
-// a cluster with more than one RGW daemon is refused before any change, and
-// so is a gateway with TLS, whose certificate the Dashboard would verify
-// against the manager image's system trust store. A Dashboard has at most one
-// link; the SUT's own RGW credentials are never used.
+// a cluster with more than one RGW daemon is refused before any change. It
+// connects to the first frontend port the gateway advertises there, the plain
+// HTTP listener that every fixture gateway serves, also one with TLS; the
+// Dashboard's RGW TLS verification option is therefore not involved and not
+// changed. A Dashboard has at most one link; the SUT's own RGW credentials
+// are never used.
 //
 // An AddGateway that fails after creating the user returns the link together
 // with the error: its Remove undoes what AddGateway changed, and so does
@@ -144,8 +146,8 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	}
 }
 
-// checkGateway requires an owned plain-HTTP gateway of c that is the only
-// RGW daemon in the service map.
+// checkGateway requires an owned gateway of c that is the only RGW daemon in
+// the service map.
 func checkGateway(ctx context.Context, c *ceph.Container, gateway *rgw.Gateway) error {
 	gateways, err := rgw.Gateways(ctx, c)
 	if err != nil {
@@ -155,9 +157,6 @@ func checkGateway(ctx context.Context, c *ceph.Container, gateway *rgw.Gateway) 
 		return owned.GatewayName == gateway.GatewayName && owned.GetContainerID() == gateway.GetContainerID()
 	}) {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: errors.New("the gateway is not an owned gateway of the dashboard's cluster")}
-	}
-	if _, err := gateway.S3SecureEndpoint(ctx); err == nil {
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: errors.New("a gateway with TLS is not supported as the dashboard's RGW backend")}
 	}
 	daemons, err := rgwDaemons(ctx, c)
 	if err != nil {
