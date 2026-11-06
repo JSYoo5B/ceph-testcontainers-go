@@ -174,3 +174,128 @@ func manifestFileBytes(manifest finalizationManifest, name string) int {
 	}
 	return -1
 }
+
+// archivedVerificationLines runs a failing finalization with one verification
+// that archives its lines and returns them, with the whole text of every
+// file of the archive.
+func archivedVerificationLines(t *testing.T, config VerificationConfig, mutate func(*verifyFixture)) ([]verificationLogLine, *VerificationReport, string) {
+	t.Helper()
+	fx, vfx := verifyFinalization(t, Config{Archive: true})
+	config.Name, config.ArchiveLogs = "archived", true
+	if _, err := fx.Verify(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	mutate(vfx)
+	fx.run()
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives %v, errors %v", archives, fx.tb.errors)
+	}
+	entries, err := os.ReadDir(archives[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(archives[0], entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(data)
+	}
+	data, err := os.ReadFile(filepath.Join(archives[0], "verification-1-archived-logs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []verificationLogLine
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(nil, 1<<20)
+	for scanner.Scan() {
+		var line verificationLogLine
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("%v: %s", err, scanner.Bytes())
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	reportData, err := os.ReadFile(filepath.Join(archives[0], "verification-1-archived.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report VerificationReport
+	if err := json.Unmarshal(reportData, &report); err != nil {
+		t.Fatal(err)
+	}
+	return lines, &report, all.String()
+}
+
+func linesOf(lines []verificationLogLine, source string) []string {
+	var got []string
+	for _, line := range lines {
+		if line.Source == source {
+			got = append(got, line.Stream+" "+line.Text)
+		}
+	}
+	return got
+}
+
+// A private key block whose delimiters are on different lines is withheld
+// from the archived lines and the findings, per source and stream: a
+// complete block, one that begins on an event line, one that the read ends
+// inside, and one whose beginning the read did not see (cut at 64 KiB),
+// whose end withholds the stream's lines back to the read's start. Lines of
+// the other stream between them stay.
+func TestVerificationArchiveLogsWithholdPrivateKeyBlocks(t *testing.T) {
+	stamp := func(after time.Duration) string { return verifyStart.Add(after).Format(time.RFC3339Nano) }
+	payloads := []string{"MIIEvQIBADANBgkqhkiG9w0payloadOne", "payloadTwoOnTheErrLine", "payloadThreeInsideTheErrBlock", "payloadFourNeverClosed", "payloadFiveOnAnEventLine"}
+	lines, report, archive := archivedVerificationLines(t, VerificationConfig{}, func(fx *verifyFixture) {
+		fx.docker.containers["osd0"].rawLogs = slices.Concat(
+			diagnosticsFrame(1, stamp(time.Minute)+" key -----BEGIN PRIVATE KEY-----\n"),
+			diagnosticsFrame(2, stamp(time.Minute+time.Second)+" between the key lines\n"),
+			diagnosticsFrame(1, stamp(time.Minute+2*time.Second)+" "+payloads[0]+"\n"),
+			diagnosticsFrame(1, stamp(time.Minute+3*time.Second)+" -----END PRIVATE KEY----- after the key\n"),
+			diagnosticsFrame(2, stamp(2*time.Minute)+" "+daemonLogLine("cluster", "ERR", "dump -----BEGIN RSA PRIVATE KEY-----"+payloads[1])+"\n"),
+			diagnosticsFrame(2, stamp(2*time.Minute+time.Second)+" "+payloads[2]+"\n"),
+			diagnosticsFrame(2, stamp(2*time.Minute+2*time.Second)+" -----END RSA PRIVATE KEY-----\n"),
+		)
+		fx.docker.containers["osd1"].rawLogs = slices.Concat(
+			diagnosticsFrame(1, stamp(time.Minute)+" -----BEGIN EC PRIVATE KEY-----\n"),
+			diagnosticsFrame(2, stamp(time.Minute)+" stderr of osd.1\n"),
+			diagnosticsFrame(1, stamp(time.Minute+time.Second)+" "+payloads[3]+"\n"),
+		)
+		fx.docker.containers["mon"].rawLogs = slices.Concat(
+			diagnosticsFrame(1, stamp(time.Minute)+" "+strings.Repeat("x", maxVerificationLine)+"-----BEGIN PRIVATE KEY-----\n"),
+			diagnosticsFrame(1, stamp(time.Minute+time.Second)+" "+daemonLogLine("cluster", "ERR", payloads[4])+"\n"),
+			diagnosticsFrame(2, stamp(time.Minute+time.Second)+" stderr of mon.a\n"),
+			diagnosticsFrame(1, stamp(time.Minute+2*time.Second)+" -----END PRIVATE KEY-----\n"),
+			diagnosticsFrame(1, stamp(time.Minute+3*time.Second)+" after the orphan end\n"),
+		)
+	})
+	for _, payload := range payloads {
+		if strings.Contains(archive, payload) {
+			t.Errorf("the archive holds %q", payload)
+		}
+	}
+	const key = verificationKeyMarker
+	for source, want := range map[string][]string{
+		"osd.0": {
+			"stdout key " + key, "stderr between the key lines", "stdout " + key, "stdout " + key + " after the key",
+			"stderr " + daemonLogLine("cluster", "ERR", "dump "+key), "stderr " + key, "stderr " + key,
+		},
+		"osd.1": {"stdout " + key, "stderr stderr of osd.1", "stdout " + key},
+		"mon.a": {"stdout " + key, "stdout " + key, "stderr stderr of mon.a", "stdout " + key, "stdout after the orphan end"},
+	} {
+		if got := linesOf(lines, source); !slices.Equal(got, want) {
+			t.Errorf("%s lines\n%q\nwant\n%q", source, got, want)
+		}
+	}
+	var findings []string
+	for _, finding := range report.Logs.Findings {
+		findings = append(findings, finding.Source+" "+finding.Text)
+	}
+	if want := []string{"mon.a " + key, "osd.0 " + daemonLogLine("cluster", "ERR", "dump "+key)}; !slices.Equal(findings, want) {
+		t.Errorf("findings\n%q\nwant\n%q", findings, want)
+	}
+}

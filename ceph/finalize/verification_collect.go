@@ -452,10 +452,11 @@ const maxVerificationLine = 64 << 10
 
 // readVerificationLogs streams the container's log lines from start to end
 // with Docker's timestamps and emits each line that is an event. keep, when
-// not nil, receives every line of the window in the order received. It
-// returns the bytes read, the lines of the window and an error when the
-// stream could not be read in full, exceeded MaxLogBytes, or held a line
-// without a valid timestamp.
+// not nil, receives every line of the window in the order received. Both run
+// after the stream is read, since a private key's end can withhold earlier
+// lines. It returns the bytes read, the lines of the window and an error
+// when the stream could not be read in full, exceeded MaxLogBytes, or held a
+// line without a valid timestamp.
 func readVerificationLogs(ctx context.Context, docker verificationDocker, target verificationTarget, tty bool, start, end time.Time, config VerificationConfig, redact func(string) string, emit func(verificationEvent), keep func(verificationLogLine)) (int64, int, error) {
 	options := mobycl.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true, Since: dockerTimestamp(start)}
 	if !end.IsZero() {
@@ -471,7 +472,25 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	stop := context.AfterFunc(opCtx, func() { _ = reader.Close() })
 	defer stop()
 	counted := &countingReader{r: io.LimitReader(reader, config.MaxLogBytes+1)}
-	malformed, outside, cut, unrecognized, lines := 0, 0, 0, 0, 0
+	malformed, outside, cut, unrecognized := 0, 0, 0, 0
+	// held are the lines of the window, kept until the end of the read.
+	var held []verificationHeldLine
+	blocks := map[string]*verificationKeyBlocks{"stdout": {}, "stderr": {}}
+	// follow tracks the private key blocks of stream through text, whether
+	// or not the line belongs to the window. An end without a beginning
+	// withholds the stream's held lines since the last end.
+	follow := func(stream, text string) (string, *verificationKeyBlocks, bool) {
+		b := blocks[stream]
+		safe, ended, orphan := b.follow(text)
+		if orphan {
+			for i := b.since; i < len(held); i++ {
+				if held[i].stream == stream {
+					held[i].withhold()
+				}
+			}
+		}
+		return safe, b, ended
+	}
 	line := func(stream string, data []byte, long, ended bool) {
 		if long {
 			// The rest of the line was not read, whatever its prefix holds.
@@ -481,33 +500,40 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		stamp, text, _ := strings.Cut(string(data), " ")
 		when, err := time.Parse(time.RFC3339Nano, stamp)
 		if err != nil {
+			if _, b, blockEnded := follow(stream, string(data)); blockEnded {
+				b.since = len(held)
+			}
 			malformed++
 			return
+		}
+		raw := strings.TrimRight(text, "\r")
+		safe, b, blockEnded := follow(stream, raw)
+		if blockEnded {
+			// Withholding never reaches back past this line, which is safe.
+			defer func() { b.since = len(held) }()
 		}
 		if when.Before(start) || (!end.IsZero() && when.After(end)) {
 			outside++
 			return
 		}
-		raw := strings.TrimRight(text, "\r")
-		lines++
+		redacted := redact(safe)
+		h := verificationHeldLine{stream: stream}
 		if keep != nil {
-			keep(verificationLogLine{Stream: stream, Time: when.UTC().Format(time.RFC3339Nano), Text: redact(raw), Truncated: truncated})
+			h.line = &verificationLogLine{Stream: stream, Time: when.UTC().Format(time.RFC3339Nano), Text: redacted, Truncated: truncated}
 		}
 		kind, _, _, unclassified := classifyVerificationLine(raw)
 		if unclassified {
 			unrecognized++
-			return
+		} else if kind != "" {
+			e := verificationEvent{source: target.source, containerID: target.id, event: string(kind), time: when.UTC().Format(time.RFC3339Nano)}
+			// Expectations match the whole redacted line; only the text
+			// that the report keeps is bounded.
+			e.match = redacted
+			e.text, e.truncated = evidence.BoundText(e.match, maxFindingText)
+			e.truncated = e.truncated || truncated
+			h.event = &e
 		}
-		if kind == "" {
-			return
-		}
-		e := verificationEvent{source: target.source, containerID: target.id, event: string(kind), time: when.UTC().Format(time.RFC3339Nano)}
-		// Expectations match the whole redacted line; only the text
-		// that the report keeps is bounded.
-		e.match = redact(raw)
-		e.text, e.truncated = evidence.BoundText(e.match, maxFindingText)
-		e.truncated = e.truncated || truncated
-		emit(e)
+		held = append(held, h)
 	}
 	stdout, stderr := &verificationLines{stream: "stdout", emit: line}, &verificationLines{stream: "stderr", emit: line}
 	err = evidence.DemuxLogs(counted, tty, stdout, stderr)
@@ -515,6 +541,14 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	ended := err != nil || counted.n > config.MaxLogBytes
 	stdout.finish(ended)
 	stderr.finish(ended)
+	for _, h := range held {
+		if h.line != nil {
+			keep(*h.line)
+		}
+		if h.event != nil {
+			emit(*h.event)
+		}
+	}
 	read := min(counted.n, config.MaxLogBytes)
 	if counted.n > config.MaxLogBytes {
 		// The limit ended the stream, whatever the reader made of that.
@@ -529,7 +563,26 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	if cut > 0 {
 		err = errors.Join(err, fmt.Errorf("%d log lines are longer than %d bytes; their rest was not read", cut, maxVerificationLine))
 	}
-	return read, lines, errors.Join(err, opCtx.Err())
+	return read, len(held), errors.Join(err, opCtx.Err())
+}
+
+// verificationHeldLine is one line of the window until the end of the read:
+// the line to keep, if kept, and its event, if any.
+type verificationHeldLine struct {
+	stream string
+	line   *verificationLogLine
+	event  *verificationEvent
+}
+
+// withhold replaces the line's text, and its event's, by
+// verificationKeyMarker.
+func (h *verificationHeldLine) withhold() {
+	if h.line != nil {
+		h.line.Text = verificationKeyMarker
+	}
+	if h.event != nil {
+		h.event.match, h.event.text = verificationKeyMarker, verificationKeyMarker
+	}
 }
 
 // verificationLines splits a stream into lines of at most
