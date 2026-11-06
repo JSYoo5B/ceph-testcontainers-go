@@ -24,7 +24,10 @@ type featureClient struct {
 	startup     *startupIdentity
 	conn        cephConn
 	adminClient func(...ClientContainerOptions) testcontainers.CustomizeRequestOption
-	facts       func() ClusterFacts
+	// quorumMember places the client in the quorum zone of a cluster with
+	// zones.
+	quorumMember func(name string) testcontainers.CustomizeRequestOption
+	facts        func() ClusterFacts
 }
 
 // featureClient returns the feature client of the cluster. A nil cluster
@@ -35,7 +38,7 @@ func (c *Container) featureClient() featureClient {
 	}
 	return featureClient{
 		toolkit: &c.toolkit, native: &c.native, runDir: &c.runDir, settings: c.settings, startup: &c.startup,
-		conn: c.conn(), adminClient: c.adminClient, facts: c.staticFacts,
+		conn: c.conn(), adminClient: c.adminClient, quorumMember: c.quorumMember, facts: c.staticFacts,
 	}
 }
 
@@ -73,7 +76,7 @@ func (f featureClient) startedContainer(ctx context.Context) (testcontainers.Con
 	defer func() { f.native.calls.endClientStartup(); cancel() }()
 	f.toolkit.markAttempted()
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
-		f.adminClient(), f.startup.ownedLabel(), WithIdleEntrypoint(),
+		f.adminClient(), f.quorumMember("client"), f.startup.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	}, f.runDir.mounts()...)...)
 	f.toolkit.publish(ctr) // A partial start remains owned and is never retried.

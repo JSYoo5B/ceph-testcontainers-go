@@ -84,7 +84,11 @@ type Container struct {
 	// portLeases is the host-port reservations of host network mode; see
 	// portLeaseState. It has no lock of its own: mu guards it.
 	portLeases portLeaseState
-	closed     bool
+	// boundary is the routed boundary of a cluster with zones, nil without
+	// them. newCluster writes the pointer before the cluster is shared and
+	// nothing replaces it; the boundary has its own leaf lock.
+	boundary *zoneBoundary
+	closed   bool
 
 	// native is the native-command state and the cancellation and fencing of
 	// its calls; see nativeCommands. Its state has its own leaf lock.
@@ -274,7 +278,8 @@ func newCluster(ctx context.Context, settings options) (*Container, error) {
 	} else {
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
-	c := &Container{settings: settings, nets: networkState{public: nw}, startup: newStartupIdentity(uuid.NewString())}
+	owner := uuid.NewString()
+	c := &Container{settings: settings, nets: networkState{public: nw}, startup: newStartupIdentity(owner)}
 	if err != nil {
 		if nw == nil {
 			return nil, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
@@ -293,6 +298,15 @@ func newCluster(ctx context.Context, settings options) (*Container, error) {
 		// of each family. The single bridge serves both planes.
 		if c.nets.publicSubnet, c.nets.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, nw.Name, settings.addressFamily); err != nil {
 			return c, err
+		}
+	}
+	if settings.zones.enabled() {
+		planes := map[NetworkPlane]string{PublicNetworkPlane: nw.Name}
+		if c.nets.cluster != nil {
+			planes[ClusterNetworkPlane] = c.nets.cluster.Name
+		}
+		if c.boundary, err = newZoneBoundary(ctx, settings.zones, owner, planes); err != nil {
+			return c, classifyDocker(ctx, fmt.Errorf("start the zone boundary: %w", err))
 		}
 	}
 	// create publishes before creating: an interrupted create may have committed,
@@ -450,7 +464,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		return mon, nil
 	}
 	create := func(ctx context.Context, ports []int) (testcontainers.Container, error) {
-		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.startup.ownedLabel())...)
+		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.quorumMember("mon.a"), c.startup.ownedLabel())...)
 	}
 	return c.startMonitorRetryingPorts(ctx, monitorPortStart{
 		host: c.settings.hostNetwork,
@@ -561,7 +575,13 @@ func (o options) monitorJoinEnvironment(name string) map[string]string {
 //
 //purpose:handoff
 func (c *Container) WithClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
-	return c.adminClient(opts...)
+	attach := c.adminClient(opts...)
+	return func(req *testcontainers.GenericContainerRequest) error {
+		if err := attach(req); err != nil {
+			return err
+		}
+		return c.zoneAttachment()(req)
+	}
 }
 
 // adminClient attaches a container of the module's own with the admin keyring.
@@ -1068,7 +1088,9 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	moduleOpts := append([]testcontainers.ContainerCustomizer{c.adminClient()}, opts...)
+	// The caller's options follow the quorum zone, so a WithZone among them
+	// places the daemon in another zone.
+	moduleOpts := append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember(name)}, opts...)
 	moduleOpts = append(moduleOpts, c.startup.ownedLabel())
 	ctr, err := runContainer(ctx, image, moduleOpts...)
 	if ctr != nil {
@@ -1131,6 +1153,9 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// stay unconfirmed are retried after the teardown, which ends the ones in
 	// the cluster's own containers.
 	_ = c.native.stopAll(ctx)
+	// The routes live in the daemons' namespaces and the routers on the
+	// bridges: release the boundary while both still exist.
+	errs = append(errs, c.boundary.close(ctx)...)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)

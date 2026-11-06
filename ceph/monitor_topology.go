@@ -41,6 +41,8 @@ type monitorTopology struct {
 	client         func(context.Context) (testcontainers.Container, error)
 	serviceTargets func() []map[string]testcontainers.Container
 	adminClient    func(...ClientContainerOptions) testcontainers.CustomizeRequestOption
+	// quorumMember places a MGR in the quorum zone of a cluster with zones.
+	quorumMember   func(name string) testcontainers.CustomizeRequestOption
 	runDaemon      func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	checkAddresses func(context.Context) error
 	killMonitor    func(context.Context, testcontainers.Container) error
@@ -72,7 +74,7 @@ func (c *Container) monitorTopology() monitorTopology {
 			}
 			return targets
 		},
-		adminClient: c.adminClient, runDaemon: c.runDaemon, checkAddresses: c.checkDualStackAddresses,
+		adminClient: c.adminClient, quorumMember: c.quorumMember, runDaemon: c.runDaemon, checkAddresses: c.checkDualStackAddresses,
 		killMonitor: c.killMonitor,
 	}
 }
