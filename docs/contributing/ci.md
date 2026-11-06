@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -847,16 +847,18 @@ with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
 for the deliberately failing ones, through `Native regressions`, which runs
 the one batch its `batch` input names.
 
-Four optional batches are [experiment cases](testing.md#experiment-cases)
+Five optional batches are [experiment cases](testing.md#experiment-cases)
 that reproduce an unpatched upstream defect and fail on the published images:
 `native_rgw_translation`
 ([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
 `native_shuffle`
 ([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
 `mon_log_ack`
-([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md))
-and `rbd_demote_restart`
-([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)).
+([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
+`rbd_demote_restart`
+([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md))
+and `rgw_conditional_writes`
+([`rgw_suspended_conditional_writes`](../../internal/integration/experiments/rgw_suspended_conditional_writes/README.md)).
 Each case's `README.md` gives its trigger, controls, command and the meaning
 of each outcome; [Experiment case tiers](#experiment-case-tiers) says when
 each one runs.
@@ -910,6 +912,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
+| `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | deliberately failing reproducer | 35 s (fails in the suspended subtests); 36 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `batch=rgw_conditional_writes` |
 | `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
 | `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 

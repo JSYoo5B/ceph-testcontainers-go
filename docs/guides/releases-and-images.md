@@ -154,12 +154,23 @@ These affect commands or client libraries you run yourself, not the typed API:
   accepted on Squid. The module itself sends no S3 requests.
 - **Squid 19.2.5 and Tentacle 20.2.4, conditional writes on a
   versioning-suspended bucket.** For a key written while versioning was
-  enabled, `If-Match` with the current ETag answers 412, and after a
-  delete marker `If-None-Match: *` answers 412 although no current version
-  exists. Umbrella 21.2.0 accepts both. The other outcomes agree on all
-  three releases: `If-None-Match: *` on an existing object and a wrong
-  `If-Match` answer 412, keys first written after suspension and buckets
-  that were never versioned behave correctly.
+  enabled, `If-Match` with the current ETag (unquoted on Squid, see the next
+  entry) answers 412, and after a delete marker `If-None-Match: *` answers 412
+  although no current version exists and, on Tentacle, `If-Match` answers 412
+  instead of 404. On Tentacle this holds for an ordinary PUT and for
+  `CompleteMultipartUpload` alike; Umbrella 21.2.0 follows AWS semantics for
+  both. On all three releases `If-None-Match: *` on an existing object and a
+  wrong `If-Match` answer 412, and keys first written after suspension behave
+  correctly. See `TestRGWSuspendedConditionalWrites` (optional
+  `native_regression` batch `rgw_conditional_writes`, experiment case
+  [`rgw_suspended_conditional_writes`](../../internal/integration/experiments/rgw_suspended_conditional_writes/README.md)).
+- **Squid 19.2.5, conditional writes on any bucket.** `If-Match` is compared
+  with the stored ETag without removing the quotes, so the quoted ETag that
+  S3 returns never matches; send it unquoted. With an unquoted ETag, `If-Match`
+  on a missing key answers 412 instead of 404. `CompleteMultipartUpload`
+  ignores `If-Match` and `If-None-Match`: a second create-once completion of
+  the same key answers 200. Tentacle 20.2.4 and Umbrella 21.2.0 accept
+  quoted ETags and evaluate both headers on the completion.
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
