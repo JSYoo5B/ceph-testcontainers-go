@@ -64,7 +64,11 @@ username, password := d.Credentials()
 - **Readiness.** `Start` and `Endpoint` pass only when the listener the MGR
   map advertises presents the installed certificate, refuses the account with
   a wrong password, accepts its password, and answers `GET /api/summary` with
-  the session token from the manager that the MGR map names active. An open
+  the session token from the manager that the MGR map names active. Every
+  connection of the check compares the presented certificate with the
+  installed one before it sends a password or the session token, so a stale
+  or foreign listener receives neither, and the check sends nothing more after
+  a mismatch. An open
   port, an enabled module or a module that can run is not readiness. The
   check runs from the control container. Each check sends one wrong password
   and then the right one, which resets the module's failed-login counter, so
