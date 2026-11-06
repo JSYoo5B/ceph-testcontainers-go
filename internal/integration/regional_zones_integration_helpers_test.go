@@ -21,6 +21,7 @@ import (
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	"github.com/testcontainers/testcontainers-go/network"
 )
 
 const (
@@ -941,8 +942,10 @@ func testRegionalZoneFailedSetup(t *testing.T) {
 }
 
 // testRegionalZoneRouteOwnership checks that the boundary owns only its own
-// routes and admits a member only once its enrollment completed. A zone a
-// client and a zone b client each get a caller /32 route to a new zone b
+// routes and admits a member only once its enrollment completed. A plain
+// container attached to the public bridge without WithZone, which the
+// boundary never enrolls, is unzoned and ApplyZoneProfile refuses to shape
+// until it is removed. A zone a client and a zone b client each get a caller /32 route to a new zone b
 // client while it starts, before its enrollment: the zone b route is within
 // the zone and stays, the zone a route conflicts with the boundary's route
 // there, so the enrollment fails on the peer routes. The new client is then
@@ -967,6 +970,7 @@ func testRegionalZoneRouteOwnership(t *testing.T) {
 	}
 	routerA := harness.ZoneRouter(t, layout, "a")
 	publicA, _ := harness.ZoneMemberByContainer(t, layout, clientA.GetContainerID())
+	checkNeverEnrolledContainerUnzoned(t, ctx, cluster, clientA, publicA.PublicAddress)
 
 	// The caller's routes go in while the new client starts, before the
 	// boundary's hook enrolls it; the hook runs again on a retried Start.
@@ -1101,6 +1105,63 @@ func testRegionalZoneRouteOwnership(t *testing.T) {
 		}
 	}
 	t.Logf("removing %s left the caller's replaced route in client-a and its own route in client-b", name)
+}
+
+// checkNeverEnrolledContainerUnzoned attaches an ordinary container to the
+// public bridge of peer, whose address there is addr, without the cluster's
+// options: the boundary never enrolls it, so the layout lists it as unzoned
+// and ApplyZoneProfile refuses to shape until it is removed.
+func checkNeverEnrolledContainerUnzoned(t *testing.T, ctx context.Context, cluster *ceph.Container, peer testcontainers.Container, addr netip.Addr) {
+	t.Helper()
+	info, err := peer.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := ""
+	for name, endpoint := range info.NetworkSettings.Networks {
+		if endpoint.IPAddress.Unmap() == addr {
+			bridge = name
+		}
+	}
+	if bridge == "" {
+		t.Fatalf("no bridge of %.12s has %v", peer.GetContainerID(), addr)
+	}
+	plain, err := testcontainers.Run(ctx, harness.NetemImage(t), ceph.WithIdleEntrypoint(), network.WithNetworkName(nil, bridge))
+	if plain != nil {
+		testcontainers.CleanupContainer(t, plain)
+	}
+	if err != nil {
+		t.Fatalf("start a plain container on the public bridge: %v", err)
+	}
+	name := regionalContainerName(t, ctx, plain)
+	layout, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatalf("Zones with the never-enrolled %s on the bridge: %v", name, err)
+	}
+	if !slices.ContainsFunc(layout.Unzoned, func(u string) bool { return strings.HasPrefix(u, name+" ") }) {
+		t.Fatalf("the never-enrolled %s is not unzoned: %v", name, layout.Unzoned)
+	}
+	profile := fault.NetworkProfile{HelperImage: harness.NetemImage(t), Delay: regionalOneWay, Plane: ceph.PublicNetworkPlane}
+	lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+	if lease != nil {
+		if restoreErr := lease.Restore(ctx); restoreErr != nil {
+			t.Errorf("restore the zone a profile: %v", restoreErr)
+		}
+	}
+	if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), name) {
+		t.Fatalf("ApplyZoneProfile with the never-enrolled %s: %v, want a refusal naming it", name, err)
+	}
+	t.Logf("a plain container on the bridge without WithZone is unzoned %v and ApplyZoneProfile refuses: %v", layout.Unzoned, err)
+	if err := plain.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Unzoned) != 0 {
+		t.Fatalf("unzoned after removing %s: %v", name, after.Unzoned)
+	}
 }
 
 // regionalRouteEditor starts a helper with NET_ADMIN in the network
