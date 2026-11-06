@@ -25,6 +25,7 @@ import (
 // module and, for minutes, its allow_m_granularity setting; the call sets
 // neither.
 func TestCephFSSnapshotSchedule(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, imageOpts := harness.IntegrationImages(t)
