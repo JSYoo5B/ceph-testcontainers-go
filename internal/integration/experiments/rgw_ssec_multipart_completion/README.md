@@ -2,6 +2,8 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWSSECMultipartCompletion`, optional batch `rgw_ssec_completion`.
+Pure tests of its completion classifier: `TestSSECClassifyCompletion` and
+`TestSSECClassifyCompletionRejectsUnclassified200` (batch `pure`).
 
 ## Use case and native contract
 
@@ -88,7 +90,8 @@ python3 .github/scripts/tag_scenarios.py optional --batch rgw_ssec_completion \
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored
-checksum algorithm, and each completion's status, error code and message.
+checksum algorithm, and each completion's HTTP status, whether a 200 carried
+an S3 error, and the error code and message.
 Customer keys are never logged.
 
 ## Observations and controls
@@ -101,9 +104,12 @@ Customer keys are never logged.
    answers with the checksum it was sent.
 3. Effect: after a 200 completion, a fresh GET without the key is refused
    with 400, and a fresh GET with the key returns the exact bytes and the
-   SSE-C algorithm header. A 200 whose body carries an S3 error counts as a
-   refusal. After a refused completion, HEAD with the key answers 404, and
-   the upload is aborted at once, so no failed completion is reused.
+   SSE-C algorithm header. The completion is classified by its XML root: a
+   200 whose root is `Error`, in any namespace, is a failed completion that
+   keeps its HTTP status, error code and message, and a 200 that is neither
+   `CompleteMultipartUploadResult` nor `Error` fails the test after its
+   upload is aborted. After a refused completion, HEAD with the key answers
+   404, and the upload is aborted at once, so no failed completion is reused.
 4. Key validation: the wrong key is a valid 256-bit key with a correct MD5,
    and its refusal must name the MD5 mismatch, so it cannot come from
    signing, TLS or malformed XML.
@@ -132,9 +138,10 @@ Customer keys are never logged.
 
 ## Cleanup and limits
 
-Every upload ID is recorded right after the initiation; refused uploads are
-aborted at once, and the cleanup aborts any upload still recorded, deletes the
-completed objects and the bucket, and reports a failure as `RGW_SSEC cleanup
+The cleanup is registered before the bucket is created and acts only when the
+creation answered 200. Every upload ID is recorded right after the
+initiation; refused uploads are aborted at once, and the cleanup aborts any
+upload still recorded, deletes the completed objects and the bucket, and reports a failure as `RGW_SSEC cleanup
 failed` separately from the result. The cluster is removed by its cleanup.
 Not run: arm64, uploads of several parts, checksum algorithms other than
 `SHA256`, the `FULL_OBJECT` checksum type, SSE-KMS and SSE-S3 uploads, and

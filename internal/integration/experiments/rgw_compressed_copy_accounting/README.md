@@ -2,6 +2,8 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWCompressedCopyAccounting`, optional batch `rgw_compressed_copy`.
+Pure tests of its bucket ownership and copy result classification
+(`TestOwnBuckets*`, `TestClassifyCopyResult`, batch `pure`).
 
 ## Use case and native contract
 
@@ -113,8 +115,8 @@ each copy resolved (`RGW_CC trace`).
    (`bucket stats`, read until they count the one object, at most 30
    seconds) must all equal the logical length, and a fresh GET must return
    the exact bytes. `size_actual` is the rounded size and is only logged.
-4. Each copy's response must be a `CopyObjectResult` without an embedded
-   error.
+4. Each copy's response must have the XML root `CopyObjectResult`; a 200
+   whose root is `Error`, in any namespace, fails with its code and message.
 
 ## Reading the result
 
@@ -138,7 +140,10 @@ each copy resolved (`RGW_CC trace`).
 
 ## Cleanup and limits
 
-The cleanup deletes the five objects and buckets and reports a failure as
+The cleanup is registered before the first bucket is created and receives
+only the buckets whose creation answered 200, so a failed intermediate
+creation still removes the buckets made before it. It deletes their objects
+and the buckets and reports a failure as
 `RGW_CC cleanup failed` separately from the result. The zone edits and the
 pool belong to the cluster, which is removed by its cleanup. No index repair
 command runs. Not run: arm64, objects with a tail (larger than the head

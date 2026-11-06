@@ -122,8 +122,10 @@ error code and message, and what a fresh GET found.
 
 ## Cleanup and limits
 
-Every key a PUT may have created is recorded before the request. The cleanup
-deletes every listed version of a recorded key, then the buckets, and
+The cleanup is registered before the first bucket is created and receives
+only the buckets whose creation answered 200. Every key a PUT may have
+created is recorded before the request. The cleanup deletes every listed
+version of a recorded key, then the buckets, and
 reports a failure as `RGW_SSE cleanup failed` separately from the result.
 The cluster is removed by its cleanup. Not run: arm64, the empty header on
 `CopyObject`, `CreateMultipartUpload` and `PostObject`, an empty

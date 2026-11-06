@@ -128,7 +128,9 @@ request.
 
 ## Cleanup and limits
 
-The cleanup deletes every listed version and delete marker by version ID,
+The cleanup is registered before the first bucket is created and receives
+only the buckets whose creation answered 200. It deletes every listed
+version and delete marker by version ID,
 then each bucket's lifecycle configuration and the buckets, and reports a
 failure as `RGW_EXP cleanup failed` separately from the result. The cluster is
 removed by its cleanup. Not run: arm64, `Date`-based and tag-filtered rules,
