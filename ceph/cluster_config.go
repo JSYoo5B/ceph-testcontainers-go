@@ -267,7 +267,7 @@ func normalizeInitialOSDs(configs []OSDConfig) ([]OSDConfig, error) {
 		}
 		layout[i].Root = config.Root
 		for j := 0; j < i; j++ {
-			if layout[i].Host != "" && layout[i].Host == layout[j].Host && (layout[i].Rack != layout[j].Rack || (layout[i].Root != "" && layout[j].Root != "" && layout[i].Root != layout[j].Root)) {
+			if layout[i].Host != "" && layout[i].Host == layout[j].Host && (layout[i].Rack != layout[j].Rack || layout[i].Zone != layout[j].Zone || (layout[i].Root != "" && layout[j].Root != "" && layout[i].Root != layout[j].Root)) {
 				return nil, fmt.Errorf("host %q has conflicting CRUSH locations", layout[i].Host)
 			}
 		}

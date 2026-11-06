@@ -753,8 +753,11 @@ func (f osdFleet) registerOSD(ctx context.Context, config OSDConfig, image strin
 	}
 	if buckets != nil && !buckets[config.Host] {
 		// Creating the bucket here leaves the booting OSD's create-or-move
-		// only its own insertion; a missing rack is created with the host.
+		// only its own insertion; a missing zone or rack is created with the host.
 		args := []string{"osd", "crush", "add-bucket", config.Host, "host", "root=" + config.Root}
+		if config.Zone != "" {
+			args = append(args, "zone="+config.Zone)
+		}
 		if config.Rack != "" {
 			args = append(args, "rack="+config.Rack)
 		}

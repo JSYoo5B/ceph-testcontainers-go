@@ -74,7 +74,7 @@ func (r *osdLaunchRecipe) Customize(req *testcontainers.GenericContainerRequest)
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{
 			"CEPH_OSD_ID": strconv.Itoa(r.id), "CEPH_OSD_UUID": r.uuid, "CEPH_OSD_HOST": r.placement.Host,
-			"CEPH_OSD_ROOT": r.placement.Root, "CEPH_OSD_RACK": r.placement.Rack, "CEPH_OSD_DEVICE_CLASS": r.placement.DeviceClass,
+			"CEPH_OSD_ROOT": r.placement.Root, "CEPH_OSD_ZONE": r.placement.Zone, "CEPH_OSD_RACK": r.placement.Rack, "CEPH_OSD_DEVICE_CLASS": r.placement.DeviceClass,
 			"CEPH_OSD_STARTUP_BENCHMARK": string(r.benchmark),
 		}),
 		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", []byte(r.osdKeyring), 0o600)),

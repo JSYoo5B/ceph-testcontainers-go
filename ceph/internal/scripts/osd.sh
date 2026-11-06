@@ -121,6 +121,9 @@ else
 fi
 mkdir -p /var/run/ceph
 location="root=${CEPH_OSD_ROOT:-default} host=${CEPH_OSD_HOST}"
+if [ -n "${CEPH_OSD_ZONE:-}" ]; then
+    location="${location} zone=${CEPH_OSD_ZONE}"
+fi
 if [ -n "${CEPH_OSD_RACK:-}" ]; then
     location="${location} rack=${CEPH_OSD_RACK}"
 fi
