@@ -299,3 +299,71 @@ func TestVerificationArchiveLogsWithholdPrivateKeyBlocks(t *testing.T) {
 		t.Errorf("findings\n%q\nwant\n%q", findings, want)
 	}
 }
+
+// A truncated line whose tail is the start of a configured secret keeps its
+// safe prefix, marked truncated, and withholds that tail, in the archived
+// lines and the findings: the last line of a cut stream and a line cut at 64
+// KiB. A whole secret on an ordinary line is redacted as before.
+func TestVerificationArchiveLogsWithholdACutSecret(t *testing.T) {
+	stamp := func(after time.Duration) string { return verifyStart.Add(after).Format(time.RFC3339Nano) }
+	const secret = "opaqueTokenValue123"
+	partial := secret[:len(secret)-1]
+	cutEvent := stamp(2*time.Minute) + " " + daemonLogLine("cluster", "ERR", "presented "+secret+" again")
+	cutEvent = cutEvent[:strings.Index(cutEvent, partial)+len(partial)]
+	long := stamp(time.Minute) + " long "
+	long += strings.Repeat("y", maxVerificationLine-len(long)-len(partial)) + secret + " rest\n"
+	lines, report, archive := archivedVerificationLines(t, VerificationConfig{RedactValues: []string{secret}}, func(fx *verifyFixture) {
+		frame := diagnosticsFrame(2, cutEvent+" again\n")
+		fx.docker.containers["osd0"].rawLogs = slices.Concat(
+			diagnosticsFrame(2, stamp(time.Minute)+" whole "+secret+" line\n"),
+			// The frame is cut right after the partial secret.
+			frame[:8+len(cutEvent)],
+		)
+		fx.docker.containers["osd1"].rawLogs = diagnosticsFrame(1, long)
+	})
+	if strings.Contains(archive, partial[:len(partial)-4]) {
+		t.Errorf("the archive holds a part of the secret")
+	}
+	find := func(source, prefix string) verificationLogLine {
+		for _, line := range lines {
+			if line.Source == source && strings.HasPrefix(line.Text, prefix) {
+				return line
+			}
+		}
+		t.Fatalf("no %s line %q in %+v", source, prefix, lines)
+		return verificationLogLine{}
+	}
+	whole, event, cut := find("osd.0", "whole"), find("osd.0", daemonLogLine("cluster", "ERR", "")), find("osd.1", "long")
+	if whole.Text != "whole [REDACTED] line" || whole.Truncated {
+		t.Errorf("whole line %+v", whole)
+	}
+	if event.Text != daemonLogLine("cluster", "ERR", "presented [REDACTED]") || !event.Truncated {
+		t.Errorf("cut stream line %+v", event)
+	}
+	if !strings.HasSuffix(cut.Text, "y[REDACTED]") || !cut.Truncated {
+		t.Errorf("long line ending %q, truncated %v", cut.Text[max(len(cut.Text)-20, 0):], cut.Truncated)
+	}
+	if len(report.Logs.Findings) != 1 || report.Logs.Findings[0].Text != event.Text || !report.Logs.Findings[0].Truncated {
+		t.Errorf("findings %+v", report.Logs.Findings)
+	}
+}
+
+func TestSecretPrefixSuffix(t *testing.T) {
+	for _, c := range []struct {
+		text, secret string
+		want         int
+	}{
+		{"line abc", "abcd", 3},
+		{"line abcd", "abcd", 0},
+		{"line ab", "abcd", 2},
+		{"line", "abcd", 0},
+		{"aaaa", "aaab", 3},
+		{"x abab", "ababc", 4},
+		{"xa", "a", 0},
+		{"", "abc", 0},
+	} {
+		if got := secretPrefixSuffix(c.text, c.secret); got != c.want {
+			t.Errorf("secretPrefixSuffix(%q, %q) = %d, want %d", c.text, c.secret, got, c.want)
+		}
+	}
+}

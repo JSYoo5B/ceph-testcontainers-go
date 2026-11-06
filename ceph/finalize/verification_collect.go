@@ -338,7 +338,7 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 				w.o.lines = append(w.o.lines, line)
 			}
 		}
-		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, w.redact, func(e verificationEvent) {
+		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, verificationLineRedaction{redact: w.redact, secrets: w.baseline.secrets}, func(e verificationEvent) {
 			w.o.logs = append(w.o.logs, e)
 		}, keep)
 		source.LogBytes, source.LogLines = read, lines
@@ -457,7 +457,7 @@ const maxVerificationLine = 64 << 10
 // lines. It returns the bytes read, the lines of the window and an error
 // when the stream could not be read in full, exceeded MaxLogBytes, or held a
 // line without a valid timestamp.
-func readVerificationLogs(ctx context.Context, docker verificationDocker, target verificationTarget, tty bool, start, end time.Time, config VerificationConfig, redact func(string) string, emit func(verificationEvent), keep func(verificationLogLine)) (int64, int, error) {
+func readVerificationLogs(ctx context.Context, docker verificationDocker, target verificationTarget, tty bool, start, end time.Time, config VerificationConfig, redaction verificationLineRedaction, emit func(verificationEvent), keep func(verificationLogLine)) (int64, int, error) {
 	options := mobycl.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true, Since: dockerTimestamp(start)}
 	if !end.IsZero() {
 		options.Until = dockerTimestamp(end)
@@ -516,7 +516,7 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 			outside++
 			return
 		}
-		redacted := redact(safe)
+		redacted := redaction.line(safe, truncated)
 		h := verificationHeldLine{stream: stream}
 		if keep != nil {
 			h.line = &verificationLogLine{Stream: stream, Time: when.UTC().Format(time.RFC3339Nano), Text: redacted, Truncated: truncated}
