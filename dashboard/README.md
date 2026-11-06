@@ -24,9 +24,12 @@ no Dashboard client and wraps no Dashboard operation. See
 3. **Hand it to the SUT**: `Endpoint` returns the active manager's HTTPS URL
    once that manager answered the owned account, and `Credentials` returns the
    account's name and password. The SUT verifies the certificate with the
-   test's CA and the name in the certificate.
+   test's CA and the name in the certificate. A SUT on the Docker host of a
+   bridge-mode cluster uses `HostEndpoint` instead, which needs the cluster
+   started with `ceph.WithManagerPorts(8443)` (see Endpoints below).
 4. **Meet a failover**: after `ceph mgr fail` or a manager loss, call
-   `Endpoint` again. It waits until the new active manager answers.
+   `Endpoint` (or `HostEndpoint`) again. It waits until the new active
+   manager answers.
 5. **Add the Object Gateway** when the SUT uses the Dashboard's RGW pages:
    `d.AddGateway(ctx, gateway)` with an owned gateway from `rgw.Start` or
    `rgw.Gateways`. `GatewayLink.Check` asks the Dashboard for the gateway and
@@ -74,8 +77,19 @@ username, password := d.Credentials()
   and then the right one, which resets the module's failed-login counter, so
   repeated checks never lock the account.
 - **Endpoints.** In bridge mode the listener is the manager's address on the
-  cluster network, port 8443: containers on that network reach it, the
-  managers publish no host port. In a host-network cluster each manager
+  cluster network, port 8443, which `Endpoint` returns: containers on that
+  network reach it. A process on the Docker host reaches it only through a
+  published port, and Docker publishes ports only when it creates a
+  container, so start the cluster with `ceph.WithManagerPorts(8443)`: every
+  manager then publishes its own host port. `HostEndpoint` returns the Docker
+  host and the active manager's port after the readiness check, and after a
+  connection from the calling process that presents the installed
+  certificate; it fails with `ceph.ErrInvalidRequest` when the managers
+  publish no port. Its host name is not the certificate's name, so the SUT
+  verifies the name it expects, for example with the TLS server name. A
+  standby's redirect names the active manager's container address; a
+  host-side SUT calls `HostEndpoint` again instead of following it. In a
+  host-network cluster each manager
   present at `Start` gets a free host port on the public address, so the test
   process reaches the listener; a manager added later uses port 8443. The
   ports are reserved and released just before the module binds them, so

@@ -14,10 +14,12 @@ must be networked.
 | The test process on a Linux Docker host | Host | `ceph.WithHostNetwork()` and `cluster.ConnectionConfig(ctx)` |
 | The test process on macOS or Windows with Docker Desktop | Host, with Docker Desktop host networking enabled | Same as above; see [Docker Desktop](#docker-desktop) |
 | An S3 client anywhere | Either | `rgw.Gateway.S3Endpoint(ctx)` (plain HTTP) |
+| A Dashboard client on the Docker host | Either; bridge mode needs `ceph.WithManagerPorts(8443)` | `dashboard.Dashboard.HostEndpoint(ctx)` |
 
 S3 is the exception: RGW serves HTTP on a single port (published in bridge
 mode, bound directly on the host in host mode), so a host S3 SDK works in both
-modes.
+modes. The Dashboard is an HTTPS listener of the active MGR; in bridge mode a
+MGR publishes it only when `WithManagerPorts` selects its port at `Run`.
 
 The public Go module does not depend on go-ceph, librados or cgo. Native
 clients are your own dependency; the module only supplies addresses,
