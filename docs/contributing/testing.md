@@ -120,6 +120,7 @@ python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 | `native_regression` | Strict tests for known upstream Ceph defects. Not part of `all`. |
 | `goceph` | The Linux go-ceph consumer test. Not part of `all`. |
 | `cephfs_fuse` | The `ceph-fuse` mount and fcntl lock tests. Not part of `all`. |
+| `cephfs_fscrypt` | The CephFS fscrypt experiment case (kernel and `ceph-fuse` clients). Not part of `all`. |
 | `role_images` | Constrained role-image routing tests. Not part of `all`. |
 | `debug_overhead`, `debug_ms_window` | Debug-level overhead measurements in `internal/debugoverhead`. Not part of `all`. |
 | `capture_archive` | The native capture-archive test in `internal/capturearchive`. Not part of `all`. |
@@ -127,7 +128,7 @@ python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 
 Most constraints begin with `all || (...)`, so `all` overrides capability and
 CI tags there: `-tags=all,ci,ci_short` filters nothing. The exceptions are
-optional and opt-in files (`native_regression`, `cephfs_fuse`, most
+optional and opt-in files (`native_regression`, `cephfs_fuse`, `cephfs_fscrypt`, most
 `ci_optional` batches), which add their own tag and are not selected by `all`,
 and recovery tests split into a parent file and per-batch copies (for example
 `rbd_receiver_readiness`): the parent drops out under any CI batch and the
@@ -227,12 +228,15 @@ python3 .github/scripts/tag_scenarios.py optional \
   --directory artifacts/local-native-rgw
 ```
 
-Other optional batches include `native_shuffle` and `cephfs_fuse`. The native
+Other optional batches include `native_shuffle`, `cephfs_fuse` and
+`cephfs_fscrypt`. The native
 batches assert behaviour that the unpatched default image lacks, so they fail
 there; they exist to verify a patched image. `cephfs_fuse` needs `/dev/fuse`,
 `CAP_SYS_ADMIN` and `apparmor=unconfined`, which a rootful engine whose kernel
 has FUSE allows: a Linux Docker Engine, or Docker Desktop (see
-[Native regressions](ci.md#native-regressions)).
+[Native regressions](ci.md#native-regressions)). `cephfs_fscrypt` needs the same
+privileges and, for its kernel subtest, a host kernel with the ceph filesystem
+type already registered.
 
 ### Running tests in parallel
 
