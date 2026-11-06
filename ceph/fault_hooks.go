@@ -156,6 +156,12 @@ func (faultHooks) NativeFailure(program string, code int, stdout, stderr []byte)
 // network is already gone.
 func (faultHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
 
+// ZoneRouter returns the router of zone and the bridge of plane once every
+// container on that bridge is a router or an enrolled member.
+func (faultHooks) ZoneRouter(ctx context.Context, c *Container, zone string, plane NetworkPlane) (testcontainers.Container, string, error) {
+	return c.boundary.router(ctx, zone, plane)
+}
+
 // AddBlockDeviceOSD adds an OSD on the caller's device-mapper node under the
 // caller's lease token (addBlockDeviceOSD). The caller owns the chain.
 func (faultHooks) AddBlockDeviceOSD(ctx context.Context, c *Container, hostPath string, major, minor uint32, sizeBytes int64, lease string) (*OSDContainer, error) {
