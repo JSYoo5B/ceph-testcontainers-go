@@ -4,12 +4,14 @@ package cephfs_fscrypt_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Client paths of the case. Each mounts CephFS in a client container that
@@ -175,6 +177,64 @@ func (p *fuseProcess) stop(wait time.Duration) error {
 	defer cancel()
 	if err := unstopped.Stop(ctx); err != nil {
 		return fmt.Errorf("stop ceph-fuse: %w", err)
+	}
+	return nil
+}
+
+// probeExec is one fscryptProbe run through harness.SessionExec: its exit
+// code, its combined output and the exec error.
+type probeExec struct {
+	Code   int
+	Output string
+	Err    error
+}
+
+// decode decodes the run's JSON result into value, or names why the run
+// has none.
+func (e probeExec) decode(value any) error {
+	if e.Err != nil {
+		return fmt.Errorf("exec: %w", e.Err)
+	}
+	if e.Code != 0 {
+		return fmt.Errorf("exit %d: %.1024s", e.Code, e.Output)
+	}
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(e.Output)), value); err != nil {
+		return fmt.Errorf("no JSON result: %w: %.1024s", err, e.Output)
+	}
+	return nil
+}
+
+// emergencyUnmountError checks the lazy unmount of point that a cleanup
+// after a failure runs: umount is the probe's umount2 call and listing the
+// probe's mount listing below point taken after it. It returns nil once the
+// listing shows no mount below point and umount2 either succeeded or
+// answered EINVAL, which means that nothing was mounted there, as after a
+// mount that failed before it appeared. Otherwise it names the failed step,
+// including a mount that is still there.
+func emergencyUnmountError(point string, umount, listing probeExec) error {
+	var unmounted struct {
+		Errno *int `json:"errno"`
+	}
+	if err := umount.decode(&unmounted); err != nil {
+		return fmt.Errorf("umount2 %s: %w", point, err)
+	}
+	if unmounted.Errno == nil {
+		return fmt.Errorf("umount2 %s: no errno in %.1024s", point, umount.Output)
+	}
+	var mounts struct {
+		Mounts *[][]string `json:"mounts"`
+	}
+	if err := listing.decode(&mounts); err != nil {
+		return fmt.Errorf("mount listing after umount2 %s: %w", point, err)
+	}
+	if mounts.Mounts == nil {
+		return fmt.Errorf("mount listing after umount2 %s: no mounts in %.1024s", point, listing.Output)
+	}
+	if len(*mounts.Mounts) != 0 {
+		return fmt.Errorf("umount2 %s: errno %d, still mounted: %v", point, *unmounted.Errno, *mounts.Mounts)
+	}
+	if errno := *unmounted.Errno; errno != 0 && errno != errnoEINVAL {
+		return fmt.Errorf("umount2 %s: errno %d", point, errno)
 	}
 	return nil
 }

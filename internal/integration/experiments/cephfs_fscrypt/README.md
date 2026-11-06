@@ -185,7 +185,11 @@ its own CephX identity and its own mount:
 
 The test unmounts with `umount2`, waits for `ceph-fuse` to exit and for the
 MDS sessions to close, and the harness terminates the cluster. Cleanup that
-runs after a failure detaches mounts lazily. The host-side kernel module is
+runs after a failure detaches mounts lazily, checks in the client
+container's mount table that nothing is mounted below the mount point any
+more and fails the test with the failed step otherwise. It waits for
+`ceph-fuse` within its own bound and, if the process has not returned,
+stops it again once the client container is terminated. The host-side kernel module is
 the operator's: the test neither loads nor unloads it.
 
 Not covered: host networking, arm64, Docker Desktop, kernels other than

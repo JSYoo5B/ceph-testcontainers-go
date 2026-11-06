@@ -146,3 +146,41 @@ func TestFuseProcessStopReadsTheResultOnlyAfterTheWorkerReturned(t *testing.T) {
 		t.Fatalf("stop after the worker returned: %v, want the refused stop of the unstopped command", err)
 	}
 }
+
+// The emergency unmount of a cleanup succeeds only when the mount table
+// shows nothing below the point and umount2 either succeeded or found
+// nothing mounted; every other outcome is reported with the failed step.
+func TestFscryptEmergencyUnmountReportsWhatRemains(t *testing.T) {
+	const point = "/mnt/cephfs"
+	ok := func(output string) probeExec { return probeExec{Output: output} }
+	empty := ok(`{"mounts": []}`)
+	retained := ok(`{"mounts": [["/mnt/cephfs", "ceph"]]}`)
+	for _, test := range []struct {
+		name            string
+		umount, listing probeExec
+		want            string
+	}{
+		{"lazy unmount", ok(`{"errno": 0}`), empty, ""},
+		{"lazy unmount after client log noise", ok("ceph-fuse: shutting down\n{\"errno\": 0}\n"), empty, ""},
+		{"nothing was mounted", ok(`{"errno": 22}`), empty, ""},
+		{"umount2 refused", ok(`{"errno": 1}`), retained, "errno 1, still mounted: [[/mnt/cephfs ceph]]"},
+		{"umount2 claims success but the mount stays", ok(`{"errno": 0}`), retained, "still mounted"},
+		{"umount2 refused without a mount", ok(`{"errno": 16}`), empty, "umount2 /mnt/cephfs: errno 16"},
+		{"exec transport", probeExec{Err: errors.New("container is not running")}, empty, "umount2 /mnt/cephfs: exec: container is not running"},
+		{"probe crashed", probeExec{Code: 1, Output: "Traceback"}, empty, "umount2 /mnt/cephfs: exit 1"},
+		{"probe printed no result", ok("nothing"), empty, "umount2 /mnt/cephfs: no JSON result"},
+		{"probe printed no errno", ok(`{}`), empty, "no errno"},
+		{"listing transport", ok(`{"errno": 0}`), probeExec{Err: context.DeadlineExceeded}, "mount listing after umount2 /mnt/cephfs: exec: context deadline exceeded"},
+		{"listing without mounts", ok(`{"errno": 0}`), ok(`{}`), "no mounts"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := emergencyUnmountError(point, test.umount, test.listing)
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
+				t.Fatalf("error %v, want one containing %q", err, test.want)
+			}
+		})
+	}
+}

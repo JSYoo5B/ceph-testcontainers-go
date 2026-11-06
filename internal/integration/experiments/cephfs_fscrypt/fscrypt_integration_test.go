@@ -170,9 +170,9 @@ func startFscryptClient(t *testing.T, ctx context.Context, c *fscryptCluster, pa
 	f.ctr = ctr
 	t.Cleanup(func() {
 		if f.mounted {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			_, _, _ = harness.SessionExec(cleanupCtx, ctr, "python3", "-c", fscryptProbe, "umount", f.point, "2")
+			if err := f.emergencyUnmount(umountDetach); err != nil {
+				t.Errorf("cleanup of client %s: %v", name, err)
+			}
 		}
 		if f.fuse != nil {
 			err := f.fuse.stop(time.Minute)
@@ -185,6 +185,22 @@ func startFscryptClient(t *testing.T, ctx context.Context, c *fscryptCluster, pa
 		}
 	})
 	return f
+}
+
+// umountDetach is umount2's MNT_DETACH flag: a lazy unmount.
+const umountDetach = "2"
+
+// emergencyUnmount unmounts the container's mount point with umount2 and
+// flags, within its own bound, in a cleanup after a failure, and checks in
+// the container's mount table that nothing is mounted below the point any
+// more.
+func (f *fscryptClient) emergencyUnmount(flags string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var umount, listing probeExec
+	umount.Code, umount.Output, umount.Err = harness.SessionExec(ctx, f.ctr, "python3", "-c", fscryptProbe, "umount", f.point, flags)
+	listing.Code, listing.Output, listing.Err = harness.SessionExec(ctx, f.ctr, "python3", "-c", fscryptProbe, "mounts", f.point)
+	return emergencyUnmountError(f.point, umount, listing)
 }
 
 // probe runs one fscryptProbe command in the client container, with input
