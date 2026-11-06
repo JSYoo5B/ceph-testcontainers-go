@@ -136,6 +136,23 @@ func TestZoneMemberAdmittedOnlyWhenCompleteForItsStart(t *testing.T) {
 	}
 }
 
+// TestZoneBoundaryLeavesOutContainersItNeverEnrolled covers a container on a
+// plane's bridge that the boundary has no record of, such as one attached
+// without Container.WithZone, and a partial enrollment: neither is admitted,
+// and neither is inspected, so the boundary needs no Docker client here.
+func TestZoneBoundaryLeavesOutContainersItNeverEnrolled(t *testing.T) {
+	agent := &testcontainers.DockerContainer{}
+	b := &zoneBoundary{enrolled: map[string]*zoneMemberState{
+		"partial": {startedAt: "t1", agent: agent},
+	}}
+	for _, id := range []string{"never-enrolled", "partial"} {
+		admitted, err := b.admittedLocked(t.Context(), id)
+		if err != nil || admitted {
+			t.Errorf("%s: admitted %v, %v; want not admitted without an error", id, admitted, err)
+		}
+	}
+}
+
 func TestZoneInterfaceParser(t *testing.T) {
 	addrs := "1: lo    inet 127.0.0.1/8 scope host lo\n42: eth0@if43    inet 10.0.0.5/16 brd 10.0.255.255 scope global eth0\n44: eth1@if45    inet 10.1.0.5/16 scope global eth1"
 	if iface, err := interfaceWithAddress(addrs, netip.MustParseAddr("10.1.0.5")); err != nil || iface != "eth1" {

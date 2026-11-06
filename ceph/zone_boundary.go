@@ -673,21 +673,36 @@ func (b *zoneBoundary) unzonedLocked(ctx context.Context) ([]string, error) {
 			if known[id] {
 				continue
 			}
-			if member := b.enrolled[id]; member.enrolledFor(member.startedAt) {
-				_, info, err := b.inspectEndpoint(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				if member.enrolledFor(info.startedAt) {
-					known[id] = true
-					continue
-				}
+			admitted, err := b.admittedLocked(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if admitted {
+				known[id] = true
+				continue
 			}
 			unzoned = append(unzoned, fmt.Sprintf("%s (%s plane)", resource.Name, plane))
 		}
 	}
 	slices.Sort(unzoned)
 	return slices.Compact(unzoned), nil
+}
+
+// admittedLocked reports whether the container id on a plane's bridge is a
+// member completely enrolled for its current start. A container the boundary
+// never tracked, such as one attached to the bridge without
+// Container.WithZone, is not, and neither is a partial enrollment; only a
+// complete one is inspected for a restart. The caller holds mu.
+func (b *zoneBoundary) admittedLocked(ctx context.Context, id string) (bool, error) {
+	member := b.enrolled[id]
+	if member == nil || !member.enrolledFor(member.startedAt) {
+		return false, nil
+	}
+	_, info, err := b.inspectEndpoint(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return member.enrolledFor(info.startedAt), nil
 }
 
 // close releases the boundary before the cluster's containers are removed:
