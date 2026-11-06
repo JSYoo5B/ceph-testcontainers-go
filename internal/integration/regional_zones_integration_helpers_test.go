@@ -938,4 +938,3 @@ func testRegionalZoneFailedSetup(t *testing.T) {
 	}
 	t.Logf("the failed setup created %d labelled resources; Terminate released them and the bridges, and left the bystander", len(during)-len(before))
 }
-

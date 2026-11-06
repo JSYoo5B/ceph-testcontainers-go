@@ -43,12 +43,12 @@ type zoneBoundary struct {
 	owner    string
 	// planes maps each plane to its bridge: public always, cluster only with a
 	// separate replication bridge.
-	planes  map[NetworkPlane]string
-	docker  *testcontainers.DockerClient
-	seed    *testcontainers.DockerNetwork
-	routers map[string]*zoneRouter
+	planes   map[NetworkPlane]string
+	docker   *testcontainers.DockerClient
+	seed     *testcontainers.DockerNetwork
+	routers  map[string]*zoneRouter
 	enrolled map[string]*zoneMemberState
-	closed  bool
+	closed   bool
 }
 
 // zoneRouter forwards what leaves its zone. addrs and ifaces are its address
