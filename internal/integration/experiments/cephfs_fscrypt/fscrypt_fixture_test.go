@@ -5,9 +5,15 @@
 package cephfs_fscrypt_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func intPointer(v int) *int { return &v }
@@ -111,5 +117,32 @@ func TestFscryptProbeRequestNumbers(t *testing.T) {
 				t.Errorf("%s %s: %#x, want %#x", path, name, got, number)
 			}
 		}
+	}
+}
+
+// stop reads the ceph-fuse call's result only after the worker closed done.
+// The worker assigns its result as soon as the call is cancelled but closes
+// done only when released, so the first stop always runs out of its wait
+// while the assignment may be in progress; under the race detector a read
+// of the result on that path fails the test. Once the worker returned, a
+// second stop reads the result and tries to stop the unstopped command,
+// which a zero NativeCommandUnstoppedError refuses.
+func TestFuseProcessStopReadsTheResultOnlyAfterTheWorkerReturned(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	process := &fuseProcess{cancel: cancel, done: make(chan struct{})}
+	release := make(chan struct{})
+	go func() {
+		defer close(process.done)
+		<-ctx.Done()
+		process.result, process.err = ceph.NativeCommandResult{ExitCode: 1}, &ceph.NativeCommandUnstoppedError{}
+		<-release
+	}()
+	if err := process.stop(10 * time.Millisecond); !errors.Is(err, errFuseOutstanding) {
+		t.Fatalf("stop before the worker returned: %v, want errFuseOutstanding", err)
+	}
+	close(release)
+	err := process.stop(time.Minute)
+	if err == nil || errors.Is(err, errFuseOutstanding) || !strings.Contains(err.Error(), "has no invocation") {
+		t.Fatalf("stop after the worker returned: %v, want the refused stop of the unstopped command", err)
 	}
 }

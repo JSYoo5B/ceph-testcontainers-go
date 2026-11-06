@@ -3,8 +3,13 @@
 package cephfs_fscrypt_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // Client paths of the case. Each mounts CephFS in a client container that
@@ -131,6 +136,47 @@ func policyRefusal(path string, errno int) (refusal *fscryptRefusal, ok bool) {
 		return &fscryptRefusal{Path: path, Requirement: fscryptNeedsClient, Detail: "FS_IOC_GET_ENCRYPTION_POLICY_EX on an empty directory: errno " + strconv.Itoa(errno)}, true
 	}
 	return nil, false
+}
+
+// fuseProcess is one ceph-fuse process, run in the foreground under
+// RunNativeCommand by a worker goroutine. The worker assigns result and err
+// and then closes done; nothing reads them before done is closed.
+type fuseProcess struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	result ceph.NativeCommandResult
+	err    error
+}
+
+// errFuseOutstanding reports a ceph-fuse call that has not returned yet.
+var errFuseOutstanding = errors.New("ceph-fuse call has not returned")
+
+// stop cancels the ceph-fuse call and waits up to wait for its worker to
+// return. Only then does it read the call's error, and a command that the
+// call could not confirm as stopped is stopped within its own bound of
+// wait. A worker that does not return within wait is reported with
+// errFuseOutstanding, and its result is left alone; terminating the
+// container ends the command and so the call, and stop can be called again
+// after that.
+func (p *fuseProcess) stop(wait time.Duration) error {
+	p.cancel()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-p.done:
+	case <-timer.C:
+		return fmt.Errorf("%w within %s of its cancellation", errFuseOutstanding, wait)
+	}
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if !errors.As(p.err, &unstopped) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := unstopped.Stop(ctx); err != nil {
+		return fmt.Errorf("stop ceph-fuse: %w", err)
+	}
+	return nil
 }
 
 // fscryptProbe is the native probe of the case, run with python3 in a

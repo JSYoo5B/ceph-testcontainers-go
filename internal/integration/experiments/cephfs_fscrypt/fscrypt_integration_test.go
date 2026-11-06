@@ -106,15 +106,10 @@ type fscryptClient struct {
 	point    string
 	fuse     *fuseProcess
 	mounted  bool
-}
-
-// fuseProcess is one ceph-fuse process, run in the foreground under
-// RunNativeCommand.
-type fuseProcess struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	result ceph.NativeCommandResult
-	err    error
+	// outstanding is a ceph-fuse process whose call had not returned when
+	// the container was still running; it is stopped again after the
+	// container is terminated.
+	outstanding *fuseProcess
 }
 
 // startFscryptClient starts an idle client container for path with a fresh
@@ -123,7 +118,10 @@ type fuseProcess struct {
 // privileged container gets CAP_SYS_ADMIN, apparmor=unconfined and, for
 // ceph-fuse, /dev/fuse; the cluster's daemons and admin container keep
 // their defaults. Cleanup unmounts what is still mounted, stops ceph-fuse
-// and terminates the container.
+// and terminates the container. Each step has its own bound, so a step that
+// runs out of time does not leave the next one without any, and a ceph-fuse
+// call that has not returned by then is stopped again once the container is
+// terminated.
 func startFscryptClient(t *testing.T, ctx context.Context, c *fscryptCluster, path, name, image string, privileged bool) *fscryptClient {
 	t.Helper()
 	// ceph-fuse sets a policy through the ceph.fscrypt.auth and
@@ -153,30 +151,36 @@ func startFscryptClient(t *testing.T, ctx context.Context, c *fscryptCluster, pa
 			host.SecurityOpt = append(host.SecurityOpt, "apparmor=unconfined")
 		}))
 	}
+	f := &fscryptClient{path: path, name: name, c: c, identity: identity, point: "/mnt/cephfs"}
+	// Registered before the container's cleanup, so it runs after the
+	// container was terminated.
+	t.Cleanup(func() {
+		if f.outstanding == nil {
+			return
+		}
+		if err := f.outstanding.stop(time.Minute); err != nil {
+			t.Errorf("ceph-fuse of %s after its container was terminated: %v", name, err)
+		}
+	})
 	ctr, err := testcontainers.Run(ctx, image, opts...)
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fscryptClient{path: path, name: name, c: c, ctr: ctr, identity: identity, point: "/mnt/cephfs"}
+	f.ctr = ctr
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
 		if f.mounted {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
 			_, _, _ = harness.SessionExec(cleanupCtx, ctr, "python3", "-c", fscryptProbe, "umount", f.point, "2")
 		}
 		if f.fuse != nil {
-			f.fuse.cancel()
-			select {
-			case <-f.fuse.done:
-			case <-cleanupCtx.Done():
-				t.Errorf("ceph-fuse of %s did not return after cancellation", name)
+			err := f.fuse.stop(time.Minute)
+			if errors.Is(err, errFuseOutstanding) {
+				f.outstanding = f.fuse
 			}
-			var unstopped *ceph.NativeCommandUnstoppedError
-			if errors.As(f.fuse.err, &unstopped) {
-				if err := unstopped.Stop(cleanupCtx); err != nil {
-					t.Errorf("stop ceph-fuse of %s: %v", name, err)
-				}
+			if err != nil {
+				t.Errorf("ceph-fuse of %s: %v", name, err)
 			}
 		}
 	})
