@@ -31,6 +31,8 @@ type osdLaunchRecipe struct {
 	timeout                                 time.Duration
 	memstore                                bool
 	benchmark                               OSDBenchmarkPolicy
+	// zone enrolls the OSD in its zone of a cluster with zones.
+	zone testcontainers.CustomizeRequestOption
 	// blockDevice is set by attachBlockDevice before the recipe is started and
 	// read by Customize; see osd_block_device.go.
 	blockDevice atomic.Pointer[osdBlockDevice]
@@ -49,7 +51,8 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 		id: osd.ID, uuid: osd.nativeUUID, placement: osd.placement,
 		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.staticFacts().NetworkName,
 		owner: c.startup.ownerID(), timeout: c.settings.startupTimeout,
-		memstore: c.settings.objectStore() == OSDMemStore, benchmark: c.settings.osdBenchmark}
+		memstore: c.settings.objectStore() == OSDMemStore, benchmark: c.settings.osdBenchmark,
+		zone: c.zoneMember(osd.placement.Zone, fmt.Sprintf("osd.%d", osd.ID))}
 	if c.nets.cluster != nil {
 		r.clusterNetwork = c.nets.cluster.Name
 	}
@@ -74,7 +77,7 @@ func (r *osdLaunchRecipe) Customize(req *testcontainers.GenericContainerRequest)
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{
 			"CEPH_OSD_ID": strconv.Itoa(r.id), "CEPH_OSD_UUID": r.uuid, "CEPH_OSD_HOST": r.placement.Host,
-			"CEPH_OSD_ROOT": r.placement.Root, "CEPH_OSD_RACK": r.placement.Rack, "CEPH_OSD_DEVICE_CLASS": r.placement.DeviceClass,
+			"CEPH_OSD_ROOT": r.placement.Root, "CEPH_OSD_ZONE": r.placement.Zone, "CEPH_OSD_RACK": r.placement.Rack, "CEPH_OSD_DEVICE_CLASS": r.placement.DeviceClass,
 			"CEPH_OSD_STARTUP_BENCHMARK": string(r.benchmark),
 		}),
 		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", []byte(r.osdKeyring), 0o600)),
@@ -99,6 +102,9 @@ func (r *osdLaunchRecipe) Customize(req *testcontainers.GenericContainerRequest)
 		opts = append(opts, network.WithNetworkName(nil, r.clusterNetwork))
 	}
 	opts = append(opts, testcontainers.WithLabels(map[string]string{clusterOwnerLabel: r.owner}))
+	if r.zone != nil {
+		opts = append(opts, r.zone)
+	}
 	for _, opt := range opts {
 		if err := opt.Customize(req); err != nil {
 			return err

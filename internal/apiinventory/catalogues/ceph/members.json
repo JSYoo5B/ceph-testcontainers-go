@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 301,
+  "count": 320,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -246,7 +246,8 @@
       "OSDConfig.DeviceClass field string",
       "OSDConfig.Host field string",
       "OSDConfig.Rack field string",
-      "OSDConfig.Root field string"
+      "OSDConfig.Root field string",
+      "OSDConfig.Zone field string"
     ],
     "ceph.OSDContainer": [
       "OSDContainer embed testcontainers.Container",
@@ -414,6 +415,32 @@
       "WatchConfig.Buffer field int",
       "WatchConfig.Interval field time.Duration",
       "WatchConfig.QueryTimeout field time.Duration"
+    ],
+    "ceph.Zone": [
+      "Zone.Members field []ZoneEndpoint",
+      "Zone.Name field string",
+      "Zone.ReporterSubtrees field int",
+      "Zone.Router field ZoneEndpoint"
+    ],
+    "ceph.ZoneEndpoint": [
+      "ZoneEndpoint.ClusterAddress field netip.Addr",
+      "ZoneEndpoint.ContainerID field string",
+      "ZoneEndpoint.Name field string",
+      "ZoneEndpoint.PublicAddress field netip.Addr"
+    ],
+    "ceph.ZoneLayout": [
+      "ZoneLayout.DownReporters field int",
+      "ZoneLayout.QuorumZone field string",
+      "ZoneLayout.ReporterSubtree field string",
+      "ZoneLayout.Routes field []ZoneRoute",
+      "ZoneLayout.Unzoned field []string",
+      "ZoneLayout.Zones field []Zone"
+    ],
+    "ceph.ZoneRoute": [
+      "ZoneRoute.Destination field netip.Addr",
+      "ZoneRoute.Member field string",
+      "ZoneRoute.Plane field NetworkPlane",
+      "ZoneRoute.Via field netip.Addr"
     ]
   }
 }

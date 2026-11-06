@@ -89,6 +89,7 @@ type hooks interface {
 	ClassifyDocker(ctx context.Context, err error) error
 	NativeFailure(program string, code int, stdout, stderr []byte) error
 	OnlyMissingHostResource(err error) bool
+	ZoneRouter(ctx context.Context, c *ceph.Container, zone string, plane ceph.NetworkPlane) (testcontainers.Container, string, error)
 	AddBlockDeviceOSD(ctx context.Context, c *ceph.Container, hostPath string, major, minor uint32, sizeBytes int64, lease string) (*ceph.OSDContainer, error)
 	JudgeDeviceChain(ctx context.Context, c *ceph.Container, hostPath string, major, minor uint32, sizeBytes int64, lease string,
 		evidence func(context.Context) (string, string, uint32, uint32, int64, [3]uint8, int, error)) (string, string)
@@ -142,6 +143,14 @@ func Closed(c *ceph.Container) bool { return get().Closed(c) }
 // Owns reports a container of the cluster's own daemons. The caller holds
 // the mutex.
 func Owns(c *ceph.Container, id string) bool { return get().Owns(c, id) }
+
+// ZoneRouter returns the router that forwards what leaves zone and the
+// bridge of plane, after checking that every container on that bridge is an
+// enrolled zone member or a router. It takes neither the cluster mutex nor a
+// handle's mutex; the boundary's own lock is a leaf.
+func ZoneRouter(ctx context.Context, c *ceph.Container, zone string, plane ceph.NetworkPlane) (testcontainers.Container, string, error) {
+	return get().ZoneRouter(ctx, c, zone, plane)
+}
 
 // OwnedLabel labels a helper container as owned by the cluster.
 func OwnedLabel(c *ceph.Container) testcontainers.CustomizeRequestOption {

@@ -2,7 +2,7 @@
 
 These are the composition rules of the value configurations and of the entry
 points that take them: the `Run` groups (`ceph.ClusterConfig`, `ceph.ImageOptions`,
-`ceph.OSDStorage`, `ceph.NetworkConfig`) and the operation values
+`ceph.OSDStorage`, `ceph.NetworkConfig`, `ceph.ZoneConfig`) and the operation values
 (`ceph.OSDOptions`, `ceph.DaemonOptions`, `ceph.ClientOptions`,
 `ceph.ClientContainerOptions`). The `ceph` doc comments link to this page as the design note of these
 values.
@@ -88,7 +88,7 @@ variadic is the only place for configuration.
 - **The grouped-carrier pattern (used by every Ceph configuration group).** A
   group is a plain value type with unexported fields and chainable,
   value-returning methods (`ClusterConfig`, `ImageOptions`, `OSDStorage`,
-  `NetworkConfig`). The value is **not** a customizer and has no `Customize`
+  `NetworkConfig`, `ZoneConfig`). The value is **not** a customizer and has no `Customize`
   method; passing it straight to `Run` does not compile. Each group has exactly
   one carrier option function, `With<Group>(value) Option` (here
   `WithImageOptions(ImageOptions)`), a `ceph.Option` that `Run` already
@@ -211,6 +211,25 @@ before any resource is created.
   written, so a caller reusing its slices, a derived value and the settings never
   share storage, a nil list stays nil (Ceph's default) and a non-nil empty list
   stays empty and is refused.
+
+### Zone group
+
+```go
+zones := ceph.ZoneConfig{}.WithZones("a", "b").WithQuorumZone("a").WithHelperImage(fault.NetemHelperImage)
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithZoneConfig(zones),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(ceph.OSDConfig{Zone: "a"}, ceph.OSDConfig{Zone: "b"})))
+```
+
+The group holds the zones, the quorum zone and the boundary's helper image;
+the three are required together. An OSD's zone stays in `OSDConfig`, beside its
+other CRUSH placement. The combination rules live in `Run`: zones need bridge
+mode, IPv4, an explicit initial layout and a declared zone for every OSD, and
+an OSD zone needs zones. A container's zone is not a `Run` setting:
+`Container.WithZone` is a customizer of that container, like `WithClient`.
+
+- **Rules applied.** The zero value changes nothing; two `WithZoneConfig`
+  options that set the same field are refused; within one value a later call
+  replaces the earlier one. `WithZones` clones its names.
 
 ### What stays a function
 

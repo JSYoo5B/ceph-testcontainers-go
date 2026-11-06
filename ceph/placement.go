@@ -10,12 +10,18 @@ import (
 	"strings"
 )
 
-// OSDConfig places a container's OSD in the logical CRUSH hierarchy.
-// Root defaults to the cluster's selected default root, Host defaults to osd-ID, and Rack/DeviceClass
-// are optional. Multiple OSDs may share a host or rack for domain-failure tests.
+// OSDConfig places a container's OSD in the logical CRUSH hierarchy
+// root > zone > rack > host. Root defaults to the cluster's selected default
+// root, Host defaults to osd-ID, and Rack/DeviceClass are optional. Multiple
+// OSDs may share a host, rack or zone for domain-failure tests.
+//
+// Zone names a CRUSH bucket of type zone and, at the same time, the logical
+// availability zone of WithZoneConfig whose network side the OSD's container
+// joins. It is required in a cluster with zones and refused in one without.
 type OSDConfig struct {
 	Host        string
 	Rack        string
+	Zone        string
 	Root        string
 	DeviceClass string
 }
@@ -52,25 +58,32 @@ func validateCRUSHHierarchy(defaultRoot string, locations []OSDConfig) error {
 			return err
 		}
 	}
-	rackRoots := make(map[string]string)
+	zoneRoots := make(map[string]string)
+	rackParents := make(map[string]OSDConfig)
 	hostLocations := make(map[string]OSDConfig)
 	for _, location := range locations {
 		for _, bucket := range []struct{ name, kind string }{
-			{location.Root, "root"}, {location.Rack, "rack"}, {location.Host, "host"},
+			{location.Root, "root"}, {location.Zone, "zone"}, {location.Rack, "rack"}, {location.Host, "host"},
 		} {
 			if err := declare(bucket.name, bucket.kind); err != nil {
 				return err
 			}
 		}
-		if location.Rack != "" {
-			if root, exists := rackRoots[location.Rack]; exists && root != location.Root {
-				return invalid(fmt.Errorf("CRUSH rack %q already belongs to root %q, cannot move it to %q", location.Rack, root, location.Root))
+		if location.Zone != "" {
+			if root, exists := zoneRoots[location.Zone]; exists && root != location.Root {
+				return invalid(fmt.Errorf("CRUSH zone %q already belongs to root %q, cannot move it to %q", location.Zone, root, location.Root))
 			}
-			rackRoots[location.Rack] = location.Root
+			zoneRoots[location.Zone] = location.Root
+		}
+		if location.Rack != "" {
+			if previous, exists := rackParents[location.Rack]; exists && (previous.Root != location.Root || previous.Zone != location.Zone) {
+				return invalid(fmt.Errorf("CRUSH rack %q already belongs to root %q zone %q, cannot move it to root %q zone %q", location.Rack, previous.Root, previous.Zone, location.Root, location.Zone))
+			}
+			rackParents[location.Rack] = location
 		}
 		if location.Host != "" {
-			if previous, exists := hostLocations[location.Host]; exists && (previous.Root != location.Root || previous.Rack != location.Rack) {
-				return invalid(fmt.Errorf("CRUSH host %q already belongs to root %q rack %q, cannot change its location", location.Host, previous.Root, previous.Rack))
+			if previous, exists := hostLocations[location.Host]; exists && (previous.Root != location.Root || previous.Zone != location.Zone || previous.Rack != location.Rack) {
+				return invalid(fmt.Errorf("CRUSH host %q already belongs to root %q zone %q rack %q, cannot change its location", location.Host, previous.Root, previous.Zone, previous.Rack))
 			}
 			hostLocations[location.Host] = location
 		}
@@ -174,7 +187,7 @@ func normalizeOSDConfig(config OSDConfig) (OSDConfig, error) {
 		config.Root = "default"
 	}
 	for _, field := range []struct{ name, value string }{
-		{"host", config.Host}, {"rack", config.Rack}, {"root", config.Root}, {"device class", config.DeviceClass},
+		{"host", config.Host}, {"rack", config.Rack}, {"zone", config.Zone}, {"root", config.Root}, {"device class", config.DeviceClass},
 	} {
 		if field.value != "" && (len(field.value) > 128 || !crushLocationName.MatchString(field.value)) {
 			return config, invalid(fmt.Errorf("CRUSH %s must use letters, digits, underscores, dots or dashes", field.name))
