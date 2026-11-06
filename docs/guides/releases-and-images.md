@@ -291,8 +291,9 @@ These affect commands or client libraries you run yourself, not the typed API:
 
 ## Role images
 
-`ceph.ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an
-exclusive All image. This is the image model used by the module and its CI.
+`ceph.ImageSet` selects Essential, Client, CephFS, RBDAux, RGW and MGR, or an
+All image that supplies every role and may be combined only with MGR. This is
+the image model used by the module and its CI.
 `Run(ctx, image)` treats the image as an aggregate. Pass
 `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(set))` to `Run` for explicit roles, with an empty
 image argument (or the set's essential image, which is not a second input); a
@@ -301,6 +302,7 @@ missing optional feature image is an error.
 | Role | Runtime responsibility |
 | --- | --- |
 | essential | MON, MGR and OSD in separate containers; bootstrap/administration, MGR modules, OSD classes/plugins |
+| mgr | The MGR daemons and their modules, when `ImageSet.MGR` selects an image other than essential |
 | client | Ordinary CLI, Python rados/rbd/cephfs bindings, encryption/striper clients, offline map diagnostics |
 | cephfs | MDS and CephFS mirror runtime |
 | rbd-aux | RBD mirror and cache-capable client runtime |
@@ -328,8 +330,61 @@ RBD/CephFS and native userspace oracles use the owned lazy client toolkit;
 aggregate selections reuse their existing executor. Client setup and mirror
 daemons use their respective client and feature images. RGW administration
 runs in rgw without requiring a generic client. Cache daemon/plugin/socket
-stay with their consuming librbd client. MGR modules and OSD plugins stay
-with essential. Caller-owned external clients remain caller-owned.
+stay with their consuming librbd client. OSD plugins stay with essential, and
+MGR modules with the MGR image. Caller-owned external clients remain caller-owned.
+
+### The MGR image
+
+`ImageSet.MGR` is the image of every manager the cluster starts: the initial
+active and standby candidates of `Run` and the managers that `AddManager`
+adds later. It replaces the whole MGR container, not a sidecar. Empty, it is
+Essential (with `All`, the All image), so a set without it runs managers as
+before; no other role has a default. Use it to run the official image, which
+ships modules that the essential role image omits, or a consumer image built
+from it with additional modules, together with the role images of the other
+daemons:
+
+```go
+// officialRef is the official image of the same release, such as quay.io/ceph/ceph:v20.2.4 pinned by digest.
+images := ceph.ImageSet{Essential: essentialRef, Client: clientRef, MGR: officialRef}
+cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)))
+// FactsOf(cluster).Images.MGR is the MGR image; every ManagerContainer.Image reports it.
+```
+
+- The precedence for one manager is `DaemonOptions.WithImage` of its
+  `AddManager` call, then `ImageSet.MGR`, then Essential. The override is the
+  explicit per-daemon building block and is not checked.
+- The MGR image must be of the cluster's release. When it is not the
+  essential image, every manager start first runs `ceph-mgr --version` in a
+  short-lived probe container of that image, which gets no keyring or cluster
+  configuration and is removed afterwards. When the release differs from
+  `ClusterFacts.CephVersion` the start fails before the manager's identity, key
+  or container exists, so the daemon never runs: `Run` returns the partial
+  cluster without that manager, and `AddManager` returns no handle. A missing
+  `ceph-mgr` is `ceph.ErrImageCapability`. Adding modules does not make another
+  release acceptable. The manager container is then created from the image ID
+  that the probe checked, so rebuilding or retagging the image in between does
+  not start an unchecked image; `ManagerContainer.Image` and
+  `ClusterFacts.Images.MGR` keep the reference as given. The probe's removal is
+  bounded (30 seconds) even when the start's context is cancelled, and a
+  removal failure fails that start; `Terminate` removes a probe left behind.
+- `ClusterFacts.Images.MGR` reports the resolved image and is never empty;
+  finalization manifests and verification reports record it with the other
+  roles. MGR containers are never recreated: `Stop` and `Start` keep the
+  container, and a manager keeps its image until it is removed.
+- Nothing in the module installs or names a module. Enable a module of the
+  image with `override.SetMGRModule`, configure it with `override.SetConfig`
+  (`mgr/<module>/<option>`), and read its state with `Observer.MGRModules`:
+  a module whose dependency is missing is advertised with `CanRun` false and
+  its `ErrorString`, and `SetMGRModule` refuses to enable it.
+  `Observer.WaitMGRModuleReady` knows only built-in modules; probe a module of
+  your own through its own command.
+
+`TestMGRImageOfficialSlot`, `TestMGRImageWithoutEssentialManager` and
+`TestMGRImageConsumerModule` (batch `mgr_image`) run the official image in the
+MGR slot, an essential image without `ceph-mgr`, and a consumer image built
+from the official image with one small module, including a module whose
+dependency is missing and a module option value that Ceph refuses.
 
 `RunNativeCommand` requires Python in the actual target container, and keeps
 explicit capability checks. Selecting a toolkit does not add utilities to a
@@ -408,7 +463,8 @@ release, err := osd.Version(ctx) // what the running daemon reports, such as "20
 Read this scope before relying on it:
 
 - It overrides one container. The cluster's images, `ClusterFacts` and the
-  other daemons are untouched.
+  other daemons are untouched. For a MGR it takes precedence over
+  `ImageSet.MGR`; to run every manager from another image, select it there.
 - `CephVersion` is recorded once from the first MON and the CLI image. It does
   not describe an overridden daemon: use the daemon handle's `Version`, which
   reads the daemon's own admin socket and fails when the reply has no
@@ -475,7 +531,7 @@ the retained store and the returned handle are enough to continue.
 ## Related APIs
 
 - [`ceph`](../../ceph/README.md): `DefaultImage`, `Run`, `FactsOf`,
-  `ImageSet`, `ImageOptions` (`WithImageSet`, `WithCephFSImage`, `WithRGWImage`),
+  `ImageSet` (including `MGR`), `ImageOptions` (`WithImageSet`, `WithCephFSImage`, `WithRGWImage`),
   `DaemonOptions.WithImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.

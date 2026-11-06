@@ -31,7 +31,7 @@ func TestClusterFactsMatchRecordedSettings(t *testing.T) {
 	}
 	want := ClusterFacts{
 		AddressFamily: AddressDualStack,
-		Images:        ImageSet{Essential: "essential:1", Client: "essential:1", CephFS: "mds:1", RBDAux: "essential:1", RGW: "rgw:1"},
+		Images:        ImageSet{Essential: "essential:1", Client: "essential:1", CephFS: "mds:1", RBDAux: "essential:1", RGW: "rgw:1", MGR: "essential:1"},
 		MessengerMode: MessengerV2Only, NetworkName: "public-net", ClusterNetworkName: "cluster-net",
 		HasSeparateClusterNetwork: true, CephVersion: "20.2.4",
 	}

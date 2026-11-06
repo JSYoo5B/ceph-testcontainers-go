@@ -34,8 +34,9 @@ type options struct {
 	auth           AuthConfig
 	osdObjectStore OSDObjectStore
 	startupTimeout time.Duration
-	// essentialImage is the Run image. It starts every MON, MGR and OSD and the
-	// control-plane CLI executor. Role images come from imageSet.
+	// essentialImage is the Run image. It starts every MON and OSD and the
+	// control-plane CLI executor, and the MGRs unless imageSet.MGR selects
+	// another image. Role images come from imageSet.
 	essentialImage string
 	// cephfsOverride and rgwOverride hold the images of
 	// ImageOptions.WithCephFSImage and WithRGWImage. They replace the role of

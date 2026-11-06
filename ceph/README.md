@@ -118,7 +118,9 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   the same field are refused, even when they agree.
 - **Images.** One aggregate image supplies every role by default; an `ImageSet`
   selects essential, client, CephFS, RBD-aux and RGW images separately, and a
-  missing optional role never falls back. See
+  missing optional role never falls back. Its MGR role is the one with a
+  default: every manager runs the essential image unless `ImageSet.MGR`
+  selects another, such as the official image or one with additional modules. See
   [Releases and images](../docs/guides/releases-and-images.md).
 - **Networks.** Bridge mode by default: only MON `a` (and RGW gateways)
   publishes ports, so native
