@@ -210,15 +210,22 @@ func startRankOneSessionWatch(t *testing.T, ctx context.Context, cluster *ceph.C
 // listsAll reports whether sessions are exactly the four baseline sessions,
 // each open.
 func (w *rankOneSessionWatch) listsAll(sessions []cephfssession.Session) bool {
-	if len(sessions) != len(w.sessions) {
-		return false
-	}
+	return listsOpenSessions(w.sessions, sessions)
+}
+
+// listsOpenSessions reports whether sessions list each identity of want once,
+// open, and nothing else. A repeated row fails even when the row count
+// matches, since it stands in for an identity that is missing.
+func listsOpenSessions(want map[sessionWatchKey]cephfssession.Session, sessions []cephfssession.Session) bool {
+	seen := make(map[sessionWatchKey]bool, len(sessions))
 	for _, s := range sessions {
-		if _, ok := w.sessions[sessionWatchKeyOf(s)]; !ok || s.State != "open" {
+		key := sessionWatchKeyOf(s)
+		if _, ok := want[key]; !ok || seen[key] || s.State != "open" {
 			return false
 		}
+		seen[key] = true
 	}
-	return true
+	return len(seen) == len(want)
 }
 
 // takenOver checks the first coherent sample with rank 0 held by zero and
