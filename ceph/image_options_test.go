@@ -76,7 +76,7 @@ func TestRunImageArgumentWithImageSet(t *testing.T) {
 	// Ordinary single-image use is unchanged: the argument is the aggregate.
 	effective, err := admit(t, "single")
 	wantAdmitted(t, err)
-	if got := effective.effectiveImages(); got != (ImageSet{Essential: "single", Client: "single", CephFS: "single", RBDAux: "single", RGW: "single"}) {
+	if got := effective.effectiveImages(); got != (ImageSet{Essential: "single", Client: "single", CephFS: "single", RBDAux: "single", RGW: "single", MGR: "single"}) {
 		t.Fatalf("single image: %+v", got)
 	}
 	// An unrelated zero ImageOptions changes nothing.

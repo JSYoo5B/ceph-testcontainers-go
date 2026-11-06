@@ -36,7 +36,7 @@ func TestClusterFactsServeTheEssentialImageAfterTermination(t *testing.T) {
 	if facts.Images.Essential != c.settings.essentialImage || facts.Images.Essential != "essential:1" {
 		t.Fatalf("essential image %q", facts.Images.Essential)
 	}
-	want := ImageSet{Essential: "essential:1", Client: "essential:1", CephFS: "mds:1", RBDAux: "essential:1", RGW: "rgw:1"}
+	want := ImageSet{Essential: "essential:1", Client: "essential:1", CephFS: "mds:1", RBDAux: "essential:1", RGW: "rgw:1", MGR: "essential:1"}
 	if facts.Images != want {
 		t.Fatalf("images %+v, want %+v", facts.Images, want)
 	}

@@ -27,7 +27,7 @@ func (o options) effectiveImages() ImageSet {
 // Run image supplies every role, except where a service image option replaced
 // the cephfs or rgw role.
 func (o options) defaultImages() ImageSet {
-	images := ImageSet{Essential: o.essentialImage, Client: o.essentialImage, CephFS: o.essentialImage, RBDAux: o.essentialImage, RGW: o.essentialImage}
+	images := ImageSet{Essential: o.essentialImage, Client: o.essentialImage, CephFS: o.essentialImage, RBDAux: o.essentialImage, RGW: o.essentialImage, MGR: o.essentialImage}
 	if o.cephfsOverride != "" {
 		images.CephFS = o.cephfsOverride
 	}

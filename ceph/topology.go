@@ -165,7 +165,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
+	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.monitorImage(daemon)}
 	c.members.roster.addMonitor(name, mon)
 	join := monitorJoin{name: name, config: []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", "")), key: key, monmap: monmap}
 	if err := c.startJoiningMonitor(ctx, mon, join); err != nil {
@@ -791,9 +791,14 @@ func monitorConfigComment(line string) (int, error) {
 // active ownership away from an existing MGR.
 // With AddressDualStack it then checks the active MGR's advertised addresses
 // and fails with ErrUnsupported when one family has no concrete address.
-// DaemonOptions.WithImage starts this one MGR from another image; the default is the
-// essential image. Options are validated before the topology lock is taken or
-// any identity is created.
+// The MGR starts from the cluster's MGR image, ClusterFacts.Images.MGR
+// (ImageSet.MGR, the essential image by default); DaemonOptions.WithImage starts
+// this one MGR from another image instead. A MGR started from a cluster MGR
+// image other than the essential image must report ClusterFacts.CephVersion
+// from ceph-mgr --version in a short-lived probe container of that image;
+// otherwise AddManager fails before any identity, key or MGR container is
+// created and returns no handle. Options
+// are validated before the topology lock is taken or any identity is created.
 //
 // It never forces the active role away from a running manager, and success
 // does not mean every MGR module is ready; use Observer.WaitMGRModuleReady or
@@ -818,7 +823,7 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	mgr, err := c.monitorTopology().startManager(ctx, name, c.settings.daemonImage(daemon))
+	mgr, err := c.monitorTopology().startManager(ctx, name, c.managerLaunch(daemon))
 	if err != nil {
 		return mgr, err
 	}
@@ -831,10 +836,17 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	return mgr, nil
 }
 
-// startManager creates the identity of a new MGR and starts its container,
-// but does not wait for the MGR to register. The caller holds c.mu. The
-// returned MGR is nil when the error came before it was owned.
-func (t monitorTopology) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
+// startManager creates the identity of a new MGR and starts its container from
+// launch.image, but does not wait for the MGR to register. With a
+// launch.release it first requires the image's ceph-mgr to report that
+// release, before any identity, key or MGR container exists, so that a
+// mismatched image never runs the daemon, and then creates the MGR container
+// from the image ID that passed that check rather than from launch.image, so
+// that a reference moved in between cannot run another image with the MGR key.
+// The handle keeps launch.image. The caller holds c.mu. The returned MGR is nil
+// when the error came before it was owned.
+func (t monitorTopology) startManager(ctx context.Context, name string, launch managerLaunch) (*ManagerContainer, error) {
+	image, daemonImage := launch.image, launch.image
 	if t.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
@@ -862,6 +874,11 @@ func (t monitorTopology) startManager(ctx context.Context, name, image string) (
 	if _, registered := managerMapGID(status, name); registered {
 		return nil, fmt.Errorf("manager %s is already registered", name)
 	}
+	if launch.release != "" {
+		if daemonImage, err = t.probeManagerRelease(ctx, launch); err != nil {
+			return nil, err
+		}
+	}
 	key, err := authStore{t.conn}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
 	if err != nil {
 		return nil, err
@@ -871,7 +888,7 @@ func (t monitorTopology) startManager(ctx context.Context, name, image string) (
 	if err := t.osds.clearSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = t.runDaemon(ctx, image, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
+	mgr.Container, err = t.runDaemon(ctx, daemonImage, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
@@ -881,6 +898,63 @@ func (t monitorTopology) startManager(ctx context.Context, name, image string) (
 		t.roster.recordInitialManager(mgr.Container)
 	}
 	return mgr, err
+}
+
+// managerProbeRemovalTimeout bounds the removal of a MGR image release probe.
+// The removal does not end with the caller's context, so that a cancelled
+// start still removes the probe, but it must not hold the topology lock
+// without bound when the Docker engine stalls; Terminate removes a probe that
+// is left behind by the cluster's owner label.
+var managerProbeRemovalTimeout = 30 * time.Second
+
+// probeManagerRelease requires the ceph-mgr of launch.image to report
+// launch.release and returns the ID of the image that reported it. It runs
+// ceph-mgr --version in a short-lived idle container of the image that gets no
+// keyring, cluster configuration or run directory, and removes it within
+// managerProbeRemovalTimeout; the cluster's owner label lets Terminate remove
+// it when that removal fails.
+func (t monitorTopology) probeManagerRelease(ctx context.Context, launch managerLaunch) (imageID string, err error) {
+	probe, err := t.runDaemon(ctx, launch.image, t.osds.startup.ownedLabel(), WithIdleEntrypoint())
+	if probe != nil {
+		defer func() {
+			removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managerProbeRemovalTimeout)
+			defer cancel()
+			if terminateErr := probe.Terminate(removeCtx); terminateErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove MGR image release probe: %w", terminateErr))
+			}
+		}()
+	}
+	if err != nil {
+		return "", fmt.Errorf("start MGR image release probe: %w", err)
+	}
+	if err := checkManagerRelease(ctx, probe, launch.release); err != nil {
+		return "", err
+	}
+	inspect, err := probe.Inspect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read MGR image release probe image ID: %w", err)
+	}
+	if inspect == nil || inspect.Image == "" {
+		return "", errors.New("read MGR image release probe image ID: Docker reported none")
+	}
+	return inspect.Image, nil
+}
+
+// checkManagerRelease requires the ceph-mgr of a container to report release.
+// A module added to a MGR image does not make another Ceph release acceptable.
+func checkManagerRelease(ctx context.Context, ctr testcontainers.Container, release string) error {
+	output, err := command(ctx, ctr, "ceph-mgr", "--version")
+	if err != nil {
+		return fmt.Errorf("read MGR image release: %w", err)
+	}
+	version, err := parseCephVersion(string(output))
+	if err != nil {
+		return fmt.Errorf("read MGR image release: %w", err)
+	}
+	if version != release {
+		return fmt.Errorf("MGR image Ceph release %s differs from core %s", version, release)
+	}
+	return nil
 }
 
 // waitManagerRegistered waits until the MGR is the available active MGR or a

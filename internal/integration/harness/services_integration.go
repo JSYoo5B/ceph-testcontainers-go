@@ -49,26 +49,45 @@ func EssentialImage(t *testing.T) string {
 func IntegrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
 	t.Helper()
 	image, opts := NativeIntegrationImages(t)
+	return image, append(opts, FunctionalOSDConfig(t))
+}
+
+// FunctionalOSDConfig is the WithConfigFile option of IntegrationImages that
+// skips mClock startup calibration, for a test that selects its images itself.
+func FunctionalOSDConfig(t *testing.T) testcontainers.ContainerCustomizer {
+	t.Helper()
 	config := filepath.Join(t.TempDir(), "functional-osd.conf")
 	if err := os.WriteFile(config, []byte("[osd]\nosd_mclock_skip_benchmark = true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return image, append(opts, ceph.WithConfigFile(config))
+	return ceph.WithConfigFile(config)
 }
 
 // NativeIntegrationImages selects images without the functional-test benchmark
 // default. Use it only when testing native calibration or configuration precedence.
 func NativeIntegrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
 	t.Helper()
+	images := IntegrationImageSet(t)
+	image := images.Essential
+	if images.All != "" {
+		image = images.All
+	}
+	return image, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))}
+}
+
+// IntegrationImageSet is the image set of NativeIntegrationImages: the role
+// images CI supplies, or an All set of the local aggregate image. A test that
+// changes one role, such as MGR, starts from it.
+func IntegrationImageSet(t *testing.T) ceph.ImageSet {
+	t.Helper()
 	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
-		image := EssentialImage(t)
-		return image, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: image}))}
+		return ceph.ImageSet{All: EssentialImage(t)}
 	}
 	images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}
 	if images.Essential == "" {
 		t.Fatal("missing essential image")
 	}
-	return images.Essential, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))}
+	return images
 }
 
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
