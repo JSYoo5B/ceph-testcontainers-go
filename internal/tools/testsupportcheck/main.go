@@ -59,7 +59,7 @@ var defaultTagSets = []string{
 	"integration",
 	"all",
 	"all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh",
-	"all,cephfs_fuse,cephfs_fscrypt",
+	"all,cephfs_fuse,cephfs_fscrypt,osd_encrypted_store",
 }
 
 // Manifest names the test-only code of the module.

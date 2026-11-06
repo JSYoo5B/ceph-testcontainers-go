@@ -21,6 +21,7 @@ run:
     - native_regression
     - cephfs_fuse
     - cephfs_fscrypt
+    - osd_encrypted_store
     - role_images
     - ci_optional
     - ci_batch_role_routing
