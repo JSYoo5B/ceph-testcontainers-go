@@ -378,7 +378,9 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   a module whose dependency is missing is advertised with `CanRun` false and
   its `ErrorString`, and `SetMGRModule` refuses to enable it.
   `Observer.WaitMGRModuleReady` knows only built-in modules; probe a module of
-  your own through its own command.
+  your own through its own command. The Dashboard, which the official image
+  ships and essential does not, is prepared by the
+  [`dashboard`](../../dashboard/README.md) package.
 
 `TestMGRImageOfficialSlot`, `TestMGRImageWithoutEssentialManager` and
 `TestMGRImageConsumerModule` (batch `mgr_image`) run the official image in the
