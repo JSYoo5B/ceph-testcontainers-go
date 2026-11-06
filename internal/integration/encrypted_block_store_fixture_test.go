@@ -5,8 +5,17 @@
 package integration_test
 
 import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 func encIntPtr(v int) *int { return &v }
@@ -154,5 +163,103 @@ func TestJudgeEncReadbackNeedsEveryAcknowledgedDigest(t *testing.T) {
 	}
 	if ok, _ := judgeEncReadback(ledger[1:], map[string]string{}); ok {
 		t.Error("a ledger without an acknowledged write was accepted")
+	}
+}
+
+// encFakeStream is an exec stream whose output and input are pipes that
+// nobody else touches: a read never reaches EOF and a write never completes,
+// until the stream is closed.
+type encFakeStream struct {
+	out     *io.PipeReader
+	in      *io.PipeWriter
+	closed  atomic.Int32
+	writeUp bool
+}
+
+func newEncFakeStream(writeBlocks bool) *encFakeStream {
+	outR, _ := io.Pipe()
+	_, inW := io.Pipe()
+	return &encFakeStream{out: outR, in: inW, writeUp: writeBlocks}
+}
+
+func (s *encFakeStream) Read(p []byte) (int, error) { return s.out.Read(p) }
+
+func (s *encFakeStream) Write(p []byte) (int, error) {
+	if s.writeUp {
+		return s.in.Write(p)
+	}
+	return len(p), nil
+}
+
+func (s *encFakeStream) CloseWrite() error { return nil }
+
+func (s *encFakeStream) Close() error {
+	s.closed.Add(1)
+	_ = s.out.Close()
+	return s.in.Close()
+}
+
+func TestEncCopyEndsAStreamThatNeverReachesEOF(t *testing.T) {
+	for name, writeBlocks := range map[string]bool{"output never ends": false, "input never read": true} {
+		s := newEncFakeStream(writeBlocks)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		done := make(chan error, 1)
+		go func() {
+			_, _, err := encCopy(ctx, s, []byte("key"))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("%s: %v, want the deadline", name, err)
+			}
+			if s.closed.Load() == 0 {
+				t.Errorf("%s: the stream was not closed", name)
+			}
+		case <-time.After(5 * time.Second):
+			_ = s.Close()
+			t.Errorf("%s: encCopy did not return after its context ended", name)
+		}
+		cancel()
+	}
+
+	var framed bytes.Buffer
+	for _, f := range []struct {
+		stream stdcopy.StdType
+		data   string
+	}{{stdcopy.Stdout, `{"action":"scan"}`}, {stdcopy.Stderr, "note"}} {
+		framed.Write([]byte{byte(f.stream), 0, 0, 0})
+		_ = binary.Write(&framed, binary.BigEndian, uint32(len(f.data)))
+		framed.WriteString(f.data)
+	}
+	stdout, stderr, err := encCopy(t.Context(), &encEOFStream{Reader: &framed}, nil)
+	if err != nil || string(stdout) != `{"action":"scan"}` || string(stderr) != "note" {
+		t.Errorf("a stream that ends: %q %q %v", stdout, stderr, err)
+	}
+}
+
+// encEOFStream is a stream whose output ends.
+type encEOFStream struct{ io.Reader }
+
+func (encEOFStream) Write(p []byte) (int, error) { return len(p), nil }
+func (encEOFStream) CloseWrite() error           { return nil }
+func (encEOFStream) Close() error                { return nil }
+
+func TestEncUnsettledNamesARunningExec(t *testing.T) {
+	err := error(&encUnsettled{ExecID: "e1", Err: context.DeadlineExceeded})
+	var u *encUnsettled
+	if !errors.As(err, &u) || u.ExecID != "e1" || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "may still be running") {
+		t.Errorf("unsettled exec error: %v", err)
+	}
+	if ok, d := judgeEncSettled(nil); !ok {
+		t.Errorf("no unsettled exec: %s", d)
+	}
+	if ok, d := judgeEncSettled([]encExecState{{ID: "e1"}, {ID: "e2"}}); !ok {
+		t.Errorf("exited execs: %s", d)
+	}
+	for name, s := range map[string]encExecState{"running": {ID: "e1", Running: true}, "not inspected": {ID: "e1", Running: true, Err: "no such exec"}} {
+		if ok, _ := judgeEncSettled([]encExecState{{ID: "e0"}, s}); ok {
+			t.Errorf("%s exec allowed the release", name)
+		}
 	}
 }

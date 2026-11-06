@@ -3,9 +3,14 @@
 package integration_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 // The encrypted OSD backing store of issue 478. A test-owned keeper holds a
@@ -491,4 +496,75 @@ func judgeEncReadback(ledger []encLedgerEntry, read map[string]string) (bool, st
 		return false, "no acknowledged write"
 	}
 	return true, fmt.Sprintf("%d acknowledged objects intact", acked)
+}
+
+// encStream is an attached exec stream: the multiplexed output to read and
+// the standard input to write and close.
+type encStream interface {
+	io.ReadWriter
+	CloseWrite() error
+	Close() error
+}
+
+// encCopy writes input to s, closes its write side and demultiplexes its
+// output until EOF. Neither the write nor the read observes ctx, so when ctx
+// ends first encCopy closes s, which ends a blocked one, and returns the
+// context's error.
+func encCopy(ctx context.Context, s encStream, input []byte) ([]byte, []byte, error) {
+	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	defer stop()
+	var stdout, stderr bytes.Buffer
+	err := func() error {
+		if len(input) > 0 {
+			if _, err := s.Write(input); err != nil {
+				return err
+			}
+		}
+		if err := s.CloseWrite(); err != nil {
+			return err
+		}
+		_, err := stdcopy.StdCopy(&stdout, &stderr, s)
+		return err
+	}()
+	if ctx.Err() != nil {
+		return stdout.Bytes(), stderr.Bytes(), fmt.Errorf("exec stream closed: %w", context.Cause(ctx))
+	}
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+// encUnsettled is a keeper exec that was started and whose exit the test did
+// not see: its stream or its status was lost, so the command may still be
+// running in the keeper.
+type encUnsettled struct {
+	ExecID string
+	Err    error
+}
+
+func (u *encUnsettled) Error() string {
+	return fmt.Sprintf("keeper exec %s may still be running: %v", u.ExecID, u.Err)
+}
+
+func (u *encUnsettled) Unwrap() error { return u.Err }
+
+// encExecState is an unsettled keeper exec as inspected before a release.
+type encExecState struct {
+	ID      string
+	Running bool
+	Err     string
+}
+
+// judgeEncSettled allows a release only once every unsettled keeper exec is
+// known to have exited. A command still running (a scan holding the crypt
+// mapping open, a retarget between its suspend and its resume) would race
+// the release.
+func judgeEncSettled(states []encExecState) (bool, string) {
+	for _, s := range states {
+		switch {
+		case s.Err != "":
+			return false, fmt.Sprintf("keeper exec %s: %s", s.ID, s.Err)
+		case s.Running:
+			return false, fmt.Sprintf("keeper exec %s is still running", s.ID)
+		}
+	}
+	return true, fmt.Sprintf("%d unsettled execs exited", len(states))
 }

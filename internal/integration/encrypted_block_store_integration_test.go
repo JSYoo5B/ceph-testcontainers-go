@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,35 +44,58 @@ const (
 
 // encEnv is one cluster whose only OSD runs on the keeper's linear node over
 // a LUKS2 crypt mapping. The key lives only in this process and reaches the
-// keeper on standard input.
+// keeper on standard input. pending are keeper execs whose exit the test did
+// not see.
 type encEnv struct {
 	docker            *mobycl.Client
 	keeper            testcontainers.Container
 	node, crypt, file string
 	loop              string
+	pending           []string
 	cluster           *ceph.Container
 	osd               *ceph.OSDContainer
 	client            testcontainers.Container
 	device            faulthook.BlockDevice
 }
 
-// do runs one keeper action with input as its standard input and fails the
-// test unless the keeper printed a receipt for it.
-func (e *encEnv) do(t *testing.T, ctx context.Context, input []byte, action string, args ...string) encReply {
-	t.Helper()
+// exec runs one keeper action and remembers an exec whose exit it did not see.
+func (e *encEnv) exec(ctx context.Context, input []byte, action string, args ...string) ([]byte, []byte, int, error) {
 	out, errOut, code, err := encExec(ctx, e.docker, e.keeper.GetContainerID(), input, append([]string{"python3", "-I", "-c", encKeeperScript, action}, args...)...)
+	var unsettled *encUnsettled
+	if errors.As(err, &unsettled) {
+		e.pending = append(e.pending, unsettled.ExecID)
+	}
+	return out, errOut, code, err
+}
+
+// try runs one keeper action with input as its standard input and returns
+// its receipt, or why there is none.
+func (e *encEnv) try(ctx context.Context, input []byte, action string, args ...string) (encReply, error) {
+	out, errOut, code, err := e.exec(ctx, input, action, args...)
 	if err != nil || code != 0 {
-		t.Fatalf("keeper %s: exit %d %v: %s %s", action, code, err, out, errOut)
+		return encReply{}, fmt.Errorf("keeper %s: exit %d %w: %s %s", action, code, err, out, errOut)
 	}
 	r, err := parseEncReply(out, action)
 	if err != nil {
-		t.Fatalf("%v: %s", err, out)
+		return r, fmt.Errorf("%w: %s", err, out)
+	}
+	return r, nil
+}
+
+// do is try that fails the test unless the keeper printed a receipt.
+func (e *encEnv) do(t *testing.T, ctx context.Context, input []byte, action string, args ...string) encReply {
+	t.Helper()
+	r, err := e.try(ctx, input, action, args...)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return r
 }
 
 // encExec runs argv in a container with input written to its standard input,
 // which is then closed, and returns its output once the process has exited.
+// Once the exec is started, any failure to see its exit is an *encUnsettled:
+// the command may still be running.
 func encExec(ctx context.Context, docker *mobycl.Client, id string, input []byte, argv ...string) ([]byte, []byte, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -81,35 +105,67 @@ func encExec(ctx context.Context, docker *mobycl.Client, id string, input []byte
 	}
 	attached, err := docker.ExecAttach(ctx, created.ID, mobycl.ExecAttachOptions{})
 	if err != nil {
-		return nil, nil, -1, err
+		return nil, nil, -1, &encUnsettled{ExecID: created.ID, Err: err}
 	}
 	defer attached.Close()
-	if len(input) > 0 {
-		if _, err := attached.Conn.Write(input); err != nil {
-			return nil, nil, -1, err
-		}
-	}
-	if err := attached.CloseWrite(); err != nil {
-		return nil, nil, -1, err
-	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, attached.Reader); err != nil {
-		return stdout.Bytes(), stderr.Bytes(), -1, err
+	stdout, stderr, err := encCopy(ctx, encHijacked{&attached.HijackedResponse}, input)
+	if err != nil {
+		return stdout, stderr, -1, &encUnsettled{ExecID: created.ID, Err: err}
 	}
 	for {
 		inspected, err := docker.ExecInspect(ctx, created.ID, mobycl.ExecInspectOptions{})
 		if err != nil {
-			return stdout.Bytes(), stderr.Bytes(), -1, err
+			return stdout, stderr, -1, &encUnsettled{ExecID: created.ID, Err: err}
 		}
 		if !inspected.Running {
-			return stdout.Bytes(), stderr.Bytes(), inspected.ExitCode, nil
+			return stdout, stderr, inspected.ExitCode, nil
 		}
 		select {
 		case <-ctx.Done():
-			return stdout.Bytes(), stderr.Bytes(), -1, ctx.Err()
+			return stdout, stderr, -1, &encUnsettled{ExecID: created.ID, Err: ctx.Err()}
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// encHijacked is the attached exec connection as an encStream.
+type encHijacked struct{ h *mobycl.HijackedResponse }
+
+func (s encHijacked) Read(p []byte) (int, error)  { return s.h.Reader.Read(p) }
+func (s encHijacked) Write(p []byte) (int, error) { return s.h.Conn.Write(p) }
+func (s encHijacked) CloseWrite() error           { return s.h.CloseWrite() }
+func (s encHijacked) Close() error                { return s.h.Conn.Close() }
+
+// settle waits, within ctx and at most a minute, for every unsettled keeper
+// exec to exit, and reports whether all of them did.
+func (e *encEnv) settle(ctx context.Context) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	states := make([]encExecState, 0, len(e.pending))
+	for _, id := range e.pending {
+		s := encExecState{ID: id, Running: true}
+		for s.Running && s.Err == "" {
+			inspected, err := e.docker.ExecInspect(ctx, id, mobycl.ExecInspectOptions{})
+			switch {
+			case err != nil:
+				s.Err = err.Error()
+			case !inspected.Running:
+				s.Running = false
+			default:
+				select {
+				case <-ctx.Done():
+					s.Err = "still running at the deadline"
+				case <-time.After(time.Second):
+				}
+			}
+		}
+		states = append(states, s)
+	}
+	ok, detail := judgeEncSettled(states)
+	if ok {
+		e.pending = nil
+	}
+	return ok, detail
 }
 
 // encOSDMapEntry is the OSD's row of the OSDMap.
@@ -295,11 +351,7 @@ func (e *encEnv) chainEvidence(ctx context.Context, osdID string) (faulthook.Cha
 	} else {
 		ev.DaemonStopped = faulthook.FactNo
 	}
-	out, _, code, err := encExec(ctx, e.docker, e.keeper.GetContainerID(), nil, "python3", "-I", "-c", encKeeperScript, "stack", e.node, e.crypt, e.loop, e.file)
-	if err != nil || code != 0 {
-		return ev, fmt.Errorf("keeper stack: exit %d %v", code, err)
-	}
-	r, err := parseEncReply(out, "stack")
+	r, err := e.try(ctx, nil, "stack", e.node, e.crypt, e.loop, e.file)
 	if err != nil {
 		return ev, err
 	}
@@ -309,11 +361,18 @@ func (e *encEnv) chainEvidence(ctx context.Context, osdID string) (faulthook.Cha
 	return ev, nil
 }
 
-// release removes what the test created of the chain. A chain whose node was
-// given to the OSD is released only when the cluster's claim table and the
-// keeper's evidence both raise no objection; otherwise all of it is kept.
+// release removes what the test created of the chain. It waits for
+// unsettled keeper execs first, and keeps all of the chain while one may still
+// be running. A chain whose node was given to the OSD is released only when
+// the cluster's claim table and the keeper's evidence both raise no
+// objection; otherwise all of it is kept.
 func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attached bool) (map[string]any, bool) {
 	out := map[string]any{"node": e.node}
+	if ok, detail := e.settle(ctx); !ok {
+		out["unsettled"] = detail
+		t.Errorf("the chain %s is retained: %s", e.node, detail)
+		return out, false
+	}
 	if attached {
 		outcome, detail := faulthook.JudgeDeviceChain(ctx, e.cluster, e.device, e.node, func(ctx context.Context) (faulthook.ChainEvidence, error) {
 			return e.chainEvidence(ctx, osdID)
@@ -324,7 +383,7 @@ func (e *encEnv) release(t *testing.T, ctx context.Context, osdID string, attach
 			return out, false
 		}
 	}
-	raw, _, code, err := encExec(ctx, e.docker, e.keeper.GetContainerID(), nil, "python3", "-I", "-c", encKeeperScript, "remove", e.node, e.crypt, e.file)
+	raw, _, code, err := e.exec(ctx, nil, "remove", e.node, e.crypt, e.file)
 	r, perr := parseEncReply(raw, "remove")
 	out["removed"] = r
 	if err != nil || code != 0 || perr != nil || !r.NodeGone || !r.CryptGone || !r.LoopReleased || !r.FileRemoved {
