@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 300,
+  "count": 301,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -126,6 +126,7 @@
       "ImageSet.CephFS field string",
       "ImageSet.Client field string",
       "ImageSet.Essential field string",
+      "ImageSet.MGR field string",
       "ImageSet.RBDAux field string",
       "ImageSet.RGW field string"
     ],

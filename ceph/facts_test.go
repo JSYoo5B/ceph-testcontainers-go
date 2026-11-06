@@ -42,7 +42,7 @@ func TestStaticFactsImagesCopyAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := defaultFacts.Images, (ImageSet{Essential: "ctl", Client: "ctl", CephFS: "mds", RBDAux: "ctl", RGW: "rgw"}); got != want {
+	if got, want := defaultFacts.Images, (ImageSet{Essential: "ctl", Client: "ctl", CephFS: "mds", RBDAux: "ctl", RGW: "rgw", MGR: "ctl"}); got != want {
 		t.Fatalf("default images = %+v, want %+v", got, want)
 	}
 	selected := &ImageSet{Essential: "e", Client: "c", CephFS: "f", RBDAux: "r", RGW: "g"}

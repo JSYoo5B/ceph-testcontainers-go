@@ -179,7 +179,7 @@ func TestRoleImageReplacesItsRoleInEitherOrder(t *testing.T) {
 					t.Fatalf("selection did not reach canceled admission: %v %v", c, err)
 				}
 				images := effective.effectiveImages()
-				want := ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"}
+				want := ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw", MGR: "core"}
 				if role == "rgw" {
 					want.RGW = "selected-service"
 				} else {
@@ -204,7 +204,7 @@ func TestRoleImageWithoutASetKeepsTheRunImageForOtherRoles(t *testing.T) {
 	if err := configureImages(&o); err != nil {
 		t.Fatal(err)
 	}
-	want := ImageSet{Essential: "all-in-one", Client: "all-in-one", CephFS: "mds-image", RBDAux: "all-in-one", RGW: "all-in-one"}
+	want := ImageSet{Essential: "all-in-one", Client: "all-in-one", CephFS: "mds-image", RBDAux: "all-in-one", RGW: "all-in-one", MGR: "all-in-one"}
 	if got := o.effectiveImages(); got != want {
 		t.Fatalf("effective images = %+v, want %+v", got, want)
 	}

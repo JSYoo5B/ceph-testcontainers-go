@@ -11,30 +11,48 @@ import (
 // ImageSet selects the roles runtime contract. All explicitly supplies every
 // role from one image. Otherwise Essential is required and optional roles are
 // required when their feature is used; there is no fallback to Essential.
+//
+// MGR is the one role with a default: the image of every manager the cluster
+// starts, the initial active and standby candidates of Run as well as those
+// that AddManager adds later. Left empty it is Essential (with All, the All
+// image), so a set without MGR runs managers as before. All may be combined
+// with MGR, which then replaces only the MGR role. The image is a whole MGR
+// container image, not a sidecar, and must ship the ceph-mgr daemon and its
+// modules of the cluster's Ceph release: when MGR is not Essential, a manager
+// started from it fails when its ceph-mgr reports another release than
+// ClusterFacts.CephVersion, and stays owned for Terminate.
+// DaemonOptions.WithImage of one AddManager call takes precedence over MGR.
+// FactsOf(c).Images.MGR reports the resolved image, never empty.
 type ImageSet struct {
 	Essential string
 	Client    string
 	CephFS    string
 	RBDAux    string
 	RGW       string
+	MGR       string
 	All       string
 }
 
 func (s ImageSet) normalized() (ImageSet, error) {
-	for _, image := range []string{s.Essential, s.Client, s.CephFS, s.RBDAux, s.RGW, s.All} {
+	for _, image := range []string{s.Essential, s.Client, s.CephFS, s.RBDAux, s.RGW, s.MGR, s.All} {
 		if image != strings.TrimSpace(image) {
 			return s, fmt.Errorf("image references must not contain surrounding whitespace")
 		}
 	}
 	if s.All != "" {
 		if s.Essential != "" || s.Client != "" || s.CephFS != "" || s.RBDAux != "" || s.RGW != "" {
-			return s, fmt.Errorf("all cannot be combined with role images")
+			return s, fmt.Errorf("all cannot be combined with role images other than MGR")
 		}
 		s.Essential, s.Client, s.CephFS, s.RBDAux, s.RGW = s.All, s.All, s.All, s.All, s.All
 		s.All = ""
 	}
 	if s.Essential == "" {
 		return s, fmt.Errorf("essential image is required")
+	}
+	// The MGR default rule: managers use Essential unless MGR selects
+	// another image. No other role defaults to Essential.
+	if s.MGR == "" {
+		s.MGR = s.Essential
 	}
 	return s, nil
 }
@@ -69,10 +87,12 @@ func WithImageOptions(config ImageOptions) Option {
 }
 
 // WithImageSet selects explicit role images. The set is the one authoritative
-// image configuration: Essential starts the MON, MGR and OSD daemons, so the
-// image argument of Run must be empty or equal to Essential and is not a second
-// input. An All set supplies every role. A role that a requested feature needs
-// and the set leaves empty is refused; there is no fallback to Essential. An
+// image configuration: Essential starts the MON and OSD daemons, and the MGR
+// daemons unless the set's MGR selects another image, so the image argument of
+// Run must be empty or equal to Essential and is not a second input. An All set
+// supplies every role. A role that a requested feature needs and the set leaves
+// empty is refused; there is no fallback to Essential, except the documented
+// MGR default of ImageSet. An
 // explicit empty set is refused, not read as unspecified. WithCephFSImage and
 // WithRGWImage replace the matching role of the set. The ImageSet is copied.
 //
