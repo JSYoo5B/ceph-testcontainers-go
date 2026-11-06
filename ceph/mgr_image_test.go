@@ -142,13 +142,17 @@ func (c *mgrImageControl) Exec(ctx context.Context, args []string, opts ...tcexe
 	return c.noInitialManagerControl.Exec(ctx, args, opts...)
 }
 
-// mgrImageDaemon is a started MGR container that answers ceph-mgr --version
-// with its release.
+// mgrImageDaemon is a container that the fixture started from image: a
+// release probe or a MGR daemon. It answers ceph-mgr --version with its
+// release.
 type mgrImageDaemon struct {
 	testcontainers.Container
 	image, release string
-	execs          []string
-	terminations   int
+	// daemon is set when the container runs mgr.sh, and keyring when it
+	// receives a MGR keyring.
+	daemon, keyring bool
+	execs           []string
+	terminations    int
 }
 
 func (d *mgrImageDaemon) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -164,9 +168,21 @@ func (d *mgrImageDaemon) Terminate(context.Context, ...testcontainers.TerminateO
 	return nil
 }
 
+// mgrImageRequest applies the options of a started container to a request.
+func mgrImageRequest(image string, opts []testcontainers.ContainerCustomizer) (testcontainers.GenericContainerRequest, error) {
+	req := testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{Image: image}}
+	for _, opt := range opts {
+		if err := opt.Customize(&req); err != nil {
+			return req, err
+		}
+	}
+	return req, nil
+}
+
 // mgrImageFixture is a cluster of the essential image "core" and the given
-// image set whose MGR containers report the release that releases names for
-// their image (20.2.4 by default).
+// image set whose containers report the release that releases names for
+// their image (20.2.4 by default). started lists every container the cluster
+// started, probes and MGR daemons, in order.
 func mgrImageFixture(t *testing.T, set ImageSet, releases map[string]string) (*Container, *mgrImageControl, *[]*mgrImageDaemon) {
 	t.Helper()
 	normalized, err := set.normalized()
@@ -179,16 +195,40 @@ func mgrImageFixture(t *testing.T, set ImageSet, releases map[string]string) (*C
 	cluster.settings.essentialImage, cluster.settings.imageSet = normalized.Essential, &normalized
 	cluster.bootstrap.cephVersion = "20.2.4"
 	var started []*mgrImageDaemon
-	cluster.daemonRunner = func(_ context.Context, image string, _ ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	cluster.daemonRunner = func(_ context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		req, err := mgrImageRequest(image, opts)
+		if err != nil {
+			return nil, err
+		}
 		release := releases[image]
 		if release == "" {
 			release = "20.2.4"
 		}
-		daemon := &mgrImageDaemon{image: image, release: release}
+		daemon := &mgrImageDaemon{image: image, release: release, daemon: slices.Contains(req.Entrypoint, "/tc/mgr.sh")}
+		for _, file := range req.Files {
+			daemon.keyring = daemon.keyring || file.ContainerFilePath == "/etc/ceph/mgr.keyring"
+		}
 		started = append(started, daemon)
 		return daemon, nil
 	}
 	return cluster, control, &started
+}
+
+// mgrImageStarts splits the containers of a fixture into MGR daemons and
+// release probes, and fails when a probe received a keyring or was not removed.
+func mgrImageStarts(t *testing.T, started []*mgrImageDaemon) (daemons, probes []*mgrImageDaemon) {
+	t.Helper()
+	for _, ctr := range started {
+		if ctr.daemon {
+			daemons = append(daemons, ctr)
+			continue
+		}
+		if ctr.keyring || ctr.terminations != 1 || !slices.Equal(ctr.execs, []string{"ceph-mgr --version"}) {
+			t.Fatalf("release probe of %s: keyring=%t terminations=%d commands %v", ctr.image, ctr.keyring, ctr.terminations, ctr.execs)
+		}
+		probes = append(probes, ctr)
+	}
+	return daemons, probes
 }
 
 // The MGR slot starts the initial active and standby candidates and every
@@ -212,19 +252,24 @@ func TestMGRImageAppliesToInitialAndAddedManagers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var images []string
-	for _, daemon := range *started {
-		images = append(images, daemon.image)
-	}
-	if !slices.Equal(images, []string{"official", "official", "official", "per-daemon"}) {
-		t.Fatalf("MGR containers started from %v", images)
-	}
-	for i, daemon := range *started {
-		checked := slices.Equal(daemon.execs, []string{"ceph-mgr --version"})
-		if want := daemon.image == "official"; checked != want || (!want && len(daemon.execs) != 0) {
-			t.Fatalf("MGR %d (%s) release check %v", i, daemon.image, daemon.execs)
+	// Each MGR of the slot image is preceded by its release probe; the
+	// override is not probed, and no MGR daemon runs a release check itself.
+	var sequence []string
+	for _, ctr := range *started {
+		kind := "probe:"
+		if ctr.daemon {
+			kind = "mgr:"
+			if !ctr.keyring || len(ctr.execs) != 0 {
+				t.Fatalf("MGR daemon of %s: keyring=%t commands %v", ctr.image, ctr.keyring, ctr.execs)
+			}
 		}
+		sequence = append(sequence, kind+ctr.image)
 	}
+	want := []string{"probe:official", "mgr:official", "probe:official", "mgr:official", "probe:official", "mgr:official", "mgr:per-daemon"}
+	if !slices.Equal(sequence, want) {
+		t.Fatalf("started %v, want %v", sequence, want)
+	}
+	mgrImageStarts(t, *started)
 	for name, want := range map[string]string{"a": "official", "b": "official", "c": "official", "d": "per-daemon"} {
 		if got := cluster.members.roster.manager(name).Image(); got != want {
 			t.Fatalf("mgr.%s reports image %q, want %q", name, got, want)
@@ -251,19 +296,20 @@ func TestMGRImageDefaultKeepsEssentialWithoutReleaseCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, daemon := range *started {
-		if daemon.image != "core" || len(daemon.execs) != 0 {
-			t.Fatalf("default MGR started from %q with commands %v", daemon.image, daemon.execs)
+		if !daemon.daemon || daemon.image != "core" || len(daemon.execs) != 0 {
+			t.Fatalf("default MGR started from %q (daemon %t) with commands %v", daemon.image, daemon.daemon, daemon.execs)
 		}
 	}
 	if len(*started) != 2 {
-		t.Fatalf("started %d MGRs", len(*started))
+		t.Fatalf("started %d containers", len(*started))
 	}
 }
 
-// A MGR image of another release fails the start after its container
-// exists: the MGR stays owned, its registration is not awaited, and Terminate
-// removes it. An override of another release is not checked.
-func TestMGRImageOfAnotherReleaseFailsAndStaysOwned(t *testing.T) {
+// A MGR image of another release is refused by its release probe before the
+// MGR daemon could start: no identity or key is created, no container gets the
+// keyring or runs mgr.sh, nothing is owned or awaited, and the probe is
+// removed. An override of another release is not checked.
+func TestMGRImageOfAnotherReleaseNeverStartsTheDaemon(t *testing.T) {
 	for _, initial := range []bool{true, false} {
 		t.Run(fmt.Sprintf("initial=%t", initial), func(t *testing.T) {
 			cluster, control, started := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "other-release"}, map[string]string{"other-release": "19.2.5", "per-daemon": "19.2.5"})
@@ -272,33 +318,26 @@ func TestMGRImageOfAnotherReleaseFailsAndStaysOwned(t *testing.T) {
 			if initial {
 				cluster.settings.managers = 1
 				err = cluster.startInitialManagers(t.Context())
-				mgr = cluster.members.roster.manager("a")
 			} else {
 				mgr, err = cluster.AddManager(t.Context(), "a")
 			}
 			if err == nil || !strings.Contains(err.Error(), "MGR image Ceph release 19.2.5 differs from core 20.2.4") {
 				t.Fatalf("mismatched release admitted: %v", err)
 			}
-			if mgr == nil || mgr.Container == nil || cluster.members.roster.manager("a") != mgr || cluster.members.roster.managerCount() != 1 || len(*started) != 1 {
-				t.Fatalf("failed MGR start lost ownership: %+v managers=%d", mgr, cluster.members.roster.managerCount())
+			daemons, probes := mgrImageStarts(t, *started)
+			if len(daemons) != 0 || len(probes) != 1 || probes[0].image != "other-release" {
+				t.Fatalf("a mismatched MGR image ran %d daemons after %d probes", len(daemons), len(probes))
 			}
-			if initial && cluster.members.roster.initialManager() != mgr.Container {
-				t.Fatal("failed initial MGR is not recorded as the first MGR")
+			if mgr != nil || cluster.members.roster.managerCount() != 0 || cluster.members.roster.initialManager() != nil {
+				t.Fatalf("a refused MGR is owned: %+v managers=%d", mgr, cluster.members.roster.managerCount())
 			}
-			polled := 0
 			for _, call := range control.calls {
-				if call == "mgr dump --format json" {
-					polled++
+				if strings.HasPrefix(call, "auth get-or-create") {
+					t.Fatalf("a refused MGR created its identity: %v", control.calls)
 				}
 			}
-			if polled != 1 {
-				t.Fatalf("the failed start waited for registration: %v", control.calls)
-			}
-			if err := cluster.Terminate(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if (*started)[0].terminations != 1 || cluster.members.roster.managerCount() != 0 {
-				t.Fatalf("Terminate left the failed MGR: terminations=%d managers=%d", (*started)[0].terminations, cluster.members.roster.managerCount())
+			if len(control.registered) != 0 {
+				t.Fatalf("a refused MGR created its key: %v", control.registered)
 			}
 		})
 	}
@@ -306,26 +345,59 @@ func TestMGRImageOfAnotherReleaseFailsAndStaysOwned(t *testing.T) {
 	if _, err := cluster.AddManager(t.Context(), "a", DaemonOptions{}.WithImage("per-daemon")); err != nil {
 		t.Fatalf("an explicit per-daemon image was release-checked: %v", err)
 	}
-	if len((*started)[0].execs) != 0 {
-		t.Fatalf("override ran %v", (*started)[0].execs)
+	if len(*started) != 1 || !(*started)[0].daemon || len((*started)[0].execs) != 0 {
+		t.Fatalf("override started %d containers, commands %v", len(*started), (*started)[0].execs)
 	}
 }
 
-// A MGR image without ceph-mgr fails with the image capability error of the
-// release check and keeps the MGR owned.
+// A MGR image without ceph-mgr fails its release probe with the image
+// capability error, and no MGR identity or daemon is created.
 func TestMGRImageWithoutTheDaemonIsAnImageCapabilityFailure(t *testing.T) {
-	cluster, _, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+	cluster, control, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+	var probe missingMGRDaemon
+	runs := 0
 	cluster.daemonRunner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
-		return &missingMGRDaemon{}, nil
+		runs++
+		return &probe, nil
 	}
 	mgr, err := cluster.AddManager(t.Context(), "a")
-	if !errors.Is(err, ErrImageCapability) || mgr == nil || cluster.members.roster.manager("a") != mgr {
+	if !errors.Is(err, ErrImageCapability) || mgr != nil || cluster.members.roster.managerCount() != 0 {
 		t.Fatalf("missing ceph-mgr: %v %+v", err, mgr)
+	}
+	if runs != 1 || probe.terminations != 1 || len(control.registered) != 0 {
+		t.Fatalf("missing ceph-mgr: runs=%d probe terminations=%d keys %v", runs, probe.terminations, control.registered)
 	}
 }
 
-type missingMGRDaemon struct{ testcontainers.Container }
+// A release probe whose removal fails reports that failure with the probe's
+// result.
+func TestMGRImageProbeRemovalFailureIsReported(t *testing.T) {
+	cluster, _, _ := mgrImageFixture(t, ImageSet{Essential: "core", MGR: "official"}, nil)
+	cluster.daemonRunner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		return &stuckMGRProbe{mgrImageDaemon{image: "official", release: "19.2.5"}}, nil
+	}
+	_, err := cluster.AddManager(t.Context(), "a")
+	if err == nil || !strings.Contains(err.Error(), "differs from core") || !strings.Contains(err.Error(), "remove MGR image release probe: probe stuck") {
+		t.Fatalf("probe removal failure: %v", err)
+	}
+}
 
-func (missingMGRDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+type stuckMGRProbe struct{ mgrImageDaemon }
+
+func (*stuckMGRProbe) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+	return errors.New("probe stuck")
+}
+
+type missingMGRDaemon struct {
+	testcontainers.Container
+	terminations int
+}
+
+func (*missingMGRDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
 	return 127, noInitialOSDStream(dockerExecFailed + ": exec: \"ceph-mgr\": executable file not found in $PATH"), nil
+}
+
+func (d *missingMGRDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+	d.terminations++
+	return nil
 }

@@ -126,6 +126,7 @@ var startupIdentityCallers = map[string]stateCaller{
 	"Create":                  {"fact", []string{"ownedLabel"}},
 	"monitorGenerations":      {"fact", []string{"ownedLabel"}},
 	"startManager":            {"fact", []string{"ownedLabel"}},
+	"probeManagerRelease":     {"fact", []string{"ownedLabel"}},
 	"startService":            {"fact", []string{"ownedLabel"}},
 	"terminate":               {"fact", []string{"ownerID", "removeLabeledContainers"}},
 }

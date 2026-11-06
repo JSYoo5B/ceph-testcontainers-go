@@ -18,9 +18,10 @@ import (
 // image), so a set without MGR runs managers as before. All may be combined
 // with MGR, which then replaces only the MGR role. The image is a whole MGR
 // container image, not a sidecar, and must ship the ceph-mgr daemon and its
-// modules of the cluster's Ceph release: when MGR is not Essential, a manager
-// started from it fails when its ceph-mgr reports another release than
-// ClusterFacts.CephVersion, and stays owned for Terminate.
+// modules of the cluster's Ceph release: when MGR is not Essential, each
+// manager start first runs ceph-mgr --version in a short-lived probe container
+// of the image and fails, before the manager's identity, key or container
+// exists, when it reports another release than ClusterFacts.CephVersion.
 // DaemonOptions.WithImage of one AddManager call takes precedence over MGR.
 // FactsOf(c).Images.MGR reports the resolved image, never empty.
 type ImageSet struct {

@@ -794,9 +794,10 @@ func monitorConfigComment(line string) (int, error) {
 // The MGR starts from the cluster's MGR image, ClusterFacts.Images.MGR
 // (ImageSet.MGR, the essential image by default); DaemonOptions.WithImage starts
 // this one MGR from another image instead. A MGR started from a cluster MGR
-// image other than the essential image whose ceph-mgr reports another release
-// than ClusterFacts.CephVersion fails after its container started; the
-// returned handle stays owned, so remove it or terminate the cluster. Options
+// image other than the essential image must report ClusterFacts.CephVersion
+// from ceph-mgr --version in a short-lived probe container of that image;
+// otherwise AddManager fails before any identity, key or MGR container is
+// created and returns no handle. Options
 // are validated before the topology lock is taken or any identity is created.
 //
 // It never forces the active role away from a running manager, and success
@@ -837,9 +838,10 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 
 // startManager creates the identity of a new MGR and starts its container from
 // launch.image, but does not wait for the MGR to register. With a
-// launch.release it then requires the container's ceph-mgr to report that
-// release. The caller holds c.mu. The returned MGR is nil when the error came
-// before it was owned.
+// launch.release it first requires the image's ceph-mgr to report that
+// release, before any identity, key or MGR container exists, so that a
+// mismatched image never runs the daemon. The caller holds c.mu. The returned
+// MGR is nil when the error came before it was owned.
 func (t monitorTopology) startManager(ctx context.Context, name string, launch managerLaunch) (*ManagerContainer, error) {
 	image := launch.image
 	if t.roster.manager(name) != nil {
@@ -869,6 +871,11 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 	if _, registered := managerMapGID(status, name); registered {
 		return nil, fmt.Errorf("manager %s is already registered", name)
 	}
+	if launch.release != "" {
+		if err := t.probeManagerRelease(ctx, launch); err != nil {
+			return nil, err
+		}
+	}
 	key, err := authStore{t.conn}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
 	if err != nil {
 		return nil, err
@@ -887,15 +894,31 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 	if name == "a" {
 		t.roster.recordInitialManager(mgr.Container)
 	}
-	if err == nil && launch.release != "" {
-		err = checkManagerRelease(ctx, mgr.Container, launch.release)
-	}
 	return mgr, err
 }
 
-// checkManagerRelease requires the ceph-mgr of a started MGR container to
-// report release. A module added to a MGR image does not make another Ceph
-// release acceptable.
+// probeManagerRelease requires the ceph-mgr of launch.image to report
+// launch.release. It runs ceph-mgr --version in a short-lived idle container of
+// the image that gets no keyring, cluster configuration or run directory, and
+// removes it; the cluster's owner label lets Terminate remove it when that
+// removal fails.
+func (t monitorTopology) probeManagerRelease(ctx context.Context, launch managerLaunch) (err error) {
+	probe, err := t.runDaemon(ctx, launch.image, t.osds.startup.ownedLabel(), WithIdleEntrypoint())
+	if probe != nil {
+		defer func() {
+			if terminateErr := probe.Terminate(context.WithoutCancel(ctx)); terminateErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove MGR image release probe: %w", terminateErr))
+			}
+		}()
+	}
+	if err != nil {
+		return fmt.Errorf("start MGR image release probe: %w", err)
+	}
+	return checkManagerRelease(ctx, probe, launch.release)
+}
+
+// checkManagerRelease requires the ceph-mgr of a container to report release.
+// A module added to a MGR image does not make another Ceph release acceptable.
 func checkManagerRelease(ctx context.Context, ctr testcontainers.Container, release string) error {
 	output, err := command(ctx, ctr, "ceph-mgr", "--version")
 	if err != nil {
