@@ -73,11 +73,15 @@ type verificationLineRedaction struct {
 	secrets []string
 }
 
-// line redacts text. For a truncated line, whose rest was not read, it first
-// withholds the longest tail that is the start of a secret: the replacement
-// of exact values cannot match a secret that the cut split, so that tail
-// would keep all of the secret but its rest. A withheld tail is replaced by
-// verificationSecretMarker.
+// line redacts text. For a truncated line, whose rest was not read, it
+// also withholds the longest tail that is the start of a secret: the
+// replacement of exact values cannot match a secret that the cut split, so
+// that tail would keep all of the secret but its rest. The tail and every
+// whole secret are masked together on the original text before redaction
+// runs, because a tail can lie inside a whole secret that ends the line (a
+// secret that starts with its own last characters); trimming the tail first
+// would split that secret and expose the rest of it. A masked run is
+// replaced by verificationSecretMarker.
 func (r verificationLineRedaction) line(text string, truncated bool) string {
 	if !truncated {
 		return r.redact(text)
@@ -89,7 +93,39 @@ func (r verificationLineRedaction) line(text string, truncated bool) string {
 	if cut == 0 {
 		return r.redact(text)
 	}
-	return r.redact(text[:len(text)-cut]) + verificationSecretMarker
+	masked := make([]bool, len(text))
+	for i := len(text) - cut; i < len(text); i++ {
+		masked[i] = true
+	}
+	for _, secret := range r.secrets {
+		if secret == "" {
+			continue
+		}
+		for from := 0; from+len(secret) <= len(text); {
+			i := strings.Index(text[from:], secret)
+			if i < 0 {
+				break
+			}
+			for j := from + i; j < from+i+len(secret); j++ {
+				masked[j] = true
+			}
+			from += i + 1
+		}
+	}
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		j := i
+		for j < len(text) && masked[j] == masked[i] {
+			j++
+		}
+		if masked[i] {
+			out.WriteString(verificationSecretMarker)
+		} else {
+			out.WriteString(text[i:j])
+		}
+		i = j
+	}
+	return r.redact(out.String())
 }
 
 // secretPrefixSuffix returns the length of the longest suffix of text that

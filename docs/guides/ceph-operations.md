@@ -555,8 +555,10 @@ ends inside the block, and an `END` whose `BEGIN` was not read (on a line
 before the window, without a timestamp, or past the 64 KiB cut of a long
 line) withholds the same way every line of that stream since the previous
 `END`. A truncated line, whose rest was not read, withholds a tail that is the
-start of a secret, such as a `RedactValues` entry, and ends in `[REDACTED]`
-instead, so that a cut cannot leave all of a secret but its last characters.
+start of a secret, such as a `RedactValues` entry, together with every whole
+secret on the line, and ends in `[REDACTED]` instead, so that a cut cannot
+leave all of a secret but its last characters, even when the secret ends the
+line and its last characters are also its start.
 
 Each check's `finalize.VerificationOutcome`, and the report's, which is the worse
 of the two:

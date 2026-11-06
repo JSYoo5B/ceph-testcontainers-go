@@ -348,6 +348,56 @@ func TestVerificationArchiveLogsWithholdACutSecret(t *testing.T) {
 	}
 }
 
+// A stream cut right after a whole secret that starts with its own last
+// character: that character is also a possible start of the secret, and
+// withholding it alone would split the whole secret and keep the rest.
+func TestVerificationArchiveLogsWithholdASecretEndingACutLine(t *testing.T) {
+	stamp := verifyStart.Add(time.Minute).Format(time.RFC3339Nano)
+	const secret = "opaque-token-o"
+	cutEvent := stamp + " " + daemonLogLine("cluster", "ERR", "value "+secret)
+	lines, report, archive := archivedVerificationLines(t, VerificationConfig{RedactValues: []string{secret}}, func(fx *verifyFixture) {
+		frame := diagnosticsFrame(2, cutEvent+" more\n")
+		fx.docker.containers["osd0"].rawLogs = frame[:8+len(cutEvent)]
+	})
+	if strings.Contains(archive, "opaque-token") {
+		t.Errorf("the archive holds a part of the secret")
+	}
+	want := daemonLogLine("cluster", "ERR", "value [REDACTED]")
+	var event *verificationLogLine
+	for i := range lines {
+		if lines[i].Source == "osd.0" {
+			event = &lines[i]
+		}
+	}
+	if event == nil || event.Text != want || !event.Truncated {
+		t.Fatalf("cut line %+v, want %q truncated", event, want)
+	}
+	if len(report.Logs.Findings) != 1 || report.Logs.Findings[0].Text != want {
+		t.Errorf("findings %+v", report.Logs.Findings)
+	}
+}
+
+func TestVerificationLineRedactionMasksWholeAndCutSecrets(t *testing.T) {
+	r := verificationLineRedaction{redact: func(s string) string { return s }, secrets: []string{"opaque-token-o", "abcd"}}
+	for _, c := range []struct {
+		text      string
+		truncated bool
+		want      string
+	}{
+		{"value opaque-token-o", true, "value [REDACTED]"},
+		{"value opaque-token-", true, "value [REDACTED]"},
+		{"opaque-token-o x ab", true, "[REDACTED] x [REDACTED]"},
+		{"x abcd abc", true, "x [REDACTED] [REDACTED]"},
+		{"x abcdabc", true, "x [REDACTED]"},
+		{"plain text", true, "plain text"},
+		{"value opaque-token-o", false, "value opaque-token-o"},
+	} {
+		if got := r.line(c.text, c.truncated); got != c.want {
+			t.Errorf("line(%q, %v) = %q, want %q", c.text, c.truncated, got, c.want)
+		}
+	}
+}
+
 func TestSecretPrefixSuffix(t *testing.T) {
 	for _, c := range []struct {
 		text, secret string
