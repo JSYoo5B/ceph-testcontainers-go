@@ -24,19 +24,42 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// cancelAfterGatewayStop interrupts Apply and drops the reply after Docker confirms the stop.
-type cancelAfterGatewayStop struct {
+// interruptedPlacementRestart drops the completed Docker Stop reply, refuses
+// the first Start, and loses one read after the next Start actually succeeds.
+type interruptedPlacementRestart struct {
 	testcontainers.Container
-	cancel context.CancelFunc
+	cancel                       context.CancelFunc
+	stops, starts, startAttempts int
+	lostRead                     bool
 }
 
-func (g cancelAfterGatewayStop) Stop(ctx context.Context, grace *time.Duration) error {
-	err := g.Container.Stop(ctx, grace)
-	if err != nil {
+func (g *interruptedPlacementRestart) Stop(ctx context.Context, grace *time.Duration) error {
+	if err := g.Container.Stop(ctx, grace); err != nil {
 		return err
 	}
+	g.stops++
 	g.cancel()
 	return errors.New("injected loss of the completed Docker stop reply")
+}
+
+func (g *interruptedPlacementRestart) Start(ctx context.Context) error {
+	g.startAttempts++
+	if g.startAttempts == 1 {
+		return errors.New("injected engine failure before Start")
+	}
+	if err := g.Container.Start(ctx); err != nil {
+		return err
+	}
+	g.starts++
+	return nil
+}
+
+func (g *interruptedPlacementRestart) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if g.starts > 0 && !g.lostRead && len(args) == 1 && args[0] == "hostname" {
+		g.lostRead = true
+		return 0, nil, errors.New("injected loss of the restarted hostname read")
+	}
+	return g.Container.Exec(ctx, args, opts...)
 }
 
 // losePlacementReplies drops the first successful staging update and commit replies.
@@ -225,6 +248,45 @@ func rgwPlacementWaitCreateBucket(t *testing.T, parent context.Context, client h
 	}
 }
 
+// rgwPlacementRecoverRestart checks both sides of the restart on a real
+// gateway. The peer changes and restores a live field the placement pinned.
+func rgwPlacementRecoverRestart(t *testing.T, ctx context.Context, target *placement.Placement, gateway, peer *rgw.Gateway) {
+	t.Helper()
+	applyCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	interrupted := &interruptedPlacementRestart{Container: gateway.Container, cancel: cancel}
+	gateway.Container = interrupted
+	defer func() { gateway.Container = interrupted.Container }()
+	err := target.Apply(applyCtx, gateway)
+	if err == nil || !errors.Is(applyCtx.Err(), context.Canceled) || interrupted.startAttempts != 1 || interrupted.starts != 0 {
+		t.Fatalf("first restart: err=%v, caller=%v, attempts=%d starts=%d", err, applyCtx.Err(), interrupted.startAttempts, interrupted.starts)
+	}
+
+	apiName, _, ok := strings.Cut(target.LocationConstraint, ":")
+	if !ok {
+		t.Fatal("placement has no zonegroup API name")
+	}
+	if _, err := peer.Admin(ctx, "zonegroup", "modify", "--api-name", apiName+"-outside"); err != nil {
+		t.Fatal(err)
+	}
+	refused := target.Apply(ctx, gateway)
+	// Restore the native zonegroup before checking the outcome so the same
+	// handle can finish the interrupted restart.
+	if _, err := peer.Admin(ctx, "zonegroup", "modify", "--api-name", apiName); err != nil {
+		t.Fatal(err)
+	}
+	state, err := gateway.State(ctx)
+	if !errors.Is(refused, ceph.ErrInvalidRequest) || err != nil || state == nil || state.Running || interrupted.startAttempts != 1 {
+		t.Fatalf("changed policy reached Start: refusal=%v, inspect=%v, state=%v attempts=%d", refused, err, state, interrupted.startAttempts)
+	}
+	if err := target.Apply(ctx, gateway); err == nil || !interrupted.lostRead || interrupted.starts != 1 {
+		t.Fatalf("post-start read: err=%v, read lost=%t starts=%d", err, interrupted.lostRead, interrupted.starts)
+	}
+	if err := target.Apply(ctx, gateway); err != nil || interrupted.stops != 1 || interrupted.starts != 1 {
+		t.Fatalf("post-start retry: err=%v stops=%d starts=%d", err, interrupted.stops, interrupted.starts)
+	}
+}
+
 func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -272,19 +334,11 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	}
 	// The stopped gateway cannot run radosgw-admin. Leave a peer serving the
 	// same scope so recovery can verify the startup defaults before Start.
-	if _, err := rgw.Start(ctx, cluster, rgw.Config{Name: "placement-control"}); err != nil {
+	peer, err := rgw.Start(ctx, cluster, rgw.Config{Name: "placement-control", SkipUserCreation: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	applyCtx, cancelApply := context.WithCancel(ctx)
-	original := gateway.Container
-	gateway.Container = cancelAfterGatewayStop{original, cancelApply}
-	err = target.Apply(applyCtx, gateway)
-	gateway.Container = original
-	interrupted := applyCtx.Err()
-	cancelApply()
-	if err != nil || !errors.Is(interrupted, context.Canceled) {
-		t.Fatalf("Apply after native gateway stop: %v, caller: %v", err, interrupted)
-	}
+	rgwPlacementRecoverRestart(t, ctx, target, gateway, peer)
 	// Docker bridge restarts may publish a new port. Native host mode reuses
 	// its allocated listener; both return the endpoint of the actual process.
 	client.Endpoint, err = gateway.S3Endpoint(ctx)
