@@ -268,12 +268,12 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 // it is assigned only in
 // markFirstMonitorTerminated, and that is called by terminate when it removes
 // the first MON, by retireMonitor when the first MON is removed and by
-// replaceMonitor when the first MON's store moves to a new container.
+// recordMonitorReplacement when the first MON's store moves to a new container.
 var lifecycleWriters = []string{
 	"closed:Container.terminate",
 	"monitorTerminated:Container.monitorTopology",
-	"monitorTerminated:Container.replaceMonitor",
 	"monitorTerminated:monitorTopology.markFirstMonitorTerminated",
+	"monitorTerminated:monitorTopology.recordMonitorReplacement",
 	"monitorTerminated:monitorTopology.retireMonitor",
 	"monitorTerminated:monitorTopology.terminateMembers",
 }

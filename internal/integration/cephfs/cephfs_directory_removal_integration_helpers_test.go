@@ -234,6 +234,57 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "after-directory-readd")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
+	// Lose the reply to a caller-requested remove, independently confirm its
+	// absence, then rebalance the other paths on these same daemons.
+	original := source.Container
+	legacyFault := &cephFSDirectoryRemovalReplyFault{Container: original, filesystem: sourceFS.FilesystemName, directory: selected}
+	source.Container = legacyFault
+	defer func() { source.Container = original }()
+	if err := mirror.RemoveDirectory(ctx, selected); !errors.Is(err, errCephFSDirectoryRemoveReplyLost) {
+		t.Fatalf("expected a lost reply to the explicit remove: %v", err)
+	}
+	for {
+		paths, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
+		var tracked []string
+		if err != nil || json.Unmarshal(paths, &tracked) != nil || tracked == nil {
+			t.Fatalf("read native directory policy after explicit remove: %s, %v", paths, err)
+		}
+		if !slices.Contains(tracked, selected) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	// A second explicit remove fails before dispatch. Its path remains in the
+	// native policy while rebalance redistributes the other desired paths.
+	undispatched := &cephFSDirectoryRemovalReplyFault{Container: legacyFault, filesystem: sourceFS.FilesystemName, directory: remaining[0], cancelBeforeDispatch: true}
+	source.Container = undispatched
+	if err := mirror.RemoveDirectory(ctx, remaining[0]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected undispatched remove: %v", err)
+	}
+	counter := &cephFSMutationCounter{Container: undispatched, includeArguments: true}
+	source.Container = counter
+	if err := mirror.RebalanceDirectories(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cephFSCheckRebalanceMutations(counter.counts(), sourceFS.FilesystemName, remaining[1:]); err != nil {
+		t.Fatal(err)
+	}
+	if n := undispatched.removals.Load(); n != 1 {
+		t.Fatalf("remove attempts on pending path %q: got %d, want 1", remaining[0], n)
+	}
+	raw, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
+	var tracked []string
+	if err != nil || json.Unmarshal(raw, &tracked) != nil || tracked == nil {
+		t.Fatalf("read rebalanced directory policy: %s, %v", raw, err)
+	}
+	slices.Sort(tracked)
+	if !slices.Equal(tracked, slices.Sorted(slices.Values(remaining))) || !slices.Equal(mirror.Directories, remaining) || legacyFault.removals.Load() != 1 {
+		t.Fatalf("explicitly removed path %q after rebalance: native %v, fixture %v, expected %v, removes %d", selected, tracked, mirror.Directories, remaining, legacyFault.removals.Load())
+	}
 	t.Logf("public strict directory release: path=%s original peer=%s two original CID/StartedAt/watcher sessions preserved; real lost reply reconciled without another delete; other three paths copied bytes while removed path stayed absent; same-path re-add superseded old receipt and copied independent checkpoints", selected, expected.PeerID)
 }
 
@@ -310,6 +361,7 @@ var errCephFSDirectoryRemoveReplyLost = errors.New("injected lost real native Ce
 type cephFSDirectoryRemovalReplyFault struct {
 	testcontainers.Container
 	filesystem, directory string
+	cancelBeforeDispatch  bool
 	commands, removals    atomic.Int32
 	lost                  atomic.Bool
 }
@@ -323,6 +375,9 @@ func (f *cephFSDirectoryRemovalReplyFault) Exec(ctx context.Context, args []stri
 	target := slices.Equal(native, []string{"fs", "snapshot", "mirror", "remove", f.filesystem, f.directory})
 	if target {
 		f.removals.Add(1)
+		if f.cancelBeforeDispatch {
+			return 0, nil, context.Canceled
+		}
 	}
 	code, reader, err := f.Container.Exec(ctx, args, opts...)
 	if target && err == nil && code == 0 && f.lost.CompareAndSwap(false, true) {

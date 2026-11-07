@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -191,6 +192,16 @@ func AdminContext(ctx context.Context, cluster *ceph.Container) (context.Context
 		return context.WithTimeout(ctx, servicehook.StartupTimeout(cluster))
 	}
 	return ctx, func() {}
+}
+
+// SettlementContext detaches a post-mutation identity read from cancellation.
+// It keeps the admin operation deadline and grants at least ten seconds from now.
+func SettlementContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(10 * time.Second)
+	if original, ok := ctx.Deadline(); ok && original.After(deadline) {
+		deadline = original
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
 }
 
 // ScopeGateway returns the first registered gateway, in name order, that

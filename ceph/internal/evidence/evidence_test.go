@@ -106,3 +106,59 @@ func TestSelectDeduplicatesNamesAndLimits(t *testing.T) {
 		t.Fatalf("limited members %+v, omitted %d", members, omitted)
 	}
 }
+
+func TestSuffixPrefixOverlap(t *testing.T) {
+	for _, c := range []struct {
+		text, secret string
+		want         int
+	}{
+		{"line abc", "abcd", 3},
+		{"line abcd", "abcd", 0},
+		{"line ab", "abcd", 2},
+		{"line", "abcd", 0},
+		{"aaaa", "aaab", 3},
+		{"x abab", "ababc", 4},
+		{"xa", "a", 0},
+		{"", "abc", 0},
+	} {
+		if got := suffixPrefixOverlap(c.text, c.secret[:len(c.secret)-1]); got != c.want {
+			t.Errorf("overlap at cut (%q, %q) = %d, want %d", c.text, c.secret, got, c.want)
+		}
+	}
+}
+
+func repetitiveLogMaskTestData() (string, []string) {
+	text := strings.Repeat("a", 1<<20)
+	return text, []string{text[:4093], text[:4094], text[:4095], text[:4096]}
+}
+
+func TestMaskRepetitiveLogTail(t *testing.T) {
+	text, secrets := repetitiveLogMaskTestData()
+	if got := RedactLog(text, secrets, true, false, Redactor(secrets)); got != "[REDACTED]" {
+		t.Fatalf("mask result length %d", len(got))
+	}
+}
+
+func BenchmarkMaskRepetitiveLogTail(b *testing.B) {
+	text, secrets := repetitiveLogMaskTestData()
+	b.SetBytes(int64(len(text)))
+	redact := Redactor(secrets)
+	for b.Loop() {
+		RedactLog(text, secrets, true, false, redact)
+	}
+}
+
+func TestRedactorRecognizesCredentialsBeforeReplacingKnownValues(t *testing.T) {
+	const value = "sample-private-value"
+	for _, tc := range []struct{ input, known string }{
+		{"password=" + value, "pass"},
+		{"Bearer " + value, "Bear"},
+		{"-----BEGIN PRIVATE KEY-----\n" + value + "\n-----END PRIVATE KEY-----", "BEGIN"},
+		{"password=" + value, "private"},
+	} {
+		got := Redactor([]string{tc.known})(tc.input)
+		if strings.Contains(got, "sample") || strings.Contains(got, "-value") {
+			t.Errorf("redacted %q to %q", tc.input, got)
+		}
+	}
+}

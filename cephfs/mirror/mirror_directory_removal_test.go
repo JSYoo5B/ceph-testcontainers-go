@@ -27,6 +27,7 @@ type directoryRemovalControlFake struct {
 	directories                     []string
 	policyOverride, mappingOverride string
 	removeError, addError           error
+	addExitCode                     int
 	applyRemoval, applyAdd          bool
 	removals, adds                  int
 	hook                            func(*directoryRemovalControlFake, []string)
@@ -93,6 +94,9 @@ func (f *directoryRemovalControlFake) Exec(ctx context.Context, args []string, o
 		f.adds++
 		if f.applyAdd {
 			f.directories = append(f.directories, a[5])
+		}
+		if f.addExitCode != 0 {
+			return f.addExitCode, directoryRemovalStderr("Error EINVAL: directory refused"), nil
 		}
 		if f.addError != nil {
 			return 0, nil, f.addError
@@ -914,6 +918,82 @@ func TestCephFSDirectoryRemovalLegacyNeverResendsAnUncertainRemove(t *testing.T)
 	s.directories = nil
 	if err := m.RemoveDirectory(t.Context(), "/owned"); err != nil || s.removals != 1 || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] {
 		t.Fatalf("path that left the policy: count=%d error=%v", s.removals, err)
+	}
+}
+
+// Explicit removal and temporary removal for redistribution share the native
+// command, but require different final membership.
+func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
+	for _, first := range []string{"remove", "rebalance-then-remove"} {
+		t.Run(first, func(t *testing.T) {
+			m, s, _, _, _ := newDirectoryRemovalFixture()
+			s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+			if first == "rebalance-then-remove" {
+				if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, errPeerRemovalTransport) {
+					t.Fatal(err)
+				}
+				if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errCephFSUncertainRemoval) {
+					t.Fatal(err)
+				}
+			} else if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) {
+				t.Fatal(err)
+			}
+
+			// A malformed read cannot establish absence.
+			s.policyOverride = "[null]"
+			if err := m.RebalanceDirectories(t.Context()); err == nil {
+				t.Fatal("malformed inventory accepted")
+			}
+			s.policyOverride = ""
+			// The original command never reaches the MGR. Other paths can
+			// be redistributed without resending it or adopting foreign policy.
+			s.removeError, s.applyRemoval = nil, true
+			s.directories = []string{"/owned", "/foreign", "/keep"}
+			s.states = map[string]string{"/foreign": `{"state":"mapped"}`, "/keep": `{"state":"mapped"}`}
+			m.registerDirectory("/keep", true)
+			if err := m.RebalanceDirectories(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if !m.directories.releasePending("/owned") || m.directories.generation("/owned") != 1 ||
+				m.directories.generation("/keep") != 2 || s.removals != 2 || s.adds != 1 ||
+				!slices.Equal(s.directories, []string{"/owned", "/foreign", "/keep"}) {
+				t.Fatalf("rebalance with unapplied removal: %+v, native %v, removes %d, adds %d", m.directories, s.directories, s.removals, s.adds)
+			}
+
+			// Once the native policy no longer tracks the pending path the
+			// fixture can also forget it.
+			s.directories = []string{"/foreign", "/keep"}
+			if err := m.RebalanceDirectories(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(m.Directories, []string{"/keep"}) || !slices.Equal(s.directories, []string{"/foreign", "/keep"}) ||
+				m.directories.releasePending("/owned") || m.directories.owns("/owned") || m.directories.generation("/owned") != 1 ||
+				m.directories.generation("/keep") != 3 || s.removals != 3 || s.adds != 2 {
+				t.Fatalf("rebalance changed explicitly removed or foreign membership: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
+			}
+		})
+	}
+}
+
+func TestExplicitReaddAfterUncertainRemovalKeepsNewGeneration(t *testing.T) {
+	m, s, _, _, _ := newDirectoryRemovalFixture()
+	s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+	if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) {
+		t.Fatal(err)
+	}
+	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errCephFSUncertainRemoval) || s.adds != 0 {
+		t.Fatalf("re-add before removal settled: %v, adds %d", err, s.adds)
+	}
+	s.removeError, s.applyRemoval, s.directories = nil, true, nil
+	if err := m.AddDirectory(t.Context(), "/owned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RebalanceDirectories(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.directories, []string{"/owned"}) || !slices.Equal(m.Directories, s.directories) ||
+		m.directories.releasePending("/owned") || m.directories.generation("/owned") != 3 || s.removals != 2 || s.adds != 2 {
+		t.Fatalf("re-added path: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
 	}
 }
 

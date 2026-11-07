@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -113,6 +114,25 @@ func TestAccountFreshQuotaAndNonpurgeLifecycle(t *testing.T) {
 		if value := fmt.Sprintf(format, a); value != "RGW account RGW12345678901234567" {
 			t.Fatalf("formatted account walked its fields: %s", value)
 		}
+	}
+}
+
+func TestAccountReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr := newAccountTestGateway()
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
+	defer cancel()
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Replace(readback)
+	a, err := create(ctx, g.Core, Config{Name: "fixture"})
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
+	if err != nil || ctx.Err() == nil || !a.State.Confirmed || a.State.VersionTag != ctr.VersionTag {
+		t.Fatalf("create = %v, ctx = %v, native ownership not confirmed", err, ctx.Err())
+	}
+	if err := newAccount(a).Remove(t.Context()); err != nil || ctr.Account != nil {
+		t.Fatalf("Remove = %v, account remains = %t", err, ctr.Account != nil)
 	}
 }
 

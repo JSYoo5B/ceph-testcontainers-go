@@ -63,11 +63,13 @@ func TestNormalizeConfig(t *testing.T) {
 	}
 	ecdsaMaterial := TLSConfig{CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ecDER}), PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: ecKeyDER})}
 	for name, bad := range map[string]Config{
-		"no certificate":    {},
-		"ECDSA key":         {TLS: ecdsaMaterial},
-		"mismatched key":    {TLS: TLSConfig{CertificatePEM: material.CertificatePEM, PrivateKeyPEM: other.PrivateKeyPEM}},
-		"invalid username":  {TLS: material, Username: "Admin user"},
-		"invalid role name": {TLS: material, Role: "read only"},
+		"no certificate":     {},
+		"ECDSA key":          {TLS: ecdsaMaterial},
+		"mismatched key":     {TLS: TLSConfig{CertificatePEM: material.CertificatePEM, PrivateKeyPEM: other.PrivateKeyPEM}},
+		"invalid username":   {TLS: material, Username: "Admin user"},
+		"invalid role name":  {TLS: material, Role: "read only"},
+		"digit-leading role": {TLS: material, Role: "1reader"},
+		"long username":      {TLS: material, Username: strings.Repeat("a", 65)},
 	} {
 		if _, _, err := normalizeConfig(bad); err == nil {
 			t.Errorf("%s accepted", name)

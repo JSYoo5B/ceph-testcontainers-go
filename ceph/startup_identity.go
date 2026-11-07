@@ -71,8 +71,9 @@ func (s *startupIdentity) ownedLabel() testcontainers.CustomizeRequestOption {
 }
 
 // removeLabeledContainers force-removes every container left with the
-// cluster's label, including those whose create reply was lost.
-func (s *startupIdentity) removeLabeledContainers(ctx context.Context) error {
+// cluster's label, including those whose create reply was lost. It preserves
+// the agents retained for retrying route cleanup in live member namespaces.
+func (s *startupIdentity) removeLabeledContainers(ctx context.Context, retainedAgents map[string]bool) error {
 	if s.owner == "" {
 		return nil
 	}
@@ -93,6 +94,9 @@ func (s *startupIdentity) removeLabeledContainers(ctx context.Context) error {
 	}
 	var errs []error
 	for _, ctr := range list.Items {
+		if retainedAgents[ctr.ID] {
+			continue
+		}
 		if _, err := docker.ContainerRemove(ctx, ctr.ID, mobycl.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); !onlyMissingHostResource(err) {
 			errs = append(errs, fmt.Errorf("remove container %.12s of the cluster: %w", ctr.ID, err))
 		}

@@ -224,3 +224,29 @@ func TestPoolPlacementDefaultsToTheClusterCRUSHRoot(t *testing.T) {
 		t.Fatalf("an explicit root was replaced: %q %v", config.CRUSHRoot, err)
 	}
 }
+
+func TestSetPlacementReusesExistingZoneRuleAfterLostReply(t *testing.T) {
+	ctr := relocationFixture()
+	name := poolPlacementRuleName("fixture", PoolConfig{CRUSHRoot: "default", FailureDomain: "zone"})
+	ctr.Output["osd crush rule dump --format json"] = strings.TrimSuffix(relocationRules, "]") +
+		`,{"rule_id":4,"rule_name":"` + name + `","steps":[{"op":"take","item_name":"default"},{"op":"chooseleaf_firstn","type":"zone","num":0},{"op":"emit"}]}]`
+	ctr.Output["osd crush dump --format json"] = `{"devices":[{"id":0},{"id":1}],"buckets":[
+		{"id":-1,"name":"default","type_name":"root","items":[{"id":-2,"weight":1},{"id":-3,"weight":1}]},
+		{"id":-2,"name":"a","type_name":"zone","items":[{"id":0,"weight":1}]},
+		{"id":-3,"name":"b","type_name":"zone","items":[{"id":1,"weight":1}]}]}`
+	pool := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 2), "fixture")
+	placement := PoolPlacement{FailureDomain: "zone"}
+	if err := pool.SetPlacement(t.Context(), placement); err != nil {
+		t.Fatal(err)
+	}
+	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"crush_rule":3`, `"crush_rule":4`, 1)
+	if err := pool.SetPlacement(t.Context(), placement); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.SetReplication(t.Context(), 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := relocationMutations(ctr); !slices.Equal(got, []string{"osd pool set fixture crush_rule " + name, "osd pool set fixture min_size 2"}) {
+		t.Fatalf("unexpected zone placement mutations: %v", got)
+	}
+}

@@ -64,7 +64,13 @@ func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa
 // and neither purged nor being purged or detached. Every daemon access to an
 // OSD (AdminSocket, Version, RotateKey and the debug-level target) uses it.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged && !o.purgeIssued && !o.detaching
+	return o.runningCapable() && c.fleet.osdHandles.get(o.ID) == o
+}
+
+// runningCapable covers the fixture lifecycle. A stopped OSD still has its
+// container and can restart. The caller holds the topology lock.
+func (o *OSDContainer) runningCapable() bool {
+	return o != nil && o.Container != nil && !o.removing && !o.purged && !o.purgeIssued && !o.detaching
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }
@@ -108,7 +114,8 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 }
 
 // Remove drains this owned OSD, waits for safe-to-destroy, stops it, waits for
-// down, purges it from Ceph and removes its container. It refuses the last OSD.
+// down, purges it from Ceph and removes its container. Another owned OSD must
+// still have its container and native registration and be outside removal or detach.
 // After identity admission, removal fences this Docker instance against new
 // native commands and drains its tracked commands before native mutations. A
 // failed drain retains ownership and its fence for retry; other targets remain
@@ -123,9 +130,11 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 // OSD, or one that Reopen replaced, returns an error and never acts on the
 // container that owns the ID now. Remove refuses a detaching or detached OSD.
 //
-// If the remaining OSDs cannot hold the data (replica count or free space),
-// the drain does not finish and the call fails at the timeout; the OSD is left
-// out and reweighted and is not marked in again automatically.
+// Once admitted, removal is permanent. SetIn and Detach on this handle then
+// return ErrInvalidRequest, including after a failed drain. If a drain times
+// out because the remaining OSDs lack space or placement domains, add the
+// required capacity or adjust pool replication, then retry Remove with a
+// fresh context. Terminate the cluster to discard the fixture instead.
 //
 //purpose:condition,lifetime
 func (o *OSDContainer) Remove(ctx context.Context) error {
@@ -159,8 +168,11 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if err := c.fleet.osdHandles.current(o); err != nil {
-		return err
+	if !o.ownedBy(c) {
+		if err := c.fleet.osdHandles.current(o); err != nil {
+			return err
+		}
+		return invalidRequest("osd.%d is no longer running-capable", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

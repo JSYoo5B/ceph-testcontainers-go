@@ -33,7 +33,7 @@ const receiverWatchOperation = "watch RBD receivers"
 //
 // Status is the ReceiverStatus of that read, compared as a whole: scope and
 // pinned identities, each expected daemon's process, native instance, pool
-// state, namespace discovery and leader view, the agreed leader, the native
+// state, namespace discovery and leader view, the reported leader, the native
 // members, ForeignInstances and DaemonProblems. Lists are sorted; Daemons and
 // DaemonProblems are keyed by daemon name. On a WatchGap Status is the partial
 // report of the failed read, with Ready false: evidence of what the read got

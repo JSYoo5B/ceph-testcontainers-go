@@ -151,3 +151,50 @@ func TestReplaceMonitorRefusesBeforeTouchingAnything(t *testing.T) {
 		t.Fatalf("nil handle: %v", err)
 	}
 }
+
+func TestMonitorReplacementPreservesUnconfirmedGenerationForRetry(t *testing.T) {
+	failure := errors.New("removal confirmation failed")
+	for _, name := range []string{"a", "b"} {
+		t.Run(name, func(t *testing.T) {
+			original := generationDouble{id: "original"}
+			cluster := &Container{Container: generationDouble{id: "first"}}
+			topology := cluster.monitorTopology()
+			old := &MonitorContainer{Container: original, DaemonName: name, owner: cluster}
+			if name == "a" {
+				cluster.Container = original
+				topology = cluster.monitorTopology()
+			} else {
+				topology.roster.addMonitor(name, old)
+			}
+			attachment := &monstore.Attachment{ID: "original", RemoveRequested: true}
+			if next, err := topology.recordMonitorReplacement(old, attachment, nil, "image", failure); next != nil || !errors.Is(err, failure) {
+				t.Fatalf("uncertain removal returned %v, %v", next, err)
+			}
+			if _, err := topology.currentMonitor(old); err != nil {
+				t.Fatalf("original handle cannot retry: %v", err)
+			}
+			created := generationDouble{id: "replacement"}
+			next, err := topology.recordMonitorReplacement(old, &monstore.Attachment{ID: "replacement"}, created, "image", nil)
+			if err != nil || next == nil || next.Container != created || topology.roster.monitor(name) != next {
+				t.Fatalf("retry returned %v, %v", next, err)
+			}
+			if _, err := topology.currentMonitor(old); err == nil {
+				t.Fatal("confirmed replacement left the original handle current")
+			}
+		})
+	}
+}
+
+func TestFirstMonitorRecipeEnrollsVolumeAndEphemeralGenerations(t *testing.T) {
+	cluster := &Container{settings: options{zones: zoneSettings{names: []string{"a", "b"}, quorum: "a"}}, boundary: &zoneBoundary{}}
+	cluster.nets.public = &testcontainers.DockerNetwork{Name: "test-public"}
+	var req testcontainers.GenericContainerRequest
+	for _, opt := range cluster.firstMonitorOptions("fsid", nil, nil) {
+		if err := opt.Customize(&req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if req.Labels[zoneLabel] != "a" || req.Labels[zoneMemberLabel] != "mon.a" || len(req.LifecycleHooks) == 0 {
+		t.Fatalf("missing MON a zone enrollment: labels %v, hooks %v", req.Labels, req.LifecycleHooks)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -266,6 +267,26 @@ func TestS3KeyOperationsWaitForTheClusterOnlyUntilTheContextEnds(t *testing.T) {
 	}
 	if ctr.count("key rm") != 1 {
 		t.Fatalf("the fresh Revoke ran %d key removals", ctr.count("key rm"))
+	}
+}
+
+func TestS3KeyReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr, user := newKeyTestUser(t)
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
+	defer cancel()
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Container = readback
+	key, err := user.CreateS3Key(ctx)
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
+	if err != nil || ctx.Err() == nil || ctr.count("key create") != 1 {
+		t.Fatalf("CreateS3Key = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("key create"))
+	}
+	credentials(t, key)
+	if err := key.Revoke(t.Context()); err != nil || len(ctr.keys) != 1 {
+		t.Fatalf("Revoke = %v, remaining keys = %d", err, len(ctr.keys))
 	}
 }
 

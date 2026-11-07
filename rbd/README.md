@@ -70,6 +70,13 @@ if err != nil {
 - No kernel RBD, `rbd-nbd` or `/dev/mapper`: containers run unprivileged with no
   host block devices. Native clients on the test host need host network mode
   on a Linux Docker host; see [Host network](../docs/guides/host-network.md).
+- The immutable object cache tests atomic no-replace renames in private
+  reservations on both the cache and socket filesystems before launching its
+  daemon. An unsupported filesystem returns `ceph.ErrEnvironmentUnavailable`.
+  If another writer replaces the cache directory, its ownership marker or a
+  published socket during Restore, Restore returns the displaced entry to a
+  vacant name. If the name is occupied or the transfer was interrupted before
+  its identity was recorded, the error identifies the retained entry.
 - Namespaces have no generation identity: do not delete and re-create a
   namespace that a descriptor still refers to. Incremental restore checks the
   baseline snapshot by name only.

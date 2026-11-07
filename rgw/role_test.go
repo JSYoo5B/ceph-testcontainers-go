@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -290,6 +291,28 @@ func TestRoleCreationRefusesExistingAndInvalidRoles(t *testing.T) {
 	}
 	if _, err := (&Gateway{}).CreateRole(t.Context(), RoleConfig{TrustPolicy: testTrust}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("a gateway not owned by a cluster: %v", err)
+	}
+}
+
+func TestRoleReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr := newRoleTestGateway()
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
+	defer cancel()
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Container = readback
+	role, err := g.CreateRole(ctx, RoleConfig{Name: "reader", TrustPolicy: testTrust})
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
+	if err != nil || ctx.Err() == nil || ctr.count("role create") != 1 {
+		t.Fatalf("CreateRole = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("role create"))
+	}
+	if arn, err := role.ARN(); err != nil || arn == "" {
+		t.Fatalf("ARN = %q, %v", arn, err)
+	}
+	if err := role.Remove(t.Context()); err != nil || len(ctr.roles) != 0 {
+		t.Fatalf("Remove = %v, remaining roles = %d", err, len(ctr.roles))
 	}
 }
 

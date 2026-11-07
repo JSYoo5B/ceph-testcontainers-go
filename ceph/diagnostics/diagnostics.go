@@ -53,7 +53,10 @@ type Target struct {
 
 // Artifact retains one observation, including incomplete output or
 // an individual failure. Data is text; inspect observations are JSON when not
-// truncated. Names and order are stable, but observations are not transactional.
+// truncated. Container logs retain the newest bounded text after redaction;
+// Truncated is also set when log collection fails, including before the
+// stream opens. Names and order are stable, but observations are not
+// transactional.
 type Artifact struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
@@ -98,7 +101,9 @@ type Report struct {
 // ends, every running query is stopped in the control container before the
 // call returns. Known admin and RGW secrets and every client key the cluster
 // generated (also replaced or attempted ones) are masked with RedactValues and
-// named secret patterns.
+// named secret patterns. A log window that starts or ends inside a PEM
+// private key masks the visible key material up to its END delimiter or
+// from its BEGIN delimiter.
 //
 //purpose:evidence
 func Collect(ctx context.Context, cluster *ceph.Container, config Config) (*Report, error) {
@@ -334,6 +339,7 @@ func (run diagnosticCollection) execute(ctx context.Context, tasks []diagnosticT
 func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticTask, artifact *Artifact) {
 	if err := ctx.Err(); err != nil {
 		artifact.Error = err.Error()
+		artifact.Truncated = artifact.Kind == "container-logs"
 		return
 	}
 	probe, cancel := context.WithTimeout(ctx, run.config.OperationTimeout)
@@ -342,7 +348,15 @@ func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticT
 		err = probe.Err()
 	}
 	cancel()
-	data, outputClipped := evidence.BoundText(run.redact(data), run.config.MaxOutputBytes)
+	bound := evidence.BoundText
+	if artifact.Kind == "container-logs" {
+		data = evidence.RedactLog(data, run.snapshot.secrets, clipped, err != nil, run.redact)
+		clipped = clipped || err != nil
+		bound = evidence.BoundTailText
+	} else {
+		data = run.redact(data)
+	}
+	data, outputClipped := bound(data, run.config.MaxOutputBytes)
 	artifact.Data, artifact.Truncated = data, clipped || outputClipped
 	if err != nil {
 		message, errorClipped := evidence.BoundText(run.redact(err.Error()), run.config.MaxOutputBytes)

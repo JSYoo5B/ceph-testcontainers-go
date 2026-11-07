@@ -614,3 +614,194 @@ func TestCollectDiagnosticsProbeDeadlineRetainsStoppedState(t *testing.T) {
 		t.Fatal("probe deadline returned with a live stream reader")
 	}
 }
+
+func TestCollectDiagnosticsMasksKnownSecretCrossingLogTailBoundary(t *testing.T) {
+	const secret = "a-known-opaque-value"
+	for _, tc := range []struct {
+		name  string
+		log   string
+		limit int
+		want  string
+	}{
+		{"cut", "old " + secret + " end", len("opaque-value end"), "[REDACTED] end"},
+		{"whole", "old " + secret + " end", len(secret + " end"), "[REDACTED] end"},
+		{"uncut suffix", "opaque-value end", 32, "opaque-value end"},
+		{"clean EOF at partial prefix", "line a-known-opa", 32, "line a-known-opa"},
+		{"front cut with clean EOF", "older line a-known-opa", len("line a-known-opa"), "line a-known-opa"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			control := &diagnosticsTestContainer{id: "owned"}
+			docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+				return io.NopCloser(strings.NewReader(tc.log)), nil
+			}}
+			report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{containers: []Target{{Container: control}}, control: control, secrets: []string{secret}}, docker, diagnosticsUnitReport())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, artifact := range report.Artifacts {
+				if artifact.Kind == "container-logs" {
+					if artifact.Data != tc.want || artifact.Truncated != (len(tc.log) > tc.limit) {
+						t.Fatalf("log tail %q, truncated %t", artifact.Data, artifact.Truncated)
+					}
+					return
+				}
+			}
+			t.Fatal("no log artifact")
+		})
+	}
+}
+
+func TestDiagnosticLogArtifactWithIncompleteFrame(t *testing.T) {
+	const secret = "a-known-opaque-value"
+	for _, tc := range []struct {
+		name, payload, want string
+		limit               int
+		secrets             []string
+	}{
+		{"end cut", "line a-known-opa", "line [REDACTED]", 64, []string{secret}},
+		{"both ends", "old-known-opaque-value safe a-known-opa", "[REDACTED] safe [REDACTED]", len("known-opaque-value safe a-known-opa"), []string{secret}},
+		{"middle of one value", "old a-known-opa", "EDACTED]", len("nown-opa"), []string{secret}},
+		{"overlapping fragments", "old 123456789abc", "[REDACTED]", 12, []string{"prefix12345678", "6789abc-suffix"}},
+		{"overlapping whole match", "old 123456789abc", "[REDACTED]", 12, []string{"prefix1234", "3456789a", "9abc-suffix"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			frame := diagnosticsFrame(1, tc.payload+"missing end")
+			docker := diagnosticsTestDocker{
+				inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+					return dockerclient.ContainerInspectResult{}, nil // multiplexed stream
+				},
+				logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+					return io.NopCloser(bytes.NewReader(frame[:8+len(tc.payload)])), nil
+				},
+			}
+			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: tc.secrets}, redact: evidence.Redactor(tc.secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
+				return diagnosticLogs(ctx, docker, "owned", config)
+			}}, &a)
+			if a.Data != tc.want || !a.Truncated || a.Error == "" || !strings.HasPrefix(evidence.ErrLogFrameCut.Error(), a.Error) {
+				t.Fatalf("incomplete frame artifact = %+v, want %q with error and truncation", a, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiagnosticLogTailKeepsNewestBytesAfterRedaction(t *testing.T) {
+	for _, tc := range []struct {
+		name, data, want string
+		limit            int
+	}{
+		{"short fragment", "e: panic at the newest line\n", "]: panic at the newest line\n", len("e: panic at the newest line\n")},
+		{"UTF-8 cut", "🐈🐈🐈key!", "🐈[REDACTED]!", len("🐈🐈🐈key!")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			secrets := []string{"rgw-secret-ending-in-e", "key"}
+			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.data, true, nil }}, &a)
+			if a.Data != tc.want || !a.Truncated || !utf8.ValidString(a.Data) {
+				t.Fatalf("log tail %+v, want %q", a, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiagnosticTTYLogDeadlineMasksPartialPayload(t *testing.T) {
+	blocked := &diagnosticsBlockingReader{closed: make(chan struct{}), exited: make(chan struct{})}
+	docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+		return struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(strings.NewReader("line a-known-opa"), blocked), blocked}, nil
+	}}
+	config := diagnosticsUnitConfig(t)
+	config.OperationTimeout = 25 * time.Millisecond
+	secrets := []string{"a-known-opaque-value"}
+	run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+	a := Artifact{Kind: "container-logs"}
+	run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
+		return diagnosticLogs(ctx, docker, "owned", config)
+	}}, &a)
+	if a.Data != "line [REDACTED]" || !a.Truncated || !strings.Contains(a.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("partial TTY artifact: %+v", a)
+	}
+}
+
+func TestDiagnosticBoundaryPreservesStructuredRedaction(t *testing.T) {
+	const sensitive = "sample-private-value"
+	for _, tc := range []struct{ name, text, known string }{
+		{"field", "password=" + sensitive + " end", "opaque-p"},
+		{"bearer", "Bearer " + sensitive + " end", "opaque-B"},
+		{"private key", "-----BEGIN PRIVATE KEY-----\n" + sensitive + "\n-----END PRIVATE KEY----- end", "opaque-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := diagnosticsUnitConfig(t)
+			cfg.MaxOutputBytes = len(tc.text)
+			secrets := []string{tc.known}
+			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.text, true, nil }}, &a)
+			if strings.Contains(a.Data, sensitive) || !strings.Contains(a.Data, "[REDACTED") || !strings.HasSuffix(a.Data, " end") {
+				t.Fatalf("redacted artifact: %+v", a)
+			}
+		})
+	}
+}
+
+func TestDiagnosticLogArtifactsMaskPartialPrivateKeys(t *testing.T) {
+	const begin = "-----BEGIN RSA PRIVATE KEY-----\n"
+	const end = "-----END RSA PRIVATE KEY-----\n"
+	const payload = "synthetic-base64-payload\n"
+	const marker = "[REDACTED PRIVATE KEY]"
+	const latest = "mgr: latest observation\n"
+	for _, tc := range []struct {
+		name, stream, want   string
+		byteLimit, lineLimit int
+		interrupted          bool
+		literals             []string
+	}{
+		{"missing BEGIN at byte limit", begin + payload + end + latest, marker + "\n" + latest, len(payload + end + latest), 20, false, nil},
+		{"missing BEGIN at Docker line limit", begin + payload + end + latest, marker + "\n" + latest, 1024, 3, false, nil},
+		{"missing END in a short frame", latest + begin + payload, latest + marker, 1024, 20, true, nil},
+		{"producer still emitting at EOF", latest + begin + payload, latest + marker, 1024, 20, false, nil},
+		{"complete block before open block", latest + begin + payload + end + latest + begin + payload,
+			latest + marker + "\n" + latest + marker, 1024, 20, true, nil},
+		{"both cuts and overlapping values", begin + payload + end + "token=abc status ok\n" + begin + payload,
+			marker + "\ntoken=[REDACTED] status ok\n" + marker, len(payload + end + "token=abc status ok\n" + begin + payload), 20, true, []string{"PRIVATE KEY", "abc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := diagnosticsUnitConfig(t)
+			cfg.MaxOutputBytes, cfg.LogTail = tc.byteLimit, tc.lineLimit
+			docker := diagnosticsTestDocker{
+				inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+					return dockerclient.ContainerInspectResult{}, nil
+				},
+				logs: func(_ context.Context, _ string, opts dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+					tail, err := strconv.Atoi(opts.Tail)
+					if err != nil {
+						t.Fatal(err)
+					}
+					text := lastLines(tc.stream, tail)
+					frame := diagnosticsFrame(1, text)
+					if tc.interrupted {
+						frame = diagnosticsFrame(1, text+"rest")
+						frame = frame[:len(frame)-4]
+					}
+					return io.NopCloser(bytes.NewReader(frame)), nil
+				},
+			}
+			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: tc.literals}, redact: evidence.Redactor(tc.literals)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) { return diagnosticLogs(ctx, docker, "owned", cfg) }}, &a)
+			if a.Data != tc.want || (a.Error != "") != tc.interrupted || a.Truncated != (len(tc.stream) > tc.byteLimit || tc.interrupted) {
+				t.Fatalf("log artifact %+v, want %q", a, tc.want)
+			}
+		})
+	}
+}

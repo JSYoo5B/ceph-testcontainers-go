@@ -407,6 +407,12 @@ func TestSessionWatchRefusesInvalidRequests(t *testing.T) {
 		t.Fatalf("nil filesystem: %v", err)
 	}
 	fs := &cephfs.Filesystem{}
+	if _, err := List(t.Context(), fs); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("list with unconstructed filesystem: %v", err)
+	}
+	if _, err := Watch(t.Context(), fs, ceph.WatchConfig{}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("watch with unconstructed filesystem: %v", err)
+	}
 	if _, err := Watch(t.Context(), fs, ceph.WatchConfig{Interval: time.Millisecond}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("short interval: %v", err)
 	}

@@ -1,0 +1,219 @@
+package evidence
+
+import (
+	"slices"
+	"strings"
+)
+
+// RedactLog masks partial known values at the missing boundaries of
+// text, together with whole values overlapping them. Match both boundaries on
+// the original bytes, since a marker inserted at one end can hide a match
+// extending from the other. Use the ordinary redactor when no boundary mask
+// applies, so inserted markers are never passed through another substitution.
+func RedactLog(text string, secrets []string, missingStart, missingEnd bool, redact func(string) string) string {
+	// Docker can omit the beginning of a PEM block at its requested line
+	// count even when the retained bytes fit and the stream ends cleanly.
+	mayContainKey := strings.Contains(text, "PRIVATE KEY-----")
+	if len(text) == 0 || (!missingStart && !missingEnd && !mayContainKey) {
+		return redact(text)
+	}
+	startCut, endCut := 0, 0
+	for _, secret := range secrets {
+		if len(secret) < 2 {
+			continue
+		}
+		if missingStart && missingEnd && len(secret) > len(text) && strings.Contains(secret, text) {
+			// The retained window can lie entirely inside one secret.
+			return "[REDACTED]"
+		}
+		if missingStart {
+			startCut = max(startCut, suffixPrefixOverlap(secret[1:], text))
+		}
+		if missingEnd {
+			endCut = max(endCut, suffixPrefixOverlap(text, secret[:len(secret)-1]))
+		}
+	}
+	if startCut == 0 && endCut == 0 && !mayContainKey {
+		return redact(text)
+	}
+	return maskOriginalSecrets(text, knownValueMask(text, secrets, startCut, endCut), true)
+}
+
+// Allocate one byte per input byte only when a partial or whole literal
+// matches. In particular, a short repeated literal creates no expanded
+// intermediate string.
+func knownValueMask(text string, secrets []string, startCut, endCut int) []byte {
+	var masked []byte
+	if startCut != 0 || endCut != 0 {
+		masked = make([]byte, len(text))
+		markBytes(masked[:startCut])
+		markBytes(masked[len(text)-endCut:])
+	}
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		if first := strings.Index(text, secret); first >= 0 {
+			if masked == nil {
+				masked = make([]byte, len(text))
+			}
+			maskOccurrences(masked, text, secret, first)
+		}
+	}
+	return masked
+}
+
+// Combine the sensitive spans on the unmodified bytes. A full configured
+// value can overlap syntax or another value just as a boundary fragment can.
+func maskOriginalSecrets(text string, masked []byte, logWindow bool) string {
+	if masked != nil && !slices.Contains(masked, byte(0)) {
+		return "[REDACTED]"
+	}
+	mark := func(start, end int, kind byte) {
+		if masked == nil {
+			masked = make([]byte, len(text))
+		}
+		for i := start; i < end; i++ {
+			masked[i] = kind
+		}
+	}
+	// Match credential syntax before a literal or boundary mask can split a
+	// field name, bearer prefix or private-key delimiter.
+	if strings.ContainsAny(text, "=:") {
+		for _, m := range secretPattern.FindAllStringSubmatchIndex(text, -1) {
+			if !isRedactionMarker(text, m[4], m[5]) {
+				mark(m[4], m[5], 1)
+			}
+		}
+	}
+	for _, m := range bearerPattern.FindAllStringSubmatchIndex(text, -1) {
+		mark(m[3], m[1], 1)
+	}
+	markPrivateKeys(text, logWindow, mark)
+	if masked == nil {
+		return text
+	}
+	return renderMask(text, masked)
+}
+
+// A visible END with no BEGIN can close a block opened before the log
+// window. Withhold back to the last closed block, as for the verification
+// stream. The window can end inside an open block on a stream error or
+// while the producer is still writing it.
+func markPrivateKeys(text string, logWindow bool, mark func(start, end int, kind byte)) {
+	open, lastEnd := -1, 0
+	VisitPrivateKeyDelimiters(text, func(begin bool, start, end int) {
+		if begin {
+			if open < 0 {
+				open = start
+			}
+			return
+		}
+		if open >= 0 {
+			mark(open, end, privateKeyByte)
+		} else if logWindow {
+			mark(lastEnd, end, privateKeyByte)
+		}
+		open, lastEnd = -1, end
+	})
+	if logWindow && open >= 0 {
+		mark(open, len(text), privateKeyByte)
+	}
+}
+
+// A contiguous masked run containing a private-key block keeps its specific
+// marker in reports that distinguish key blocks from individual credentials.
+const privateKeyByte = 2
+
+func renderMask(text string, masked []byte) string {
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		j := i
+		if masked[i] == 0 {
+			for j < len(text) && masked[j] == 0 {
+				j++
+			}
+			out.WriteString(text[i:j])
+		} else {
+			for j < len(text) && masked[j] != 0 {
+				j++
+			}
+			if slices.Contains(masked[i:j], byte(privateKeyByte)) {
+				out.WriteString("[REDACTED PRIVATE KEY]")
+			} else {
+				out.WriteString("[REDACTED]")
+			}
+		}
+		i = j
+	}
+	return out.String()
+}
+
+func markBytes(mask []byte) {
+	for i := range mask {
+		mask[i] = 1
+	}
+}
+
+// maskOccurrences marks the union of all overlapping matches. KMP resumes
+// at the longest matching border; only bytes beyond the preceding match need
+// marking. Thus both matching and marking are linear for each secret.
+func maskOccurrences(mask []byte, text, secret string, first int) {
+	end := first + len(secret)
+	markBytes(mask[first:end])
+	if end == len(text) {
+		return
+	}
+	fail := prefixFailures(secret)
+	matched := fail[len(secret)-1]
+	for i := end; i < len(text); i++ {
+		for matched > 0 && text[i] != secret[matched] {
+			matched = fail[matched-1]
+		}
+		if text[i] != secret[matched] {
+			continue
+		}
+		matched++
+		if matched == len(secret) {
+			nextEnd := i + 1
+			markBytes(mask[max(end, nextEnd-len(secret)):nextEnd])
+			end = nextEnd
+			matched = fail[matched-1]
+		}
+	}
+}
+
+// suffixPrefixOverlap finds the longest suffix of the first string that is a
+// prefix of the second. Only the common possible length matters.
+func suffixPrefixOverlap(suffix, prefix string) int {
+	n := min(len(suffix), len(prefix))
+	suffix, prefix = suffix[len(suffix)-n:], prefix[:n]
+	fail := prefixFailures(prefix)
+	// suffix is at most as long as prefix, so a full match can only end the loop.
+	k := 0
+	for i := 0; i < len(suffix); i++ {
+		for k > 0 && suffix[i] != prefix[k] {
+			k = fail[k-1]
+		}
+		if suffix[i] == prefix[k] {
+			k++
+		}
+	}
+	return k
+}
+
+// prefixFailures stores the length of the longest proper border ending at
+// each byte, shared by boundary matching and whole-value search.
+func prefixFailures(prefix string) []int {
+	fail := make([]int, len(prefix))
+	for i, k := 1, 0; i < len(prefix); i++ {
+		for k > 0 && prefix[i] != prefix[k] {
+			k = fail[k-1]
+		}
+		if prefix[i] == prefix[k] {
+			k++
+		}
+		fail[i] = k
+	}
+	return fail
+}

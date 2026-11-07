@@ -156,59 +156,33 @@ func KeyringSecrets(keyring []byte) []string {
 // secretPattern takes the value after a secret-looking name. A bracketed
 // part of the value is taken whole, closing bracket included, so a secret
 // such as "[x]" or "a[b]" is masked entirely; a closing bracket outside one
-// ends the value, as at the end of a JSON array. maskSecrets leaves a value
-// that is exactly a redaction marker alone, which keeps redaction idempotent.
+// ends the value, as at the end of a JSON array. Existing markers stay intact.
 var secretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)((?:\[[^"'\s,;}\[\]]*\]|[^"'\s,;}\]])+)`)
 
-// maskSecrets replaces the value of every secretPattern match with
-// "[REDACTED]", except a value that is a complete marker an earlier pass
-// wrote: "[REDACTED]" itself, or the "[REDACTED" that begins
-// "[REDACTED PRIVATE KEY]". A value that only starts with a marker, such as
-// what a configured value's replacement leaves before the rest of a
-// credential, is masked whole.
-func maskSecrets(data string) string {
-	var out strings.Builder
-	last := 0
-	for _, m := range secretPattern.FindAllStringSubmatchIndex(data, -1) {
-		value := data[m[4]:m[5]]
-		if value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[m[5]:], " PRIVATE KEY]") {
-			continue
-		}
-		out.WriteString(data[last:m[4]])
-		out.WriteString("[REDACTED]")
-		last = m[5]
-	}
-	out.WriteString(data[last:])
-	return out.String()
+func isRedactionMarker(data string, start, end int) bool {
+	value := data[start:end]
+	return value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[end:], " PRIVATE KEY]")
 }
 
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
-var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
+var privateKeyDelimiter = regexp.MustCompile(`-----(?:BEGIN|END) (?:[A-Z ]+)?PRIVATE KEY-----`)
 
-// Redactor masks values and recognized secrets. Values are replaced in one
-// pass, longest first, so that a replacement is never rewritten again and
-// the output grows at most linearly.
+// VisitPrivateKeyDelimiters visits PEM private-key delimiters in source order.
+// start and end are byte offsets in the original text.
+func VisitPrivateKeyDelimiters(text string, visit func(begin bool, start, end int)) {
+	for _, m := range privateKeyDelimiter.FindAllStringIndex(text, -1) {
+		visit(strings.HasPrefix(text[m[0]:m[1]], "-----BEGIN "), m[0], m[1])
+	}
+}
+
+// Redactor masks configured values and recognized credential spans together.
+// Overlapping values are withheld as one run.
 func Redactor(values []string) func(string) string {
 	values = slices.DeleteFunc(slices.Clone(values), func(value string) bool { return value == "" })
-	slices.SortFunc(values, func(a, b string) int {
-		if len(a) != len(b) {
-			return len(b) - len(a)
-		}
-		return strings.Compare(a, b)
-	})
+	slices.Sort(values)
 	values = slices.Compact(values)
-	pairs := make([]string, 0, 2*len(values))
-	for _, value := range values {
-		pairs = append(pairs, value, "[REDACTED]")
-	}
-	replacer := strings.NewReplacer(pairs...)
 	return func(data string) string {
-		data = replacer.Replace(data)
-		data = privateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
-		// Bearer tokens first: the secret pattern takes only the word after
-		// "Authorization:", which would leave the token behind it.
-		data = bearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return maskSecrets(data)
+		return maskOriginalSecrets(data, knownValueMask(data, values, 0, 0), false)
 	}
 }
 
@@ -224,6 +198,19 @@ func BoundText(data string, limit int) (string, bool) {
 		end--
 	}
 	return data[:end], true
+}
+
+// BoundTailText keeps the newest complete UTF-8 runes of a bounded log tail.
+func BoundTailText(data string, limit int) (string, bool) {
+	data = strings.ToValidUTF8(data, "�")
+	if len(data) <= limit {
+		return data, false
+	}
+	start := len(data) - limit
+	for start < len(data) && !utf8.RuneStart(data[start]) {
+		start++
+	}
+	return data[start:], true
 }
 
 // ErrorText returns the redacted, bounded text of err, "?" when it is empty,

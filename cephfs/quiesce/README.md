@@ -59,9 +59,12 @@ lifecycle that every Watch shares (baseline, gaps, overflow and `Stop`) is in
 
 - Members must be confirmed subvolumes of `fs` that the subvolume package
   created; each one's native identity is checked before the set is created.
-- An uncertain create can return a non-nil `Set` with an error: keep it to
-  release, or let its expiration pass before terminating the cluster. Never
-  edit the set ID outside the fixture.
+- An uncertain create can return a non-nil `Set` with an error. A lost
+  create reply still permits `Release` if `Start` confirmed the QUIESCED
+  version. A failed readback leaves an inspection-only handle. Later
+  `Status` and `Watch` reads do not grant release authority. Native timers
+  bound the pause on a running cluster, and termination disposes of the set. Never edit the set ID
+  outside the fixture.
 - Native sets can overlap paths; releasing this set does not cancel another.
   Set records stay in the native quiesce database until the cluster is
   disposed of.

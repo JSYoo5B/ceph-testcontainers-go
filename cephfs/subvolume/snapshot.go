@@ -19,7 +19,8 @@ import (
 
 // Snapshot is an owned snapshot of a confirmed subvolume. Its public fields
 // describe creation; mutations use the captured private identity. Snapshot
-// creation does not quiesce concurrent application writers.
+// creation does not quiesce concurrent application writers. A descriptor
+// returned with a create or metadata-read error has unconfirmed identity.
 type Snapshot struct {
 	Name, SubvolumeName, GroupName, FilesystemName, Path string
 	identity                                             *snapshotRecord
@@ -133,6 +134,10 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 // same-named snapshot. Application writers must be synchronized by the caller
 // before taking a consistency-sensitive checkpoint. External CLI mutations must
 // not race the native preflight and creation.
+//
+// A create or metadata-read failure can return an unconfirmed descriptor.
+// Use SnapshotInfo to inspect the native name. Remove and Clone require a
+// confirmed identity. Deleting by name could remove another client's snapshot.
 //
 //purpose:construction
 func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*Snapshot, error) {

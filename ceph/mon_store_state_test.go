@@ -74,7 +74,7 @@ func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
 				"c.Container.Terminate(ctx, opts...)",
 				"c.monStores.ReleaseStores(ctx)",
 				"c.controlPlane.terminate(ctx, opts...)",
-				"c.startup.removeLabeledContainers(ctx)",
+				"c.startup.removeLabeledContainers(ctx, retainedAgents)",
 				"c.fleet.stores.retryVolume(ctx, volumeErr, c.fleet.osdHandles.count() == 0)",
 				"c.monStores.RetryStores(ctx, monStoreErr)",
 				"c.runDir.release(ctx)",

@@ -82,9 +82,10 @@ func (l GatewayLink) GoString() string { return l.String() }
 // changed. A Dashboard has at most one link; the SUT's own RGW credentials
 // are never used.
 //
-// An AddGateway that fails after creating the user returns the link together
-// with the error: its Remove undoes what AddGateway changed, and so does
-// Dashboard.Restore.
+// After attempting user creation, AddGateway may return a link with an
+// error. Keep it for Remove, or call Dashboard.Restore. Cleanup checks for
+// an unconfirmed user: an absent user needs no cleanup, and a present user
+// with unconfirmed ownership is preserved and reported.
 //
 //purpose:construction,condition
 func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*GatewayLink, error) {
@@ -386,6 +387,7 @@ type rgwKeyOption struct {
 	existed         bool
 	previous        string
 	installed       string
+	write           pendingMutation
 }
 
 func (k *rgwKeyOption) name() string { return "mgr/dashboard/" + k.option }
@@ -396,7 +398,7 @@ func (k *rgwKeyOption) install(ctx context.Context, c *ceph.Container, value str
 		return err
 	}
 	k.existed, k.previous, k.installed = found, previous, value
-	return runWithInput(ctx, c, "set dashboard "+k.command, []byte(value), "dashboard", "set-"+k.command, "-i", "-")
+	return k.write.track(runWithInput(ctx, c, "set dashboard "+k.command, []byte(value), "dashboard", "set-"+k.command, "-i", "-"))
 }
 
 // restore puts the prior value back, or resets an option that was not set
@@ -405,6 +407,9 @@ func (k *rgwKeyOption) install(ctx context.Context, c *ceph.Container, value str
 func (k *rgwKeyOption) restore(ctx context.Context, c *ceph.Container) error {
 	if k.installed == "" {
 		return nil
+	}
+	if err := k.write.settle(ctx); err != nil {
+		return err
 	}
 	current, found, err := managerOption(ctx, c, k.name())
 	if err != nil {
@@ -420,7 +425,7 @@ func (k *rgwKeyOption) restore(ctx context.Context, c *ceph.Container) error {
 	if !k.existed {
 		_, err = c.Ceph(ctx, "dashboard", "reset-"+k.command)
 	} else {
-		err = runWithInput(ctx, c, "restore dashboard "+k.command, []byte(k.previous), "dashboard", "set-"+k.command, "-i", "-")
+		err = k.write.track(runWithInput(ctx, c, "restore dashboard "+k.command, []byte(k.previous), "dashboard", "set-"+k.command, "-i", "-"))
 	}
 	if err != nil {
 		return fmt.Errorf("restore %s: %w", k.name(), err)

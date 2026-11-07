@@ -21,7 +21,8 @@ import (
 // that another fixture sharing the receiving pool is unhealthy.
 //
 // Daemons holds per-daemon detail keyed by daemon name. LeaderDaemonName and
-// LeaderInstanceID name the owned leader when one was agreed. Instances are the
+// LeaderInstanceID identify an owned daemon claiming leadership. Its report
+// can disagree with another receiver's view during election. Instances are the
 // native members and ForeignInstances those this fixture does not own.
 // DaemonProblems holds short reason codes per daemon, such as
 // receiver-scope-not-ready or receiver-leader-converging.

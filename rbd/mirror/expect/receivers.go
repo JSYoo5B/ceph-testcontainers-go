@@ -32,7 +32,8 @@ type ReceiverDaemon struct {
 // Receivers states what a test expects of the owned receiver cohort in one
 // mirror.ReceiverStatus observation. Select names the daemons it checks.
 // Leader, when set, names the selected running daemon that must be the agreed
-// owned leader. Ready requires the observation's own Ready verdict, and lists
+// owned leader: it must claim its own instance, and every selected running
+// receiver must report that instance as leader. Ready requires the observation's own Ready verdict, and lists
 // each daemon problem and foreign instance that prevents it; Ready false
 // places no requirement on the verdict. Exact requires the observed cohort to
 // be exactly the selected daemons with no foreign native instance.
@@ -91,7 +92,8 @@ const (
 // namespace discovery for ReceiverMismatchDiscovered, instance IDs for
 // ReceiverMismatchInstance and ReceiverMismatchForeign (Observed only), the
 // problem code for ReceiverMismatchProblem (Observed only) and daemon names
-// for ReceiverMismatchLeader.
+// for ReceiverMismatchLeader. When the named leader matches but its election
+// view conflicts with a selected receiver, Observed includes the conflicting views.
 type ReceiverMismatch struct {
 	Reason         ReceiverMismatchReason
 	Daemon         string
@@ -226,8 +228,10 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 	for _, name := range slices.Sorted(maps.Keys(byName)) {
 		result.Mismatches = append(result.Mismatches, byName[name]...)
 	}
-	if e.Leader != "" && observed.LeaderDaemonName != e.Leader {
-		result.Mismatches = append(result.Mismatches, ReceiverMismatch{Reason: ReceiverMismatchLeader, Want: e.Leader, Observed: observed.LeaderDaemonName})
+	if e.Leader != "" {
+		if leader := e.observedLeader(observed); leader != e.Leader {
+			result.Mismatches = append(result.Mismatches, ReceiverMismatch{Reason: ReceiverMismatchLeader, Want: e.Leader, Observed: leader})
+		}
 	}
 	if e.Ready || e.Exact {
 		for _, id := range slices.Sorted(slices.Values(observed.ForeignInstances)) {
@@ -241,6 +245,31 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 	}
 	result.Matched = len(result.Mismatches) == 0
 	return result, nil
+}
+
+func (e Receivers) observedLeader(observed mirror.ReceiverStatus) string {
+	if observed.LeaderDaemonName != e.Leader {
+		return observed.LeaderDaemonName
+	}
+	leader := observed.Daemons[e.Leader]
+	var conflicts []string
+	for _, selected := range e.Select {
+		if !selected.Running {
+			continue
+		}
+		member := observed.Daemons[selected.Name]
+		isLeader := selected.Name == e.Leader
+		if member.Leader != isLeader || member.LeaderInstanceID != leader.InstanceID ||
+			(isLeader && (leader.InstanceID == "" || leader.InstanceID != observed.LeaderInstanceID)) {
+			conflicts = append(conflicts, fmt.Sprintf("%s reports instance=%q leader=%t leader_instance=%q",
+				selected.Name, member.InstanceID, member.Leader, member.LeaderInstanceID))
+		}
+	}
+	if len(conflicts) == 0 {
+		return e.Leader
+	}
+	slices.Sort(conflicts)
+	return fmt.Sprintf("%s (cohort leader instance=%q, %s)", e.Leader, observed.LeaderInstanceID, strings.Join(conflicts, ", "))
 }
 
 func (e Receivers) validate() error {

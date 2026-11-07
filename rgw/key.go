@@ -55,8 +55,9 @@ func (u *User) CreationKey() *S3Key {
 // the fixture's before the native command runs. The user must be active, and
 // its fixture-created keys must be as the fixture recorded them.
 //
-// The outcome is read back from native state, also when the call fails or
-// its ctx ends, and the native command is never repeated:
+// After dispatch, a read checks the outcome even if ctx ends. It keeps the
+// admin operation deadline, with at least ten seconds for readback. The
+// fixture sends the key creation command only once:
 //
 //   - a nil error returns the confirmed key;
 //   - a non-nil key with an error is tracked: when native state showed the

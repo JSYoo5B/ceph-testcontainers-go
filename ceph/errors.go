@@ -23,14 +23,12 @@ import (
 // finish. An error that matches no category is a failed check of the
 // fixture's own, such as output it could not parse, or a failure whose
 // outcome is unknown, such as a container that disappeared after a native
-// command was sent to it. Only ErrInvalidRequest
-// promises that nothing changed.
+// command was sent to it.
 var (
-	// ErrInvalidRequest reports a request that the fixture refused before
-	// any change: malformed arguments, or an operation that the state of the
-	// cluster or of the selected resource forbids, such as a terminated
-	// cluster, a container that the cluster neither owns nor has attached,
-	// or an override that is already held.
+	// ErrInvalidRequest identifies a classified argument or state refusal,
+	// such as a terminated cluster or a container outside its ownership and
+	// attachments. A refusal can follow native reads or partial setup. Consult
+	// the operation's contract for preflight checks and partial handles.
 	ErrInvalidRequest = errors.New("invalid request")
 	// ErrUnsupported reports a native feature that the Ceph of the relevant
 	// target lacks, established before any change from that target's own
@@ -255,7 +253,7 @@ func classify(kind, err error) error {
 	return &OperationError{Kind: kind, Err: err}
 }
 
-// invalidRequest is a refusal before any change.
+// invalidRequest classifies an argument or state refusal.
 func invalidRequest(format string, args ...any) error {
 	return newInvalid(fmt.Errorf(format, args...))
 }

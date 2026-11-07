@@ -291,6 +291,13 @@ func validateLimits(requested Limits) error {
 // a terminated cluster, is refused with ceph.ErrInvalidRequest. It does not
 // recheck cancellation after the setup gate.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
+	if fs.Cluster() == nil {
+		err := ctx.Err()
+		if err == nil {
+			err = servicehook.Invalid(errors.New("CephFS filesystem is unavailable"))
+		}
+		return ctx, 0, func() {}, err
+	}
 	var fsID int64
 	refused := false
 	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{

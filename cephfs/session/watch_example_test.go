@@ -25,8 +25,16 @@ func ExampleWatch() {
 		panic(err)
 	}
 	fs := cephfs.Filesystems(cluster.Container)[0]
-	// ... the SUT mounts fs; find its session with session.List ...
-	var client session.Session
+	// The SUT mounts fs from a client with hostname "sut".
+	sessions, err := session.List(ctx, fs)
+	if err != nil {
+		panic(err)
+	}
+	i := slices.IndexFunc(sessions, func(s session.Session) bool { return s.Hostname == "sut" && s.ID != 0 })
+	if i < 0 {
+		panic("no mounted session for sut")
+	}
+	client := sessions[i]
 	w, err := session.Watch(ctx, fs, ceph.WatchConfig{}, client.ID)
 	if err != nil {
 		panic(err)

@@ -56,7 +56,11 @@ func (c TLSConfig) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.Stri
 // one role of the account, a built-in role such as read-only (the default),
 // block-manager or administrator, or a role that already exists; Start
 // creates no role. The password is generated and satisfies the Dashboard's
-// default password policy.
+// default password policy. Username and Role each contain 1 to 64 ASCII
+// characters, starting with a lowercase letter and followed by lowercase
+// letters, digits, underscores, periods or hyphens. Start sets the account
+// display name to a generated ownership marker. Keep that display name
+// unchanged so Restore can verify the account before deletion.
 type Config struct {
 	TLS      TLSConfig
 	Username string
@@ -84,15 +88,16 @@ type state struct {
 	key  []byte
 
 	// Restoration state, in the order Restore undoes it.
-	accountOwned bool
-	certificate  *configKey
-	privateKey   *configKey
-	multicluster *multiclusterState
-	module       *override.MGRModuleHandle
-	settings     []*override.ConfigHandle
-	link         *GatewayLink
-	restored     bool
-	attempted    bool
+	accountMarker string
+	accountCreate pendingMutation
+	certificate   *configKey
+	privateKey    *configKey
+	multicluster  *multiclusterState
+	module        *override.MGRModuleHandle
+	settings      []*override.ConfigHandle
+	link          *GatewayLink
+	restored      bool
+	attempted     bool
 }
 
 // String names the Dashboard by its account without the password.
@@ -255,8 +260,6 @@ func (s *state) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The account must not exist before anything changes. The module is
-	// not loaded yet, so this is checked again once it is.
 	s.attempted = true
 	if facts.UsesHostNetwork {
 		if err := s.hostListeners(ctx, observer, facts.PublicAddress); err != nil {
@@ -274,10 +277,10 @@ func (s *state) start(ctx context.Context) error {
 	if err := waitCommands(ctx, s.cluster); err != nil {
 		return err
 	}
-	if err := s.installCertificate(ctx); err != nil {
+	if err := s.installCertificate(ctx, runWithInput); err != nil {
 		return err
 	}
-	if err := s.createAccount(ctx); err != nil {
+	if err := s.createAccount(ctx, runWithInput); err != nil {
 		return err
 	}
 	_, err = s.endpoint(ctx, nil)
@@ -361,9 +364,14 @@ func waitCommands(ctx context.Context, c *ceph.Container) error {
 	}
 }
 
+// inputCommand runs a native Ceph command with a secret on standard input.
+//
+//testdouble:dependency-port
+type inputCommand func(context.Context, *ceph.Container, string, []byte, ...string) error
+
 // installCertificate records the stored certificate and key and installs the
 // configured ones for every manager.
-func (s *state) installCertificate(ctx context.Context) error {
+func (s *state) installCertificate(ctx context.Context, write inputCommand) error {
 	var err error
 	if s.certificate, err = readConfigKey(ctx, s.cluster, "mgr/dashboard/crt"); err != nil {
 		return err
@@ -371,22 +379,51 @@ func (s *state) installCertificate(ctx context.Context) error {
 	if s.privateKey, err = readConfigKey(ctx, s.cluster, "mgr/dashboard/key"); err != nil {
 		return err
 	}
-	s.certificate.installed, s.privateKey.installed = s.cert, s.key
-	if err := runWithInput(ctx, s.cluster, "install dashboard certificate", s.cert, "dashboard", "set-ssl-certificate", "-i", "-"); err != nil {
-		return err
+	s.certificate.installed = s.cert
+	if err := write(ctx, s.cluster, "install dashboard certificate", s.cert, "dashboard", "set-ssl-certificate", "-i", "-"); err != nil {
+		return s.certificate.write.track(err)
 	}
-	return runWithInput(ctx, s.cluster, "install dashboard private key", s.key, "dashboard", "set-ssl-certificate-key", "-i", "-")
+	s.privateKey.installed = s.key
+	return s.privateKey.write.track(write(ctx, s.cluster, "install dashboard private key", s.key, "dashboard", "set-ssl-certificate-key", "-i", "-"))
 }
 
 // createAccount creates the owned account; an existing one is refused.
-func (s *state) createAccount(ctx context.Context) error {
+func (s *state) createAccount(ctx context.Context, write inputCommand) error {
 	if _, err := s.cluster.Ceph(ctx, "dashboard", "ac-user-show", s.username); err == nil {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "create dashboard account", Err: fmt.Errorf("dashboard account %s already exists", s.username)}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	s.accountOwned = true
-	return runWithInput(ctx, s.cluster, "create dashboard account", []byte(s.password), "dashboard", "ac-user-create", s.username, "-i", "-", s.role)
+	// Both creation and its readback can lose their reply. The display name
+	// binds cleanup to this creation attempt even then.
+	s.accountMarker = "tc-dashboard-" + rand.Text()
+	if err := write(ctx, s.cluster, "create dashboard account", []byte(s.password), "dashboard", "ac-user-create", s.username, "-i", "-", s.role, s.accountMarker); err != nil {
+		return s.accountCreate.track(err)
+	}
+	return s.checkAccount(ctx)
+}
+
+// A pendingMutation holds the specific command that could still change a
+// resource after its caller returned. Restore settles it before reading the
+// resource or issuing another write.
+type pendingMutation struct {
+	command *ceph.NativeCommandUnstoppedError
+}
+
+func (p *pendingMutation) track(err error) error {
+	errors.As(err, &p.command)
+	return err
+}
+
+func (p *pendingMutation) settle(ctx context.Context) error {
+	if p.command == nil {
+		return nil
+	}
+	if err := p.command.Stop(ctx); err != nil {
+		return err
+	}
+	p.command = nil
+	return nil
 }
 
 // runWithInput runs a ceph CLI command in the control container with input as
@@ -410,7 +447,8 @@ func runWithInput(ctx context.Context, c *ceph.Container, label string, input []
 	return nil
 }
 
-// Credentials returns the owned account's name and password for the SUT.
+// Credentials returns the owned account's login name and password for the SUT.
+// Keep its display name unchanged. Restore uses it as the ownership marker.
 //
 //purpose:handoff
 func (d *Dashboard) Credentials() (username, password string) {
@@ -429,7 +467,9 @@ func (d *Dashboard) Credentials() (username, password string) {
 // of each connection before it sends a password or the session token, and
 // sends nothing more after a mismatch. A standby answers with a redirect to
 // the active manager, which the check refuses, so the call waits, within the
-// cluster's startup timeout, until a failover settles.
+// cluster's startup timeout, until a failover settles. That timeout starts
+// after admission. The initial state check can wait behind AddGateway or
+// Restore even after the caller's context expires.
 //
 // The URL is the one the MGR map advertises: in bridge mode the active
 // manager's address on the cluster network, in host mode the cluster's
@@ -547,7 +587,8 @@ func sameActive(ctx context.Context, observer *ceph.Observer, listener activeLis
 // manager's Dashboard. It runs the readiness check of Endpoint first, then
 // connects from the calling process to the returned URL and requires the
 // listener to present the installed certificate; that connection sends no
-// request.
+// request. As with Endpoint, the initial state check waits for admission
+// before starting the probe timeout and can outlast the caller's deadline.
 //
 // In bridge mode the URL is the Docker host and the host port that Docker
 // mapped to the advertised port of the active manager's container, so the
@@ -703,12 +744,18 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // owned account wrote it, restores the module's enabled state and the
 // listener options.
 //
-// It touches only what Start changed. It refuses, and leaves as it is, a
-// certificate or key that was changed after Start and a listener option or
-// module state that the override handles find changed; it then continues with
-// the other steps and returns the joined errors, and a later Restore retries
-// what failed. When it disables the module it returns once the MGR map no
-// longer advertises the dashboard service. A deleted account is not an
+// For an interrupted account, TLS or gateway API key write, Restore confirms
+// the command has stopped before using the resource's state to complete that step. It
+// verifies the account's display name against the ownership marker set at
+// creation. Keep the display name unchanged. If it differs, Restore
+// preserves the account and returns ceph.ErrInvalidRequest.
+// An outside change to a certificate, key, listener option or
+// module state that would be overwritten is refused. External account
+// changes must not race the native read and delete commands.
+// Restore still attempts the listener options. It keeps the module enabled
+// until the preceding steps succeed, retains the fixture slot on error, and
+// retries unfinished steps on the next call. When it disables the module it
+// waits for the MGR map to withdraw the service. A deleted account is not an
 // error. The module's own records, such as its access database and
 // session-token signing key, stay. Restore is idempotent.
 //
@@ -738,11 +785,11 @@ func (s *state) restore(ctx context.Context) error {
 	}
 	// The dashboard commands need the module, so they run before the module
 	// is restored.
-	if s.accountOwned {
+	if s.accountMarker != "" {
 		if err := s.deleteAccount(ctx); err != nil {
 			errs = append(errs, err)
 		} else {
-			s.accountOwned = false
+			s.accountMarker = ""
 		}
 	}
 	if s.multicluster != nil {
@@ -843,7 +890,35 @@ func waitServiceWithdrawn(ctx context.Context, c *ceph.Container) error {
 	}
 }
 
+// checkAccount verifies the creation marker in the native account. The
+// full account record contains a password hash and must stay out of errors.
+func (s *state) checkAccount(ctx context.Context) error {
+	data, err := s.cluster.Ceph(ctx, "dashboard", "ac-user-show", s.username)
+	if err != nil {
+		return err
+	}
+	var account struct {
+		Username string `json:"username"`
+		Name     string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &account); err != nil {
+		return errors.New("decode dashboard account")
+	}
+	if account.Username != s.username || s.accountMarker == "" || account.Name != s.accountMarker {
+		return servicehook.Invalid(fmt.Errorf("dashboard account %s does not carry its creation marker", s.username))
+	}
+	return nil
+}
+
 func (s *state) deleteAccount(ctx context.Context) error {
+	if err := s.accountCreate.settle(ctx); err != nil {
+		return err
+	}
+	if err := s.checkAccount(ctx); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	if _, err := s.cluster.Ceph(ctx, "dashboard", "ac-user-delete", s.username); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("delete dashboard account %s: %w", s.username, err)
 	}
@@ -858,6 +933,7 @@ type configKey struct {
 	previous []byte
 	// installed is the value Start wrote, nil before it tried.
 	installed []byte
+	write     pendingMutation
 }
 
 func readConfigKey(ctx context.Context, c *ceph.Container, name string) (*configKey, error) {
@@ -877,20 +953,30 @@ func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
 	if k.installed == nil {
 		return nil
 	}
+	if err := k.write.settle(ctx); err != nil {
+		return err
+	}
 	current, err := c.Ceph(ctx, "config-key", "get", k.name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
+		if !k.existed {
+			return nil
+		}
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("removed outside the dashboard fixture; refusing restoration")}
 	case err != nil:
 		return fmt.Errorf("read %s: %w", k.name, err)
 	}
-	if !bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(k.installed)) {
+	current = bytes.TrimSpace(current)
+	if k.existed && bytes.Equal(current, bytes.TrimSpace(k.previous)) {
+		return nil
+	}
+	if !bytes.Equal(current, bytes.TrimSpace(k.installed)) {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("changed outside the dashboard fixture; refusing restoration")}
 	}
 	if !k.existed {
 		_, err = c.Ceph(ctx, "config-key", "rm", k.name)
 	} else {
-		err = runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-")
+		err = k.write.track(runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-"))
 	}
 	if err != nil {
 		return fmt.Errorf("restore %s: %w", k.name, err)

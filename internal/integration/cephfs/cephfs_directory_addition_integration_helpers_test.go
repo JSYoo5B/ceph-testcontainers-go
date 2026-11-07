@@ -150,9 +150,8 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		t.Fatal("preexisting foreign path changed after refusal", err)
 	}
 
-	// Registration requires an existing filesystem directory. Preparing only the
-	// source inode creates no data, snapshot or mirror policy; the native array
-	// must still prove this path absent before the typed intent is registered.
+	// Prepare the source inode for the later checkpoint. Creating it leaves
+	// the path absent from the native mirror policy.
 	harness.MultiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "prepare", added, "prepare-added-directory")
 	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign}); err != nil {
 		t.Fatal("prepared source directory changed absent native registration", err)

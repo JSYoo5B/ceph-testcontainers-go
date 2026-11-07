@@ -17,3 +17,7 @@ func TestRegionalZoneFailedSetup(t *testing.T) {
 func TestRegionalZoneRouteOwnership(t *testing.T) {
 	testRegionalZoneRouteOwnership(t)
 }
+
+func TestRegionalZonePoolAndVolumeMonitor(t *testing.T) {
+	testRegionalZonePoolAndVolumeMonitor(t)
+}

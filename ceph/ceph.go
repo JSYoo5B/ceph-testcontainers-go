@@ -118,10 +118,13 @@ type Container struct {
 // Stop/Start can be used for failure injection; OSDContainer.Remove drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
-	ID          int
-	owner       *Container
-	nativeUUID  string
-	placement   OSDConfig
+	ID         int
+	owner      *Container
+	nativeUUID string
+	placement  OSDConfig
+	// removing is set after removal admission, before fencing or draining.
+	// A failed attempt keeps membership changes and detach blocked for retry.
+	removing    bool
 	purged      bool
 	purgeIssued bool
 	// detaching marks an OSD that OSDContainer.Detach fenced; detachRemoved marks
@@ -467,7 +470,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		return mon, nil
 	}
 	create := func(ctx context.Context, ports []int) (testcontainers.Container, error) {
-		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.quorumMember("mon.a"), c.startup.ownedLabel())...)
+		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.startup.ownedLabel())...)
 	}
 	return c.startMonitorRetryingPorts(ctx, monitorPortStart{
 		host: c.settings.hostNetwork,
@@ -535,7 +538,7 @@ func (c *Container) firstMonitorOptions(fsid string, ports []int, opts []testcon
 	if ports != nil {
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 	}
-	return moduleOpts
+	return append(moduleOpts, c.quorumMember("mon.a"))
 }
 
 // monitorEnvironment returns the mon.sh variables of the first MON:
@@ -564,6 +567,9 @@ func (o options) monitorJoinEnvironment(name string) map[string]string {
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
+// WithZoneConfig requires Container.WithZone after this option. Omitting it
+// fails enrollment after start with ErrInvalidRequest. Keep and terminate
+// the live container returned alongside the error.
 //
 // It copies the bootstrap /etc/ceph/ceph.conf and
 // /etc/ceph/ceph.client.admin.keyring into the container and joins it to the
@@ -884,6 +890,10 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := c.osdFleet().checkOSDRemovable(ctx, osd); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	osd.removing = true
 	if osd.Container != nil {
 		if err := c.native.fence(ctx, osd.GetContainerID()); err != nil {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)
@@ -921,8 +931,8 @@ func (f osdFleet) retireOSD(ctx context.Context, osd *OSDContainer) error {
 
 // checkOSDRemovable verifies, before removeOSD fences or changes anything,
 // that osd is the registered native OSD this handle created and that another
-// owned OSD remains. A purge that may have committed with a lost response is
-// settled here by a fresh, strict absence. The caller holds c.mu.
+// owned OSD retains its container and remains outside removal or detach. A purge
+// whose response was lost is settled here by a fresh, strict absence. The caller holds c.mu.
 func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
 	id := osd.ID
 	if osd.purged {
@@ -940,24 +950,20 @@ func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) erro
 		// The previous purge may have committed despite a lost response.
 		// A fresh, strict absence can settle only this handle's own request.
 		osd.purged = true
-	} else {
-		if _, err := f.osdHandles.ownedState(dump, id); err != nil {
-			return err
+		return nil
+	}
+	if _, err := f.osdHandles.ownedState(dump, id); err != nil {
+		return err
+	}
+	for otherID, other := range f.osdHandles.each() {
+		if otherID == id || !other.runningCapable() {
+			continue
 		}
-		remaining := 0
-		for otherID, other := range f.osdHandles.each() {
-			if other == nil || other.purged {
-				continue
-			}
-			if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {
-				remaining++
-			}
-		}
-		if remaining <= 1 {
-			return errors.New("cannot remove the last OSD; terminate the cluster instead")
+		if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {
+			return nil
 		}
 	}
-	return nil
+	return errors.New("cannot remove the last OSD; terminate the cluster instead")
 }
 
 // drainAndPurgeOSD takes osd out of the data placement, waits for the drain,
@@ -1158,7 +1164,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	_ = c.native.stopAll(ctx)
 	// The routes live in the daemons' namespaces and the routers on the
 	// bridges: release the boundary while both still exist.
-	errs = append(errs, c.boundary.close(ctx)...)
+	boundaryErrs, retainedAgents := c.boundary.close(ctx)
+	errs = append(errs, boundaryErrs...)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)
@@ -1185,7 +1192,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		c.toolkit.unlock()
 	}
 
-	scanErr := c.startup.removeLabeledContainers(ctx)
+	scanErr := c.startup.removeLabeledContainers(ctx, retainedAgents)
 	errs = append(errs, scanErr)
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.

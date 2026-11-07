@@ -116,6 +116,15 @@ func TestImmutableObjectCache(t *testing.T) {
 	if second, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: "/var/cache/other"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
 		t.Fatalf("a second daemon on the same socket: %v", err)
 	}
+	// The first daemon has cached no objects. A different socket still shares
+	// the same cache directory and must be refused before the second launch.
+	second, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{
+		ID: id, Path: lease.Config().Path, Socket: "/run/ceph/tc-second-cache.sock",
+	})
+	restoreImmutableObjectCacheAtCleanup(t, second)
+	if second != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("different socket on a live cache directory: %v, %v", second, err)
+	}
 	status, err := lease.Status(ctx)
 	if err != nil || !status.Running || status.CachedObjects != 0 || status.RADOSReads != 0 {
 		t.Fatalf("status before a read: %+v, %v", status, err)
@@ -152,8 +161,15 @@ func TestImmutableObjectCache(t *testing.T) {
 
 	// A cache directory that existed, empty, before the lease: Restore of a
 	// running daemon stops it and keeps the directory, now empty again.
-	const existing, existingSocket = "/var/cache/tc-ioc-existing", "/run/tc-ioc-existing/cache.sock"
+	// Keep the socket on a separate mount so the lease must support the
+	// rename operations on both its socket and cache filesystems.
+	const existing, existingSocket = "/var/cache/tc-ioc-existing", "/dev/shm/tc-ioc-existing/cache.sock"
 	harness.ExecCommand(t, ctx, client, "mkdir", existing)
+	cacheDevice := harness.ExecOutput(t, ctx, client, "stat", "-c", "%d", existing)
+	socketDevice := harness.ExecOutput(t, ctx, client, "stat", "-c", "%d", "/dev/shm")
+	if cacheDevice == socketDevice {
+		t.Fatalf("cache directory and socket share device %s", cacheDevice)
+	}
 	kept, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: existing, Socket: existingSocket})
 	restoreImmutableObjectCacheAtCleanup(t, kept)
 	if err != nil {
@@ -209,8 +225,10 @@ type cacheDaemonIdentity struct {
 // cacheSocketHolders prints "<pid> <stat>" for each process that has the
 // listening Unix socket bound to $0 open: /proc/net/unix gives the socket's
 // inode (flags 00010000 mark a listening socket) and /proc/<pid>/fd the
-// processes that hold it.
-const cacheSocketHolders = `inode=$(awk -v path="$0" '$NF == path && $4 == "00010000" { print $7 }' /proc/net/unix)
+// processes that hold it. The client path and the daemon's bound path are
+// hard links to the same filesystem inode.
+const cacheSocketHolders = `inode=$(awk '$4 == "00010000" && NF >= 8 { print $7, $8 }' /proc/net/unix |
+    while read -r ino bound; do if test "$bound" -ef "$0"; then echo "$ino"; fi; done)
 test -n "$inode" || exit 0
 for fd in /proc/[0-9]*/fd/*; do
     test "$(readlink "$fd" 2>/dev/null)" = "socket:[$inode]" && echo "${fd%/fd/*}"

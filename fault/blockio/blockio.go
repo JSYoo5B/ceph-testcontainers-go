@@ -1,6 +1,10 @@
 // Package blockio prepares disposable device-mapper storage for one BlueStore
 // OSD and injects bounded main-device delay or EIO. The main device also carries
 // BlueFS traffic. Restoring its table does not restart or recover the OSD.
+//
+// Run, AttachOSD, Apply, Restore, Status and Terminate each give their work
+// a two-minute deadline, including waiting for the backend lock where needed.
+// An earlier caller deadline takes precedence.
 package blockio
 
 import (
@@ -261,6 +265,8 @@ func (b *Container) GetContainerID() string {
 
 // AttachOSD creates and starts one OSD on this backend. It accepts only a ready
 // linear backend and allows one attachment attempt, including partial startup.
+// The two-minute operation deadline also covers OSD startup. Increasing the
+// cluster startup timeout cannot extend that deadline.
 // The cluster restores its registered block fault before stopping daemons;
 // this separately owned keeper stays until the caller terminates the backend.
 //

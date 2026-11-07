@@ -63,6 +63,76 @@ func TestCephFSDirectoryAdditionRetainsAppliedReplyLossAndStatusIsReadOnly(t *te
 	}
 }
 
+func TestDirectoryAdditionNativeRefusalSettlesAgainstOriginalPolicy(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		m, s, _ := newDirectoryAdditionFixture(t)
+		s.addExitCode, s.applyAdd = 22, applied
+		r, err := beginDirectoryAdditionFixture(t, m, "/refused")
+		if err == nil || s.adds != 1 {
+			t.Fatalf("native add: receipt %v, err %v", r, err)
+		}
+		if applied {
+			if r == nil || m.ops.directoryAddition != r || m.ops.guardDirectoryAdditionOverlap() == nil {
+				t.Fatal("present policy lost pending intent")
+			}
+			same, err := beginDirectoryAdditionFixture(t, m, "/refused")
+			if same != r || err != nil || !r.registered || s.adds != 1 {
+				t.Fatalf("present policy retry: %v", err)
+			}
+			continue
+		}
+		if r != nil || m.ops.directoryAddition != nil || m.ops.guardDirectoryAdditionOverlap() != nil {
+			t.Fatal("absent refused policy blocked the fixture")
+		}
+		s.addExitCode, s.applyAdd = 0, true
+		next, err := beginDirectoryAdditionFixture(t, m, "/valid")
+		if err != nil || !next.registered || s.adds != 2 {
+			t.Fatalf("next addition: %v", err)
+		}
+	}
+}
+
+func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(map[bool]string{false: "refused", true: "uncertain-then-refused"}[retry], func(t *testing.T) {
+			m, s, _, a, b := newDirectoryRemovalFixture()
+			m.ops.peerGeneration = 1
+			removal, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.stats, b.stats = "{}", "{}"
+			if status, err := removal.Status(t.Context()); err != nil || !status.Released {
+				t.Fatalf("complete removal: %+v, %v", status, err)
+			}
+			previous, err := beginDirectoryAdditionFixture(t, m, "/other")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			s.applyAdd = false
+			if retry {
+				s.addError = errPeerRemovalTransport
+				pending, err := beginDirectoryAdditionFixture(t, m, "/owned")
+				if pending == nil || !errors.Is(err, errPeerRemovalTransport) {
+					t.Fatalf("missing uncertain receipt: %v", err)
+				}
+				s.addError = nil
+			}
+			s.addExitCode = 22
+			if r, err := beginDirectoryAdditionFixture(t, m, "/owned"); r != nil || err == nil {
+				t.Fatalf("refused native add returned receipt %v, error %v", r, err)
+			}
+			if status, err := previous.Status(t.Context()); err != nil || !status.Registered || !status.PolicyPresent {
+				t.Fatalf("previous completed addition: %+v, %v", status, err)
+			}
+			if status, err := removal.Status(t.Context()); err != nil || !status.Released {
+				t.Fatalf("previous terminal removal: %+v, %v", status, err)
+			}
+		})
+	}
+}
+
 func TestCephFSDirectoryAdditionRetriesOnlyUncertainAbsentRequest(t *testing.T) {
 	for _, acknowledged := range []bool{false, true} {
 		t.Run(map[bool]string{false: "uncertain", true: "acknowledged"}[acknowledged], func(t *testing.T) {

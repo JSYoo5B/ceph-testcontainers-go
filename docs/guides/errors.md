@@ -24,7 +24,7 @@ error.
 
 | Category | Meaning | Examples |
 | --- | --- | --- |
-| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
+| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, a resource that was replaced outside the fixture |
 | `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on an essential image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
@@ -47,9 +47,10 @@ follow changes of earlier steps: `dashboard.Start` installs the certificate
 and key before it refuses an existing account of the same name, and returns
 a partial handle with that error. So the category alone does not establish
 that nothing changed, and an image or environment error during a later step
-is not a promise to roll back the entire fixture either. Always preserve and
-restore a non-nil partial handle returned with an error, whatever its
-category.
+is not a promise to roll back the entire fixture either. Keep a non-nil partial handle and follow the
+operation's recovery contract. A Dashboard handle supports `Restore`. For an
+unconfirmed CephFS subvolume snapshot, pass the names from the descriptor
+to `subvolume.SnapshotInfo` to inspect the current native metadata.
 Once a native command has been sent, a lost reply leaves its effect unknown:
 the command may have run, as when Docker answers the final inspection of an
 exec after the command finished. Such a failure keeps Docker's error, and is

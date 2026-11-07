@@ -31,8 +31,10 @@ const (
 
 // CaptureWithFile registers a capture with explicit consent to copy its raw,
 // unsanitized packet payloads and endpoint identifiers into the failure archive.
-// Use Capture for metadata alone. maxBytes must be positive and at most 64 MiB;
-// at most 16 files and 64 MiB together are admitted per finalization. There is no
+// Use Capture for metadata alone. Registration requires a positive maxBytes of
+// at most 64 MiB. All registered captures settle. When archiving, only the first
+// 16 file registrations are eligible, in order, and published copies share a
+// 64 MiB budget. Registration reserves no space. There is no
 // implicit truncation. Settlement, copying, archive retention and later upload
 // are separate outcomes. A passing run settles without opening the source.
 // Local filesystem calls may finish after a deadline (for example on a stalled
@@ -156,6 +158,7 @@ func copyCaptureFile(ctx context.Context, directory string, source CaptureFileSo
 	}
 	defer func() { _ = temp.Close(); _ = os.Remove(temp.Name()) }()
 	hash := sha256.New()
+	var writtenBytes int64
 	buffer := make([]byte, 32<<10)
 	limited := io.LimitReader(reader, size+1)
 	for {
@@ -165,12 +168,12 @@ func copyCaptureFile(ctx context.Context, directory string, source CaptureFileSo
 		}
 		n, readErr := limited.Read(buffer)
 		if n > 0 {
-			if result.Bytes+int64(n) > size {
+			if writtenBytes+int64(n) > size {
 				result.Error = "capture source size changed"
 				return
 			}
 			written, writeErr := io.MultiWriter(temp, hash).Write(buffer[:n])
-			result.Bytes += int64(written)
+			writtenBytes += int64(written)
 			if writeErr != nil {
 				result.Error = "capture destination write failed"
 				return
@@ -188,8 +191,8 @@ func copyCaptureFile(ctx context.Context, directory string, source CaptureFileSo
 			return
 		}
 	}
-	result.SHA256 = fmt.Sprintf("%x", hash.Sum(nil))
-	if result.Bytes != size || result.SHA256 != result.ExpectedSHA256 {
+	copiedDigest := fmt.Sprintf("%x", hash.Sum(nil))
+	if writtenBytes != size || copiedDigest != result.ExpectedSHA256 {
 		result.Error = "capture source size or digest changed"
 		return
 	}
@@ -211,6 +214,6 @@ func copyCaptureFile(ctx context.Context, directory string, source CaptureFileSo
 		result.Error = "capture destination publish failed"
 		return
 	}
-	result.Copied = true
+	result.Bytes, result.SHA256, result.Copied = writtenBytes, copiedDigest, true
 	return
 }

@@ -123,7 +123,7 @@ func newRetainedFixture(t *testing.T) *retainedFixture {
 		state := lifecycle.native[3]
 		state.Up = f.runErr == nil
 		lifecycle.native[3] = state
-		return &retainedCandidate{osdLifecycleDaemon{control: lifecycle}}, f.runErr
+		return &retainedCandidate{osdLifecycleDaemon{id: 3, control: lifecycle}}, f.runErr
 	}
 	return f
 }
@@ -137,6 +137,27 @@ func (f *retainedFixture) helperWrites() [][]string {
 		}
 	}
 	return writes
+}
+
+func TestDetachRefusesAdmittedRemovalAfterOSDOut(t *testing.T) {
+	f := newRetainedFixture(t)
+	osd := osdHandle(t, t.Context(), f.cluster, 3)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.control.afterAction = func(action string) {
+		if action == "osd out 3" {
+			cancel()
+		}
+	}
+	if err := osd.Remove(ctx); !errors.Is(err, context.Canceled) || f.control.native[3].In {
+		t.Fatalf("interrupted removal returned %v, OSD %+v", err, f.control.native[3])
+	}
+	if detached, err := osd.Detach(t.Context()); detached != nil || !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("detach after admitted removal returned %v, %v", detached, err)
+	}
+	if f.daemon.stops != 0 || f.daemon.terminations != 0 || len(f.helper.commands) != 0 || osd.detaching {
+		t.Fatal("detach changed the container or retained store after removal began")
+	}
 }
 
 func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {

@@ -626,9 +626,8 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 // and restart its gateway afterwards. This does not promote a zone or restart
 // a gateway automatically.
 //
-// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
-// other topology operations, and a terminated fixture refuses it with
-// ceph.ErrInvalidRequest.
+// It waits for other topology operations within ctx. Calling it on a
+// terminated fixture returns ceph.ErrInvalidRequest.
 //
 //purpose:condition
 func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
@@ -640,9 +639,8 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 // and reflected zonegroups. Use it to recover a fenced destination after a
 // planned failback; promotion and gateway restart remain caller decisions.
 //
-// Like AddZone and RemoveZone, it waits, bounded by ctx, for the fixture's
-// other topology operations, and a terminated fixture refuses it with
-// ceph.ErrInvalidRequest.
+// It waits for other topology operations within ctx. Calling it on a
+// terminated fixture returns ceph.ErrInvalidRequest.
 //
 //purpose:condition
 func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {

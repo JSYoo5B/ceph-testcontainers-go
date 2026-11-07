@@ -155,6 +155,27 @@ func TestDirectoryWatchBaselineIsBufferedBeforeItReturns(t *testing.T) {
 	}
 }
 
+func TestDirectoryWatchEndsWhenRebalanceRegistersItsPathAgain(t *testing.T) {
+	m, _, _, _, _ := newDirectoryRemovalFixture()
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	w, err := m.WatchDirectory(ctx, ceph.WatchConfig{Interval: 100 * time.Millisecond}, "/owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Stop() })
+	if baseline := nextDirectoryEvent(t, w); baseline.Kind != ceph.WatchBaseline {
+		t.Fatal(baseline)
+	}
+	if err := m.RebalanceDirectories(ctx); err != nil {
+		t.Fatal(err)
+	}
+	awaitDirectoryWatchDone(t, w)
+	if err := w.Stop(); !errors.Is(err, errCephFSObservationGuard) || !strings.Contains(err.Error(), "registered again") {
+		t.Fatalf("re-registered path: %v", err)
+	}
+}
+
 func TestDirectoryWatchUnchangedStateProducesNoEvent(t *testing.T) {
 	f := newDirectoryWatchFixture()
 	f.change(func(f *directoryWatchFixture) {

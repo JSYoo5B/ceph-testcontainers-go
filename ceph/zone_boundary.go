@@ -73,12 +73,13 @@ type zoneRouter struct {
 // it is a member of its zone only once complete: after its agent, its own
 // routes and the other members' routes to it are all in place.
 type zoneMemberState struct {
-	endpoint  zoneEndpoint
-	startedAt string
-	ifaces    map[NetworkPlane]string
-	agent     testcontainers.Container
-	routes    map[netip.Addr]zoneRouteRecord
-	complete  bool
+	clusterOwned bool // The member carried this cluster's owner label at enrollment.
+	endpoint     zoneEndpoint
+	startedAt    string
+	ifaces       map[NetworkPlane]string
+	agent        testcontainers.Container
+	routes       map[netip.Addr]zoneRouteRecord
+	complete     bool
 }
 
 // enrolledFor reports whether m is a complete enrollment of the start at
@@ -262,6 +263,23 @@ type zoneInspection struct {
 	labels          map[string]string
 }
 
+// trackMember records the inspected container's identity before creating its
+// route agent. The immutable owner label determines which member namespaces
+// can survive the cluster's owner-label sweep.
+func (info zoneInspection) trackMember(id, owner string, addrs map[NetworkPlane]netip.Addr) *zoneMemberState {
+	name := info.labels[zoneMemberLabel]
+	if name == "" {
+		name = info.name
+	}
+	return &zoneMemberState{
+		endpoint:     zoneEndpoint{id: id, name: name, zone: info.labels[zoneLabel], addrs: addrs},
+		startedAt:    info.startedAt,
+		clusterOwned: owner != "" && info.labels[clusterOwnerLabel] == owner,
+		ifaces:       make(map[NetworkPlane]string),
+		routes:       make(map[netip.Addr]zoneRouteRecord),
+	}
+}
+
 // enroll makes a started container a member of the zone its labels name: a
 // route agent in its network namespace, a route to every member of another
 // zone through its own zone's router, and in every other member a route to
@@ -294,10 +312,6 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 	if len(addrs) == 0 {
 		return invalidRequest("zone member %s has no IPv4 address on the cluster's bridges", info.name)
 	}
-	name := info.labels[zoneMemberLabel]
-	if name == "" {
-		name = info.name
-	}
 	member := b.enrolled[id]
 	switch {
 	case member.enrolledFor(info.startedAt):
@@ -316,10 +330,10 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 		if err := b.dropStaleMembers(ctx, id, addrs); err != nil {
 			return err
 		}
-		member = &zoneMemberState{endpoint: zoneEndpoint{id: id, name: name, zone: zone, addrs: addrs}, startedAt: info.startedAt,
-			ifaces: map[NetworkPlane]string{}, routes: map[netip.Addr]zoneRouteRecord{}}
+		member = info.trackMember(id, b.owner, addrs)
 		b.enrolled[id] = member
 	}
+	name := member.endpoint.name
 	if member.agent == nil {
 		agent, err := runContainer(ctx, b.settings.helperImage,
 			WithIdleEntrypoint(),
@@ -403,6 +417,9 @@ func (b *zoneBoundary) dropStaleMembers(ctx context.Context, joining string, add
 			continue
 		}
 		current, info, err := b.inspectEndpoint(ctx, id)
+		if !onlyMissingHostResource(err) {
+			return err
+		}
 		if err == nil && info.running && info.startedAt == member.startedAt && maps.Equal(current, member.endpoint.addrs) {
 			return fmt.Errorf("zone member %s still has an address of the joining container", member.endpoint.name)
 		}
@@ -711,16 +728,16 @@ func (b *zoneBoundary) admittedLocked(ctx context.Context, id string) (bool, err
 // that no container or network with the boundary's label is left. A route of
 // the caller stays. Network shaping on the routers is restored before, by the
 // fault registry. A failed step keeps what it could not release for a retried
-// Terminate.
-func (b *zoneBoundary) close(ctx context.Context) []error {
+// Terminate. The returned IDs exempt those agents from the owner-label sweep.
+func (b *zoneBoundary) close(ctx context.Context) ([]error, map[string]bool) {
 	if b == nil {
-		return nil
+		return nil, nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.closed = true
 	if b.docker == nil {
-		return nil // Released by an earlier Terminate.
+		return nil, nil // Released by an earlier Terminate.
 	}
 	var errs []error
 	for _, id := range slices.Sorted(maps.Keys(b.enrolled)) {
@@ -730,6 +747,10 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 			continue
 		}
 		_, info, inspectErr := b.inspectEndpoint(ctx, id)
+		if !onlyMissingHostResource(inspectErr) {
+			errs = append(errs, inspectErr)
+			continue
+		}
 		live := inspectErr == nil && info.running && info.startedAt == member.startedAt
 		if live && len(member.routes) > 0 {
 			var ops []zoneRouteOp
@@ -773,16 +794,24 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 		}
 	}
 	if len(errs) > 0 {
-		return errs
+		// A caller-owned namespace can outlive the cluster. Keep its agent
+		// available to finish route cleanup on the next Terminate.
+		retained := make(map[string]bool, len(b.enrolled))
+		for _, member := range b.enrolled {
+			if !member.clusterOwned && member.agent != nil {
+				retained[member.agent.GetContainerID()] = true
+			}
+		}
+		return errs, retained
 	}
 	if err := b.checkReleasedLocked(ctx); err != nil {
-		return []error{err}
+		return []error{err}, nil
 	}
 	if err := b.docker.Close(); err != nil {
-		return []error{fmt.Errorf("close the zone boundary's Docker client: %w", err)}
+		return []error{fmt.Errorf("close the zone boundary's Docker client: %w", err)}, nil
 	}
 	b.docker = nil
-	return nil
+	return nil, nil
 }
 
 // checkReleasedLocked fails when a container or a network with the

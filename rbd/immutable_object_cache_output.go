@@ -116,12 +116,12 @@ func (f immutableObjectCacheFields) parseCount(key, value string, bits int) (uin
 // immutableObjectCacheInspection is the inspect operation's report of the
 // client container. path is none, empty, full or other.
 type immutableObjectCacheInspection struct {
-	binary, plugin, socket bool
-	path                   string
+	binary, plugin, socket, flock, rename, invalidSocketParent bool
+	path, identity, claim                                      string
 }
 
 func inspectImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (immutableObjectCacheInspection, error) {
-	out, err := immutableObjectCacheOp(ctx, client, "inspect", config.Path, config.Socket)
+	out, err := immutableObjectCacheOp(ctx, client, "sh", "inspect", config.Path, config.Socket)
 	if err != nil {
 		return immutableObjectCacheInspection{}, err
 	}
@@ -130,7 +130,7 @@ func inspectImmutableObjectCache(ctx context.Context, client testcontainers.Cont
 
 func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immutableObjectCacheInspection, error) {
 	var state immutableObjectCacheInspection
-	f, err := out.fields("binary", "plugin", "socket", "path")
+	f, err := out.fields("binary", "plugin", "socket", "path", "identity", "claim", "flock", "rename")
 	if err != nil {
 		return state, err
 	}
@@ -140,10 +140,30 @@ func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immuta
 	if state.plugin, err = f.flag("plugin"); err != nil {
 		return state, err
 	}
-	if state.socket, err = f.flag("socket"); err != nil {
+	socket, err := f.oneOf("socket", "0", "1", "invalid-parent")
+	if err != nil {
 		return state, err
 	}
-	state.path, err = f.oneOf("path", "none", "empty", "full", "other")
+	state.socket, state.invalidSocketParent = socket == "1", socket == "invalid-parent"
+	if state.flock, err = f.flag("flock"); err != nil {
+		return state, err
+	}
+	if state.rename, err = f.flag("rename"); err != nil {
+		return state, err
+	}
+	state.claim, err = f.required("claim")
+	if err != nil {
+		return state, err
+	}
+	const prefix = "/tmp/tc-ioc-path-"
+	digest, ok := strings.CutPrefix(state.claim, prefix)
+	if !ok || len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
+		return state, f.errorf("claim", "expected a cache claim digest")
+	}
+	state.path, err = f.oneOf("path", "none", "empty", "full", "other", "claimed", "invalid-parent")
+	if err == nil && state.path == "empty" {
+		state.identity, err = f.required("identity")
+	}
 	return state, err
 }
 
@@ -151,26 +171,37 @@ func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immuta
 // daemonizing parent's exit status, the PID file's PID (0 when it is empty)
 // and whether that process opened the socket.
 type immutableObjectCacheStart struct {
-	exit  int
-	pid   int
-	ready bool
+	exit     int
+	pid      int
+	ready    bool
+	conflict bool
+	replied  bool
 }
 
-func (l *ImmutableObjectCacheLease) start(ctx context.Context) (immutableObjectCacheStart, error) {
+func (l *ImmutableObjectCacheLease) start(ctx context.Context, state immutableObjectCacheInspection) (immutableObjectCacheStart, error) {
 	c := l.config
-	out, err := immutableObjectCacheOp(ctx, l.client, "start", c.ID, c.Path, c.Socket,
-		strconv.FormatInt(c.MaxSize, 10), l.adminSocket, l.pidFile)
+	out, err := immutableObjectCacheOp(ctx, l.client, l.owner, "start", c.ID, c.Path, c.Socket,
+		strconv.FormatInt(c.MaxSize, 10), l.adminSocket, l.pidFile, state.path, state.identity, state.claim)
 	if err != nil {
 		return immutableObjectCacheStart{}, err
 	}
-	return parseImmutableObjectCacheStart(out)
+	started, err := parseImmutableObjectCacheStart(out)
+	started.replied = true
+	return started, err
 }
 
 func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableObjectCacheStart, error) {
 	var started immutableObjectCacheStart
-	f, err := out.fields("exit", "pid", "ready")
+	f, err := out.fields("exit", "pid", "ready", "conflict")
 	if err != nil {
 		return started, err
+	}
+	if _, ok := f.values["conflict"]; ok {
+		if len(f.values) != 1 || f.values["conflict"] != "1" {
+			return started, f.errorf("conflict", "expected a lone conflict=1 before daemon launch")
+		}
+		started.conflict = true
+		return started, nil
 	}
 	exit, err := f.count("exit", 8)
 	if err != nil {

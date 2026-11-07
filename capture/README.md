@@ -73,6 +73,9 @@ if report.End != capture.EndStopped || report.File.Status != capture.FileValid {
   structurally valid file does not show that the intended traffic was captured,
   that nothing was dropped, or that any message is valid. A capture that ended
   at `MaxPackets` is not an error, but later traffic is missing.
+- Start creates the output file exclusively after helper readiness. If another
+  writer claims the name first, Start leaves that file in place. A failed
+  start can return a session for retrying probe or helper cleanup with `Stop`.
 - The caller owns the session and its output file: no cluster `Terminate`
   stops it. A pcap holds payloads and identifiers that redaction does not
   sanitize; keep it only where the test deliberately retains it.

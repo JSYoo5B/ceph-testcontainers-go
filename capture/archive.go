@@ -41,7 +41,7 @@ func (s *Session) CaptureFile(ctx context.Context) (io.ReadCloser, int64, string
 	// Lstat plus SameFile refuses symlinks and replacements between inspection
 	// and open. The archive independently checks size and digest on this handle.
 	before, err := os.Lstat(s.request.Output)
-	if err != nil || !before.Mode().IsRegular() {
+	if err != nil || !before.Mode().IsRegular() || !os.SameFile(before, s.outputInfo) {
 		return nil, 0, "", errors.New("capture source is not an accessible regular file")
 	}
 	file, err := os.Open(s.request.Output)

@@ -68,7 +68,8 @@ func (w *ImageWatch) Events() <-chan ImageWatchEvent {
 // has returned and Events is closed, and returns the cause that ended the
 // watch: nil when Stop ended it, the context's error when the WatchImage
 // context ended, a ceph.ErrWatchOverflow error, or the read error that ended
-// it (a terminated mirror or cluster, or a replaced image or policy). Buffered
+// it (including disabled source mirroring, a terminated mirror or cluster, or
+// a replaced image or policy). Buffered
 // events stay readable after Stop. Stop is safe to call more than once and
 // from any goroutine; every call returns the same cause. Call it before the
 // mirror's cleanup: cancelling the context alone does not wait.
@@ -108,7 +109,8 @@ func (w *ImageWatch) Stop() error {
 // WatchResumed. These end the watch instead: ctx ending, Stop, a terminated
 // mirror or cluster (ceph.ErrInvalidRequest), a full buffer
 // (ceph.ErrWatchOverflow), a source or destination image replaced under the
-// same name, a destination whose mirroring is disabled after enrollment, a
+// same name, disabled source mirroring, destination mirroring disabled after
+// enrollment, a
 // changed pool or policy identity, and a malformed native report. Those
 // errors carry no native output.
 //
