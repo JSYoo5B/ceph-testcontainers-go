@@ -45,6 +45,9 @@ clients you need. The cluster's client role (`Images.Client`) has the `ceph`,
 
 ```golang
 facts, err := ceph.FactsOf(cluster)
+if err != nil {
+	t.Fatal(err)
+}
 client, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
@@ -92,8 +95,8 @@ so they are terminated first (see [Contexts, ownership and cleanup](contexts-and
 
 Other bridge-mode endpoints:
 
-- `FactsOf(cluster).NetworkName` returns the bridge name, for containers you attach
-  yourself.
+- The `NetworkName` field of the facts that `ceph.FactsOf(cluster)` returns
+  is the bridge name, for containers you attach yourself.
 - `rgw.Gateway.S3Endpoint(ctx)` returns a mapped host port for host S3 clients.
   `DaemonEndpoint(ctx)` returns the gateway's address on the cluster network
   for clients inside it.
