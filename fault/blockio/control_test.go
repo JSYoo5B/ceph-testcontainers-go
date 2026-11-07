@@ -54,6 +54,35 @@ func newControlFixture(t *testing.T) (*Container, *controlReceipts) {
 	return b, m
 }
 
+// Inspect the deadline handed to the first keeper command without waiting for
+// an OSD or a real timeout.
+func TestAttachOSDOperationDeadline(t *testing.T) {
+	for _, callerBound := range []time.Duration{10 * time.Minute, 10 * time.Second} {
+		t.Run(callerBound.String(), func(t *testing.T) {
+			b, _ := newControlFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), callerBound)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			start := time.Now()
+			var deadline time.Time
+			b.nativeCommand = func(ctx context.Context, _ ...string) ([]byte, error) {
+				deadline, _ = ctx.Deadline()
+				return nil, errors.New("stop after observing the deadline")
+			}
+			if _, err := b.AttachOSD(ctx, &ceph.Container{}); err == nil {
+				t.Fatal("AttachOSD accepted a failed backend observation")
+			}
+			if callerBound < 2*time.Minute {
+				if !deadline.Equal(parentDeadline) {
+					t.Fatalf("operation deadline %v, caller deadline %v", deadline, parentDeadline)
+				}
+			} else if deadline.Before(start.Add(2*time.Minute)) || deadline.After(time.Now().Add(2*time.Minute)) {
+				t.Fatalf("operation deadline %v outside the two-minute bound", deadline)
+			}
+		})
+	}
+}
+
 func (m *controlReceipts) command(ctx context.Context, args ...string) ([]byte, error) {
 	m.t.Helper()
 	if err := ctx.Err(); err != nil {
