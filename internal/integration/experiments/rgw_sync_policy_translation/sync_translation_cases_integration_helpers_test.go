@@ -75,22 +75,23 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 			}
 			harness.S3FeatureRequest(t, ctx, c, http.MethodPut, path, payload, headers, http.StatusOK)
 		}
-		payload := bytes.Repeat([]byte("translated cross-bucket OR tags and priority\n"), 2048)
+		payload := func(path string) []byte { return bytes.Repeat([]byte("translated "+path+"\n"), 2048) }
 		for _, object := range []struct{ path, color string }{{input + "/published/blue", "blue"}, {input + "/published/red", "red"}, {input + "/published/green", "green"}, {input + "/published/untagged", ""}, {input + "/private/blue", "blue"}, {other + "/published/from-other-bucket", "blue"}} {
-			putTagged(a, object.path, object.color, payload)
+			putTagged(a, object.path, object.color, payload(object.path))
 		}
 		if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 			t.Fatal(err)
 		}
-		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/blue", http.StatusOK, payload)
-		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/red", http.StatusOK, payload)
+		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/blue", http.StatusOK, payload(input+"/published/blue"))
+		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/red", http.StatusOK, payload(input+"/published/red"))
 		harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, high.ID)
 		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/blue", "STANDARD_IA")
 		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/red", "STANDARD_IA")
-		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated priority STANDARD_IA", payload)
+		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated blue STANDARD_IA", payload(input+"/published/blue"))
+		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated red STANDARD_IA", payload(input+"/published/red"))
 		// Object ownership changed to the destination bucket's ordinary owner.
 		destA.Request(t, ctx, http.MethodGet, output+"/published/blue", nil, http.StatusForbidden)
-		putTagged(destB, output+"/published/reverse", "blue", payload)
+		putTagged(destB, output+"/published/reverse", "blue", payload(output+"/published/reverse"))
 		harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destB, Path: output + "/published/green"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/untagged"}, harness.RGWAbsentObject{Client: destB, Path: output + "/private/blue"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/from-other-bucket"}, harness.RGWAbsentObject{Client: b, Path: output + "/published/reverse"})
 		// Remove only the high-priority pipe. The matching lower-priority pipe
 		// now selects STANDARD for a new write and preserves previous IA objects.
@@ -104,8 +105,12 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 		harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, low.ID)
 		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/fallback", "STANDARD")
 		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-standard", "translated fallback STANDARD", fallback)
-		if got := destB.Request(t, ctx, http.MethodGet, output+"/published/blue", nil, http.StatusOK); !bytes.Equal(got, payload) {
-			t.Fatal("priority removal changed previous replica")
+		for _, color := range []string{"blue", "red"} {
+			path := "/published/" + color
+			if got := destB.Request(t, ctx, http.MethodGet, output+path, nil, http.StatusOK); !bytes.Equal(got, payload(input+path)) {
+				t.Fatalf("priority removal changed the %s replica", color)
+			}
+			harness.AssertRGWSyncClass(t, ctx, destB, output, "published/"+color, "STANDARD_IA")
 		}
 		if err := selected.Remove(ctx); err != nil {
 			t.Fatal(err)
