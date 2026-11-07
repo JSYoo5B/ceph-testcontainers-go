@@ -359,6 +359,7 @@ func TestCacheReservationProbesBothFilesystems(t *testing.T) {
 				{22, 4},
 				{95, 4},
 				{5, 5},
+				{137, 6},
 				{0, 4},
 			} {
 				t.Run(role+"/"+attempt+"/"+strconv.Itoa(fault.result), func(t *testing.T) {
@@ -373,7 +374,19 @@ func TestCacheReservationProbesBothFilesystems(t *testing.T) {
 					f.program(t, "mv", `if test "$2" = "$FAIL_SEED"; then exit 1; fi
 exec /bin/mv "$@"`)
 					f.program(t, "python3", `if test "$PWD" = "$FAIL_SEED" && test "${3:-}" = probe.from; then
-    if test "$ATTEMPT" = first || test -L probe.to; then exit "$FAULT"; fi
+    if test "$ATTEMPT" = first || test -L probe.to; then
+        if test "$FAULT" = 137; then
+            exec /usr/bin/python3 -c 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'
+        fi
+        # Inject at the ctypes call, so the production helper emits the result.
+        exec /usr/bin/python3 -c 'import ctypes, os, sys
+def rename(*args):
+    fault = int(os.environ["FAULT"])
+    ctypes.set_errno(fault)
+    return -1 if fault else 0
+ctypes.CDLL.renameat2 = rename
+exec(sys.argv.pop(1))' "$2" "$3" "$4" "${5:-}"
+    fi
 fi
 exec /usr/bin/python3 "$@"`)
 					dirs := []string{control}

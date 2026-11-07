@@ -606,25 +606,22 @@ func TestImmutableObjectCacheMalformedStatusKeepsTheLease(t *testing.T) {
 func TestImmutableObjectCacheReportsProbeFailureBeforeLaunch(t *testing.T) {
 	for _, mount := range []struct{ suffix, parent string }{{".lease", "/socket-fs"}, {".stage", "/cache-fs"}} {
 		for _, probe := range []struct {
-			exit        int
-			detail      string
-			unsupported bool
+			exit               int
+			detail, diagnostic string
+			unsupported        bool
 		}{
-			{4, "22", true},
-			{4, "0", true},
-			{5, "5", false},
+			{4, "22", "Linux errno 22", true},
+			{4, "0", "no-replace semantics violated", true},
+			{5, "5", "Linux errno 5", false},
+			{6, "137", "helper returned no valid syscall result (exit status 137)", false},
 		} {
 			t.Run(mount.suffix+"/"+probe.detail, func(t *testing.T) {
 				c := newFakeCacheClient()
 				c.failedReservation, c.probeExit, c.probeDetail = mount.suffix, probe.exit, probe.detail
 				cfg := ImmutableObjectCache{Path: "/cache-fs/data", Socket: "/socket-fs/cache.sock"}
 				lease, err := StartImmutableObjectCache(t.Context(), c, cfg)
-				diagnostic := "Linux errno " + probe.detail
-				if probe.detail == "0" {
-					diagnostic = "no-replace semantics violated"
-				}
 				if lease != nil || err == nil || errors.Is(err, ceph.ErrEnvironmentUnavailable) != probe.unsupported ||
-					!strings.Contains(err.Error(), mount.parent) || !strings.Contains(err.Error(), diagnostic) || len(c.daemons) != 0 {
+					!strings.Contains(err.Error(), mount.parent) || !strings.Contains(err.Error(), probe.diagnostic) || len(c.daemons) != 0 {
 					t.Fatalf("reservation probe: lease=%v err=%v launched=%d", lease, err, len(c.daemons))
 				}
 			})

@@ -194,11 +194,19 @@ lib = ctypes.CDLL(None, use_errno=True)
 rename = getattr(lib, "renameat2", None)
 if rename is None: sys.exit(38)
 rc = rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 1)
-sys.exit(ctypes.get_errno() if rc else 0)' "$1" "$2"
+result = ctypes.get_errno() if rc else 0
+if sys.argv[3] == "probe":
+    print("errno=%d" % result)
+else:
+    sys.exit(result)' "$1" "$2" "${3:-}"
 }
 probe_rename() {
-    rename_noreplace probe.from probe.to
-    result=$?
+    reply=$(rename_noreplace probe.from probe.to probe)
+    status=$?
+    case "$reply" in
+        errno=[0-9]|errno=[0-9][0-9]|errno=[0-9][0-9][0-9]) result=${reply#errno=} ;;
+        *) echo "$status"; exit 6 ;; # No valid syscall result from the helper.
+    esac
     test "$result" = "$1" && return 0
     echo "$result"
     case "$result" in
@@ -674,7 +682,8 @@ esac
 // parent_cache plugin and python3 with access to libc's renameat2 syscall. A missing prerequisite is ceph.ErrImageCapability.
 // Startup probes both reservation filesystems. A filesystem that cannot perform an
 // atomic no-replace rename returns ceph.ErrEnvironmentUnavailable. Other
-// rename failures report the affected directory and the Linux errno.
+// rename failures report the affected directory and the Linux errno. A helper
+// that exits without reporting a syscall result is identified by its exit status.
 // An existing socket, a non-empty cache directory or an invalid path is
 // refused with ceph.ErrInvalidRequest. Contention for the cache path or the
 // public socket during startup also returns ceph.ErrInvalidRequest; if rollback
@@ -769,7 +778,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 			} else {
 				lease.reservations = append(lease.reservations, directory)
 				lease.uncertainReservation = directory
-				if report.ExitCode == 4 || report.ExitCode == 5 {
+				if report.ExitCode == 4 || report.ExitCode == 5 || report.ExitCode == 6 {
 					failure = cacheRenameProbeError(directory, report)
 				}
 			}
@@ -842,12 +851,15 @@ func (l *ImmutableObjectCacheLease) rollbackStart(ctx context.Context, cause err
 // The client reports Linux errno values even when the Go caller runs elsewhere.
 // Zero denotes a completed syscall that violated the no-replace postconditions.
 func cacheRenameProbeError(directory string, report supervised.ShellReport) error {
-	errno, err := strconv.ParseUint(strings.TrimSpace(string(report.Stdout)), 10, 8)
+	value, err := strconv.ParseUint(strings.TrimSpace(string(report.Stdout)), 10, 8)
 	if err != nil {
-		return fmt.Errorf("probe RENAME_NOREPLACE at %s: invalid errno report", path.Dir(directory))
+		return fmt.Errorf("probe RENAME_NOREPLACE at %s: invalid probe report", path.Dir(directory))
 	}
-	cause := fmt.Errorf("probe RENAME_NOREPLACE at %s: Linux errno %d", path.Dir(directory), errno)
-	if errno == 0 {
+	if report.ExitCode == 6 {
+		return fmt.Errorf("probe RENAME_NOREPLACE at %s: helper returned no valid syscall result (exit status %d)", path.Dir(directory), value)
+	}
+	cause := fmt.Errorf("probe RENAME_NOREPLACE at %s: Linux errno %d", path.Dir(directory), value)
+	if value == 0 {
 		cause = fmt.Errorf("probe RENAME_NOREPLACE at %s: no-replace semantics violated", path.Dir(directory))
 	}
 	if report.ExitCode == 4 {
