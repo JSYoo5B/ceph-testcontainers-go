@@ -71,12 +71,14 @@ for {
   so a topic deleted and recreated with the same name, owner and queue between
   two calls, or between the reads of one call, is not detected. Account-owned
   topics are not selected by a tenant; use `Gateway.Admin` for them.
-- Outcomes stay distinct, and none is an empty queue: an invalid selection or
-  sample is `ceph.ErrInvalidRequest` before any command; a missing topic
-  matches `fs.ErrNotExist` and a refused read `fs.ErrPermission`; a topic
-  without a persistent queue is `notification.ErrNotPersistent`; a cluster
-  before Ceph 19 is `ceph.ErrUnsupported`; an unexpected native reply is an
-  unclassified error.
+- Invalid selection or sample arguments match `ceph.ErrInvalidRequest` before
+  any command runs. If the topic read shows that the topic has no persistent
+  queue, the error matches both `notification.ErrNotPersistent` and
+  `ceph.ErrInvalidRequest` via `errors.Is`.
+- A missing topic matches `fs.ErrNotExist` and a refused read matches
+  `fs.ErrPermission`. A cluster before Ceph 19 matches `ceph.ErrUnsupported`.
+  An unexpected native reply produces an unclassified error. Check the error
+  before interpreting zero entries as an empty queue.
 - Bounds: at most `MaxSampleEntries` entries. `topic dump` writes the whole
   queue (its `--max-entries` only sizes its pages), so `Queue` keeps the first
   `MaxBytes` bytes of the reply (default `DefaultSampleBytes`), discards the
