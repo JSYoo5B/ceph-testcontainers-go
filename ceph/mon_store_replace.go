@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -29,7 +30,8 @@ import (
 // removed container and is stale, also for MON a, whose embedded container of
 // Container is then gone and whose fixture commands use the control container.
 //
-// When the old container is gone and the new one fails, the error comes with
+// If removal of the old container is unconfirmed, retry on this handle or
+// terminate the cluster. When the old container is gone and the new one fails, the error comes with
 // the new handle if a container exists: the store and its volume stay owned,
 // nothing is formatted, and Replace on that handle or Terminate continues.
 // A creation whose reply was lost is never replayed; only Terminate settles it.
@@ -84,22 +86,8 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	}
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
-	oldID := cur.GetContainerID()
 	id, err := store.ReplaceGeneration(ctx, gens, image)
-	if store.Attachment != nil && store.Attachment.ID == oldID && !store.Attachment.RemoveRequested {
-		// Refused before the old container was touched: nothing changed.
-		return nil, err
-	}
-	// The old container is gone. Its handle is stale from here on.
-	if name == "a" && cur.Container == t.first {
-		t.markFirstMonitorTerminated()
-	}
-	next := &MonitorContainer{DaemonName: name, owner: c, image: image, Container: gens.created[id]}
-	if next.Container == nil {
-		c.members.roster.dropMonitor(name)
-		return nil, errors.Join(err, fmt.Errorf("monitor %s has no container after its replacement; Terminate settles the store", name))
-	}
-	c.members.roster.addMonitor(name, next)
+	next, err := t.recordMonitorReplacement(cur, store.Attachment, gens.created[id], image, err)
 	if err != nil {
 		return next, err
 	}
@@ -110,6 +98,28 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 		return next, fmt.Errorf("monitor %s did not rejoin the quorum: %w", name, err)
 	}
 	return next, t.refreshMonitorConfig(ctx)
+}
+
+// recordMonitorReplacement updates the roster from the store's attachment
+// after a replacement attempt. The caller holds the topology lock.
+func (t monitorTopology) recordMonitorReplacement(cur *MonitorContainer, attachment *monstore.Attachment, created testcontainers.Container, image string, err error) (*MonitorContainer, error) {
+	name := cur.DaemonName
+	if attachment != nil && attachment.ID == cur.GetContainerID() {
+		if attachment.RemoveRequested {
+			return nil, fmt.Errorf("monitor %s removal is unconfirmed; retry Replace on the original handle: %w", name, err)
+		}
+		return nil, err
+	}
+	if name == "a" && cur.Container == t.first {
+		t.markFirstMonitorTerminated()
+	}
+	if created == nil {
+		t.roster.dropMonitor(name)
+		return nil, errors.Join(err, fmt.Errorf("monitor %s has no container after its replacement; Terminate settles the store", name))
+	}
+	next := &MonitorContainer{DaemonName: name, owner: t.owner, image: image, Container: created}
+	t.roster.addMonitor(name, next)
+	return next, err
 }
 
 // monitorReplacementQuorum refuses a replacement that would leave fewer than a
