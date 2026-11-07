@@ -80,8 +80,9 @@ the image by digest when the result is evidence.
 - The leader, election epoch and each OSD's session (MON and `global_id`) are
   read before the window; with `debug_mon 10` and `debug_monc 10` set, each
   OSD writes two cluster log entries (`scrub_purged_snaps`).
-- Positive control: the entries reach the cluster log, and the
-  leader-connected OSD is acknowledged. Otherwise the oracle is invalid and
+- The test commits a unique marker to the cluster log before triggering the
+  scrubs. Each OSD's scrub completion must appear after that marker in the
+  same log tail, and the leader-connected OSD must be acknowledged. Otherwise the oracle is invalid and
   the test fails as such.
 - The window is rejected if the leader, the election epoch or any session
   changed, or if an OSD's MonClient log shows a reset, reopen or hunt, even
