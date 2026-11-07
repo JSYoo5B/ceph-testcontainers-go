@@ -31,11 +31,11 @@ import (
 
 // archivedLogLine is one line of a verification-<n>-<name>-logs.jsonl file.
 type archivedLogLine struct {
-	Source    string `json:"source"`
-	Stream    string `json:"stream"`
-	Time      string `json:"time"`
-	Text      string `json:"text"`
-	Truncated bool   `json:"truncated"`
+	Source    string    `json:"source"`
+	Stream    string    `json:"stream"`
+	Time      time.Time `json:"time"`
+	Text      string    `json:"text"`
+	Truncated bool      `json:"truncated"`
 }
 
 var (
@@ -162,7 +162,7 @@ func TestVerificationLogArchive(t *testing.T) {
 	}
 	down, boot := first("mon.a", archivedMonDown), first("mon.a", archivedMonBoot)
 	marked, wrong := first("osd.0", archivedOSDMarked), first("osd.0", archivedOSDWrong)
-	if !(down.Time < boot.Time && marked.Time <= wrong.Time) {
+	if !archivedIntervalOrdered(down.Time, boot.Time, marked.Time, wrong.Time) {
 		t.Fatalf("archived interval out of order: %+v %+v %+v %+v", down, boot, marked, wrong)
 	}
 
@@ -177,7 +177,7 @@ func TestVerificationLogArchive(t *testing.T) {
 		t.Fatal("the archive has no osd.0 log tail")
 	}
 	t.Logf("diagnostics osd.0 tail: %d bytes, truncated %v; archived window: %d osd.0 lines", len(collected.Artifacts[tail].Data), collected.Artifacts[tail].Truncated, perSource["osd.0"])
-	if archivedOSDWrong.MatchString(collected.Artifacts[tail].Data) {
+	if !osdTailPastInterval(collected.Artifacts[tail], archivedOSDWrong) {
 		t.Fatal("the debug output did not move osd.0's log tail past the interval")
 	}
 }
@@ -199,9 +199,9 @@ func verificationWaitTailPast(t *testing.T, ctx context.Context, cluster *ceph.C
 			continue
 		}
 		tail := slices.IndexFunc(report.Artifacts, func(a diagnostics.Artifact) bool {
-			return a.Kind == "container-logs" && a.Role == "osd" && a.Name == "0" && a.Error == ""
+			return a.Kind == "container-logs" && a.Role == "osd" && a.Name == "0"
 		})
-		if tail >= 0 && !pattern.MatchString(report.Artifacts[tail].Data) {
+		if tail >= 0 && osdTailPastInterval(report.Artifacts[tail], pattern) {
 			return
 		}
 	}

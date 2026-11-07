@@ -242,6 +242,18 @@ func TestEvaluateGate(t *testing.T) {
 			t.Errorf("%s: stale %v, fixture error %q", name, slots, receipt.FixtureError)
 		}
 	}
+	for name, mut := range map[string]func(*GateReceipt){
+		"unavailable MGR":            func(r *GateReceipt) { r.Map.Available = false },
+		"absent active registration": func(r *GateReceipt) { r.Map.Active = Registration{} },
+		"missing tell":               func(r *GateReceipt) { r.Control = nil },
+		"tell of the standby":        func(r *GateReceipt) { r.Control.Target = "mgr.a" },
+	} {
+		r := gateCase(t)
+		mut(&r)
+		if got := EvaluateGate(r, owned); got.Complete || got.FixtureError == "" {
+			t.Errorf("%s accepted as product evidence: %+v", name, got)
+		}
+	}
 	refused := gateCase(t)
 	refused.Control.ExitCode = 13
 	if receipt := EvaluateGate(refused, owned); receipt.FixtureError == "" || !strings.Contains(receipt.FixtureError, "tell version") {

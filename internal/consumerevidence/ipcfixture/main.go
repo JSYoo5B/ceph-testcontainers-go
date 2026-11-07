@@ -53,11 +53,12 @@ type reply struct {
 // ready describes the started fixture to the driver, which checks its
 // cleanup independently.
 type ready struct {
-	FSID       string   `json:"fsid"`
-	Monitors   []string `json:"monitors"`
-	Managers   []string `json:"managers"`
-	Containers []string `json:"containers"`
-	Network    string   `json:"network"`
+	DaemonContainers map[string]string `json:"daemon_containers"`
+	FSID             string            `json:"fsid"`
+	Monitors         []string          `json:"monitors"`
+	Managers         []string          `json:"managers"`
+	Containers       []string          `json:"containers"`
+	Network          string            `json:"network"`
 }
 
 const (
@@ -157,12 +158,15 @@ func waitReady(ctx context.Context, cluster *ceph.Container) (ready, error) {
 	if err != nil {
 		return ready{}, err
 	}
+	started.DaemonContainers = make(map[string]string)
 	started.Containers = []string{cluster.GetContainerID(), control.GetContainerID()}
 	for _, monitor := range monitors {
+		started.DaemonContainers["mon."+monitor.DaemonName] = monitor.GetContainerID()
 		started.Monitors = append(started.Monitors, monitor.DaemonName)
 		started.Containers = append(started.Containers, monitor.GetContainerID())
 	}
 	for _, manager := range managers {
+		started.DaemonContainers["mgr."+manager.DaemonName] = manager.GetContainerID()
 		started.Managers = append(started.Managers, manager.DaemonName)
 		started.Containers = append(started.Containers, manager.GetContainerID())
 	}

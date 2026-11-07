@@ -161,7 +161,8 @@ func readRefusals(ctx context.Context, monitors []*ceph.MonitorContainer, bounds
 // failure is never excused by an unrelated refusal line. A failed native
 // control means that native authentication of a new client failed too. Either
 // is a fixture error, not evidence about the SUT. An incomplete read leaves
-// the receipt incomplete, never clean.
+// the receipt incomplete, never clean. A complete gate requires an available
+// active MGR and a native control targeting that registration.
 func EvaluateGate(receipt GateReceipt, owned []string) GateReceipt {
 	receipt.Complete = len(owned) > 0 && receipt.Map.Query.Complete() && len(receipt.Monitors) > 0 &&
 		!slices.ContainsFunc(receipt.Monitors, func(m MonitorSessions) bool { return !m.Query.Complete() }) &&
@@ -197,7 +198,17 @@ func EvaluateGate(receipt GateReceipt, owned []string) GateReceipt {
 		}
 		receipt.Daemons = append(receipt.Daemons, daemon)
 	}
-	if control := receipt.Control; control != nil && (control.ExitCode != 0 || !control.Complete) {
+	switch control := receipt.Control; {
+	case !receipt.Map.Available || receipt.Map.Active.Name == "" || receipt.Map.Active.GID == 0:
+		receipt.Complete = false
+		problems = append(problems, "no available active MGR")
+	case control == nil:
+		receipt.Complete = false
+		problems = append(problems, "missing native control for the active MGR")
+	case control.Target != "mgr."+receipt.Map.Active.Name || control.Command != "tell version":
+		receipt.Complete = false
+		problems = append(problems, "native control did not target the active MGR")
+	case control.ExitCode != 0 || !control.Complete:
 		problems = append(problems, fmt.Sprintf("native %s %s (exit %d, complete %t)", control.Command, control.Target, control.ExitCode, control.Complete))
 	}
 	if len(problems) > 0 {
@@ -229,7 +240,7 @@ func CheckGate(ctx context.Context, cluster *ceph.Container, label string, bound
 	var queries []Query
 	receipt.Refusals, queries = readRefusals(ctx, monitors, bounds)
 	receipt.Queries = append(receipt.Queries, queries...)
-	if receipt.Map.Query.Complete() && receipt.Map.Active.Name != "" {
+	if receipt.Map.Query.Complete() && receipt.Map.Available && receipt.Map.Active.Name != "" {
 		control, query, _, stopErr := tellVersion(ctx, cluster, "mgr."+receipt.Map.Active.Name, bounds.Control, 4<<10)
 		receipt.Control = &control
 		receipt.Queries = append(receipt.Queries, query)
