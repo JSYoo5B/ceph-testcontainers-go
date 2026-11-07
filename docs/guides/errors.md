@@ -24,7 +24,7 @@ error.
 
 | Category | Meaning | Examples |
 | --- | --- | --- |
-| `ceph.ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
+| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
 | `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on an essential image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
@@ -34,13 +34,18 @@ The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match
 several.
 
-`ErrInvalidRequest` is a validation refusal before any change. Documented
-feature preflights, such as `WithAuth` key-type validation and `rbdmirror.Run`
-namespace mapping checks, also refuse unsupported features before changes.
-Extension capability checks run before the fault is applied. These guarantees
-belong to the documented operation or preflight; an image or environment
-error during a later step is not a promise to roll back the entire fixture.
-Always preserve a non-nil partial handle returned with an error.
+`ErrInvalidRequest` names the reason for a refusal, not when it happened. A
+refusal by argument validation or by a documented preflight comes before any
+change: `WithAuth` key-type validation and `rbdmirror.Run` namespace mapping
+checks refuse unsupported features before changes, and extension capability
+checks run before the fault is applied. A refusal found in a later step can
+follow changes of earlier steps: `dashboard.Start` installs the certificate
+and key before it refuses an existing account of the same name, and returns
+a partial handle with that error. So the category alone does not establish
+that nothing changed, and an image or environment error during a later step
+is not a promise to roll back the entire fixture either. Always preserve and
+restore a non-nil partial handle returned with an error, whatever its
+category.
 Once a native command has been sent, a lost reply leaves its effect unknown:
 the command may have run, as when Docker answers the final inspection of an
 exec after the command finished. Such a failure keeps Docker's error, and is
