@@ -54,9 +54,11 @@ category for a container that disappeared or stopped; neither says that the
 command did not run.
 
 The narrower errors of the module belong to a category:
-`ceph.ErrHostNetworkUnavailable`, `fault.ErrNetemPermissionDenied` and
-`fault.ErrNetemKernelUnsupported` to `ErrEnvironmentUnavailable`, and
-`fault.ErrNetemImageUnsupported` to `ErrImageCapability`. Both forms match:
+`ceph.ErrHostNetworkUnavailable`, `fault.ErrNetemPermissionDenied`,
+`fault.ErrNetemKernelUnsupported` and `capture.ErrPermissionDenied` to
+`ErrEnvironmentUnavailable`, `fault.ErrNetemImageUnsupported` and
+`capture.ErrImageUnsupported` to `ErrImageCapability`, and
+`capture.ErrFailed` to `ErrNativeFailure`. Both forms match:
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithHostNetwork())
@@ -186,16 +188,17 @@ ships. When a module command finds that a program is missing from the image,
 Docker cannot start it, and the error is `ErrImageCapability` with the
 program in `Capability`.
 
-Optional extensions, such as the netem helper of `ApplyNetworkProfile`,
-are selected explicitly and checked before anything changes. Their errors
-separate the four cases that matter:
+Optional extensions, such as the netem helper of `ApplyNetworkProfile` and
+the packet-capture helper of `capture.Start`, are selected explicitly and
+checked before anything changes. Their errors separate the four cases that
+matter:
 
 | Case | Category | Narrower error |
 | --- | --- | --- |
-| The extension is not selected (`NetworkProfile.HelperImage` is empty) | `ErrImageCapability` | |
-| The selected image does not meet the extension's contract | `ErrImageCapability` | `ErrNetemImageUnsupported` |
-| The tools work, but the engine denies a permission or the kernel lacks a module | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied`, `ErrNetemKernelUnsupported` |
-| The extension's native command ran and failed | `ErrNativeFailure` | `*NativeFailure` of `tc` |
+| The extension is not selected (`NetworkProfile.HelperImage` or `capture.Request.HelperImage` is empty) | `ErrImageCapability` | |
+| The selected image does not meet the extension's contract | `ErrImageCapability` | `fault.ErrNetemImageUnsupported`, `capture.ErrImageUnsupported` |
+| The tools work, but the engine denies a permission or the kernel lacks a module | `ErrEnvironmentUnavailable` | `fault.ErrNetemPermissionDenied`, `fault.ErrNetemKernelUnsupported`, `capture.ErrPermissionDenied` |
+| The extension's native command ran and failed | `ErrNativeFailure` | `*NativeFailure` of `tc`, `capture.ErrFailed` |
 
 Nothing installs a missing tool or falls back to another mechanism.
 
@@ -215,6 +218,12 @@ Some errors keep their own contracts and match no category:
   `ceph.ErrInvalidRequest` and leaves the input open. A write ended by its
   context keeps the context error; some bytes may already have been sent.
   See [Standard input](native-commands.md#standard-input).
+- `dashboard.ErrGatewayRefused` and `dashboard.ErrGatewayUnreachable`: the
+  Dashboard answered, and the gateway it links refused its RGW identity or
+  could not be reached. They describe the gateway's answer, not a failure of
+  the Dashboard.
+- `notification.ErrNotPersistent`: the selected topic exists but has no
+  persistent queue to observe.
 - Failed checks of the fixture's own, such as native output that it could
   not parse, or a readback that differs from the requested change.
 - A failure whose outcome is unknown, such as a container that disappeared
