@@ -115,17 +115,20 @@ multisite.WithConfig(multisite.Config{
 })
 ```
 
-The same `Timing` field is available in `TopologyConfig`. It applies one-second
-metadata/data sync polling arguments to the owned gateways, including later
-zones. Default fixtures keep native timing. The command-line values take
+The same `Timing` field is available in `TopologyConfig`. It sets
+`rgw_meta_sync_poll_interval` and `rgw_data_sync_poll_interval` to one second,
+instead of the twenty-second caught-up default, as arguments of the owned
+gateways, including later zones. Native notifications can wake these loops
+earlier, so the saving per operation is not fixed. Default fixtures keep native timing. The command-line values take
 precedence over central and local configuration; the gateway lifetime owns the
 condition, so termination ends it without a persistent configuration override.
 A partial fixture returned with an error still needs termination.
 
 This targets already-caught-up incremental polling. Keep metadata readiness and
 client byte checks; bootstrap, new-bucket initial sync, lease ownership, failure
-backoff and fault windows are separate conditions. See
-[Fixture daemon timing](../../docs/guides/daemon-timing.md).
+backoff, retries, readiness timeouts and fault windows are separate
+conditions. See [Fixture daemon timing](../../docs/guides/daemon-timing.md)
+for what every timing profile shares.
 
 ## Concepts and limits
 

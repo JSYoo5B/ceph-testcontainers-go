@@ -21,50 +21,14 @@ customizer. A partial fixture returned with an error still needs termination.
 For mClock startup I/O and allocation policy, see
 [OSD startup calibration](osd-startup-benchmark.md).
 
-## Directory pins
+## Profile details
 
-The CephFS profile requires two or more active ranks owned by the original
-filesystem, native MDS releases 19.2.5 or 20.2.4, and an effective five-second
-`mds_tick_interval`. It sets one second on each current active MDS and verifies
-the effective readback. It uses existing `override.ConfigHandle`s: retain every
-returned handle even after an error and restore them in reverse order. Future
-scaled or replaced MDSs are outside that returned scope.
-
-An already queued tick keeps its previous deadline. The first handoff may
-therefore still take five seconds. Application and restoration have a cost;
-short pin sequences may not save time. The interval also drives other MDS
-upkeep, so restore before testing expiry, reconnection, failover or a required
-fault-overlap window. See [CephFS](../../cephfs/README.md#directory-pin-timing).
-
-## Incremental multisite sync
-
-Use the RGW profile on qualified 20.2.4 gateways when the fixture needs repeated
-incremental metadata or data catch-up. It sets `rgw_meta_sync_poll_interval` and
-`rgw_data_sync_poll_interval` to one second. The default caught-up polling
-interval is twenty seconds. Native notifications can wake these loops earlier;
-the profile does not guarantee a fixed saving for every operation.
-
-Bootstrap and the first object of a new bucket include work that is different
-from caught-up incremental polling. Keep the native metadata-ready barrier
-before relying on object replication. The profile does not shorten the sync
-lease period, retries, failure backoff or readiness timeouts, and it does not
-make a readiness observation prove object bytes arrived. Verify payloads using
-the client under test. See [RGW multisite](../../rgw/multisite/README.md).
-
-## Journal replay
-
-Use the RBD profile on qualified 20.2.4 journal receivers. It sets
-`rbd_mirror_journal_poll_age` to one second before replay instances start. A
-journal player captures its watch interval: changing a running daemon's central
-setting and reading it back does not prove an existing player changed its wait.
-Ending the owned daemon also ends its captured replay configuration.
-
-Snapshot replay is notification-driven and is outside this profile. Pool peer
-refresh and image state-check intervals govern discovery or retries, rather
-than every incremental write. Replay delay, snapshots on a schedule, leader
-heartbeats and reconnect/failure observations remain their original scenario
-conditions. Check actual destination bytes after readiness. See
-[RBD mirror](../../rbd/mirror/README.md).
+Each package documents its profile beside the operations it shortens: the
+qualified releases and native settings, what the profile leaves at native
+timing, how its condition ends and what a test must still check. See
+[CephFS directory-pin timing](../../cephfs/README.md#directory-pin-timing),
+[RGW incremental sync timing](../../rgw/multisite/README.md#incremental-sync-timing)
+and [RBD journal polling timing](../../rbd/mirror/README.md#journal-polling-timing).
 
 ## Delays that define the assertion
 

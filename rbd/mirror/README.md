@@ -95,18 +95,21 @@ rbdmirror.WithConfig(rbdmirror.Config{
 })
 ```
 
-This sets a one-second journal polling argument on the mirror's owned daemons
-before replay instances start. Default fixtures keep native timing. Snapshot
-mode is outside the profile. A journal player captures its wait interval; a
+This sets `rbd_mirror_journal_poll_age` to one second as an argument of the
+mirror's owned daemons before replay instances start. Default fixtures keep
+native timing. Snapshot replay is notification-driven and outside the
+profile. A journal player captures its wait interval; a
 central configuration change cannot be assumed to retime an existing player.
 The condition ends when the owned daemon terminates and does not persist in the
 cluster configuration database. A partial mirror returned with an error still
 needs termination.
 
-Initial enrollment, periodic discovery, heartbeat/failure detection and replay
+Initial enrollment, periodic discovery (pool peer refresh and image state
+checks), leader heartbeats, failure detection, scheduled snapshots and replay
 delay remain distinct. Readiness alone does not establish replication of an
 acknowledged write: compare actual destination data. See
-[Fixture daemon timing](../../docs/guides/daemon-timing.md).
+[Fixture daemon timing](../../docs/guides/daemon-timing.md) for what every
+timing profile shares.
 
 ## Concepts and limits
 
