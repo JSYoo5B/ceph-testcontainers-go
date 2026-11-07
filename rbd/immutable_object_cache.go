@@ -67,7 +67,7 @@ type ImmutableObjectCacheStatus struct {
 
 // ImmutableObjectCacheLease owns one daemon that StartImmutableObjectCache
 // started, with its socket and cache directory. It signals the process only
-// while its command line holds the lease's socket, so a reused PID is never
+// while its command line holds the lease's unique PID file, so a reused PID is never
 // stopped. To count cache use, read Status.RADOSReads: rados df read
 // counters lag behind and do not show it.
 type ImmutableObjectCacheLease struct {
@@ -82,6 +82,7 @@ type ImmutableObjectCacheLease struct {
 	pid         int
 	// createdPath means that the cache directory did not exist before.
 	createdPath bool
+	stopped     bool
 	complete    bool
 }
 
@@ -90,11 +91,15 @@ var immutableObjectCacheID = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // immutableObjectCacheScript runs one operation in the client container and
 // reports its result as key=value lines; it exits non-zero only when the
 // container cannot run it. A process is the lease's daemon only while its
-// command line holds the lease's socket, so a reused PID is never signaled.
+// command line holds the lease's PID file, so a reused PID is never signaled.
 const immutableObjectCacheScript = `set -u
 ours() {
     test -n "$1" && test -r "/proc/$1/cmdline" &&
-        tr '\0' '\n' < "/proc/$1/cmdline" | grep -qxF -- "--immutable_object_cache_sock=$2"
+        tr '\0' '\n' < "/proc/$1/cmdline" | grep -qxF -- "--pid-file=$2"
+}
+exists() { test -e "$1" || test -L "$1"; }
+same_file_or_absent() {
+    ! exists "$1" || { test ! -L "$1" && test "$1" -ef "$2"; }
 }
 op=$1
 shift
@@ -107,31 +112,68 @@ inspect)
     if test -e "$sock" || test -L "$sock"; then echo socket=1; else echo socket=0; fi
     if test -L "$path"; then echo path=other
     elif test -d "$path"; then
-        if test -z "$(ls -A "$path")"; then echo path=empty; else echo path=full; fi
+        if test -z "$(ls -A "$path")"; then
+            echo path=empty
+            printf 'identity=' && stat -c '%d:%i:%w' "$path" || exit 1
+        else echo path=full; fi
     elif test -e "$path"; then echo path=other
     else echo path=none
     fi
     ;;
 start)
     id=$1 path=$2 sock=$3 size=$4 asok=$5 pidfile=$6
-    mkdir -p "$path" "$(dirname "$sock")" "$(dirname "$asok")" "$(dirname "$pidfile")" || exit 1
+    state=$pidfile.lease marker=.${pidfile##*/}.owner
+    # Refusals before reservation have no daemon or cached files to restore.
+    if ! mkdir -p "$(dirname "$sock")" || ! mkdir -m 700 "$state"; then
+        printf 'exit=1\npid=\nready=0\nunreserved=1\n'
+        exit 0
+    fi
+    before_launch_failure() {
+        touch "$state/not-launched" && echo 1 > "$state/exit" || exit 1
+        printf 'exit=1\npid=\nready=0\n'
+        exit 0
+    }
+    if exists "$sock" || exists "$asok" || exists "$pidfile"; then before_launch_failure; fi
+    if test "$7" = none; then
+        mkdir -p "$(dirname "$path")" && mkdir "$path" || before_launch_failure
+        touch "$state/created" || exit 1
+    else
+        test ! -L "$path" && test -d "$path" && test -z "$(ls -A "$path")" &&
+            test "$(stat -c '%d:%i:%w' "$path")" = "$8" || before_launch_failure
+    fi
+    stat -c '%d:%i:%w' "$path" > "$state/owner" || before_launch_failure
     ceph-immutable-object-cache --id "$id" --immutable_object_cache_path="$path" \
         --immutable_object_cache_sock="$sock" --immutable_object_cache_max_size="$size" \
         --admin-socket="$asok" --pid-file="$pidfile" >/dev/null 2>&1
-    echo "exit=$?"
+    exitcode=$?
+    echo "exit=$exitcode"
     tries=0
     while test "$tries" -lt 150; do
         if test -S "$sock" && test -s "$pidfile"; then break; fi
         sleep 0.2
         tries=$((tries + 1))
     done
+    test ! -L "$path" && test "$(stat -c '%d:%i:%w' "$path")" = "$(cat "$state/owner")" || exit 1
+    # Older filesystems omit birth time, so an inode number can be reused.
+    # The daemon clears its cache on startup: place the marker only afterwards.
+    if test "$(stat -c '%w' "$path")" = -; then
+        mkdir "$path/$marker" && stat -c '%d:%i' "$path/$marker" > "$state/marker" || exit 1
+    fi
+    # Pin the actual files, including their inodes if the daemon unlinks
+    # them during shutdown. A later file at the same name belongs to its creator.
+    for file in "$sock" "$asok" "$pidfile"; do
+        if exists "$file"; then
+            test ! -L "$file" && ln "$file" "$state/${file##*/}.pin" || exit 1
+        fi
+    done
+    printf '%s\n' "$exitcode" > "$state/exit.tmp" && mv "$state/exit.tmp" "$state/exit" || exit 1
     echo "pid=$(cat "$pidfile" 2>/dev/null)"
-    if test -S "$sock" && ours "$(cat "$pidfile" 2>/dev/null)" "$sock"; then echo ready=1; else echo ready=0; fi
+    if test -S "$sock" && ours "$(cat "$pidfile" 2>/dev/null)" "$pidfile"; then echo ready=1; else echo ready=0; fi
     ;;
 status)
     pid=$1 sock=$2 asok=$3 path=$4 pidfile=$5
     test "$pid" -gt 0 || pid=$(cat "$pidfile" 2>/dev/null)
-    if ours "$pid" "$sock"; then
+    if ours "$pid" "$pidfile"; then
         echo running=1
         echo "perf=$(ceph --admin-daemon "$asok" perf dump objecter 2>/dev/null | tr -d '\n')"
     else
@@ -146,24 +188,78 @@ status)
     ;;
 stop)
     pid=$1 sock=$2 pidfile=$3
-    test "$pid" -gt 0 || pid=$(cat "$pidfile" 2>/dev/null)
+    # A lost Exec reply can leave start still running before its daemon
+    # writes a PID. Wait for a later retry rather than declaring it stopped.
+    state=$pidfile.lease
+    if ! test -f "$state/exit"; then echo stopped=0; exit 0; fi
+    test "$pid" -gt 0 || pid=$(cat "$state/${pidfile##*/}.pin" 2>/dev/null)
+    if test -z "$pid" && test "$(cat "$state/exit")" = 0; then
+        # After the readiness budget the daemon can still publish its PID.
+        # Stop only that process; cleanup refuses any unpinned late files.
+        pid=$(cat "$pidfile" 2>/dev/null)
+        if ! ours "$pid" "$pidfile"; then echo stopped=0; exit 0; fi
+    fi
     for signal in TERM KILL; do
-        ours "$pid" "$sock" || break
+        ours "$pid" "$pidfile" || break
         kill -s "$signal" "$pid" 2>/dev/null
         tries=0
-        while ours "$pid" "$sock" && test "$tries" -lt 50; do
+        while ours "$pid" "$pidfile" && test "$tries" -lt 50; do
             sleep 0.2
             tries=$((tries + 1))
         done
     done
-    if ours "$pid" "$sock"; then echo stopped=0; else echo stopped=1; fi
+    if ours "$pid" "$pidfile"; then echo stopped=0; else echo stopped=1; fi
     ;;
 remove)
     path=$1 sock=$2 asok=$3 pidfile=$4 created=$5
-    rm -f "$sock" "$asok" "$pidfile" || exit 1
-    if test "$created" = 1; then rm -rf "$path" || exit 1
-    elif test -d "$path"; then find "$path" -mindepth 1 -delete || exit 1
+    state=$pidfile.lease marker=.${pidfile##*/}.owner
+    # stop confirmed this receipt. Its removal is the last cleanup step,
+    # so a retry after a lost remove reply has nothing left to unlink.
+    if ! exists "$state"; then
+        for file in "$sock" "$asok" "$pidfile"; do
+            if exists "$file"; then echo removed=0; exit 0; fi
+        done
+        if test "$created" = 1; then
+            if exists "$path"; then echo removed=0; exit 0; fi
+        elif test -L "$path" || ! test -d "$path" || test -n "$(ls -A "$path")"; then
+            echo removed=0; exit 0
+        fi
+        echo removed=1; exit 0
     fi
+    if test -f "$state/not-launched"; then
+        if test -f "$state/created" && exists "$path"; then
+            test ! -L "$path" && test "$(stat -c '%d:%i:%w' "$path")" = "$(cat "$state/owner")" &&
+                rmdir "$path" || { echo removed=0; exit 0; }
+        fi
+        rm -rf "$state" || exit 1
+        echo removed=1; exit 0
+    fi
+    for file in "$sock" "$asok" "$pidfile"; do
+        same_file_or_absent "$file" "$state/${file##*/}.pin" || { echo removed=0; exit 0; }
+    done
+    if exists "$path"; then
+        test ! -L "$path" && cd -P "$path" || { echo removed=0; exit 0; }
+        test "$(stat -c '%d:%i:%w' .)" = "$(cat "$state/owner")" || { echo removed=0; exit 0; }
+        if ! test -f "$state/emptied"; then
+            if test -f "$state/marker"; then
+                test ! -L "$marker" && test -d "$marker" &&
+                    test "$(stat -c '%d:%i' "$marker")" = "$(cat "$state/marker")" || { echo removed=0; exit 0; }
+            fi
+            # Relative traversal stays in the opened directory across renames.
+            find . -mindepth 1 ! -path "./$marker" -delete || exit 1
+            touch "$state/emptied" || exit 1
+        fi
+        if test -f "$state/marker" && test -d "$marker"; then rmdir "$marker" || exit 1; fi
+        if test "$created" = 1; then
+            test . -ef "$path" && rmdir "$path" || exit 1
+        fi
+    elif ! test -f "$state/emptied"; then
+        echo removed=0; exit 0
+    fi
+    for file in "$sock" "$asok" "$pidfile"; do
+        same_file_or_absent "$file" "$state/${file##*/}.pin" && rm -f "$file" || exit 1
+    done
+    rm -rf "$state" || exit 1
     echo removed=1
     ;;
 *)
@@ -182,7 +278,9 @@ esac
 // An existing socket, a non-empty cache directory or an invalid path is
 // refused with ceph.ErrInvalidRequest, and nothing is changed. A daemon that
 // exits or never opens its socket fails the call with ceph.ErrNativeFailure,
-// and what it left is removed.
+// and startup attempts to restore the prior state. A lost start reply or a
+// failed cleanup returns a non-nil lease with the error. Keep that lease and
+// call Restore with a fresh bounded context; a cleanup error needs attention.
 //
 //purpose:construction,condition
 func StartImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error) {
@@ -214,7 +312,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		pidFile:     path.Join(path.Dir(config.Socket), "immutable-object-cache-"+token+".pid"),
 		createdPath: state.path == "none",
 	}
-	started, err := lease.start(ctx)
+	started, err := lease.start(ctx, state)
 	if err != nil {
 		// The daemon may run; the lease can still stop and remove it, and
 		// finds it by its PID file.
@@ -229,6 +327,9 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		cause = fmt.Errorf("the daemon exited with status %d", started.exit)
 	}
 	failure := &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "start the immutable object cache", Err: cause}
+	if started.unreserved {
+		return nil, failure
+	}
 	if err := lease.restore(context.WithoutCancel(ctx)); err != nil {
 		return lease, errors.Join(failure, err)
 	}
@@ -325,14 +426,14 @@ func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
 		return err
 	}
 	defer l.mu.Unlock()
-	if l.complete {
-		return nil
-	}
 	return l.stop(ctx)
 }
 
 // stop finds the daemon by its PID file when the start was not confirmed.
 func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
+	if l.stopped || l.complete {
+		return nil
+	}
 	out, err := immutableObjectCacheOp(ctx, l.client, "stop", strconv.Itoa(l.pid), l.config.Socket, l.pidFile)
 	if err != nil {
 		return fmt.Errorf("stop the immutable object cache: %w", err)
@@ -343,14 +444,17 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 	}
 	if !stopped {
 		return &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "stop the immutable object cache",
-			Err: errors.New("the daemon still runs after SIGKILL")}
+			Err: errors.New("could not confirm daemon startup has settled and the owned process has stopped")}
 	}
+	l.stopped = true
 	return nil
 }
 
 // Restore stops the daemon if it runs and removes its socket, admin socket,
 // PID file and cached objects. It removes the cache directory only when the
-// lease created it. A repeated call after success does nothing.
+// lease created it. If the reserved directory or a socket or PID file has
+// been replaced, Restore preserves the replacement and reports a conflict.
+// A repeated call after success does nothing.
 //
 //purpose:construction,lifetime
 func (l *ImmutableObjectCacheLease) Restore(ctx context.Context) error {
@@ -384,7 +488,7 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 		return err
 	}
 	if !removed {
-		return errors.New("remove the immutable object cache files: the script did not confirm the removal")
+		return errors.New("remove the immutable object cache files: the lease could not verify ownership of its reserved paths")
 	}
 	l.complete = true
 	return nil

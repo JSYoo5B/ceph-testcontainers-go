@@ -117,7 +117,7 @@ func (f immutableObjectCacheFields) parseCount(key, value string, bits int) (uin
 // client container. path is none, empty, full or other.
 type immutableObjectCacheInspection struct {
 	binary, plugin, socket bool
-	path                   string
+	path, identity         string
 }
 
 func inspectImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (immutableObjectCacheInspection, error) {
@@ -130,7 +130,7 @@ func inspectImmutableObjectCache(ctx context.Context, client testcontainers.Cont
 
 func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immutableObjectCacheInspection, error) {
 	var state immutableObjectCacheInspection
-	f, err := out.fields("binary", "plugin", "socket", "path")
+	f, err := out.fields("binary", "plugin", "socket", "path", "identity")
 	if err != nil {
 		return state, err
 	}
@@ -144,6 +144,9 @@ func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immuta
 		return state, err
 	}
 	state.path, err = f.oneOf("path", "none", "empty", "full", "other")
+	if err == nil && state.path == "empty" {
+		state.identity, err = f.required("identity")
+	}
 	return state, err
 }
 
@@ -151,15 +154,16 @@ func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immuta
 // daemonizing parent's exit status, the PID file's PID (0 when it is empty)
 // and whether that process opened the socket.
 type immutableObjectCacheStart struct {
-	exit  int
-	pid   int
-	ready bool
+	exit       int
+	pid        int
+	ready      bool
+	unreserved bool
 }
 
-func (l *ImmutableObjectCacheLease) start(ctx context.Context) (immutableObjectCacheStart, error) {
+func (l *ImmutableObjectCacheLease) start(ctx context.Context, state immutableObjectCacheInspection) (immutableObjectCacheStart, error) {
 	c := l.config
 	out, err := immutableObjectCacheOp(ctx, l.client, "start", c.ID, c.Path, c.Socket,
-		strconv.FormatInt(c.MaxSize, 10), l.adminSocket, l.pidFile)
+		strconv.FormatInt(c.MaxSize, 10), l.adminSocket, l.pidFile, state.path, state.identity)
 	if err != nil {
 		return immutableObjectCacheStart{}, err
 	}
@@ -168,7 +172,7 @@ func (l *ImmutableObjectCacheLease) start(ctx context.Context) (immutableObjectC
 
 func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableObjectCacheStart, error) {
 	var started immutableObjectCacheStart
-	f, err := out.fields("exit", "pid", "ready")
+	f, err := out.fields("exit", "pid", "ready", "unreserved")
 	if err != nil {
 		return started, err
 	}
@@ -190,6 +194,15 @@ func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableOb
 	}
 	if started.ready, err = f.flag("ready"); err != nil {
 		return started, err
+	}
+	if _, ok := f.values["unreserved"]; ok {
+		started.unreserved, err = f.flag("unreserved")
+		if err != nil {
+			return started, err
+		}
+		if started.unreserved && (started.exit == 0 || started.ready || started.pid != 0) {
+			return started, f.errorf("unreserved", "an unreserved start must report failure without a daemon")
+		}
 	}
 	if started.ready && started.pid == 0 {
 		return started, f.errorf("pid", "a ready daemon has no PID")

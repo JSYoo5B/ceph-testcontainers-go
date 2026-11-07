@@ -91,7 +91,7 @@ func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.Pro
 		case f.objects[a[0]][0] > 0:
 			out = append(out, "path=full")
 		default:
-			out = append(out, "path=empty")
+			out = append(out, "path=empty", "identity=original-dir")
 		}
 	case "start":
 		path, sock, pidfile := a[1], a[2], a[5]
