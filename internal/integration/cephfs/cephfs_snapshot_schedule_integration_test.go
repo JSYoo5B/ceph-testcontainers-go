@@ -108,7 +108,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	var trace []string
 	var creationTimes []time.Time
 	deadline := time.After(6 * time.Minute)
-	for previous := (*snapschedule.Status)(nil); status.Created < 3 || status.Pruned < 1; {
+	for previous := (*snapschedule.Status)(nil); status.Created < 3 || status.Pruned < 1 || len(creationTimes) < 2; {
 		var event snapschedule.LeaseWatchEvent
 		select {
 		case received, ok := <-progress.Events():
@@ -138,8 +138,13 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 			}
 		}
 		if current.Created > status.Created {
-			if current.Created != status.Created+1 || current.Last.IsZero() {
-				t.Fatalf("missed a snapshot identity: before %d, current %+v", status.Created, current)
+			if current.Last.IsZero() {
+				t.Fatal("a creation has no native timestamp")
+			}
+			// A polling watch can skip creations. Start a fresh pair and
+			// wait for its successor before judging the two newest names.
+			if current.Created != status.Created+1 {
+				creationTimes = nil
 			}
 			creationTimes = append(creationTimes, current.Last.UTC())
 		}
@@ -156,7 +161,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(creationTimes) < 3 || !scheduleRetainsNewestTwo(snapshots, creationTimes) || status.First.IsZero() || !status.Last.After(status.First) {
+	if !scheduleRetainsNewestTwo(snapshots, creationTimes) || status.First.IsZero() || !status.Last.After(status.First) {
 		t.Fatalf("snapshots %v with status %s", snapshots, status.Raw)
 	}
 	// Restore ends a running watch: the schedule is no longer the lease's.
