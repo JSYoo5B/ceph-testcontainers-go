@@ -924,8 +924,11 @@ availability zones behind caller-owned routers on its public and cluster
 bridges, qualifies the boundary's round trips with netem, partitions it and
 reads the data back after recovery, and records whether the engine forwards
 between two Docker bridges through a container. Its helpers and routers run
-with `NET_ADMIN` and namespaced sysctls; see
-[A routed boundary between logical zones](../guides/fault-injection.md#a-routed-boundary-between-logical-zones).
+with `NET_ADMIN` and namespaced sysctls. It is the research proof behind
+`ceph.WithZoneConfig`, not the way a test builds zones; see
+[Hand-built routers](../guides/fault-injection.md#hand-built-routers-research-example)
+for what it does and [Regional zones](../guides/regional-zones.md) for the
+public fixture.
 
 `osd_encrypted_store` (`TestEncryptedBlockDeviceOSD`,
 `TestEncryptedBlockStoreKeepsACollidingMapping`) runs one BlueStore OSD on a
