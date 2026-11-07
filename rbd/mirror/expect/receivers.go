@@ -92,7 +92,8 @@ const (
 // namespace discovery for ReceiverMismatchDiscovered, instance IDs for
 // ReceiverMismatchInstance and ReceiverMismatchForeign (Observed only), the
 // problem code for ReceiverMismatchProblem (Observed only) and daemon names
-// for ReceiverMismatchLeader.
+// for ReceiverMismatchLeader. When the named leader matches but its election
+// view conflicts with a selected receiver, Observed includes the conflicting views.
 type ReceiverMismatch struct {
 	Reason         ReceiverMismatchReason
 	Daemon         string
@@ -228,11 +229,7 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 		result.Mismatches = append(result.Mismatches, byName[name]...)
 	}
 	if e.Leader != "" {
-		leader := observed.LeaderDaemonName
-		if leader == e.Leader && !e.leaderAgreed(observed) {
-			leader = ""
-		}
-		if leader != e.Leader {
+		if leader := e.observedLeader(observed); leader != e.Leader {
 			result.Mismatches = append(result.Mismatches, ReceiverMismatch{Reason: ReceiverMismatchLeader, Want: e.Leader, Observed: leader})
 		}
 	}
@@ -250,18 +247,29 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 	return result, nil
 }
 
-func (e Receivers) leaderAgreed(observed mirror.ReceiverStatus) bool {
-	leader := observed.Daemons[e.Leader]
-	if !leader.Leader || leader.InstanceID == "" || leader.InstanceID != observed.LeaderInstanceID {
-		return false
+func (e Receivers) observedLeader(observed mirror.ReceiverStatus) string {
+	if observed.LeaderDaemonName != e.Leader {
+		return observed.LeaderDaemonName
 	}
+	leader := observed.Daemons[e.Leader]
+	var conflicts []string
 	for _, selected := range e.Select {
+		if !selected.Running {
+			continue
+		}
 		member := observed.Daemons[selected.Name]
-		if selected.Running && (member.LeaderInstanceID != leader.InstanceID || member.Leader != (selected.Name == e.Leader)) {
-			return false
+		isLeader := selected.Name == e.Leader
+		if member.Leader != isLeader || member.LeaderInstanceID != leader.InstanceID ||
+			(isLeader && (leader.InstanceID == "" || leader.InstanceID != observed.LeaderInstanceID)) {
+			conflicts = append(conflicts, fmt.Sprintf("%s reports instance=%q leader=%t leader_instance=%q",
+				selected.Name, member.InstanceID, member.Leader, member.LeaderInstanceID))
 		}
 	}
-	return true
+	if len(conflicts) == 0 {
+		return e.Leader
+	}
+	slices.Sort(conflicts)
+	return fmt.Sprintf("%s (cohort leader instance=%q, %s)", e.Leader, observed.LeaderInstanceID, strings.Join(conflicts, ", "))
 }
 
 func (e Receivers) validate() error {

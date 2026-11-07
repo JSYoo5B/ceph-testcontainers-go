@@ -82,6 +82,11 @@ func TestReceiversConflictingLeaderViewsWithStoppedMember(t *testing.T) {
 			if err != nil || got.Matched || len(got.Mismatches) != 1 || got.Mismatches[0].Reason != ReceiverMismatchLeader {
 				t.Fatalf("conflicting leader views: %+v, %v", got, err)
 			}
+			detail := got.Mismatches[0].Observed
+			if !strings.HasPrefix(detail, `a (cohort leader instance="4101"`) ||
+				!strings.Contains(detail, dissenter+" reports ") || !strings.Contains(detail, `leader_instance="4102"`) {
+				t.Fatalf("missing conflicting leader views in %q", detail)
+			}
 		})
 	}
 }
