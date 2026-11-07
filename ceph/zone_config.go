@@ -81,7 +81,7 @@ func (z ZoneConfig) WithQuorumZone(name string) ZoneConfig {
 
 // WithHelperImage selects the image of the zone routers and of the route
 // agents that join each member's network namespace with NET_ADMIN. It needs
-// sleep, sh, cat and iproute2's ip; fault.NetemHelperImage qualifies. The
+// sleep, sh, cat, wc and iproute2's ip; fault.NetemHelperImage qualifies. The
 // helper is never selected implicitly, and the daemon images stay unchanged.
 //
 //purpose:construction

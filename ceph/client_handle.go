@@ -24,6 +24,9 @@ func (client *ClientConfig) cluster(op string) (*Container, error) {
 // rejects a descriptor whose creation is incomplete, that is revoked or that
 // ReplaceKey made stale. Caller owns the attached container and must terminate
 // it before the cluster. The options customize the container's ceph.conf.
+// WithZoneConfig requires Container.WithZone after this option. Omitting it
+// fails enrollment after start with ErrInvalidRequest. Keep and terminate
+// the live container returned alongside the error.
 //
 // The container gets /etc/ceph/ceph.conf, with the current MON addresses and a
 // [client.<id>] section that points to the keyring, and the keyring at

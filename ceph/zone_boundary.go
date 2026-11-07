@@ -403,6 +403,9 @@ func (b *zoneBoundary) dropStaleMembers(ctx context.Context, joining string, add
 			continue
 		}
 		current, info, err := b.inspectEndpoint(ctx, id)
+		if !onlyMissingHostResource(err) {
+			return err
+		}
 		if err == nil && info.running && info.startedAt == member.startedAt && maps.Equal(current, member.endpoint.addrs) {
 			return fmt.Errorf("zone member %s still has an address of the joining container", member.endpoint.name)
 		}
@@ -730,6 +733,10 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 			continue
 		}
 		_, info, inspectErr := b.inspectEndpoint(ctx, id)
+		if !onlyMissingHostResource(inspectErr) {
+			errs = append(errs, inspectErr)
+			continue
+		}
 		live := inspectErr == nil && info.running && info.startedAt == member.startedAt
 		if live && len(member.routes) > 0 {
 			var ops []zoneRouteOp

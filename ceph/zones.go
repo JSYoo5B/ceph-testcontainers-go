@@ -14,23 +14,21 @@ import (
 
 // ZoneLayout is the zone topology of a cluster from WithZoneConfig, as the
 // fixture holds it: the zones with their routers and members, the routes the
-// boundary installed, the MON quorum's zone, Ceph's down-reporter policy and
+// boundary recorded for cleanup, the MON quorum's zone, Ceph's down-reporter policy and
 // the containers on the cluster's bridges that belong to no zone.
 type ZoneLayout struct {
 	// QuorumZone holds every MON, MGR and the control CLI.
 	QuorumZone string
 	// Zones are sorted by name.
 	Zones []Zone
-	// Routes are the /32 routes the boundary recorded in the members'
-	// network namespaces, sorted by member and destination. A member and its
-	// peers in the same zone have none between them. A route the caller
-	// installed is not listed, and the boundary never replaces or removes it.
+	// Routes lists the boundary's recorded /32 route intents, sorted by member
+	// and destination. Records include installations with uncertain outcomes.
+	// Inspect the member's route table or probe traffic for the effective path.
 	Routes []ZoneRoute
 	// DownReporters is mon_osd_min_down_reporters and ReporterSubtree is
-	// mon_osd_reporter_subtree_level: a MON marks an OSD down only after
-	// failure reports from DownReporters distinct ReporterSubtree buckets.
-	// When the boundary is cut, a zone's OSDs are marked down only if the
-	// quorum zone's Zone.ReporterSubtrees reaches DownReporters.
+	// mon_osd_reporter_subtree_level. Marking an OSD down through failure
+	// reports requires DownReporters distinct ReporterSubtree buckets. A MON
+	// can also mark an OSD down after mon_osd_report_timeout without a beacon.
 	DownReporters   int
 	ReporterSubtree string
 	// Unzoned names the containers on the cluster's bridges that are neither
@@ -64,8 +62,10 @@ type ZoneEndpoint struct {
 	PublicAddress, ClusterAddress netip.Addr
 }
 
-// ZoneRoute is one route the boundary installed: Member sends to Destination
-// on Plane through Via, the address of its zone's router on that plane.
+// ZoneRoute records an intended route from Member to Destination on Plane
+// through Via, the member's zone router. The boundary records the route before
+// installation so it can clean up a partial enrollment. The effective route
+// can differ after a failed installation or a change by the caller.
 type ZoneRoute struct {
 	Member           string
 	Plane            NetworkPlane
@@ -73,8 +73,8 @@ type ZoneRoute struct {
 }
 
 // WithZone places a container in zone: Container.WithClient and
-// ClientConfig.WithIdentity containers, which a cluster with zones refuses to
-// start without it, and service daemons such as an rgw.Start gateway, which
+// ClientConfig.WithIdentity containers, whose post-start enrollment requires
+// a zone, and service daemons such as an rgw.Start gateway, which
 // otherwise join the quorum zone. Pass it after the attachment option. On
 // every start the container is enrolled as a member: a route agent with
 // NET_ADMIN joins its network namespace and the boundary installs its routes
@@ -150,7 +150,9 @@ func (c *Container) zoneHooks() testcontainers.CustomizeRequestOption {
 
 // Zones returns the zone topology of a cluster from WithZoneConfig. It reads
 // Ceph's down-reporter settings with the control CLI and inspects the
-// cluster's bridges for containers without a zone. A cluster without zones
+// cluster's bridges for containers without a zone. Routes come from the
+// boundary's cleanup records. To verify forwarding, inspect the member's
+// kernel route or send traffic through it. A cluster without zones
 // is refused.
 //
 //purpose:observation,evidence

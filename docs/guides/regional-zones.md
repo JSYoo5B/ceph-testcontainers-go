@@ -35,7 +35,8 @@ defer lease.Restore(ctx)
   daemons started without `WithZone` are in the quorum zone. Each OSD is in its
   `OSDConfig.Zone`, which a regional cluster requires for every OSD, initial or
   added. A caller's `WithClient` or `ClientConfig.WithIdentity` container
-  needs `Container.WithZone`; without it the start fails. Pass
+  needs `Container.WithZone`; without it post-start enrollment fails. Terminate the
+  live container returned with the error. Pass
   `Container.WithZone` to `rgw.Start` or another service start to place a
   service daemon in another zone.
 - **CRUSH to network.** An OSD's CRUSH location is
@@ -74,9 +75,10 @@ defer lease.Restore(ctx)
   `Start` after the cause of the failure is removed) completes the enrollment
   with what is already installed.
 - **Observation.** `Container.Zones` returns the zones with their routers and
-  members (name, container, address on each plane), the installed routes, the
+  members (name, container, address on each plane), recorded route intents, the
   containers on the bridges without a zone (`Unzoned`), and Ceph's
-  down-reporter policy.
+  down-reporter policy. Check a route lookup in the member's namespace or
+  probe traffic to verify the effective path.
 
 ## Faults at the boundary
 
@@ -103,11 +105,11 @@ containers to look for. A path within a zone is not at the boundary; use
 
 The outcome of a partition depends on placement, so the quorum zone is an
 explicit setting. Clients and OSDs of the other zones cannot reach any MON
-while the boundary is cut: a client there fails to authenticate. A MON marks
-an OSD down only after failure reports from `mon_osd_min_down_reporters`
-distinct `mon_osd_reporter_subtree_level` buckets (2 and host by default), so
-the far zone's OSDs are marked down only if the quorum zone has that many
-reporting hosts. `ZoneLayout.DownReporters`, `ReporterSubtree` and
+while the boundary is cut: a client there fails to authenticate. Marking an OSD
+down through failure reports requires reports from `mon_osd_min_down_reporters`
+distinct `mon_osd_reporter_subtree_level` buckets (2 and host by default).
+A MON can also mark an OSD down after `mon_osd_report_timeout` without a
+beacon, even with fewer reporting hosts. `ZoneLayout.DownReporters`, `ReporterSubtree` and
 `Zone.ReporterSubtrees` report the three values. With two OSD hosts in the
 quorum zone, one in the other and size 2/min_size 1, a cut marks the far OSD
 down after about `osd_heartbeat_grace` and the quorum zone keeps acknowledging

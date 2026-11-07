@@ -1,12 +1,19 @@
 package ceph
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func zoneAddrs(public, cluster string) map[NetworkPlane]netip.Addr {
@@ -206,5 +213,71 @@ func TestZonePeersLeaveOutMembersThatCannotHoldRoutes(t *testing.T) {
 	}
 	if want := []string{"complete", "routesdue"}; !slices.Equal(got, want) {
 		t.Fatalf("peers %v, want %v", got, want)
+	}
+}
+
+type zoneCleanupAgent struct {
+	testcontainers.Container
+	calls [][]string
+	stops int
+}
+
+func (a *zoneCleanupAgent) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	a.calls = append(a.calls, slices.Clone(args))
+	return 0, strings.NewReader(""), nil
+}
+
+func (a *zoneCleanupAgent) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+	a.stops++
+	return nil
+}
+
+func TestZoneBoundaryRetainsUninspectedMemberUntilCleanupRetry(t *testing.T) {
+	const id = "member"
+	var unavailable atomic.Bool
+	unavailable.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/"+id+"/json"):
+			if unavailable.Load() {
+				http.Error(w, `{"message":"temporary inspect failure"}`, http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.WriteString(w, `{"Id":"member","State":{"Running":true,"StartedAt":"start"}}`)
+		case strings.HasSuffix(r.URL.Path, "/containers/json"), strings.HasSuffix(r.URL.Path, "/networks"):
+			_, _ = io.WriteString(w, "[]")
+		default:
+			t.Errorf("unexpected Docker call %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := mobycl.New(mobycl.WithHost("tcp://"+strings.TrimPrefix(server.URL, "http://")), mobycl.WithAPIVersion("1.51"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	agent := &zoneCleanupAgent{}
+	dest := netip.MustParseAddr("10.0.0.5")
+	record := zoneRouteRecord{plane: PublicNetworkPlane, via: netip.MustParseAddr("10.0.0.250"), dev: "eth0"}
+	member := &zoneMemberState{endpoint: zoneEndpoint{id: id, name: id, addrs: zoneAddrs("10.0.0.2", "")}, startedAt: "start", agent: agent, routes: map[netip.Addr]zoneRouteRecord{dest: record}}
+	b := &zoneBoundary{docker: &testcontainers.DockerClient{Client: client}, enrolled: map[string]*zoneMemberState{id: member}}
+
+	if err := b.dropStaleMembers(t.Context(), "joining", member.endpoint.addrs); err == nil {
+		t.Fatal("joining member claimed an address after an inconclusive inspection")
+	}
+	if errs := b.close(t.Context()); len(errs) == 0 {
+		t.Fatal("inconclusive inspection allowed cleanup")
+	}
+	if b.enrolled[id] != member || member.routes[dest] != record || member.agent != agent || agent.stops != 0 || len(agent.calls) != 0 {
+		t.Fatalf("failed inspection discarded cleanup state: member %+v, calls %v", member, agent.calls)
+	}
+	unavailable.Store(false)
+	if errs := b.close(t.Context()); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if len(b.enrolled) != 0 || agent.stops != 1 || len(agent.calls) != 2 || !strings.Contains(strings.Join(agent.calls[0], " "), zoneRouteCommand(record.removal(id, dest))) {
+		t.Fatalf("retry did not remove the owned route and agent: calls %v, stops %d", agent.calls, agent.stops)
 	}
 }
