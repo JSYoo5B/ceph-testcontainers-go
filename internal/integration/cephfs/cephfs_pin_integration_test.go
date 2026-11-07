@@ -151,3 +151,60 @@ func TestCephFSPins(t *testing.T) {
 		})
 	}
 }
+
+// A live override can still restore its field after a refused removal.
+// Recreating both names must allow new overrides without granting the old
+// handles authority over the replacements.
+func TestCephFSPinRemovalOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: "pins"}))
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var previous []*subvolume.PinOverrideHandle
+	for range 2 {
+		group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "owned"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		setting := subvolume.PinSetting{Type: subvolume.PinExport, Value: 0}
+		groupPin := cephFSPinGroupLease(t, ctx, fs, group, setting)
+		if err := group.Remove(ctx); err == nil {
+			t.Fatal("removed an empty group with a live override")
+		}
+		volume, err := subvolume.Create(ctx, fs, subvolume.Config{Name: "data", GroupName: group.Name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		volumePin := cephFSPinVolumeLease(t, ctx, fs, volume, setting)
+		if err := volume.Remove(ctx); err == nil {
+			t.Fatal("removed a subvolume with a live override")
+		}
+		for _, old := range previous {
+			if err := old.Restore(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, read := range []func(context.Context) (*subvolume.PinPolicy, error){group.PinPolicy, volume.PinPolicy} {
+			policy, err := read(ctx)
+			if err != nil || policy.ExportRank != 0 {
+				t.Fatalf("pin after refused removal or prior lease restore: %+v, %v", policy, err)
+			}
+		}
+		if err := volumePin.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := volume.Remove(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := groupPin.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := group.Remove(ctx); err != nil {
+			t.Fatal(err)
+		}
+		previous = []*subvolume.PinOverrideHandle{groupPin, volumePin}
+	}
+}

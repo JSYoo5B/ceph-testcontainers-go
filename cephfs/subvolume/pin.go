@@ -470,3 +470,13 @@ func (p *pinOverrides) track(key string, change *PinOverrideHandle) {
 
 // forget drops the override of key once it is restored.
 func (p *pinOverrides) forget(key string) { delete(p.byField, key) }
+
+// allowRemoval runs under the same setup gate as pin acquisition and Restore.
+func (p *pinOverrides) allowRemoval(target *volumeRecord) error {
+	for _, change := range p.byField {
+		if change.target.identity == target {
+			return errors.New("restore this directory's pin overrides before removal")
+		}
+	}
+	return nil
+}

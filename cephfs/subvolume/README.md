@@ -89,6 +89,8 @@ Watch shares (baseline, gaps, overflow and `Stop`) is in
   or application synchronisation. Quota enforcement and usage accounting are
   native and can lag writes; removal moves data to Ceph's trash and purges
   asynchronously.
+- Restore every pin override on a subvolume or group before removing it.
+  A refused removal leaves both the directory and its override available.
 - Pin reads and clone identity checks run libcephfs in the client container,
   so the client image needs the Python `cephfs` binding. A pin policy reports
   the local virtual xattrs, not inherited policy or actual MDS authority.

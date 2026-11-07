@@ -292,3 +292,39 @@ func cephFSPinTestStream(data []byte) io.Reader {
 	stream.Write(data)
 	return &stream
 }
+
+func TestRemovalRequiresOnlyTheTargetPinOverridesRestored(t *testing.T) {
+	_, control, volume, group := cephFSPinFixture()
+	setting := PinSetting{Type: PinExport, Value: 1}
+	volumePin, err := volume.OverridePin(t.Context(), setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupPin, err := group.OverridePin(t.Context(), setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remove := range []func(context.Context) error{volume.Remove, group.Remove} {
+		if err := remove(t.Context()); err == nil || !strings.Contains(err.Error(), "pin overrides") {
+			t.Fatalf("remove with a live pin: %v", err)
+		}
+	}
+	if volume.identity.removalAttempted || group.identity.removalAttempted {
+		t.Fatal("removal started while a pin was held")
+	}
+	if err := volumePin.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := volume.Remove(t.Context()); err != nil {
+		t.Fatalf("unrelated group pin blocked subvolume removal: %v", err)
+	}
+	if control.policies[group.Path].ExportRank != 1 {
+		t.Fatal("subvolume removal changed the group pin")
+	}
+	if err := groupPin.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := group.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
