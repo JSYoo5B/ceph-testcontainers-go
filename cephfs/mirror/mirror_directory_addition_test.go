@@ -63,6 +63,35 @@ func TestCephFSDirectoryAdditionRetainsAppliedReplyLossAndStatusIsReadOnly(t *te
 	}
 }
 
+func TestDirectoryAdditionNativeRefusalSettlesAgainstOriginalPolicy(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		m, s, _ := newDirectoryAdditionFixture(t)
+		s.addExitCode, s.applyAdd = 22, applied
+		r, err := beginDirectoryAdditionFixture(t, m, "/refused")
+		if err == nil || s.adds != 1 {
+			t.Fatalf("native add: receipt %v, err %v", r, err)
+		}
+		if applied {
+			if r == nil || m.ops.directoryAddition != r || m.ops.guardDirectoryAdditionOverlap() == nil {
+				t.Fatal("present policy lost pending intent")
+			}
+			same, err := beginDirectoryAdditionFixture(t, m, "/refused")
+			if same != r || err != nil || !r.registered || s.adds != 1 {
+				t.Fatalf("present policy retry: %v", err)
+			}
+			continue
+		}
+		if r != nil || m.ops.directoryAddition != nil || m.ops.guardDirectoryAdditionOverlap() != nil {
+			t.Fatal("absent refused policy blocked the fixture")
+		}
+		s.addExitCode, s.applyAdd = 0, true
+		next, err := beginDirectoryAdditionFixture(t, m, "/valid")
+		if err != nil || !next.registered || s.adds != 2 {
+			t.Fatalf("next addition: %v", err)
+		}
+	}
+}
+
 func TestCephFSDirectoryAdditionRetriesOnlyUncertainAbsentRequest(t *testing.T) {
 	for _, acknowledged := range []bool{false, true} {
 		t.Run(map[bool]string{false: "uncertain", true: "acknowledged"}[acknowledged], func(t *testing.T) {

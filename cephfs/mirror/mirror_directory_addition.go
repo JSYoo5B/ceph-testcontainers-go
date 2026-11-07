@@ -2,9 +2,11 @@ package mirror
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 )
@@ -48,7 +50,9 @@ type DirectoryAdditionStatus struct {
 // Ceph's policy) and Registered (the fixture also owns it); after a lost reply
 // the policy can be present while Registered stays false, and only a repeated
 // BeginDirectoryAddition confirms ownership. Neither flag says that a daemon
-// picked up the path.
+// picked up the path. When the native add exits unsuccessfully and a fresh
+// observation confirms absence in the original scope, the fixture retires the
+// intent and returns a nil receipt. Transport failures retain the pending receipt.
 //
 //purpose:construction,condition
 func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
@@ -76,7 +80,8 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 		return nil, err
 	}
 	if r := mirror.ops.directoryAddition; r != nil && r.directory == directory && !r.superseded {
-		return r, r.resume(ctx)
+		err := r.resume(ctx)
+		return mirror.ops.directoryAddition, err
 	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return nil, err
@@ -108,7 +113,8 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 	}
 	// Register BEFORE mutation; an uncertain native response cannot erase intent.
 	mirror.ops.directoryAddition = r
-	return r, r.attempt(ctx)
+	err = r.attempt(ctx)
+	return mirror.ops.directoryAddition, err
 }
 
 func (ops *mirrorOperations) guardDirectoryAdditionOverlap() error {
@@ -265,6 +271,15 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 	}
 	r.requestAttempted = true
 	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.sourceFilesystem, r.directory); err != nil {
+		var failure *ceph.NativeFailure
+		if errors.As(err, &failure) {
+			present, readErr := r.observe(ctx, true)
+			if readErr == nil && !present {
+				r.superseded = true
+				m.ops.directoryAddition = nil
+			}
+			err = errors.Join(err, readErr)
+		}
 		return cephFSObserveQuery("add original CephFS mirror directory", err)
 	}
 	r.requestAcknowledged = true

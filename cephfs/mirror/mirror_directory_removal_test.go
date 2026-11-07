@@ -27,6 +27,7 @@ type directoryRemovalControlFake struct {
 	directories                     []string
 	policyOverride, mappingOverride string
 	removeError, addError           error
+	addExitCode                     int
 	applyRemoval, applyAdd          bool
 	removals, adds                  int
 	hook                            func(*directoryRemovalControlFake, []string)
@@ -93,6 +94,9 @@ func (f *directoryRemovalControlFake) Exec(ctx context.Context, args []string, o
 		f.adds++
 		if f.applyAdd {
 			f.directories = append(f.directories, a[5])
+		}
+		if f.addExitCode != 0 {
+			return f.addExitCode, directoryRemovalStderr("Error EINVAL: directory refused"), nil
 		}
 		if f.addError != nil {
 			return 0, nil, f.addError
