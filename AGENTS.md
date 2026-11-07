@@ -33,7 +33,9 @@ break" does not apply to them.
 - **`Run` returns the partially started value together with its error**, so the
   caller's `testcontainers.CleanupContainer` still terminates it. A module's
   `Container` embeds `testcontainers.Container` (a service package embeds
-  `*ceph.Container`).
+  `*ceph.Container`). `rgw/multisite` is the one package whose `Run` returns
+  no `Container`: its `*Fixture` spans the gateways of several clusters,
+  which are containers, and embeds none of them.
 - An operation on one resource handle is a method of that handle
   (`volume.Resize(ctx, n)`), not a parent method that takes the handle; see
   [API naming](docs/contributing/api-naming.md).
