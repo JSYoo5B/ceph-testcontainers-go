@@ -73,12 +73,13 @@ type zoneRouter struct {
 // it is a member of its zone only once complete: after its agent, its own
 // routes and the other members' routes to it are all in place.
 type zoneMemberState struct {
-	endpoint  zoneEndpoint
-	startedAt string
-	ifaces    map[NetworkPlane]string
-	agent     testcontainers.Container
-	routes    map[netip.Addr]zoneRouteRecord
-	complete  bool
+	clusterOwned bool // The member carried this cluster's owner label at enrollment.
+	endpoint     zoneEndpoint
+	startedAt    string
+	ifaces       map[NetworkPlane]string
+	agent        testcontainers.Container
+	routes       map[netip.Addr]zoneRouteRecord
+	complete     bool
 }
 
 // enrolledFor reports whether m is a complete enrollment of the start at
@@ -262,6 +263,23 @@ type zoneInspection struct {
 	labels          map[string]string
 }
 
+// trackMember records the inspected container's identity before creating its
+// route agent. The immutable owner label determines which member namespaces
+// can survive the cluster's owner-label sweep.
+func (info zoneInspection) trackMember(id, owner string, addrs map[NetworkPlane]netip.Addr) *zoneMemberState {
+	name := info.labels[zoneMemberLabel]
+	if name == "" {
+		name = info.name
+	}
+	return &zoneMemberState{
+		endpoint:     zoneEndpoint{id: id, name: name, zone: info.labels[zoneLabel], addrs: addrs},
+		startedAt:    info.startedAt,
+		clusterOwned: owner != "" && info.labels[clusterOwnerLabel] == owner,
+		ifaces:       make(map[NetworkPlane]string),
+		routes:       make(map[netip.Addr]zoneRouteRecord),
+	}
+}
+
 // enroll makes a started container a member of the zone its labels name: a
 // route agent in its network namespace, a route to every member of another
 // zone through its own zone's router, and in every other member a route to
@@ -294,10 +312,6 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 	if len(addrs) == 0 {
 		return invalidRequest("zone member %s has no IPv4 address on the cluster's bridges", info.name)
 	}
-	name := info.labels[zoneMemberLabel]
-	if name == "" {
-		name = info.name
-	}
 	member := b.enrolled[id]
 	switch {
 	case member.enrolledFor(info.startedAt):
@@ -316,10 +330,10 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 		if err := b.dropStaleMembers(ctx, id, addrs); err != nil {
 			return err
 		}
-		member = &zoneMemberState{endpoint: zoneEndpoint{id: id, name: name, zone: zone, addrs: addrs}, startedAt: info.startedAt,
-			ifaces: map[NetworkPlane]string{}, routes: map[netip.Addr]zoneRouteRecord{}}
+		member = info.trackMember(id, b.owner, addrs)
 		b.enrolled[id] = member
 	}
+	name := member.endpoint.name
 	if member.agent == nil {
 		agent, err := runContainer(ctx, b.settings.helperImage,
 			WithIdleEntrypoint(),
@@ -784,7 +798,7 @@ func (b *zoneBoundary) close(ctx context.Context) ([]error, map[string]bool) {
 		// available to finish route cleanup on the next Terminate.
 		retained := make(map[string]bool, len(b.enrolled))
 		for _, member := range b.enrolled {
-			if member.agent != nil {
+			if !member.clusterOwned && member.agent != nil {
 				retained[member.agent.GetContainerID()] = true
 			}
 		}
