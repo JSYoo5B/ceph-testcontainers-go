@@ -291,6 +291,18 @@ func TestImmutableObjectCacheStartFailuresLeaveNothing(t *testing.T) {
 	}
 }
 
+func TestImmutableObjectCacheClientSocketAddressLimit(t *testing.T) {
+	client := newFakeCacheClient()
+	// Unix socket addresses count bytes, including the leading slash.
+	socket := "/" + strings.Repeat("é", 53)
+	if _, err := normalizeImmutableObjectCache(client, ImmutableObjectCache{Socket: socket}); err != nil {
+		t.Fatalf("107-byte client address: %v", err)
+	}
+	if _, err := normalizeImmutableObjectCache(client, ImmutableObjectCache{Socket: socket + "a"}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("108-byte client address: %v", err)
+	}
+}
+
 func TestImmutableObjectCacheRefusals(t *testing.T) {
 	for name, test := range map[string]struct {
 		setup  func(*fakeCacheClient)

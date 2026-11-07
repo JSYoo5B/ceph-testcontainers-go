@@ -7,7 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 	"testing"
 )
 
@@ -46,7 +49,7 @@ esac
 				}
 			}
 			cache, sock := filepath.Join(root, "cache"), filepath.Join(root, "client.sock")
-			asok, pidfile := filepath.Join(root, "admin.sock"), filepath.Join(root, "daemon.pid")
+			asok, pidfile := filepath.Join(root, "admin.sock"), filepath.Join(root, uuid.NewString()+".pid")
 			if initial == "empty" {
 				if err := os.Mkdir(cache, 0700); err != nil {
 					t.Fatal(err)
@@ -57,8 +60,9 @@ esac
 				t.Fatal(err)
 			}
 			closeOnCleanup(listener)
-			// Returning a PID and publishing the socket lets start record the
-			// files. The process has already exited when stop checks its PID.
+			fixture := cacheShellFixture{pidfile: pidfile}
+			fixture.cleanTestAlias(t)
+			livePID, _ := fixture.process(t, fixture.privateSocket())
 			path := root + ":" + os.Getenv("PATH")
 			daemon := `#!/bin/sh
 printf x >&3
@@ -66,7 +70,7 @@ read -r resume <&4 || exit 1
 for arg do
     case "$arg" in
         --immutable_object_cache_sock=*) ln "$TEST_SOCKET" "${arg#*=}" || exit 1 ;;
-        --pid-file=*) echo "$$" > "${arg#*=}" || exit 1 ;;
+        --pid-file=*) echo "$LIVE_PID" > "${arg#*=}" || exit 1 ;;
     esac
 done
 `
@@ -75,7 +79,7 @@ done
 			}
 			command := func(args ...string) *exec.Cmd {
 				cmd := exec.CommandContext(t.Context(), "sh", append([]string{"-c", immutableObjectCacheScript, "sh"}, args...)...)
-				cmd.Env = append(os.Environ(), "PATH="+path, "TEST_SOCKET="+filepath.Join(root, "daemon-socket"))
+				cmd.Env = append(os.Environ(), "PATH="+path, "TEST_SOCKET="+filepath.Join(root, "daemon-socket"), "LIVE_PID="+strconv.Itoa(livePID))
 				return cmd
 			}
 			run := func(args ...string) string {
@@ -104,8 +108,11 @@ done
 			if err != nil || inspection.path != initial {
 				t.Fatalf("inspect: %+v, %v", inspection, err)
 			}
-			if got := run("reserve", pidfile); got != "" {
+			if got := run("reserve", pidfile+".lease"); got != "" {
 				t.Fatal(got)
+			}
+			if initial == "none" {
+				run("reserve", filepath.Join(root, "."+filepath.Base(pidfile)+".stage"))
 			}
 			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, inspection.identity)
 			start.ExtraFiles = []*os.File{signalW, gateR}
@@ -188,7 +195,7 @@ done
 func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 	root := t.TempDir()
 	cache, sock := filepath.Join(root, "cache"), filepath.Join(root, "socket")
-	asok, pidfile := filepath.Join(root, "admin"), filepath.Join(root, "pid")
+	asok, pidfile := filepath.Join(root, "admin"), filepath.Join(root, uuid.NewString()+".pid")
 	if err := os.WriteFile(cache, []byte("foreign"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -202,9 +209,10 @@ func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	if got := run("reserve", pidfile); got != "" {
+	if got := run("reserve", pidfile+".lease"); got != "" {
 		t.Fatal(got)
 	}
+	run("reserve", filepath.Join(root, "."+filepath.Base(pidfile)+".stage"))
 	if got := run("start", "admin", cache, sock, "1024", asok, pidfile, "none", ""); got != "exit=1\npid=\nready=0" {
 		t.Fatalf("prelaunch conflict: %s", got)
 	}

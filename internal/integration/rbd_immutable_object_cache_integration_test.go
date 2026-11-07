@@ -209,8 +209,10 @@ type cacheDaemonIdentity struct {
 // cacheSocketHolders prints "<pid> <stat>" for each process that has the
 // listening Unix socket bound to $0 open: /proc/net/unix gives the socket's
 // inode (flags 00010000 mark a listening socket) and /proc/<pid>/fd the
-// processes that hold it.
-const cacheSocketHolders = `inode=$(awk -v path="$0" '$NF == path && $4 == "00010000" { print $7 }' /proc/net/unix)
+// processes that hold it. The client path and the daemon's bound path are
+// hard links to the same filesystem inode.
+const cacheSocketHolders = `inode=$(awk '$4 == "00010000" && NF >= 8 { print $7, $8 }' /proc/net/unix |
+    while read -r ino bound; do if test "$bound" -ef "$0"; then echo "$ino"; fi; done)
 test -n "$inode" || exit 0
 for fd in /proc/[0-9]*/fd/*; do
     test "$(readlink "$fd" 2>/dev/null)" = "socket:[$inode]" && echo "${fd%/fd/*}"

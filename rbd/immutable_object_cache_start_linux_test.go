@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/google/uuid"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -26,8 +27,44 @@ type cacheShellFixture struct {
 func newCacheShellFixture(t *testing.T) cacheShellFixture {
 	t.Helper()
 	root := t.TempDir()
-	return cacheShellFixture{root: root, cache: filepath.Join(root, "data"), sock: filepath.Join(root, "sock"),
-		asok: filepath.Join(root, "admin"), pidfile: filepath.Join(root, "pid"), env: append(os.Environ(), "PATH="+root+":"+os.Getenv("PATH"))}
+	f := cacheShellFixture{root: root, cache: filepath.Join(root, "data"), sock: filepath.Join(root, "sock"),
+		asok: filepath.Join(root, "admin"), pidfile: filepath.Join(root, uuid.NewString()+".pid"), env: append(os.Environ(), "PATH="+root+":"+os.Getenv("PATH"))}
+	f.cleanTestAlias(t)
+	return f
+}
+func (f cacheShellFixture) cleanTestAlias(t *testing.T) {
+	t.Helper()
+	alias := filepath.Dir(f.privateSocket())
+	t.Cleanup(func() {
+		if dest, err := os.Readlink(alias); err == nil && dest == f.pidfile+".lease" {
+			if err := os.Remove(alias); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+}
+
+func (f cacheShellFixture) privateSocket() string {
+	return filepath.Join("/tmp", "tc-ioc-"+filepath.Base(f.pidfile), "s")
+}
+
+func (f cacheShellFixture) reserve(t *testing.T) {
+	t.Helper()
+	f.check(t, "", "reserve", f.pidfile+".lease")
+	f.check(t, "", "reserve", filepath.Join(filepath.Dir(f.cache), "."+filepath.Base(f.pidfile)+".stage"))
+}
+
+func (f cacheShellFixture) process(t *testing.T, socket string) (int, <-chan struct{}) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "while :; do sleep 0.02; done", "daemon",
+		"--pid-file="+filepath.Join(f.pidfile+".lease", "pid"), "--immutable_object_cache_sock="+socket)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
+	return cmd.Process.Pid, done
 }
 
 func (f cacheShellFixture) program(t *testing.T, name, body string) {
@@ -59,7 +96,7 @@ func (f cacheShellFixture) start(t *testing.T) *exec.Cmd {
 
 func TestCacheStartNeverDispatched(t *testing.T) {
 	f := newCacheShellFixture(t)
-	f.check(t, "", "reserve", f.pidfile)
+	f.reserve(t)
 	f.check(t, "stopped=1", "stop", "0", f.sock, f.pidfile)
 	f.check(t, "removed=1", "remove", f.cache, f.sock, f.asok, f.pidfile, "1")
 	if err := f.start(t).Run(); err == nil {
@@ -75,7 +112,7 @@ func TestCacheDaemonizedParentSuccessWithoutDaemon(t *testing.T) {
 	f := newCacheShellFixture(t)
 	f.program(t, "ceph-immutable-object-cache", "exit 0")
 	f.program(t, "sleep", "exit 0") // skip only the readiness delay
-	f.check(t, "", "reserve", f.pidfile)
+	f.reserve(t)
 	out, err := f.start(t).Output()
 	if err != nil || strings.TrimSpace(string(out)) != "exit=0\npid=\nready=0" {
 		t.Fatalf("launcher: %q, %v", out, err)
@@ -100,27 +137,20 @@ func TestCacheFinishedLaunchWithMissingEvidence(t *testing.T) {
 			t.Cleanup(func() { _ = listener.Close() })
 			// Keep the owned process waitable by the test after the launcher exits.
 			// Its argv carries the exact same unique PID option as the native child.
-			process := func(socket string) (int, <-chan struct{}) {
-				t.Helper()
-				cmd := exec.CommandContext(t.Context(), "sh", "-c", "while :; do sleep 0.02; done", "daemon",
-					"--pid-file="+f.pidfile, "--immutable_object_cache_sock="+socket)
-				if err := cmd.Start(); err != nil {
-					t.Fatal(err)
-				}
-				done := make(chan struct{})
-				go func() { _ = cmd.Wait(); close(done) }()
-				t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
-				return cmd.Process.Pid, done
-			}
-			pid, done := process(f.sock)
-			_, unrelated := process(f.sock + ".foreign")
+			pid, done := f.process(t, f.privateSocket())
+			_, unrelated := f.process(t, f.privateSocket()+".foreign")
 			if failure == "pin" {
-				process(f.sock) // a second matching process requires another Stop
+				f.process(t, f.privateSocket()) // a second matching process requires another Stop
 			}
 			f.env = append(f.env, "CACHE_ROOT="+f.root, "LIVE_PID="+strconv.Itoa(pid), "FAULT="+failure)
 			f.program(t, "ceph-immutable-object-cache", `
-command -p ln "$CACHE_ROOT/original" "$CACHE_ROOT/sock" || exit 1
-echo "$LIVE_PID" > "$CACHE_ROOT/pid"
+for arg do
+    case "$arg" in
+        --immutable_object_cache_sock=*) command -p ln "$CACHE_ROOT/original" "${arg#*=}" || exit 1 ;;
+        --pid-file=*) echo "$LIVE_PID" > "${arg#*=}" || exit 1 ;;
+    esac
+done
+if test "$FAULT" = marker; then rm -rf "$CACHE_ROOT/data"/.*.owner; fi
 case "$FAULT" in
     replaced) mv "$CACHE_ROOT/data" "$CACHE_ROOT/saved" && mkdir "$CACHE_ROOT/data" && echo foreign > "$CACHE_ROOT/data/foreign" ;;
     deleted) rmdir "$CACHE_ROOT/data" ;;
@@ -128,7 +158,7 @@ esac
 `)
 			switch failure {
 			case "pin":
-				f.program(t, "ln", `case "$2" in *.pin) exit 1 ;; esac
+				f.program(t, "ln", `case "$*" in *.pin) exit 1 ;; esac
 command -p ln "$@"`)
 			case "marker":
 				f.program(t, "stat", `case "$2" in
@@ -136,10 +166,10 @@ command -p ln "$@"`)
     %d:%i:%w) command -p stat -c '%d:%i:-' "$3" ;;
     *) command -p stat "$@" ;;
 esac`)
-				f.program(t, "mkdir", `case "$1" in *.owner) exit 1 ;; esac
+				f.program(t, "mkdir", `case "$1" in *.stage/*) ;; *.owner) exit 1 ;; esac
 command -p mkdir "$@"`)
 			}
-			f.check(t, "", "reserve", f.pidfile)
+			f.reserve(t)
 			out, err := f.start(t).Output()
 			if failure == "deleted-after-start" {
 				if err != nil || !strings.Contains(string(out), "ready=1") {
@@ -153,7 +183,7 @@ command -p mkdir "$@"`)
 			}
 			// The lost start reply, then deletion of the PID file, leave only
 			// the process's unique argument available for reconciliation.
-			if err := os.Remove(f.pidfile); err != nil {
+			if err := os.Remove(filepath.Join(f.pidfile+".lease", "pid")); err != nil {
 				t.Fatal(err)
 			}
 			if failure == "pin" {
@@ -176,17 +206,16 @@ command -p mkdir "$@"`)
 			}
 			switch failure {
 			case "pin":
-				if err := os.Rename(f.sock, f.sock+".original"); err != nil {
-					t.Fatal(err)
-				}
+				// The socket pin failed before the public path could be created.
+				// Cleanup must leave an outside replacement alone.
 				if err := os.WriteFile(f.sock, []byte("foreign"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				remove("removed=0")
+				remove("removed=1")
 				if got, err := os.ReadFile(f.sock); err != nil || string(got) != "foreign" {
 					t.Fatalf("foreign socket replacement: %q, %v", got, err)
 				}
-				if err := os.Rename(f.sock+".original", f.sock); err != nil {
+				if err := os.Rename(f.sock, f.sock+".foreign"); err != nil {
 					t.Fatal(err)
 				}
 			case "replaced":
