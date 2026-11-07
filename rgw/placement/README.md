@@ -83,8 +83,12 @@ endpoint, err := gateway.S3Endpoint(ctx) // after the restart
 - In a realm, `Apply` needs the current metadata master and refuses a staging
   period that holds unrelated changes. A lost commit reply is checked against
   the next epoch of the same period and the exact expected policy. If an
-  update or commit command might still be running, the next publication in
-  that cluster and realm first confirms that the earlier writer has stopped. `Reload` never publishes,
+  update or commit might still be running, the next placement publication in
+  that cluster and realm first confirms that the earlier writer has stopped.
+  Serialize placement publication with multisite topology and sync-policy
+  changes. After an uncertain placement update or commit, retry `Apply` on the
+  original handle and confirm success before using `SyncGroup.Apply` or
+  another period writer. `Reload` never publishes,
   pulls or rewrites federation topology.
 - `SetUserDefault` changes user metadata only. Tags nil keeps the user's tags;
   a nonempty list replaces them, and replacing matching tags with nonmatching

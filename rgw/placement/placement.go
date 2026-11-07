@@ -360,6 +360,10 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 // period only when its topology differs solely by this new placement. After
 // a lost commit reply, Apply reads the committed period on a separate budget.
 // A retry recognizes the exact owned change and preserves unrelated edits.
+// Placement publications in one cluster and realm settle earlier placement
+// writers. Serialize multisite period publication with Apply. After an
+// uncertain update or commit, retry Apply on the original handle and confirm
+// success before publishing through the multisite fixture or native commands.
 // Coordinate mappings in other zones before publishing a realm policy, import
 // the committed period into those clusters and call Reload there. It never
 // changes defaults, deletes resources or silently rolls back a partial failure.
