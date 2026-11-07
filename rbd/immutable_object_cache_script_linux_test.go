@@ -10,12 +10,33 @@ import (
 	"testing"
 )
 
-// Exercise the production shell against real directory and socket inodes. Only
-// the daemon command is substituted; the host never starts a Ceph process.
+// Exercise the production shell against real directory and socket inodes
+// with a substitute daemon. The no-birth-time cases mask only stat's %w.
 func TestCacheRestorePreservesReplacedPaths(t *testing.T) {
-	for _, initial := range []string{"none", "empty"} {
-		t.Run(initial, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, initial string
+		noBirthTime   bool
+	}{
+		{"none", "none", false},
+		{"empty", "empty", false},
+		{"none-no-birth", "none", true},
+		{"empty-no-birth", "empty", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			initial := tc.initial
 			root := t.TempDir()
+			if tc.noBirthTime {
+				stat := `#!/bin/sh
+case "$2" in
+    %w) command -p stat -c '-' "$3" ;;
+    %d:%i:%w) command -p stat -c '%d:%i:-' "$3" ;;
+    *) command -p stat "$@" ;;
+esac
+`
+				if err := os.WriteFile(filepath.Join(root, "stat"), []byte(stat), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
 			cache, sock := filepath.Join(root, "cache"), filepath.Join(root, "client.sock")
 			asok, pidfile := filepath.Join(root, "admin.sock"), filepath.Join(root, "daemon.pid")
 			if initial == "empty" {
@@ -71,15 +92,11 @@ done
 			}
 			defer gateR.Close()
 			defer gateW.Close()
-			identity := ""
-			if initial == "empty" {
-				out, err := exec.CommandContext(t.Context(), "stat", "-c", "%d:%i:%w", cache).Output()
-				if err != nil {
-					t.Fatal(err)
-				}
-				identity = strings.TrimSpace(string(out))
+			inspection, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", run("inspect", cache, sock)))
+			if err != nil || inspection.path != initial {
+				t.Fatalf("inspect: %+v, %v", inspection, err)
 			}
-			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, identity)
+			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, inspection.identity)
 			start.ExtraFiles = []*os.File{signalW, gateR}
 			if err := start.Start(); err != nil {
 				t.Fatal(err)
@@ -105,16 +122,23 @@ done
 			// Replace the directory first, then restore it and replace the socket.
 			// Each conflict must preserve the foreign bytes until the owner moves
 			// the replacement away; the same lease can then finish its cleanup.
-			for _, file := range []string{cache, sock} {
+			replacements := []string{cache, sock}
+			if tc.noBirthTime {
+				// Keep the parent inode intact but replace its ownership marker.
+				// The device/inode check on the parent alone would accept this.
+				marker := filepath.Join(cache, "."+filepath.Base(pidfile)+".owner")
+				replacements = append(replacements, marker)
+			}
+			for _, file := range replacements {
 				if err := os.Rename(file, file+".original"); err != nil {
 					t.Fatal(err)
 				}
 				marker := file
-				if file == cache {
-					if err := os.Mkdir(cache, 0700); err != nil {
+				if file != sock {
+					if err := os.Mkdir(file, 0700); err != nil {
 						t.Fatal(err)
 					}
-					marker = filepath.Join(cache, "foreign")
+					marker = filepath.Join(file, "foreign")
 				}
 				if err := os.WriteFile(marker, []byte("foreign bytes"), 0600); err != nil {
 					t.Fatal(err)
@@ -125,7 +149,7 @@ done
 				if got, err := os.ReadFile(marker); err != nil || string(got) != "foreign bytes" {
 					t.Fatalf("modified replacement %s: %q, %v", marker, got, err)
 				}
-				if err := os.Rename(file, file+".foreign"); err != nil {
+				if err := os.Rename(file, filepath.Join(root, filepath.Base(file)+".foreign")); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Rename(file+".original", file); err != nil {
