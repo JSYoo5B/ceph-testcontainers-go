@@ -150,23 +150,27 @@ func TestWithCeph(t *testing.T) {
 }
 ```
 
-The service packages start a cluster with their own defaults:
+The service packages start a cluster with their own defaults: `rbd.Run`
+creates an initialized RBD pool named `rbd`, `cephfs.Run` the filesystem
+`tc-cephfs` with one active MDS, and `rgw.Run` one S3 gateway with a generated
+test user. Like `ceph.Run`, each returns a partially started fixture together
+with its error, so register its cleanup before checking the error:
 
 ```golang
-// An initialized RBD pool named rbd.
-volumes, err := rbd.Run(ctx, ceph.DefaultImage)
-
-// The filesystem tc-cephfs with one active MDS.
-files, err := cephfs.Run(ctx, ceph.DefaultImage)
-
-// One S3 gateway with a generated test user.
 objects, err := rgw.Run(ctx, ceph.DefaultImage)
+testcontainers.CleanupContainer(t, objects)
+if err != nil {
+	t.Fatal(err)
+}
 gateways, err := rgw.Gateways(ctx, objects.Container)
 if err != nil {
 	t.Fatal(err)
 }
 gateway := gateways[0] // AccessKey, SecretKey and Region
 endpoint, err := gateway.S3Endpoint(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 To serve several services from one cluster, pass their options to `ceph.Run`:
