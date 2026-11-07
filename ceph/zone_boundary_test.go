@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -218,16 +219,23 @@ func TestZonePeersLeaveOutMembersThatCannotHoldRoutes(t *testing.T) {
 
 type zoneCleanupAgent struct {
 	testcontainers.Container
-	calls [][]string
-	stops int
+	docker *fakeOwnedDocker
+	calls  [][]string
+	stops  int
 }
 
+func (a *zoneCleanupAgent) GetContainerID() string { return "route-agent" }
+
 func (a *zoneCleanupAgent) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if a.docker.containers[a.GetContainerID()] == nil {
+		return 0, nil, errors.New("route agent was removed")
+	}
 	a.calls = append(a.calls, slices.Clone(args))
 	return 0, strings.NewReader(""), nil
 }
 
 func (a *zoneCleanupAgent) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+	delete(a.docker.containers, a.GetContainerID())
 	a.stops++
 	return nil
 }
@@ -258,7 +266,12 @@ func TestZoneBoundaryRetainsUninspectedMemberUntilCleanupRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = client.Close() }()
-	agent := &zoneCleanupAgent{}
+	docker := &fakeOwnedDocker{containers: map[string]map[string]string{
+		"member":      {"purpose": "caller"},
+		"orphan":      {clusterOwnerLabel: "cluster"},
+		"route-agent": {clusterOwnerLabel: "cluster", zoneBoundaryLabel: "cluster"},
+	}}
+	agent := &zoneCleanupAgent{docker: docker}
 	dest := netip.MustParseAddr("10.0.0.5")
 	record := zoneRouteRecord{plane: PublicNetworkPlane, via: netip.MustParseAddr("10.0.0.250"), dev: "eth0"}
 	member := &zoneMemberState{endpoint: zoneEndpoint{id: id, name: id, addrs: zoneAddrs("10.0.0.2", "")}, startedAt: "start", agent: agent, routes: map[netip.Addr]zoneRouteRecord{dest: record}}
@@ -267,17 +280,22 @@ func TestZoneBoundaryRetainsUninspectedMemberUntilCleanupRetry(t *testing.T) {
 	if err := b.dropStaleMembers(t.Context(), "joining", member.endpoint.addrs); err == nil {
 		t.Fatal("joining member claimed an address after an inconclusive inspection")
 	}
-	if errs := b.close(t.Context()); len(errs) == 0 {
+	cluster := ownedCluster("cluster", docker)
+	cluster.boundary = b
+	if err := cluster.Terminate(t.Context()); err == nil || !strings.Contains(err.Error(), "temporary inspect failure") {
 		t.Fatal("inconclusive inspection allowed cleanup")
+	}
+	if !slices.Equal(docker.removed, []string{"orphan"}) || docker.containers[id] == nil || docker.containers[agent.GetContainerID()] == nil {
+		t.Fatalf("owner sweep after inspect failure: removed %v, remaining %v", docker.removed, docker.containers)
 	}
 	if b.enrolled[id] != member || member.routes[dest] != record || member.agent != agent || agent.stops != 0 || len(agent.calls) != 0 {
 		t.Fatalf("failed inspection discarded cleanup state: member %+v, calls %v", member, agent.calls)
 	}
 	unavailable.Store(false)
-	if errs := b.close(t.Context()); len(errs) > 0 {
-		t.Fatal(errs)
+	if err := cluster.Terminate(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	if len(b.enrolled) != 0 || agent.stops != 1 || len(agent.calls) != 2 || !strings.Contains(strings.Join(agent.calls[0], " "), zoneRouteCommand(record.removal(id, dest))) {
+	if len(docker.containers) != 1 || docker.containers[id] == nil || len(b.enrolled) != 0 || agent.stops != 1 || len(agent.calls) != 2 || !strings.Contains(strings.Join(agent.calls[0], " "), zoneRouteCommand(record.removal(id, dest))) {
 		t.Fatalf("retry did not remove the owned route and agent: calls %v, stops %d", agent.calls, agent.stops)
 	}
 }

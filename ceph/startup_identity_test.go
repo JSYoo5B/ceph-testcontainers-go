@@ -23,7 +23,7 @@ func TestStartupIdentityZeroValueIsInert(t *testing.T) {
 	s.ownedContainerDocker = func(context.Context) (ownedContainerClient, error) {
 		return nil, errors.New("listed the containers of a cluster without an owner")
 	}
-	if err := s.removeLabeledContainers(t.Context()); err != nil {
+	if err := s.removeLabeledContainers(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -74,12 +74,12 @@ func TestStartupIdentityRemovalListsByItsOwnLabel(t *testing.T) {
 	}}
 	s := newStartupIdentity("a")
 	s.ownedContainerDocker = func(context.Context) (ownedContainerClient, error) { return docker, nil }
-	if err := s.removeLabeledContainers(t.Context()); err != nil || docker.containers["mine"] != nil || docker.containers["other"] == nil {
+	if err := s.removeLabeledContainers(t.Context(), nil); err != nil || docker.containers["mine"] != nil || docker.containers["other"] == nil {
 		t.Fatalf("removal returned %v and left %v", err, docker.containers)
 	}
 	boom := errors.New("synthetic client failure")
 	s.ownedContainerDocker = func(context.Context) (ownedContainerClient, error) { return nil, boom }
-	if err := s.removeLabeledContainers(t.Context()); !errors.Is(err, boom) {
+	if err := s.removeLabeledContainers(t.Context(), nil); !errors.Is(err, boom) {
 		t.Fatalf("a client failure was not reported: %v", err)
 	}
 }

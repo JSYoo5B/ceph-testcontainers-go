@@ -1168,7 +1168,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	_ = c.native.stopAll(ctx)
 	// The routes live in the daemons' namespaces and the routers on the
 	// bridges: release the boundary while both still exist.
-	errs = append(errs, c.boundary.close(ctx)...)
+	boundaryErrs, retainedAgents := c.boundary.close(ctx)
+	errs = append(errs, boundaryErrs...)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)
@@ -1195,7 +1196,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		c.toolkit.unlock()
 	}
 
-	scanErr := c.startup.removeLabeledContainers(ctx)
+	scanErr := c.startup.removeLabeledContainers(ctx, retainedAgents)
 	errs = append(errs, scanErr)
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.

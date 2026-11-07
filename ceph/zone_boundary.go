@@ -714,16 +714,16 @@ func (b *zoneBoundary) admittedLocked(ctx context.Context, id string) (bool, err
 // that no container or network with the boundary's label is left. A route of
 // the caller stays. Network shaping on the routers is restored before, by the
 // fault registry. A failed step keeps what it could not release for a retried
-// Terminate.
-func (b *zoneBoundary) close(ctx context.Context) []error {
+// Terminate. The returned IDs exempt those agents from the owner-label sweep.
+func (b *zoneBoundary) close(ctx context.Context) ([]error, map[string]bool) {
 	if b == nil {
-		return nil
+		return nil, nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.closed = true
 	if b.docker == nil {
-		return nil // Released by an earlier Terminate.
+		return nil, nil // Released by an earlier Terminate.
 	}
 	var errs []error
 	for _, id := range slices.Sorted(maps.Keys(b.enrolled)) {
@@ -780,16 +780,24 @@ func (b *zoneBoundary) close(ctx context.Context) []error {
 		}
 	}
 	if len(errs) > 0 {
-		return errs
+		// A caller-owned namespace can outlive the cluster. Keep its agent
+		// available to finish route cleanup on the next Terminate.
+		retained := make(map[string]bool, len(b.enrolled))
+		for _, member := range b.enrolled {
+			if member.agent != nil {
+				retained[member.agent.GetContainerID()] = true
+			}
+		}
+		return errs, retained
 	}
 	if err := b.checkReleasedLocked(ctx); err != nil {
-		return []error{err}
+		return []error{err}, nil
 	}
 	if err := b.docker.Close(); err != nil {
-		return []error{fmt.Errorf("close the zone boundary's Docker client: %w", err)}
+		return []error{fmt.Errorf("close the zone boundary's Docker client: %w", err)}, nil
 	}
 	b.docker = nil
-	return nil
+	return nil, nil
 }
 
 // checkReleasedLocked fails when a container or a network with the

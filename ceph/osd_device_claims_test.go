@@ -458,7 +458,7 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 					"osd.Terminate(ctx, opts...)",
 					"c.fleet.deviceClaims.release(id, osd.Container != nil)",
 					"c.fleet.osdHandles.forget(id)",
-					"c.startup.removeLabeledContainers(ctx)",
+					"c.startup.removeLabeledContainers(ctx, retainedAgents)",
 					"c.fleet.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != \"\")",
 					"c.runDir.release(ctx)",
 				})...)
