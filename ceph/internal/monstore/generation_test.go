@@ -270,12 +270,15 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 			if r.Attachment.ID != "ctr-1" || !r.Attachment.RemoveRequested {
 				t.Fatalf("the removal request was not recorded: %+v", r.Attachment)
 			}
+
+			// Retry the same store once removal can be confirmed.
+			g.removeErr, g.removeLies = nil, false
+			d.listErr, d.users = nil, nil
+			id, err := r.ReplaceGeneration(t.Context(), g, "new")
+			if err != nil || id != "ctr-2" || r.Attachment == nil || r.Attachment.ID != id || len(g.launches) != 2 || g.launches[1].Mode != Require {
+				t.Fatalf("retry returned %q, %v; attachment %+v, launches %+v", id, err, r.Attachment, g.launches)
+			}
 		})
-	}
-	// Control: with none of those the same call succeeds.
-	r, _, g := monStoreRunningFixture(t)
-	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err != nil {
-		t.Fatal(err)
 	}
 }
 
