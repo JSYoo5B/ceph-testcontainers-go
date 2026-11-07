@@ -7,9 +7,11 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +103,22 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			const bucket = "/tc-mon-rolling"
 			s3.Request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 			s3.Request(t, ctx, http.MethodPut, bucket+"/retained", payload, http.StatusOK)
+			// Observe warm daemons past the MON's effective grace windows and a tick.
+			mon := harness.MonitorHandle(t, ctx, cluster, "a")
+			readSeconds := func(option string) time.Duration {
+				t.Helper()
+				raw, err := mon.AdminSocket(ctx, "config", "get", option)
+				var value map[string]string
+				if err != nil || json.Unmarshal(raw, &value) != nil {
+					t.Fatalf("read %s: %q, %v", option, raw, err)
+				}
+				n, err := strconv.ParseFloat(value[option], 64)
+				if err != nil || n <= 0 {
+					t.Fatalf("unexpected %s=%q: %v", option, value[option], err)
+				}
+				return time.Duration(n * float64(time.Second))
+			}
+			beaconWindow := max(readSeconds("mon_mgr_beacon_grace"), readSeconds("mds_beacon_grace")) + readSeconds("mon_tick_interval")
 			stop := 3 * time.Second
 			for i, pair := range [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}} {
 				if i == 2 {
@@ -126,6 +144,41 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				monitorRollingRADOS(t, ctx, harness.ToolkitContainer(t, cluster), payload)
 				if i != 2 {
 					monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
+					select {
+					case <-time.After(beaconWindow):
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					}
+					observer := harness.ObserveCluster(cluster)
+					now, err := observer.ManagerStatus(ctx)
+					if err != nil || !now.Available || now.ActiveGID != initialManager.ActiveGID {
+						t.Fatalf("warm MGR after mon.%s removal: %+v, %v", pair[0], now, err)
+					}
+					health, err := observer.HealthDetails(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if check, down := health.Checks["MGR_DOWN"]; down {
+						t.Fatalf("warm MGR stopped beaconing: %+v", check)
+					}
+					raw, err := cluster.Ceph(ctx, "fs", "get", filesystem.FilesystemName, "--format", "json")
+					var fs struct {
+						MDSMap struct {
+							Info map[string]struct {
+								GID   uint64          `json:"gid"`
+								State string          `json:"state"`
+								Laggy json.RawMessage `json:"laggy_since"`
+							} `json:"info"`
+						} `json:"mdsmap"`
+					}
+					if err != nil || json.Unmarshal(raw, &fs) != nil || len(fs.MDSMap.Info) != 1 {
+						t.Fatalf("read warm MDS map: %s, %v", raw, err)
+					}
+					for _, rank := range fs.MDSMap.Info {
+						if rank.GID != initialMDS.Active[0].GID || rank.State != "up:active" || len(rank.Laggy) != 0 {
+							t.Fatalf("warm MDS after mon.%s removal: %+v", pair[0], rank)
+						}
+					}
 				}
 			}
 			quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
