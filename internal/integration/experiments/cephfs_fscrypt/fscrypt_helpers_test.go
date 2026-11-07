@@ -4,10 +4,13 @@ package cephfs_fscrypt_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -484,3 +487,52 @@ if command == "rmdir":
 
 emit(errno=-1, error="unknown command " + command)
 `
+
+// The official FUSE build qualified with directory ioctls in the experiment.
+const qualifiedFuseImage = "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+
+// Key status values of FS_IOC_GET_ENCRYPTION_KEY_STATUS and the removal
+// status flags of FS_IOC_REMOVE_ENCRYPTION_KEY.
+const (
+	keyAbsent              = 1
+	keyPresent             = 2
+	keyIncompletelyRemoved = 3
+	removalFilesBusy       = 1
+)
+
+type fscryptRetained struct {
+	Before        string `json:"before"`
+	RemoveErrno   int    `json:"remove_errno"`
+	RemoveFlags   *int   `json:"remove_flags"`
+	BusyStatus    int    `json:"busy_status"`
+	Retained      string `json:"retained"`
+	RetainedErrno int    `json:"retained_errno"`
+	OtherErrno    int    `json:"other_errno"`
+	FinalErrno    int    `json:"final_errno"`
+	FinalFlags    *int   `json:"final_flags"`
+	FinalStatus   int    `json:"final_status"`
+	ReopenErrno   int    `json:"reopen_errno"`
+}
+
+func (r fscryptRetained) matches(plaintext []byte) bool {
+	return r.Before == hex.EncodeToString(plaintext) && r.RemoveErrno == 0 &&
+		r.RemoveFlags != nil && *r.RemoveFlags&removalFilesBusy != 0 && r.BusyStatus == keyIncompletelyRemoved &&
+		r.RetainedErrno == 0 && r.Retained == r.Before && r.OtherErrno == errnoENOKEY &&
+		r.FinalStatus == keyAbsent && (r.ReopenErrno == errnoENOENT || r.ReopenErrno == errnoENOKEY)
+}
+
+// qualifiedView identifies the observed client cohorts for metadata and the
+// privileged empty-directory policy. Other builds still run the capability probe.
+func (a fscryptAdmission) qualifiedView(clientPath, version, image string) bool {
+	if a.Machine != "x86_64" || !strings.HasPrefix(a.Kernel, "6.8.0-") {
+		return false
+	}
+	switch clientPath {
+	case kernelPath:
+		return slices.Contains([]string{"19.2.5", "20.2.4", "21.2.0"}, version)
+	case fusePath:
+		return version == "21.2.0" && image == qualifiedFuseImage
+	default:
+		return false
+	}
+}
