@@ -280,6 +280,7 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 		for {
 			g, err := readGate(label)
 			if err == nil && g.Complete && consumerActiveControl(g) && accept(g) {
+				t.Logf("MGR_KEYRING_GATE %s: control %+v, daemons %+v, fixture error %q", label, g.Control, g.Daemons, g.FixtureError)
 				return
 			}
 			select {
