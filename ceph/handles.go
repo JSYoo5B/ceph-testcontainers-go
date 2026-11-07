@@ -64,7 +64,7 @@ func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa
 // and neither purged nor being purged or detached. Every daemon access to an
 // OSD (AdminSocket, Version, RotateKey and the debug-level target) uses it.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged && !o.purgeIssued && !o.detaching
+	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.removing && !o.purged && !o.purgeIssued && !o.detaching
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }

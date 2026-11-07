@@ -118,10 +118,13 @@ type Container struct {
 // Stop/Start can be used for failure injection; OSDContainer.Remove drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
-	ID          int
-	owner       *Container
-	nativeUUID  string
-	placement   OSDConfig
+	ID         int
+	owner      *Container
+	nativeUUID string
+	placement  OSDConfig
+	// removing is set after removal admission, before fencing or draining.
+	// A failed attempt keeps membership changes and detach blocked for retry.
+	removing    bool
 	purged      bool
 	purgeIssued bool
 	// detaching marks an OSD that OSDContainer.Detach fenced; detachRemoved marks
@@ -887,6 +890,10 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := c.osdFleet().checkOSDRemovable(ctx, osd); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	osd.removing = true
 	if osd.Container != nil {
 		if err := c.native.fence(ctx, osd.GetContainerID()); err != nil {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)

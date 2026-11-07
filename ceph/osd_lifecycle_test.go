@@ -248,7 +248,7 @@ func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
 			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "last OSD") {
 				t.Fatalf("last actual owned registration was removable: %v", err)
 			}
-			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 {
+			if cluster.fleet.osdHandles.get(3).removing || len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 {
 				t.Fatal("last-OSD guard ran after draining or daemon changes")
 			}
 		})
@@ -286,6 +286,11 @@ func TestOSDRemovalDeadlineRetainsPartialOwnershipAndOriginalFailure(t *testing.
 			if phase == "drain" && daemon.stops != 0 {
 				t.Fatal("undrained OSD was stopped")
 			}
+			beforeDumps, beforeActions := control.dumps, len(control.actions)
+			if err := osdHandle(t, t.Context(), cluster, 3).SetIn(t.Context(), true); !errors.Is(err, ErrInvalidRequest) ||
+				control.dumps != beforeDumps || len(control.actions) != beforeActions || control.native[3].In {
+				t.Fatalf("SetIn during partial %s removal: err=%v, dumps=%d, actions=%v, OSD=%+v", phase, err, control.dumps, control.actions, control.native[3])
+			}
 			cluster.settings.startupTimeout = time.Second
 			control.safeErr, daemon.keepUp = nil, false
 			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil || cluster.fleet.osdHandles.get(3) != nil {
@@ -314,7 +319,7 @@ func TestOSDRemovalCanceledAndClosedDoNotChangeState(t *testing.T) {
 			if err := osdHandle(t, ctx, cluster, 3).Remove(ctx); err == nil {
 				t.Fatal("expired/closed operation was accepted")
 			}
-			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.fleet.osdHandles.get(3) == nil || cluster.fleet.osdHandles.get(3).purgeIssued {
+			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.fleet.osdHandles.get(3) == nil || cluster.fleet.osdHandles.get(3).removing || cluster.fleet.osdHandles.get(3).purgeIssued {
 				t.Fatal("expired/closed operation changed native or cleanup state")
 			}
 		})
