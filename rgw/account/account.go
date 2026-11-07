@@ -131,7 +131,8 @@ func normalizeConfig(config Config) (Config, error) {
 // Create creates a fresh account exclusively in the actual native scope of
 // gateway g. Existing IDs are rejected and never adopted. A partial handle
 // may be returned after a native failure, but ownership requires a validated
-// creation response and native metadata version tag. Inspect uncertain results
+// creation response and native metadata version tag. After a successful create
+// reply, a separate ten-second read verifies that tag even if ctx ends. Inspect uncertain results
 // through Gateway.Admin or terminate the disposable cluster; do not migrate
 // users into them or blindly delete an identity whose creation was not
 // confirmed.
@@ -196,7 +197,9 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*gwbase.Account
 	if err != nil || !creationIdentity(created, config) {
 		return a, errors.New("RGW account creation identity could not be confirmed")
 	}
-	native, err := g.ReadNativeAccount(ctx, a)
+	settleCtx, stop := gwbase.SettlementContext(ctx)
+	defer stop()
+	native, err := g.ReadNativeAccount(settleCtx, a)
 	if err != nil {
 		return a, err
 	}

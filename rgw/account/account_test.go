@@ -116,6 +116,20 @@ func TestAccountFreshQuotaAndNonpurgeLifecycle(t *testing.T) {
 	}
 }
 
+func TestAccountReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr := newAccountTestGateway()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	g.Replace(&gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel})
+	a, err := create(ctx, g.Core, Config{Name: "fixture"})
+	if err != nil || ctx.Err() == nil || !a.State.Confirmed || a.State.VersionTag != ctr.VersionTag {
+		t.Fatalf("create = %v, ctx = %v, native ownership not confirmed", err, ctx.Err())
+	}
+	if err := newAccount(a).Remove(t.Context()); err != nil || ctr.Account != nil {
+		t.Fatalf("Remove = %v, account remains = %t", err, ctr.Account != nil)
+	}
+}
+
 func TestAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 	for _, edit := range []func(*gwbase.Account, *gwtest.AccountContainer){
 		func(a *gwbase.Account, _ *gwtest.AccountContainer) { a.Origin = gwtest.Foreign() },

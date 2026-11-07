@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -97,10 +96,6 @@ const (
 	policyRemoved
 )
 
-// roleSettleTimeout bounds the native readback that settles a role command
-// whose call failed, also after the call's ctx ended.
-const roleSettleTimeout = 10 * time.Second
-
 var (
 	roleName   = regexp.MustCompile(`^[A-Za-z0-9_+=,.@][A-Za-z0-9_+=,.@-]{0,63}$`)
 	rolePath   = regexp.MustCompile(`^/([\x21-\x7E]*/)?$`)
@@ -149,8 +144,8 @@ func validPolicyDocument(document string) bool {
 // in order with role-policy put, so a test can hand the role's ARN to the SUT.
 // An existing role of the same name is refused, never adopted or changed,
 // and so is a name that another role handle of this cluster still tracks.
-// Every outcome is read back from native state with role get, also when a
-// call fails or its ctx ends, and no native command is ever repeated:
+// Each mutation gets a separate ten-second role get to read back its outcome,
+// even if ctx ends after dispatch. No mutation is replayed:
 //
 //   - a nil error returns the role with all its policies;
 //   - a non-nil role with an error is tracked and its Remove removes what the
@@ -224,7 +219,7 @@ func (s *roleState) handle() *Role {
 func (s *roleState) create(ctx context.Context, g *gwbase.Core) error {
 	_, cmdErr := g.AdminCommand(ctx, "role", "create", "--role-name", s.name, "--path", s.path, "--assume-role-policy-doc", s.trust)
 	errors.As(cmdErr, &s.unstopped)
-	native, err := settleRole(ctx, g, s.name, cmdErr)
+	native, err := settleRole(ctx, g, s.name)
 	switch {
 	case err != nil:
 		return errors.Join(cmdErr, fmt.Errorf("whether RGW created the role is unknown; the role is tracked and its Remove settles and removes it: %w", err))
@@ -269,7 +264,7 @@ func (s *roleState) putPolicy(ctx context.Context, g *gwbase.Core, policy RolePo
 	s.policies = append(s.policies, tracked)
 	_, cmdErr := g.AdminCommand(ctx, "role-policy", "put", "--role-name", s.name, "--policy-name", policy.Name, "--policy-doc", policy.Document)
 	errors.As(cmdErr, &s.unstopped)
-	native, err := settleRole(ctx, g, s.name, cmdErr)
+	native, err := settleRole(ctx, g, s.name)
 	if err != nil {
 		return errors.Join(cmdErr, fmt.Errorf("whether RGW put the role policy is unknown; the role is tracked and its Remove settles it: %w", err))
 	}
@@ -419,7 +414,7 @@ func (r *Role) Remove(ctx context.Context) error {
 	}
 	_, cmdErr := g.AdminCommand(ctx, "role", "delete", "--role-name", s.name)
 	errors.As(cmdErr, &s.unstopped)
-	native, err = settleRole(ctx, g, s.name, cmdErr)
+	native, err = settleRole(ctx, g, s.name)
 	switch {
 	case err != nil:
 		return errors.Join(cmdErr, fmt.Errorf("whether RGW deleted the role is unknown; Remove settles it: %w", err))
@@ -442,7 +437,7 @@ func (r *Role) Remove(ctx context.Context) error {
 func (s *roleState) deletePolicy(ctx context.Context, g *gwbase.Core, policy *rolePolicy) (*nativeRole, error) {
 	_, cmdErr := g.AdminCommand(ctx, "role-policy", "delete", "--role-name", s.name, "--policy-name", policy.name)
 	errors.As(cmdErr, &s.unstopped)
-	native, err := settleRole(ctx, g, s.name, cmdErr)
+	native, err := settleRole(ctx, g, s.name)
 	if err != nil {
 		return nil, errors.Join(cmdErr, fmt.Errorf("whether RGW deleted the role policy is unknown; Remove settles it: %w", err))
 	}
@@ -493,15 +488,9 @@ type nativeRole struct {
 	document map[string]any
 }
 
-// settleRole reads the role name after a command whose call returned err: in
-// ctx when the call succeeded, or within roleSettleTimeout of a context that
-// ignores the end of ctx when it failed, so that a canceled call still
-// learns what it changed.
-func settleRole(ctx context.Context, g *gwbase.Core, name string, err error) (*nativeRole, error) {
-	if err == nil {
-		return readRole(ctx, g, name)
-	}
-	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), roleSettleTimeout)
+// settleRole reads the role after a mutation on a fresh settlement budget.
+func settleRole(ctx context.Context, g *gwbase.Core, name string) (*nativeRole, error) {
+	settleCtx, cancel := gwbase.SettlementContext(ctx)
 	defer cancel()
 	return readRole(settleCtx, g, name)
 }

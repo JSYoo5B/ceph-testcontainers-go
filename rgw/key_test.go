@@ -269,6 +269,21 @@ func TestS3KeyOperationsWaitForTheClusterOnlyUntilTheContextEnds(t *testing.T) {
 	}
 }
 
+func TestS3KeyReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr, user := newKeyTestUser(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	g.Container = &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	key, err := user.CreateS3Key(ctx)
+	if err != nil || ctx.Err() == nil || ctr.count("key create") != 1 {
+		t.Fatalf("CreateS3Key = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("key create"))
+	}
+	credentials(t, key)
+	if err := key.Revoke(t.Context()); err != nil || len(ctr.keys) != 1 {
+		t.Fatalf("Revoke = %v, remaining keys = %d", err, len(ctr.keys))
+	}
+}
+
 func TestS3KeyCreationFailureIsSettledAndNeverReplayed(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

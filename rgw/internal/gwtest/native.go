@@ -17,6 +17,33 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// CancelAtCreateReadback wraps a gateway and cancels the caller when the next
+// exec starts after a successful native creation. Only a detached readback
+// can complete once the caller ends.
+//
+//testdouble:shared-double
+type CancelAtCreateReadback struct {
+	testcontainers.Container
+	Cancel  context.CancelFunc
+	created bool
+}
+
+// Exec delivers the create reply before canceling at its following read.
+//
+//testdouble:shared-double
+func (c *CancelAtCreateReadback) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if c.created {
+		c.created = false
+		c.Cancel()
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err
+		}
+	}
+	code, out, err := c.Container.Exec(ctx, args, opts...)
+	c.created = code == 0 && err == nil && slices.Contains(Argv(args), "create")
+	return code, out, err
+}
+
 // Scope is the native scope that a running PlacementContainer registers in the
 // service map when its zonegroup is in no realm.
 //

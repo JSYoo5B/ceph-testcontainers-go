@@ -293,6 +293,23 @@ func TestRoleCreationRefusesExistingAndInvalidRoles(t *testing.T) {
 	}
 }
 
+func TestRoleReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
+	g, ctr := newRoleTestGateway()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	g.Container = &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	role, err := g.CreateRole(ctx, RoleConfig{Name: "reader", TrustPolicy: testTrust})
+	if err != nil || ctx.Err() == nil || ctr.count("role create") != 1 {
+		t.Fatalf("CreateRole = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("role create"))
+	}
+	if arn, err := role.ARN(); err != nil || arn == "" {
+		t.Fatalf("ARN = %q, %v", arn, err)
+	}
+	if err := role.Remove(t.Context()); err != nil || len(ctr.roles) != 0 {
+		t.Fatalf("Remove = %v, remaining roles = %d", err, len(ctr.roles))
+	}
+}
+
 func TestRoleCreationFailureIsSettledAndNeverReplayed(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

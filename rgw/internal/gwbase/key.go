@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -59,10 +58,6 @@ const (
 	accessKeyAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	accessKeyLength   = 20
 )
-
-// settleTimeout bounds the native readback that settles a key command whose
-// call failed, also after the call's ctx ended.
-const settleTimeout = 10 * time.Second
 
 // generateAccessKey returns a random access key of the native form.
 func generateAccessKey() (string, error) {
@@ -195,15 +190,9 @@ func (g *Core) supervisedUserCommand(ctx context.Context, u *User, args ...strin
 	return g.supervised(ctx, g.Container(), CommandArgs(scope, args...))
 }
 
-// settle reads u after a key command whose call returned err: in ctx when
-// the call succeeded, or within settleTimeout of a context that ignores the
-// end of ctx when it failed, so that a canceled call still learns what it
-// changed.
-func (g *Core) settle(ctx context.Context, u *User, err error) (*NativeUser, error) {
-	if err == nil {
-		return g.readUser(ctx, u)
-	}
-	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+// settle reads the user's keys after a mutation on a fresh settlement budget.
+func (g *Core) settle(ctx context.Context, u *User) (*NativeUser, error) {
+	settleCtx, cancel := SettlementContext(ctx)
 	defer cancel()
 	return g.readUser(settleCtx, u)
 }
@@ -243,7 +232,7 @@ func (g *Core) CreateKey(ctx context.Context, u *User) (*Key, error) {
 	if cause == nil {
 		cause = errors.New("RGW S3 key creation answered")
 	}
-	after, err := g.settle(ctx, u, cmdErr)
+	after, err := g.settle(ctx, u)
 	if err != nil {
 		return key, errors.Join(cmdErr, fmt.Errorf("whether RGW created the S3 key is unknown; the key is tracked and its Revoke settles and removes it: %w", err))
 	}
@@ -318,7 +307,7 @@ func (g *Core) RevokeKey(ctx context.Context, u *User, key *Key) error {
 	key.Status = KeyRevoking
 	_, cmdErr := g.supervisedUserCommand(ctx, u, "key", "rm", "--uid", u.ID, "--key-type", "s3", "--access-key", key.AccessKey)
 	errors.As(cmdErr, &key.Unstopped)
-	after, err := g.settle(ctx, u, cmdErr)
+	after, err := g.settle(ctx, u)
 	if err != nil {
 		return errors.Join(cmdErr, fmt.Errorf("whether RGW removed the S3 key is unknown; Revoke settles it: %w", err))
 	}
