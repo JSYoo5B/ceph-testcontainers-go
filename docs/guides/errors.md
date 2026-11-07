@@ -47,9 +47,9 @@ follow changes of earlier steps: `dashboard.Start` installs the certificate
 and key before it refuses an existing account of the same name, and returns
 a partial handle with that error. So the category alone does not establish
 that nothing changed, and an image or environment error during a later step
-is not a promise to roll back the entire fixture either. Always preserve and
-restore a non-nil partial handle returned with an error, whatever its
-category.
+is not a promise to roll back the entire fixture either. Keep a non-nil partial handle and follow the
+operation's recovery contract. A Dashboard handle supports `Restore`; an
+unconfirmed CephFS subvolume snapshot descriptor supports read-only inspection.
 Once a native command has been sent, a lost reply leaves its effect unknown:
 the command may have run, as when Docker answers the final inspection of an
 exec after the command finished. Such a failure keeps Docker's error, and is
