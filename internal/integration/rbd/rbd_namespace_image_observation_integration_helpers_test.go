@@ -369,13 +369,17 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			return e.Kind == ceph.WatchBaseline && e.Status.ReplayReady && e.Status.SourcePrimary
 		})
 	}
-	// Observe a role change specific to the first image. The second stays
-	// primary, including its subsequent stopped and restarted samples.
-	image := harness.RBDScopeImage(pool, mappings[0][0], "volume")
-	harness.RBDScenarioCommand(t, ctx, owner.SourceRBD, "mirror", "image", "demote", image)
-	watches[0].await(t, 2*time.Minute, "selected image demoted", func(e rbdmirror.ImageWatchEvent) bool { return !e.Status.SourcePrimary })
-	harness.RBDScenarioCommand(t, ctx, owner.SourceRBD, "mirror", "image", "promote", "--force", image)
-	watches[0].await(t, 2*time.Minute, "selected image promoted", func(e rbdmirror.ImageWatchEvent) bool { return e.Status.SourcePrimary && e.Status.ReplayReady })
+	// Write and checkpoint only ns-a/volume. Its sibling keeps its earlier
+	// bytes and checkpoint. Watch reports replay state and identity; data
+	// delivery is proved independently before and after the receiver changes.
+	prior := checkpoints[0]
+	payloads[0] = rbdScopedImagePayload(0, "selected-watch-checkpoint")
+	harness.RBDScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, mappings[0][0], "volume", 0, payloads[0])
+	checkpoints[0] = harness.RBDReceiverNativeSnapshot(t, ctx, sourceClient, pool, mappings[0][0], "volume")
+	if checkpoints[0] <= prior {
+		t.Fatalf("selected image checkpoint %d follows %d", checkpoints[0], prior)
+	}
+	verify("selected-watch-checkpoint")
 	rw, err := views[1].WatchReceivers(ctx, cfg, receiver.DaemonName)
 	if err != nil {
 		t.Fatal(err)
