@@ -104,6 +104,9 @@ done
 			if err != nil || inspection.path != initial {
 				t.Fatalf("inspect: %+v, %v", inspection, err)
 			}
+			if got := run("reserve", pidfile); got != "" {
+				t.Fatal(got)
+			}
 			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, inspection.identity)
 			start.ExtraFiles = []*os.File{signalW, gateR}
 			if err := start.Start(); err != nil {
@@ -198,6 +201,9 @@ func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 			t.Fatal(err)
 		}
 		return strings.TrimSpace(string(out))
+	}
+	if got := run("reserve", pidfile); got != "" {
+		t.Fatal(got)
 	}
 	if got := run("start", "admin", cache, sock, "1024", asok, pidfile, "none", ""); got != "exit=1\npid=\nready=0" {
 		t.Fatalf("prelaunch conflict: %s", got)

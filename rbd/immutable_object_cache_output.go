@@ -154,10 +154,9 @@ func parseImmutableObjectCacheInspection(out immutableObjectCacheOutput) (immuta
 // daemonizing parent's exit status, the PID file's PID (0 when it is empty)
 // and whether that process opened the socket.
 type immutableObjectCacheStart struct {
-	exit       int
-	pid        int
-	ready      bool
-	unreserved bool
+	exit  int
+	pid   int
+	ready bool
 }
 
 func (l *ImmutableObjectCacheLease) start(ctx context.Context, state immutableObjectCacheInspection) (immutableObjectCacheStart, error) {
@@ -172,7 +171,7 @@ func (l *ImmutableObjectCacheLease) start(ctx context.Context, state immutableOb
 
 func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableObjectCacheStart, error) {
 	var started immutableObjectCacheStart
-	f, err := out.fields("exit", "pid", "ready", "unreserved")
+	f, err := out.fields("exit", "pid", "ready")
 	if err != nil {
 		return started, err
 	}
@@ -194,15 +193,6 @@ func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableOb
 	}
 	if started.ready, err = f.flag("ready"); err != nil {
 		return started, err
-	}
-	if _, ok := f.values["unreserved"]; ok {
-		started.unreserved, err = f.flag("unreserved")
-		if err != nil {
-			return started, err
-		}
-		if started.unreserved && (started.exit == 0 || started.ready || started.pid != 0) {
-			return started, f.errorf("unreserved", "an unreserved start must report failure without a daemon")
-		}
 	}
 	if started.ready && started.pid == 0 {
 		return started, f.errorf("pid", "a ready daemon has no PID")

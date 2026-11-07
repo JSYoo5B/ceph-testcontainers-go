@@ -1,7 +1,9 @@
 package rbd
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // fakeCacheDaemon is a ceph-immutable-object-cache process.
@@ -70,6 +73,11 @@ func (f *fakeCacheClient) daemon(pid, sock, pidfile string) *fakeCacheDaemon {
 func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(args) > 11 && args[2] == supervised.ShellScript && args[11] == "reserve" {
+		line := supervised.ShellEndPrefix + "0\n"
+		header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
+		return 0, bytes.NewReader(append(header, line...)), nil
+	}
 	if len(args) < 5 || args[0] != "sh" || args[2] != immutableObjectCacheScript {
 		return clustertest.Reply(args, 2, nil)
 	}
