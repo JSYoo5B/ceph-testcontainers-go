@@ -115,8 +115,9 @@ username, password := d.Credentials()
   hold the installed certificate, and refuses an outside edit, as the
   override handles do for the module and options. An existing account of the
   same name is refused, never adopted, and no role is created.
-- **Restoration.** `Restore` verifies the Dashboard account's creation marker
-  before deletion. It keeps the module enabled until the gateway link,
+- **Restoration.** `Restore` verifies the Dashboard account's display name
+  before deletion. Keep the generated display name unchanged because it
+  marks the account as owned by this fixture. It keeps the module enabled until the gateway link,
   account, multi-cluster record and certificate steps succeed. It still
   attempts the listener options, retains the fixture slot on error and
   retries the unfinished steps on the next call. The module keeps its access database and token

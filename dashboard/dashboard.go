@@ -58,7 +58,9 @@ func (c TLSConfig) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.Stri
 // creates no role. The password is generated and satisfies the Dashboard's
 // default password policy. Username and Role each contain 1 to 64 ASCII
 // characters, starting with a lowercase letter and followed by lowercase
-// letters, digits, underscores, periods or hyphens.
+// letters, digits, underscores, periods or hyphens. Start sets the account
+// display name to a generated ownership marker. Keep that display name
+// unchanged so Restore can verify the account before deletion.
 type Config struct {
 	TLS      TLSConfig
 	Username string
@@ -445,7 +447,8 @@ func runWithInput(ctx context.Context, c *ceph.Container, label string, input []
 	return nil
 }
 
-// Credentials returns the owned account's name and password for the SUT.
+// Credentials returns the owned account's login name and password for the SUT.
+// Keep its display name unchanged. Restore uses it as the ownership marker.
 //
 //purpose:handoff
 func (d *Dashboard) Credentials() (username, password string) {
@@ -743,8 +746,10 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 //
 // For an interrupted account, TLS or gateway API key write, Restore confirms
 // the command has stopped before using the resource's state to complete that step. It
-// reads the account's creation marker before deleting it. A different
-// marker or an outside change to a certificate, key, listener option or
+// verifies the account's display name against the ownership marker set at
+// creation. Keep the display name unchanged. If it differs, Restore
+// preserves the account and returns ceph.ErrInvalidRequest.
+// An outside change to a certificate, key, listener option or
 // module state that would be overwritten is refused. External account
 // changes must not race the native read and delete commands.
 // Restore still attempts the listener options. It keeps the module enabled
