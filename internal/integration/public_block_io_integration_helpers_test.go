@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
@@ -132,6 +133,17 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		t.Logf("BLOCKIO_DELAY eligible=true native_delay_verified=true baseline=%s delayed=%s restored=%s", baseline, delayed, restored)
 	}
+	// Snapshot the exact log prefix immediately before installing EIO. An
+	// earlier failure from setup or the delay phase cannot satisfy this check.
+	logs, err := osd.Logs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineHash := sha256.New()
+	logBytes, readErr := io.Copy(baselineHash, logs)
+	if err := errors.Join(readErr, logs.Close()); err != nil {
+		t.Fatal(err)
+	}
 	if err := backend.Apply(ctx, blockio.Profile{EIO: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,22 +152,17 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		t.Fatalf("EIO request and observed kernel table differ: %+v", status)
 	}
 	failed := blockIOCommand(t, ctx, cluster, client, "put", "during-eio", "/tmp/blockio-payload")
-	if failed.ExitCode == 0 && !failed.TimedOut {
-		t.Fatal("EIO did not produce a bounded native client failure")
+	if !blockIOExpectedFailure(failed) {
+		t.Fatalf("EIO put failed for an unexpected reason: exit=%d timedOut=%t stderr=%s", failed.ExitCode, failed.TimedOut, failed.Stderr)
 	}
-	// Kernel table observation and client failure are separate from daemon logs.
-	logs, err := osd.Logs(ctx)
+	// Read through the end of the fault window before restoring the table.
+	logs, err = osd.Logs(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, readErr := io.ReadAll(io.LimitReader(logs, 4<<20))
-	closeErr := logs.Close()
-	if readErr != nil || closeErr != nil {
-		t.Fatal(readErr, closeErr)
-	}
-	text := strings.ToLower(string(data))
-	if !strings.Contains(text, "input/output error") && !strings.Contains(text, "i/o error") {
-		t.Fatal("client failure lacked independent OSD I/O-error log evidence")
+	err = checkBlockIOLogWindow(logs, logBytes, baselineHash.Sum(nil))
+	if err := errors.Join(err, logs.Close()); err != nil {
+		t.Fatal(err)
 	}
 	if err := backend.Restore(ctx); err != nil {
 		t.Fatal(err)
