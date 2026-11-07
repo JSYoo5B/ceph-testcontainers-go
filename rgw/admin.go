@@ -230,8 +230,9 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 // creation. If the generated credentials were confirmed, the handle supports
 // Info and Remove even after a later capability setup failure. If the
 // creation response is malformed, truncated or missing keys, credentials and
-// ownership cannot be confirmed: inspect through Admin or terminate the cluster
-// rather than adopting native keys or blindly retrying the same ID.
+// ownership cannot be confirmed. Remove can establish absence after the
+// create command has ended. A user still present requires inspection through
+// Admin or termination of the disposable cluster.
 // Native user edits from external clients must not race this operation.
 //
 // With UserConfig.Account the user is that account's root user. The account
@@ -404,8 +405,10 @@ func (u *User) Suspend(ctx context.Context, suspended bool) error {
 }
 
 // Remove removes an owned identity without purging buckets or objects.
-// The handle must contain its confirmed generated credentials; an incomplete
-// creation response never permits adopting keys from a later native query.
+// Deleting a present user requires its confirmed generated credentials. After
+// an uncertain creation, Remove first settles the create command and checks
+// the creation scope. Absence completes cleanup. A present identity whose
+// creation was never confirmed stays untouched and Remove returns an error.
 // Ceph refuses ordinary users that still own buckets; remove those through the
 // S3 client first. Account buckets belong to the account and may outlive a root
 // user's removal; removing the account independently refuses a nonempty one.
@@ -426,11 +429,17 @@ func (u *User) Remove(ctx context.Context) error {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
-	if !user.Confirmed() {
-		return errors.New("RGW user was not created in this cluster")
+	if user.State == nil {
+		return errors.New("RGW user has no creation state")
 	}
 	if user.State.Removed {
 		return nil
+	}
+	if pending := user.State.UnstoppedCreate; pending != nil {
+		if err := pending.Stop(ctx); err != nil {
+			return fmt.Errorf("settle RGW user creation before removal: %w", err)
+		}
+		user.State.UnstoppedCreate = nil
 	}
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {
@@ -445,6 +454,9 @@ func (u *User) Remove(ctx context.Context) error {
 	if !exists {
 		user.State.Removed = true
 		return nil
+	}
+	if !user.Confirmed() {
+		return errors.New("RGW user exists but its creation was not confirmed; refusing removal")
 	}
 	if _, err := g.OwnedUser(ctx, user); err != nil {
 		return err

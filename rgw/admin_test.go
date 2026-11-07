@@ -43,7 +43,8 @@ type rgwAdminTestContainer struct {
 	stopped, paused, restarting bool
 	// onExec, when set, runs in each radosgw-admin invocation before it
 	// answers.
-	onExec func()
+	onExec       func()
+	stopFailures int
 }
 
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
@@ -54,6 +55,10 @@ func (ctr *rgwAdminTestContainer) State(context.Context) (*container.State, erro
 
 func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if gwtest.IsCancel(args) {
+		if ctr.stopFailures > 0 {
+			ctr.stopFailures--
+			return 0, nil, errors.New("engine unavailable during stop")
+		}
 		return 0, nil, nil
 	}
 	original := args
@@ -201,6 +206,35 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 	}
 }
 
+func TestUnconfirmedUserRemovalWaitsForCreateAndProvesAbsence(t *testing.T) {
+	gateway, ctr := newRGWAdminTestGateway(Config{Zone: "owned-zone"},
+		rgwAdminResponse{data: `[]`}, rgwAdminResponse{err: errors.New("lost create reply")},
+		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: `[]`})
+	ctr.stopFailures = 2 // the first stop and the first Remove cannot confirm it
+	user, err := gateway.CreateUser(t.Context(), UserConfig{ID: "test-user"})
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if !errors.As(err, &unstopped) || user == nil {
+		t.Fatalf("CreateUser = %v, %v", user, err)
+	}
+	if err := user.Remove(t.Context()); err == nil || len(ctr.calls) != 2 {
+		t.Fatalf("inspected identity before create stopped: %v, %v", err, ctr.calls)
+	}
+	if err := user.Remove(t.Context()); err == nil || len(ctr.calls) != 3 || user.base().State.Removed {
+		t.Fatalf("present identity was accepted or changed: %v, %v", err, ctr.calls)
+	}
+	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed || len(ctr.calls) != 4 {
+		t.Fatalf("absent identity did not settle: %v, %v", err, ctr.calls)
+	}
+	for _, args := range ctr.calls[2:] {
+		if !slices.Equal(args, ctr.calls[0]) {
+			t.Fatalf("cleanup issued more than the original scoped user list: %v", args)
+		}
+	}
+	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 4 {
+		t.Fatalf("settled removal repeated a command: %v", err)
+	}
+}
+
 func TestRGWCreationWithoutConfirmedKeysCannotAdoptNativeIdentity(t *testing.T) {
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	for _, test := range []struct{ name, output string }{
@@ -210,7 +244,7 @@ func TestRGWCreationWithoutConfirmedKeysCannotAdoptNativeIdentity(t *testing.T) 
 		{"missing secret", rgwAdminFixture("test-user", "", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `[]`}, rgwAdminResponse{data: test.output}, rgwAdminResponse{data: native})
+			gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: `[]`}, rgwAdminResponse{data: test.output}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native})
 			user, err := gateway.CreateUser(t.Context(), UserConfig{ID: "test-user"})
 			if err == nil || user == nil || !user.base().State.Created || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatal("unconfirmed successful native creation lost its partial handle or exposed keys")
@@ -221,7 +255,7 @@ func TestRGWCreationWithoutConfirmedKeysCannotAdoptNativeIdentity(t *testing.T) 
 			if _, err := user.Info(t.Context()); err == nil || len(ctr.calls) != 2 {
 				t.Fatal("unconfirmed handle adopted credentials from a later native query")
 			}
-			if err := user.Remove(t.Context()); err == nil || len(ctr.calls) != 2 {
+			if err := user.Remove(t.Context()); err == nil || len(ctr.calls) != 3 || !slices.Equal(ctr.calls[2][len(ctr.calls[2])-2:], []string{"user", "list"}) {
 				t.Fatal("unconfirmed handle attempted native identity removal")
 			}
 			if data, err := gateway.Admin(t.Context(), "user", "info", "--uid", user.ID()); err != nil || string(data) != native {

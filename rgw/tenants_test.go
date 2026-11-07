@@ -300,8 +300,13 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 			if _, err := user.Info(t.Context()); err == nil || len(f.Calls) != 0 {
 				t.Fatal("unconfirmed creation adopted later native root credentials")
 			}
-			if err := user.Remove(t.Context()); err == nil || len(f.Calls) != 0 {
-				t.Fatal("unconfirmed creation attempted native root removal")
+			if err := user.Remove(t.Context()); err == nil {
+				t.Fatal("unconfirmed root creation accepted a present user")
+			}
+			for _, args := range f.Calls {
+				if slices.Contains(args, "rm") || slices.Contains(args, "info") {
+					t.Fatal("unconfirmed creation attempted native root removal or adoption")
+				}
 			}
 		})
 	}

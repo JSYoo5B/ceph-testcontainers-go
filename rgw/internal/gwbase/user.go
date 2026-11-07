@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -78,6 +79,9 @@ type User struct {
 // UserState is the lifecycle state of a user.
 type UserState struct {
 	Created, Removed bool
+	// UnstoppedCreate retains a create command that could still publish the
+	// identity after an absence check. Remove must settle it first.
+	UnstoppedCreate *ceph.NativeCommandUnstoppedError
 	// NativeScope, when set, is the exact native scope that the user's
 	// commands use: that of a tenanted user's gateway or of a root user's
 	// account.
@@ -225,8 +229,9 @@ func (g *Core) CreateUser(ctx context.Context, spec UserSpec) (*User, error) {
 	if spec.MaxBuckets != nil {
 		args = append(args, "--max-buckets", strconv.Itoa(*spec.MaxBuckets))
 	}
-	data, err := g.UserCommand(ctx, user, args...)
+	data, err := g.supervisedUserCommand(ctx, user, args...)
 	if err != nil {
+		errors.As(err, &user.State.UnstoppedCreate)
 		return user, err
 	}
 	user.State.Created = true
