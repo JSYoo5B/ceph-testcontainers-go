@@ -34,12 +34,11 @@ func ExampleSet_Watch() {
 	set, err := quiesce.Start(ctx, fs, []*subvolume.Subvolume{volume}, cfg)
 	if set != nil {
 		defer func() {
-			// Release also checks that the checkpoint stayed consistent. If
-			// release cannot be confirmed, allow the native timers to expire
-			// before terminating the cluster.
-			if err := set.Release(context.Background()); err != nil {
+			// Release checks that the checkpoint stayed consistent.
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := set.Release(releaseCtx); err != nil {
 				fmt.Printf("checkpoint not confirmed for set %s: %v\n", set.ID(), err)
-				time.Sleep(cfg.Timeout + cfg.Expiration)
 			}
 		}()
 	}

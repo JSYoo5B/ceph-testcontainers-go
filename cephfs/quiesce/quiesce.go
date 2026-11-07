@@ -38,8 +38,9 @@ type State struct {
 // Set owns a newly created, unique native quiesce set. Copies share state.
 // Release confirms the captured QUIESCED version, so an outside edit or
 // expiration cannot masquerade as a consistent checkpoint. An uncertain create
-// may return a non-nil handle plus an error; retain it or let its native timer
-// expire before terminating the cluster. Never externally edit this set ID.
+// may return a non-nil handle plus an error. Retain it for inspection and
+// release. The native timers bound a pause on a cluster that stays running.
+// Terminating the cluster disposes of its sets. Never externally edit this set ID.
 type Set struct {
 	filesystem *fsbase.Core
 	state      *setRecord
