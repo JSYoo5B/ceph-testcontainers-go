@@ -161,8 +161,15 @@ func TestImmutableObjectCache(t *testing.T) {
 
 	// A cache directory that existed, empty, before the lease: Restore of a
 	// running daemon stops it and keeps the directory, now empty again.
-	const existing, existingSocket = "/var/cache/tc-ioc-existing", "/run/tc-ioc-existing/cache.sock"
+	// Keep the socket on a separate mount so the lease must support the
+	// rename operations on both its socket and cache filesystems.
+	const existing, existingSocket = "/var/cache/tc-ioc-existing", "/dev/shm/tc-ioc-existing/cache.sock"
 	harness.ExecCommand(t, ctx, client, "mkdir", existing)
+	cacheDevice := harness.ExecOutput(t, ctx, client, "stat", "-c", "%d", existing)
+	socketDevice := harness.ExecOutput(t, ctx, client, "stat", "-c", "%d", "/dev/shm")
+	if cacheDevice == socketDevice {
+		t.Fatalf("cache directory and socket share device %s", cacheDevice)
+	}
 	kept, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: existing, Socket: existingSocket})
 	restoreImmutableObjectCacheAtCleanup(t, kept)
 	if err != nil {
