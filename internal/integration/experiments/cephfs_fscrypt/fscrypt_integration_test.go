@@ -377,23 +377,6 @@ type fscryptKeyStatus struct {
 	Users  int `json:"users"`
 }
 
-type fscryptEntry struct {
-	Name     string `json:"name"`
-	Mode     uint32 `json:"mode"`
-	Size     int64  `json:"size"`
-	Ino      uint64 `json:"ino"`
-	MtimeNS  int64  `json:"mtime_ns"`
-	Data     string `json:"data"`
-	Target   string `json:"target"`
-	Children *int   `json:"children"`
-	Errno    int    `json:"errno"`
-}
-
-func (e fscryptEntry) plainName() string {
-	name, _ := hex.DecodeString(e.Name)
-	return string(name)
-}
-
 type fscryptListing struct {
 	Errno   int            `json:"errno"`
 	Entries []fscryptEntry `json:"entries"`
@@ -568,13 +551,8 @@ func exposed(t *testing.T, keyed, locked fscryptListing, clientPath string, qual
 			t.Fatalf("%s: inode %d of %q not listed", clientPath, entry.Ino, entry.plainName())
 		}
 		if qualified {
-			switch kind := entry.Mode & 0o170000; {
-			case other.Mode != entry.Mode || other.MtimeNS != entry.MtimeNS:
-				t.Fatalf("%s: locked mode/mtime differ on inode %d", clientPath, entry.Ino)
-			case kind == 0o100000 && other.Size != entry.Size:
-				t.Fatalf("%s: locked file size %d, want %d", clientPath, other.Size, entry.Size)
-			case kind == 0o120000 && ((clientPath == fusePath && other.Size != entry.Size) || (clientPath == kernelPath && other.Size != 96)):
-				t.Fatalf("%s: unexpected locked/keyed symlink sizes %d/%d", clientPath, other.Size, entry.Size)
+			if err := entry.checkLockedMetadata(clientPath, other); err != nil {
+				t.Fatal(err)
 			}
 		}
 		var fields []string

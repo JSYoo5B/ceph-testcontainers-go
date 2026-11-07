@@ -536,3 +536,42 @@ func (a fscryptAdmission) qualifiedView(clientPath, version, image string) bool 
 		return false
 	}
 }
+
+type fscryptEntry struct {
+	Name     string `json:"name"`
+	Mode     uint32 `json:"mode"`
+	Size     int64  `json:"size"`
+	Ino      uint64 `json:"ino"`
+	MtimeNS  int64  `json:"mtime_ns"`
+	Data     string `json:"data"`
+	Target   string `json:"target"`
+	Children *int   `json:"children"`
+	Errno    int    `json:"errno"`
+}
+
+func (e fscryptEntry) plainName() string {
+	name, _ := hex.DecodeString(e.Name)
+	return string(name)
+}
+
+// The fixture uses a 39-byte symlink target. On the qualified kernel build
+// its encoded target occupies 96 bytes. FUSE exposes the plaintext length.
+func (keyed fscryptEntry) checkLockedMetadata(clientPath string, locked fscryptEntry) error {
+	if locked.Mode != keyed.Mode || locked.MtimeNS != keyed.MtimeNS {
+		return fmt.Errorf("%s: locked mode/mtime differ on inode %d", clientPath, keyed.Ino)
+	}
+	want := keyed.Size
+	switch keyed.Mode & 0o170000 {
+	case 0o100000:
+	case 0o120000:
+		if clientPath == kernelPath {
+			want = 96
+		}
+	default:
+		return nil
+	}
+	if locked.Size != want {
+		return fmt.Errorf("%s: locked inode %d size %d, want %d", clientPath, keyed.Ino, locked.Size, want)
+	}
+	return nil
+}

@@ -226,3 +226,23 @@ func TestFscryptFuseQualificationMatchesTheObservedClient(t *testing.T) {
 		t.Fatal("unqualified platform was assigned the reference FUSE behavior")
 	}
 }
+
+func TestFscryptLockedMetadataDistinguishesClientViews(t *testing.T) {
+	file := fscryptEntry{Mode: 0o100600, Size: 4096, MtimeNS: 42}
+	for _, alter := range []func(*fscryptEntry){
+		func(e *fscryptEntry) { e.Mode++ }, func(e *fscryptEntry) { e.MtimeNS++ }, func(e *fscryptEntry) { e.Size-- },
+	} {
+		locked := file
+		alter(&locked)
+		if file.checkLockedMetadata(kernelPath, locked) == nil {
+			t.Fatal("accepted changed metadata")
+		}
+	}
+	link := fscryptEntry{Mode: 0o120777, Size: 39}
+	encoded := link
+	encoded.Size = 96
+	if link.checkLockedMetadata(kernelPath, encoded) != nil || link.checkLockedMetadata(fusePath, link) != nil ||
+		link.checkLockedMetadata(kernelPath, link) == nil || link.checkLockedMetadata(fusePath, encoded) == nil {
+		t.Fatal("incorrect locked symlink size qualification")
+	}
+}
