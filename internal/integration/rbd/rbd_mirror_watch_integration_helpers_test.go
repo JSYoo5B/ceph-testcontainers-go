@@ -20,7 +20,7 @@ const rbdMirrorWatchPool = "tc-rbd-watch"
 
 // rbdMirrorWatchStream reads one watch's events in order: it fails on a
 // skipped sequence number or a closed watch, counts gaps (a read can fail
-// while a receiver stops), and remembers the last successful event.
+// while a receiver stops), and forwards successful observations.
 type rbdMirrorWatchStream[E any] struct {
 	name   string
 	events <-chan E
@@ -28,7 +28,6 @@ type rbdMirrorWatchStream[E any] struct {
 	meta   func(E) (uint64, ceph.WatchEventKind)
 	last   uint64
 	gaps   int
-	latest E
 }
 
 func (s *rbdMirrorWatchStream[E]) await(t *testing.T, limit time.Duration, what string, match func(E) bool) E {
@@ -49,23 +48,6 @@ func (s *rbdMirrorWatchStream[E]) await(t *testing.T, limit time.Duration, what 
 	}
 }
 
-// current reads the events already buffered and returns the last successful
-// one, which is the latest state the watch reported.
-func (s *rbdMirrorWatchStream[E]) current(t *testing.T) E {
-	t.Helper()
-	for {
-		select {
-		case event, ok := <-s.events:
-			if !ok {
-				t.Fatalf("%s: watch ended: %v", s.name, s.stop())
-			}
-			s.record(t, "buffered", event)
-		default:
-			return s.latest
-		}
-	}
-}
-
 // record checks the sequence of one event and reports whether it is a
 // successful read.
 func (s *rbdMirrorWatchStream[E]) record(t *testing.T, what string, event E) bool {
@@ -80,7 +62,6 @@ func (s *rbdMirrorWatchStream[E]) record(t *testing.T, what string, event E) boo
 		t.Logf("%s %s: gap at event %d: %+v", s.name, what, sequence, event)
 		return false
 	}
-	s.latest = event
 	t.Logf("%s %s: event %d %s: %+v", s.name, what, sequence, kind, event)
 	return true
 }
@@ -97,7 +78,7 @@ func (s *rbdMirrorWatchStream[E]) finish(t *testing.T) {
 	}
 }
 
-// testRBDMirrorWatch stops the elected receiver of a two-daemon mirror while
+// testRBDMirrorWatch stops the observed image replayer of a two-daemon mirror while
 // both watches run. The receiver event that names the survivor as leader,
 // with the stopped member still in the pinned cohort, advances the test: a
 // new payload and a mirror snapshot checkpoint are written on the source.
@@ -204,7 +185,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	if s := imageBaseline.Status; !s.ReplayReady || s.DaemonName == "" || s.GlobalID == "" {
 		t.Fatalf("image baseline = %+v", imageBaseline)
 	}
-	victim := receiverBaseline.Status.LeaderDaemonName
+	victim := imageBaseline.Status.DaemonName
 	var stopped *rbdmirror.Daemon
 	survivor := ""
 	for _, daemon := range link.Daemons() {
@@ -215,9 +196,13 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 		}
 	}
 	victimBefore := receiverBaseline.Status.Daemons[victim]
-	t.Logf("baseline: leader %s (instance %s), image replayed by %s (instance %s), survivor %s", victim, victimBefore.InstanceID, imageBaseline.Status.DaemonName, imageBaseline.Status.InstanceID, survivor)
+	if stopped == nil || survivor == "" || victimBefore.InstanceID == "" || victimBefore.InstanceID != imageBaseline.Status.InstanceID {
+		t.Fatalf("baseline replayer %s/%s does not match receiver cohort %+v", victim, imageBaseline.Status.InstanceID, receiverBaseline.Status)
+	}
+	t.Logf("baseline: leader %s, image replayed by %s (instance %s), survivor %s", receiverBaseline.Status.LeaderDaemonName, imageBaseline.Status.DaemonName, imageBaseline.Status.InstanceID, survivor)
 
 	grace := 2 * time.Second
+	stopBegan := time.Now()
 	if err := stopped.Stop(ctx, &grace); err != nil {
 		t.Fatal(err)
 	}
@@ -249,15 +234,14 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	second := harness.RBDMultiClusterPayload(2<<20, 73)
 	harness.RBDScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, rbdMirrorWatchPool, "", "volume", 0, second)
 	checkpoint := harness.RBDReceiverNativeSnapshot(t, ctx, sourceClient, rbdMirrorWatchPool, "", "volume")
-	replaying := images.current(t)
-	if !replaying.Status.ReplayReady || replaying.Status.DaemonName != survivor {
-		replaying = images.await(t, 4*time.Minute, "survivor replay", func(e rbdmirror.ImageWatchEvent) bool {
-			return e.Status.ReplayReady && e.Status.DaemonName == survivor
-		})
-	}
-	if result, err := (rbdmirrorexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor}).Evaluate(replaying.Status); err != nil || !result.Matched {
-		t.Fatalf("the replay event names another image pair: %v %v", result, err)
-	}
+	replay := rbdmirrorexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor, NewInstance: true}
+	replaying := images.await(t, 4*time.Minute, "replayer moved", func(e rbdmirror.ImageWatchEvent) bool {
+		result, err := replay.Evaluate(e.Status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e.Sequence > imageBaseline.Sequence && !e.Finished.Before(stopBegan) && result.Matched
+	})
 	t.Logf("survivor replay: event %d %s by %s (instance %s; baseline %s)", replaying.Sequence, replaying.Kind, replaying.Status.DaemonName, replaying.Status.InstanceID, imageBaseline.Status.DaemonName)
 	harness.RBDScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, rbdMirrorWatchPool, "", "volume", second)
 	t.Logf("checkpoint %d delivered through %s", checkpoint, survivor)
@@ -279,9 +263,40 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	}
 	t.Logf("restart: event %d %s, %s instance %s -> %s, observed %v after the start returned", restarted.Sequence, restarted.Kind, victim, victimBefore.InstanceID, restarted.Status.Daemons[victim].InstanceID, restarted.Finished.Sub(restartedAt))
 
+	// A leader can assign the image to its peer. In that topology the first
+	// stop proved a replay move; stop the actual leader separately to also
+	// exercise a change in election.
+	if receiverBaseline.Status.LeaderDaemonName != victim {
+		leaderName := restarted.Status.LeaderDaemonName
+		var leader *rbdmirror.Daemon
+		next := ""
+		for _, daemon := range link.Daemons() {
+			if daemon.DaemonName == leaderName {
+				leader = daemon
+			} else {
+				next = daemon.DaemonName
+			}
+		}
+		if leader == nil || next == "" {
+			t.Fatalf("invalid restarted cohort: %+v", restarted.Status)
+		}
+		if err := leader.Stop(ctx, &grace); err != nil {
+			t.Fatal(err)
+		}
+		receivers.await(t, 4*time.Minute, "change of elected leader", func(e rbdmirror.ReceiverWatchEvent) bool {
+			return e.Status.LeaderDaemonName == next && !e.Status.Ready && !e.Status.Daemons[leaderName].Running && e.Status.Daemons[next].Running && slices.Equal(e.Status.ExpectedDaemons, receiverBaseline.Status.ExpectedDaemons)
+		})
+		if err := leader.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		receivers.await(t, 4*time.Minute, "leader restart", func(e rbdmirror.ReceiverWatchEvent) bool {
+			member := e.Status.Daemons[leaderName]
+			return e.Status.Ready && member.Running && member.ContainerID == leader.GetContainerID() && member.InstanceID != "" && member.InstanceID != restarted.Status.Daemons[leaderName].InstanceID
+		})
+	}
 	receivers.finish(t)
 	images.finish(t)
 	elapsed := time.Since(watchStarted)
-	t.Logf("native RBD mirror watch: leader %s stopped -> %s elected -> %s replays -> checkpoint delivered -> %s restarted; receivers %d events %d gaps, image %d events %d gaps, watches ran %v at a %v interval",
+	t.Logf("native RBD mirror watch: replayer %s stopped -> leader %s -> %s replays -> checkpoint delivered -> %s restarted; receivers %d events %d gaps, image %d events %d gaps, watches ran %v at a %v interval",
 		victim, survivor, survivor, victim, receivers.last, receivers.gaps, images.last, images.gaps, elapsed.Round(time.Second), interval)
 }

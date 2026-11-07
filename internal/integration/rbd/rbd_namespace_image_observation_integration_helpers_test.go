@@ -346,6 +346,49 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	write("initial")
 	initial := check("initial", receiver)
 	verify("initial")
+	// Both mappings have an image called volume. check independently pinned
+	// their distinct local and global IDs using each site's native CLI.
+	watches := make([]*rbdMirrorWatchStream[rbdmirror.ImageWatchEvent], 2)
+	cfg := ceph.WatchConfig{Interval: time.Second, Buffer: 64}
+	for i := range watches {
+		w, err := views[i].WatchImage(ctx, cfg, "volume")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = w.Stop() })
+		watches[i] = &rbdMirrorWatchStream[rbdmirror.ImageWatchEvent]{name: mappings[i][0], events: w.Events(), stop: w.Stop, meta: func(e rbdmirror.ImageWatchEvent) (uint64, ceph.WatchEventKind) {
+			if e.Kind != ceph.WatchGap {
+				expected := rbdmirrorexpect.Image{Select: initial[i], Replaying: e.Status.ReplayReady}
+				if r, err := expected.Evaluate(e.Status); err != nil || !r.Matched || i == 1 && !e.Status.SourcePrimary {
+					t.Fatalf("watch for %v crossed namespace or role: %+v, %v", mappings[i], r, err)
+				}
+			}
+			return e.Sequence, e.Kind
+		}}
+		watches[i].await(t, time.Second, "baseline", func(e rbdmirror.ImageWatchEvent) bool {
+			return e.Kind == ceph.WatchBaseline && e.Status.ReplayReady && e.Status.SourcePrimary
+		})
+	}
+	// Observe a role change specific to the first image. The second stays
+	// primary, including its subsequent stopped and restarted samples.
+	image := harness.RBDScopeImage(pool, mappings[0][0], "volume")
+	harness.RBDScenarioCommand(t, ctx, owner.SourceRBD, "mirror", "image", "demote", image)
+	watches[0].await(t, 2*time.Minute, "selected image demoted", func(e rbdmirror.ImageWatchEvent) bool { return !e.Status.SourcePrimary })
+	harness.RBDScenarioCommand(t, ctx, owner.SourceRBD, "mirror", "image", "promote", "--force", image)
+	watches[0].await(t, 2*time.Minute, "selected image promoted", func(e rbdmirror.ImageWatchEvent) bool { return e.Status.SourcePrimary && e.Status.ReplayReady })
+	rw, err := views[1].WatchReceivers(ctx, cfg, receiver.DaemonName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rw.Stop() })
+	receivers := &rbdMirrorWatchStream[rbdmirror.ReceiverWatchEvent]{name: "bound receiver", events: rw.Events(), stop: rw.Stop, meta: func(e rbdmirror.ReceiverWatchEvent) (uint64, ceph.WatchEventKind) {
+		r := e.Status
+		if e.Kind != ceph.WatchGap && (r.Pool != pool || r.SourceFSID != sourceStatus.FSID || r.DestinationFSID != destinationStatus.FSID || r.SourceNamespace != mappings[1][0] || r.DestinationNamespace != mappings[1][1] || r.PeerID != identity.PeerUUID || len(r.ExpectedDaemons) != 1 || r.ExpectedDaemons[0] != receiver.DaemonName || r.Daemons[receiver.DaemonName].ContainerID != receiver.GetContainerID()) {
+			t.Fatalf("bound receiver lost its mapping, peer or cohort: %+v", r)
+		}
+		return e.Sequence, e.Kind
+	}}
+	receivers.await(t, time.Second, "baseline", func(e rbdmirror.ReceiverWatchEvent) bool { return e.Kind == ceph.WatchBaseline && e.Status.Ready })
 	cid := receiver.GetContainerID()
 	originalProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
 	grace := 2 * time.Second
@@ -354,6 +397,12 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	}
 	rbdScopedImageRawProcess(t, ctx, oracle, receiver, false)
 	nonReady("stopped-original")
+	for _, stream := range watches {
+		stream.await(t, 2*time.Minute, "same receiver stopped", func(e rbdmirror.ImageWatchEvent) bool { return !e.Status.ReplayReady })
+	}
+	receivers.await(t, 2*time.Minute, "same receiver stopped", func(e rbdmirror.ReceiverWatchEvent) bool {
+		return !e.Status.Ready && !e.Status.Daemons[receiver.DaemonName].Running
+	})
 	write("same-cid-restart")
 	if err := receiver.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -367,6 +416,16 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		t.Fatalf("same-CID restart did not retain container and create fresh task/instance: %v %v", fresh, freshErr)
 	}
 	verify("same-cid-restart")
+	for i, stream := range watches {
+		stream.await(t, 2*time.Minute, "new receiving instance", func(e rbdmirror.ImageWatchEvent) bool {
+			return e.Status.ReplayReady && e.Status.InstanceID == restarted[i].InstanceID
+		})
+		stream.finish(t)
+	}
+	receivers.await(t, 2*time.Minute, "new receiving instance", func(e rbdmirror.ReceiverWatchEvent) bool {
+		return e.Status.Ready && e.Status.Daemons[receiver.DaemonName].InstanceID == restarted[1].InstanceID
+	})
+	receivers.finish(t)
 	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
