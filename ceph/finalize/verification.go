@@ -59,7 +59,16 @@ type VerificationConfig struct {
 }
 
 // LogEvent is the kind of a log line that verification evaluates. Lines of
-// no kind are not events.
+// no kind are not events. Cluster log entries use these envelopes:
+//
+//	<stamp> <thread> <level> log_channel(<channel>) log [<PRIO>] : <message>
+//	[<channel> ]<stamp> <name> (<rank>) <seq> : <channel> [<PRIO>] <message>
+//
+// In the second form the optional leading channel must equal the entry's channel.
+// PRIO is DBG, INF, SEC, WRN or ERR. The stamp is a calendar date and time
+// (YYYY-MM-DDThh:mm:ss) with three or six fractional digits and a numeric
+// timezone (±hhmm). The parser accepts offset hours up to 12 west or 14 east
+// and offset minutes from 00 to 59.
 type LogEvent string
 
 const (

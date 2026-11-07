@@ -480,8 +480,8 @@ source prints (a daemon's `log_channel(<channel>) log [<PRIO>]` line and the
 MON's cluster log line), so an `INF` entry that quotes `[WRN]` is no event,
 and a line with a marker but no recognized envelope is a gap of the check,
 never a guessed event. The grammar is in the godoc of
-[`finalize.LogEvent`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#LogEvent)
-and its parser. Other releases and outputs (for example journald or syslog)
+[`finalize.LogEvent`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#LogEvent).
+Other releases and outputs (for example journald or syslog)
 are not recognized.
 
 Daemons write their cluster log entries to their own output and the MON
