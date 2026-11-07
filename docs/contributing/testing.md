@@ -484,11 +484,11 @@ to its own files.
 | `multicluster` | Independent clusters, zones and peers |
 | `recovery` | Faults, partitions, removal and recovery |
 
-The tag is `ci_<category>`. `short` is a selection, not a time limit: it runs
-for every pull request. Other categories run on a pull request only for
-batches whose files changed. Ceph periodic runs every category on Tentacle and
-Squid, so a test must pass on both (see
-[Pull request scope](ci.md#pull-request-scope)).
+The tag is `ci_<category>`. `short` is a selection, not a time limit. Which
+batches a pull request, a push to `main` and Ceph periodic run is described
+in [Pull request scope](ci.md#pull-request-scope) and
+[Periodic runs](ci.md#periodic-runs). A test must pass on every release in
+[Supported releases](ci.md#supported-releases).
 
 ### Batches and the `//ci:` line
 

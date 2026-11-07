@@ -66,9 +66,12 @@ Without `--changed-head` the planner uses a plain merge-base comparison
 (recorded as `legacy-merge-base`). `--changed-files FILE` is a separate
 manual input.
 
-Pushes to `main` run Code checks, Docker checks and Ceph short. Every other
-batch, and every batch on Squid 19.2.5, runs in Ceph periodic within 3 hours
-of a new commit on `main`. Pushes to other branches trigger nothing. Pull
+Pushes to `main` run Code checks, Docker checks and Ceph short, and the other
+categories only in a [release phase](#release-phase). No run is scheduled per
+commit for the other batches or releases: Ceph periodic draws a daily sample
+and runs every batch on every supported release only when dispatched in
+`full` mode (see [Periodic runs](#periodic-runs)). Pushes to other branches
+trigger nothing. Pull
 requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
 and the scoped categories) and `unlabeled` (Ceph short) start real runs only
 for `ci:full` and `ci:selected-batches`.
