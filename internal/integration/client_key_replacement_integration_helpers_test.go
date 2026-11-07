@@ -119,8 +119,19 @@ func osdRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, cl
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _ := io.ReadAll(reader)
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return code, out
+}
+
+func requireOSDReadAuthRefusal(t *testing.T, ctx context.Context, holder testcontainers.Container, client *ceph.ClientConfig) {
+	t.Helper()
+	code, out := osdRead(t, ctx, holder, client)
+	if code == 0 || !(bytes.Contains(out, []byte("(13) Permission denied")) || bytes.Contains(out, []byte("(1) Operation not permitted"))) {
+		t.Fatalf("expected an OSD read authentication refusal, got exit %d: %s", code, out)
+	}
 }
 
 // clientKeyMonTicketTTL makes a held session renew its MON ticket, and so
@@ -179,9 +190,7 @@ func runClientKeyReplacement(t *testing.T) {
 			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client with the old key authenticated: %s", out)
 			}
-			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
-				t.Fatal("a fresh client with the old key read from the OSD")
-			}
+			requireOSDReadAuthRefusal(t, ctx, holder, client)
 			fresh := startClientContainer(t, ctx, cluster, next)
 			for _, command := range [][]string{{"mon", "stat"}, {"pg", "stat"}} {
 				if code, out := clientCommand(t, ctx, fresh, next, command...); code != 0 {
@@ -236,6 +245,7 @@ func runClientKeyReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 		holder := startClientContainer(t, ctx, cluster, client)
+		mons := authenticatedMonitorOverrides(t, ctx, cluster, holder, client)
 		// Calls canceled at different points leave the key that the next
 		// call confirms, or a key the next call replaces.
 		current := client
@@ -263,7 +273,7 @@ func runClientKeyReplacement(t *testing.T) {
 			current = resolved
 		}
 		fresh := startClientContainer(t, ctx, cluster, current)
-		for _, mon := range monitorOverrides(t, ctx, cluster) {
+		for _, mon := range mons {
 			if code, out := clientCommand(t, ctx, fresh, current, "--mon_host_override", mon, "mon", "stat"); code != 0 {
 				t.Fatalf("the new key through %s: exit %d: %s", mon, code, out)
 			}
@@ -534,9 +544,9 @@ func waitHeldRenewalRejected(t *testing.T, ctx context.Context, ctr testcontaine
 	return 0, false
 }
 
-// monitorOverrides returns, per MON, the address vector that
-// mon_host_override takes.
-func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container) []string {
+// authenticatedMonitorOverrides checks the original holder's key through
+// each of the three MON endpoints before the identity changes.
+func authenticatedMonitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container, holder testcontainers.Container, client *ceph.ClientConfig) []string {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	var dump struct {
@@ -546,7 +556,7 @@ func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container
 			} `json:"public_addrs"`
 		} `json:"mons"`
 	}
-	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Mons) == 0 {
+	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Mons) != 3 {
 		t.Fatalf("mon dump: %v", err)
 	}
 	var overrides []string
@@ -555,7 +565,14 @@ func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container
 		for _, addr := range mon.PublicAddrs.Addrvec {
 			addrs = append(addrs, fmt.Sprintf("%s:%s", addr.Type, addr.Addr))
 		}
-		overrides = append(overrides, "["+strings.Join(addrs, ",")+"]")
+		endpoint := "[" + strings.Join(addrs, ",") + "]"
+		if len(addrs) == 0 || slices.Contains(overrides, endpoint) {
+			t.Fatalf("empty or duplicate MON address vector %q", endpoint)
+		}
+		if code, out := clientCommand(t, ctx, holder, client, "--mon_host_override", endpoint, "mon", "stat"); code != 0 {
+			t.Fatalf("the original holder could not authenticate through %s: exit %d: %s", endpoint, code, out)
+		}
+		overrides = append(overrides, endpoint)
 	}
 	return overrides
 }
