@@ -281,7 +281,11 @@ func TestCaptureFailureArchive(t *testing.T) {
 			truncated := []string{}
 			for _, artifact := range diagnostics.Artifacts {
 				if artifact.Kind == "container-logs" && artifact.Name == "tail-probe" {
-					foundProbe = artifact.Truncated && len(artifact.Data) == logLimit && strings.HasSuffix(artifact.Data, " [REDACTED] [REDACTED] latest observation\n")
+					// Replacing the clipped suffix saves nine bytes, then masking the
+					// two short values adds fourteen. The tail drops the first five
+					// bytes of its leading marker and preserves the latest trailer.
+					foundProbe = artifact.Truncated && len(artifact.Data) == logLimit &&
+						strings.HasPrefix(artifact.Data, "CTED] ") && strings.HasSuffix(artifact.Data, " [REDACTED] [REDACTED] latest observation\n")
 				}
 				if artifact.Error != "" {
 					t.Fatalf("diagnostic error %s/%s", artifact.Kind, artifact.Name)
