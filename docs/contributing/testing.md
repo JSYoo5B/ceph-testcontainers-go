@@ -709,6 +709,33 @@ export CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac
 Then run the case's `go test` or `tag_scenarios.py optional` command from its
 manual. Each manual names the images its recorded result ran on.
 
+### Messenger coverage manifest
+
+[`messenger_coverage.json`](../../internal/integration/testdata/messenger_coverage.json)
+maps the environment requirements of a Messenger client to the tests that
+prove them; the
+[Messenger client fixtures guide](../guides/messenger-client-fixtures.md#coverage-manifest)
+describes its rows and statuses.
+
+`TestMessengerCoverageManifest` checks the manifest without Docker: every
+named test and symbol exists, covered and partial rows have cases, every test
+the daemon-to-daemon table cites is mapped, and a cited `TestName/subtest`
+runs through `t.Run` in the test, a helper or another subtest. The validator
+follows subtest names that are string literals, literal table fields in the
+same function, or `harness.NetworkModes` modes; cite the top-level test otherwise. A
+receipt marker must be in code the cited test reaches. Regenerate the reference from
+a Ceph checkout at the pinned commit:
+
+```sh
+python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
+  --commit 7f793731f1b39eb4f465e960113d2363c311b964 --release 20.2.4 \
+  --output internal/integration/testdata/messenger_reference.json
+```
+
+The declaration/native-case evidence join, which connects reference
+declarations to validated receipts, is documented in
+[`messenger_evidence.py`](../../.github/scripts/messenger_evidence.py).
+
 ### Release differences
 
 Where the expected outcome differs between releases, the test selects it from

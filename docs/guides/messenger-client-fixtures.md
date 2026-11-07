@@ -865,25 +865,10 @@ any tracking issue. Symbols come from
 the OSD operations, message types and feature bits of the pinned Ceph headers,
 with feature aliases kept separate.
 
-`TestMessengerCoverageManifest` checks the manifest without Docker: every
-named test and symbol exists, covered and partial rows have cases, every test
-the daemon-to-daemon table cites is mapped, and a cited `TestName/subtest`
-runs through `t.Run` in the test, a helper or another subtest. The validator
-follows subtest names that are string literals, literal table fields in the
-same function, or `harness.NetworkModes` modes; cite the top-level test otherwise. A
-receipt marker must be in code the cited test reaches. The manifest records
-whether a recipe exists, not whether it passed. Regenerate the reference from
-a Ceph checkout at the pinned commit:
-
-```sh
-python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
-  --commit 7f793731f1b39eb4f465e960113d2363c311b964 --release 20.2.4 \
-  --output internal/integration/testdata/messenger_reference.json
-```
-
-The declaration/native-case evidence join, which connects reference
-declarations to validated receipts, is documented in
-[`messenger_evidence.py`](../../.github/scripts/messenger_evidence.py).
+The manifest records whether a recipe exists, not whether it passed. Its
+validator and how to regenerate the reference are contributor procedures,
+described in
+[Messenger coverage manifest](../contributing/testing.md#messenger-coverage-manifest).
 
 ## Differences from a single-container bootstrap
 
