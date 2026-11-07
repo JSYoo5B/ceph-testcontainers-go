@@ -227,7 +227,7 @@ func TestOSDRemovalAcceptsAlreadyMissingOwnedDockerContainer(t *testing.T) {
 }
 
 func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
-	for _, scenario := range []string{"last descriptor", "purged neighbor", "absent pending neighbor", "foreign neighbor"} {
+	for _, scenario := range []string{"last descriptor", "purged neighbor", "absent pending neighbor", "registered pending neighbor", "detaching neighbor", "foreign neighbor"} {
 		t.Run(scenario, func(t *testing.T) {
 			cluster, control, daemon := newOSDLifecycleFixture()
 			switch scenario {
@@ -240,6 +240,10 @@ func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
 			case "absent pending neighbor":
 				cluster.fleet.osdHandles.get(4).purgeIssued = true
 				delete(control.native, 4)
+			case "registered pending neighbor":
+				cluster.fleet.osdHandles.get(4).purgeIssued = true
+			case "detaching neighbor":
+				cluster.fleet.osdHandles.get(4).detaching = true
 			case "foreign neighbor":
 				state := control.native[4]
 				state.UUID = osdLifecycleForeignUUID
@@ -290,6 +294,13 @@ func TestOSDRemovalDeadlineRetainsPartialOwnershipAndOriginalFailure(t *testing.
 			if err := osdHandle(t, t.Context(), cluster, 3).SetIn(t.Context(), true); !errors.Is(err, ErrInvalidRequest) ||
 				control.dumps != beforeDumps || len(control.actions) != beforeActions || control.native[3].In {
 				t.Fatalf("SetIn during partial %s removal: err=%v, dumps=%d, actions=%v, OSD=%+v", phase, err, control.dumps, control.actions, control.native[3])
+			}
+			survivor := osdHandle(t, t.Context(), cluster, 4)
+			if err := survivor.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "last OSD") {
+				t.Fatalf("removing the survivor during %s: %v", phase, err)
+			}
+			if survivor.removing || !control.native[4].In || len(control.actions) != beforeActions {
+				t.Fatalf("removal changed the survivor: removing=%t, actions=%v, state=%+v", survivor.removing, control.actions, control.native[4])
 			}
 			cluster.settings.startupTimeout = time.Second
 			control.safeErr, daemon.keepUp = nil, false

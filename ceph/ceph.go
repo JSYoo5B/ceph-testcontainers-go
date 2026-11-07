@@ -931,7 +931,7 @@ func (f osdFleet) retireOSD(ctx context.Context, osd *OSDContainer) error {
 
 // checkOSDRemovable verifies, before removeOSD fences or changes anything,
 // that osd is the registered native OSD this handle created and that another
-// owned OSD remains. A purge that may have committed with a lost response is
+// owned OSD remains outside removal or detach. A purge that may have committed with a lost response is
 // settled here by a fresh, strict absence. The caller holds c.mu.
 func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
 	id := osd.ID
@@ -950,24 +950,20 @@ func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) erro
 		// The previous purge may have committed despite a lost response.
 		// A fresh, strict absence can settle only this handle's own request.
 		osd.purged = true
-	} else {
-		if _, err := f.osdHandles.ownedState(dump, id); err != nil {
-			return err
+		return nil
+	}
+	if _, err := f.osdHandles.ownedState(dump, id); err != nil {
+		return err
+	}
+	for otherID, other := range f.osdHandles.each() {
+		if otherID == id || other == nil || other.removing || other.purgeIssued || other.purged || other.detaching {
+			continue
 		}
-		remaining := 0
-		for otherID, other := range f.osdHandles.each() {
-			if other == nil || other.purged {
-				continue
-			}
-			if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {
-				remaining++
-			}
-		}
-		if remaining <= 1 {
-			return errors.New("cannot remove the last OSD; terminate the cluster instead")
+		if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {
+			return nil
 		}
 	}
-	return nil
+	return errors.New("cannot remove the last OSD; terminate the cluster instead")
 }
 
 // drainAndPurgeOSD takes osd out of the data placement, waits for the drain,
