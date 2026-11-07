@@ -37,7 +37,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    topology. Settings are grouped values, each passed through one option:
    `WithClusterConfig` (MON/MGR/OSD counts, OSD layout, CRUSH root, pool
    defaults, initial pools), `WithOSDStorage`, `WithMonitorStorage`, `WithNetworkConfig`,
-   `WithImageOptions`, plus `WithAuth`, `WithConfigFile`, `WithHostNetwork`,
+   `WithImageOptions`, `WithZoneConfig` (logical zones behind a routed
+   boundary), plus `WithAuth`, `WithConfigFile`, `WithHostNetwork`,
    `WithManagerPorts` and `WithStartupTimeout`. Contradictory options fail before anything is created.
    For small functional OSDs, select
    `OSDStorage{}.WithStartupBenchmark(OSDBenchmarkSkip)` explicitly;
@@ -63,8 +64,10 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
 4. **Observe and verify.** `Observe` returns a resource-free `Observer` for readiness waits, tracked
    optional-service inventory, health, PG and
    pool reports, quorum, OSD states, MGR modules and services, watchers and
-   blocklist entries. `Ceph` and `RunNativeCommand` run bounded native commands
-   when no typed observation exists.
+   blocklist entries. When no typed observation exists, `Ceph` runs the raw
+   Ceph CLI in the control container, retrying only the connection to a MON
+   (bounded by `ctx` and a minute), and `RunNativeCommand` runs a command
+   under a supervisor that bounds its run time and output.
 5. **Finish.** `testcontainers.CleanupContainer` runs `Terminate`, which
    removes every owned container, network and volume. The
    [finalize](finalize/README.md) package replaces it when the test needs
