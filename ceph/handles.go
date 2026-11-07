@@ -108,7 +108,8 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 }
 
 // Remove drains this owned OSD, waits for safe-to-destroy, stops it, waits for
-// down, purges it from Ceph and removes its container. It refuses the last OSD.
+// down, purges it from Ceph and removes its container. Another owned OSD must
+// still have its native registration and be outside removal or detach.
 // After identity admission, removal fences this Docker instance against new
 // native commands and drains its tracked commands before native mutations. A
 // failed drain retains ownership and its fence for retry; other targets remain
