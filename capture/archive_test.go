@@ -130,3 +130,49 @@ func TestStopPreservesReplacementAtReservedOutput(t *testing.T) {
 		})
 	}
 }
+
+// rejectedProbe fails preflight after the caller changes the output path.
+type rejectedProbe struct {
+	*fakeBackend
+	beforeRefusal func()
+}
+
+func (b rejectedProbe) probe(context.Context, string, string, []string) (probeResult, string, error) {
+	b.beforeRefusal()
+	return probeResult{}, "", fmt.Errorf("capture probe failed")
+}
+
+func TestStartRollbackRetainsReservedFileForRetry(t *testing.T) {
+	req := request(t)
+	original := req.Output + ".original"
+	backend := rejectedProbe{newFakeBackend(), func() {
+		if err := os.Rename(req.Output, original); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(req.Output, []byte("foreign"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	s, err := start(t.Context(), backend, fakeTarget{}, req)
+	if s == nil || err == nil {
+		t.Fatalf("Start after failed rollback: session=%p, err=%v", s, err)
+	}
+	if _, err := s.Stop(t.Context()); err == nil {
+		t.Fatal("Stop accepted a replacement")
+	}
+	if contents, err := os.ReadFile(req.Output); err != nil || string(contents) != "foreign" {
+		t.Fatalf("replacement: %q, %v", contents, err)
+	}
+	if err := os.Rename(req.Output, req.Output+".foreign"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(original, req.Output); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Stop(t.Context()); err != nil || exists(req.Output) || s.output != nil {
+		t.Fatalf("reserved output after Stop: exists=%t, open=%t, err=%v", exists(req.Output), s.output != nil, err)
+	}
+	if _, err := s.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -371,9 +371,9 @@ var pollInterval = 100 * time.Millisecond
 // container instance and sandbox at that point and never follows a restart.
 // On failure Start cleans up its helper. Before removing the reserved
 // output it checks that the path still identifies the file it created.
-// It returns a non-nil session with an error only when it could not remove
-// a probe or a helper that failed; the empty output file then stays, and Stop
-// retries the removal.
+// If cleanup of the reserved file, probe or helper is incomplete, keep the
+// returned session and call Stop to retry. When probe or helper removal
+// fails, the empty output file stays with the caller.
 //
 //purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
@@ -399,11 +399,7 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 	if err != nil {
 		return nil, nshelper.InvalidRequest("create the capture output: %w", err)
 	}
-	info, err := output.Stat()
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("stat the reserved capture output: %w", err), output.Close())
-	}
-	s := &Session{backend: b, request: req, target: state, output: output, outputInfo: info}
+	s := &Session{backend: b, request: req, target: state, output: output}
 	s.report = Report{
 		ContainerID: id, Network: req.Network, Interface: req.Interface, MACAddress: state.MAC,
 		SandboxID: state.SandboxID, TargetStartedAt: state.StartedAt, HelperImage: req.HelperImage,
@@ -416,7 +412,7 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 			s.finished = true
 			return s, errors.Join(err, s.closeOutput())
 		}
-		return nil, errors.Join(err, s.removeReservedOutput(), s.closeOutput())
+		return s.rollbackOutput(err)
 	}
 	if err := s.startHelper(ctx, id); err != nil {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
@@ -425,7 +421,7 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 		if removeErr != nil {
 			return s, errors.Join(err, removeErr, s.closeOutput())
 		}
-		return nil, errors.Join(err, s.removeReservedOutput(), s.closeOutput())
+		return s.rollbackOutput(err)
 	}
 	return s, nil
 }
@@ -443,17 +439,49 @@ func (s *Session) checkOutputIdentity() error {
 	if err != nil {
 		return err
 	}
-	if !os.SameFile(info, s.outputInfo) {
+	return s.matchOutput(info)
+}
+
+func (s *Session) matchOutput(pathInfo os.FileInfo) error {
+	if s.outputInfo == nil {
+		info, err := s.output.Stat()
+		if err != nil {
+			return fmt.Errorf("stat the reserved capture output: %w", err)
+		}
+		s.outputInfo = info
+	}
+	if !os.SameFile(pathInfo, s.outputInfo) {
 		return errors.New("capture output path no longer names the reserved file")
 	}
 	return nil
 }
 
-func (s *Session) removeReservedOutput() error {
-	if err := s.checkOutputIdentity(); err != nil {
+// A failed startup keeps the descriptor until rollback can verify and remove
+// the reserved path, or confirm that the path is already absent.
+func (s *Session) rollbackOutput(cause error) (*Session, error) {
+	s.finished = true
+	err := s.discardOutput()
+	if s.output != nil {
+		return s, errors.Join(cause, err)
+	}
+	return nil, errors.Join(cause, err)
+}
+
+func (s *Session) discardOutput() error {
+	info, err := os.Lstat(s.request.Output)
+	if errors.Is(err, os.ErrNotExist) {
+		return s.closeOutput()
+	}
+	if err != nil {
 		return err
 	}
-	return os.Remove(s.request.Output)
+	if err := s.matchOutput(info); err != nil {
+		return err
+	}
+	if err := os.Remove(s.request.Output); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.closeOutput()
 }
 
 // admitTarget refuses targets whose endpoint a helper cannot join.
@@ -637,6 +665,9 @@ func (s *Session) Stop(ctx context.Context) (Report, error) {
 	if !s.finished {
 		s.finished = true
 		s.err = s.finish(finishCtx)
+	} else if s.output != nil {
+		// Startup rollback kept the descriptor for this retry.
+		return s.report, s.discardOutput()
 	}
 	return s.report, errors.Join(s.err, s.removeProbe(finishCtx), s.removeHelper(finishCtx))
 }
