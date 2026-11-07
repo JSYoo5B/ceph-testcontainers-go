@@ -22,6 +22,10 @@ type DirectoryAddition struct {
 	baseGeneration, generation            uint64
 	requestAttempted, requestAcknowledged bool
 	registered, superseded                bool
+	// Receipts displaced by this pending add, restored only if the original
+	// scope confirms absence after a native refusal.
+	priorAddition *DirectoryAddition
+	priorRemoval  *DirectoryRemoval
 }
 
 // DirectoryAdditionStatus reports native policy presence in the
@@ -80,8 +84,7 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 		return nil, err
 	}
 	if r := mirror.ops.directoryAddition; r != nil && r.directory == directory && !r.superseded {
-		err := r.resume(ctx)
-		return mirror.ops.directoryAddition, err
+		return r.result(r.resume(ctx))
 	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return nil, err
@@ -108,13 +111,22 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 	if present {
 		return nil, cephFSObserveGuard("CephFS directory addition path existed before this intent")
 	}
-	if previous := mirror.ops.directoryAddition; previous != nil {
+	if previous := mirror.ops.directoryAddition; previous != nil && !previous.superseded {
+		r.priorAddition = previous
 		previous.superseded = true
 	}
 	// Register BEFORE mutation; an uncertain native response cannot erase intent.
 	mirror.ops.directoryAddition = r
-	err = r.attempt(ctx)
-	return mirror.ops.directoryAddition, err
+	return r.result(r.attempt(ctx))
+}
+
+// A settled refusal retires the attempted receipt. A caller retrying the
+// attempt must never receive the earlier receipt it displaced.
+func (r *DirectoryAddition) result(err error) (*DirectoryAddition, error) {
+	if r.superseded {
+		return nil, err
+	}
+	return r, err
 }
 
 func (ops *mirrorOperations) guardDirectoryAdditionOverlap() error {
@@ -250,6 +262,7 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 		m.registerDirectory(r.directory, true)
 		r.generation = m.directories.generation(r.directory)
 		r.registered = true
+		r.priorAddition, r.priorRemoval = nil, nil
 		return nil
 	}
 	if r.requestAcknowledged {
@@ -266,7 +279,8 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 		return err
 	}
 	m := r.scope.mirror
-	if old := m.ops.directoryRemoval; old != nil && old.terminal() && old.directory == r.directory {
+	if old := m.ops.directoryRemoval; old != nil && !old.superseded && old.terminal() && old.directory == r.directory {
+		r.priorRemoval = old
 		old.superseded = true
 	}
 	r.requestAttempted = true
@@ -276,7 +290,14 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 			present, readErr := r.observe(ctx, true)
 			if readErr == nil && !present {
 				r.superseded = true
-				m.ops.directoryAddition = nil
+				m.ops.directoryAddition = r.priorAddition
+				if r.priorAddition != nil {
+					r.priorAddition.superseded = false
+				}
+				if r.priorRemoval != nil {
+					r.priorRemoval.superseded = false
+				}
+				r.priorAddition, r.priorRemoval = nil, nil
 			}
 			err = errors.Join(err, readErr)
 		}

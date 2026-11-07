@@ -18,11 +18,12 @@
 // the original state and proves what happened, even after a lost reply. The
 // receipts share these rules:
 //   - Begin* returns (nil, err) when it refused during admission, before it
-//     recorded a receipt. Once a receipt is recorded, every error returns it
-//     with the error, whether or not the native request was sent: call the
-//     same Begin* again with the same path or peer UUID and a fresh context;
-//     the retry returns the same receipt, checks Ceph first
-//     and does not resend an applied request. A directory remove that was
+//     recorded a receipt. BeginDirectoryAddition also returns (nil, err) after
+//     a native add fails if a fresh observation confirms the path is absent.
+//     An uncertain transport outcome retains the addition receipt.
+//   - When Begin* returns a receipt with an error, call the same Begin* again
+//     with the same path or peer UUID and a fresh context. The retry checks
+//     Ceph before sending another request. A directory remove that was
 //     sent without an acknowledged reply is never sent again, by the receipt,
 //     RemoveDirectory or RebalanceDirectories: a policy that still shows the
 //     path mapped does not prove that the MGR dropped it. The retry then only
