@@ -14,7 +14,10 @@ import (
 // are not part of it; mirrorOperations keeps them.
 type cephFSDirectoryOwnership struct {
 	owned, pendingRelease map[string]bool
-	generations           map[string]uint64
+	// A rebalance unregisters temporarily and restores the path on retry.
+	// An explicit removal instead forgets the path once Ceph confirms absence.
+	rebalanceRelease map[string]bool
+	generations      map[string]uint64
 }
 
 // owns reports whether the fixture registered directory and still owns it.
@@ -29,13 +32,13 @@ func (o *cephFSDirectoryOwnership) generation(directory string) uint64 {
 // releasePending reports whether a remove of directory was sent without an
 // acknowledged reply.
 func (o *cephFSDirectoryOwnership) releasePending(directory string) bool {
-	return o.pendingRelease[directory]
+	return o.pendingRelease[directory] || o.rebalanceRelease[directory]
 }
 
 // hasIntent reports whether directory is owned, has a pending release or has
 // exhausted its generations, any of which refuses a new addition intent.
 func (o *cephFSDirectoryOwnership) hasIntent(directory string) bool {
-	return o.owned[directory] || o.pendingRelease[directory] || o.generations[directory] == ^uint64(0)
+	return o.owned[directory] || o.releasePending(directory) || o.generations[directory] == ^uint64(0)
 }
 
 // register records an acknowledged owned registration of directory and
@@ -51,19 +54,22 @@ func (o *cephFSDirectoryOwnership) register(directory string) {
 	o.generations[directory]++
 }
 
-// markReleasePending records that a remove of directory is about to be sent;
-// an error cannot prove that the MGR did not apply it.
+// markReleasePending records an explicit removal, including a caller asking
+// to keep the path absent after an uncertain temporary rebalance removal.
 func (o *cephFSDirectoryOwnership) markReleasePending(directory string) {
-	o.releaseSet()[directory] = true
-}
-
-// releaseSet is the pending-release set that a rebalance updates while it
-// removes and restores the owned paths.
-func (o *cephFSDirectoryOwnership) releaseSet() map[string]bool {
 	if o.pendingRelease == nil {
 		o.pendingRelease = make(map[string]bool)
 	}
-	return o.pendingRelease
+	o.pendingRelease[directory] = true
+	delete(o.rebalanceRelease, directory)
+}
+
+// rebalanceReleaseSet records temporary removes between rebalance attempts.
+func (o *cephFSDirectoryOwnership) rebalanceReleaseSet() map[string]bool {
+	if o.rebalanceRelease == nil {
+		o.rebalanceRelease = make(map[string]bool)
+	}
+	return o.rebalanceRelease
 }
 
 // forget drops ownership and the pending release of directory once its
@@ -72,6 +78,7 @@ func (o *cephFSDirectoryOwnership) releaseSet() map[string]bool {
 func (o *cephFSDirectoryOwnership) forget(directory string) {
 	delete(o.owned, directory)
 	delete(o.pendingRelease, directory)
+	delete(o.rebalanceRelease, directory)
 }
 
 // ownedPaths lists the owned paths in order.

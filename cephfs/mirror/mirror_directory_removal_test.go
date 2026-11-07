@@ -921,6 +921,78 @@ func TestCephFSDirectoryRemovalLegacyNeverResendsAnUncertainRemove(t *testing.T)
 	}
 }
 
+// Explicit removal and temporary removal for redistribution share the native
+// command, but require different final membership.
+func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
+	for _, first := range []string{"remove", "rebalance-then-remove"} {
+		t.Run(first, func(t *testing.T) {
+			m, s, _, _, _ := newDirectoryRemovalFixture()
+			s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+			if first == "rebalance-then-remove" {
+				if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, errPeerRemovalTransport) {
+					t.Fatal(err)
+				}
+				if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errCephFSUncertainRemoval) {
+					t.Fatal(err)
+				}
+			} else if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) {
+				t.Fatal(err)
+			}
+
+			// A malformed read cannot establish absence. A confirmed present
+			// path keeps the pending request and blocks other mutations.
+			s.policyOverride = "[null]"
+			if err := m.RebalanceDirectories(t.Context()); err == nil {
+				t.Fatal("malformed inventory accepted")
+			}
+			s.policyOverride = ""
+			if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, errCephFSUncertainRemoval) {
+				t.Fatal(err)
+			}
+			if !m.directories.releasePending("/owned") || !m.directories.owns("/owned") || s.removals != 1 || s.adds != 0 {
+				t.Fatalf("unsettled removal lost or resent: %+v, removes %d, adds %d", m.directories, s.removals, s.adds)
+			}
+
+			// The original native command finally applies. Only another
+			// desired directory is redistributed. A foreign policy stays put.
+			s.removeError, s.applyRemoval = nil, true
+			s.directories = []string{"/foreign", "/keep"}
+			s.states = map[string]string{"/foreign": `{"state":"mapped"}`, "/keep": `{"state":"mapped"}`}
+			m.registerDirectory("/keep", true)
+			if err := m.RebalanceDirectories(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(m.Directories, []string{"/keep"}) || !slices.Equal(s.directories, []string{"/foreign", "/keep"}) ||
+				m.directories.releasePending("/owned") || m.directories.owns("/owned") || m.directories.generation("/owned") != 1 ||
+				m.directories.generation("/keep") != 2 || s.removals != 2 || s.adds != 1 {
+				t.Fatalf("rebalance changed explicitly removed or foreign membership: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
+			}
+		})
+	}
+}
+
+func TestExplicitReaddAfterUncertainRemovalKeepsNewGeneration(t *testing.T) {
+	m, s, _, _, _ := newDirectoryRemovalFixture()
+	s.removeError, s.applyRemoval = errPeerRemovalTransport, false
+	if err := m.RemoveDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) {
+		t.Fatal(err)
+	}
+	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errCephFSUncertainRemoval) || s.adds != 0 {
+		t.Fatalf("re-add before removal settled: %v, adds %d", err, s.adds)
+	}
+	s.removeError, s.applyRemoval, s.directories = nil, true, nil
+	if err := m.AddDirectory(t.Context(), "/owned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RebalanceDirectories(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.directories, []string{"/owned"}) || !slices.Equal(m.Directories, s.directories) ||
+		m.directories.releasePending("/owned") || m.directories.generation("/owned") != 3 || s.removals != 2 || s.adds != 2 {
+		t.Fatalf("re-added path: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
+	}
+}
+
 // An uncertain remove sent by RemoveDirectory is not sent again through a
 // receipt that BeginDirectoryRemoval creates afterwards: the receipt reports
 // the native state until the path leaves the policy.

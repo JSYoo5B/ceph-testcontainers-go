@@ -234,6 +234,42 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "after-directory-readd")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")
+	// Lose the reply to a caller-requested remove, independently confirm its
+	// absence, then rebalance the other paths on these same daemons.
+	original := source.Container
+	legacyFault := &cephFSDirectoryRemovalReplyFault{Container: original, filesystem: sourceFS.FilesystemName, directory: selected}
+	source.Container = legacyFault
+	defer func() { source.Container = original }()
+	if err := mirror.RemoveDirectory(ctx, selected); !errors.Is(err, errCephFSDirectoryRemoveReplyLost) {
+		t.Fatalf("expected a lost reply to the explicit remove: %v", err)
+	}
+	for {
+		paths, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
+		var tracked []string
+		if err != nil || json.Unmarshal(paths, &tracked) != nil || tracked == nil {
+			t.Fatalf("read native directory policy after explicit remove: %s, %v", paths, err)
+		}
+		if !slices.Contains(tracked, selected) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	if err := mirror.RebalanceDirectories(ctx); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
+	var tracked []string
+	if err != nil || json.Unmarshal(raw, &tracked) != nil || tracked == nil {
+		t.Fatalf("read rebalanced directory policy: %s, %v", raw, err)
+	}
+	slices.Sort(tracked)
+	if !slices.Equal(tracked, slices.Sorted(slices.Values(remaining))) || !slices.Equal(mirror.Directories, remaining) || legacyFault.removals.Load() != 1 {
+		t.Fatalf("explicitly removed path %q after rebalance: native %v, fixture %v, expected %v, removes %d", selected, tracked, mirror.Directories, remaining, legacyFault.removals.Load())
+	}
 	t.Logf("public strict directory release: path=%s original peer=%s two original CID/StartedAt/watcher sessions preserved; real lost reply reconciled without another delete; other three paths copied bytes while removed path stayed absent; same-path re-add superseded old receipt and copied independent checkpoints", selected, expected.PeerID)
 }
 
