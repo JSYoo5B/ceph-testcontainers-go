@@ -186,6 +186,11 @@ func TestPlacementLostStopCanRecognizeAnExternalRestart(t *testing.T) {
 	// An operator reconciles a Stop that never took effect. Its old generation
 	// no longer runs; the operation still checks the loaded resources.
 	ctr.started = "external restart"
+	f.ForeignDefault = true
+	if err := apply(t.Context(), g.Core, p); !errors.Is(err, ceph.ErrInvalidRequest) || f.StopCount != 0 || f.StartCount != 0 {
+		t.Fatalf("accepted external generation with foreign defaults: %v", err)
+	}
+	f.ForeignDefault = false
 	if err := apply(t.Context(), g.Core, p); err != nil || f.StopCount != 0 || f.StartCount != 0 {
 		t.Fatalf("restarted reconciled gateway: %v", err)
 	}

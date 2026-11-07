@@ -73,6 +73,7 @@ type PlacementContainer struct {
 	ForeignDefault        bool
 	PendingRegistrations  int
 	StopCount, StartCount int
+	stopped               bool
 }
 
 // NewPlacementContainer returns the model of a gateway in the zonegroup
@@ -92,7 +93,7 @@ func NewPlacementContainer() *PlacementContainer {
 //
 //testdouble:shared-double
 func (f *PlacementContainer) State(context.Context) (*container.State, error) {
-	return &container.State{Running: true}, nil
+	return &container.State{Running: !f.stopped, StartedAt: fmt.Sprint(f.StartCount)}, nil
 }
 
 // GetContainerID returns the fixed ID gateway.
@@ -105,13 +106,18 @@ func (f *PlacementContainer) GetContainerID() string { return "gateway" }
 //testdouble:shared-double
 func (f *PlacementContainer) Stop(context.Context, *time.Duration) error {
 	f.StopCount++
+	f.stopped = true
 	return nil
 }
 
 // Start counts a gateway start.
 //
 //testdouble:shared-double
-func (f *PlacementContainer) Start(context.Context) error { f.StartCount++; return nil }
+func (f *PlacementContainer) Start(context.Context) error {
+	f.StartCount++
+	f.stopped = false
+	return nil
+}
 
 // Exec answers the hostname, service map, pool listing and placement commands.
 //

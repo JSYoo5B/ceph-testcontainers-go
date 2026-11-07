@@ -1,7 +1,9 @@
 package placement
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 )
@@ -146,5 +148,52 @@ func TestRecoveredGatewayRetriesOnlyPostStartVerification(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRejectedApplyDoesNotChangePendingReloadPolicy(t *testing.T) {
+	g, f := newRGWPlacementFixture()
+	ctr := &interruptedGateway{PlacementContainer: f, started: "original", losePostStartHostname: true}
+	g.Replace(ctr)
+	p, err := create(t.Context(), g.Core, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reload(t.Context(), g.Core, p); err == nil {
+		t.Fatal("expected post-start read failure")
+	}
+	f.Group["unrelated"] = "allowed by Reload"
+	if err := apply(t.Context(), g.Core, p); err == nil {
+		t.Fatal("Apply accepted changed creation policy")
+	}
+	if err := reload(t.Context(), g.Core, p); err != nil || ctr.StopCount != 1 || ctr.StartCount != 1 {
+		t.Fatalf("retry Reload: %v, stops=%d starts=%d", err, ctr.StopCount, ctr.StartCount)
+	}
+}
+
+// The external operator completes its own start/stop cycle while Docker's
+// successful Stop reply to placement is still in transit.
+type stopWithReplacedGeneration struct{ *interruptedGateway }
+
+func (g *stopWithReplacedGeneration) Stop(ctx context.Context, grace *time.Duration) error {
+	if err := g.interruptedGateway.Stop(ctx, grace); err != nil {
+		return err
+	}
+	if err := g.interruptedGateway.Start(ctx); err != nil {
+		return err
+	}
+	return g.interruptedGateway.Stop(ctx, grace)
+}
+
+func TestAcknowledgedStopPreservesExternallyStoppedGeneration(t *testing.T) {
+	g, f := newRGWPlacementFixture()
+	ctr := &stopWithReplacedGeneration{&interruptedGateway{PlacementContainer: f, started: "original"}}
+	g.Replace(ctr)
+	p, err := create(t.Context(), g.Core, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(t.Context(), g.Core, p); err == nil || !ctr.stopped || ctr.StartCount != 1 || ctr.StopCount != 2 {
+		t.Fatalf("Apply after external cycle: %v, stopped=%t starts=%d stops=%d", err, ctr.stopped, ctr.StartCount, ctr.StopCount)
 	}
 }

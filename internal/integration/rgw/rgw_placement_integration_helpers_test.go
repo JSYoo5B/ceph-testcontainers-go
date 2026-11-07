@@ -62,6 +62,28 @@ func (g *interruptedPlacementRestart) Exec(ctx context.Context, args []string, o
 	return g.Container.Exec(ctx, args, opts...)
 }
 
+// cycleBeforeStopReply lets an independent caller start and stop the real
+// container before placement receives its acknowledged Stop.
+type cycleBeforeStopReply struct {
+	testcontainers.Container
+	externalStart string
+}
+
+func (g *cycleBeforeStopReply) Stop(ctx context.Context, grace *time.Duration) error {
+	if err := g.Container.Stop(ctx, grace); err != nil {
+		return err
+	}
+	if err := g.Container.Start(ctx); err != nil {
+		return err
+	}
+	state, err := g.Container.State(ctx)
+	if err != nil {
+		return err
+	}
+	g.externalStart = state.StartedAt
+	return g.Container.Stop(ctx, grace)
+}
+
 // losePlacementReplies drops the first successful staging update and commit replies.
 type losePlacementReplies struct {
 	testcontainers.Container
@@ -339,6 +361,17 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 		t.Fatal(err)
 	}
 	rgwPlacementRecoverRestart(t, ctx, target, gateway, peer)
+	cycle := &cycleBeforeStopReply{Container: gateway.Container}
+	gateway.Container = cycle
+	err = target.Apply(ctx, gateway)
+	gateway.Container = cycle.Container
+	stateAfterStop, inspectErr := gateway.State(ctx)
+	if err == nil || inspectErr != nil || cycle.externalStart == "" || stateAfterStop == nil || stateAfterStop.Running || stateAfterStop.StartedAt != cycle.externalStart {
+		t.Fatalf("expected the externally stopped generation to remain stopped: state=%v, inspect=%v, Apply=%v", stateAfterStop, inspectErr, err)
+	}
+	if err := gateway.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
 	// Docker bridge restarts may publish a new port. Native host mode reuses
 	// its allocated listener; both return the endpoint of the actual process.
 	client.Endpoint, err = gateway.S3Endpoint(ctx)

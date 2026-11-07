@@ -127,19 +127,36 @@ func (p *Placement) resumeRestart(ctx context.Context, g *gwbase.Core, wanted re
 		if _, err := p.readPolicy(ctx, g, target, wanted); err != nil {
 			return false, err
 		}
-		if err := ctr.Start(ctx); err != nil {
+		if err := startOriginalGateway(ctx, g, record); err != nil {
 			return false, fmt.Errorf("resume RGW after placement restart: %w", err)
 		}
 	}
-	record.policy = wanted
 	record.startConfirmed = true
-	if err := p.confirmRestart(ctx, g, record); err != nil {
+	if err := p.confirmRestart(ctx, g, record, wanted); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func (p *Placement) confirmRestart(ctx context.Context, g *gwbase.Core, record *gatewayRestart) error {
+// Docker Start acts on a container ID, so check the process generation again
+// after Stop or any intervening policy reads before requesting a start.
+func startOriginalGateway(ctx context.Context, g *gwbase.Core, record *gatewayRestart) error {
+	ctr := g.Container()
+	state, err := ctr.State(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect stopped gateway before Start: %w", err)
+	}
+	if state == nil || state.Paused || state.Restarting || state.Running {
+		return errors.New("cannot confirm the gateway is stopped before Start")
+	}
+	if state.StartedAt != record.originalStart {
+		delete(restartsFor(g.Cluster()), ctr.GetContainerID())
+		return errors.New("another RGW generation was stopped before Start; leaving it stopped")
+	}
+	return ctr.Start(ctx)
+}
+
+func (p *Placement) confirmRestart(ctx context.Context, g *gwbase.Core, record *gatewayRestart, policy restartPolicy) error {
 	ctr := g.Container()
 	state, err := ctr.State(ctx)
 	if err != nil {
@@ -154,7 +171,10 @@ func (p *Placement) confirmRestart(ctx context.Context, g *gwbase.Core, record *
 	}
 	startedAt := state.StartedAt
 	record.observedStart = &startedAt
-	if _, err := p.runningPolicy(ctx, g, record.policy); err != nil {
+	if err := restartScope(ctx, g, ctr, p.scope); err != nil {
+		return err
+	}
+	if _, err := p.runningPolicy(ctx, g, policy); err != nil {
 		return err
 	}
 	// The gateway may also be restarted externally during the policy read.
@@ -203,9 +223,9 @@ func (p *Placement) restart(ctx context.Context, g *gwbase.Core, policy restartP
 		}
 		return errors.Join(fmt.Errorf("stop RGW for placement restart: %w", stopErr), err)
 	}
-	if err := ctr.Start(startCtx); err != nil {
+	if err := startOriginalGateway(startCtx, g, record); err != nil {
 		return fmt.Errorf("restart RGW to load placement: %w", err)
 	}
 	record.startConfirmed = true
-	return p.confirmRestart(startCtx, g, record)
+	return p.confirmRestart(startCtx, g, record, policy)
 }
