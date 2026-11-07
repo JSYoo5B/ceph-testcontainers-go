@@ -163,7 +163,7 @@ func TestDirectoryWatchEndsWhenRebalanceRegistersItsPathAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Stop()
+	t.Cleanup(func() { _ = w.Stop() })
 	if baseline := nextDirectoryEvent(t, w); baseline.Kind != ceph.WatchBaseline {
 		t.Fatal(baseline)
 	}
