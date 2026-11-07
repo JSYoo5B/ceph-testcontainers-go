@@ -97,9 +97,12 @@ recovery need the default two OSDs or more.
 - Everything in [`ceph`](../ceph/README.md) applies to the cluster. Multisite
   (one realm across clusters, zones, zonegroups, sync policy) is in
   [`rgw/multisite`](multisite/README.md).
-- Images: the `Run` image is the essential image; `ceph.ImageOptions.WithRGWImage`
-  selects the gateway image, which must contain `radosgw` and `radosgw-admin`
-  (`Gateway.Admin` runs inside the gateway). Keep every role on the same Ceph
+- Images: gateways use the cluster's RGW role. That is the `Run` image, such
+  as the aggregate `ceph.DefaultImage`, unless `ceph.ImageOptions.WithImageSet`
+  selects an `ImageSet` whose `RGW` role differs, and
+  `ceph.ImageOptions.WithRGWImage` replaces either. The gateway image must
+  contain `radosgw` and `radosgw-admin` (`Gateway.Admin` runs inside the
+  gateway). Keep every role on the same Ceph
   release and architecture. `ceph.DefaultImage` is Tentacle 20.2.4; Squid
   19.2.5 is supported (use 19.2.5, not 19.2.6, for multisite). See
   [Releases and images](../docs/guides/releases-and-images.md).
