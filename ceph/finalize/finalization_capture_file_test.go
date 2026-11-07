@@ -158,7 +158,7 @@ func TestFinalizationCaptureFileRefusalsPreserveCleanupAndBoundedEvidence(t *tes
 			dir := fx.archives(t)[0]
 			m := readManifest(t, dir)
 			out := m.CaptureFiles[0]
-			if out.Copied || out.Error == "" || m.Archive.Complete || !m.Final || m.Termination == nil {
+			if out.Copied || out.Bytes != 0 || out.SHA256 != "" || out.Error == "" || m.Archive.Complete || !m.Final || m.Termination == nil {
 				t.Fatalf("outcome %+v manifest %+v", out, m)
 			}
 			if strings.Contains(out.Error, "private") || len(out.Error) > 80 {
@@ -241,7 +241,7 @@ func TestCaptureFileDeadlineRemovesPartialCopy(t *testing.T) {
 	raw.reader = reader
 	dir := t.TempDir()
 	out := copyCaptureFile(ctx, dir, raw, finalizationCaptureFile{Name: "raw.pcap", Limit: 128}, 128)
-	if out.Copied || out.Bytes != 5 || out.Error != "capture archive deadline expired" || !reader.closed {
+	if out.Copied || out.Bytes != 0 || out.Error != "capture archive deadline expired" || !reader.closed {
 		t.Fatal(out)
 	}
 	files, err := os.ReadDir(dir)
@@ -279,5 +279,30 @@ func TestFinalizationLateCleanupFailureReportsUnavailableSource(t *testing.T) {
 	m := readManifest(t, fx.archives(t)[0])
 	if m.Phase != "after-cleanup" || !m.Trigger.CleanupFailed || !m.Final || !m.Captures[0].Reported || m.CaptureFiles[0].Error != "capture source unavailable" || m.Termination == nil {
 		t.Fatalf("late archive %+v", m)
+	}
+}
+
+func TestArchiveDiscardedCaptureLeavesFullBudgetAvailable(t *testing.T) {
+	fx := newFinalizationFixture(t, Config{Archive: true})
+	discarded := captureFileFixture(fx, make([]byte, captureArchiveBytes))
+	discarded.digest = strings.Repeat("f", 64)
+	kept := captureFileFixture(fx, []byte("valid second capture"))
+	fx.CaptureWithFile("discarded", discarded, captureArchiveBytes)
+	fx.CaptureWithFile("kept", kept, kept.size)
+	fx.tb.Errorf("workload failure")
+	fx.run()
+
+	dir := fx.archives(t)[0]
+	m := readManifest(t, dir)
+	first, second := m.CaptureFiles[0], m.CaptureFiles[1]
+	if first.Error != "capture source size or digest changed" || first.Bytes != 0 || first.Copied || first.ExpectedBytes != captureArchiveBytes {
+		t.Fatalf("discarded capture: %+v", first)
+	}
+	if _, err := os.Stat(filepath.Join(dir, first.Name)); !os.IsNotExist(err) {
+		t.Fatalf("discarded capture remained on disk: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, second.Name))
+	if !second.Copied || second.Bytes != kept.size || err != nil || !bytes.Equal(data, kept.data) {
+		t.Fatalf("second capture: %+v, bytes %q, err %v", second, data, err)
 	}
 }
