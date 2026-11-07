@@ -19,10 +19,11 @@ import (
 // refuses to execute admin commands until Start has actually restored it.
 type interruptedGateway struct {
 	*gwtest.PlacementContainer
-	stopped, failStart bool
-	loseStopReply      bool
-	loseCompletedStop  bool
-	started            string
+	stopped, failStart    bool
+	loseStopReply         bool
+	loseCompletedStop     bool
+	started               string
+	losePostStartHostname bool
 }
 
 func (g *interruptedGateway) Stop(ctx context.Context, grace *time.Duration) error {
@@ -47,6 +48,7 @@ func (g *interruptedGateway) Start(ctx context.Context) error {
 		return err
 	}
 	g.stopped = false
+	g.started += "/restart"
 	return g.PlacementContainer.Start(ctx)
 }
 
@@ -55,6 +57,10 @@ func (g *interruptedGateway) State(context.Context) (*container.State, error) {
 }
 
 func (g *interruptedGateway) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if g.losePostStartHostname && g.StartCount > 0 && len(args) == 1 && args[0] == "hostname" {
+		g.losePostStartHostname = false
+		return 0, nil, errors.New("lost first restarted hostname read")
+	}
 	if g.stopped {
 		return 0, nil, errors.New("exec on a stopped gateway")
 	}

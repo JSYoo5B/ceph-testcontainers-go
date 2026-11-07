@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
@@ -70,9 +69,6 @@ type Placement struct {
 type activationState struct {
 	period        map[string]any
 	commitPending bool
-	// For each container stopped by this placement, remember the generation
-	// that was stopped until Start has completed.
-	restarts map[string]string
 }
 
 // origin binds a Placement to the gateway core that created it (see
@@ -198,7 +194,7 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*Placement, err
 		return nil, err
 	}
 	p := &Placement{origin: gwbase.NewOrigin(g), Name: config.Name, RealmID: scope.RealmID, ZonegroupID: scope.GroupID, ZoneID: scope.ZoneID,
-		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, scope: scope, config: config, poolIDs: poolIDs, activation: &activationState{restarts: make(map[string]string)}}
+		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, scope: scope, config: config, poolIDs: poolIDs, activation: &activationState{}}
 	if apiName, ok := group["api_name"].(string); !ok || apiName == "" {
 		return nil, errors.New("RGW zonegroup has no S3 API name")
 	}
@@ -354,7 +350,8 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 // assign a new mapped host port. Other gateways in the same zone require their
 // own Apply. After a stop, Start has a bounded context independent of caller
 // cancellation. A retry starts a stopped gateway only after another admin
-// container verifies its startup scope. If Stop loses
+// container verifies its startup scope and policy and the cluster confirms the
+// original pool IDs. If Stop loses
 // its reply and the original generation stays running, retries refuse another
 // restart until the gateway stops or its generation changes. Realm mode requires the current metadata master and commits a new
 // period only when its topology differs solely by this new placement. After
@@ -389,120 +386,19 @@ func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()
-	restored, err := p.resumeRestart(ctx, g)
-	if err != nil {
+	wanted := restartPolicy{exact: true}
+	restored, err := p.resumeRestart(ctx, g, wanted)
+	if err != nil || (restored && p.scope.RealmID == "") {
 		return err
 	}
-	group, err := admitActivation(ctx, g, p)
+	group, err := p.runningPolicy(ctx, g, wanted)
 	if err != nil {
 		return err
 	}
 	if p.scope.RealmID == "" {
-		if restored {
-			return nil
-		}
-		// An unscoped gateway originally chose native defaults at startup.
-		// Restarting it after another actor changes those pointers could serve
-		// another zone, despite the policy edits having used correct live IDs.
-		return p.restart(ctx, g)
+		return p.restart(ctx, g, wanted)
 	}
 	return publishPeriod(ctx, g, p, groupTarget(group, p.config.Name))
-}
-
-// admitActivation refuses activation unless the scope, the pools and the
-// native zonegroup and zone documents are exactly those confirmed at
-// creation. It returns the current zonegroup document.
-func admitActivation(ctx context.Context, g *gwbase.Core, p *Placement) (map[string]any, error) {
-	if err := checkResources(ctx, g, p); err != nil {
-		return nil, err
-	}
-	group, zone, err := nativeScope(ctx, g, p.scope)
-	if err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(group, p.group) || !reflect.DeepEqual(zone, p.zone) {
-		return nil, servicehook.Invalid(errors.New("RGW zone or zonegroup changed since placement creation; refusing activation"))
-	}
-	return group, nil
-}
-
-// resumeRestart restores the same container after an incomplete stop/start.
-func (p *Placement) resumeRestart(ctx context.Context, g *gwbase.Core) (bool, error) {
-	ctr := g.Container()
-	id := ctr.GetContainerID()
-	started, pending := p.activation.restarts[id]
-	if !pending {
-		return false, nil
-	}
-	state, err := ctr.State(ctx)
-	if err != nil {
-		return false, fmt.Errorf("inspect RGW after placement restart: %w", err)
-	}
-	if state == nil {
-		return false, errors.New("missing container state after RGW placement restart")
-	}
-	if state.Running && state.StartedAt == started {
-		// Docker may still be completing a Stop whose reply was lost.
-		// Keep the record until a restart succeeds or the generation changes.
-		return false, errors.New("the earlier RGW placement stop is unconfirmed and its original generation is still running; retry after the container stops or its generation changes")
-	}
-	restore := !state.Running && state.StartedAt == started
-	if restore {
-		// The stopped container cannot resolve its startup defaults itself.
-		// A peer with the same configured selectors or an aggregate control
-		// image can query them before this generation is started again.
-		target := servicehook.CLI(g.Cluster())
-		if peer, err := g.ScopeGateway(ctx); err == nil {
-			target = peer.Container()
-		}
-		if err := restartScope(ctx, g, target, p.scope); err != nil {
-			return false, fmt.Errorf("verify stopped RGW startup scope before resuming: %w", err)
-		}
-		if err := ctr.Start(ctx); err != nil {
-			return false, fmt.Errorf("resume RGW after placement restart: %w", err)
-		}
-	}
-	delete(p.activation.restarts, id)
-	return restore || state.Running, nil
-}
-
-// restart admits only a running gateway whose startup scope still matches.
-// After dispatch, restore its run state even if the caller canceled.
-func (p *Placement) restart(ctx context.Context, g *gwbase.Core) error {
-	if err := restartScope(ctx, g, g.Container(), p.scope); err != nil {
-		return err
-	}
-	ctr := g.Container()
-	state, err := ctr.State(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect RGW before placement restart: %w", err)
-	}
-	if state == nil || !state.Running || state.Paused || state.Restarting {
-		return servicehook.Invalid(errors.New("RGW placement restart requires a running gateway"))
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	id := ctr.GetContainerID()
-	p.activation.restarts[id] = state.StartedAt
-	grace := 3 * time.Second
-	stopCtx, finishStop := gwbase.SettlementContext(ctx)
-	stopErr := ctr.Stop(stopCtx, &grace)
-	finishStop()
-	startCtx, cancel := gwbase.SettlementContext(ctx)
-	defer cancel()
-	if stopErr != nil {
-		restored, err := p.resumeRestart(startCtx, g)
-		if restored {
-			return checkResources(startCtx, g, p)
-		}
-		return errors.Join(fmt.Errorf("stop RGW for placement restart: %w", stopErr), err)
-	}
-	if err := ctr.Start(startCtx); err != nil {
-		return fmt.Errorf("restart RGW to load placement: %w", err)
-	}
-	delete(p.activation.restarts, id)
-	return nil
 }
 
 // periodWriters tracks an unresolved staging update or commit for all placement
@@ -653,7 +549,11 @@ func checkStagingPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.Native
 
 // currentPeriod reads the realm's current period in scope.
 func currentPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) (map[string]any, error) {
-	data, err := g.Command(ctx, scope, "period", "get")
+	return currentPeriodIn(ctx, g, g.Container(), scope)
+}
+
+func currentPeriodIn(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) (map[string]any, error) {
+	data, err := g.CommandIn(ctx, target, scope, "period", "get")
 	if err != nil {
 		return nil, err
 	}
@@ -666,8 +566,9 @@ func currentPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope
 // published period through the multicluster fixture before reloading another
 // cluster. This method never publishes, pulls or rewrites federation topology.
 // After a stop, Start has a bounded context independent of caller cancellation.
-// A retry starts a stopped gateway only after another admin container verifies
-// its startup scope. An unconfirmed stop of the
+// A retry starts a stopped gateway only after the cluster confirms the original
+// pool IDs and another admin container verifies its startup scope, placement
+// mapping and, for a realm, the published target. An unconfirmed stop of the
 // still-running original generation must settle before a retry can restart it.
 // Resolve S3Endpoint again
 // because Docker may assign a new mapped host port.
@@ -693,33 +594,15 @@ func reload(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()
-	restored, err := p.resumeRestart(ctx, g)
-	if err != nil {
+	wanted := restartPolicy{published: p.scope.RealmID != ""}
+	restored, err := p.resumeRestart(ctx, g, wanted)
+	if err != nil || restored {
 		return err
 	}
-	if err := checkResources(ctx, g, p); err != nil {
+	if _, err := p.runningPolicy(ctx, g, wanted); err != nil {
 		return err
 	}
-	group, zone, err := nativeScope(ctx, g, p.scope)
-	if err != nil {
-		return err
-	}
-	if _, err := snapshot(p, group, zone); err != nil {
-		return err
-	}
-	if p.scope.RealmID != "" {
-		period, err := currentPeriod(ctx, g, p.scope)
-		if err != nil {
-			return err
-		}
-		if err := committedTarget(period, p); err != nil {
-			return err
-		}
-	}
-	if restored {
-		return nil
-	}
-	return p.restart(ctx, g)
+	return p.restart(ctx, g, wanted)
 }
 
 func committedTarget(period map[string]any, p *Placement) error {
@@ -784,6 +667,13 @@ func validateHandle(g *gwbase.Core, p *Placement) error {
 }
 
 func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
+	if err := p.checkRuntime(ctx, g); err != nil {
+		return err
+	}
+	return p.checkPools(ctx, g)
+}
+
+func (p *Placement) checkRuntime(ctx context.Context, g *gwbase.Core) error {
 	scope, err := g.RuntimeScope(ctx)
 	if err != nil {
 		return err
@@ -791,6 +681,10 @@ func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	if scope != p.scope {
 		return errors.New("RGW gateway's native placement scope changed")
 	}
+	return nil
+}
+
+func (p *Placement) checkPools(ctx context.Context, g *gwbase.Core) error {
 	states, err := servicehook.PoolStates(ctx, g.Cluster())
 	if err != nil {
 		return err
@@ -804,7 +698,11 @@ func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
 }
 
 func nativeScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) (map[string]any, map[string]any, error) {
-	data, err := g.Command(ctx, scope, "zonegroup", "get")
+	return nativeScopeIn(ctx, g, g.Container(), scope)
+}
+
+func nativeScopeIn(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) (map[string]any, map[string]any, error) {
+	data, err := g.CommandIn(ctx, target, scope, "zonegroup", "get")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -812,7 +710,7 @@ func nativeScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) 
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err = g.Command(ctx, scope, "zone", "get")
+	data, err = g.CommandIn(ctx, target, scope, "zone", "get")
 	if err != nil {
 		return nil, nil, err
 	}
