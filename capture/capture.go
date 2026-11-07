@@ -406,6 +406,9 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 		Filter: req.Filter, SnapLen: req.SnapLen, MaxPackets: req.MaxPackets, MaxBytes: req.maxBytes(),
 		Output: req.Output, End: EndUnknown, Target: TargetUnknown,
 	}
+	if err := s.recordOutputIdentity(); err != nil {
+		return s.rollbackOutput(err)
+	}
 	if err := s.preflight(ctx, id); err != nil {
 		if s.probe != "" {
 			// The probe is still owned: Stop retries its removal.
@@ -442,13 +445,20 @@ func (s *Session) checkOutputIdentity() error {
 	return s.matchOutput(info)
 }
 
+func (s *Session) recordOutputIdentity() error {
+	info, err := s.output.Stat()
+	if err != nil {
+		return fmt.Errorf("stat the reserved capture output: %w", err)
+	}
+	s.outputInfo = info
+	return nil
+}
+
 func (s *Session) matchOutput(pathInfo os.FileInfo) error {
 	if s.outputInfo == nil {
-		info, err := s.output.Stat()
-		if err != nil {
-			return fmt.Errorf("stat the reserved capture output: %w", err)
+		if err := s.recordOutputIdentity(); err != nil {
+			return err
 		}
-		s.outputInfo = info
 	}
 	if !os.SameFile(pathInfo, s.outputInfo) {
 		return errors.New("capture output path no longer names the reserved file")
