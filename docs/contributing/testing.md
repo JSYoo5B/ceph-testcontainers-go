@@ -691,10 +691,10 @@ of `.github/ceph-role-images.json` and export them:
 release=20.2.4
 dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
 python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,rgw --prepare-only --output-dir "$dir"
-eval "$(python3 -c 'import json, sys
-for k, v in json.load(open(sys.argv[1]))["prepared_environment"].items():
-    print(f"export {k}={v}")' "$dir/summary.json")"
+  --release "$release" --roles essential,client,rgw --prepare-only --output-dir "$dir" \
+  --github-env "$dir/role-images.env" &&
+  . "./$dir/role-images.env" &&
+  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_RGW_IMAGE
 ```
 
 Tentacle 20.2.5 has no published role images. Run it on the upstream
@@ -702,11 +702,12 @@ aggregate that `.github/ceph-discovery-images.json` pins, with no role
 variable set:
 
 ```sh
-unset CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_RGW_IMAGE
+unset SCENARIO_IMAGE_LAYOUT CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE \
+  CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE
 export CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c
 ```
 
-Then run the case's `go test` or `tag_scenarios.py optional` command from its
+After the selected setup succeeds, run the case's `go test` or `tag_scenarios.py optional` command from its
 manual. Each manual names the images its recorded result ran on.
 
 ### Messenger coverage manifest

@@ -29,8 +29,9 @@ ceph-testcontainers-images.
    and compile new examples. Compilation is not a native run.
 4. Reuse independently verified CI at the candidate's exact SHA: the six
    required status contexts, which are the jobs of the Code checks workflow
-   (Unit tests, Race detector, Vet, compile and CI tooling, Compiled tag
-   coverage and helpers, and the two Vulnerability check versions; see
+   (`Unit tests`, `Race detector`, `Vet, compile and CI tooling`,
+   `Compiled tag coverage and helpers`, `Vulnerability check (Go 1.26.x)`
+   and `Vulnerability check (Go 1.27.x)`; see
    [Code checks](ci.md#code-checks)), and the runtime workflows (Docker,
    short, topology, recovery and multicluster, and the other
    [supported releases](ci.md#supported-releases) through a full Ceph
