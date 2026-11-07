@@ -159,8 +159,11 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if err := c.fleet.osdHandles.current(o); err != nil {
-		return err
+	if !o.ownedBy(c) {
+		if err := c.fleet.osdHandles.current(o); err != nil {
+			return err
+		}
+		return invalidRequest("osd.%d is no longer running-capable", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

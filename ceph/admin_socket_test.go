@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,9 @@ func TestOSDDaemonAccessSharesOneOwnershipRule(t *testing.T) {
 			c, control := adminSocketCluster()
 			osd := osdHandle(t, t.Context(), c, 0)
 			mark(osd)
+			if err := osd.SetIn(t.Context(), false); !errors.Is(err, ErrInvalidRequest) {
+				t.Errorf("SetIn = %v", err)
+			}
 			if _, err := osd.AdminSocket(t.Context(), "status"); err == nil || !strings.Contains(err.Error(), "not owned") {
 				t.Errorf("AdminSocket = %v", err)
 			}

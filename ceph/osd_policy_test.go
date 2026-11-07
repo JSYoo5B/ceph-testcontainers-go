@@ -115,7 +115,7 @@ func TestWaitForPGCleanRejectsClosedOrUnavailableControlImmediately(t *testing.T
 }
 
 func osdPolicyCluster(ctr *osdPolicyFixture) *Container {
-	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{3: {ID: 3, nativeUUID: osdPolicyUUID}}}}}
+	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{3: {ID: 3, Container: ctr, nativeUUID: osdPolicyUUID}}}}}
 }
 
 type osdPolicyFixture struct {
