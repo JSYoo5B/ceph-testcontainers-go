@@ -919,6 +919,19 @@ between two Docker bridges through a container. Its helpers and routers run
 with `NET_ADMIN` and namespaced sysctls; see
 [A routed boundary between logical zones](../guides/fault-injection.md#a-routed-boundary-between-logical-zones).
 
+`osd_encrypted_store` (`TestEncryptedBlockDeviceOSD`,
+`TestEncryptedBlockStoreKeepsACollidingMapping`) runs one BlueStore OSD on a
+linear device-mapper node over a test-owned LUKS2 dm-crypt mapping, locks and
+unlocks the store with a key only the test holds, and requires the original
+OSD, store and bytes after the unlock. A privileged keeper in the client role
+image binds the engine host's `/dev`; its cleanup removes a mapping or loop
+only while it still has the DM UUID, device number or backing inode the test
+recorded, and keeps a mapping that only shares the test's name. The engine
+host's kernel must have the device-mapper `crypt` target registered; the test
+fails naming it and never loads a module, except on a GitHub-hosted runner.
+Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
+(see [Testing](testing.md#one-ci-batch-exactly-as-ci-runs-it)).
+
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
