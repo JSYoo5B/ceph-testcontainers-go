@@ -48,10 +48,38 @@ func (f cacheShellFixture) privateSocket() string {
 	return filepath.Join("/tmp", "tc-ioc-"+filepath.Base(f.pidfile), "s")
 }
 
+func (f cacheShellFixture) claimPath(t *testing.T) string {
+	t.Helper()
+	out, err := f.command(t, "inspect", f.cache, f.sock).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
+	if err != nil || inspection.claim == "" {
+		t.Fatalf("inspect: %+v, %v", inspection, err)
+	}
+	return inspection.claim
+}
+
 func (f cacheShellFixture) reserve(t *testing.T) {
 	t.Helper()
+	claim := f.claimPath(t)
+	f.check(t, "", "claim", claim, f.pidfile+".lease")
+	t.Cleanup(func() {
+		if target, _ := os.Readlink(claim); target == "sh:"+f.pidfile+".lease" {
+			_ = os.Remove(claim)
+		}
+	})
 	f.check(t, "", "reserve", f.pidfile+".lease")
 	f.check(t, "", "reserve", filepath.Join(filepath.Dir(f.cache), "."+filepath.Base(f.pidfile)+".stage"))
+}
+
+func (f cacheShellFixture) release(t *testing.T, stage string) {
+	t.Helper()
+	dirs := []string{f.pidfile + ".lease", stage}
+	f.check(t, "removed=1", "release-reservation", append([]string{"", ""}, dirs...)...)
+	f.check(t, "removed=1", "unclaim", f.claimPath(t), f.pidfile+".lease")
+	f.check(t, "removed=1", "forget-reservation", dirs...)
 }
 
 func (f cacheShellFixture) process(t *testing.T, socket string) (int, <-chan struct{}) {
@@ -91,7 +119,7 @@ func (f cacheShellFixture) check(t *testing.T, want, op string, args ...string) 
 
 func (f cacheShellFixture) start(t *testing.T) *exec.Cmd {
 	t.Helper()
-	return f.command(t, "start", "admin", f.cache, f.sock, "1024", f.asok, f.pidfile, "none", "")
+	return f.command(t, "start", "admin", f.cache, f.sock, "1024", f.asok, f.pidfile, "none", "", f.claimPath(t))
 }
 
 func TestCacheStartNeverDispatched(t *testing.T) {
@@ -102,6 +130,7 @@ func TestCacheStartNeverDispatched(t *testing.T) {
 	if err := f.start(t).Run(); err == nil {
 		t.Fatal("late launch accepted a revoked reservation")
 	}
+	f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 	entries, err := os.ReadDir(f.root)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("late launch left files: %v, %v", entries, err)
@@ -119,6 +148,7 @@ func TestCacheDaemonizedParentSuccessWithoutDaemon(t *testing.T) {
 	}
 	f.check(t, "stopped=1", "stop", "0", f.sock, f.pidfile)
 	f.check(t, "removed=1", "remove", f.cache, f.sock, f.asok, f.pidfile, "1")
+	f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 	for _, name := range []string{f.cache, f.pidfile + ".lease"} {
 		if _, err := os.Lstat(name); !os.IsNotExist(err) {
 			t.Fatalf("cleanup left %s: %v", name, err)
@@ -127,7 +157,7 @@ func TestCacheDaemonizedParentSuccessWithoutDaemon(t *testing.T) {
 }
 
 func TestCacheFinishedLaunchWithMissingEvidence(t *testing.T) {
-	for _, failure := range []string{"pin", "replaced", "deleted", "marker", "deleted-after-start"} {
+	for _, failure := range []string{"pin", "replaced", "deleted", "deleted-after-start"} {
 		t.Run(failure, func(t *testing.T) {
 			f := newCacheShellFixture(t)
 			listener, err := net.Listen("unix", filepath.Join(f.root, "original"))
@@ -150,24 +180,16 @@ for arg do
         --pid-file=*) echo "$LIVE_PID" > "${arg#*=}" || exit 1 ;;
     esac
 done
-if test "$FAULT" = marker; then rm -rf "$CACHE_ROOT/data"/.*.owner; fi
 case "$FAULT" in
     replaced) mv "$CACHE_ROOT/data" "$CACHE_ROOT/saved" && mkdir "$CACHE_ROOT/data" && echo foreign > "$CACHE_ROOT/data/foreign" ;;
-    deleted) rmdir "$CACHE_ROOT/data" ;;
+    deleted) rm -rf "$CACHE_ROOT/data" ;;
 esac
 `)
 			switch failure {
 			case "pin":
 				f.program(t, "ln", `case "$*" in *.pin) exit 1 ;; esac
 command -p ln "$@"`)
-			case "marker":
-				f.program(t, "stat", `case "$2" in
-    %w) command -p stat -c '-' "$3" ;;
-    %d:%i:%w) command -p stat -c '%d:%i:-' "$3" ;;
-    *) command -p stat "$@" ;;
-esac`)
-				f.program(t, "mkdir", `case "$1" in *.stage/*) ;; *.owner) exit 1 ;; esac
-command -p mkdir "$@"`)
+
 			}
 			f.reserve(t)
 			out, err := f.start(t).Output()
@@ -229,15 +251,10 @@ command -p mkdir "$@"`)
 				if err := os.Rename(filepath.Join(f.root, "saved"), f.cache); err != nil {
 					t.Fatal(err)
 				}
-			case "marker":
-				// A filesystem without birth times needs its marker before a
-				// recursive removal can be authorized. Preserve the directory.
-				remove("removed=0")
-				if err := os.Rename(f.cache, f.cache+".unverified"); err != nil {
-					t.Fatal(err)
-				}
+
 			}
 			remove("removed=1")
+			f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 			for _, name := range []string{f.cache, f.sock, f.asok, f.pidfile, f.pidfile + ".lease"} {
 				if _, err := os.Lstat(name); !os.IsNotExist(err) {
 					t.Fatalf("owned path after Restore: %s: %v", name, err)
@@ -259,6 +276,9 @@ type delayedCacheReservation struct {
 func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	switch args[2] {
 	case supervised.ShellScript:
+		if args[11] != "claim" {
+			return c.fakeCacheClient.Exec(ctx, args, opts...)
+		}
 		c.saved = append([]string(nil), args...)
 		c.saved[4] = filepath.Join(c.root, filepath.Base(args[4]))
 		return 0, nil, context.Canceled
@@ -270,7 +290,7 @@ func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts 
 		args = append([]string(nil), args...)
 		args[4] = filepath.Join(c.root, filepath.Base(args[4]))
 	default:
-		if args[4] != "release-reservation" {
+		if args[4] != "release-reservation" && args[4] != "forget-reservation" && args[4] != "unclaim" {
 			return c.fakeCacheClient.Exec(ctx, args, opts...)
 		}
 	}

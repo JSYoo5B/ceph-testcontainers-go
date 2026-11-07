@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,10 +47,11 @@ type fakeCacheClient struct {
 	// from opening its socket. execFail fails the exec of that operation
 	// after the operation ran. statusDrop leaves that field out of the status
 	// report.
-	startExit  int
-	noSocket   bool
-	execFail   string
-	statusDrop string
+	startExit     int
+	startConflict bool
+	noSocket      bool
+	execFail      string
+	statusDrop    string
 }
 
 func newFakeCacheClient() *fakeCacheClient {
@@ -70,14 +72,25 @@ func (f *fakeCacheClient) daemon(pid, sock, pidfile string) *fakeCacheDaemon {
 	return nil
 }
 
-func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (f *fakeCacheClient) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if len(args) > 2 && args[2] == supervised.ShellCancelScript {
+		return clustertest.Reply(args, 0, nil)
+	}
+	if len(args) > 11 && args[2] == supervised.ShellScript {
+		code, raw, err := f.cacheCommand(args[7:])
+		if err != nil {
+			return 0, nil, err
+		}
+		line := supervised.ShellEndPrefix + strconv.Itoa(code) + "\n"
+		header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
+		return code, io.MultiReader(raw, bytes.NewReader(append(header, line...))), nil
+	}
+	return f.cacheCommand(args)
+}
+
+func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(args) > 11 && args[2] == supervised.ShellScript && args[11] == "reserve" {
-		line := supervised.ShellEndPrefix + "0\n"
-		header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
-		return 0, bytes.NewReader(append(header, line...)), nil
-	}
 	if len(args) < 5 || args[0] != "sh" || args[2] != immutableObjectCacheScript {
 		return clustertest.Reply(args, 2, nil)
 	}
@@ -89,8 +102,13 @@ func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.Pro
 		}
 	}()
 	switch op {
+	case "claim", "reserve":
+	case "confirm-reservation":
+		out = append(out, "reserved=1")
+	case "release-reservation", "forget-reservation", "unclaim":
+		out = append(out, "removed=1")
 	case "inspect":
-		out = append(out, "binary="+bit(f.binary), "plugin="+bit(f.plugin), "socket="+bit(f.files[a[1]] != ""))
+		out = append(out, "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64), "flock=1", "binary="+bit(f.binary), "plugin="+bit(f.plugin), "socket="+bit(f.files[a[1]] != ""))
 		switch kind := f.files[a[0]]; {
 		case kind == "":
 			out = append(out, "path=none")
@@ -102,6 +120,9 @@ func (f *fakeCacheClient) Exec(_ context.Context, args []string, _ ...tcexec.Pro
 			out = append(out, "path=empty", "identity=original-dir")
 		}
 	case "start":
+		if f.startConflict {
+			return clustertest.Reply(args, 0, []byte("conflict=1\n"))
+		}
 		path, sock, pidfile := a[1], a[2], a[5]
 		f.files[path] = "dir"
 		out = append(out, fmt.Sprintf("exit=%d", f.startExit))
@@ -288,6 +309,15 @@ func TestImmutableObjectCacheStartFailuresLeaveNothing(t *testing.T) {
 				t.Fatalf("after a failed start: %d daemons, files %v", client.running(), client.files)
 			}
 		})
+	}
+}
+
+func TestImmutableObjectCacheClassifiesPrelaunchConflict(t *testing.T) {
+	client := newFakeCacheClient()
+	client.startConflict = true
+	lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
+	if lease != nil || !errors.Is(err, ceph.ErrInvalidRequest) || errors.Is(err, ceph.ErrNativeFailure) || client.running() != 0 {
+		t.Fatalf("prelaunch conflict: %v, %v, running=%d", lease, err, client.running())
 	}
 }
 
@@ -517,11 +547,13 @@ func TestImmutableObjectCacheStartOutput(t *testing.T) {
 }
 
 func TestImmutableObjectCacheInspectAndFlagOutput(t *testing.T) {
-	if got, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", "binary=0", "plugin=1", "socket=0", "path=none")); err != nil ||
-		got != (immutableObjectCacheInspection{plugin: true, path: "none"}) {
+	if got, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", "binary=0", "plugin=1", "socket=0", "path=none", "flock=1", "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64))); err != nil ||
+		got != (immutableObjectCacheInspection{plugin: true, path: "none", flock: true, claim: "/tmp/tc-ioc-path-" + strings.Repeat("a", 64)}) {
 		t.Fatalf("inspection %+v, %v", got, err)
 	}
 	for name, lines := range map[string][]string{
+		"missing claim":  {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1"},
+		"unsafe claim":   {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1", "claim=/tmp/unrelated"},
 		"missing plugin": {"binary=1", "socket=0", "path=none"},
 		"unknown path":   {"binary=1", "plugin=1", "socket=0", "path=dir"},
 		"malformed flag": {"binary=true", "plugin=1", "socket=0", "path=none"},

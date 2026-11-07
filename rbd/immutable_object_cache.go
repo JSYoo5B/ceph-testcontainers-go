@@ -37,7 +37,8 @@ type ImmutableObjectCache struct {
 	// its keyring, as ceph.ClientConfig.WithIdentity does.
 	ID string
 	// Path is the cache directory; empty means
-	// DefaultImmutableObjectCachePath. It must be absent or empty.
+	// DefaultImmutableObjectCachePath. It must be absent or empty. The lease
+	// stores the daemon's objects in a private subdirectory of Path.
 	Path string
 	// Socket is the path of the daemon's client socket; empty means
 	// DefaultImmutableObjectCacheSocket. It must not exist, and it must not
@@ -56,8 +57,8 @@ type ImmutableObjectCacheStatus struct {
 	Running bool
 	// PID is the daemon's process ID in the client container.
 	PID int
-	// CachedObjects and CachedBytes count the files under the cache
-	// directory: one per cached parent object.
+	// CachedObjects and CachedBytes count the daemon's object files and
+	// their bytes. Lease ownership records are excluded.
 	CachedObjects int
 	CachedBytes   int64
 	// RADOSReads is the daemon's objecter read count while Running: the
@@ -85,10 +86,15 @@ type ImmutableObjectCacheLease struct {
 	createdPath bool // the cache directory did not exist before startup
 	launchSent  bool // start was submitted after successful reservation
 	// A pending reservation must be canceled before its directory is removed.
-	reserveMarker string
-	reservations  []string
-	stopped       bool
-	complete      bool
+	reserveMarker        string
+	cleanupMarker        string
+	reservations         []string
+	owner                string
+	resourcesRemoved     bool
+	controlsReleased     bool
+	uncertainReservation string
+	claim                string
+	complete             bool
 }
 
 const immutableCacheReserveLabel = "reserve the immutable object cache lease"
@@ -117,16 +123,64 @@ exists() { test -e "$1" || test -L "$1"; }
 # Bind under the private reservation. A short alias keeps the daemon's Unix
 # socket addresses within sockaddr_un even when the public parent is deep.
 cache_paths() {
-    state=$pidfile.lease
+    state=$pidfile.lease control=$pidfile.lease
     alias=/tmp/tc-ioc-${pidfile##*/}
     private_sock=$alias/s
     private_admin=$alias/a
     private_pid=$state/pid
-    marker=.${pidfile##*/}.owner
+    marker=.ceph-immutable-cache
+}
+# Keep a second link to each reservation's identity beside the directory.
+# The expected token comes from the Go lease, outside all container paths.
+owned_dir() {
+    test -d "$1" && test ! -L "$1" && test -f "$1/.identity" && test ! -L "$1/.identity" &&
+        test ! -L "$1/.identity" && test ! -L "$2" && test "$1/.identity" -ef "$2" &&
+        test "$(head -n 1 "$2")" = "$0:$(stat -c '%d:%i:%w' "$1")"
+}
+pin_control() {
+    test ! -L "$control" && test -d "$control" || return 1
+    exec 7<"$control" || return 1
+    state=/proc/$$/fd/7/.
+    owned_dir "$state" "$control.witness" && test "$state" -ef "$control"
+}
+path_claim() {
+    canonical=$(realpath -m -- "$1") || return 1
+    # Mountinfo identifies the filesystem and the root of each bind mount.
+    # This key stays stable when missing parents are created and when the same
+    # directory is addressed through another mount of that filesystem.
+    identity=$(CACHE_PATH="$canonical" awk '
+        function decode(s) {
+            gsub(/\\040/, " ", s); gsub(/\\011/, "\t", s)
+            gsub(/\\012/, "\n", s); gsub(/\\134/, sprintf("%c",92), s)
+            return s
+        }
+        BEGIN { p=ENVIRON["CACHE_PATH"] }
+        {
+            m=decode($5)
+            if (length(m)>=n && (m=="/" || p==m || index(p,m "/")==1)) {
+                n=length(m); root=decode($4); dev=$3
+                tail=(m=="/" ? p : substr(p,n+1))
+            }
+        }
+        END { if (!n) exit 1; printf "%s:%s%s", dev, (root=="/" ? "" : root), tail }
+        ' /proc/self/mountinfo) || return 1
+    hash=$(printf '%s' "$identity" | sha256sum) || return 1
+    printf '/tmp/tc-ioc-path-%s' "${hash%% *}"
+}
+# A non-directory ancestor is an invalid pathname. An unreadable directory
+# remains an inspection error rather than a malformed-request verdict.
+parent_state() {
+    parent=$(dirname -- "$1") || return 1
+    while ! exists "$parent"; do parent=$(dirname -- "$parent") || return 1; done
+    if ! test -d "$parent"; then echo invalid; elif test -x "$parent"; then echo valid; else return 1; fi
 }
 publish_file() {
     source=$1 public=$2 name=$3
-    ln -T "$source" "$state/$name.pin" && ln -T "$state/$name.pin" "$public" || return 1
+    ln -T "$source" "$state/$name.pin" || return 1
+    if ! ln -T "$state/$name.pin" "$public"; then
+        if exists "$public"; then conflict; fi
+        return 1
+    fi
     touch "$state/$name.published"
 }
 check_public() {
@@ -136,27 +190,72 @@ check_public() {
 remove_public() {
     if exists "$1" && test ! -L "$1" && test "$1" -ef "$state/$2.pin"; then rm -f "$1"; else check_public "$1" "$2"; fi
 }
-release_control() {
-    if test "$created" = 1 && exists "$stage"; then
-        if exists "$stage/data/$marker"; then rmdir "$stage/data/$marker" || return 1; fi
-        if exists "$stage/data"; then rmdir "$stage/data" || return 1; fi
-        rmdir "$stage" || return 1
+# Only remove known control files. In particular, never traverse an outside
+# directory that has appeared under a reservation's former name.
+release_dir() {
+    dir=$1 guard=$dir.witness seed=$dir.pending-$0 retired=$dir.releasing-$0
+    if exists "$seed"; then
+        if ! exists "$guard" && test -f "$seed/.identity" && test ! -L "$seed" &&
+            test "$(cat "$seed/.identity")" = "$0:$(stat -c '%d:%i:%w' "$seed")"; then
+            ln -T "$seed/.identity" "$guard" || return 1
+        fi
+        owned_dir "$seed" "$guard" || return 1
+        mv -nT "$seed" "$retired" && ! exists "$seed" || return 1
     fi
-    if test "$(readlink "$alias" 2>/dev/null)" = "$state"; then rm -f "$alias" || return 1; fi
-    rm -rf "$state"
+    if exists "$dir" && ! exists "$retired" && ! grep -qx drained "$guard" 2>/dev/null; then
+        owned_dir "$dir" "$guard" || return 1
+        mv -nT "$dir" "$retired" && ! exists "$dir" || return 1
+    fi
+    if exists "$retired"; then
+        test ! -L "$retired" && test -d "$retired" || return 1
+        (cd -P "$retired" &&
+            test "$(head -n 1 "$guard" 2>/dev/null)" = "$0:$(stat -c '%d:%i:%w' .)" &&
+            if exists .identity; then
+                owned_dir . "$guard" &&
+                rm -f -- launch finished owner dispatched emptied path-claim marker payload unpublished-marker \
+                    a s pid admin.pin socket.pin pidfile.pin admin.published socket.published pidfile.published &&
+                test -z "$(find . -mindepth 1 ! -name .identity -print -quit)" &&
+                printf 'drained\n' >> "$guard" && rm .identity
+            else grep -qx drained "$guard"; fi &&
+            test . -ef "$retired" && rmdir "$retired") || return 1
+    fi
+    if exists "$guard"; then
+        test ! -L "$guard" && test -f "$guard" &&
+            test "$(head -n 1 "$guard" | cut -d: -f1)" = "$0" && grep -qx drained "$guard"
+    else
+        { test "$dir" = "$uncertain" || { test "$dir" = "$absent_stage" && ! exists "$(dirname "$dir")"; }; } &&
+            ! exists "$dir" && ! exists "$seed" && ! exists "$retired"
+    fi
 }
 op=$1
 shift
+# A Docker exec can outlive its transport response. Serialize every Restore
+# mutation and new path claim on this stable container inode. Descendants
+# retain FD 9; even a delayed unlink outlives neither the lock nor its fence.
+case "$op" in
+claim|reserve|stop|remove|release-reservation|forget-reservation|unclaim)
+    exec 9</tmp || exit 1
+    while :; do
+        flock -E 75 -w 1 -x 9 && break
+        test "$?" = 75 || exit 1
+    done
+    ;;
+esac
 case "$op" in
 inspect)
     path=$1 sock=$2
+    if command -v flock >/dev/null 2>&1; then echo flock=1; else echo flock=0; fi
     if command -v ceph-immutable-object-cache >/dev/null 2>&1; then echo binary=1; else echo binary=0; fi
     dir=$(ceph-conf --show-config-value plugin_dir 2>/dev/null)
     if test -n "$dir" && test -f "$dir/librbd/libceph_librbd_parent_cache.so"; then echo plugin=1; else echo plugin=0; fi
     if test -e "$sock" || test -L "$sock"; then echo socket=1; else echo socket=0; fi
-    if test -L "$path"; then echo path=other
+    parent_kind=$(parent_state "$path") && socket_parent=$(parent_state "$sock") || exit 1
+    claim=$(path_claim "$path") || exit 1
+    printf 'claim=%s\n' "$claim"
+    if test "$parent_kind" = invalid || test "$socket_parent" = invalid || test -L "$path" || exists "$claim"; then echo path=other
     elif test -d "$path"; then
-        if test -z "$(ls -A "$path")"; then
+        contents=$(ls -A "$path") || exit 1
+        if test -z "$contents"; then
             echo path=empty
             printf 'identity=' && stat -c '%d:%i:%w' "$path" || exit 1
         else echo path=full; fi
@@ -164,16 +263,53 @@ inspect)
     else echo path=none
     fi
     ;;
+claim)
+    if exists "$1"; then exit 3; fi
+    exec ln -sT "$0:$2" "$1"
+    ;;
+claim-held)
+    if exists "$1"; then echo held=1; else echo held=0; fi
+    ;;
+unclaim)
+    if test "$(readlink "$1" 2>/dev/null)" = "$0:$2"; then rm "$1" || exit 1; fi
+    echo removed=1
+    ;;
+confirm-reservation)
+    if owned_dir "$1" "$1.witness"; then echo reserved=1; else echo reserved=0; fi
+    ;;
 reserve)
-    state=$1
-    # The shell supervisor can stop and reap its command. Make the actual
-    # reservation in that process, so no descendant can reserve after cancel.
-    mkdir -p "$(dirname "$state")" || exit 1
-    exec mkdir -m 700 "$state"
+    dir=$1 seed=$1.pending-$0
+    parent=$(dirname "$dir") || exit 1
+    if test -n "${2:-}"; then
+        if test -L "$parent" || ! test -d "$parent"; then exit 3; fi
+        identity=$(stat -c '%d:%i:%w' "$parent") || exit 1
+        test "$identity" = "$2" || exit 3
+    else
+        mkdir -p "$parent" || exit 1
+    fi
+    if exists "$dir" || exists "$dir.witness" || exists "$seed"; then exit 3; fi
+    mkdir -m 700 "$seed" || exit 1
+    identity=$(stat -c '%d:%i:%w' "$seed") || exit 1
+    printf '%s:%s\n' "$0" "$identity" > "$seed/.identity" && ln -T "$seed/.identity" "$dir.witness" || exit 1
+    # The final publication runs in the supervisor's directly reaped process.
+    exec mv -nT "$seed" "$dir"
     ;;
 release-reservation)
-    for state do
-        if exists "$state"; then rmdir "$state" || exit 1; fi
+    uncertain=$1 absent_stage=$2; shift 2
+    for dir do
+        release_dir "$dir" || { echo removed=0; exit 0; }
+    done
+    echo removed=1
+    ;;
+forget-reservation)
+    # Go received positive acknowledgements for data and control release.
+    # Only the external witnesses belonging to this lease may be removed.
+    for dir do
+        guard=$dir.witness
+        if test ! -L "$guard" && test -f "$guard" &&
+            test "$(head -n 1 "$guard" | cut -d: -f1)" = "$0" && grep -qx drained "$guard"; then
+            rm "$guard" || exit 1
+        fi
     done
     echo removed=1
     ;;
@@ -181,39 +317,48 @@ start)
     id=$1 path=$2 sock=$3 size=$4 asok=$5 pidfile=$6
     cache_paths
     stage=$(dirname "$path")/.${pidfile##*/}.stage
+    pin_control || exit 1
+    if test "$7" = empty; then stage=$path/.${pidfile##*/}.stage; fi
+    owned_dir "$stage" "$stage.witness" || exit 1
     # Stop and start compete for one claim in the pre-existing reservation.
     # A delayed start after Restore cannot re-create that reservation.
     birth=$(cut -d' ' -f22 "/proc/$$/stat") || exit 1
     ln -sT "$$:$birth" "$state/launch" || exit 1
     trap 'touch "$state/finished"' EXIT
-    before_launch_failure() {
-        printf 'exit=1\npid=\nready=0\n'
-        exit 0
-    }
-    if exists "$sock" || exists "$asok" || exists "$pidfile"; then before_launch_failure; fi
-    ln -sT "$state" "$alias" || before_launch_failure
+    conflict() { printf 'conflict=1\n'; exit 0; }
+    if exists "$sock" || exists "$asok" || exists "$pidfile"; then conflict; fi
+    claim=$9
+    printf '%s\n' "$claim" > "$state/path-claim" || exit 1
+    test "$(readlink "$claim" 2>/dev/null)" = "$0:$control" || conflict
+    ln -sT "$control" "$alias" || exit 1
     if test "$7" = none; then
-        # Record the directory identity before exposing it under the caller's
-        # name. Until publication, cleanup only needs the private staging area.
-        mkdir "$stage/data" || before_launch_failure
-        stat -c '%d:%i:%w' "$stage/data" > "$state/owner" || before_launch_failure
-        if test "$(stat -c '%w' "$stage/data")" = -; then
-            touch "$state/needs-marker" && mkdir "$stage/data/$marker" &&
-                stat -c '%d:%i' "$stage/data/$marker" > "$state/marker" || before_launch_failure
-        fi
-        mv -nT "$stage/data" "$path" && ! exists "$stage/data" || before_launch_failure
+        if exists "$path"; then conflict; fi
+        mkdir "$stage/data" || exit 1
+        root=$stage/data
     else
-        test ! -L "$path" && test -d "$path" && test -z "$(ls -A "$path")" &&
-            test "$(stat -c '%d:%i:%w' "$path")" = "$8" || before_launch_failure
-        printf '%s\n' "$8" > "$state/owner" || before_launch_failure
-        if test "$(stat -c '%w' "$path")" = -; then touch "$state/needs-marker" || before_launch_failure; fi
+        if test -L "$path" || ! test -d "$path"; then conflict; fi
+        stage_name=${stage##*/}
+        others=$(find "$path" -mindepth 1 -maxdepth 1 ! -name "$stage_name" ! -name "$stage_name.witness" -print -quit) || exit 1
+        if test -n "$others" || test "$(stat -c '%d:%i:%w' "$path")" != "$8"; then conflict; fi
+        root=$path
     fi
-    touch "$state/dispatched" || before_launch_failure
-    ceph-immutable-object-cache --id "$id" --immutable_object_cache_path="$path" \
+    stat -c '%d:%i:%w' "$root" > "$state/owner" || exit 1
+    # The daemon initializes only objects/. Its sibling ownership marker
+    # survives initialization, daemon loss and a restart of the container.
+    mkdir "$stage/marker" && ln -sT "$0:$control" "$stage/marker/owner" &&
+        stat -c '%d:%i' "$stage/marker" > "$state/marker" &&
+        mkdir "$stage/marker/objects" && stat -c '%d:%i:%w' "$stage/marker/objects" > "$state/payload" || exit 1
+    mv -nT "$stage/marker" "$root/$marker" || { if exists "$root/$marker"; then conflict; fi; exit 1; }
+    if exists "$stage/marker"; then conflict; fi
+    if test "$7" = none; then
+        mv -nT "$root" "$path" || { if exists "$path"; then conflict; fi; exit 1; }
+        if exists "$root"; then conflict; fi
+    fi
+    touch "$state/dispatched" || exit 1
+    ceph-immutable-object-cache --id "$id" --immutable_object_cache_path="$path/$marker/objects" \
         --immutable_object_cache_sock="$private_sock" --immutable_object_cache_max_size="$size" \
         --admin-socket="$private_admin" --pid-file="$private_pid" >/dev/null 2>&1
     exitcode=$?
-    echo "exit=$exitcode"
     tries=0
     while test "$exitcode" = 0 && test "$tries" -lt 150; do
         if test -S "$private_sock" && test -s "$private_pid"; then break; fi
@@ -221,26 +366,20 @@ start)
         tries=$((tries + 1))
     done
     test ! -L "$path" && test "$(stat -c '%d:%i:%w' "$path")" = "$(cat "$state/owner")" || exit 1
-    # The daemon clears its cache on startup: renew the fallback marker.
-    if test -f "$state/needs-marker"; then
-        if ! exists "$path/$marker"; then mkdir "$path/$marker" || exit 1; fi
-        test ! -L "$path/$marker" && test -d "$path/$marker" &&
-            stat -c '%d:%i' "$path/$marker" > "$state/marker" || exit 1
-    fi
     pid=$(cat "$private_pid" 2>/dev/null)
-    echo "pid=$pid"
     if test "$exitcode" != 0 || ! test -S "$private_sock" || ! ours "$pid" "$private_pid" "$private_sock"; then
-        echo ready=0; exit 0
+        printf 'exit=%s\npid=%s\nready=0\n' "$exitcode" "$pid"; exit 0
     fi
     # Every public inode comes from the lease's private directory. Publication
     # cannot replace a competing listener, and cleanup never adopts one.
     if test -S "$private_admin"; then publish_file "$state/a" "$asok" admin || exit 1; fi
     publish_file "$private_pid" "$pidfile" pidfile && publish_file "$state/s" "$sock" socket || exit 1
-    echo ready=1
+    printf 'exit=0\npid=%s\nready=1\n' "$pid"
     ;;
 status)
     pid=$1 sock=$2 asok=$3 path=$4 pidfile=$5
     cache_paths
+    pin_control || exit 1
     test "$pid" -gt 0 || pid=$(cat "$private_pid" 2>/dev/null)
     if ours "$pid" "$private_pid" "$private_sock"; then
         echo running=1
@@ -248,9 +387,10 @@ status)
     else
         echo running=0
     fi
-    if test -d "$path"; then
+    if test -d "$path/$marker/objects"; then
+        test "$(readlink "$path/$marker/owner")" = "$0:$control" || exit 1
         echo dir=1
-        find "$path" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { printf "files=%d\nbytes=%.0f\n", n, b }'
+        find "$path/$marker/objects" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { printf "files=%d\nbytes=%.0f\n", n, b }'
     else
         echo dir=0
     fi
@@ -258,7 +398,8 @@ status)
 stop)
     pid=$1 sock=$2 pidfile=$3
     cache_paths
-    if test -d "$state" && ! test -f "$state/finished"; then
+    pin_control || { echo stopped=0; exit 0; }
+    if ! test -f "$state/finished"; then
         if ln -sT canceled "$state/launch" 2>/dev/null; then echo stopped=1; exit 0; fi
         owner=$(readlink "$state/launch") || exit 1
         if test "$owner" = canceled; then echo stopped=1; exit 0; fi
@@ -289,37 +430,67 @@ remove)
     path=$1 sock=$2 asok=$3 pidfile=$4 created=$5
     cache_paths
     stage=$(dirname "$path")/.${pidfile##*/}.stage
-    # Removing the reservation is the last step after all owned paths are released.
-    if ! exists "$state"; then echo removed=1; exit 0; fi
+    pin_control || { echo removed=0; exit 0; }
+    if test "$created" = 0; then stage=$path/.${pidfile##*/}.stage; fi
+    if test "$created" = 1 || exists "$path"; then
+        stage_name=$stage
+        test ! -L "$stage_name" && test -d "$stage_name" || { echo removed=0; exit 0; }
+        exec 8<"$stage_name" || exit 1
+        stage=/proc/$$/fd/8/.
+        owned_dir "$stage" "$stage_name.witness" && test "$stage" -ef "$stage_name" || { echo removed=0; exit 0; }
+    fi
+    # An interrupted build of the marker tree has never been sent to Ceph.
+    # Remove only the known entries inside the authenticated staging directory.
+    if exists "$stage/marker"; then
+        touch "$state/unpublished-marker" || exit 1
+        test ! -L "$stage/marker" && test -d "$stage/marker" || { echo removed=0; exit 0; }
+        if exists "$stage/marker/objects"; then rmdir "$stage/marker/objects" || exit 1; fi
+        if exists "$stage/marker/owner"; then
+            test "$(readlink "$stage/marker/owner")" = "$0:$control" && rm "$stage/marker/owner" || exit 1
+        fi
+        rmdir "$stage/marker" || exit 1
+    fi
     check_public "$sock" socket && check_public "$asok" admin && check_public "$pidfile" pidfile || { echo removed=0; exit 0; }
-    # An unpublished or already reclaimed directory is still in staging.
-    # Its former public name can belong to someone else.
-    if { test "$created" = 1 || test -f "$state/dispatched"; } &&
-        test -s "$state/owner" && exists "$path" &&
-        { test "$created" = 0 || ! exists "$stage/data"; }; then
-        test ! -L "$path" && cd -P "$path" || { echo removed=0; exit 0; }
-        test "$(stat -c '%d:%i:%w' .)" = "$(cat "$state/owner")" || { echo removed=0; exit 0; }
-        if test -f "$state/needs-marker" && { test "$created" = 1 || ! test -f "$state/emptied"; }; then
-            test ! -L "$marker" && test -d "$marker" &&
+    # A staged directory was either never published or already reclaimed.
+    root=$path
+    if test "$created" = 1 && exists "$stage/data"; then root=$stage/data; fi
+    if test -s "$state/owner" && exists "$root" && ! test -f "$state/emptied" && ! exists "$stage/reclaimed"; then
+        test ! -L "$root" && cd -P "$root" && test "$(stat -c '%d:%i:%w' .)" = "$(cat "$state/owner")" ||
+            { echo removed=0; exit 0; }
+        if test -f "$state/marker" && ! test -f "$state/unpublished-marker"; then
+            test ! -L "$marker" && test "$(readlink "$marker/owner" 2>/dev/null)" = "$0:$control" &&
                 test "$(stat -c '%d:%i' "$marker")" = "$(cat "$state/marker")" || { echo removed=0; exit 0; }
-        fi
-        if test -f "$state/dispatched" && ! test -f "$state/emptied"; then
-            # Relative traversal stays in the opened directory across renames.
-            find . -mindepth 1 ! -path "./$marker" -delete || exit 1
-            touch "$state/emptied" || exit 1
-        fi
-        if test "$created" = 1; then
-            # Move the verified empty directory, with its marker, back into
-            # staging first. A retry can never remove a new public directory.
-            test -z "$(find . -mindepth 1 ! -path "./$marker" -print -quit)" &&
-                test . -ef "$path" && mv -nT "$path" "$stage/data" && test . -ef "$stage/data" ||
-                { echo removed=0; exit 0; }
-        elif test -f "$state/marker" && test -d "$marker"; then
-            rmdir "$marker" || exit 1
+            if test "$created" = 1 && test "$root" = "$path"; then
+                test -z "$(find . -mindepth 1 -maxdepth 1 ! -name "$marker" -print -quit)" &&
+                    test . -ef "$path" && mv -nT "$path" "$stage/data" && test . -ef "$stage/data" ||
+                    { echo removed=0; exit 0; }
+            fi
+            # Move the authenticated subtree into private staging before the
+            # recursive traversal. After this transition a reused public path is
+            # independent of this cleanup, including after a lost reply.
+            mv -nT "$marker" "$stage/reclaimed" && ! exists "$marker" || exit 1
         fi
     fi
+    if exists "$stage/reclaimed"; then
+        test ! -L "$stage/reclaimed" && cd -P "$stage/reclaimed" &&
+            test "$(stat -c '%d:%i' .)" = "$(cat "$state/marker")" || { echo removed=0; exit 0; }
+        if ! test -f "$state/emptied"; then
+            test "$(readlink owner 2>/dev/null)" = "$0:$control" || { echo removed=0; exit 0; }
+            if exists objects; then
+                (test ! -L objects && cd -P objects && test "$(stat -c '%d:%i:%w' .)" = "$(cat "$state/payload")" &&
+                    find . -mindepth 1 -delete) || { echo removed=0; exit 0; }
+                rmdir objects || exit 1
+            fi
+            touch "$state/emptied" || exit 1
+        fi
+        if exists owner; then test "$(readlink owner)" = "$0:$control" && rm owner || exit 1; fi
+        test . -ef "$stage/reclaimed" && rmdir "$stage/reclaimed" || exit 1
+    else
+        touch "$state/emptied" || exit 1
+    fi
+    if test "$created" = 1 && exists "$stage/data"; then rmdir "$stage/data" || exit 1; fi
     remove_public "$sock" socket && remove_public "$asok" admin && remove_public "$pidfile" pidfile || exit 1
-    release_control || exit 1
+    if test "$(readlink "$alias" 2>/dev/null)" = "$control"; then rm -f "$alias" || exit 1; fi
     echo removed=1
     ;;
 *)
@@ -332,11 +503,12 @@ esac
 // in client, a container that the caller owns, and returns its lease. A
 // librbd client in the same container uses the cache when it sets the
 // lease's ClientOptions; other clients read the parents from RADOS. The
-// container must have ceph-immutable-object-cache on its PATH and the librbd
-// parent_cache plugin in its plugin directory: the official Ceph image has
-// both, and an image without them is refused with ceph.ErrImageCapability.
+// container needs util-linux flock, ceph-immutable-object-cache and the
+// librbd parent_cache plugin. A missing prerequisite is ceph.ErrImageCapability.
 // An existing socket, a non-empty cache directory or an invalid path is
-// refused with ceph.ErrInvalidRequest, and nothing is changed. A daemon that
+// refused with ceph.ErrInvalidRequest. Contention for the cache path or the
+// public socket during startup also returns ceph.ErrInvalidRequest; if rollback
+// fails the caller receives the lease for a later Restore. A daemon that
 // exits or never opens its socket fails the call with ceph.ErrNativeFailure,
 // and startup attempts to restore the prior state. A lost start reply or a
 // failed cleanup returns a non-nil lease with the error. Keep that lease and
@@ -353,6 +525,8 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		return nil, fmt.Errorf("inspect the immutable object cache container: %w", err)
 	}
 	switch {
+	case !state.flock:
+		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "flock", Err: errors.New("the immutable cache requires util-linux flock")}
 	case !state.binary:
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "ceph-immutable-object-cache",
 			Err: errors.New("the client container has no ceph-immutable-object-cache executable")}
@@ -366,34 +540,85 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 	}
 	token := uuid.NewString()
 	lease := &ImmutableObjectCacheLease{
+		owner:       uuid.NewString(),
 		config:      config,
 		client:      client,
 		adminSocket: path.Join(path.Dir(config.Socket), "immutable-object-cache-"+token[:8]+".asok"),
 		pidFile:     path.Join(path.Dir(config.Socket), "immutable-object-cache-"+token+".pid"),
 		createdPath: state.path == "none",
 	}
-	directories := []string{lease.pidFile + ".lease"}
-	if lease.createdPath {
-		directories = append(directories, path.Join(path.Dir(config.Path), "."+path.Base(lease.pidFile)+".stage"))
+	lease.claim = state.claim
+	claimReport, err := supervised.RunShell(ctx, client, immutableCacheReserveLabel, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "claim", lease.claim, lease.pidFile+".lease")
+	if err != nil {
+		lease.reserveMarker, _ = supervised.Unconfirmed(err)
+		return lease, fmt.Errorf("claim immutable object cache path: %w", err)
 	}
-	for _, directory := range directories {
-		report, err := supervised.RunShell(ctx, client, immutableCacheReserveLabel, 10, "sh", "-c", immutableObjectCacheScript, "sh", "reserve", directory)
+	if claimReport.Stopped {
+		return lease, errors.New("immutable object cache path claim timed out")
+	}
+	if claimReport.ExitCode != 0 {
+		out, inspectErr := immutableObjectCacheOp(ctx, client, lease.owner, "claim-held", lease.claim)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		held, inspectErr := parseImmutableObjectCacheFlag(out, "held")
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		if held || claimReport.ExitCode == 3 {
+			return nil, immutableCacheConflict()
+		}
+		return nil, fmt.Errorf("claim immutable object cache path: exit %d", claimReport.ExitCode)
+	}
+	stageParent := config.Path
+	if lease.createdPath {
+		stageParent = path.Dir(config.Path)
+	}
+	directories := []string{lease.pidFile + ".lease", path.Join(stageParent, "."+path.Base(lease.pidFile)+".stage")}
+	for i, directory := range directories {
+		var parentIdentity string
+		if i == 1 && !lease.createdPath {
+			parentIdentity = state.identity
+		}
+		report, err := supervised.RunShell(ctx, client, immutableCacheReserveLabel, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "reserve", directory, parentIdentity)
 		if err == nil && !report.Stopped && report.ExitCode != 0 {
 			failure := fmt.Errorf("%s: exit %d", immutableCacheReserveLabel, report.ExitCode)
-			if len(lease.reservations) > 0 {
-				if cleanupErr := lease.Restore(context.WithoutCancel(ctx)); cleanupErr != nil {
-					return lease, errors.Join(failure, cleanupErr)
-				}
+			if report.ExitCode == 3 {
+				failure = immutableCacheConflict()
+			} else {
+				lease.reservations = append(lease.reservations, directory)
+				lease.uncertainReservation = directory
+			}
+			if cleanupErr := lease.Restore(context.WithoutCancel(ctx)); cleanupErr != nil {
+				return lease, errors.Join(failure, cleanupErr)
 			}
 			return nil, failure
 		}
 		lease.reservations = append(lease.reservations, directory)
+		if err != nil || report.Stopped {
+			lease.uncertainReservation = directory
+		}
 		if err != nil {
 			lease.reserveMarker, _ = supervised.Unconfirmed(err)
 			return lease, fmt.Errorf("%s: %w", immutableCacheReserveLabel, err)
 		}
 		if report.Stopped {
 			return lease, errors.New("immutable object cache lease reservation timed out")
+		}
+		out, verifyErr := immutableObjectCacheOp(ctx, client, lease.owner, "confirm-reservation", directory)
+		if verifyErr != nil {
+			return lease, verifyErr
+		}
+		reserved, verifyErr := parseImmutableObjectCacheFlag(out, "reserved")
+		if verifyErr != nil {
+			return lease, verifyErr
+		}
+		if !reserved {
+			failure := immutableCacheConflict()
+			if cleanupErr := lease.Restore(context.WithoutCancel(ctx)); cleanupErr != nil {
+				return lease, errors.Join(failure, cleanupErr)
+			}
+			return nil, failure
 		}
 	}
 	lease.launchSent = true
@@ -411,11 +636,18 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 	if started.exit != 0 {
 		cause = fmt.Errorf("the daemon exited with status %d", started.exit)
 	}
-	failure := &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "start the immutable object cache", Err: cause}
+	var failure error = &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "start the immutable object cache", Err: cause}
+	if started.conflict {
+		failure = immutableCacheConflict()
+	}
 	if err := lease.restore(context.WithoutCancel(ctx)); err != nil {
 		return lease, errors.Join(failure, err)
 	}
 	return nil, failure
+}
+
+func immutableCacheConflict() error {
+	return servicehook.Invalid(errors.New("immutable object cache path or socket is already claimed or changed during startup"))
 }
 
 func normalizeImmutableObjectCache(client testcontainers.Container, config ImmutableObjectCache) (ImmutableObjectCache, error) {
@@ -492,7 +724,7 @@ func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObject
 }
 
 func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObjectCacheStatus, error) {
-	out, err := immutableObjectCacheOp(ctx, l.client, "status", strconv.Itoa(l.pid), l.config.Socket, l.adminSocket, l.config.Path, l.pidFile)
+	out, err := immutableObjectCacheOp(ctx, l.client, l.owner, "status", strconv.Itoa(l.pid), l.config.Socket, l.adminSocket, l.config.Path, l.pidFile)
 	if err != nil {
 		return ImmutableObjectCacheStatus{}, fmt.Errorf("read the immutable object cache: %w", err)
 	}
@@ -502,7 +734,8 @@ func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObject
 // Stop stops the daemon, with SIGTERM and then SIGKILL, and keeps the cache
 // directory and socket file: librbd clients that open an image afterwards
 // fail to register with the cache and read the parents from RADOS. A daemon
-// that already exited needs no stop.
+// that already exited needs no stop. Restore operations and new cache path
+// claims in the same client container serialize their filesystem changes.
 //
 //purpose:condition
 func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
@@ -515,7 +748,7 @@ func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
 
 // stop reconciles the reservation, launcher and daemon after a lost reply.
 func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
-	if l.stopped || l.complete {
+	if l.resourcesRemoved || l.complete {
 		return nil
 	}
 	if !l.launchSent {
@@ -525,10 +758,9 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 			}
 			l.reserveMarker = ""
 		}
-		l.stopped = true
 		return nil
 	}
-	out, err := immutableObjectCacheOp(ctx, l.client, "stop", strconv.Itoa(l.pid), l.config.Socket, l.pidFile)
+	out, err := l.cleanupOp(ctx, "stop", strconv.Itoa(l.pid), l.config.Socket, l.pidFile)
 	if err != nil {
 		return fmt.Errorf("stop the immutable object cache: %w", err)
 	}
@@ -540,14 +772,15 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 		return &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "stop the immutable object cache",
 			Err: errors.New("could not confirm daemon startup has settled and the owned process has stopped")}
 	}
-	l.stopped = true
 	return nil
 }
 
 // Restore stops the daemon if it runs and removes its socket, admin socket,
 // PID file and cached objects. It removes the cache directory only when the
-// lease created it. A missing directory needs no cleanup. If the reserved directory or a socket or PID file has
-// been replaced, Restore preserves the replacement and reports a conflict.
+// lease created it. A missing cache directory needs no cleanup. If a private
+// reservation, the cache directory or a published file was replaced, Restore
+// preserves the replacement and reports a conflict. Restore verifies its private
+// reservations against independent witnesses before reading or deleting them.
 // A competing listener that claimed the client socket before publication
 // keeps its address.
 // A repeated call after success does nothing.
@@ -575,12 +808,34 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 	if l.createdPath {
 		created = "1"
 	}
-	op := "remove"
-	args := []string{l.config.Path, l.config.Socket, l.adminSocket, l.pidFile, created}
-	if !l.launchSent {
-		op, args = "release-reservation", l.reservations
+	if l.launchSent && !l.resourcesRemoved {
+		if err := l.confirmRemoval(ctx, "remove", l.config.Path, l.config.Socket, l.adminSocket, l.pidFile, created); err != nil {
+			return err
+		}
+		l.resourcesRemoved = true
 	}
-	out, err := immutableObjectCacheOp(ctx, l.client, op, args...)
+	if !l.controlsReleased {
+		var absentStage string
+		if l.resourcesRemoved && !l.createdPath {
+			absentStage = path.Join(l.config.Path, "."+path.Base(l.pidFile)+".stage")
+		}
+		if err := l.confirmRemoval(ctx, "release-reservation", append([]string{l.uncertainReservation, absentStage}, l.reservations...)...); err != nil {
+			return err
+		}
+		l.controlsReleased = true
+	}
+	if err := l.confirmRemoval(ctx, "forget-reservation", l.reservations...); err != nil {
+		return err
+	}
+	if err := l.confirmRemoval(ctx, "unclaim", l.claim, l.pidFile+".lease"); err != nil {
+		return err
+	}
+	l.complete = true
+	return nil
+}
+
+func (l *ImmutableObjectCacheLease) confirmRemoval(ctx context.Context, op string, args ...string) error {
+	out, err := l.cleanupOp(ctx, op, args...)
 	if err != nil {
 		return fmt.Errorf("remove the immutable object cache files: %w", err)
 	}
@@ -589,17 +844,43 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 		return err
 	}
 	if !removed {
-		return errors.New("remove the immutable object cache files: the lease could not verify ownership of its reserved paths")
+		if op == "release-reservation" && l.uncertainReservation != "" {
+			return fmt.Errorf("restore immutable cache: could not authenticate reservation %s or its unpublished seed %s.pending-%s; preserve any replacement and inspect before retrying", l.uncertainReservation, l.uncertainReservation, l.owner)
+		}
+		return fmt.Errorf("remove the immutable object cache files: %s could not verify ownership; inspect the cache path %s and reservations %s before retrying", op, l.config.Path, strings.Join(l.reservations, ", "))
 	}
-	l.complete = true
 	return nil
+}
+
+// cleanupOp fences a dispatch that may still arrive after a lost Exec reply.
+// The shell's flock is inherited by any rm, mv or find still running after the
+// supervisor reaps its direct child. The next command waits for that lock under
+// its own caller context. There is no separate duration cap on cache cleanup.
+func (l *ImmutableObjectCacheLease) cleanupOp(ctx context.Context, op string, args ...string) (immutableObjectCacheOutput, error) {
+	const label = "reconcile the immutable object cache"
+	if l.cleanupMarker != "" {
+		if err := supervised.CancelShell(ctx, l.client, label, l.cleanupMarker); err != nil {
+			return immutableObjectCacheOutput{}, err
+		}
+		l.cleanupMarker = ""
+	}
+	argv := append([]string{"sh", "-c", immutableObjectCacheScript, l.owner, op}, args...)
+	report, err := supervised.RunShellLimited(ctx, l.client, label, 0, 1024, argv...)
+	if err != nil {
+		l.cleanupMarker, _ = supervised.Unconfirmed(err)
+		return immutableObjectCacheOutput{}, err
+	}
+	if report.ExitCode != 0 || report.StdoutTruncated {
+		return immutableObjectCacheOutput{}, fmt.Errorf("immutable cache %s command failed with exit %d", op, report.ExitCode)
+	}
+	return immutableObjectCacheOutput{op: op, out: report.Stdout}, nil
 }
 
 // immutableObjectCacheOp runs one operation of immutableObjectCacheScript and
 // returns its key=value lines, unvalidated: each operation's parser checks
 // the fields it needs.
-func immutableObjectCacheOp(ctx context.Context, client testcontainers.Container, op string, args ...string) (immutableObjectCacheOutput, error) {
-	out, err := multicluster.Exec(ctx, client, append([]string{"sh", "-c", immutableObjectCacheScript, "sh", op}, args...)...)
+func immutableObjectCacheOp(ctx context.Context, client testcontainers.Container, key, op string, args ...string) (immutableObjectCacheOutput, error) {
+	out, err := multicluster.Exec(ctx, client, append([]string{"sh", "-c", immutableObjectCacheScript, key, op}, args...)...)
 	if err != nil {
 		return immutableObjectCacheOutput{}, err
 	}

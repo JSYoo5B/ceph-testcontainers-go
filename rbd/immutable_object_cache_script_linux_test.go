@@ -60,7 +60,7 @@ esac
 				t.Fatal(err)
 			}
 			closeOnCleanup(listener)
-			fixture := cacheShellFixture{pidfile: pidfile}
+			fixture := cacheShellFixture{pidfile: pidfile, cache: cache, sock: sock, root: root, env: append(os.Environ(), "PATH="+root+":"+os.Getenv("PATH"))}
 			fixture.cleanTestAlias(t)
 			livePID, _ := fixture.process(t, fixture.privateSocket())
 			path := root + ":" + os.Getenv("PATH")
@@ -108,13 +108,21 @@ done
 			if err != nil || inspection.path != initial {
 				t.Fatalf("inspect: %+v, %v", inspection, err)
 			}
-			if got := run("reserve", pidfile+".lease"); got != "" {
-				t.Fatal(got)
+			claim := inspection.claim
+			run("claim", claim, pidfile+".lease")
+			t.Cleanup(func() {
+				if target, _ := os.Readlink(claim); target == "sh:"+pidfile+".lease" {
+					_ = os.Remove(claim)
+				}
+			})
+			run("reserve", pidfile+".lease")
+			stageParent := root
+			if initial == "empty" {
+				stageParent = cache
 			}
-			if initial == "none" {
-				run("reserve", filepath.Join(root, "."+filepath.Base(pidfile)+".stage"))
-			}
-			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, inspection.identity)
+			stage := filepath.Join(stageParent, "."+filepath.Base(pidfile)+".stage")
+			run("reserve", stage)
+			start := command("start", "admin", cache, sock, "1024", asok, pidfile, initial, inspection.identity, inspection.claim)
 			start.ExtraFiles = []*os.File{signalW, gateR}
 			if err := start.Start(); err != nil {
 				t.Fatal(err)
@@ -146,7 +154,7 @@ done
 			if tc.noBirthTime {
 				// Keep the parent inode intact but replace its ownership marker.
 				// The device/inode check on the parent alone would accept this.
-				marker := filepath.Join(cache, "."+filepath.Base(pidfile)+".owner")
+				marker := filepath.Join(cache, ".ceph-immutable-cache")
 				replacements = append(replacements, marker)
 			}
 			for _, file := range replacements {
@@ -179,6 +187,7 @@ done
 			if got := remove(); got != "removed=1" {
 				t.Fatalf("cleanup after restoring original paths: %s", got)
 			}
+			fixture.release(t, stage)
 			for _, file := range []string{sock, pidfile, pidfile + ".lease"} {
 				if _, err := os.Lstat(file); !os.IsNotExist(err) {
 					t.Fatalf("owned path %s after cleanup: %v", file, err)
@@ -209,11 +218,9 @@ func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	if got := run("reserve", pidfile+".lease"); got != "" {
-		t.Fatal(got)
-	}
-	run("reserve", filepath.Join(root, "."+filepath.Base(pidfile)+".stage"))
-	if got := run("start", "admin", cache, sock, "1024", asok, pidfile, "none", ""); got != "exit=1\npid=\nready=0" {
+	fixture := cacheShellFixture{root: root, cache: cache, sock: sock, pidfile: pidfile, env: os.Environ()}
+	fixture.reserve(t)
+	if got := run("start", "admin", cache, sock, "1024", asok, pidfile, "none", "", fixture.claimPath(t)); got != "conflict=1" {
 		t.Fatalf("prelaunch conflict: %s", got)
 	}
 	if got := run("stop", "0", sock, pidfile); got != "stopped=1" {
@@ -225,6 +232,7 @@ func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 	if body, err := os.ReadFile(cache); err != nil || string(body) != "foreign" {
 		t.Fatalf("foreign file after Restore: %q, %v", body, err)
 	}
+	fixture.release(t, filepath.Join(root, "."+filepath.Base(pidfile)+".stage"))
 	if _, err := os.Lstat(pidfile + ".lease"); !os.IsNotExist(err) {
 		t.Fatalf("reservation survived cleanup: %v", err)
 	}

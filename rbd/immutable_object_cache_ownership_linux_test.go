@@ -75,7 +75,7 @@ case "$2" in *.stage/data) kill -KILL "$PPID" ;; esac`)
 					t.Fatal(err)
 				}
 				if phase == "published-no-birth" {
-					marker := filepath.Join(f.cache, "."+filepath.Base(f.pidfile)+".owner")
+					marker := filepath.Join(f.cache, ".ceph-immutable-cache")
 					if err := os.Rename(marker, marker+".saved"); err != nil {
 						t.Fatal(err)
 					}
@@ -89,6 +89,7 @@ case "$2" in *.stage/data) kill -KILL "$PPID" ;; esac`)
 					t.Fatalf("published cache directory survived Restore: %v", err)
 				}
 			}
+			f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 			f.assertReleased(t)
 		})
 	}
@@ -122,6 +123,7 @@ kill -KILL "$PPID"`)
 		t.Fatal("Stop left the owned process alive")
 	}
 	f.check(t, "removed=1", "remove", f.cache, f.sock, f.asok, f.pidfile, "1")
+	f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 	f.assertReleased(t)
 	for _, resource := range []string{f.cache, f.sock, f.asok, f.pidfile} {
 		if _, err := os.Stat(resource); !os.IsNotExist(err) {
@@ -181,11 +183,12 @@ done`)
 				t.Fatal(err)
 			}
 			err = start.Wait()
-			if outcome == "ready-private-listener" && err == nil {
-				t.Fatal("published over the competing listener")
+			if err != nil {
+				t.Fatal(err)
 			}
 			f.check(t, "stopped=1", "stop", "0", f.sock, f.pidfile)
 			f.check(t, "removed=1", "remove", f.cache, f.sock, f.asok, f.pidfile, "1")
+			f.release(t, filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage"))
 			f.assertReleased(t)
 			conn, err := net.DialTimeout("unix", f.sock, time.Second)
 			if err != nil {

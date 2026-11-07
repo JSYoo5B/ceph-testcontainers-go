@@ -116,6 +116,15 @@ func TestImmutableObjectCache(t *testing.T) {
 	if second, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: "/var/cache/other"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
 		t.Fatalf("a second daemon on the same socket: %v", err)
 	}
+	// The first daemon has cached no objects. A different socket still shares
+	// the same cache directory and must be refused before the second launch.
+	second, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{
+		ID: id, Path: lease.Config().Path, Socket: "/run/ceph/tc-second-cache.sock",
+	})
+	restoreImmutableObjectCacheAtCleanup(t, second)
+	if second != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("different socket on a live cache directory: %v, %v", second, err)
+	}
 	status, err := lease.Status(ctx)
 	if err != nil || !status.Running || status.CachedObjects != 0 || status.RADOSReads != 0 {
 		t.Fatalf("status before a read: %+v, %v", status, err)
