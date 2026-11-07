@@ -527,7 +527,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		sample.ClientState, sample.RenewSeq, sample.CapTTL = own.Sessions[0].State, own.Sessions[0].RenewSeq, own.Sessions[0].CapTTL
 		sample.Pending = clientMDSRequests(t, ctx, cluster, client, asok)
 		sample.MDSInodeSize = m.MDSInodeSize(t, ctx, m.MDS.Name, baseline.Inode)
-		if actor.Published(ctx, 4) {
+		if actor.Published(t, ctx, 4) {
 			t.Fatalf("the metadata request returned during the cut: %+v", actor.Receipt(t, ctx, 4))
 		}
 		if sample.MDSState != "open" || sample.ClientState != "open" || len(sample.Pending) != 1 || sample.Pending[0].TID != pending.TID {

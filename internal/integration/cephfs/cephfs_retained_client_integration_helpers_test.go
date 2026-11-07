@@ -273,9 +273,14 @@ func (run *cephFSActorRun) progress(t *testing.T, ctx context.Context, baseline 
 
 // published reports whether the actor has published receipt phase, without
 // waiting for it.
-func (run *cephFSActorRun) Published(ctx context.Context, phase int) bool {
-	code, _, err := harness.SessionExec(ctx, run.client, "test", "-e", run.workdir+"/receipt-"+strconv.Itoa(phase))
-	return err == nil && code == 0
+func (run *cephFSActorRun) Published(t *testing.T, ctx context.Context, phase int) bool {
+	t.Helper()
+	code, out, err := harness.SessionExec(ctx, run.client, "test", "-e", run.workdir+"/receipt-"+strconv.Itoa(phase))
+	present, checkErr := cephFSReceiptFilePresent(code, err)
+	if checkErr != nil {
+		t.Fatalf("check actor receipt %d: %v, %.256s", phase, checkErr, out)
+	}
+	return present
 }
 
 // startCephFSActor starts the actor in client under RunNativeCommand and
@@ -1052,6 +1057,18 @@ func runCephFSLateReconnect(t *testing.T) {
 	if daemon == nil {
 		t.Fatalf("active mds.%s is not owned", old.Name)
 	}
+	readWindow := func(ctx context.Context) (time.Duration, error) {
+		raw, err := cluster.Ceph(ctx, "config", "show", "mds."+takeover.Name, "mds_reconnect_timeout")
+		if err != nil {
+			return 0, err
+		}
+		seconds, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
+		return time.Duration(seconds * float64(time.Second)), err
+	}
+	ordinary, err := readWindow(ctx)
+	if err != nil || ordinary < 30*time.Second {
+		t.Fatalf("pre-override reconnect control on mds.%s: %s, %v", takeover.Name, ordinary, err)
+	}
 	window, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
 	t.Cleanup(func() {
 		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -1062,6 +1079,14 @@ func runCephFSLateReconnect(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	effective, err := harness.Observe(ctx, 30*time.Second, 5*time.Second, 200*time.Millisecond, func(probe context.Context) (time.Duration, bool, error) {
+		value, err := readWindow(probe)
+		return value, err == nil && value == 10*time.Second, err
+	})
+	if err != nil {
+		t.Fatalf("takeover mds.%s effective reconnect timeout: %s, %v", takeover.Name, effective.Value, err)
 	}
 
 	base := make([]byte, 0, 266)
@@ -1122,8 +1147,8 @@ func runCephFSLateReconnect(t *testing.T) {
 		t.Fatalf("rank 0 is not served by mds.%s: %+v, %v", takeover.Name, status, err)
 	}
 	held := reconnectLast - reconnectFirst
-	if reconnectFirst == 0 || held < 5*time.Second || held > time.Minute {
-		t.Fatalf("rank 0 states %v, up:reconnect for %s, want the 10 s window", states, held)
+	if reconnectFirst == 0 || !cephFSShortReconnectWindow(held, effective.Value, ordinary) {
+		t.Fatalf("rank 0 states %v, up:reconnect for %s, want shortened %s window (control %s)", states, held, effective.Value, ordinary)
 	}
 	sessions, err := cephfssession.List(ctx, fs)
 	if err != nil {
@@ -2416,8 +2441,9 @@ func runCephFSFlushingCapReplay(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 		}
 		size := m.MDSInodeSize(t, ctx, m.MDS.Name, baseline.Inode)
-		if !caps.Flushing() || caps.Size != uint64(len(whole)) || size != uint64(len(base)) || actor.Published(ctx, 3) {
-			t.Fatalf("look %d: the cap flush is not held: %s; mds size=%d; fsync returned=%t", look, held, size, actor.Published(ctx, 3))
+		published := actor.Published(t, ctx, 3)
+		if !caps.Flushing() || caps.Size != uint64(len(whole)) || size != uint64(len(base)) || published {
+			t.Fatalf("look %d: the cap flush is not held: %s; mds size=%d; fsync returned=%t", look, held, size, published)
 		}
 		held += fmt.Sprintf("; mds size=%d", size)
 		if look == 0 {
@@ -2434,8 +2460,9 @@ func runCephFSFlushingCapReplay(t *testing.T) {
 		t.Fatal("restore mds_log_pause:", err)
 	}
 	down, downRaw := m.clientInode(t, ctx, asok, baseline.Inode)
-	if !down.Flushing() || actor.Published(ctx, 3) {
-		t.Fatalf("with no MDS the client does not hold the cap flush: %s; fsync returned=%t", downRaw, actor.Published(ctx, 3))
+	published := actor.Published(t, ctx, 3)
+	if !down.Flushing() || published {
+		t.Fatalf("with no MDS the client does not hold the cap flush: %s; fsync returned=%t", downRaw, published)
 	}
 	current := m.restartMDS(t, ctx, daemon, cid)
 	recovered := time.Since(killed)

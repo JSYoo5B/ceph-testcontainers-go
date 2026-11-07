@@ -285,7 +285,7 @@ finally:
 	}
 	// A remains behind its next gate: no unlock or second lock request may
 	// reconstruct the lock before B independently observes recovery.
-	if holder.Published(ctx, 3) {
+	if holder.Published(t, ctx, 3) {
 		t.Fatal("holder made another request before post-takeover proof")
 	}
 	postDenied, postLock := contender.op(t, ctx, 4), contender.op(t, ctx, 5)
@@ -298,7 +298,7 @@ finally:
 	if err := sameFcntlTakeoverLock(preLock.Lock, postLock.Lock); err != nil {
 		t.Fatal(err)
 	}
-	if holder.Published(ctx, 3) {
+	if holder.Published(t, ctx, 3) {
 		t.Fatal("holder advanced while B observed its reconstructed lock")
 	}
 	unlocked := holder.op(t, ctx, 1)
