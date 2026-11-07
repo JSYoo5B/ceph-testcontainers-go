@@ -26,7 +26,7 @@ func TestStoppedApplyRechecksCreationDocumentsAndPoolIDsBeforeStart(t *testing.T
 			case "zone":
 				f.Zone["outside"] = "preserve"
 			case "replaced pool":
-				f.PoolID++
+				f.PoolID = 99 // distinct from every other pool in the fixture
 			}
 			// Reload cannot weaken the strict checks of the interrupted Apply.
 			copyHandle := *p
