@@ -736,6 +736,39 @@ The declaration/native-case evidence join, which connects reference
 declarations to validated receipts, is documented in
 [`messenger_evidence.py`](../../.github/scripts/messenger_evidence.py).
 
+### OSD startup policy tests
+
+The consumer side of these policies is the
+[OSD startup calibration guide](../guides/osd-startup-benchmark.md).
+
+The internal integration harness sets `osd_mclock_skip_benchmark = true` in its
+bootstrap configuration before the initial OSDs start. The same configuration
+reaches later OSDs and retained starts. Functional tests avoid calibration I/O
+without changing the library default. Explicit storage policy takes precedence;
+a later configuration file can replace the harness default key by key.
+
+Calibration controls explicitly select Native or provide their comparison
+configuration. Tests of unselected-policy precedence use image selection without
+the harness default, so native calibration and central configuration remain
+covered independently.
+
+#### Native verification
+
+The opt-in benchmark qualifier compares native/skip on fresh disk-backed and
+tmpfs-backed BlueStore fixtures and keeps MemStore as an applicability control.
+It records initial startup, later OSD addition and same-container restart
+separately, with effective scheduler/skip/force/capacity settings, calibration
+receipts, allocated bytes, tmpfs usage and daemon RSS where observable. Client
+writes, recovery and owned cleanup remain assertions in both cohorts.
+
+The startup-policy integration test separately exercises the public typed API,
+contradictory local/central settings, initial/add/restart/retained-reopen paths
+and exact-byte I/O. Native controls retain calibration; unselected policy still
+honors existing central configuration. These tests require Linux and the
+appropriate native build tags.
+Compilation, live settings, observed calibration and full CI are different
+validation layers.
+
 ### Release differences
 
 Where the expected outcome differs between releases, the test selects it from
