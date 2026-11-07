@@ -324,6 +324,7 @@ helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
 | `bluestore_block_size` | 1 GiB sparse file | `OSDStorage.WithBlockSize` |
 | `bluestore_cache_size`, autotune | 64 MiB, off | config file `[osd]` |
 | `osd_max_object_name_len`, `osd_max_object_namespace_len` | 256, 64 | config file `[osd]` |
+| `osd_crush_chooseleaf_type` | 0: the default CRUSH rule places replicas on distinct OSDs, not distinct hosts | a rule the test creates, such as `ceph osd crush rule create-replicated` with a `host` failure domain |
 | `auth_allow_insecure_global_id_reclaim` | `false` | not configurable |
 | Logging | stderr (container logs), no log files | not configurable |
 
@@ -331,7 +332,8 @@ helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
 
 - In bridge mode, MON `a` is the only Ceph daemon with published ports
   (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Only` and
-  `MessengerV2Secure`).
+  `MessengerV2Secure`), unless `ceph.WithManagerPorts` publishes ports on
+  every MGR for MGR modules such as the Dashboard.
   Native RADOS, RBD and CephFS clients must run in a `WithClient` container; a
   host process cannot reach the OSDs. RGW's HTTP endpoint is published and
   reachable from the host (see [rgw](../../rgw/README.md)).
