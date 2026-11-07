@@ -217,7 +217,26 @@ func pollTimingSettings(t *testing.T, parent context.Context, gateway *rgw.Gatew
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	asok := gatewayAsok(t, ctx, gateway)
+	// Restart can leave the previous process's socket file in /var/run.
+	// Match the listening UNIX socket inode to the daemon's open descriptors.
+	asok := strings.TrimSpace(harness.ExecOutput(t, ctx, gateway, "python3", "-c", `
+import os
+sockets = set()
+for fd in os.listdir("/proc/1/fd"):
+    try:
+        target = os.readlink("/proc/1/fd/" + fd)
+    except FileNotFoundError:
+        continue
+    if target.startswith("socket:["):
+        sockets.add(target[8:-1])
+with open("/proc/net/unix") as table:
+    paths = [fields[7] for line in table if len(fields := line.split()) == 8
+             and fields[3] == "00010000" and fields[4] == "0001"
+             and fields[6] in sockets and fields[7].endswith(".asok")]
+if len(paths) != 1:
+    raise SystemExit("expected one listening admin socket owned by gateway PID 1")
+print(paths[0])
+`))
 	for name, want := range settings {
 		var last string
 		for {
