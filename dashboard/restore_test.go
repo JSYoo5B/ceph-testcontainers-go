@@ -186,21 +186,23 @@ func (in *lateCommandInput) CloseWrite() error {
 func (in *lateCommandInput) Close() error { return in.output.Close() }
 
 func (f *lateWriteCLI) AttachExec(_ context.Context, cmd, _ []string) (supervised.Attachment, error) {
-	at := slices.Index(cmd, "dashboard")
+	at := slices.IndexFunc(cmd, func(arg string) bool { return arg == "dashboard" || arg == "config-key" })
 	if at < 0 || at+1 >= len(cmd) {
-		return supervised.Attachment{}, errors.New("expected a Dashboard mutation")
+		return supervised.Attachment{}, errors.New("expected a Dashboard or config-key mutation")
 	}
-	verb := cmd[at+1]
+	args := cmd[at:]
 	read, output := io.Pipe()
 	in := &lateCommandInput{output: output, accepted: func(value string) {
 		f.delayed = func() {
-			switch verb {
-			case "ac-user-create":
-				f.accountName = cmd[len(cmd)-1]
-			case "set-ssl-certificate":
+			switch {
+			case slices.Equal(args[:2], []string{"dashboard", "ac-user-create"}):
+				f.accountName = args[len(args)-1]
+			case slices.Equal(args[:2], []string{"dashboard", "set-ssl-certificate"}):
 				f.keys["mgr/dashboard/crt"] = value
-			case "set-ssl-certificate-key":
+			case slices.Equal(args[:2], []string{"dashboard", "set-ssl-certificate-key"}):
 				f.keys["mgr/dashboard/key"] = value
+			case slices.Equal(args[:2], []string{"config-key", "set"}) && len(args) == 5:
+				f.keys[args[2]] = value
 			}
 		}
 	}}
@@ -265,5 +267,30 @@ func TestRestoreSettlesLateDashboardWrites(t *testing.T) {
 				t.Fatalf("retry left account=%q, keys=%d, active=%t: %v", f.accountName, len(f.keys), s.registry.active != nil, err)
 			}
 		})
+	}
+}
+
+func TestRestoreSettlesLateTLSRollback(t *testing.T) {
+	const key = "mgr/dashboard/crt"
+	f := &lateWriteCLI{restoreCLI: &restoreCLI{keys: map[string]string{key: "installed"}}, stopFailures: 2}
+	s := dashboardRestoreState(f.restoreCLI)
+	s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
+	s.certificate = &configKey{name: key, existed: true, previous: []byte("original"), installed: []byte("installed")}
+
+	var pending *ceph.NativeCommandUnstoppedError
+	if err := s.restore(t.Context()); !errors.As(err, &pending) || f.delayed == nil || f.keys[key] != "installed" || s.registry.active != s {
+		t.Fatalf("rollback before delayed write: value=%q active=%t err=%v", f.keys[key], s.registry.active == s, err)
+	}
+	f.delayed()
+	if f.keys[key] != "original" {
+		t.Fatalf("late rollback wrote %q", f.keys[key])
+	}
+	// The key already reads as its prior value, but the command has not
+	// been confirmed stopped. The matching value alone cannot free the slot.
+	if err := s.restore(t.Context()); err == nil || s.registry.active != s || s.restored {
+		t.Fatalf("retry released an unsettled rollback: %v", err)
+	}
+	if err := s.restore(t.Context()); err != nil || f.keys[key] != "original" || f.delayed != nil || s.registry.active != nil {
+		t.Fatalf("settled rollback: value=%q active=%t err=%v", f.keys[key], s.registry.active != nil, err)
 	}
 }
