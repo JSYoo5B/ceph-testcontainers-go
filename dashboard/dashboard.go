@@ -741,8 +741,8 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // owned account wrote it, restores the module's enabled state and the
 // listener options.
 //
-// Restore first confirms that an interrupted account or TLS write can no
-// longer run before using the resource's state to complete that step. It
+// For an interrupted account, TLS or gateway API key write, Restore confirms
+// the command has stopped before using the resource's state to complete that step. It
 // reads the account's creation marker before deleting it. A different
 // marker or an outside change to a certificate, key, listener option or
 // module state that would be overwritten is refused. External account

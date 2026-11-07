@@ -33,6 +33,19 @@ type restoreCLI struct {
 func (f *restoreCLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	command := clustertest.ModuleArgs(args)
 	switch {
+	case slices.Equal(command, []string{"config", "dump", "--format", "json"}):
+		entries := make([]map[string]string, 0, len(f.keys))
+		for name, value := range f.keys {
+			entries = append(entries, map[string]string{"section": "mgr", "name": name, "value": value})
+		}
+		data, _ := json.Marshal(entries)
+		return clustertest.Reply(args, 0, data)
+	case slices.Equal(command, []string{"dashboard", "reset-rgw-api-access-key"}):
+		delete(f.keys, "mgr/dashboard/RGW_API_ACCESS_KEY")
+		return clustertest.Reply(args, 0, nil)
+	case slices.Equal(command, []string{"dashboard", "reset-rgw-api-secret-key"}):
+		delete(f.keys, "mgr/dashboard/RGW_API_SECRET_KEY")
+		return clustertest.Reply(args, 0, nil)
 	case slices.Equal(command, []string{"dashboard", "ac-user-show", "tester"}):
 		if f.accountName != "" {
 			data, _ := json.Marshal(map[string]string{"username": "tester", "name": f.accountName})
@@ -201,6 +214,10 @@ func (f *lateWriteCLI) AttachExec(_ context.Context, cmd, _ []string) (supervise
 				f.keys["mgr/dashboard/crt"] = value
 			case slices.Equal(args[:2], []string{"dashboard", "set-ssl-certificate-key"}):
 				f.keys["mgr/dashboard/key"] = value
+			case slices.Equal(args[:2], []string{"dashboard", "set-rgw-api-access-key"}):
+				f.keys["mgr/dashboard/RGW_API_ACCESS_KEY"] = value
+			case slices.Equal(args[:2], []string{"dashboard", "set-rgw-api-secret-key"}):
+				f.keys["mgr/dashboard/RGW_API_SECRET_KEY"] = value
 			case slices.Equal(args[:2], []string{"config-key", "set"}) && len(args) == 5:
 				f.keys[args[2]] = value
 			}
@@ -292,5 +309,55 @@ func TestRestoreSettlesLateTLSRollback(t *testing.T) {
 	}
 	if err := s.restore(t.Context()); err != nil || f.keys[key] != "original" || f.delayed != nil || s.registry.active != nil {
 		t.Fatalf("settled rollback: value=%q active=%t err=%v", f.keys[key], s.registry.active != nil, err)
+	}
+}
+
+func TestRestoreSettlesLateGatewayKeyWrites(t *testing.T) {
+	for _, option := range []string{"RGW_API_ACCESS_KEY", "RGW_API_SECRET_KEY"} {
+		for _, stage := range []string{"install", "rollback"} {
+			t.Run(option+"/"+stage, func(t *testing.T) {
+				f := &lateWriteCLI{restoreCLI: &restoreCLI{keys: map[string]string{}}, stopFailures: 2}
+				s := dashboardRestoreState(f.restoreCLI)
+				s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
+				key := &rgwKeyOption{option: option, command: strings.ToLower(strings.ReplaceAll(option, "_", "-"))}
+				s.link = &GatewayLink{&linkState{dashboard: s, keys: []*rgwKeyOption{key}}}
+				var err error
+				var wantAfterWrite string
+				switch stage {
+				case "install":
+					wantAfterWrite = "fixture-value"
+					err = key.install(t.Context(), s.cluster, wantAfterWrite)
+				case "rollback":
+					key.existed, key.previous, key.installed = true, "prior-value", "fixture-value"
+					f.keys[key.name()] = key.installed
+					wantAfterWrite = key.previous
+					err = s.restore(t.Context())
+				}
+				var pending *ceph.NativeCommandUnstoppedError
+				if !errors.As(err, &pending) || f.delayed == nil {
+					t.Fatalf("write was not left pending: %v", err)
+				}
+				if stage == "rollback" {
+					// Restoration has taken effect, but its writer can still run.
+					f.delayed()
+				}
+				if err := s.restore(t.Context()); err == nil || s.registry.active != s || s.link == nil || s.restored {
+					t.Fatalf("Restore released the link before the command stopped: %v", err)
+				}
+				if stage == "install" {
+					// The old (absent) value was visible throughout the failed Restore.
+					f.delayed()
+				}
+				if f.keys[key.name()] != wantAfterWrite {
+					t.Fatal("late command did not write the requested value")
+				}
+				if err := s.restore(t.Context()); err != nil || s.registry.active != nil || s.link != nil || f.delayed != nil {
+					t.Fatalf("Restore did not settle the pending link: %v", err)
+				}
+				if actual, found := f.keys[key.name()]; found != key.existed || actual != key.previous {
+					t.Fatal("settled link did not restore the original gateway API key option")
+				}
+			})
+		}
 	}
 }
