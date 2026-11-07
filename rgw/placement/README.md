@@ -70,9 +70,34 @@ endpoint, err := gateway.S3Endpoint(ctx) // after the restart
 - Creation refuses an existing name and never changes the zonegroup default
   or any existing bucket's placement. Index and multipart pools must be
   replicated; data pools may be erasure coded.
+- A placement restart records the original gateway generation. If Docker
+  loses the Stop reply while that generation is still running, every placement
+  on the cluster refuses another restart of that container. Retry the original
+  handle once the stop completes. If it never takes effect, inspect Docker
+  and reconcile the gateway's run state.
+- Before resuming a stopped gateway, the fixture checks the original pool
+  IDs on the cluster and reads the startup scope and placement policy through
+  a running gateway in the same scope or a control container with
+  `radosgw-admin`. Both the interrupted and requested operations must admit
+  the live policy. `Apply` requires the exact creation documents; `Reload`
+  checks the target, its local mapping and, in a realm, its publication.
+  A refusal leaves the gateway stopped. If creating another placement made
+  the original documents stale, inspect the intended policy, reconcile the
+  gateway generation explicitly, then use the handle for the desired policy.
+- Once Start succeeds, a failed confirmation can be retried on the same
+  handle without cycling the gateway again. A different placement can
+  request its own restart after fresh admission. A generation stopped
+  externally after a restart stays stopped.
 - In a realm, `Apply` needs the current metadata master and refuses a staging
-  period that holds unrelated changes; `Reload` never publishes, pulls or
-  rewrites federation topology.
+  period that holds unrelated changes. A lost commit reply is checked against
+  the next epoch of the same period and the exact expected policy. If an
+  update or commit might still be running, the next placement publication in
+  that cluster and realm first confirms that the earlier writer has stopped.
+  Serialize placement publication with multisite topology and sync-policy
+  changes. After an uncertain placement update or commit, retry `Apply` on the
+  original handle and confirm success before using `SyncGroup.Apply` or
+  another period writer. `Reload` never publishes,
+  pulls or rewrites federation topology.
 - `SetUserDefault` changes user metadata only. Tags nil keeps the user's tags;
   a nonempty list replaces them, and replacing matching tags with nonmatching
   ones revokes access to a restricted target. Placement tags authorize new

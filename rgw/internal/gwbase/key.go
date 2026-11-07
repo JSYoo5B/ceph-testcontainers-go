@@ -187,7 +187,7 @@ func (g *Core) supervisedUserCommand(ctx context.Context, u *User, args ...strin
 	if scope != *u.State.NativeScope {
 		return nil, errors.New("RGW user's native runtime scope changed")
 	}
-	return g.supervised(ctx, g.Container(), CommandArgs(scope, args...))
+	return g.SupervisedCommand(ctx, scope, args...)
 }
 
 // settle reads the user's keys after a mutation on a fresh settlement budget.

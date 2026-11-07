@@ -152,6 +152,9 @@ for what every timing profile shares.
 - The fixture owns its gateways, setup clients and the HTTP bridge between
   zones; `Terminate` leaves realm, zone configuration and data in the clusters.
   Do not edit periods or zones while topology changes or `SyncGroup.Apply` run.
+  Serialize these period writers with `placement.Placement.Apply` in the same
+  realm. If a placement update or commit is uncertain, retry the original
+  placement handle successfully before publishing through this fixture.
 - Sync policy: the fixture creates fresh groups only and checks every mutation
   against the native policy. On Ceph 20.2.4 pipe `Priority` between overlapping
   pipes and source-side denial in user mode with an ordinary user have no

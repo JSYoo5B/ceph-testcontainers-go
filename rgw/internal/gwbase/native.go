@@ -15,6 +15,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // NativeScope is the exact native scope a running gateway registered in the
@@ -127,11 +128,22 @@ func CommandArgs(scope NativeScope, args ...string) []string {
 	return append(argv, args...)
 }
 
+// SupervisedCommand runs radosgw-admin in the exact native scope and returns
+// a NativeCommandUnstoppedError when the process may still run after dispatch.
+func (c *Core) SupervisedCommand(ctx context.Context, scope NativeScope, args ...string) ([]byte, error) {
+	return c.supervised(ctx, c.Container(), CommandArgs(scope, args...))
+}
+
 // Command runs radosgw-admin in the gateway container in the exact native
 // scope. A failure is redacted. It is called with the owning cluster's mutex
 // held.
 func (c *Core) Command(ctx context.Context, scope NativeScope, args ...string) ([]byte, error) {
-	data, err := servicehook.Command(ctx, c.Container(), CommandArgs(scope, args...)...)
+	return c.CommandIn(ctx, c.Container(), scope, args...)
+}
+
+// CommandIn executes the exact-scope command through an admitted admin container.
+func (c *Core) CommandIn(ctx context.Context, target testcontainers.Container, scope NativeScope, args ...string) ([]byte, error) {
+	data, err := servicehook.Command(ctx, target, CommandArgs(scope, args...)...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("RGW placement command: %w", ctx.Err())

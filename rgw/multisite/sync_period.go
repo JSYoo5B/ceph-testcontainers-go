@@ -17,7 +17,10 @@ import (
 // Bucket policy is dynamic and this method only checks its owned native snapshot.
 // Unrelated current, locally pending or staging-period edits are refused before
 // period update can overwrite them. Partial publication/reload is not rolled
-// back; retry the same handle after resolving an external failure.
+// back; retry the same handle after resolving an external failure. Serialize
+// zonegroup publication with Placement.Apply in the same realm. After an
+// uncertain placement update or commit, successfully retry the original
+// placement handle before calling this method.
 //
 //purpose:construction,condition
 func (g *SyncGroup) Apply(ctx context.Context) error {

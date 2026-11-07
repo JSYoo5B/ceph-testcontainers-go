@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
@@ -20,6 +19,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // StorageClass maps one native S3 storage class to an existing data
@@ -60,8 +60,15 @@ type Placement struct {
 	scope                                                  gwbase.NativeScope
 	config                                                 Config
 	poolIDs                                                map[string]int64
-	group, zone, previousPeriod                            map[string]any
+	group, zone                                            map[string]any
+	activation                                             *activationState
 	confirmed                                              bool
+}
+
+// Copies of a placement share recovery state under the owning cluster's lock.
+type activationState struct {
+	period        map[string]any
+	commitPending bool
 }
 
 // origin binds a Placement to the gateway core that created it (see
@@ -187,15 +194,15 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*Placement, err
 		return nil, err
 	}
 	p := &Placement{origin: gwbase.NewOrigin(g), Name: config.Name, RealmID: scope.RealmID, ZonegroupID: scope.GroupID, ZoneID: scope.ZoneID,
-		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, scope: scope, config: config, poolIDs: poolIDs}
+		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, scope: scope, config: config, poolIDs: poolIDs, activation: &activationState{}}
 	if apiName, ok := group["api_name"].(string); !ok || apiName == "" {
 		return nil, errors.New("RGW zonegroup has no S3 API name")
 	}
 	if scope.RealmID != "" {
-		if p.previousPeriod, err = currentPeriod(ctx, g, scope); err != nil {
+		if p.activation.period, err = currentPeriod(ctx, g, scope); err != nil {
 			return nil, err
 		}
-		if p.previousPeriod["realm_id"] != scope.RealmID {
+		if p.activation.period["realm_id"] != scope.RealmID {
 			return nil, errors.New("RGW current period belongs to a different realm")
 		}
 	}
@@ -341,8 +348,19 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 // Apply activates a confirmed new policy through gateway g. Standalone mode
 // explicitly restarts only g; resolve S3Endpoint again because Docker can
 // assign a new mapped host port. Other gateways in the same zone require their
-// own Apply. Realm mode requires the current metadata master and commits a new
-// period only when its topology differs solely by this new placement.
+// own Apply. After a stop, Start has a bounded context independent of caller
+// cancellation. A retry starts a stopped gateway only after another admin
+// container verifies its startup scope and policy and the cluster confirms the
+// original pool IDs. If Stop loses
+// its reply and the original generation stays running, retries refuse another
+// restart until the gateway stops or its generation changes. Realm mode requires the current metadata master and commits a new
+// period only when its topology differs solely by this new placement. After
+// a lost commit reply, Apply reads the committed period on a separate budget.
+// A retry recognizes the exact owned change and preserves unrelated edits.
+// Placement publications in one cluster and realm settle earlier placement
+// writers. Serialize multisite period publication with Apply. After an
+// uncertain update or commit, retry Apply on the original handle and confirm
+// success before publishing through the multisite fixture or native commands.
 // Coordinate mappings in other zones before publishing a realm policy, import
 // the committed period into those clusters and call Reload there. It never
 // changes defaults, deletes resources or silently rolls back a partial failure.
@@ -368,51 +386,32 @@ func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()
-	group, err := admitActivation(ctx, g, p)
+	wanted := restartPolicy{exact: true}
+	restored, err := p.resumeRestart(ctx, g, wanted)
+	if err != nil || (restored && p.scope.RealmID == "") {
+		return err
+	}
+	group, err := p.runningPolicy(ctx, g, wanted)
 	if err != nil {
 		return err
 	}
 	if p.scope.RealmID == "" {
-		// An unscoped gateway originally chose native defaults at startup.
-		// Restarting it after another actor changes those pointers could serve
-		// another zone, despite the policy edits having used correct live IDs.
-		return restart(ctx, g, p.scope, "apply")
+		return p.restart(ctx, g, wanted)
 	}
 	return publishPeriod(ctx, g, p, groupTarget(group, p.config.Name))
 }
 
-// admitActivation refuses activation unless the scope, the pools and the
-// native zonegroup and zone documents are exactly those confirmed at
-// creation. It returns the current zonegroup document.
-func admitActivation(ctx context.Context, g *gwbase.Core, p *Placement) (map[string]any, error) {
-	if err := checkResources(ctx, g, p); err != nil {
-		return nil, err
-	}
-	group, zone, err := nativeScope(ctx, g, p.scope)
-	if err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(group, p.group) || !reflect.DeepEqual(zone, p.zone) {
-		return nil, servicehook.Invalid(errors.New("RGW zone or zonegroup changed since placement creation; refusing activation"))
-	}
-	return group, nil
-}
+// periodWriters tracks an unresolved staging update or commit for all placement
+// handles publishing to the same realm in a cluster. The cluster lock guards it.
+type periodWriters map[string]*ceph.NativeCommandUnstoppedError
 
-// restart restarts gateway g so that it loads the policy, after checking that
-// its startup defaults still resolve to the policy's scope. verb names the
-// operation in its errors.
-func restart(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, verb string) error {
-	if err := restartScope(ctx, g, scope); err != nil {
-		return err
+func (w periodWriters) run(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, operation string) ([]byte, error) {
+	data, err := g.SupervisedCommand(ctx, scope, "period", operation)
+	var pending *ceph.NativeCommandUnstoppedError
+	if errors.As(err, &pending) {
+		w[scope.RealmID] = pending
 	}
-	grace := 3 * time.Second
-	if err := g.Container().Stop(ctx, &grace); err != nil {
-		return fmt.Errorf("stop RGW to %s placement: %w", verb, err)
-	}
-	if err := g.Container().Start(ctx); err != nil {
-		return fmt.Errorf("restart RGW to %s placement: %w", verb, err)
-	}
-	return nil
+	return data, err
 }
 
 // publishPeriod commits a realm period whose only change is target. The
@@ -420,11 +419,24 @@ func restart(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, verb
 // metadata master; an existing staging period must hold nothing but this
 // change. The committed period becomes the handle's new baseline.
 func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map[string]any) error {
+	writers := servicehook.Extension(g.Cluster(), "rgw/placement/period-writers", func() any {
+		return make(periodWriters)
+	}).(periodWriters)
+	if pending := writers[p.scope.RealmID]; pending != nil {
+		if err := pending.Stop(ctx); err != nil {
+			return fmt.Errorf("previous RGW period writer may still run: %w", err)
+		}
+		delete(writers, p.scope.RealmID)
+	}
 	current, err := currentPeriod(ctx, g, p.scope)
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(current, p.previousPeriod) {
+	if !reflect.DeepEqual(current, p.activation.period) {
+		if p.activation.commitPending && p.committedChange(current, target) == nil {
+			p.activation.period, p.activation.commitPending = current, false
+			return nil
+		}
 		return servicehook.Invalid(errors.New("RGW current period changed since placement creation; refusing publication"))
 	}
 	if current["master_zone"] != p.scope.ZoneID {
@@ -433,7 +445,10 @@ func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map
 	if err := checkStagingPeriod(ctx, g, p.scope, current, target); err != nil {
 		return err
 	}
-	data, err := g.Command(ctx, p.scope, "period", "update")
+	if committedTarget(current, p) == nil {
+		return nil
+	}
+	data, err := writers.run(ctx, g, p.scope, "update")
 	if err != nil {
 		return err
 	}
@@ -444,18 +459,53 @@ func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map
 	if err := periodChange(current, staging, p.scope.GroupID, target); err != nil {
 		return err
 	}
-	if _, err := g.Command(ctx, p.scope, "period", "commit"); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	committed, err := currentPeriod(ctx, g, p.scope)
+	p.activation.commitPending = true
+	_, commitErr := writers.run(ctx, g, p.scope, "commit")
+	if writers[p.scope.RealmID] != nil {
+		return commitErr
+	}
+	readCtx, cancel := gwbase.SettlementContext(ctx)
+	defer cancel()
+	committed, err := currentPeriod(readCtx, g, p.scope)
 	if err != nil {
-		return err
+		return errors.Join(commitErr, fmt.Errorf("read RGW period after placement commit: %w", err))
 	}
-	if err := periodChange(current, committed, p.scope.GroupID, target); err != nil {
-		return err
+	if reflect.DeepEqual(committed, current) {
+		p.activation.commitPending = false
+		if commitErr != nil {
+			return commitErr
+		}
+		return errors.New("RGW answered the placement commit without publishing the target")
 	}
-	p.previousPeriod = committed
+	if err := p.committedChange(committed, target); err != nil {
+		p.activation.commitPending = false
+		return errors.Join(commitErr, err)
+	}
+	p.activation.period, p.activation.commitPending = committed, false
 	return nil
+}
+
+// With the same master a placement commit advances the current period by
+// one epoch. A promotion or later epoch cannot satisfy this check even
+// if it eventually publishes the same placement policy.
+func (p *Placement) committedChange(current, target map[string]any) error {
+	previous := p.activation.period
+	before, _ := previous["epoch"].(json.Number)
+	after, _ := current["epoch"].(json.Number)
+	prevEpoch, prevErr := before.Int64()
+	nextEpoch, nextErr := after.Int64()
+	if prevErr != nil || nextErr != nil || prevEpoch < 1 || nextEpoch < 2 || nextEpoch-1 != prevEpoch ||
+		!reflect.DeepEqual(current["id"], previous["id"]) || !reflect.DeepEqual(current["realm_epoch"], previous["realm_epoch"]) ||
+		!reflect.DeepEqual(current["predecessor_uuid"], previous["predecessor_uuid"]) {
+		return servicehook.Invalid(errors.New("RGW current period is not the next epoch of the owned placement commit"))
+	}
+	if err := committedTarget(current, p); err != nil {
+		return err
+	}
+	return periodChange(previous, current, p.scope.GroupID, target)
 }
 
 // checkStagingPeriod refuses to overwrite a staging period that holds policy
@@ -499,7 +549,11 @@ func checkStagingPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.Native
 
 // currentPeriod reads the realm's current period in scope.
 func currentPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) (map[string]any, error) {
-	data, err := g.Command(ctx, scope, "period", "get")
+	return currentPeriodIn(ctx, g, g.Container(), scope)
+}
+
+func currentPeriodIn(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) (map[string]any, error) {
+	data, err := g.CommandIn(ctx, target, scope, "period", "get")
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +565,13 @@ func currentPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope
 // committed period must contain the exact owned target and zone. Import the
 // published period through the multicluster fixture before reloading another
 // cluster. This method never publishes, pulls or rewrites federation topology.
-// Resolve S3Endpoint again because Docker may assign a new mapped host port.
+// After a stop, Start has a bounded context independent of caller cancellation.
+// A retry starts a stopped gateway only after the cluster confirms the original
+// pool IDs and another admin container verifies its startup scope, placement
+// mapping and, for a realm, the published target. An unconfirmed stop of the
+// still-running original generation must settle before a retry can restart it.
+// Resolve S3Endpoint again
+// because Docker may assign a new mapped host port.
 //
 //purpose:construction,condition
 func (p *Placement) Reload(ctx context.Context, g *rgw.Gateway) error {
@@ -534,26 +594,15 @@ func reload(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()
-	if err := checkResources(ctx, g, p); err != nil {
+	wanted := restartPolicy{published: p.scope.RealmID != ""}
+	restored, err := p.resumeRestart(ctx, g, wanted)
+	if err != nil || restored {
 		return err
 	}
-	group, zone, err := nativeScope(ctx, g, p.scope)
-	if err != nil {
+	if _, err := p.runningPolicy(ctx, g, wanted); err != nil {
 		return err
 	}
-	if _, err := snapshot(p, group, zone); err != nil {
-		return err
-	}
-	if p.scope.RealmID != "" {
-		period, err := currentPeriod(ctx, g, p.scope)
-		if err != nil {
-			return err
-		}
-		if err := committedTarget(period, p); err != nil {
-			return err
-		}
-	}
-	return restart(ctx, g, p.scope, "reload")
+	return p.restart(ctx, g, wanted)
 }
 
 func committedTarget(period map[string]any, p *Placement) error {
@@ -586,11 +635,11 @@ func committedTarget(period map[string]any, p *Placement) error {
 	return errors.New("RGW owned placement zonegroup is absent from the local committed period")
 }
 
-func restartScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) error {
+func restartScope(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) error {
 	for _, resource := range []struct {
 		kind, id string
 	}{{"zonegroup", scope.GroupID}, {"zone", scope.ZoneID}} {
-		data, err := g.AdminCommand(ctx, resource.kind, "get")
+		data, err := g.AdminCommandIn(ctx, target, resource.kind, "get")
 		if err != nil {
 			return err
 		}
@@ -618,6 +667,13 @@ func validateHandle(g *gwbase.Core, p *Placement) error {
 }
 
 func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
+	if err := p.checkRuntime(ctx, g); err != nil {
+		return err
+	}
+	return p.checkPools(ctx, g)
+}
+
+func (p *Placement) checkRuntime(ctx context.Context, g *gwbase.Core) error {
 	scope, err := g.RuntimeScope(ctx)
 	if err != nil {
 		return err
@@ -625,6 +681,10 @@ func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
 	if scope != p.scope {
 		return errors.New("RGW gateway's native placement scope changed")
 	}
+	return nil
+}
+
+func (p *Placement) checkPools(ctx context.Context, g *gwbase.Core) error {
 	states, err := servicehook.PoolStates(ctx, g.Cluster())
 	if err != nil {
 		return err
@@ -638,7 +698,11 @@ func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
 }
 
 func nativeScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) (map[string]any, map[string]any, error) {
-	data, err := g.Command(ctx, scope, "zonegroup", "get")
+	return nativeScopeIn(ctx, g, g.Container(), scope)
+}
+
+func nativeScopeIn(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) (map[string]any, map[string]any, error) {
+	data, err := g.CommandIn(ctx, target, scope, "zonegroup", "get")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -646,7 +710,7 @@ func nativeScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) 
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err = g.Command(ctx, scope, "zone", "get")
+	data, err = g.CommandIn(ctx, target, scope, "zone", "get")
 	if err != nil {
 		return nil, nil, err
 	}

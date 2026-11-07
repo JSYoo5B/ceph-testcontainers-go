@@ -28,8 +28,10 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/dashboard"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // dashboardServerName is the only name in the test certificates. Consumers
@@ -702,10 +704,89 @@ func testDashboardRGWGateway(t *testing.T) {
 	if got := s3.Request(t, ctx, "GET", "/"+bucket+"/object", nil, 200); !bytes.Equal(got, payload) {
 		t.Fatalf("S3 read back after Remove %q", got)
 	}
+	t.Run("unconfirmed-user", func(t *testing.T) {
+		testDashboardUnconfirmedGatewayUser(t, ctx, d, gateway)
+	})
 	if err := d.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("DASHBOARD RGW link removed: an outside key edit refused, then user %s gone, keys restored; owner data intact", linkUser)
+}
+
+// delayedDashboardUserCreate holds one supervised user create as if Docker
+// had accepted its exec, lost the response and started it later. Every other
+// command runs in the real gateway except the first two stops of that exec.
+type delayedDashboardUserCreate struct {
+	testcontainers.Container
+	command      []string
+	refusedStops int
+}
+
+func (f *delayedDashboardUserCreate) Exec(ctx context.Context, args []string, options ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if len(args) > 7 && args[2] == supervised.ShellScript && len(f.command) == 0 &&
+		slices.Contains(args[7:], "create") && slices.Contains(args[7:], "user") {
+		f.command = slices.Clone(args)
+		return 0, nil, errors.New("lost gateway user create reply")
+	}
+	if len(args) > 4 && args[2] == supervised.ShellCancelScript && len(f.command) != 0 && args[4] == f.command[4] && f.refusedStops < 2 {
+		f.refusedStops++
+		return 0, nil, errors.New("gateway user create stop unavailable")
+	}
+	return f.Container.Exec(ctx, args, options...)
+}
+
+func testDashboardUnconfirmedGatewayUser(t *testing.T, ctx context.Context, d *dashboard.Dashboard, g *rgw.Gateway) {
+	t.Helper()
+	transport := &delayedDashboardUserCreate{Container: g.Container}
+	g.Container = transport
+	defer func() { g.Container = transport.Container }()
+
+	link, err := d.AddGateway(ctx, g)
+	var pending *ceph.NativeCommandUnstoppedError
+	if !errors.As(err, &pending) || link == nil || link.User() == nil || link.User().CreationKey() != nil {
+		t.Fatalf("AddGateway with a lost create reply: link=%v, error=%v", link, err)
+	}
+	id := link.User().ID()
+	if err := link.Remove(ctx); err == nil || transport.refusedStops != 2 {
+		t.Fatalf("Remove while create could still run: stops=%d, error=%v", transport.refusedStops, err)
+	}
+	// Dispatch the exact held exec. Check its resulting native state without
+	// handing the generated credentials to the unconfirmed user handle.
+	code, output, err := transport.Container.Exec(ctx, transport.command)
+	if err != nil || code != 0 || output == nil {
+		t.Fatalf("delayed gateway user create: exit=%d, error=%v", code, err)
+	}
+	if _, err := io.Copy(io.Discard, output); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Admin(ctx, "user", "info", "--uid", id); err != nil {
+		t.Fatalf("read the user created after Remove: %v", err)
+	}
+	if _, err := g.Admin(ctx, "user", "rm", "--uid", id); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := g.CreateUser(ctx, rgw.UserConfig{ID: id, DisplayName: "outside replacement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Restore(ctx); err == nil || !strings.Contains(err.Error(), "creation was not confirmed") || link.User() == nil {
+		t.Fatalf("Restore did not retain the unconfirmed link user: %v", err)
+	}
+	// Info verifies the replacement's original credentials against native
+	// state, so a user recreated under the same name would fail this check.
+	info, err := foreign.Info(ctx)
+	if err != nil || info.DisplayName != "outside replacement" {
+		t.Fatalf("foreign gateway user after Restore: display name=%q, error=%v", info.DisplayName, err)
+	}
+	if err := foreign.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Restore(ctx); err != nil {
+		t.Fatalf("Restore after confirmed user absence: %v", err)
+	}
+	if err := link.Check(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("gateway link still active after Restore: %v", err)
+	}
 }
 
 // waitDashboardRGW waits until the Dashboard lists bucket with its owner.

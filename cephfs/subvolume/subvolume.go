@@ -442,7 +442,8 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 
 // Remove removes an owned empty group without --force. A native refusal (for
 // example a nonempty group) preserves its handle for retry. A repeat call after
-// confirmed success is a no-op. External edits must not race removal.
+// confirmed success is a no-op. Restore this group's pin overrides first.
+// External edits must not race removal.
 //
 //purpose:lifetime
 func (group *Group) Remove(ctx context.Context) error {
@@ -457,6 +458,9 @@ func (group *Group) Remove(ctx context.Context) error {
 	defer done()
 	if group.identity.Removed {
 		return nil
+	}
+	if err := pinOverridesOf(fs).allowRemoval(group.identity); err != nil {
+		return err
 	}
 	if group.identity.FilesystemID != fsID {
 		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
@@ -490,7 +494,8 @@ func (group *Group) Remove(ctx context.Context) error {
 // --retain-snapshots. Native Ceph refuses subvolumes with snapshots; use the
 // snapshot helpers to remove owned snapshots first. Trash purging is async.
 // Repeat removal after confirmed success is a no-op; external edits must not
-// race this operation. Its filesystem, groups and pools remain available.
+// race this operation. Restore this subvolume's pin overrides first. Its
+// filesystem, groups and pools remain available.
 //
 //purpose:lifetime
 func (subvolume *Subvolume) Remove(ctx context.Context) error {
@@ -505,6 +510,9 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 	defer done()
 	if subvolume.identity.Removed {
 		return nil
+	}
+	if err := pinOverridesOf(fs).allowRemoval(subvolume.identity); err != nil {
+		return err
 	}
 	for authorization := range subvolume.identity.authorizations {
 		if !authorization.deauthorized {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // Production native command/parser orchestration, with only existing private
@@ -63,38 +65,87 @@ func TestCephFSDirectoryAdditionRetainsAppliedReplyLossAndStatusIsReadOnly(t *te
 	}
 }
 
-func TestDirectoryAdditionNativeRefusalSettlesAgainstOriginalPolicy(t *testing.T) {
-	for _, applied := range []bool{false, true} {
-		m, s, _ := newDirectoryAdditionFixture(t)
-		s.addExitCode, s.applyAdd = 22, applied
-		r, err := beginDirectoryAdditionFixture(t, m, "/refused")
-		if err == nil || s.adds != 1 {
-			t.Fatalf("native add: receipt %v, err %v", r, err)
-		}
-		if applied {
-			if r == nil || m.ops.directoryAddition != r || m.ops.guardDirectoryAdditionOverlap() == nil {
-				t.Fatal("present policy lost pending intent")
+func TestDirectoryAdditionRetiresKnownRefusalOnFreshReadback(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		outside, delayed bool
+	}{
+		{"absent", false, false},
+		{"outside at first readback", true, false},
+		{"absent on retry", false, true},
+		{"outside before retry", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, s, _ := newDirectoryAdditionFixture(t)
+			previous, err := beginDirectoryAdditionFixture(t, m, "/previous")
+			if err != nil {
+				t.Fatal(err)
 			}
-			same, err := beginDirectoryAdditionFixture(t, m, "/refused")
-			if same != r || err != nil || !r.registered || s.adds != 1 {
-				t.Fatalf("present policy retry: %v", err)
+			s.applyAdd, s.addExitCode = false, 22
+			before := s.adds
+			s.hook = func(_ *directoryRemovalControlFake, args []string) {
+				if len(args) == 6 && args[3] == "add" {
+					if tc.delayed {
+						s.policyOverride = "null"
+					} else if tc.outside {
+						s.directories = append(s.directories, "/refused")
+					}
+				}
 			}
-			continue
-		}
-		if r != nil || m.ops.directoryAddition != nil || m.ops.guardDirectoryAdditionOverlap() != nil {
-			t.Fatal("absent refused policy blocked the fixture")
-		}
-		s.addExitCode, s.applyAdd = 0, true
-		next, err := beginDirectoryAdditionFixture(t, m, "/valid")
-		if err != nil || !next.registered || s.adds != 2 {
-			t.Fatalf("next addition: %v", err)
-		}
+			r, err := beginDirectoryAdditionFixture(t, m, "/refused")
+			var refusal *ceph.NativeFailure
+			if !errors.As(err, &refusal) || refusal.ExitCode != 22 {
+				t.Fatalf("expected original native refusal: %v", err)
+			}
+			s.hook, s.policyOverride, s.applyAdd, s.addExitCode = nil, "", true, 0
+			if tc.delayed {
+				if r == nil {
+					t.Fatal("failed readback lost pending receipt")
+				}
+				if tc.outside {
+					s.directories = append(s.directories, "/refused")
+				}
+				if status, err := r.Status(t.Context()); err != nil || status.Registered || status.PolicyPresent != tc.outside {
+					t.Fatalf("pending policy observation: %+v, %v", status, err)
+				}
+				if _, err := m.AddDaemon(t.Context(), "receiver"); !errors.Is(err, errCephFSObservationGuard) {
+					t.Fatalf("read-only status released the gate: %v", err)
+				}
+				r, err = beginDirectoryAdditionFixture(t, m, "/refused")
+			}
+			if r != nil || !errors.As(err, &refusal) || refusal.ExitCode != 22 || errors.Is(err, errCephFSObservationGuard) != tc.outside || s.adds != before+1 {
+				t.Fatalf("settle refused request: receipt %v, error %v, adds %d", r, err, s.adds-before)
+			}
+			if status, err := previous.Status(t.Context()); err != nil || !status.Registered || !status.PolicyPresent {
+				t.Fatalf("previous registration: %+v, %v", status, err)
+			}
+			if _, err := m.beginDirectoryRemoval(t.Context(), "/refused", peerRemovalClusterReader); !errors.Is(err, errCephFSObservationGuard) {
+				t.Fatalf("typed removal accepted unowned path: %v", err)
+			}
+			if err := m.AddDirectory(t.Context(), "/next"); err != nil {
+				t.Fatal(err)
+			}
+			wantNative := []string{"/owned", "/previous"}
+			if tc.outside {
+				wantNative = append(wantNative, "/refused")
+			}
+			if !slices.Equal(s.directories, append(wantNative, "/next")) || !slices.Equal(m.Directories, []string{"/owned", "/previous", "/next"}) || m.directories.generation("/refused") != 0 {
+				t.Fatalf("native %v, owned %v", s.directories, m.Directories)
+			}
+		})
 	}
 }
 
 func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
-	for _, retry := range []bool{false, true} {
-		t.Run(map[bool]string{false: "refused", true: "uncertain-then-refused"}[retry], func(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		retry, outside bool
+	}{
+		{"refused", false, false},
+		{"uncertain-then-refused", true, false},
+		{"external re-registration", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			m, s, _, a, b := newDirectoryRemovalFixture()
 			m.ops.peerGeneration = 1
 			removal, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
@@ -111,7 +162,7 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 			}
 
 			s.applyAdd = false
-			if retry {
+			if tc.retry {
 				s.addError = errPeerRemovalTransport
 				pending, err := beginDirectoryAdditionFixture(t, m, "/owned")
 				if pending == nil || !errors.Is(err, errPeerRemovalTransport) {
@@ -120,13 +171,25 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 				s.addError = nil
 			}
 			s.addExitCode = 22
+			if tc.outside {
+				s.hook = func(_ *directoryRemovalControlFake, args []string) {
+					if len(args) == 6 && args[3] == "add" {
+						s.directories = append(s.directories, "/owned")
+					}
+				}
+			}
 			if r, err := beginDirectoryAdditionFixture(t, m, "/owned"); r != nil || err == nil {
 				t.Fatalf("refused native add returned receipt %v, error %v", r, err)
 			}
 			if status, err := previous.Status(t.Context()); err != nil || !status.Registered || !status.PolicyPresent {
 				t.Fatalf("previous completed addition: %+v, %v", status, err)
 			}
-			if status, err := removal.Status(t.Context()); err != nil || !status.Released {
+			status, err := removal.Status(t.Context())
+			if tc.outside {
+				if !errors.Is(err, errCephFSObservationGuard) || status.Released || m.directories.owns("/owned") {
+					t.Fatalf("previous removal adopted the outside registration: %+v, %v", status, err)
+				}
+			} else if err != nil || !status.Released {
 				t.Fatalf("previous terminal removal: %+v, %v", status, err)
 			}
 		})
