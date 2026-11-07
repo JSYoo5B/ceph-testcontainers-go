@@ -151,8 +151,15 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	checkpoint := func(label string) {
 		t.Log(timeline.Gateways(ctx, label, rgwPlacementReplicaBounds.Inspect, gateways, []string{"source", "destination"}))
 	}
-	if err := sourcePlacement.Apply(ctx, fixture.Source); err != nil {
-		t.Fatal(err)
+	commit := &losePlacementCommitReply{Container: fixture.Source.Container}
+	fixture.Source.Container = commit
+	err = sourcePlacement.Apply(ctx, fixture.Source)
+	if err == nil {
+		err = sourcePlacement.Apply(ctx, fixture.Source)
+	}
+	fixture.Source.Container = commit.Container
+	if err != nil || commit.commits != 1 {
+		t.Fatalf("Apply and retry after lost native commit reply: %v, commits=%d", err, commit.commits)
 	}
 	checkpoint("after source Apply")
 	if err := fixture.PullDestinationPeriod(ctx); err != nil {

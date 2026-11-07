@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +22,40 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
+
+// cancelAfterGatewayStop interrupts Apply only after Docker confirms the stop.
+type cancelAfterGatewayStop struct {
+	testcontainers.Container
+	cancel context.CancelFunc
+}
+
+func (g cancelAfterGatewayStop) Stop(ctx context.Context, grace *time.Duration) error {
+	err := g.Container.Stop(ctx, grace)
+	if err == nil {
+		g.cancel()
+	}
+	return err
+}
+
+// losePlacementCommitReply drops the reply only after the native commit succeeds.
+type losePlacementCommitReply struct {
+	testcontainers.Container
+	commits int
+}
+
+func (g *losePlacementCommitReply) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := g.Container.Exec(ctx, args, opts...)
+	if err == nil && code == 0 && len(args) >= 2 && slices.Equal(args[len(args)-2:], []string{"period", "commit"}) {
+		if _, err := io.Copy(io.Discard, out); err != nil {
+			return 0, nil, err
+		}
+		g.commits++
+		return 0, nil, errors.New("injected loss of the successful period commit reply")
+	}
+	return code, out, err
+}
 
 // rgwPlacementBindSource captures the source gateway's container and process
 // start before the replicated write, within one inspection bound.
@@ -225,8 +260,15 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if _, err := placement.Create(ctx, gateway, config); err == nil {
 		t.Fatal("existing placement could be overwritten")
 	}
-	if err := target.Apply(ctx, gateway); err != nil {
-		t.Fatal(err)
+	applyCtx, cancelApply := context.WithCancel(ctx)
+	original := gateway.Container
+	gateway.Container = cancelAfterGatewayStop{original, cancelApply}
+	err = target.Apply(applyCtx, gateway)
+	gateway.Container = original
+	interrupted := applyCtx.Err()
+	cancelApply()
+	if err != nil || !errors.Is(interrupted, context.Canceled) {
+		t.Fatalf("Apply after native gateway stop: %v, caller: %v", err, interrupted)
 	}
 	// Docker bridge restarts may publish a new port. Native host mode reuses
 	// its allocated listener; both return the endpoint of the actual process.
