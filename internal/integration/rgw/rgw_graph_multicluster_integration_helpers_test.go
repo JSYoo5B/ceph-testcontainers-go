@@ -105,7 +105,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 			t.Fatalf("zone identity/listener is not distinct: %+v", zone)
 		}
 		ids[zone.ID], peers[zone.PeerEndpoint] = true, true
-		rgwAssertThreeZonePeriod(t, ctx, fixture, zone.Name, zones)
+		rgwAssertSingleRegionPeriod(t, ctx, fixture, zone.Name, zones, host)
 		endpoint, err := zone.Gateway.S3Endpoint(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -161,7 +161,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	for i, zone := range zones {
-		rgwAssertThreeZonePeriod(t, ctx, fixture, zone.Name, zones)
+		rgwAssertSingleRegionPeriod(t, ctx, fixture, zone.Name, zones, host)
 		if got := clients[i].Request(t, ctx, http.MethodGet, bucket+"/retained", nil, http.StatusOK); !bytes.Equal(got, seed) {
 			t.Fatal("retained zone data changed after gateway restarts")
 		}
@@ -169,7 +169,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	t.Log("three independent Ceph clusters: one realm/zonegroup, named metadata master, three native zone IDs/endpoints, secondary outage/rejoin and retained cross-zone communication passed")
 }
 
-func rgwAssertThreeZonePeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture, name string, expected []multisite.Zone) {
+func rgwAssertSingleRegionPeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture, name string, expected []multisite.Zone, host bool) {
 	t.Helper()
 	data, err := fixture.ZoneAdmin(ctx, name, "period", "get", "--format", "json")
 	if err != nil {
@@ -188,17 +188,18 @@ func rgwAssertThreeZonePeriod(t *testing.T, ctx context.Context, fixture *multis
 			} `json:"zonegroups"`
 		} `json:"period_map"`
 	}
-	if err := json.Unmarshal(data, &period); err != nil || period.RealmID != fixture.RealmID || period.MasterZone != expected[0].ID || len(period.PeriodMap.Zonegroups) != 1 {
-		t.Fatalf("native realm/master/group mismatch in %s: error=%v output=%s", name, err, data)
+	if err := json.Unmarshal(data, &period); err != nil || period.RealmID != fixture.RealmID || period.MasterZone != fixture.SourceZoneID || len(period.PeriodMap.Zonegroups) != 1 {
+		t.Fatalf("native realm/master/group mismatch in %s: error=%v", name, err)
 	}
 	group := period.PeriodMap.Zonegroups[0]
-	if group.MasterZone != expected[0].ID || len(group.Zones) != len(expected) {
+	if group.MasterZone != fixture.SourceZoneID || len(group.Zones) != len(expected) {
 		t.Fatalf("native zone count/master mismatch in %s", name)
 	}
 	for _, want := range expected {
+		endpoint := rgwPeriodEndpoint(t, ctx, want, host)
 		found := false
 		for _, actual := range group.Zones {
-			if actual.Name == want.Name && actual.ID == want.ID && len(actual.Endpoints) == 1 && actual.Endpoints[0] == want.PeerEndpoint {
+			if actual.Name == want.Name && actual.ID == want.ID && rgwPeriodHasEndpoint(actual.Endpoints, want.PeerEndpoint, endpoint) {
 				found = true
 			}
 		}
@@ -206,4 +207,20 @@ func rgwAssertThreeZonePeriod(t *testing.T, ctx context.Context, fixture *multis
 			t.Fatalf("zone %s period omits native identity/endpoint for %s", name, want.Name)
 		}
 	}
+}
+
+func rgwPeriodEndpoint(t *testing.T, ctx context.Context, zone multisite.Zone, host bool) string {
+	t.Helper()
+	if !host {
+		return zone.PeerEndpoint
+	}
+	endpoint, err := zone.Gateway.DaemonEndpoint(ctx)
+	if err != nil || endpoint == "" {
+		t.Fatalf("zone %s daemon endpoint %q, reserved %q: %v", zone.Name, endpoint, zone.PeerEndpoint, err)
+	}
+	return endpoint
+}
+
+func rgwPeriodHasEndpoint(committed []string, reserved, listener string) bool {
+	return listener != "" && listener == reserved && len(committed) == 1 && committed[0] == listener
 }

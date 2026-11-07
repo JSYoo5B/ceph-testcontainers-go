@@ -69,6 +69,14 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	if sourcePeerErr != nil || destinationPeerErr != nil {
 		t.Fatalf("gateway daemon endpoints unavailable: source=%v destination=%v", sourcePeerErr, destinationPeerErr)
 	}
+	zones := multisite.Zones()
+	if len(zones) != 2 {
+		t.Fatalf("pair has %d zones", len(zones))
+	}
+	host := harness.StaticFacts(source).UsesHostNetwork
+	for _, zone := range zones {
+		rgwAssertSingleRegionPeriod(t, ctx, multisite, zone.Name, zones, host)
+	}
 	t.Logf("S3 endpoints source=%s destination=%s; daemon endpoints source=%s destination=%s; committed period master and zone endpoints verified", sourceEndpoint, destinationEndpoint, sourcePeer, destinationPeer)
 	sourceS3 := harness.S3HTTPClient{Endpoint: sourceEndpoint, AccessKey: sourceRGW.AccessKey, SecretKey: sourceRGW.SecretKey, Region: sourceRGW.Region, HTTP: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
