@@ -194,7 +194,8 @@ func (e ownershipError) Error() string { return string(e) }
 // Release resumes this set's I/O only at its captured QUIESCED version, using
 // native optimistic concurrency. Expired/timed-out/canceled sets are reported as
 // errors, so a test cannot treat an interrupted checkpoint as consistent. Lost
-// replies can be retried; confirmed RELEASED copies become no-ops. Native set
+// replies can be retried. While the attempted release is RELEASING, retry
+// Release to confirm completion. Confirmed RELEASED copies become no-ops. Native set
 // records are retained by the QDB and disposed of with the cluster.
 //
 //purpose:condition,lifetime
@@ -221,9 +222,14 @@ func (q *Set) Release(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if q.state.releaseAttempted && current.State == "RELEASED" {
-		q.state.released = true
-		return nil
+	if q.state.releaseAttempted {
+		switch current.State {
+		case "RELEASING":
+			return errors.New("native release is still in progress; retry Release")
+		case "RELEASED":
+			q.state.released = true
+			return nil
+		}
 	}
 	if current.State != "QUIESCED" || current.Version != q.state.version {
 		return servicehook.Invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))

@@ -30,7 +30,19 @@ func ExampleSet_Watch() {
 	if err != nil {
 		panic(err)
 	}
-	set, err := quiesce.Start(ctx, fs, []*subvolume.Subvolume{volume}, quiesce.Config{Timeout: 20 * time.Second, Expiration: time.Minute})
+	cfg := quiesce.Config{Timeout: 20 * time.Second, Expiration: time.Minute}
+	set, err := quiesce.Start(ctx, fs, []*subvolume.Subvolume{volume}, cfg)
+	if set != nil {
+		defer func() {
+			// Release also checks that the checkpoint stayed consistent. If
+			// release cannot be confirmed, allow the native timers to expire
+			// before terminating the cluster.
+			if err := set.Release(context.Background()); err != nil {
+				fmt.Printf("checkpoint not confirmed for set %s: %v\n", set.ID(), err)
+				time.Sleep(cfg.Timeout + cfg.Expiration)
+			}
+		}()
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -38,7 +50,7 @@ func ExampleSet_Watch() {
 	if err != nil {
 		panic(err)
 	}
-	defer func() { _ = watch.Stop() }() // before the cluster's Terminate
+	defer func() { _ = watch.Stop() }() // before the set's Release
 	<-watch.Events()                    // the QUIESCED baseline
 	lost := make(chan string, 1)
 	go func() {
@@ -54,8 +66,5 @@ func ExampleSet_Watch() {
 	case state := <-lost:
 		fmt.Println("checkpoint abandoned: the set is", state)
 	default:
-	}
-	if err := set.Release(ctx); err != nil {
-		fmt.Println("checkpoint not consistent:", err)
 	}
 }

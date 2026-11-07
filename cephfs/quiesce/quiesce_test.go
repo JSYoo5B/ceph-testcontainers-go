@@ -29,6 +29,7 @@ type quiesceTestControl struct {
 	timeout, expiration     float64
 	mutations               int
 	lostCreate, lostRelease bool
+	releaseInProgress       bool
 }
 
 func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -51,6 +52,9 @@ func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tc
 			return 0, nil, errors.New("ESTALE")
 		}
 		f.state = "RELEASED"
+		if f.releaseInProgress {
+			f.state = "RELEASING"
+		}
 		f.version++
 		if f.lostRelease {
 			f.lostRelease = false
@@ -150,6 +154,25 @@ func TestCephFSQuiesceUncertainRepliesRetainRecoveryHandle(t *testing.T) {
 	}
 	if err := q.Release(t.Context()); err != nil || control.mutations != 2 {
 		t.Fatal("release retry duplicated mutation", err)
+	}
+}
+
+func TestReleaseRetryWhileNativeReleaseIsInProgress(t *testing.T) {
+	fs, control, volume := quiesceFixture(t)
+	q, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, Config{Timeout: time.Second, Expiration: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control.lostRelease, control.releaseInProgress = true, true
+	if err := q.Release(t.Context()); err == nil {
+		t.Fatal("missing lost reply")
+	}
+	if err := q.Release(t.Context()); err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("in-flight release should be retryable: %v", err)
+	}
+	control.state = "RELEASED"
+	if err := q.Release(t.Context()); err != nil || control.mutations != 2 {
+		t.Fatalf("release retry: %v, mutations %d", err, control.mutations)
 	}
 }
 
