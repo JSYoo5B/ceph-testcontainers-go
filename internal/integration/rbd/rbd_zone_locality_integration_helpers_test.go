@@ -34,12 +34,6 @@ type localityMap struct {
 	ActingPrimary int    `json:"acting_primary"`
 }
 
-// localityOp is one entry of an OSD's dump_historic_ops.
-type localityOp struct {
-	Description string `json:"description"`
-	InitiatedAt string `json:"initiated_at"`
-}
-
 // localityRead is one data read probe: a fresh rbd process with a policy and
 // a declared CRUSH location, and what it did.
 type localityRead struct {
@@ -90,6 +84,7 @@ func testRBDZoneLocality(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := harness.RegionalClient(t, ctx, cluster, "a")
+	controlClient := harness.RegionalClient(t, ctx, cluster, "b")
 	layout, err := cluster.Zones(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +159,12 @@ func testRBDZoneLocality(t *testing.T) {
 	}
 	local, remote := address(osdA.ID), address(osdB.ID)
 	probe := harness.NewZoneProbe(t, ctx, clientMember.Name, client.GetContainerID())
-	rtt := func(phase string) (harness.ZoneRTT, harness.ZoneRTT) {
+	controlMember, controlZone := harness.ZoneMemberByContainer(t, layout, controlClient.GetContainerID())
+	if controlZone != "b" || controlMember.PublicAddress == remote.Addr() || local.Addr() == clientMember.PublicAddress {
+		t.Fatal("cross-zone control overlaps a selected peer")
+	}
+	controlProbe := harness.NewZoneProbe(t, ctx, controlMember.Name, controlClient.GetContainerID())
+	rtt := func(phase string) (harness.ZoneRTT, harness.ZoneRTT, harness.ZoneRTT) {
 		t.Helper()
 		l, err := probe.ConnectRTT(ctx, local, 20, 2*time.Second)
 		if err != nil {
@@ -175,9 +175,14 @@ func testRBDZoneLocality(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("RTT %-10s client to local osd.%d %s: %s; to remote osd.%d %s: %s", phase, osdA.ID, local, l, osdB.ID, remote, r)
-		return l, r
+		c, err := controlProbe.ConnectRTT(ctx, local, 20, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("RTT %s: unselected client %s in b to osd.%d in a: %s", phase, controlMember.PublicAddress, osdA.ID, c)
+		return l, r, c
 	}
-	baseLocal, baseRemote := rtt("baseline")
+	baseLocal, baseRemote, baseControl := rtt("baseline")
 	var leases []*fault.NetworkProfileLease
 	for zone, peer := range map[string]netip.Addr{"a": remote.Addr(), "b": clientMember.PublicAddress} {
 		lease, err := fault.ApplyZoneProfile(ctx, cluster, zone, fault.NetworkProfile{HelperImage: helper, Plane: ceph.PublicNetworkPlane, Delay: localityOneWay, Peer: peer})
@@ -194,7 +199,10 @@ func testRBDZoneLocality(t *testing.T) {
 		}
 		t.Logf("zone %s egress to %s delayed %v on %.12s %s", zone, peer, localityOneWay, lease.ContainerID, lease.Interface)
 	}
-	shapedLocal, shapedRemote := rtt("shaped")
+	shapedLocal, shapedRemote, shapedControl := rtt("shaped")
+	if err := harness.CheckZoneControl(baseControl, shapedControl); err != nil {
+		t.Fatalf("unselected cross-zone path gained delay: %v", err)
+	}
 	if err := harness.CheckZoneControl(baseLocal, shapedLocal); err != nil {
 		t.Fatalf("the local path changed under shaping: %v", err)
 	}
@@ -240,8 +248,8 @@ func testRBDZoneLocality(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	restoredLocal, restoredRemote := rtt("restored")
-	for name, pair := range map[string][2]harness.ZoneRTT{"local": {baseLocal, restoredLocal}, "remote": {baseRemote, restoredRemote}} {
+	restoredLocal, restoredRemote, restoredControl := rtt("restored")
+	for name, pair := range map[string][2]harness.ZoneRTT{"unselected": {baseControl, restoredControl}, "local": {baseLocal, restoredLocal}, "remote": {baseRemote, restoredRemote}} {
 		if err := harness.CheckZoneControl(pair[0], pair[1]); err != nil {
 			t.Fatalf("the %s path after restoration: %v", name, err)
 		}
@@ -270,18 +278,9 @@ func localityHistory(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var history struct {
-		Ops []localityOp `json:"ops"`
-	}
-	if err := json.Unmarshal(out, &history); err != nil {
-		t.Fatalf("osd.%d dump_historic_ops: %v", osd.ID, err)
-	}
-	reads := map[string]string{}
-	for _, op := range history.Ops {
-		if strings.HasPrefix(op.Description, "osd_op(") && strings.Contains(op.Description, object) &&
-			(strings.Contains(op.Description, "[read ") || strings.Contains(op.Description, "sparse-read")) {
-			reads[op.Description+" @"+op.InitiatedAt] = op.Description
-		}
+	reads, err := harness.RBDDataReadsInHistory(out, map[string]bool{object: true})
+	if err != nil {
+		t.Fatalf("osd.%d history: %v", osd.ID, err)
 	}
 	return reads
 }
@@ -311,9 +310,9 @@ func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.C
 	sum := strings.Fields(harness.ExecOutput(t, ctx, client, "sh", "-c", "sha256sum "+path+" && rm -f "+path))[0]
 	read := localityRead{Policy: policy, Location: location, Effective: strings.Join(effective, " "), Elapsed: elapsed, SHA256: sum, Served: map[int][]string{}}
 	for _, osd := range osds {
-		for key, description := range localityHistory(t, ctx, osd, object) {
+		for key := range localityHistory(t, ctx, osd, object) {
 			if _, seen := before[osd.ID][key]; !seen {
-				read.Served[osd.ID] = append(read.Served[osd.ID], description)
+				read.Served[osd.ID] = append(read.Served[osd.ID], key)
 			}
 		}
 	}
