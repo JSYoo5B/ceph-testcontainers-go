@@ -199,7 +199,13 @@ make test-all                       # -tags=all -count=1 -v -timeout=180m ./...
 ALL_TEST_TIMEOUT=6h make test-all
 ```
 
-It runs every scenario sequentially and takes hours. Prefer one test, a
+It runs the default suite, the tests that build with `-tags=all`, one package
+at a time (`-p 1`), and takes hours. Tests within a package still run
+concurrently when they opt in and `CEPH_TEST_PARALLEL` is set (see
+[Running tests in parallel](#running-tests-in-parallel)). The optional
+batches need their own tags and are not part of it (see
+[Optional tests](#optional-tests) and
+[Native regressions](ci.md#native-regressions)). Prefer one test, a
 [Make target](#make-targets) or one CI batch.
 
 ### One CI batch, exactly as CI runs it
@@ -317,8 +323,10 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 Use `--release 21.2.0` for Umbrella or `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
 resolve only some roles. The script pulls only missing images, never builds,
 and refuses an existing `--output-dir`. `summary.json` lists the `CEPH_TEST_*`
-values under `prepared_environment`; export them for a test, the tag runner or
-`make scenario` with `SCENARIO_IMAGE_LAYOUT=roles`.
+values under `prepared_environment`; export them for a test or the tag runner.
+`make scenario` with `SCENARIO_IMAGE_LAYOUT=roles` needs all five role
+variables, so use it only after preparing every role; with a subset, run the
+batch with `tag_scenarios.py run` or `optional` instead.
 
 ### Image compatibility checks
 
@@ -623,6 +631,10 @@ It requires `native_regression`, never compiles under plain `all`, uses the
 //go:build (all || (integration && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_my_regression)))
 ```
 
+The source is the inventory of optional batches: each is the
+`ci_batch_<name>` of a file whose constraint names `ci_optional`, and no
+document lists all of them.
+
 ### Experiment cases
 
 A test whose assertion characterizes a native behaviour across Ceph builds,
@@ -679,7 +691,7 @@ version, or a new major release without a row fails the test; an unlisted
 patch uses its major release's row. `TestReleaseCapabilityTable` checks these
 rules without a cluster.
 
-Command-form differences that both releases support (the cluster's internal
+Command-form differences that every supported release supports (the cluster's internal
 `cephBefore`, reached through `internal/servicehook`, and
 `multicluster.CephBefore`) belong to the fixtures and their own tests, not to
 this table.

@@ -882,7 +882,7 @@ gh workflow run "Native regressions" --ref main -f batch=native_rgw_translation 
   -f rgw_image=ghcr.io/example/ceph-rgw:patched
 ```
 
-`cephfs_fscrypt` (`TestCephFSFscrypt`) is a sixth optional experiment case,
+`cephfs_fscrypt` (`TestCephFSFscrypt`) is another optional experiment case,
 [`cephfs_fscrypt`](../../internal/integration/experiments/cephfs_fscrypt/README.md),
 that passes on the published images. Its client containers mount CephFS
 with the engine's kernel and with `ceph-fuse` and get `CAP_SYS_ADMIN` and
@@ -891,7 +891,12 @@ the ceph filesystem type registered. It refuses, naming the missing
 requirement, and never loads a module or skips. Outside the tag runner,
 build it with `go test -tags all,cephfs_fscrypt`.
 
-The other optional batches are not experiment cases:
+The following optional batches are not experiment cases. They are a
+selection: the source declares every optional batch (see
+[Optional tests](testing.md#optional-tests)), and the timing and fault
+batches are described with their features, for example in
+[Daemon timing](../guides/daemon-timing.md) and the
+[`fault/blockio` README](../../fault/blockio/README.md).
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
