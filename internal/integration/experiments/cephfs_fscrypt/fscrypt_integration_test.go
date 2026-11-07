@@ -75,7 +75,33 @@ func (c *fscryptCluster) clientImage(t *testing.T, ctx context.Context, path str
 	if code, _, err := harness.SessionExec(ctx, c.admin, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
 		t.Fatal(err)
 	} else if code == 0 {
+		if c.version == "21.2.0" {
+			// Matrix preparation can pass the same official image by local
+			// image ID or another tag. Check the image actually in use.
+			docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := docker.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			running, err := c.admin.Inspect(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			built, err := docker.ImageInspect(ctx, running.Image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(built.RepoDigests, qualifiedFuseImage) {
+				return qualifiedFuseImage
+			}
+		}
 		return image
+	} else if code != 1 {
+		t.Fatalf("check for ceph-fuse in the client image: exit %d", code)
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(c.version) {
 		t.Fatalf("client image %s has no ceph-fuse, and Ceph version %q names no official image", image, c.version)

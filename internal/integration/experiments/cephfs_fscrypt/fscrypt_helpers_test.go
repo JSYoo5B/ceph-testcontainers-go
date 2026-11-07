@@ -489,7 +489,7 @@ emit(errno=-1, error="unknown command " + command)
 `
 
 // The official FUSE build qualified with directory ioctls in the experiment.
-const qualifiedFuseImage = "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+const qualifiedFuseImage = "quay.io/ceph/ceph@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
 
 // Key status values of FS_IOC_GET_ENCRYPTION_KEY_STATUS and the removal
 // status flags of FS_IOC_REMOVE_ENCRYPTION_KEY.
