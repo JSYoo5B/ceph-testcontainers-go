@@ -27,10 +27,15 @@ ceph-testcontainers-images.
 3. Run the Docker-free checks in [Testing](testing.md): `make check` and
    `make lint`, plus the Python CI-tooling tests. Check local Markdown links
    and compile new examples. Compilation is not a native run.
-4. Reuse independently verified CI at the candidate's exact SHA: Code checks
-   (the only required check) and the runtime workflows (Docker, short,
-   topology, recovery and multicluster, and Squid through Ceph periodic or the
-   release matrix; see [CI](ci.md)). Record the workflow/run and
+4. Reuse independently verified CI at the candidate's exact SHA: the six
+   required status contexts, which are the jobs of the Code checks workflow
+   (Unit tests, Race detector, Vet, compile and CI tooling, Compiled tag
+   coverage and helpers, and the two Vulnerability check versions; see
+   [Code checks](ci.md#code-checks)), and the runtime workflows (Docker,
+   short, topology, recovery and multicluster, and the other
+   [supported releases](ci.md#supported-releases) through a full Ceph
+   periodic run or the release matrix), which no rule requires but the
+   release does. Record the workflow/run and
    attempt identities, chosen image references and actual image IDs. A
    canceled, skipped or missing scenario is not a native pass. Record
    vulnerability-scan results from Code checks as well.
