@@ -33,6 +33,17 @@ const rgwKeyFaultShim = `#!/bin/sh
 REAL
 status=$?
 fault=$(cat /tmp/tc-key-fault 2>/dev/null)
+if [ "$status" -eq 0 ]; then
+	previous=
+	for arg in "$@"; do
+		if [ "$arg" = create ] && [ "$fault" = "pause-$previous" ]; then
+			rm -f /tmp/tc-key-fault
+			touch /tmp/tc-create-completed
+			exec sleep 40
+		fi
+		previous=$arg
+	done
+fi
 if [ -n "$fault" ]; then
 	key=0
 	for arg in "$@"; do
@@ -88,11 +99,48 @@ func installRGWKeyFaultShim(t *testing.T, ctx context.Context, gateway *rgw.Gate
 	}
 }
 
+// cancelRGWCreate cancels while the supervised shim holds the reply from a
+// successful native create. The marker is read through Docker outside the
+// cluster's topology mutex, which the mutation is still holding.
+func cancelRGWCreate[T any](t *testing.T, parent context.Context, g *rgw.Gateway, create func(context.Context) (T, error)) (T, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	type result struct {
+		handle T
+		err    error
+	}
+	var got result
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		got.handle, got.err = create(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+	for {
+		select {
+		case <-done:
+			t.Fatal("RGW create returned before the shim confirmed dispatch")
+		case <-ctx.Done():
+			t.Fatal("RGW create did not reach the post-mutation shim")
+		case <-time.After(100 * time.Millisecond):
+			code, _, err := g.Exec(ctx, []string{"test", "-f", "/tmp/tc-create-completed"})
+			if err != nil || (code != 0 && code != 1) {
+				t.Fatalf("read create marker: exit %d, %v", code, err)
+			}
+			if code == 0 {
+				cancel()
+				<-done
+				return got.handle, got.err
+			}
+		}
+	}
+}
+
 // removeRGWKeyFaultShim restores the real radosgw-admin and checks that no
 // armed fault is left.
 func removeRGWKeyFaultShim(t *testing.T, ctx context.Context, gateway *rgw.Gateway) {
 	t.Helper()
-	if code, out := rgwGatewayExec(t, ctx, gateway, "sh", "-c", "test ! -e /tmp/tc-key-fault && rm -f /usr/local/sbin/radosgw-admin"); code != 0 {
+	if code, out := rgwGatewayExec(t, ctx, gateway, "sh", "-c", "test ! -e /tmp/tc-key-fault && rm -f /tmp/tc-create-completed /usr/local/sbin/radosgw-admin"); code != 0 {
 		t.Fatalf("an armed key fault was not consumed, or the shim stayed: %s", out)
 	}
 }

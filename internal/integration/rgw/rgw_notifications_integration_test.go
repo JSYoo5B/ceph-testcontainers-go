@@ -162,8 +162,8 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 		if one := observeQueue(t, ctx, gateway, selected, notification.Sample{MaxEntries: 1}); len(one.Pending) != 1 || one.Pending[0] != again.Pending[0] || one.Stats.Entries < uint64(len(queued)) {
 			t.Fatalf("sample is not the first entry of the queue: %+v", one)
 		}
-		if snapshot, err := notification.Queue(ctx, gateway, selected, notification.Sample{MaxEntries: len(queued), MaxBytes: 64}); err == nil || snapshot.Sampled {
-			t.Fatalf("sample over its byte limit was accepted: %+v", snapshot)
+		if snapshot, err := notification.Queue(ctx, gateway, selected, notification.Sample{MaxEntries: len(queued), MaxBytes: 64}); err == nil || !strings.Contains(err.Error(), "topic dump reply reached the sample's byte limit") || snapshot.Sampled {
+			t.Fatal("oversized sample did not produce the byte-limit refusal")
 		} else if strings.Contains(err.Error(), pushEndpoint) {
 			t.Fatal("refused sample error exposes the push endpoint")
 		}
