@@ -122,12 +122,13 @@ func (w *SyncWatch) Stop() error {
 // status and, for each selected source, whether it is reported and its data
 // status; the other sources and the zone's MetadataMaster flag are reported
 // but not compared, so their changes alone produce no event. A failed read,
-// including a zone that has not yet imported the current period, produces a
-// WatchGap and the watch continues; the next successful read is WatchResumed.
+// including a zone that has yet to import the current period or a native
+// sync-status header whose realm, zonegroup or zone differs from the fixture's
+// recorded identity, produces a WatchGap. The next successful read is WatchResumed.
 // These end the watch instead: ctx ending, Stop, Terminate
 // (ceph.ErrInvalidRequest), a full buffer (ceph.ErrWatchOverflow), a zone or
 // selected source that is no longer an attached owned zone of the
-// zonegroup, a changed realm, zonegroup or zone identity, and a committed
+// zonegroup, and a committed
 // period or realm epoch other than the baseline's, as any sync policy or
 // topology commit makes, even while the zone has not imported it yet: watch
 // the new period with a new WatchSync.
@@ -412,9 +413,9 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 //
 // Sequence, Kind, Started and Finished are as in SyncWatchEvent. Status is the
 // BucketSyncPolicyStatus of that read; its stages PeriodImported,
-// PolicyImported, BucketsImported and Imported are compared, and its
-// identities stay the baseline's. On a WatchGap it is the partial report of
-// the failed read, with Imported false. A destination that has not finished
+// PolicyImported, BucketsImported and Imported are compared. On a WatchGap
+// Status contains the partial read with Imported false, or the zero value
+// if the query timed out acquiring the topology lock. A destination that has not finished
 // importing a bucket fails the native read, so that stage reads as a WatchGap
 // with BucketsImported false rather than as a change. Two statuses
 // separated by a gap, or by the polling interval, do not establish the stages
@@ -466,14 +467,13 @@ func (w *BucketPolicyWatch) Stop() error {
 // referenced bucket instance imported, and all of them together as Imported.
 // The default WatchConfig.Interval is 2 seconds.
 //
-// Before it returns, WatchBucketPolicy makes one successful read under ctx
-// and QueryTimeout. The destination fails its native reads while it imports a
-// bucket that was just created, so a failed first read is retried once a
-// second until QueryTimeout passes, without holding the topology lock in
-// between. A refused request, a read that would end the watch and a first
-// read that never succeeds return their error and start nothing. That read
-// admits the request as WaitBucketPolicyReady does, and the watch keeps what
-// it captured for its lifetime: the master's committed period, the
+// Under ctx and QueryTimeout, WatchBucketPolicy first admits the request
+// once, as WaitBucketPolicyReady does. An error reading the master during
+// admission returns immediately. After admission, a failed first sample
+// (for example, while the destination imports a new bucket) is retried once
+// a second, releasing the topology lock between attempts. A fatal error or
+// expiry before the first successful sample starts no watch.
+// The watch keeps the identities captured at admission: the master's committed period, the
 // group's policy as the fixture confirmed it, the destination zone and the
 // referenced source and destination bucket instances. Start the watch after
 // the policy change, as you would WaitBucketPolicyReady; a baseline that is
@@ -581,8 +581,7 @@ func (t *policyImportTarget) lockedSample(ctx context.Context) (BucketSyncPolicy
 	return t.sample(ctx)
 }
 
-// bucketPolicyWatchEqual compares the import stages; the identities are the
-// baseline's in every read.
+// bucketPolicyWatchEqual compares the import stages of successful samples.
 func bucketPolicyWatchEqual(a, b BucketSyncPolicyStatus) bool {
 	return a.PeriodImported == b.PeriodImported && a.PolicyImported == b.PolicyImported && a.BucketsImported == b.BucketsImported && a.Imported == b.Imported
 }

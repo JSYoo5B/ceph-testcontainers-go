@@ -28,8 +28,9 @@ type BucketSyncPolicyStatus struct {
 // mutex queue time, for an unchanged owned bucket group's metadata to import
 // into an explicit attached destination selected by its pipes. It checks the
 // exact committed period, source-scope group snapshot, and all referenced
-// source/destination bucket instances needed by that destination. Missing or
-// older local metadata and a failed read wait; recreated instances and changed
+// source/destination bucket instances needed by that destination. Admission
+// reads the master once and returns any error immediately. After admission,
+// missing or older local metadata and transient read failures are retried. Recreated instances and changed
 // master policy are refused. Allowed/forbidden policies can also be observed
 // as imported. WatchBucketPolicy reports the stages of the same read.
 //

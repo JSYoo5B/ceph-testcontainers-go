@@ -348,7 +348,7 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 // all sites. Existing running gateways restart to load the final period,
 // retaining their listener ports and storage; fenced gateways stay stopped
 // unless an earlier reload of theirs was interrupted.
-// The new gateway reloads only if its host-mode endpoint changed after startup.
+// The new gateway starts with its committed endpoint and skips this reload.
 // Running secondaries finish initial metadata full sync before reload. Complete
 // any external master transition first, or keep the previous master fenced.
 // Refresh S3Endpoint afterwards because bridge-mode published ports may change.

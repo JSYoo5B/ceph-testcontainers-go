@@ -31,7 +31,7 @@ import (
 // Inspect act on the gateway container. Formatting a Gateway, User or
 // TLSConfig with any fmt verb, including %+v and %#v, prints only an
 // identifying label such as "RGW gateway s3"; credentials and TLS keys are
-// read explicitly from the fields or User.Credentials. A gateway runs with 4
+// read explicitly from the fields or User.CreationKey().Credentials(). A gateway runs with 4
 // worker threads: enough for functional tests, not for load tests. Rate limits
 // are enforced by each gateway separately. Copies of a Gateway share its
 // identity; Remove accepts only the descriptor that Start or Gateways returned.
