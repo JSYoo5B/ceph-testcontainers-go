@@ -29,14 +29,26 @@ import (
 // when the command was idempotent and left the final state unchanged.
 type cephFSMutationCounter struct {
 	testcontainers.Container
-	commands  atomic.Int64
-	mu        sync.Mutex
-	mutations map[string]int
+	commands         atomic.Int64
+	mu               sync.Mutex
+	mutations        map[string]int
+	includeArguments bool
 }
 
 func (c *cephFSMutationCounter) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	c.commands.Add(1)
 	if kind := cephFSMutationKind(args); kind != "" {
+		if c.includeArguments {
+			// Ignore the transport timeout while retaining the program,
+			// subcommand and each positional operand as a distinct word.
+			if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
+				kind = fmt.Sprintf("ceph %q", args[3:])
+			} else if len(args) != 0 && args[0] == "ceph" {
+				kind = fmt.Sprintf("ceph %q", args[1:])
+			} else {
+				kind = fmt.Sprintf("%q", args)
+			}
+		}
 		c.mu.Lock()
 		if c.mutations == nil {
 			c.mutations = make(map[string]int)
@@ -52,6 +64,22 @@ func (c *cephFSMutationCounter) counts() map[string]int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return maps.Clone(c.mutations)
+}
+
+// A rebalance must remove and re-add each eligible path exactly once on
+// the selected filesystem. The final inventory alone cannot show those cycles.
+func cephFSCheckRebalanceMutations(got map[string]int, filesystem string, eligible []string) error {
+	want := make(map[string]int, 2*len(eligible))
+	for _, directory := range eligible {
+		for _, op := range []string{"remove", "add"} {
+			key := fmt.Sprintf("ceph %q", []string{"fs", "snapshot", "mirror", op, filesystem, directory})
+			want[key] = 1
+		}
+	}
+	if !maps.Equal(got, want) {
+		return fmt.Errorf("rebalance commands: got %v, want %v", got, want)
+	}
+	return nil
 }
 
 // cephFSValuedFlags are the CLI flags whose value is a separate word.

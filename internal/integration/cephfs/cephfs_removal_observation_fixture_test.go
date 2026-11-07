@@ -67,6 +67,34 @@ func TestCephFSMutationCounterForwardsUnchanged(t *testing.T) {
 	}
 }
 
+func TestCephFSRebalanceMatchesEachFilesystemAndDirectory(t *testing.T) {
+	eligible := []string{"/first", "/second"}
+	for _, tc := range []struct {
+		name, secondFS, secondPath string
+		matches                    bool
+	}{
+		{"both eligible paths", "source", "/second", true},
+		{"one cycle repeated and one omitted", "source", "/first", false},
+		{"same path in another filesystem", "destination", "/second", false},
+		{"pending path in place of eligible path", "source", "/pending", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := &cephFSMutationCounter{Container: &cephFSCommandRecorder{}, includeArguments: true}
+			for _, op := range []string{"remove", "add"} {
+				for _, target := range [][2]string{{"source", "/first"}, {tc.secondFS, tc.secondPath}} {
+					args := cephCLI("fs", "snapshot", "mirror", op, target[0], target[1])
+					if _, _, err := counter.Exec(t.Context(), args); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := cephFSCheckRebalanceMutations(counter.counts(), "source", eligible); (err == nil) != tc.matches {
+				t.Fatalf("matches=%t: %v", tc.matches, err)
+			}
+		})
+	}
+}
+
 // TestCephFSMutationKindSeparatesReadsFromWrites classifies the reads that
 // removal observation issues as reads and the state-changing commands of the
 // mirror fixture as mutations, wherever their flags appear.

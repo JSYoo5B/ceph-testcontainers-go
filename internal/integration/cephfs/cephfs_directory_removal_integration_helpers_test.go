@@ -261,17 +261,20 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	// A second explicit remove fails before dispatch. Its path remains in the
 	// native policy while rebalance redistributes the other desired paths.
 	undispatched := &cephFSDirectoryRemovalReplyFault{Container: legacyFault, filesystem: sourceFS.FilesystemName, directory: remaining[0], cancelBeforeDispatch: true}
-	counter := &cephFSMutationCounter{Container: undispatched}
-	source.Container = counter
+	source.Container = undispatched
 	if err := mirror.RemoveDirectory(ctx, remaining[0]); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected undispatched remove: %v", err)
 	}
+	counter := &cephFSMutationCounter{Container: undispatched, includeArguments: true}
+	source.Container = counter
 	if err := mirror.RebalanceDirectories(ctx); err != nil {
 		t.Fatal(err)
 	}
-	counts := counter.counts()
-	if undispatched.removals.Load() != 1 || counts["ceph fs snapshot mirror remove"] != len(remaining) || counts["ceph fs snapshot mirror add"] != len(remaining)-1 {
-		t.Fatalf("expected one undispatched remove and a remove/add per other desired path: %v, attempts on pending path %d", counts, undispatched.removals.Load())
+	if err := cephFSCheckRebalanceMutations(counter.counts(), sourceFS.FilesystemName, remaining[1:]); err != nil {
+		t.Fatal(err)
+	}
+	if n := undispatched.removals.Load(); n != 1 {
+		t.Fatalf("remove attempts on pending path %q: got %d, want 1", remaining[0], n)
 	}
 	raw, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
 	var tracked []string
