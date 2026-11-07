@@ -71,13 +71,11 @@ finalization.Check("pool still clean", observer.WaitForClean)
 - A verification that is unexpected or incomplete fails the test. It never
   changes the cluster, and clean is evidence for the reported sources and
   window only.
-- When the test binary has a `-timeout`, the archive is armed to run while a
-  test still runs `ArchiveTimeout` plus ten seconds before that deadline. Go's
-  timeout panic runs no cleanup, so this `before-deadline` archive is the
-  only evidence such a test leaves; its manifest is never final. It is taken
-  whether or not the test has failed. A test that ends after it is finalized
-  as usual, and when it passes, the before-deadline archive remains with its
-  manifest not final.
+- When the test binary has a `-timeout`, a `before-deadline` archive is armed
+  `ArchiveTimeout` plus ten seconds before that deadline, because Go's
+  timeout panic runs no cleanup; see
+  [the failure archive](../../docs/guides/ceph-operations.md#the-failure-archive)
+  for when it is taken and what its manifest holds.
 - Adding a step after finalization has started fails the test. Nothing runs
   after another forced process exit (`os.Exit`, a signal, a cancelled job) or
   a lost runner.

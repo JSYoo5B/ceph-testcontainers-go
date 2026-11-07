@@ -474,23 +474,15 @@ from a marker inside its message:
 | `LogClusterSecurity` | a cluster log entry of severity `SEC` |
 | `LogClusterWarning` | a cluster log entry of severity `WRN` |
 
-The first match in this order decides. A cluster log entry has one of two
-forms, as the pinned Ceph source (Tentacle 20.2.4) prints them: a daemon's own
-log line `<stamp> <thread> <level> log_channel(<channel>) log [<PRIO>] : <message>`,
-and the cluster log line `[<channel> ]<stamp> <name> (<rank>) <seq> : <channel> [<PRIO>] <message>`
-that the MON writes (a leading channel must equal the entry's own). `PRIO` is
-`DBG`, `INF`, `SEC`, `WRN` or `ERR`. The stamp must be a real calendar date and time
-with three or six fractional digits and a canonical numeric timezone `[+-]HHMM` (minutes below 60, offsets from -1200 to +1400), as the producer writes it;
-an envelope with any other stamp is not an envelope. An entry of any channel (`cluster`,
-`audit`, ...) is an event by its severity, so an `INF` entry that quotes
-`[WRN]` is no event, and a `WRN` entry that quotes `[ERR]` is a warning. A line
-that carries an `[ERR]`, `[SEC]` or `[WRN]` marker without one of these forms is
-not classified and not guessed: the check has a gap that counts such lines, so
-it is incomplete. A quoted assertion or fatal signature still makes an
-assertion or fatal event, whatever envelope it is in. An expectation's
-`Pattern` still matches the whole line, envelope included. Formats are
-qualified per Ceph release natively separately; other releases and outputs
-(for example journald or syslog) are not recognized.
+The first match in this order decides. The cluster log kinds come only from
+the severity of an entry's own log envelope, in the two forms the pinned Ceph
+source prints (a daemon's `log_channel(<channel>) log [<PRIO>]` line and the
+MON's cluster log line), so an `INF` entry that quotes `[WRN]` is no event,
+and a line with a marker but no recognized envelope is a gap of the check,
+never a guessed event. The grammar is in the godoc of
+[`finalize.LogEvent`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#LogEvent)
+and its parser. Other releases and outputs (for example journald or syslog)
+are not recognized.
 
 Daemons write their cluster log entries to their own output and the MON
 writes them again as the cluster log, so one entry can be two events. Other
@@ -516,35 +508,10 @@ A log expectation never matches a crash, and a crash expectation never a log
 line. Expectations do not repair, restart or archive anything, and they do
 not suppress the test's own checks.
 
-`finalize.VerificationConfig` fields (zero selects the default):
-
-| Field | Default | Maximum | Meaning |
-| --- | --- | --- | --- |
-| `Name` | `post-test` | 128 bytes | Names the check and the report. |
-| `Logs`, `Crashes` | none | 256 each | The expected events. |
-| `Timeout` | 2 minutes | 5 minutes | The activation, and each evaluation; the check is also bounded by `CheckTimeout`. |
-| `OperationTimeout` | 20 seconds | 1 minute | Each Docker operation, including one container's log stream. |
-| `MaxLogBytes` | 32 MiB | 256 MiB | Log stream bytes of the window per container. |
-| `MaxFindings` | 256 | 4096 | Findings kept per check. |
-| `AdditionalContainers` | none | 64 | Caller-owned daemon containers, such as mirror daemons; never adopted. |
-| `RedactValues` | none | 128 | Additional secrets to remove from the report and the archived lines; each one line of at most 4096 bytes. |
-| `ArchiveLogs` | off | | Keep every line of the window that the log check reads for the failure archive. |
-
-`finalize.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
-`Window` (`finalize.VerificationWindow`: `Phase` `test`, `StartedAt` and
-`EndedAt` on the engine's clock, `EvaluatedAt`), the `Sources`
-(`finalize.VerificationSource`: `Source`, `Role`, `Name`, `ContainerID`,
-`ImageID`, `StartedAt`, `RestartCount`, `State`, `LogDriver`, `LogBytes`,
-`LogLines` and the `BaselineCrashes`), the effective `LogExpectations` and
-`CrashExpectations`, `Notes` on its scope, and one `finalize.VerificationCheck`
-each for `Logs` and `Crashes`. A check has its `Outcome`, the `Permitted`
-and `Unexpected` counts, `Findings` (`finalize.VerificationFinding`: `Source`,
-`ContainerID`, `Event`, `Time`, the redacted `Text` of at most 1 KiB with
-`Truncated`, `CrashID`, and the permitting `Expectation`, empty when
-unexpected), with the unexpected ones first and `OmittedFindings` beyond
-`MaxFindings`, the `Expectations` (`finalize.ExpectationResult`: `Name`,
-`Required`, `MinCount`, `MaxCount`, `Matched`, `Satisfied`) and the `Gaps`
-(`finalize.VerificationGap`: `Source`, `Reason`).
+The defaults and limits of
+[`finalize.VerificationConfig`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#VerificationConfig)
+and the fields of `finalize.VerificationReport`, its sources, checks,
+findings, expectation results and gaps are in their godoc.
 
 A log line's redacted text, which expectations match and findings and the
 archived lines keep, is redacted one line at a time with two additions that

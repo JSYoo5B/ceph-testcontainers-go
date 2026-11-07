@@ -23,7 +23,10 @@ import (
 // minute timeout for the activation and for each evaluation (at most five),
 // 20 seconds per Docker operation (at most one minute), 32 MiB of log stream
 // per container (at most 256 MiB) and 256 retained findings per check (at
-// most 4096).
+// most 4096). Name is one line of at most 128 bytes, Logs and Crashes take at
+// most 256 expectations each, and AdditionalContainers and RedactValues have
+// the limits of diagnostics.Config (64 containers, 128 values of at most 4096
+// bytes).
 type VerificationConfig struct {
 	// Name labels the verification, its check and its report. Empty selects
 	// "post-test". Names are unique within one Finalization.
