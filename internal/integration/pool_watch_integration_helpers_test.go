@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"slices"
 	"strings"
@@ -154,9 +155,26 @@ func testPoolPGWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	poolID := first.Snapshot.PoolBefore.ID
 	t.Logf("baseline: pool %d, epochs %d..%d, read %v", poolID, first.Snapshot.OSDMapEpochBefore, first.Snapshot.OSDMapEpochAfter, first.Finished.Sub(first.Started))
 
-	// Stop the acting primary of the first PG, so at least that PG loses an
-	// acting member.
-	watched := first.Snapshot.PGs[0]
+	const object = "while-degraded"
+	mappedPG := func() ceph.PGID {
+		t.Helper()
+		raw, err := cluster.Ceph(ctx, "osd", "map", poolWatchPool, object, "--format", "json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mapping struct {
+			Object string    `json:"objname"`
+			PG     ceph.PGID `json:"pgid"`
+		}
+		if err := json.Unmarshal(raw, &mapping); err != nil || mapping.Object != object || mapping.PG == "" {
+			t.Fatalf("map %s: %s, %v", object, raw, err)
+		}
+		return mapping.PG
+	}
+	watched, found := poolPGWatchRow(first, mappedPG())
+	if !found {
+		t.Fatalf("baseline lacks the PG of %s", object)
+	}
 	var target *ceph.OSDContainer
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID == watched.ActingPrimary {
@@ -184,7 +202,10 @@ func testPoolPGWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	// The degraded report advances the test: with min_size 1 the client
 	// must still write and read back through the pool.
 	payload := bytes.Repeat([]byte("written while degraded\n"), 256)
-	poolPGWatchRoundTrip(t, ctx, client, "while-degraded", payload)
+	if pg := mappedPG(); pg != watched.PGID {
+		t.Fatalf("%s now maps to %s, want degraded PG %s", object, pg, watched.PGID)
+	}
+	poolPGWatchRoundTrip(t, ctx, client, object, payload)
 
 	if err := target.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -201,7 +222,7 @@ func testPoolPGWatch(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	if err := observer.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	poolPGWatchReadBack(t, ctx, client, "while-degraded", payload)
+	poolPGWatchReadBack(t, ctx, client, object, payload)
 	if err := w.Stop(); err != nil {
 		t.Fatalf("Stop = %v", err)
 	}

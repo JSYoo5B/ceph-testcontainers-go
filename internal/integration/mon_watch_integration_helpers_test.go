@@ -5,87 +5,15 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"slices"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 const monWatchPool = "tc-mon-watch"
-
-// monWatchWorkload plays the SUT: it writes and reads back objects through
-// the rados CLI of the client container until stopped, independently of the
-// watch, and records when each completed operation started and ended.
-type monWatchWorkload struct {
-	mu     sync.Mutex
-	starts []time.Time
-	ends   []time.Time
-	failed []string
-	done   chan struct{}
-}
-
-func startMonWatchWorkload(ctx context.Context, client testcontainers.Container) *monWatchWorkload {
-	w := &monWatchWorkload{done: make(chan struct{})}
-	go func() {
-		defer close(w.done)
-		for n := 0; ctx.Err() == nil; n++ {
-			started := time.Now()
-			name := "mon-watch-" + strconv.Itoa(n)
-			err := monWatchRados(ctx, client, "put", name, "/etc/hosts")
-			if err == nil {
-				err = monWatchRados(ctx, client, "get", name, "/tmp/"+name)
-			}
-			w.mu.Lock()
-			if err == nil {
-				w.starts, w.ends = append(w.starts, started), append(w.ends, time.Now())
-			} else if ctx.Err() == nil {
-				w.failed = append(w.failed, fmt.Sprintf("%s: %v", name, err))
-			}
-			w.mu.Unlock()
-		}
-	}()
-	return w
-}
-
-func monWatchRados(ctx context.Context, client testcontainers.Container, args ...string) error {
-	code, r, err := client.Exec(ctx, append([]string{"timeout", "60", "rados", "-p", monWatchPool}, args...), tcexec.Multiplexed())
-	if err != nil {
-		return err
-	}
-	out, _ := io.ReadAll(r)
-	if code != 0 {
-		return fmt.Errorf("rados %s exited %d: %s", args[0], code, out)
-	}
-	return nil
-}
-
-// completedWithin counts the operations that started at or after from and
-// finished before to.
-func (w *monWatchWorkload) completedWithin(from, to time.Time) int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n := 0
-	for i, s := range w.starts {
-		if !s.Before(from) && w.ends[i].Before(to) {
-			n++
-		}
-	}
-	return n
-}
-
-func (w *monWatchWorkload) failures() []string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return slices.Clone(w.failed)
-}
 
 // awaitMonitorWatchEvent reads events until match accepts one, and fails on
 // a closed watch or after limit. Gaps are counted, not fatal: a read fails
@@ -193,7 +121,7 @@ func testMonitorWatch(t *testing.T) {
 
 	workCtx, stopWork := context.WithCancel(ctx)
 	defer stopWork()
-	work := startMonWatchWorkload(workCtx, client)
+	work := startWatchWorkload(workCtx, client, monWatchPool)
 
 	stopped := harness.MonitorHandle(t, ctx, cluster, "c")
 	grace := 10 * time.Second

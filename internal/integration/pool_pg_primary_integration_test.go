@@ -125,10 +125,17 @@ func TestPoolPGPrimaryOverrideServesKnownBytesAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	matches := 0
 	for _, pg := range snapshot.PGs {
-		if pg.PGID == original.PGID && pg.ActingPrimary != newPrimary {
-			t.Fatalf("Pool.PGs reports %+v", pg)
+		if pg.PGID == original.PGID {
+			matches++
+			if pg.ActingPrimary != newPrimary {
+				t.Fatalf("Pool.PGs reports %+v", pg)
+			}
 		}
+	}
+	if matches != 1 {
+		t.Fatalf("Pool.PGs reported %d rows for overridden PG %s", matches, original.PGID)
 	}
 	pgPrimaryGet(t, ctx, client, "record", seed)
 	during := bytes.Repeat([]byte("written through the moved primary\n"), 64)
