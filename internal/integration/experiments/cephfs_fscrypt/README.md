@@ -85,8 +85,8 @@ Optional: no required CI environment is proven to give client containers
 registered. One run takes about 50 seconds on a Linux amd64 Docker Engine
 host with warm images (46 s on 20.2.4, 51 s on 19.2.5, 55 s on 21.2.0).
 
-- Pull request: never.
-- Comment: `/ci run cephfs_fscrypt [on squid|umbrella]`.
+- Pull request: not in the default checks; a maintainer runs it on the
+  head with `/ci run cephfs_fscrypt [on squid|umbrella]`.
 - Periodic: never.
 
 ## Running it

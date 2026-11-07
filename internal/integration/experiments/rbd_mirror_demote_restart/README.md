@@ -49,8 +49,10 @@ expected result for an unpatched defect; it is not a fixture failure.
 ## Tier and triggers
 
 Deliberately failing reproducer: one run takes about 7 minutes and fails at
-the exact-bytes check on every published image. It never runs on a pull
-request, on `main` or in periodic samples, and never gates anything.
+the exact-bytes check on every published image. No automatic run includes it
+(the default checks of a pull request, pushes to `main`, periodic samples),
+and it never gates anything. A maintainer can run it on demand, also on a pull
+request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rbd_demote_restart`.
 - Comment: `/ci run rbd_demote_restart` or `/ci run rbd_demote_restart on squid`.
