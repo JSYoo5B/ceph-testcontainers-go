@@ -140,3 +140,23 @@ func TestRGWBackendRoleAbsenceAcceptsOnlyNativeENOENT(t *testing.T) {
 		}
 	}
 }
+
+func TestWrongKMSCARejectsAuditFromWrongOrUnknownPeer(t *testing.T) {
+	const good, bad = "192.0.2.10", "192.0.2.11"
+	request := func(addr string) []byte {
+		data, err := json.Marshal(map[string]any{"type": "request", "auth": map[string]any{"policies": []string{"rgw-read-owned"}},
+			"request": map[string]string{"operation": "read", "path": "tc/data/allowed", "remote_address": addr}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(data, '\n')
+	}
+	if err := rgwKMSAuditSources(request(good), good, bad); err != nil {
+		t.Fatal(err)
+	}
+	for _, audit := range [][]byte{nil, request(""), request(bad), append(request(good), request(bad)...)} {
+		if rgwKMSAuditSources(audit, good, bad) == nil {
+			t.Fatal("audit attributed a wrong or missing peer to the trusted gateway")
+		}
+	}
+}

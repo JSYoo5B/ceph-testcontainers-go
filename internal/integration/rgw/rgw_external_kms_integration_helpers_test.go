@@ -3,8 +3,13 @@
 package rgw_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -30,15 +35,76 @@ func rgwExternalKMS(t *testing.T) {
 		failed := harness.RGWBackendSigned(t, ctx, f.Trusted, "s3", http.MethodPut, f.Bucket+"/denied-key", []byte("outside the token policy"), denied)
 		harness.RGWBackendRequire(t, failed, http.StatusBadRequest, http.StatusForbidden, http.StatusInternalServerError)
 		harness.RGWBackendRequire(t, harness.RGWBackendSigned(t, ctx, f.Trusted, "s3", http.MethodGet, f.Bucket+"/denied-key", nil, nil), http.StatusNotFound)
-		counts, err := harness.RGWBackendVaultAuditProof(f.Vault.Audit(t, ctx))
+		audit := f.Vault.Audit(t, ctx)
+		counts, err := harness.RGWBackendVaultAuditProof(audit)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if counts["tc/data/allowed"] < 3 || counts["tc/data/denied"] == 0 {
 			t.Fatalf("Vault audit lacks the RGW key reads: allowed=%d denied=%d", counts["tc/data/allowed"], counts["tc/data/denied"])
 		}
+		trusted, err := f.Gateways[0].ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrong, err := f.Gateways[1].ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rgwKMSAuditSources(audit, trusted, wrong); err != nil {
+			t.Fatal(err)
+		}
+		// Change only the Vault CA in the gateway that returned 500. The same
+		// running process must now decrypt the same object with the same token.
+		if err := f.Gateways[1].CopyToContainer(ctx, f.Vault.CA, harness.RGWKMSCAFile, 0o600); err != nil {
+			t.Fatal("replace the unrelated Vault CA")
+		}
+		f.ReadExact(t, f.WrongCA, "same gateway after replacing its Vault CA")
 		t.Logf("SSE-KMS over verified HTTPS on both legs; Vault audit allowed=%d denied=%d", counts["tc/data/allowed"], counts["tc/data/denied"])
 	})
 
 	f.Close(t)
+}
+
+// rgwKMSAuditSources attributes every attempt on the selected key to the
+// trusted gateway, including requests for which Vault never sent a response.
+func rgwKMSAuditSources(data []byte, trusted, wrong string) error {
+	good, err := netip.ParseAddr(trusted)
+	if err != nil {
+		return errors.New("trusted gateway address unavailable")
+	}
+	bad, err := netip.ParseAddr(wrong)
+	if err != nil || good == bad {
+		return errors.New("gateways need distinct Vault peers")
+	}
+	reads := 0
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event struct {
+			Type    string
+			Auth    struct{ Policies []string }
+			Request struct {
+				Path, Operation string
+				Remote          string `json:"remote_address"`
+			}
+		}
+		if json.Unmarshal(line, &event) != nil {
+			return errors.New("malformed Vault audit record")
+		}
+		if event.Type != "request" || event.Request.Path != "tc/data/allowed" || event.Request.Operation != "read" ||
+			!slices.Equal(event.Auth.Policies, []string{"rgw-read-owned"}) {
+			continue
+		}
+		peer, err := netip.ParseAddr(event.Request.Remote)
+		if err != nil || peer.Unmap() != good.Unmap() {
+			return errors.New("Vault received a selected-key request from outside the trusted gateway")
+		}
+		reads++
+	}
+	if reads == 0 {
+		return errors.New("no Vault read attributed to the trusted gateway")
+	}
+	return nil
 }
