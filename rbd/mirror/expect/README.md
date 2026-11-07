@@ -27,7 +27,8 @@ reports the pool running and has discovered the namespace mapping) or
 stopped. A `Baseline` from an earlier observation pins the container, so a
 same-name replacement does not pass, and `NewInstance` requires a native
 instance other than the baseline's, as after a same-container restart. `Leader`
-names the daemon that must be the agreed owned leader, `Ready` requires the
+names the daemon that must claim its own instance as leader and whose instance
+every selected running receiver must report as leader, `Ready` requires the
 observation's own verdict and lists each daemon problem that prevents it, and
 `Exact` refuses unselected cohort members and foreign instances.
 

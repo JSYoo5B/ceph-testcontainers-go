@@ -32,7 +32,8 @@ type ReceiverDaemon struct {
 // Receivers states what a test expects of the owned receiver cohort in one
 // mirror.ReceiverStatus observation. Select names the daemons it checks.
 // Leader, when set, names the selected running daemon that must be the agreed
-// owned leader. Ready requires the observation's own Ready verdict, and lists
+// owned leader: it must claim its own instance, and every selected running
+// receiver must report that instance as leader. Ready requires the observation's own Ready verdict, and lists
 // each daemon problem and foreign instance that prevents it; Ready false
 // places no requirement on the verdict. Exact requires the observed cohort to
 // be exactly the selected daemons with no foreign native instance.
@@ -226,8 +227,14 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 	for _, name := range slices.Sorted(maps.Keys(byName)) {
 		result.Mismatches = append(result.Mismatches, byName[name]...)
 	}
-	if e.Leader != "" && observed.LeaderDaemonName != e.Leader {
-		result.Mismatches = append(result.Mismatches, ReceiverMismatch{Reason: ReceiverMismatchLeader, Want: e.Leader, Observed: observed.LeaderDaemonName})
+	if e.Leader != "" {
+		leader := observed.LeaderDaemonName
+		if leader == e.Leader && !e.leaderAgreed(observed) {
+			leader = ""
+		}
+		if leader != e.Leader {
+			result.Mismatches = append(result.Mismatches, ReceiverMismatch{Reason: ReceiverMismatchLeader, Want: e.Leader, Observed: leader})
+		}
 	}
 	if e.Ready || e.Exact {
 		for _, id := range slices.Sorted(slices.Values(observed.ForeignInstances)) {
@@ -241,6 +248,20 @@ func (e Receivers) Evaluate(observed mirror.ReceiverStatus) (ReceiversEvaluation
 	}
 	result.Matched = len(result.Mismatches) == 0
 	return result, nil
+}
+
+func (e Receivers) leaderAgreed(observed mirror.ReceiverStatus) bool {
+	leader := observed.Daemons[e.Leader]
+	if !leader.Leader || leader.InstanceID == "" || leader.InstanceID != observed.LeaderInstanceID {
+		return false
+	}
+	for _, selected := range e.Select {
+		member := observed.Daemons[selected.Name]
+		if selected.Running && (member.LeaderInstanceID != leader.InstanceID || member.Leader != (selected.Name == e.Leader)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (e Receivers) validate() error {

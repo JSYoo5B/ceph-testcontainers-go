@@ -67,6 +67,25 @@ func TestReceiversMatchesSurvivorElectionWithoutReadiness(t *testing.T) {
 	}
 }
 
+func TestReceiversConflictingLeaderViewsWithStoppedMember(t *testing.T) {
+	for _, dissenter := range []string{"a", "b"} {
+		t.Run(dissenter, func(t *testing.T) {
+			status := readyReceivers()
+			status.Ready = false
+			status.ExpectedDaemons = append(status.ExpectedDaemons, "c")
+			status.Daemons["c"] = mirror.ReceiverDaemonStatus{ContainerID: "cid-c"}
+			member := status.Daemons[dissenter]
+			member.LeaderInstanceID = "4102"
+			status.Daemons[dissenter] = member
+			expectation := Receivers{Select: []ReceiverDaemon{{Name: "a", Running: true}, {Name: "b", Running: true}, {Name: "c"}}, Leader: "a"}
+			got, err := expectation.Evaluate(status)
+			if err != nil || got.Matched || len(got.Mismatches) != 1 || got.Mismatches[0].Reason != ReceiverMismatchLeader {
+				t.Fatalf("conflicting leader views: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestReceiversReportsEachReasonFromTheEvaluatedObservation(t *testing.T) {
 	baseline := readyReceivers()
 	observed := readyReceivers()
