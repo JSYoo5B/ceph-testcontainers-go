@@ -32,7 +32,7 @@ image (see [Delaying or failing an OSD's device](#delaying-or-failing-an-osds-de
 | A chosen OSD serves one PG, so a fault hits the serving target | `Pool.OverridePGPrimary`, then `OSDContainer.Stop` or `fault.Pause` of that OSD | The PG's acting primary is the chosen OSD; once that OSD is down, a survivor serves the PG | Yes | `PGPrimaryOverrideHandle.Restore` |
 | An OSD's main device is slow or returns I/O errors | `fault/blockio`: `Container.AttachOSD`, then `Container.Apply` | Slow OSD operations; with EIO the OSD can abort and clients see timeouts | Not tested | `Container.Restore`, then restart the OSD |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
-| An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
+| An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD` creates a replacement after removal. `SetIn(ctx, true)` reverses a previous `SetIn(ctx, false)`. |
 | A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
 | A CephFS MDS answers but refuses metadata mutations | `cephfs.MDS.ForceReadOnly` | EROFS for writes; reads of existing data work | Yes | None: replace the process, then `MDSReadOnlyFault.WaitReplaced` |
 | A CephFS client cannot open a new session | `session.OverrideRefusal` (`cephfs/session`) | The new mount fails with EPERM; open sessions keep working | Yes | `RefusalOverrideHandle.Restore` |
@@ -916,9 +916,11 @@ Traps:
 ## Removing an OSD or marking it out
 
 [`OSDContainer.Remove`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) drains, stops,
-purges and removes an OSD. It refuses the last owned OSD, and when the remaining
-OSDs cannot hold the data it times out and leaves the OSD out and reweighted.
-`AddOSD` is refused until a removal has finished.
+purges and removes an OSD. At least one other owned, container-backed OSD
+with a matching native registration must remain outside removal or detach.
+If the drain times out because the remaining OSDs cannot hold the data, add
+capacity or adjust pool replication and retry `Remove`. Once a purge has been
+issued, finish cleanup before calling `AddOSD`.
 
 [`OSDContainer.SetIn`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.SetIn)`(ctx, false)`
 marks an OSD out while it keeps running. During that time wait with

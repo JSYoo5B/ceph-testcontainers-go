@@ -590,7 +590,7 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 
 | Operation | After an error |
 | --- | --- |
-| `OSDContainer.Remove` | Retry with a fresh context. If the purge reply was lost, the retry accepts the OSD's absence; if the purge completed, only the Docker cleanup is repeated. `AddOSD` is refused until the removal is finished. A removal that timed out because data could not move leaves the OSD out and reweighted. |
+| `OSDContainer.Remove` | Retry with a fresh context or terminate the cluster. If a drain timed out because data could not move, add capacity or adjust replication before retrying. Once purge is issued, `AddOSD` refuses new registrations until removal finishes. A retry can confirm a lost purge reply from the OSD's absence, then finish Docker cleanup. |
 | `MonitorContainer.Remove`, `ManagerContainer.Remove` | The member stays owned; retry or terminate. |
 | `AddMonitor` that joined but could not update every daemon's `ceph.conf` | `RefreshMonitorConfig(ctx)`; do not add the same name again. |
 | `Pool.Remove` | Retry; it finishes removing whichever owned resources remain. |
