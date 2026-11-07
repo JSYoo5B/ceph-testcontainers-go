@@ -47,8 +47,8 @@ const (
 	// DebugLevelUnconfirmed: restoration could not be verified, for example
 	// with a paused daemon or an unavailable socket; Restore may be retried.
 	DebugLevelUnconfirmed DebugLevelState = "unconfirmed"
-	// DebugLevelNotApplied: the request was refused before any native
-	// step, so nothing was applied and there is nothing to restore. Reason
+	// DebugLevelNotApplied: the request ended before issuing the native set.
+	// The prior level may have been read. There is nothing to restore. Reason
 	// holds the refusal. A window that may have been applied never reports
 	// this state.
 	DebugLevelNotApplied DebugLevelState = "not-applied"

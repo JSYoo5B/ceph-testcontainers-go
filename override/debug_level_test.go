@@ -743,6 +743,7 @@ func TestDebugLevelRevalidatesAfterReads(t *testing.T) {
 		replace(fake)
 		h, err := openDebugLevelFake(t.Context(), registry, fake, "20")
 		wantNotApplied(t, h, err, fake)
+		wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelNotApplied)
 		if fake.current() != "9/9" || slotHeld(registry) {
 			t.Fatalf("value %q slot held %v", fake.current(), slotHeld(registry))
 		}

@@ -376,7 +376,6 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	s.record(DebugLevelPriorRead, prior, nil)
 	handle := &DebugLevelHandle{state: s}
 
-	s.record(DebugLevelApplyAttempted, "", nil)
 	settle, setErr := target.Set(ctx, s.identity, setting.Name, setting.Level)
 	if setErr != nil {
 		setErr = fmt.Errorf("set %s of %s: %w", setting.Name, setting.Daemon, setErr)
@@ -385,6 +384,7 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 		// The target changed during the prior read and nothing was set.
 		return s.refuse(setErr)
 	}
+	s.record(DebugLevelApplyAttempted, "", nil)
 	s.pending = settle
 	// A lost reply or cancellation does not prove that the set did not
 	// apply; read back with a fresh bounded context, after a set that may
