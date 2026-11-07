@@ -255,11 +255,13 @@ if err := watch.Stop(); err != nil {
   consumer. The test can call fixture operations between events. A read that
   waits too long for a lock is a gap.
 - `Stop` cancels the watch, waits for its goroutine and returns the cause:
-  nil for `Stop` itself, a finished clone or an imported bucket policy, the
-  context's error,
+  nil for `Stop` itself, a clone or quiesce set that reached a terminal state
+  or an imported bucket policy, the context's error,
   `ErrWatchOverflow`, or the read error that ended it. Cancelling the context
   alone does not wait. Stopping a watch never changes what it observed: a
-  clone keeps running and a mirror keeps replaying.
+  clone keeps running and a mirror keeps replaying. Call `Stop` before the
+  fixture's cleanup, as the example registers it: a fixture that terminates
+  first ends the watch with an error.
 - A Watch reports what Ceph reported. Up, active+clean, replaying or synced
   are not proof that a client reaches the daemon or that particular data
   arrived, so check the SUT's own results as well.

@@ -110,18 +110,14 @@ if err != nil {
 To react to a filesystem's MDS topology while the SUT runs,
 `fs.WatchMDSs(ctx, cfg)` polls the FSMap in one goroutine and sends a change
 of `MDSStatus` (max_mds, active ranks, ordinary and replay standbys) on one
-channel, with the FSMap and MDSMap epochs of that read. The baseline is
-buffered before it returns. Wait for it before you stop an MDS. A takeover, a
-restarted daemon's new GID and a standby that registers again are events; a
-rank still in replay is in no list, as in `MDSStatus`. A failed read is a
-`WatchGap` event and the next success is `WatchResumed`. A full buffer ends
-the watch with `ceph.ErrWatchOverflow` instead of dropping events, and so do
-a filesystem recreated under the same name, a removed filesystem and cluster
-termination. The watch never waits for readiness; use `WaitReady` for the
-requested standby capacity. Call `Stop` before the fixture's cleanup: it joins
-the watch and returns why it ended. See
-[watching state](../docs/guides/contexts-and-cleanup.md#watching-state) for the
-lifecycle that every Watch shares.
+channel, with the FSMap and MDSMap epochs of that read. Receive the baseline
+before you stop an MDS. A takeover, a restarted daemon's new GID and a
+standby that registers again are events; a rank still in replay is in no
+list, as in `MDSStatus`. A filesystem recreated under the same name, a removed
+filesystem and cluster termination end the watch. The watch never waits for
+readiness; use `WaitReady` for the requested standby capacity. The lifecycle
+that every Watch shares (baseline, gaps, overflow and `Stop`) is in
+[watching state](../docs/guides/contexts-and-cleanup.md#watching-state).
 
 To assert the rank holders and standbys of one `MDSStatus` read or watch
 event, such as a takeover by another GID, use the optional

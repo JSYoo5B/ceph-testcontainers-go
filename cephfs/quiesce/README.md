@@ -40,23 +40,20 @@ if err := set.Release(ctx); err != nil {
 
 To notice that a checkpoint lost its pause while the SUT is still copying,
 `set.Watch(ctx, cfg)` polls the set's native state in one goroutine and sends
-changes of its state, version, timeout and expiration on one channel. The
-baseline is buffered before it returns; receive it before starting the
-copy. A read never renews the expiration and never adopts a version, so
-`Release` still refuses a changed set. A failed read is a `ceph.WatchGap`
-event and the next success is `ceph.WatchResumed`. A `RELEASED`, `EXPIRED`,
+changes of its state, version, timeout and expiration on one channel.
+Receive the baseline before starting the copy. A read never renews the
+expiration and never adopts a version, so `Release` still refuses a changed
+set. A `RELEASED`, `EXPIRED`,
 `TIMEDOUT`, `CANCELED` or `FAILED` state is the last event, and `Stop` then
 returns nil: an expired set is an outcome in that event, not a watch error.
 These end the watch with `ceph.ErrInvalidRequest` instead: a set that is
 absent from the native quiesce database, changed or excluded members, a
 version lower than one already seen (the set was recreated), a replaced
-filesystem and cluster termination; a full buffer ends it with
-`ceph.ErrWatchOverflow`. A `QUIESCED` event is a sample, not a lease: the set
-can expire right after it, so a missing event never proves a consistent
-checkpoint, and `Release` stays the consistency result. Call `Stop` before
-the fixture's cleanup: it joins the watch and returns why it ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
-the lifecycle that every Watch shares.
+filesystem and cluster termination. A `QUIESCED` event is a sample, not a
+lease: the set can expire right after it, so a missing event never proves a
+consistent checkpoint, and `Release` stays the consistency result. The
+lifecycle that every Watch shares (baseline, gaps, overflow and `Stop`) is in
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Concepts and limits
 

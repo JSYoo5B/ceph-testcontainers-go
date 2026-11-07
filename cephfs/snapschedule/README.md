@@ -64,19 +64,15 @@ count, its first or last snapshot time or the directory's retention changes.
 This is aggregate progress, emitted only on change, not a per-snapshot event
 history: two runs between reads are one event, a read equal to the previous
 one is none, and nothing says why the module deactivated a schedule. List the
-snapshots themselves with `Lease.Snapshots`. The baseline is buffered before
-it returns. A failed read is a `ceph.WatchGap` event and the next success is
-`ceph.WatchResumed`. A deactivated schedule is a change, not the end of the
+snapshots themselves with `Lease.Snapshots`. A deactivated schedule is a change, not the end of the
 watch, since the module can activate it again. The watch has no terminal
 state; these end it with `ceph.ErrInvalidRequest`: `Restore`, a schedule the
 module no longer lists (even if added again with the same path and repeat),
 another schedule of the directory with the lease's repeat, a removed or
-replaced filesystem and cluster termination. A full buffer ends it with
-`ceph.ErrWatchOverflow`. A lease whose add was never confirmed cannot be
-watched; restore it. Call `Stop` before `Restore` and the fixture's cleanup: it
-joins the watch and returns why it ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
-the lifecycle that every Watch shares.
+replaced filesystem and cluster termination. A lease whose add was never
+confirmed cannot be watched; restore it. Stop the watch before `Restore` too.
+The lifecycle that every Watch shares (baseline, gaps, overflow and `Stop`) is
+in [watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Concepts and limits
 

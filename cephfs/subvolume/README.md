@@ -60,18 +60,14 @@ if err != nil {
 
 To act on an asynchronous clone while it runs, `clone.Watch(ctx, cfg)` polls
 its native status in one goroutine and sends changes on one channel, Progress
-included, exactly as Ceph reports it. The baseline is buffered before it
-returns. Wait for it before you cancel the clone or inject the fault. A failed
-read is a `ceph.WatchGap` event and the next success is `ceph.WatchResumed`.
-A complete, failed or canceled status is the last event, and `Stop` then
-returns nil: a failed clone is an outcome in that event, not a watch error. A
-full buffer ends the watch with `ceph.ErrWatchOverflow`, and so do a replaced
-or removed target, source or filesystem and cluster termination. Stopping the
-watch never cancels the clone, and `Clone.Wait` stays the readiness result.
-Call `Stop` before the fixture's cleanup: it joins the watch and returns why it
-ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for the
-lifecycle that every Watch shares.
+included, exactly as Ceph reports it. Receive the baseline before you cancel
+the clone or inject the fault. A complete, failed or canceled status is the
+last event, and `Stop` then returns nil: a failed clone is an outcome in that
+event, not a watch error. A replaced or removed target, source or filesystem
+and cluster termination end the watch. Stopping the watch never cancels the
+clone, and `Clone.Wait` stays the readiness result. The lifecycle that every
+Watch shares (baseline, gaps, overflow and `Stop`) is in
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Concepts and limits
 

@@ -72,20 +72,16 @@ To react to the receiving side while the SUT runs, `link.WatchReceivers(ctx,
 cfg, names...)` polls the same observation as `ReceiverStatus`, and
 `link.WatchImage(ctx, cfg, "volume")` the same as `ImageStatus`; a bound
 `Namespace` has both methods for its scope. Each sends changes on one channel,
-5 seconds apart by default. The baseline is buffered before the call returns
-and pins what `WaitReceiverReady` or `WaitReplayReady` pins: the cohort with
-its original containers, or the source and destination image identities.
-Wait for it before you stop a receiver or interrupt its peer link. A stopped
-member, a new native instance of the same container, a moved leader and a
-moved image replay are events; a replaced daemon, image or policy and a
-terminated mirror or cluster end the watch. A failed read is a `WatchGap`
-event that keeps the partial report, and the next success is `WatchResumed`.
-A full buffer ends the watch with `ceph.ErrWatchOverflow` instead of dropping
-events. Neither watch proves that a write or checkpoint arrived: compare the
-destination data. Call `Stop` before the mirror's cleanup: it joins the watch
-and returns why it ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for the
-lifecycle that every Watch shares.
+5 seconds apart by default. The baseline pins what `WaitReceiverReady` or
+`WaitReplayReady` pins: the cohort with its original containers, or the
+source and destination image identities. Receive it before you stop a
+receiver or interrupt its peer link. A stopped member, a new native instance
+of the same container, a moved leader and a moved image replay are events; a
+replaced daemon, image or policy and a terminated mirror or cluster end the
+watch. A gap keeps the partial report. Neither watch proves that a write or
+checkpoint arrived: compare the destination data. The lifecycle that every
+Watch shares (baseline, gaps, overflow and `Stop`) is in
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Journal polling timing
 
