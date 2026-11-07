@@ -239,7 +239,7 @@ finally:
 		}
 		result <- sessionResult{code: code, output: data, err: err}
 	}()
-	if err := wait.ForExec([]string{"test", "-f", ready}).WithStartupTimeout(30*time.Second).WaitUntilReady(ctx, writerClient); err != nil {
+	if err := wait.ForExec([]string{"test", "-s", ready}).WithStartupTimeout(30*time.Second).WaitUntilReady(ctx, writerClient); err != nil {
 		t.Fatal("held native session was not ready", err)
 	}
 	copy := *writer
@@ -250,8 +250,25 @@ finally:
 	assertPreserved(writer)
 	probe(writerClient, writer.Client, source, neighbor, sourceInfo, neighborInfo, "revoked")
 	probe(writerClient, writer.Client, neighbor, source, neighborInfo, sourceInfo, "r")
+	heldID := strings.TrimSpace(string(cephFSSubvolumeExec(t, ctx, writerClient, "cat", ready)))
+	held := findCephFSSession(t, ctx, fs, heldID)
+	if held == nil || held.EntityID != writer.Client.User() {
+		t.Fatalf("writer session %s missing after deauthorization: %+v", heldID, held)
+	}
+	cephFSSubvolumeExec(t, ctx, writerClient, "touch", trigger+".control")
+	if err := wait.ForExec([]string{"test", "-f", trigger + ".written"}).WithStartupTimeout(30*time.Second).WaitUntilReady(ctx, writerClient); err != nil {
+		t.Fatal("held session failed to write after deauthorization:", err)
+	}
 	if err := writer.EvictClients(ctx); err != nil {
 		t.Fatal(err)
+	}
+	_, err = harness.Observe(ctx, 30*time.Second, 5*time.Second, 200*time.Millisecond, func(probe context.Context) (bool, bool, error) {
+		active, err := cephfssession.List(probe, fs)
+		gone := err == nil && !slices.ContainsFunc(active, func(s cephfssession.Session) bool { return s.ID == held.ID })
+		return gone, gone, err
+	})
+	if err != nil {
+		t.Fatalf("evicted session %s remains listed: %v", heldID, err)
 	}
 	cephFSSubvolumeExec(t, ctx, writerClient, "python3", "-c", "open('"+trigger+"', 'w').close()")
 	select {
@@ -465,15 +482,19 @@ fs.mount(mount_root=root.encode(), filesystem_name=filesystem.encode())
 fd = fs.open('/held-before-revoke', os.O_CREAT | os.O_WRONLY, 0o600)
 fs.write(fd, b'live established session', 0)
 fs.fsync(fd, 0)
-fs.close(fd)
-open(ready, 'w').close()
+with open(ready, 'w') as report:
+    report.write(str(fs.get_instance_id()))
+while not os.path.exists(trigger + '.control'):
+    time.sleep(0.1)
+def held_write():
+    assert fs.write(fd, b'held write', 0) == len(b'held write')
+    fs.fsync(fd, 0)
+held_write()
+open(trigger + '.written', 'w').close()
 while not os.path.exists(trigger):
     time.sleep(0.1)
 try:
-    fd = fs.open('/after-eviction', os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    fs.write(fd, b'must be rejected', 0)
-    fs.fsync(fd, 0)
-    fs.close(fd)
+    held_write()
 except cephfs.Error as error:
     print('held native session rejected: ' + str(error), flush=True)
 else:
