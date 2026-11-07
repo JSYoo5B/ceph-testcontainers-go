@@ -49,7 +49,11 @@ if err != nil {
 }
 d, err := dashboard.Start(ctx, cluster, dashboard.Config{TLS: dashboard.TLSConfig{CertificatePEM: cert, PrivateKeyPEM: key}})
 if d != nil {
-	t.Cleanup(func() { _ = d.Restore(context.Background()) })
+	t.Cleanup(func() {
+		if err := d.Restore(context.Background()); err != nil {
+			t.Errorf("restore dashboard: %v", err)
+		}
+	})
 }
 if err != nil {
 	t.Fatal(err)
