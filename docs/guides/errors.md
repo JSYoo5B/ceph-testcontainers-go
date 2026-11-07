@@ -34,6 +34,10 @@ The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match
 several.
 
+For a topic without a persistent queue, `notification.Queue` returns an error
+that matches both `notification.ErrNotPersistent` and `ceph.ErrInvalidRequest`
+with `errors.Is`.
+
 `ErrInvalidRequest` names the reason for a refusal, not when it happened. A
 refusal by argument validation or by a documented preflight comes before any
 change: `WithAuth` key-type validation and `rbdmirror.Run` namespace mapping
@@ -218,12 +222,9 @@ Some errors keep their own contracts and match no category:
   `ceph.ErrInvalidRequest` and leaves the input open. A write ended by its
   context keeps the context error; some bytes may already have been sent.
   See [Standard input](native-commands.md#standard-input).
-- `dashboard.ErrGatewayRefused` and `dashboard.ErrGatewayUnreachable`: the
-  Dashboard answered, and the gateway it links refused its RGW identity or
-  could not be reached. They describe the gateway's answer, not a failure of
-  the Dashboard.
-- `notification.ErrNotPersistent`: the selected topic exists but has no
-  persistent queue to observe.
+- `dashboard.ErrGatewayRefused` means the gateway refused the Dashboard's RGW identity.
+- `dashboard.ErrGatewayUnreachable` means the Dashboard reported a gateway
+  connection failure or the probe timed out waiting for the Dashboard to answer.
 - Failed checks of the fixture's own, such as native output that it could
   not parse, or a readback that differs from the requested change.
 - A failure whose outcome is unknown, such as a container that disappeared

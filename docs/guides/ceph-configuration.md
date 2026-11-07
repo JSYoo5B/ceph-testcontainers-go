@@ -302,8 +302,9 @@ a helper applies or restores it.
   (Squid, and Tentacle before 20.2.4) and refuses another requested key type
   with `ErrUnsupported`. A revoked client
   ([`ClientConfig.Revoke`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Revoke))
-  that authenticated before loses its open MON session on Tentacle, while
-  Squid keeps it answering.
+  that authenticated before loses its open MON session on Tentacle 20.2.4,
+  while Squid 19.2.5 keeps it answering. The open MON session behavior on
+  Umbrella 21.2.0 has not been characterized here.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
   [NetworkConfig.WithMessengerMode](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithMessengerMode)).

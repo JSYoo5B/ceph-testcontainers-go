@@ -32,17 +32,19 @@ observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
 }
+readyCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+defer cancel()
 for {
-	status, err := observer.ManagerStatus(ctx)
+	status, err := observer.ManagerStatus(readyCtx)
 	if err == nil && status.Available {
-		_, err = cluster.Ceph(ctx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json")
+		_, err = cluster.Ceph(readyCtx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json")
 		if err == nil {
 			break
 		}
 	}
 	select {
-	case <-ctx.Done():
-		t.Fatalf("snap_schedule does not answer: %v", err)
+	case <-readyCtx.Done():
+		t.Fatalf("snap_schedule readiness: %v (manager available: %t, last probe error: %v)", readyCtx.Err(), status.Available, err)
 	case <-time.After(time.Second):
 	}
 }
