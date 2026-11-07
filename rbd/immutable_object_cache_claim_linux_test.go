@@ -151,6 +151,12 @@ func TestCachePathClaimArbitratesEquivalentEmptyPaths(t *testing.T) {
 	if a != b {
 		t.Fatalf("two names for the same cache produced %s and %s", a, b)
 	}
+	t.Cleanup(func() {
+		target, _ := os.Readlink(a)
+		if target == "sh:"+first.pidfile+".lease" || target == "sh:"+second.pidfile+".lease" {
+			_ = os.Remove(a)
+		}
+	})
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	result := make(chan cacheShellFixture, 2)
@@ -171,11 +177,7 @@ func TestCachePathClaimArbitratesEquivalentEmptyPaths(t *testing.T) {
 		t.Fatalf("obtained %d claims", len(result))
 	}
 	winner := <-result
-	t.Cleanup(func() {
-		if target, _ := os.Readlink(a); target == "sh:"+winner.pidfile+".lease" {
-			_ = os.Remove(a)
-		}
-	})
+
 	out, err := second.command(t, "inspect", second.cache, second.sock).Output()
 	if err != nil {
 		t.Fatal(err)

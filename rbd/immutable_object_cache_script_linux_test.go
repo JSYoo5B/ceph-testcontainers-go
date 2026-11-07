@@ -219,6 +219,7 @@ func TestCacheRestoreAfterPrelaunchConflict(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	fixture := cacheShellFixture{root: root, cache: cache, sock: sock, pidfile: pidfile, env: os.Environ()}
+	fixture.cleanTestAlias(t)
 	fixture.reserve(t)
 	if got := run("start", "admin", cache, sock, "1024", asok, pidfile, "none", "", fixture.claimPath(t)); got != "conflict=1" {
 		t.Fatalf("prelaunch conflict: %s", got)
