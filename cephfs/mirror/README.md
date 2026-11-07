@@ -89,7 +89,8 @@ shares (baseline, gaps, overflow and `Stop`) is in
   provided. Both clusters must use the same network mode;
   `Daemon.InterruptPeerLink` needs bridge networking.
 - Ceph's MGR assigns directories to daemons. On Ceph 20.2.4 it does not move
-  assigned directories when a daemon joins: call `RebalanceDirectories`. The
+  assigned directories when a daemon joins: call `RebalanceDirectories`. It
+  re-registers the owned paths, ending their existing directory watches. The
   MGR's mirroring module can hang for good when a directory is removed while
   another assignment is changing; `RebalanceDirectories` waits for an idle
   policy, plain removals do not, and `ceph mgr fail` recovers.

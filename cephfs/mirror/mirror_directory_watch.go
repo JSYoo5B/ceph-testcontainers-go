@@ -111,11 +111,11 @@ func (w *DirectoryWatch) Stop() error {
 // a long fixture operation is a gap. A successful read whose compared state
 // equals the previous successful read produces no event. A failed read
 // produces a WatchGap and the watch continues; the next successful read is
-// WatchResumed. A new owner after daemon loss or a rebalance, a new native
+// WatchResumed. A new owner after daemon loss, a new native
 // watcher instance after a restart and reset counters are changes, not the
 // end of the watch. These end the watch instead: ctx ending, Stop, a
 // terminated mirror or source or destination cluster, the directory policy
-// removed from the mirror or registered again (even under the same path),
+// removed from the mirror or registered again (including by RebalanceDirectories),
 // the peer removed or replaced, a changed filesystem or metadata pool
 // identity, a native report that DirectoryStatus refuses as malformed or
 // contradictory, and a full buffer (ceph.ErrWatchOverflow).
