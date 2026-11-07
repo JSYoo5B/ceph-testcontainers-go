@@ -335,10 +335,12 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	verify(seed, seedCheckpoint, "final-seed-unchanged")
 	verify(foreign, foreignCheckpoint, "final-foreign-unchanged")
 	beforeCommands = counter.commands.Load()
-	if receipt, err := mirror.BeginDirectoryRemoval(ctx, outside); receipt != nil || err == nil || counter.commands.Load() != beforeCommands {
-		t.Fatal("native foreign policy gained privately owned removal authority", err)
+	for _, path := range []string{foreign, outside} {
+		if receipt, err := mirror.BeginDirectoryRemoval(ctx, path); receipt != nil || err == nil || counter.commands.Load() != beforeCommands || slices.Contains(mirror.Directories, path) {
+			t.Fatalf("foreign policy %q gained privately owned removal authority: %v", path, err)
+		}
 	}
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added, unapplied}); err != nil || slices.Contains(mirror.Directories, foreign) || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added, unapplied}); err != nil || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
 		t.Fatal("final original policy/client lifecycle/fault evidence changed", err)
 	}
 	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
