@@ -1,0 +1,225 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 626.684,
+  "execution": "42367566862-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "fc0c309620a2f6de22d2d0a845cc09d37312fbb5fcb971caec9cfc0ebe6e9ee5",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "dbfb55ace23e9c60dd5af5189938947d82bafd27eba8dc0f5a1ee65306784916",
+        "cell": "21.2.0/477e3db0532c",
+        "entries": [
+          {
+            "core": false,
+            "id": "topology-osd_second_fault-e2e6003d-2709e8d1fe",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_second_fault",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_second_fault-e2e6003d",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_second_fault/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/osd_second_fault_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_second_fault",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDSecondFaultDuringBackfill"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-osd_fullness_live_client-047f04db-5129ef468d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_fullness_live_client",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_fullness_live_client-047f04db",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_fullness_live_client/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/osd_fullness_live_client_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_fullness_live_client",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDFullnessLiveClientDuringBarrier"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2a0b72d90e81a4102ff7c608af4a4014c76c4d776bff015ad1459215543def01",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "6d47d7f259f6bc72d6e0280acfbfa5d37aef9dbceeba1a68f47bd35870b7f979",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-07T11:18:06.147973+00:00",
+        "source_sha": "2a93656b2c8e98f6db56edd36e97c2ba24e88664",
+        "test_images": {
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "dbfb55ace23e9c60dd5af5189938947d82bafd27eba8dc0f5a1ee65306784916",
+        "cell": "20.2.4/477e3db0532c",
+        "entries": [
+          {
+            "core": false,
+            "id": "topology-osd_second_fault-e2e6003d-2709e8d1fe",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_second_fault",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_second_fault-e2e6003d",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_second_fault/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/osd_second_fault_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_second_fault",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDSecondFaultDuringBackfill"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-osd_fullness_live_client-047f04db-5129ef468d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_fullness_live_client",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_fullness_live_client-047f04db",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_fullness_live_client/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/osd_fullness_live_client_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_fullness_live_client",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDFullnessLiveClientDuringBarrier"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2f0266c7dba5c18b1f8addd9d4ee25b56f4b3616a2afed6244520685391061fa",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:aac25fc48b5306425ceefaf6a46755d5820fb3f60805141334de4f99a4ea6d6c"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "1b2015efbb943ac523eea3c5d35b74786a15690c1d3584925904f91344bd4ac0",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-07T11:18:06.147973+00:00",
+        "source_sha": "2a93656b2c8e98f6db56edd36e97c2ba24e88664",
+        "test_images": {
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "2a93656b2c8e98f6db56edd36e97c2ba24e88664:42367566862:1",
+    "selected_at": "2026-11-07T11:18:06.147973+00:00",
+    "source_sha": "2a93656b2c8e98f6db56edd36e97c2ba24e88664"
+  },
+  "receipt_sha256": "8e0eb007232437ecc12674d34fb465746cb5fb13411d22285399d2df7db072d9",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "2a93656b2c8e98f6db56edd36e97c2ba24e88664",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    }
+  ]
+}
