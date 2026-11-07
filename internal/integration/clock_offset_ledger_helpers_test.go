@@ -375,7 +375,10 @@ func judgeClockRestore(l clockOffsetLedger, s clockOffsetStep, lastShift clockOf
 		return clockRestoreUnknown, "measurement bracket starts before the restore acknowledgement"
 	}
 	if s.Measured.overlaps(l.Baseline) {
-		if lastShift.Known && s.Measured.overlaps(lastShift) {
+		if !lastShift.Known {
+			return clockRestoreUnknown, "no admitted nonzero offset was measured before restore"
+		}
+		if s.Measured.overlaps(lastShift) {
 			return clockRestoreUnknown, "measured interval contains both the reference and the last admitted offset and does not discriminate"
 		}
 		return clockRestoreVerified, "same instance measured inside the reference interval after the +0 acknowledgement"

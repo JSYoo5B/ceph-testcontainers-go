@@ -444,3 +444,26 @@ func TestClockOffsetLedgerFleetRejudgesLiveCleanup(t *testing.T) {
 		}
 	}
 }
+
+func TestClockRestoreNeedsAnObservedShift(t *testing.T) {
+	ackOnly := clockLedStep("plus", clockLedOff, 100*clockLedSec)
+	ackOnly.SampleKnown = false
+	for _, tc := range []struct {
+		name  string
+		steps []clockOffsetStep
+	}{
+		{"no steps", nil},
+		{"zero only", []clockOffsetStep{clockLedStep("zero", 0, 100*clockLedSec)}},
+		{"ack only", []clockOffsetStep{ackOnly}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := clockLedgerOK()
+			l.Steps = tc.steps
+			l.Cleanup = clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}
+			j := judgeClockOffsetLedger(l)
+			if j.Restore != clockRestoreUnknown || j.CleanupVerdict != clockProvenanceInvalid {
+				t.Fatalf("unwitnessed restore: %s", j)
+			}
+		})
+	}
+}
