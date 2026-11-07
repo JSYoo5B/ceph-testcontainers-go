@@ -81,11 +81,11 @@ func (o *cephFSDirectoryOwnership) forget(directory string) {
 	delete(o.rebalanceRelease, directory)
 }
 
-// ownedPaths lists the owned paths in order.
-func (o *cephFSDirectoryOwnership) ownedPaths() []string {
+// rebalancePaths lists owned paths that the caller still wants registered.
+func (o *cephFSDirectoryOwnership) rebalancePaths() []string {
 	directories := make([]string, 0, len(o.owned))
 	for directory, owned := range o.owned {
-		if owned {
+		if owned && !o.pendingRelease[directory] {
 			directories = append(directories, directory)
 		}
 	}

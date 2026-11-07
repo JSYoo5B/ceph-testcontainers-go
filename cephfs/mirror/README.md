@@ -91,8 +91,9 @@ shares (baseline, gaps, overflow and `Stop`) is in
 - Ceph's MGR assigns directories to daemons. On Ceph 20.2.4 it does not move
   assigned directories when a daemon joins: call `RebalanceDirectories`. It
   re-registers the owned paths, ending their existing directory watches. If an
-  explicit removal lost its reply, rebalance waits for a retry while the path
-  remains tracked and leaves it removed once its absence is confirmed. The
+  explicit removal lost its reply, rebalance skips that path, redistributes
+  the other owned paths when the native policy is idle, and forgets the
+  removed path once its absence is confirmed. The
   MGR's mirroring module can hang for good when a directory is removed while
   another assignment is changing; `RebalanceDirectories` waits for an idle
   policy, plain removals do not, and `ceph mgr fail` recovers.

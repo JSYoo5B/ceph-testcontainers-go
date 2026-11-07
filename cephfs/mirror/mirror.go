@@ -1009,10 +1009,10 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 // MGR's mirroring module.
 // Every current member must be running; remove stopped members first. Intended
 // membership is retained on partial CLI failure so a fresh-context retry can
-// recover, except that a path whose remove failed or lost its reply is never
-// removed again: the retry fails while the native policy still tracks it.
-// A pending explicit RemoveDirectory completes once its path is absent;
-// rebalance leaves that path out of the restored policy.
+// recover. If rebalance's own temporary remove loses its reply, retry once
+// that path leaves the native policy. A path pending an explicit RemoveDirectory
+// is excluded from rebalance while still tracked and forgotten once absent.
+// The other owned paths can be redistributed when the native policy is idle.
 // Caller-added policies and other filesystems are not modified.
 //
 // The deadlock: the MGR's mirroring module holds its policy lock while a
@@ -1047,14 +1047,13 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, directory := range slices.Sorted(maps.Keys(mirror.directories.pendingRelease)) {
-			if slices.Contains(tracked, directory) {
-				return uncertainRemoval(ctx, mirror, directory)
+		for directory := range mirror.directories.pendingRelease {
+			if !slices.Contains(tracked, directory) {
+				mirror.forgetDirectory(directory)
 			}
-			mirror.forgetDirectory(directory)
 		}
 	}
-	directories := mirror.directories.ownedPaths()
+	directories := mirror.directories.rebalancePaths()
 	if len(directories) == 0 {
 		return nil
 	}

@@ -258,8 +258,20 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+	// A second explicit remove fails before dispatch. Its path remains in the
+	// native policy while rebalance redistributes the other desired paths.
+	undispatched := &cephFSDirectoryRemovalReplyFault{Container: legacyFault, filesystem: sourceFS.FilesystemName, directory: remaining[0], cancelBeforeDispatch: true}
+	counter := &cephFSMutationCounter{Container: undispatched}
+	source.Container = counter
+	if err := mirror.RemoveDirectory(ctx, remaining[0]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected undispatched remove: %v", err)
+	}
 	if err := mirror.RebalanceDirectories(ctx); err != nil {
 		t.Fatal(err)
+	}
+	counts := counter.counts()
+	if undispatched.removals.Load() != 1 || counts["ceph fs snapshot mirror remove"] != len(remaining) || counts["ceph fs snapshot mirror add"] != len(remaining)-1 {
+		t.Fatalf("expected one undispatched remove and a remove/add per other desired path: %v, attempts on pending path %d", counts, undispatched.removals.Load())
 	}
 	raw, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", sourceFS.FilesystemName)
 	var tracked []string
@@ -346,6 +358,7 @@ var errCephFSDirectoryRemoveReplyLost = errors.New("injected lost real native Ce
 type cephFSDirectoryRemovalReplyFault struct {
 	testcontainers.Container
 	filesystem, directory string
+	cancelBeforeDispatch  bool
 	commands, removals    atomic.Int32
 	lost                  atomic.Bool
 }
@@ -359,6 +372,9 @@ func (f *cephFSDirectoryRemovalReplyFault) Exec(ctx context.Context, args []stri
 	target := slices.Equal(native, []string{"fs", "snapshot", "mirror", "remove", f.filesystem, f.directory})
 	if target {
 		f.removals.Add(1)
+		if f.cancelBeforeDispatch {
+			return 0, nil, context.Canceled
+		}
 	}
 	code, reader, err := f.Container.Exec(ctx, args, opts...)
 	if target && err == nil && code == 0 && f.lost.CompareAndSwap(false, true) {

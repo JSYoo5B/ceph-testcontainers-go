@@ -939,32 +939,36 @@ func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// A malformed read cannot establish absence. A confirmed present
-			// path keeps the pending request and blocks other mutations.
+			// A malformed read cannot establish absence.
 			s.policyOverride = "[null]"
 			if err := m.RebalanceDirectories(t.Context()); err == nil {
 				t.Fatal("malformed inventory accepted")
 			}
 			s.policyOverride = ""
-			if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, errCephFSUncertainRemoval) {
-				t.Fatal(err)
-			}
-			if !m.directories.releasePending("/owned") || !m.directories.owns("/owned") || s.removals != 1 || s.adds != 0 {
-				t.Fatalf("unsettled removal lost or resent: %+v, removes %d, adds %d", m.directories, s.removals, s.adds)
-			}
-
-			// The original native command finally applies. Only another
-			// desired directory is redistributed. A foreign policy stays put.
+			// The original command never reaches the MGR. Other paths can
+			// be redistributed without resending it or adopting foreign policy.
 			s.removeError, s.applyRemoval = nil, true
-			s.directories = []string{"/foreign", "/keep"}
+			s.directories = []string{"/owned", "/foreign", "/keep"}
 			s.states = map[string]string{"/foreign": `{"state":"mapped"}`, "/keep": `{"state":"mapped"}`}
 			m.registerDirectory("/keep", true)
 			if err := m.RebalanceDirectories(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+			if !m.directories.releasePending("/owned") || m.directories.generation("/owned") != 1 ||
+				m.directories.generation("/keep") != 2 || s.removals != 2 || s.adds != 1 ||
+				!slices.Equal(s.directories, []string{"/owned", "/foreign", "/keep"}) {
+				t.Fatalf("rebalance with unapplied removal: %+v, native %v, removes %d, adds %d", m.directories, s.directories, s.removals, s.adds)
+			}
+
+			// Once the native policy no longer tracks the pending path the
+			// fixture can also forget it.
+			s.directories = []string{"/foreign", "/keep"}
+			if err := m.RebalanceDirectories(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			if !slices.Equal(m.Directories, []string{"/keep"}) || !slices.Equal(s.directories, []string{"/foreign", "/keep"}) ||
 				m.directories.releasePending("/owned") || m.directories.owns("/owned") || m.directories.generation("/owned") != 1 ||
-				m.directories.generation("/keep") != 2 || s.removals != 2 || s.adds != 1 {
+				m.directories.generation("/keep") != 3 || s.removals != 3 || s.adds != 2 {
 				t.Fatalf("rebalance changed explicitly removed or foreign membership: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
 			}
 		})
