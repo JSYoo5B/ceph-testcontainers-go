@@ -170,9 +170,11 @@ client session goes to the first entry of the daemon's vector, so with the
 sections above MGR, OSD and MDS operations run over IPv4 with one daemon and
 over IPv6 with the other, also after a failover.
 
-Replacing a daemon with `AddMonitor`, `AddOSD`, `AddManager`,
-`MDS.AddReplacement` and the matching `Remove` keeps a dual-stack cluster
-consistent: the replacement advertises both families, no vector keeps an
+For a MON, OSD or MGR, add the replacement with `AddMonitor`, `AddOSD` or
+`AddManager` and remove the old daemon with its `Remove` method. For an MDS,
+stop the old MDS, run `ceph mds fail <old-gid>`, then call
+`oldMDS.AddReplacement(ctx)` followed by `oldMDS.RemoveStopped(ctx)`.
+The replacement advertises both address families, no vector keeps an
 entry of a replaced daemon, and a client that stays connected moves its
 sessions to the current daemons. The admission check of
 `ManagerContainer.Remove` also reads the vectors of daemons added before it;
