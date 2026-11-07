@@ -145,8 +145,8 @@ func Closed(c *ceph.Container) bool { return get().Closed(c) }
 func Owns(c *ceph.Container, id string) bool { return get().Owns(c, id) }
 
 // ZoneRouter returns the router that forwards what leaves zone and the
-// bridge of plane, after checking that every container on that bridge is an
-// enrolled zone member or a router. It takes neither the cluster mutex nor a
+// bridge of plane, after checking that the bridges of all configured planes contain
+// only enrolled zone members and routers. It takes neither the cluster mutex nor a
 // handle's mutex; the boundary's own lock is a leaf.
 func ZoneRouter(ctx context.Context, c *ceph.Container, zone string, plane ceph.NetworkPlane) (testcontainers.Container, string, error) {
 	return get().ZoneRouter(ctx, c, zone, plane)

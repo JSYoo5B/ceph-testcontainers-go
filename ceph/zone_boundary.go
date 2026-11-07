@@ -620,7 +620,7 @@ func (b *zoneBoundary) exec(ctx context.Context, ctr testcontainers.Container, a
 }
 
 // router returns the router of zone after checking that every container on
-// the plane's bridge is a router or a member completely enrolled for its
+// every configured plane's bridge is a router or a member completely enrolled for its
 // current start: any other container, a partial enrollment included, would
 // reach the other zones directly.
 func (b *zoneBoundary) router(ctx context.Context, zone string, plane NetworkPlane) (testcontainers.Container, string, error) {

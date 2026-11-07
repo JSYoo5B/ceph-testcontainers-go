@@ -157,7 +157,7 @@ func (faultHooks) NativeFailure(program string, code int, stdout, stderr []byte)
 func (faultHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
 
 // ZoneRouter returns the router of zone and the bridge of plane once every
-// container on that bridge is a router or a completely enrolled member.
+// container on every configured plane's bridge is a router or a completely enrolled member.
 func (faultHooks) ZoneRouter(ctx context.Context, c *Container, zone string, plane NetworkPlane) (testcontainers.Container, string, error) {
 	return c.boundary.router(ctx, zone, plane)
 }
