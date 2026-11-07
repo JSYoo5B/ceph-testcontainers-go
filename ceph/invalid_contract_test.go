@@ -55,12 +55,14 @@ import (
 // Stop of an unstarted watch and the ownership loss that ends one. Session
 // admission also classifies a filesystem with no constructed cluster. RBD
 // classifies a cache client socket path that exceeds the librbd address limit
-// and a cache path or public socket claimed by a competing setup.
+// and a cache path or public socket claimed by a competing setup. RGW
+// placement refuses an unavailable gateway generation before restart and a
+// committed period outside the expected lineage.
 var invalidCallSites = map[string]int{
 	"rbd": 30, "cephfs": 27, "rgw": 51,
 	"cephfs/subvolume": 32, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 17, "cephfs/snapschedule": 16,
-	"rgw/account": 11, "rgw/placement": 20, "rgw/notification": 6, "rgw/internal/gwbase": 15,
+	"rgw/account": 11, "rgw/placement": 22, "rgw/notification": 6, "rgw/internal/gwbase": 15,
 	"rbd/mirror": 34, "cephfs/mirror": 21,
 }
 
