@@ -33,40 +33,64 @@ func RedactLog(text string, secrets []string, missingStart, missingEnd bool, red
 	if startCut == 0 && endCut == 0 {
 		return redact(text)
 	}
-	return maskOriginalSecrets(text, secrets, startCut, endCut)
+	return maskOriginalSecrets(text, knownValueMask(text, secrets, startCut, endCut))
 }
 
-// Combine the sensitive spans on the unmodified bytes. A full configured
-// value can overlap syntax or another value just as a boundary fragment can.
-func maskOriginalSecrets(text string, secrets []string, startCut, endCut int) string {
-	masked := make([]byte, len(text))
-	markBytes(masked[:startCut])
-	markBytes(masked[len(text)-endCut:])
+// Allocate one byte per input byte only when a partial or whole literal
+// matches. In particular, a short repeated literal creates no expanded
+// intermediate string.
+func knownValueMask(text string, secrets []string, startCut, endCut int) []byte {
+	var masked []byte
+	if startCut != 0 || endCut != 0 {
+		masked = make([]byte, len(text))
+		markBytes(masked[:startCut])
+		markBytes(masked[len(text)-endCut:])
+	}
 	for _, secret := range secrets {
 		if secret == "" {
 			continue
 		}
-		maskOccurrences(masked, text, secret)
+		if first := strings.Index(text, secret); first >= 0 {
+			if masked == nil {
+				masked = make([]byte, len(text))
+			}
+			maskOccurrences(masked, text, secret, first)
+		}
 	}
-	if !slices.Contains(masked, byte(0)) {
+	return masked
+}
+
+// Combine the sensitive spans on the unmodified bytes. A full configured
+// value can overlap syntax or another value just as a boundary fragment can.
+func maskOriginalSecrets(text string, masked []byte) string {
+	if masked != nil && !slices.Contains(masked, byte(0)) {
 		return "[REDACTED]"
+	}
+	mark := func(start, end int, kind byte) {
+		if masked == nil {
+			masked = make([]byte, len(text))
+		}
+		for i := start; i < end; i++ {
+			masked[i] = kind
+		}
 	}
 	// Match credential syntax before a literal or boundary mask can split a
 	// field name, bearer prefix or private-key delimiter.
 	if strings.ContainsAny(text, "=:") {
 		for _, m := range secretPattern.FindAllStringSubmatchIndex(text, -1) {
 			if !isRedactionMarker(text, m[4], m[5]) {
-				markBytes(masked[m[4]:m[5]])
+				mark(m[4], m[5], 1)
 			}
 		}
 	}
 	for _, m := range bearerPattern.FindAllStringSubmatchIndex(text, -1) {
-		markBytes(masked[m[3]:m[1]])
+		mark(m[3], m[1], 1)
 	}
 	for _, m := range privateKeyPattern.FindAllStringIndex(text, -1) {
-		for i := m[0]; i < m[1]; i++ {
-			masked[i] = privateKeyByte
-		}
+		mark(m[0], m[1], privateKeyByte)
+	}
+	if masked == nil {
+		return text
 	}
 	return renderMask(text, masked)
 }
@@ -108,13 +132,12 @@ func markBytes(mask []byte) {
 // maskOccurrences marks the union of all overlapping matches. KMP resumes
 // at the longest matching border; only bytes beyond the preceding match need
 // marking. Thus both matching and marking are linear for each secret.
-func maskOccurrences(mask []byte, text, secret string) {
-	first := strings.Index(text, secret)
-	if first < 0 {
-		return
-	}
+func maskOccurrences(mask []byte, text, secret string, first int) {
 	end := first + len(secret)
 	markBytes(mask[first:end])
+	if end == len(text) {
+		return
+	}
 	fail := prefixFailures(secret)
 	matched := fail[len(secret)-1]
 	for i := end; i < len(text); i++ {
