@@ -36,9 +36,8 @@ func runDaemonKeyRotation(t *testing.T) {
 	if err := os.WriteFile(tick, []byte("[mon]\nmon_tick_interval = 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	const monTicketTTL = 10 * time.Second
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
-		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second, MonTicketTTL: monTicketTTL}), ceph.WithConfigFile(tick))
+		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second}), ceph.WithConfigFile(tick))
 	osd, mgr := clusteraccess.OSDs(t, cluster)[0], clusteraccess.InitialManager(t, cluster)
 
 	// A pending key left by an interrupted rotation is the one a later call
@@ -87,18 +86,13 @@ func runDaemonKeyRotation(t *testing.T) {
 	if _, err := cluster.Ceph(ctx, "tell", "osd.0", "version"); err != nil {
 		t.Fatalf("the OSD stopped answering after the rotation: %v", err)
 	}
-	// Expire the old MON tickets while the sole MON is down. Its new
-	// session table must then contain authenticated connections from both
-	// daemons while they still run in their original containers.
+	// Restart the sole MON to discard its sessions. Each new CephX handshake
+	// answers a fresh server challenge with the entity key, even when the
+	// client presents its old ticket to reclaim its global ID.
 	stop := 10 * time.Second
 	mon := harness.MonitorHandle(t, ctx, cluster, "a")
 	if err := mon.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
-	}
-	select {
-	case <-time.After(monTicketTTL + time.Second):
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
 	}
 	if err := mon.Start(ctx); err != nil {
 		t.Fatal(err)
