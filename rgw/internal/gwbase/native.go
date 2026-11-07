@@ -127,6 +127,12 @@ func CommandArgs(scope NativeScope, args ...string) []string {
 	return append(argv, args...)
 }
 
+// SupervisedCommand runs radosgw-admin in the exact native scope and returns
+// a NativeCommandUnstoppedError when the process may still run after dispatch.
+func (c *Core) SupervisedCommand(ctx context.Context, scope NativeScope, args ...string) ([]byte, error) {
+	return c.supervised(ctx, c.Container(), CommandArgs(scope, args...))
+}
+
 // Command runs radosgw-admin in the gateway container in the exact native
 // scope. A failure is redacted. It is called with the owning cluster's mutex
 // held.

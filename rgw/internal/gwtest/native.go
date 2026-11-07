@@ -174,6 +174,11 @@ func (f *PlacementContainer) Exec(_ context.Context, args []string, _ ...tcexec.
 			case slices.Contains(args, "commit"):
 				f.CurrentPeriod = Clone(f.StagingPeriod)
 				f.CurrentPeriod["id"] = "period-id"
+				epoch, err := strconv.Atoi(fmt.Sprint(f.CurrentPeriod["epoch"]))
+				if err != nil {
+					return 1, nil, err
+				}
+				f.CurrentPeriod["epoch"] = epoch + 1
 				result = f.CurrentPeriod
 			default:
 				return 0, nil, errors.New("unexpected period command")
