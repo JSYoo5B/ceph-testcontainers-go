@@ -121,29 +121,48 @@ func TestMGRDebugLevel(t *testing.T) {
 	logReceipt(paused)
 
 	// Failover: the active MGR respawns, the standby takes over in place.
+	originalStandby := get(standby.name, "debug_mgr")
+	const activeMarker, standbyMarker, respawnMarker = "2/2", "4/4", "7/7"
+	set(active.name, "debug_mgr", activeMarker)
+	if got := get(active.name, "debug_mgr"); got != activeMarker {
+		t.Fatalf("active marker read back as %q", got)
+	}
+	set(standby.name, "debug_mgr", standbyMarker)
+	priorStandby := get(standby.name, "debug_mgr")
+	if priorStandby != standbyMarker {
+		t.Fatalf("standby marker read back as %q", priorStandby)
+	}
 	failed := open(active.name, "debug_mgr", "10/10")
+	if r := failed.Receipt(); r.Prior != activeMarker || r.GID != active.gid {
+		t.Fatalf("active window %+v, independently observed prior %q", r, activeMarker)
+	}
 	kept := open(standby.name, "debug_mgr", "10/10")
-	priorStandby := kept.Receipt().Prior
+	if r := kept.Receipt(); r.Prior != priorStandby || r.GID != standby.gid || get(standby.name, "debug_mgr") != "10/10" {
+		t.Fatalf("standby window %+v, independently observed prior %q", r, priorStandby)
+	}
 	harness.CephCommand(t, ctx, cluster, "mgr", "fail", active.name)
 	respawned := waitMGRFailover(t, ctx, cluster, active, standby)
+	respawnPrior := get(active.name, "debug_mgr")
+	if respawnPrior == "10/10" {
+		t.Fatalf("respawned MGR GID %d kept the old window's level", respawned)
+	}
+	set(active.name, "debug_mgr", respawnMarker)
+	if got := get(active.name, "debug_mgr"); got != respawnMarker {
+		t.Fatalf("respawned MGR marker read back as %q", got)
+	}
 	if err := failed.Restore(ctx); err == nil || failed.Receipt().State != override.DebugLevelTargetChanged {
 		t.Fatalf("restore into a respawned MGR: %v %+v", err, failed.Receipt())
 	}
 	logReceipt(failed)
-	for _, transition := range failed.Receipt().Transitions {
-		if transition.Readback == "10/10" && transition.State == override.DebugLevelRestored {
-			t.Fatalf("a respawned MGR was reported restored: %+v", failed.Receipt())
-		}
+	if got := get(active.name, "debug_mgr"); got != respawnMarker {
+		t.Fatalf("restore changed the marker on respawned MGR GID %d: got %q, want %q", respawned, got, respawnMarker)
 	}
-	// The respawned process runs without the window's level, and nothing
-	// was set in it.
-	if level := get(active.name, "debug_mgr"); level == "10/10" {
-		t.Fatalf("respawned mgr.%s (GID %d) still shows the window's level", active.name, respawned)
-	}
+	set(active.name, "debug_mgr", respawnPrior)
 	if err := kept.Restore(ctx); err != nil || kept.Receipt().State != override.DebugLevelRestored || get(standby.name, "debug_mgr") != priorStandby {
 		t.Fatalf("restore of the promoted standby: %v %+v", err, kept.Receipt())
 	}
 	logReceipt(kept)
+	set(standby.name, "debug_mgr", originalStandby)
 }
 
 type mgrRole struct {
