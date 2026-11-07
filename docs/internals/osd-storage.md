@@ -332,9 +332,12 @@ or failed release.
 
 ## Block-device OSDs
 
-An OSD can run with a device-mapper node as its BlueStore main device. This
-path is internal: `internal/faulthook.AddBlockDeviceOSD` reaches it for the
-block-device fault tests, and no public option adds such an OSD.
+An OSD can run with a device-mapper node as its BlueStore main device. No
+`ceph` option adds such an OSD; `internal/faulthook.AddBlockDeviceOSD`
+reaches the path, and its callers are the public
+[`fault/blockio`](../../fault/blockio/README.md) backend
+(`Container.AttachOSD`, whose release goes through
+`faulthook.JudgeDeviceChain`) and the block-device fault tests.
 
 ### Launch and claims
 
