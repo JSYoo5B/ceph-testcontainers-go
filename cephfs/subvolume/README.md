@@ -90,7 +90,10 @@ Watch shares (baseline, gaps, overflow and `Stop`) is in
   native and can lag writes; removal moves data to Ceph's trash and purges
   asynchronously.
 - Restore every pin override on a subvolume or group before removing it.
-  A refused removal leaves both the directory and its override available.
+  A live override blocks removal with `ceph.ErrInvalidRequest`. If Restore
+  finds an outside value on the same directory and inode, it preserves that
+  value, releases the field and returns `ceph.ErrInvalidRequest`. The old
+  handle keeps that error. Removal can proceed once the other overrides settle.
 - Pin reads and clone identity checks run libcephfs in the client container,
   so the client image needs the Python `cephfs` binding. A pin policy reports
   the local virtual xattrs, not inherited policy or actual MDS authority.

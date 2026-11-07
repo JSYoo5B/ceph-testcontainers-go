@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/volbase"
@@ -105,7 +106,7 @@ func TestCephFSPinIndependentFieldsPreserveOutsidePolicies(t *testing.T) {
 }
 
 func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
-	for _, scenario := range []string{"field", "inode", "subvolume path", "birth time", "filesystem", "pool", "removed"} {
+	for _, scenario := range []string{"inode", "subvolume path", "birth time", "filesystem", "pool", "removed"} {
 		t.Run(scenario, func(t *testing.T) {
 			fs, control, volume, _ := cephFSPinFixture()
 			change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
@@ -113,8 +114,6 @@ func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch scenario {
-			case "field":
-				control.policies[change.state.path].ExportRank = -1
 			case "inode":
 				control.policies[change.state.path].Inode++
 			case "subvolume path":
@@ -305,7 +304,7 @@ func TestRemovalRequiresOnlyTheTargetPinOverridesRestored(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, remove := range []func(context.Context) error{volume.Remove, group.Remove} {
-		if err := remove(t.Context()); err == nil || !strings.Contains(err.Error(), "pin overrides") {
+		if err := remove(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "export pin override") {
 			t.Fatalf("remove with a live pin: %v", err)
 		}
 	}
@@ -326,5 +325,51 @@ func TestRemovalRequiresOnlyTheTargetPinOverridesRestored(t *testing.T) {
 	}
 	if err := group.Remove(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOutsidePinValueReleasesOnlyItsOwnRemovalGuard(t *testing.T) {
+	fs, control, volume, group := cephFSPinFixture()
+	for _, target := range []struct {
+		override func(context.Context, PinSetting) (*PinOverrideHandle, error)
+		remove   func(context.Context) error
+	}{{volume.OverridePin, volume.Remove}, {group.OverridePin, group.Remove}} {
+		change, err := target.override(t.Context(), PinSetting{Type: PinExport, Value: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := target.override(t.Context(), PinSetting{Type: PinDistributed, Value: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		copyHandle := *change
+		policy := control.policies[change.state.path]
+		policy.ExportRank = -1
+		before := len(control.mutations)
+		if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || policy.ExportRank != -1 || len(control.mutations) != before {
+			t.Fatalf("outside value: %+v, err=%v", policy, err)
+		}
+		if err := target.remove(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "distributed") {
+			t.Fatalf("remaining field did not guard removal: %v", err)
+		}
+		newPin, err := target.override(t.Context(), PinSetting{Type: PinExport, Value: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := copyHandle.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || policy.ExportRank != 1 {
+			t.Fatalf("stale copy affected replacement override: %+v, err=%v", policy, err)
+		}
+		if err := newPin.Restore(t.Context()); err != nil || policy.ExportRank != -1 {
+			t.Fatalf("restore new override: %+v, %v", policy, err)
+		}
+		if err := other.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := target.remove(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(pinOverridesOf(fs.Core).byField) != 0 {
+		t.Fatal("pin entries remain after removal")
 	}
 }

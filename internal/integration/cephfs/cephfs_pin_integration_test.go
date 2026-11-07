@@ -6,6 +6,7 @@ package cephfs_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"testing"
@@ -163,6 +164,30 @@ func TestCephFSPinRemovalOwnership(t *testing.T) {
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("outside-value", func(t *testing.T) {
+		group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "outside"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Three distinct native values distinguish the original policy,
+		// the lease's requested pin and the caller's later edit.
+		pin, err := group.OverridePin(ctx, subvolume.PinSetting{Type: subvolume.PinRandom, Value: 0.001})
+		if err != nil {
+			t.Fatal(err)
+		}
+		harness.MustCeph(t, ctx, cluster, "fs", "subvolumegroup", "pin", fs.FilesystemName, group.Name, "random", "0.002")
+		if err := pin.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("restore outside edit: %v", err)
+		}
+		policy, err := group.PinPolicy(ctx)
+		if err != nil || policy.RandomProbability != 0.002 {
+			t.Fatalf("outside policy: %+v, %v", policy, err)
+		}
+		if err := group.Remove(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	var previous []*subvolume.PinOverrideHandle
 	for range 2 {
 		group, err := subvolume.CreateGroup(ctx, fs, subvolume.GroupConfig{Name: "owned"})
