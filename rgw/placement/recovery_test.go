@@ -21,6 +21,7 @@ type interruptedGateway struct {
 	*gwtest.PlacementContainer
 	stopped, failStart bool
 	loseStopReply      bool
+	loseCompletedStop  bool
 	started            string
 }
 
@@ -30,7 +31,11 @@ func (g *interruptedGateway) Stop(ctx context.Context, grace *time.Duration) err
 		return errors.New("Docker accepted stop but its reply was lost")
 	}
 	g.stopped = true
-	return g.PlacementContainer.Stop(ctx, grace)
+	err := g.PlacementContainer.Stop(ctx, grace)
+	if err == nil && g.loseCompletedStop {
+		return errors.New("stop completed but Docker lost the reply")
+	}
+	return err
 }
 
 func (g *interruptedGateway) Start(ctx context.Context) error {
@@ -54,6 +59,62 @@ func (g *interruptedGateway) Exec(ctx context.Context, args []string, opts ...tc
 		return 0, nil, errors.New("exec on a stopped gateway")
 	}
 	return g.PlacementContainer.Exec(ctx, args, opts...)
+}
+
+// placementControl models a separate CLI container sharing the cluster's
+// native defaults. A split essential image can lack radosgw-admin.
+type placementControl struct {
+	*gwtest.PlacementContainer
+	missingAdmin bool
+}
+
+func (c *placementControl) GetContainerID() string { return "control" }
+
+func (c *placementControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if c.missingAdmin && gwtest.Argv(args)[0] == "radosgw-admin" {
+		return gwtest.Reply(args, 127, gwtest.Stream(true, []byte("radosgw-admin unavailable\n")))
+	}
+	return c.PlacementContainer.Exec(ctx, args, opts...)
+}
+
+func TestPlacementRechecksStartupDefaultsBeforeResuming(t *testing.T) {
+	f := gwtest.NewPlacementContainer()
+	ctr := &interruptedGateway{PlacementContainer: f, failStart: true, started: "original"}
+	control := &placementControl{PlacementContainer: f}
+	g := gwtest.NewGateway(ctr, control)
+	p, err := create(t.Context(), g.Core, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(t.Context(), g.Core, p); err == nil || !ctr.stopped {
+		t.Fatalf("initial restart: %v, stopped=%t", err, ctr.stopped)
+	}
+	control.missingAdmin = true
+	if err := apply(t.Context(), g.Core, p); !errors.Is(err, ceph.ErrImageCapability) || !ctr.stopped || f.StartCount != 0 {
+		t.Fatalf("resume without admin control: %v, starts=%d", err, f.StartCount)
+	}
+	control.missingAdmin = false
+	f.ForeignDefault = true
+	if err := apply(t.Context(), g.Core, p); !errors.Is(err, ceph.ErrInvalidRequest) || !ctr.stopped || f.StartCount != 0 {
+		t.Fatalf("resume with changed default: %v, starts=%d", err, f.StartCount)
+	}
+	f.ForeignDefault = false
+	if err := apply(t.Context(), g.Core, p); err != nil || ctr.stopped || f.StartCount != 1 || f.StopCount != 1 {
+		t.Fatalf("after restoring defaults: %v, starts=%d, stops=%d", err, f.StartCount, f.StopCount)
+	}
+}
+
+func TestPlacementRecognizesCompletedStopDespiteLostReply(t *testing.T) {
+	g, f := newRGWPlacementFixture()
+	ctr := &interruptedGateway{PlacementContainer: f, loseCompletedStop: true, started: "original"}
+	g.Replace(ctr)
+	p, err := create(t.Context(), g.Core, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(t.Context(), g.Core, p); err != nil || ctr.stopped || f.StartCount != 1 || f.StopCount != 1 {
+		t.Fatalf("Apply after lost reply: %v, stopped=%t, starts=%d stops=%d", err, ctr.stopped, f.StartCount, f.StopCount)
+	}
 }
 
 func TestPlacementRetryRestartsOnlyItsOwnStoppedGeneration(t *testing.T) {
@@ -130,7 +191,9 @@ type commitFault struct {
 	*gwtest.PlacementContainer
 	cancel                         context.CancelFunc
 	loseReply, failRead, committed bool
-	deferCommit, exitAfterCommit   bool
+	exitAfterCommit                bool
+	deferOperation                 string
+	delayed                        []string
 	stopFailures                   int
 	commits                        int
 }
@@ -141,6 +204,7 @@ func (f *commitFault) Exec(ctx context.Context, args []string, opts ...tcexec.Pr
 			f.stopFailures--
 			return 0, nil, errors.New("command stop could not be confirmed")
 		}
+		f.delayed = nil
 		return 0, nil, nil
 	}
 	if f.committed && slices.Contains(args, "period") && slices.Contains(args, "get") {
@@ -153,8 +217,9 @@ func (f *commitFault) Exec(ctx context.Context, args []string, opts ...tcexec.Pr
 		f.failRead = false
 		return 0, nil, errors.New("readback unavailable")
 	}
-	if f.deferCommit && slices.Contains(args, "commit") {
-		f.deferCommit = false
+	if f.deferOperation != "" && slices.Contains(args, f.deferOperation) {
+		f.deferOperation = ""
+		f.delayed = slices.Clone(args)
 		return 0, nil, errors.New("exec accepted but not yet launched")
 	}
 	code, out, err := f.PlacementContainer.Exec(ctx, args, opts...)
@@ -222,7 +287,7 @@ func TestPlacementReconcilesOnlyItsDispatchedPeriodCommit(t *testing.T) {
 
 func TestPlacementUnstoppedCommitPreventsRestaging(t *testing.T) {
 	g, f := realmPlacementFixture()
-	ctr := &commitFault{PlacementContainer: f, cancel: func() {}, deferCommit: true, stopFailures: 2}
+	ctr := &commitFault{PlacementContainer: f, cancel: func() {}, deferOperation: "commit", stopFailures: 2}
 	g.Replace(ctr)
 	p, err := create(t.Context(), g.Core, testConfig())
 	if err != nil {
@@ -247,6 +312,52 @@ func TestPlacementUnstoppedCommitPreventsRestaging(t *testing.T) {
 	}
 	if err := apply(t.Context(), g.Core, p); err != nil || ctr.commits != 1 {
 		t.Fatalf("retry after stop confirmation = %v, commits=%d", err, ctr.commits)
+	}
+}
+
+func TestPlacementUnstoppedUpdateCannotOverwriteSubsequentStaging(t *testing.T) {
+	for _, anotherHandle := range []bool{false, true} {
+		g, f := realmPlacementFixture()
+		ctr := &commitFault{PlacementContainer: f, cancel: func() {}, deferOperation: "update", stopFailures: 2}
+		g.Replace(ctr)
+		p, err := create(t.Context(), g.Core, testConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pending *ceph.NativeCommandUnstoppedError
+		if err := apply(t.Context(), g.Core, p); !errors.As(err, &pending) {
+			t.Fatalf("lost staging update: %v", err)
+		}
+		if anotherHandle {
+			config := testConfig()
+			config.Name = "other"
+			p, err = create(t.Context(), g.Core, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.Calls = nil
+		if err := apply(t.Context(), g.Core, p); err == nil {
+			t.Fatal("ignored the unconfirmed staging writer")
+		}
+		for _, argv := range f.Calls {
+			if slices.Contains(argv, "period") {
+				t.Fatalf("read or changed period while the earlier writer could still run: %v", argv)
+			}
+		}
+		if anotherHandle {
+			continue
+		}
+		if err := apply(t.Context(), g.Core, p); err != nil || ctr.commits != 1 {
+			t.Fatalf("publish after stopping writer: %v, commits=%d", err, ctr.commits)
+		}
+		f.StagingPeriod["independent"] = "keep"
+		if ctr.delayed != nil {
+			_, _, _ = f.Exec(t.Context(), ctr.delayed)
+		}
+		if f.StagingPeriod["independent"] != "keep" {
+			t.Fatal("late update overwrote an independent staging edit")
+		}
 	}
 }
 

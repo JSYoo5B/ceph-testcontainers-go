@@ -75,13 +75,16 @@ endpoint, err := gateway.S3Endpoint(ctx) // after the restart
   same gateway. If Stop lost its reply and the original process is still
   running, the retry waits for evidence by returning an error. If the stop
   never takes effect, inspect Docker and reconcile the gateway's run state
-  before retrying. A newly started generation is rechecked; an externally
+  before retrying. Before restarting a stopped generation, the fixture
+  resolves its startup defaults through a running gateway in the same scope
+  or a control container with `radosgw-admin`. If that check fails, the
+  gateway stays stopped. A newly started generation is rechecked; an externally
   restarted and subsequently stopped gateway stays stopped.
 - In a realm, `Apply` needs the current metadata master and refuses a staging
   period that holds unrelated changes. A lost commit reply is checked against
-  the next epoch of the same period and the exact expected policy. If the
-  commit command might still be running, a retry must establish that it has
-  ended before issuing another period update. `Reload` never publishes,
+  the next epoch of the same period and the exact expected policy. If an
+  update or commit command might still be running, the next publication in
+  that cluster and realm first confirms that the earlier writer has stopped. `Reload` never publishes,
   pulls or rewrites federation topology.
 - `SetUserDefault` changes user metadata only. Tags nil keeps the user's tags;
   a nonempty list replaces them, and replacing matching tags with nonmatching

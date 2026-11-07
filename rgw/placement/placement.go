@@ -20,6 +20,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // StorageClass maps one native S3 storage class to an existing data
@@ -69,7 +70,6 @@ type Placement struct {
 type activationState struct {
 	period        map[string]any
 	commitPending bool
-	unstopped     *ceph.NativeCommandUnstoppedError
 	// For each container stopped by this placement, remember the generation
 	// that was stopped until Start has completed.
 	restarts map[string]string
@@ -353,7 +353,8 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 // explicitly restarts only g; resolve S3Endpoint again because Docker can
 // assign a new mapped host port. Other gateways in the same zone require their
 // own Apply. After a stop, Start has a bounded context independent of caller
-// cancellation. If starting fails, retry on the same gateway. If Stop loses
+// cancellation. A retry starts a stopped gateway only after another admin
+// container verifies its startup scope. If Stop loses
 // its reply and the original generation stays running, retries refuse another
 // restart until the gateway stops or its generation changes. Realm mode requires the current metadata master and commits a new
 // period only when its topology differs solely by this new placement. After
@@ -443,6 +444,16 @@ func (p *Placement) resumeRestart(ctx context.Context, g *gwbase.Core) (bool, er
 	}
 	restore := !state.Running && state.StartedAt == started
 	if restore {
+		// The stopped container cannot resolve its startup defaults itself.
+		// A peer with the same configured selectors or an aggregate control
+		// image can query them before this generation is started again.
+		target := servicehook.CLI(g.Cluster())
+		if peer, err := g.ScopeGateway(ctx); err == nil {
+			target = peer.Container()
+		}
+		if err := restartScope(ctx, g, target, p.scope); err != nil {
+			return false, fmt.Errorf("verify stopped RGW startup scope before resuming: %w", err)
+		}
 		if err := ctr.Start(ctx); err != nil {
 			return false, fmt.Errorf("resume RGW after placement restart: %w", err)
 		}
@@ -454,7 +465,7 @@ func (p *Placement) resumeRestart(ctx context.Context, g *gwbase.Core) (bool, er
 // restart admits only a running gateway whose startup scope still matches.
 // After dispatch, restore its run state even if the caller canceled.
 func (p *Placement) restart(ctx context.Context, g *gwbase.Core) error {
-	if err := restartScope(ctx, g, p.scope); err != nil {
+	if err := restartScope(ctx, g, g.Container(), p.scope); err != nil {
 		return err
 	}
 	ctr := g.Container()
@@ -477,7 +488,10 @@ func (p *Placement) restart(ctx context.Context, g *gwbase.Core) error {
 	startCtx, cancel := gwbase.SettlementContext(ctx)
 	defer cancel()
 	if stopErr != nil {
-		_, err := p.resumeRestart(startCtx, g)
+		restored, err := p.resumeRestart(startCtx, g)
+		if restored {
+			return checkResources(startCtx, g, p)
+		}
 		return errors.Join(fmt.Errorf("stop RGW for placement restart: %w", stopErr), err)
 	}
 	if err := ctr.Start(startCtx); err != nil {
@@ -487,16 +501,32 @@ func (p *Placement) restart(ctx context.Context, g *gwbase.Core) error {
 	return nil
 }
 
+// periodWriters tracks an unresolved staging update or commit for all placement
+// handles publishing to the same realm in a cluster. The cluster lock guards it.
+type periodWriters map[string]*ceph.NativeCommandUnstoppedError
+
+func (w periodWriters) run(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, operation string) ([]byte, error) {
+	data, err := g.SupervisedCommand(ctx, scope, "period", operation)
+	var pending *ceph.NativeCommandUnstoppedError
+	if errors.As(err, &pending) {
+		w[scope.RealmID] = pending
+	}
+	return data, err
+}
+
 // publishPeriod commits a realm period whose only change is target. The
 // current period must be the one recorded at creation and this zone its
 // metadata master; an existing staging period must hold nothing but this
 // change. The committed period becomes the handle's new baseline.
 func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map[string]any) error {
-	if pending := p.activation.unstopped; pending != nil {
+	writers := servicehook.Extension(g.Cluster(), "rgw/placement/period-writers", func() any {
+		return make(periodWriters)
+	}).(periodWriters)
+	if pending := writers[p.scope.RealmID]; pending != nil {
 		if err := pending.Stop(ctx); err != nil {
-			return fmt.Errorf("previous RGW period commit may still run: %w", err)
+			return fmt.Errorf("previous RGW period writer may still run: %w", err)
 		}
-		p.activation.unstopped = nil
+		delete(writers, p.scope.RealmID)
 	}
 	current, err := currentPeriod(ctx, g, p.scope)
 	if err != nil {
@@ -518,7 +548,7 @@ func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map
 	if committedTarget(current, p) == nil {
 		return nil
 	}
-	data, err := g.Command(ctx, p.scope, "period", "update")
+	data, err := writers.run(ctx, g, p.scope, "update")
 	if err != nil {
 		return err
 	}
@@ -533,8 +563,8 @@ func publishPeriod(ctx context.Context, g *gwbase.Core, p *Placement, target map
 		return err
 	}
 	p.activation.commitPending = true
-	_, commitErr := g.SupervisedCommand(ctx, p.scope, "period", "commit")
-	if errors.As(commitErr, &p.activation.unstopped) {
+	_, commitErr := writers.run(ctx, g, p.scope, "commit")
+	if writers[p.scope.RealmID] != nil {
 		return commitErr
 	}
 	readCtx, cancel := gwbase.SettlementContext(ctx)
@@ -632,7 +662,8 @@ func currentPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope
 // published period through the multicluster fixture before reloading another
 // cluster. This method never publishes, pulls or rewrites federation topology.
 // After a stop, Start has a bounded context independent of caller cancellation.
-// If starting fails, retry on the same gateway. An unconfirmed stop of the
+// A retry starts a stopped gateway only after another admin container verifies
+// its startup scope. An unconfirmed stop of the
 // still-running original generation must settle before a retry can restart it.
 // Resolve S3Endpoint again
 // because Docker may assign a new mapped host port.
@@ -717,11 +748,11 @@ func committedTarget(period map[string]any, p *Placement) error {
 	return errors.New("RGW owned placement zonegroup is absent from the local committed period")
 }
 
-func restartScope(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope) error {
+func restartScope(ctx context.Context, g *gwbase.Core, target testcontainers.Container, scope gwbase.NativeScope) error {
 	for _, resource := range []struct {
 		kind, id string
 	}{{"zonegroup", scope.GroupID}, {"zone", scope.ZoneID}} {
-		data, err := g.AdminCommand(ctx, resource.kind, "get")
+		data, err := g.AdminCommandIn(ctx, target, resource.kind, "get")
 		if err != nil {
 			return err
 		}
