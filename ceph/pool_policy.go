@@ -173,7 +173,7 @@ func (pc poolCatalog) rulePlacement(ctx context.Context, id int) (PoolConfig, er
 		if choose.Op != "chooseleaf_firstn" && choose.Op != "choose_firstn" {
 			break
 		}
-		if choose.Type != "osd" && choose.Type != "host" && choose.Type != "rack" {
+		if choose.Type != "osd" && choose.Type != "host" && choose.Type != "rack" && choose.Type != "zone" {
 			break
 		}
 		if choose.Op == "choose_firstn" && choose.Type != "osd" {
@@ -185,7 +185,7 @@ func (pc poolCatalog) rulePlacement(ctx context.Context, id int) (PoolConfig, er
 		}
 		return PoolConfig{CRUSHRoot: root, DeviceClass: class, FailureDomain: choose.Type}, nil
 	}
-	return PoolConfig{}, fmt.Errorf("native CRUSH rule %d is not a supported simple osd/host/rack rule", id)
+	return PoolConfig{}, fmt.Errorf("native CRUSH rule %d is not a supported simple osd/host/rack/zone rule", id)
 }
 
 // Count native buckets rather than creation-time placement descriptions. A

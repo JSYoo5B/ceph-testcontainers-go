@@ -467,7 +467,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		return mon, nil
 	}
 	create := func(ctx context.Context, ports []int) (testcontainers.Container, error) {
-		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.quorumMember("mon.a"), c.startup.ownedLabel())...)
+		return runContainer(ctx, image, append(c.firstMonitorOptions(fsid, ports, opts), c.startup.ownedLabel())...)
 	}
 	return c.startMonitorRetryingPorts(ctx, monitorPortStart{
 		host: c.settings.hostNetwork,
@@ -535,7 +535,7 @@ func (c *Container) firstMonitorOptions(fsid string, ports []int, opts []testcon
 	if ports != nil {
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 	}
-	return moduleOpts
+	return append(moduleOpts, c.quorumMember("mon.a"))
 }
 
 // monitorEnvironment returns the mon.sh variables of the first MON:
@@ -564,6 +564,9 @@ func (o options) monitorJoinEnvironment(name string) map[string]string {
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
+// WithZoneConfig requires Container.WithZone after this option. Omitting it
+// fails enrollment after start with ErrInvalidRequest. Keep and terminate
+// the live container returned alongside the error.
 //
 // It copies the bootstrap /etc/ceph/ceph.conf and
 // /etc/ceph/ceph.client.admin.keyring into the container and joins it to the

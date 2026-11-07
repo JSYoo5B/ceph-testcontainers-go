@@ -553,7 +553,7 @@ func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 	}
 }
 
-// SetPlacement moves a replicated pool to a simple osd/host/rack CRUSH rule.
+// SetPlacement moves a replicated pool to a simple osd/host/rack/zone CRUSH rule.
 // The size and min_size are unchanged and the new placement needs enough owned
 // eligible domains in the native CRUSH map. It reuses the pool's CreatePool
 // rule or an earlier rule from this method when its native steps match;

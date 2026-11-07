@@ -1238,3 +1238,37 @@ func regionalContainerName(t *testing.T, ctx context.Context, ctr testcontainers
 	}
 	return strings.TrimPrefix(info.Name, "/")
 }
+
+func testRegionalZonePoolAndVolumeMonitor(t *testing.T) {
+	ctx := t.Context()
+	cluster := harness.NewRegionalCluster(t, ceph.Run,
+		ceph.WithMonitorStorage(ceph.MonitorStorage{}.WithVolume()),
+		ceph.WithZoneConfig(harness.RegionalZoneConfig(t)),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(
+			ceph.OSDConfig{Zone: "a", Host: "host-a"},
+			ceph.OSDConfig{Zone: "b", Host: "host-b"},
+		).WithPoolDefaults(2, 1)))
+	layout, err := cluster.Zones(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mon, zone := harness.ZoneMember(t, layout, "mon.a"); zone != layout.QuorumZone || mon.ContainerID != cluster.GetContainerID() || len(layout.Unzoned) != 0 {
+		t.Fatalf("volume-backed MON a in zone %q: %+v, unzoned %v", zone, mon, layout.Unzoned)
+	}
+	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: regionalPool, Replicas: 2, MinSize: 1, FailureDomain: "zone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.SetReplication(ctx, 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, domain := range []string{"osd", "zone", "zone"} {
+		if err := pool.SetPlacement(ctx, ceph.PoolPlacement{FailureDomain: domain}); err != nil {
+			t.Fatalf("set %s placement: %v", domain, err)
+		}
+	}
+	state, err := pool.Status(ctx)
+	if err != nil || state.Size != 2 || state.MinSize != 2 {
+		t.Fatalf("regional replication after placement changes: %+v, %v", state, err)
+	}
+}
