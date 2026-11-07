@@ -30,8 +30,27 @@ func ExampleLease_Watch() {
 	if _, err := override.SetConfig(ctx, cluster.Container, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"}); err != nil {
 		panic(err)
 	}
-	// ... wait until the restarted MGR answers again ...
 	fs := cephfs.Filesystems(cluster.Container)[0]
+	observer, err := ceph.Observe(cluster.Container)
+	if err != nil {
+		panic(err)
+	}
+	readyCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	for {
+		status, err := observer.ManagerStatus(readyCtx)
+		if err == nil && status.Available {
+			_, err = cluster.Ceph(readyCtx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json")
+			if err == nil {
+				break
+			}
+		}
+		select {
+		case <-readyCtx.Done():
+			panic(fmt.Errorf("snap_schedule readiness: %w (manager available: %t, last probe error: %v)", readyCtx.Err(), status.Available, err))
+		case <-time.After(time.Second):
+		}
+	}
 	lease, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2}})
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.Background()) }()
