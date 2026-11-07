@@ -59,8 +59,11 @@ or exactly as CI runs the batch:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch native_shuffle \
   --package ./internal/integration/experiments/cephfs_mirror_daemon_redistribution \
-  --directory artifacts/native-shuffle
+  --directory "artifacts/native-shuffle-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digest with the result.
 

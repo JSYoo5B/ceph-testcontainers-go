@@ -56,8 +56,11 @@ or exactly as CI runs the batch:
 python3 .github/scripts/tag_scenarios.py run --category recovery \
   --batch rgw_kms_failure_modes \
   --package ./internal/integration/experiments/rgw_kms_failure_modes \
-  --directory artifacts/rgw-kms-failure-modes
+  --directory "artifacts/rgw-kms-failure-modes-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 The log records the Vault image, the native status codes and the audited
 key outcomes.

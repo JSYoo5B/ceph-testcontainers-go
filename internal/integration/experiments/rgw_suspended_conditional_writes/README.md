@@ -86,8 +86,11 @@ or run the batch exactly as CI does:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
   --package ./internal/integration/experiments/rgw_suspended_conditional_writes \
-  --directory artifacts/rgw-conditional-writes
+  --directory "artifacts/rgw-conditional-writes-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_COND ceph=`), every step's native status and error code, and the

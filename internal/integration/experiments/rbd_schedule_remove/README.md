@@ -66,8 +66,11 @@ or exactly as CI runs the batch:
 python3 .github/scripts/tag_scenarios.py run --category topology \
   --batch discovery_schedule \
   --package ./internal/integration/experiments/rbd_schedule_remove \
-  --directory artifacts/rbd-schedule-remove
+  --directory "artifacts/rbd-schedule-remove-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Use a pinned digest (`quay.io/ceph/ceph:v19.2.2@sha256:...`) or the published
 role aggregate when the result is evidence.

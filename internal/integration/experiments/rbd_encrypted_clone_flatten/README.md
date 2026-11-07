@@ -64,8 +64,11 @@ or exactly as CI runs the batch:
 python3 .github/scripts/tag_scenarios.py run --category topology \
   --batch rbd_encrypted_clone_flatten \
   --package ./internal/integration/experiments/rbd_encrypted_clone_flatten \
-  --directory artifacts/rbd-encrypted-clone-flatten
+  --directory "artifacts/rbd-encrypted-clone-flatten-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 ## Observations and controls
 

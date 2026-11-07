@@ -83,8 +83,11 @@ Or run the batch exactly as CI does:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_ssec_completion \
   --package ./internal/integration/experiments/rgw_ssec_multipart_completion \
-  --directory artifacts/rgw-ssec-completion
+  --directory "artifacts/rgw-ssec-completion-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored

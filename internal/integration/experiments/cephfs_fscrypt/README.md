@@ -106,8 +106,11 @@ or exactly as CI runs the batch:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch cephfs_fscrypt \
   --package ./internal/integration/experiments/cephfs_fscrypt \
-  --directory artifacts/cephfs-fscrypt
+  --directory "artifacts/cephfs-fscrypt-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Each subtest logs one `FSCRYPT_RECEIPT` line, or `FSCRYPT_CLIENT_REFUSED`
 for a client build without fscrypt.

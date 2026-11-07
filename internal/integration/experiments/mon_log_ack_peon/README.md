@@ -66,8 +66,11 @@ or through the tag runner:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch mon_log_ack \
   --package ./internal/integration/experiments/mon_log_ack_peon \
-  --directory artifacts/mon-log-ack
+  --directory "artifacts/mon-log-ack-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 The log line `MON_LOG_ACK ceph=...` records the version the cluster runs; pin
 the image by digest when the result is evidence.

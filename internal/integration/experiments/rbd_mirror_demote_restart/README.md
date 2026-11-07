@@ -71,8 +71,11 @@ or, exactly as CI runs the batch:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
   --package ./internal/integration/experiments/rbd_mirror_demote_restart \
-  --directory artifacts/rbd-demote-restart
+  --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digest and the `ceph --version` source SHA with the result;
 `harness.StaticFacts` logs the versions the cluster runs.
