@@ -3,15 +3,23 @@
 package cephfs_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
@@ -137,17 +145,45 @@ func testCephFSDirectoryRemovalSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatal("add a directory with the slow MGR path:", err)
 	}
+	original := source.Container
+	dispatch := &cephFSRemovalDispatchProbe{Container: original, filesystem: sourceFS.FilesystemName, logf: t.Logf}
+	source.Container = dispatch
+	defer func() { source.Container = original }()
+	paths := append(slices.Clone(initial), added)
+	var callers sync.WaitGroup
+	callers.Add(len(paths))
+	type outcome struct {
+		directory string
+		elapsed   time.Duration
+		err       error
+	}
+	results := make(chan outcome, len(paths))
+	removeCtx, cancelRemoves := context.WithTimeout(ctx, 12*time.Minute)
+	defer cancelRemoves()
+	for _, directory := range paths {
+		go func() {
+			callers.Done()
+			callers.Wait()
+			started := time.Now()
+			err := mirror.RemoveDirectory(removeCtx, directory)
+			results <- outcome{directory, time.Since(started), err}
+		}()
+	}
 	var timeline []string
-	for _, directory := range append(slices.Clone(initial), added) {
-		started := time.Now()
-		removeCtx, stop := context.WithTimeout(ctx, 3*time.Minute)
-		err := mirror.RemoveDirectory(removeCtx, directory)
-		stop()
-		took := time.Since(started).Round(time.Millisecond)
-		if err != nil {
-			t.Fatalf("remove %s after %s (earlier: %v): %v", directory, took, timeline, err)
+	var errs []error
+	for range paths {
+		result := <-results
+		timeline = append(timeline, fmt.Sprintf("%s %s", result.directory, result.elapsed.Round(time.Millisecond)))
+		if result.err != nil {
+			cancelRemoves()
+			errs = append(errs, fmt.Errorf("remove %s: %w", result.directory, result.err))
 		}
-		timeline = append(timeline, fmt.Sprintf("%s %s", directory, took))
+	}
+	if err := errors.Join(errs...); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatch.sent) != len(paths) {
+		t.Fatalf("observed %d removal dispatches for %d paths", len(dispatch.sent), len(paths))
 	}
 
 	// The module answers, and its policy drains.
@@ -169,4 +205,90 @@ func testCephFSDirectoryRemovalSerialization(t *testing.T) {
 	}
 	t.Logf("CEPHFS_MIRROR_REMOVAL_SERIALIZATION %s: MGR to osd %s delayed %s; removals %s; policy drained after %s (%d probes)",
 		harness.StaticFacts(source).Images.Essential, osd, time.Second, strings.Join(timeline, ", "), drained.Elapsed.Round(time.Millisecond), drained.Attempts)
+}
+
+// cephFSRemovalDispatchProbe inspects the actual admission reads. It adds no
+// queries or sleeps that could let a missing production wait pass by chance.
+type cephFSRemovalDispatchProbe struct {
+	testcontainers.Container
+	logf       func(string, ...any)
+	filesystem string
+	removing   atomic.Bool
+	mu         sync.Mutex
+	states     map[string]string
+	sent       []string
+}
+
+func (p *cephFSRemovalDispatchProbe) Exec(ctx context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args := argv
+	if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
+		args = args[3:]
+	}
+	if len(args) < 5 || !slices.Equal(args[:3], []string{"fs", "snapshot", "mirror"}) || args[4] != p.filesystem {
+		return p.Container.Exec(ctx, argv, opts...)
+	}
+	if args[3] == "remove" && len(args) == 6 {
+		if !p.removing.CompareAndSwap(false, true) {
+			return 0, nil, errors.New("overlapping native directory remove dispatches")
+		}
+		defer p.removing.Store(false)
+		p.mu.Lock()
+		err := checkCephFSRemovalDispatch(p.states, p.sent, args[5])
+		if err == nil {
+			p.logf("remove %s on %s: observed native states %v, previously dispatched %v", args[5], p.filesystem, p.states, p.sent)
+			p.sent = append(p.sent, args[5])
+			p.states = nil
+		}
+		p.mu.Unlock()
+		if err != nil {
+			return 0, nil, err
+		}
+		return p.Container.Exec(ctx, argv, opts...)
+	}
+	if !((args[3] == "ls" && len(args) == 5) || (args[3] == "dirmap" && len(args) == 6)) {
+		return p.Container.Exec(ctx, argv, opts...)
+	}
+	code, reader, err := p.Container.Exec(ctx, argv, opts...)
+	if err != nil {
+		return code, reader, err
+	}
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		return code, nil, err
+	}
+	var out, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &stderr, bytes.NewReader(raw)); err != nil {
+		return code, nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if args[3] == "ls" {
+		p.states = nil
+		if code == 0 {
+			var names []string
+			if err := json.Unmarshal(out.Bytes(), &names); err != nil || names == nil {
+				return 0, nil, fmt.Errorf("invalid policy ls: %s", out.Bytes())
+			}
+			p.states = make(map[string]string, len(names))
+			for _, name := range names {
+				p.states[name] = ""
+			}
+		}
+	} else if _, listed := p.states[args[5]]; listed {
+		switch {
+		case code == 0:
+			var m struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &m); err != nil {
+				return 0, nil, err
+			}
+			p.states[args[5]] = m.State
+		case code == 2 && strings.Contains(stderr.String(), "ENOENT"):
+			delete(p.states, args[5])
+		default:
+			p.states[args[5]] = ""
+		}
+	}
+	return code, bytes.NewReader(raw), nil
 }
