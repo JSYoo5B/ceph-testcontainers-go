@@ -24,7 +24,7 @@ error.
 
 | Category | Meaning | Examples |
 | --- | --- | --- |
-| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
+| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, a resource that was replaced outside the fixture |
 | `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on an essential image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |

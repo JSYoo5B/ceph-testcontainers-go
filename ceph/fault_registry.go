@@ -66,9 +66,9 @@ type faultKindSpec struct {
 	undone string
 }
 
-// The families disagree on purpose: delay refusals are ErrInvalidRequest,
-// the others plain errors. Interruption and pause return the incomplete
-// handle with the error, so a caller can still restore it.
+// Each family defines its admission error. In particular, the blocklist,
+// ratio, config, OSD flag and MGR module overrides return plain errors
+// for an existing reservation.
 var faultKinds = map[faultKind]faultKindSpec{
 	faultBlockIO: {phase: faultStorage, undone: "restore block I/O fault", refuse: func(bool) error {
 		return invalidRequest("this block backend already belongs to the cluster")

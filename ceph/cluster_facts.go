@@ -34,19 +34,6 @@ var errNilClusterFacts = invalid(errors.New("cannot capture static facts of a ni
 // cluster, including a terminated one. A nil cluster returns the zero
 // ClusterFacts and an error that matches ErrInvalidRequest.
 //
-// It takes no lock, runs no command and makes no Docker call, and it never
-// reads the closed flag: closing starts before teardown finishes,
-// so the flag is no evidence about the state of the owned resources, and
-// termination alone must not fail the capture. The recorded settings, version
-// and network records are written before the cluster is returned to the caller
-// and termination does not clear them, so reading them needs no
-// synchronization with a concurrent Terminate. Retained and read are the run
-// settings, the public and replication network records and the Ceph version
-// recorded at startup. A fact never recorded, as in a cluster returned by Run
-// with an error, stays empty and is not replaced by a default.
-// TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup guards that no
-// later code path writes these sources.
-//
 // The facts are written by Run before it returns and are never cleared by
 // Terminate, so FactsOf works on a terminated cluster or while Terminate runs,
 // without a lock, command or Docker call. A fact that was never recorded stays
