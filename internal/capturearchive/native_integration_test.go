@@ -14,11 +14,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	mobycl "github.com/moby/moby/client"
@@ -119,7 +122,13 @@ func TestCaptureFailureArchive(t *testing.T) {
 				return c
 			}
 			target := runTarget([]string{"sh", "-c", "mkdir -p /www && echo archive-payload > /www/index.html && httpd -p 7000 -h /www && exec sleep infinity"})
-			client := runTarget([]string{"sleep", "infinity"})
+			// Arrange an actual byte cut inside a configured secret in this client's
+			// stdout. Only the suffix and the padding fit in the archive's log tail.
+			const logLimit = 64 << 10
+			const secretSuffix = "opaque-suffix-probe"
+			const knownSecret = "diagnostic-front-cut-" + secretSuffix
+			padding := logLimit - len(secretSuffix) - 1 // include the final newline
+			client := runTarget([]string{"sh", "-c", `printf '%s%*s\n' "$1" "$2" ''; exec sleep infinity`, "log-probe", knownSecret, strconv.Itoa(padding)})
 			inspected, err := target.Inspect(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -147,7 +156,11 @@ func TestCaptureFailureArchive(t *testing.T) {
 			}
 			root := filepath.Join(t.ArtifactDir(), "failure-archives")
 			tb := &controlledFailureTB{TB: t}
-			finalization, err := finalize.TerminateOnCleanup(tb, cluster, finalize.Config{Archive: true, ArchiveDirectory: root, Scenario: "capture-raw-copy"})
+			finalization, err := finalize.TerminateOnCleanup(tb, cluster, finalize.Config{
+				Archive: true, ArchiveDirectory: root, Scenario: "capture-raw-copy",
+				Diagnostics: diagnostics.Config{MaxOutputBytes: logLimit, RedactValues: []string{knownSecret},
+					AdditionalContainers: []diagnostics.Target{{Role: "client", Name: "tail-probe", Container: client}}},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -249,16 +262,23 @@ func TestCaptureFailureArchive(t *testing.T) {
 			var diagnostics struct {
 				Complete  bool
 				Artifacts []struct {
-					Kind, Name, Role string
-					Truncated        bool
-					Error            string
+					Kind, Name, Role, Data string
+					Truncated              bool
+					Error                  string
 				}
 			}
 			if err := json.Unmarshal(diagnosticBytes, &diagnostics); err != nil {
 				t.Fatal(err)
 			}
+			if bytes.Contains(diagnosticBytes, []byte(secretSuffix)) {
+				t.Fatal("the archived log tail exposed the known secret at its byte boundary")
+			}
+			foundProbe := false
 			truncated := []string{}
 			for _, artifact := range diagnostics.Artifacts {
+				if artifact.Kind == "container-logs" && artifact.Name == "tail-probe" {
+					foundProbe = artifact.Truncated && strings.HasPrefix(artifact.Data, "[REDACTED] ")
+				}
 				if artifact.Error != "" {
 					t.Fatalf("diagnostic error %s/%s", artifact.Kind, artifact.Name)
 				}
@@ -268,6 +288,9 @@ func TestCaptureFailureArchive(t *testing.T) {
 					}
 					truncated = append(truncated, artifact.Role+"/"+artifact.Name)
 				}
+			}
+			if !foundProbe {
+				t.Fatal("missing archived evidence of the redacted front-cut log")
 			}
 			if diagnostics.Complete != (len(truncated) == 0) || len(m.Collectors) != 2 {
 				t.Fatal("unexplained diagnostic completeness")

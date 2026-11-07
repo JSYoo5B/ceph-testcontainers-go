@@ -614,3 +614,39 @@ func TestCollectDiagnosticsProbeDeadlineRetainsStoppedState(t *testing.T) {
 		t.Fatal("probe deadline returned with a live stream reader")
 	}
 }
+
+func TestCollectDiagnosticsMasksKnownSecretCrossingLogTailBoundary(t *testing.T) {
+	const secret = "a-known-opaque-value"
+	for _, tc := range []struct {
+		name  string
+		log   string
+		limit int
+		want  string
+	}{
+		{"cut", "old " + secret + " end", len("opaque-value end"), "[REDACTED] end"},
+		{"whole", "old " + secret + " end", len(secret + " end"), "[REDACTED] end"},
+		{"uncut suffix", "opaque-value end", 32, "opaque-value end"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			control := &diagnosticsTestContainer{id: "owned"}
+			docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+				return io.NopCloser(strings.NewReader(tc.log)), nil
+			}}
+			report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{containers: []Target{{Container: control}}, control: control, secrets: []string{secret}}, docker, diagnosticsUnitReport())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, artifact := range report.Artifacts {
+				if artifact.Kind == "container-logs" {
+					if artifact.Data != tc.want || artifact.Truncated != (len(tc.log) > tc.limit) {
+						t.Fatalf("log tail %q, truncated %t", artifact.Data, artifact.Truncated)
+					}
+					return
+				}
+			}
+			t.Fatal("no log artifact")
+		})
+	}
+}

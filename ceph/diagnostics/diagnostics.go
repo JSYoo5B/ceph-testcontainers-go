@@ -342,6 +342,9 @@ func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticT
 		err = probe.Err()
 	}
 	cancel()
+	if artifact.Kind == "container-logs" && clipped {
+		data = evidence.MaskClippedStart(data, run.snapshot.secrets)
+	}
 	data, outputClipped := evidence.BoundText(run.redact(data), run.config.MaxOutputBytes)
 	artifact.Data, artifact.Truncated = data, clipped || outputClipped
 	if err != nil {

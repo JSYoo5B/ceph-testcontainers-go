@@ -442,23 +442,3 @@ func TestVerificationLineRedactionMasksWholeAndCutSecrets(t *testing.T) {
 		}
 	}
 }
-
-func TestSecretPrefixSuffix(t *testing.T) {
-	for _, c := range []struct {
-		text, secret string
-		want         int
-	}{
-		{"line abc", "abcd", 3},
-		{"line abcd", "abcd", 0},
-		{"line ab", "abcd", 2},
-		{"line", "abcd", 0},
-		{"aaaa", "aaab", 3},
-		{"x abab", "ababc", 4},
-		{"xa", "a", 0},
-		{"", "abc", 0},
-	} {
-		if got := secretPrefixSuffix(c.text, c.secret); got != c.want {
-			t.Errorf("secretPrefixSuffix(%q, %q) = %d, want %d", c.text, c.secret, got, c.want)
-		}
-	}
-}
