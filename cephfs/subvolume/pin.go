@@ -80,6 +80,7 @@ type pinOverrideState struct {
 	inode             uint64
 	previous, applied float64
 	restored          bool
+	displaced         error
 }
 
 // PinPolicy reads all three local fields on an owned subvolume's base
@@ -213,6 +214,8 @@ func temporaryPin(ctx context.Context, fs *fsbase.Core, target pinTarget, settin
 // Restore confirms the same owned directory/inode and returns only this field
 // to its previous canonical native value. It is idempotent across handle copies;
 // after an uncertain reply, retry with a fresh context to reconcile readback.
+// A confirmed outside value is preserved. Restore returns ErrInvalidRequest,
+// releases the field, and every copy of the handle retains that refusal.
 //
 //purpose:condition,lifetime
 func (change *PinOverrideHandle) Restore(ctx context.Context) error {
@@ -221,19 +224,20 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	}
 	fs := change.filesystem
 	var restored bool
-	if err := fs.WithSetupGate(ctx, func() { restored = change.state.restored }); err != nil {
+	var displaced error
+	if err := fs.WithSetupGate(ctx, func() { restored, displaced = change.state.restored, change.state.displaced }); err != nil {
 		return err
 	}
-	if restored {
-		return nil
+	if restored || displaced != nil {
+		return displaced
 	}
 	ctx, fsID, done, err := volbase.Begin(ctx, fs)
 	if err != nil {
 		return err
 	}
 	defer done()
-	if change.state.restored {
-		return nil
+	if change.state.restored || change.state.displaced != nil {
+		return change.state.displaced
 	}
 	key := change.state.path + "\x00" + string(change.setting.Type)
 	pins := pinOverridesOf(fs)
@@ -251,7 +255,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return nil
 	}
 	if value != change.state.applied {
-		return servicehook.Invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
+		return change.releaseDisplaced(pins, key)
 	}
 	if _, err := pinCommand(ctx, fs.Volumes(), change.target, change.setting.Type, change.state.previous); err != nil {
 		return err
@@ -260,12 +264,22 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if pinValue(current, change.setting.Type) != change.state.previous {
+	value = pinValue(current, change.setting.Type)
+	if value != change.state.previous && value != change.state.applied {
+		return change.releaseDisplaced(pins, key)
+	}
+	if value != change.state.previous {
 		return errors.New("directory pin restoration readback differs from prior policy")
 	}
 	change.state.restored = true
 	pins.forget(key)
 	return nil
+}
+
+func (change *PinOverrideHandle) releaseDisplaced(pins *pinOverrides, key string) error {
+	change.state.displaced = servicehook.Invalid(fmt.Errorf("%s pin at %s changed outside this override; refusing restoration", change.setting.Type, change.state.path))
+	pins.forget(key)
+	return change.state.displaced
 }
 
 func validatePinSetting(setting PinSetting) error {
@@ -468,5 +482,15 @@ func (p *pinOverrides) track(key string, change *PinOverrideHandle) {
 	p.byField[key] = change
 }
 
-// forget drops the override of key once it is restored.
+// forget releases a field once restored or confirmed to have an outside value.
 func (p *pinOverrides) forget(key string) { delete(p.byField, key) }
+
+// allowRemoval runs under the same setup gate as pin acquisition and Restore.
+func (p *pinOverrides) allowRemoval(target *volumeRecord) error {
+	for _, change := range p.byField {
+		if change.target.identity == target {
+			return servicehook.Invalid(fmt.Errorf("restore the %s pin override at %s before removal", change.setting.Type, change.state.path))
+		}
+	}
+	return nil
+}

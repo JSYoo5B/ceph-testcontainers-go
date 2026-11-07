@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/monstore"
@@ -172,6 +173,12 @@ func TestMonitorReplacementPreservesUnconfirmedGenerationForRetry(t *testing.T) 
 			}
 			if _, err := topology.currentMonitor(old); err != nil {
 				t.Fatalf("original handle cannot retry: %v", err)
+			}
+			monitors, err := cluster.Monitors(t.Context())
+			if err != nil || !slices.ContainsFunc(monitors, func(mon *MonitorContainer) bool {
+				return mon.DaemonName == name && mon.Container == original
+			}) {
+				t.Fatalf("original monitor missing from roster after failed removal: %v, %v", monitors, err)
 			}
 			created := generationDouble{id: "replacement"}
 			next, err := topology.recordMonitorReplacement(old, &monstore.Attachment{ID: "replacement"}, created, "image", nil)
