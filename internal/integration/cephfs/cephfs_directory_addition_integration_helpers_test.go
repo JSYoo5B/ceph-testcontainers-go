@@ -182,6 +182,35 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		t.Fatal("registered intent did not publish exactly one desired path", err)
 	}
 	cephFSDirectoryAdditionLog(t, "applied-explicit-reconcile", status, counter, mirror, policy)
+	// Restrict only this add to a read-only identity and interrupt its first
+	// policy readback. A fresh retry must retire the known native refusal,
+	// preserve the previous addition and admit an ordinary AddDaemon below.
+	const readerKeyring = "/tmp/tc-directory-add-reader.keyring"
+	if _, err := source.Ceph(ctx, "auth", "get-or-create", "client.directory-add-reader",
+		"mon", "allow r", "mgr", "allow r", "-o", readerKeyring); err != nil {
+		t.Fatal("prepare read-only directory-add identity", err)
+	}
+	refusal := &cephFSRefusedDirectoryAdd{Container: counter, filesystem: sourceFS.FilesystemName, keyring: readerKeyring}
+	source.Container = refusal
+	request, err := mirror.BeginDirectoryAddition(ctx, "/refused-add")
+	var nativeRefusal *ceph.NativeFailure
+	if request == nil || !errors.As(err, &nativeRefusal) || !errors.Is(err, errCephFSRefusalReadback) || nativeRefusal.ExitCode != 13 {
+		t.Fatalf("expected native permission refusal and interrupted readback: %v", err)
+	}
+	if retired, err := mirror.BeginDirectoryAddition(ctx, "/refused-add"); retired != nil || !errors.As(err, &nativeRefusal) || nativeRefusal.ExitCode != 13 || refusal.attempts.Load() != 1 {
+		t.Fatalf("fresh absence replayed or retained a refused request: attempts %d, err %v", refusal.attempts.Load(), err)
+	}
+	source.Container = counter
+	if _, err := source.Ceph(ctx, "auth", "del", "client.directory-add-reader"); err != nil {
+		t.Fatal(err)
+	}
+	harness.MultiClusterExecOutput(t, ctx, control, "rm", "-f", readerKeyring)
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, added}); err != nil {
+		t.Fatal("native refusal changed owned or foreign policy", err)
+	}
+	if status, err := applied.Status(ctx); err != nil || !status.Registered || !status.PolicyPresent {
+		t.Fatalf("settling refusal lost previous addition: %+v, %v", status, err)
+	}
 	receiver, err := mirror.AddDaemon(ctx, "addition-receiver")
 	if err != nil || receiver == nil || len(mirror.Daemons()) != 1 || customizers.Load() != 2 {
 		t.Fatal("registered zero-inventory intent did not permit ordinary new receiver", err)
@@ -353,6 +382,30 @@ func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+var errCephFSRefusalReadback = errors.New("injected failed policy readback after native directory add refusal")
+
+type cephFSRefusedDirectoryAdd struct {
+	testcontainers.Container
+	filesystem, keyring string
+	attempts            atomic.Int32
+	failRead            atomic.Bool
+}
+
+func (f *cephFSRefusedDirectoryAdd) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	native := args
+	if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
+		native = args[3:]
+	}
+	if slices.Equal(native, []string{"fs", "snapshot", "mirror", "add", f.filesystem, "/refused-add"}) && f.attempts.Add(1) == 1 {
+		f.failRead.Store(true)
+		args = append(slices.Clone(args), "--name", "client.directory-add-reader", "--keyring", f.keyring)
+	}
+	if slices.Equal(native, []string{"fs", "snapshot", "mirror", "ls", f.filesystem}) && f.failRead.CompareAndSwap(true, false) {
+		return 0, nil, errCephFSRefusalReadback
+	}
+	return f.Container.Exec(ctx, args, opts...)
 }
 
 type cephFSDirectoryAdditionCommandCounter struct {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // Production native command/parser orchestration, with only existing private
@@ -89,6 +91,40 @@ func TestDirectoryAdditionNativeRefusalSettlesAgainstOriginalPolicy(t *testing.T
 		if err != nil || !next.registered || s.adds != 2 {
 			t.Fatalf("next addition: %v", err)
 		}
+	}
+}
+
+func TestDirectoryAdditionRetiresKnownRefusalOnFreshReadback(t *testing.T) {
+	m, s, _ := newDirectoryAdditionFixture(t)
+	s.directories = append(s.directories, "/foreign")
+	s.applyAdd, s.addExitCode = false, 22
+	s.hook = func(_ *directoryRemovalControlFake, args []string) {
+		if len(args) == 6 && args[3] == "add" {
+			// The CLI exit is known, but the policy readback cannot be decoded.
+			s.policyOverride = "null"
+		}
+	}
+	r, err := beginDirectoryAdditionFixture(t, m, "/refused")
+	var refusal *ceph.NativeFailure
+	if r == nil || !errors.As(err, &refusal) || refusal.ExitCode != 22 {
+		t.Fatalf("missing pending refusal: %v, %v", r, err)
+	}
+	s.hook, s.policyOverride, s.applyAdd, s.addExitCode = nil, "", true, 0
+	if status, err := r.Status(t.Context()); err != nil || status.Registered || status.PolicyPresent {
+		t.Fatalf("pending policy observation: %+v, %v", status, err)
+	}
+	if _, err := m.AddDaemon(t.Context(), "receiver"); !errors.Is(err, errCephFSObservationGuard) {
+		t.Fatalf("read-only status released the gate: %v", err)
+	}
+	r, err = beginDirectoryAdditionFixture(t, m, "/refused")
+	if r != nil || !errors.As(err, &refusal) || refusal.ExitCode != 22 || s.adds != 1 {
+		t.Fatalf("fresh absence replayed a refused add: %v, %v, attempts %d", r, err, s.adds)
+	}
+	if err := m.AddDirectory(t.Context(), "/next"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.directories, []string{"/owned", "/foreign", "/next"}) || !slices.Equal(m.Directories, []string{"/owned", "/next"}) {
+		t.Fatalf("native %v, owned %v", s.directories, m.Directories)
 	}
 }
 

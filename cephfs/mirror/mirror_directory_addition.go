@@ -22,6 +22,8 @@ type DirectoryAddition struct {
 	baseGeneration, generation            uint64
 	requestAttempted, requestAcknowledged bool
 	registered, superseded                bool
+	// A nonzero CLI exit is known even if the following policy read fails.
+	refusal *ceph.NativeFailure
 	// Receipts displaced by this pending add, restored only if the original
 	// scope confirms absence after a native refusal.
 	priorAddition *DirectoryAddition
@@ -56,7 +58,9 @@ type DirectoryAdditionStatus struct {
 // BeginDirectoryAddition confirms ownership. Neither flag says that a daemon
 // picked up the path. When the native add exits unsuccessfully and a fresh
 // observation confirms absence in the original scope, the fixture retires the
-// intent and returns a nil receipt. Transport failures retain the pending receipt.
+// intent and returns a nil receipt with the native refusal. If the read fails,
+// a repeated Begin settles the known refusal without resending the add.
+// A transport error leaves dispatch uncertain and retains the pending receipt.
 //
 //purpose:construction,condition
 func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
@@ -262,8 +266,11 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 		m.registerDirectory(r.directory, true)
 		r.generation = m.directories.generation(r.directory)
 		r.registered = true
-		r.priorAddition, r.priorRemoval = nil, nil
+		r.priorAddition, r.priorRemoval, r.refusal = nil, nil, nil
 		return nil
+	}
+	if r.refusal != nil {
+		return r.retireRefused()
 	}
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS directory addition policy convergence", nil)
@@ -287,17 +294,11 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.sourceFilesystem, r.directory); err != nil {
 		var failure *ceph.NativeFailure
 		if errors.As(err, &failure) {
+			refusal := *failure
+			r.refusal = &refusal
 			present, readErr := r.observe(ctx, true)
 			if readErr == nil && !present {
-				r.superseded = true
-				m.ops.directoryAddition = r.priorAddition
-				if r.priorAddition != nil {
-					r.priorAddition.superseded = false
-				}
-				if r.priorRemoval != nil {
-					r.priorRemoval.superseded = false
-				}
-				r.priorAddition, r.priorRemoval = nil, nil
+				return r.retireRefused()
 			}
 			err = errors.Join(err, readErr)
 		}
@@ -305,6 +306,21 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 	}
 	r.requestAcknowledged = true
 	return r.resume(ctx)
+}
+
+// The original scope confirmed that the refused request left no native policy.
+func (r *DirectoryAddition) retireRefused() error {
+	r.superseded = true
+	r.scope.mirror.ops.directoryAddition = r.priorAddition
+	if r.priorAddition != nil {
+		r.priorAddition.superseded = false
+	}
+	if r.priorRemoval != nil {
+		r.priorRemoval.superseded = false
+	}
+	err := cephFSObserveQuery("add original CephFS mirror directory", r.refusal)
+	r.priorAddition, r.priorRemoval, r.refusal = nil, nil, nil
+	return err
 }
 
 // Status is read-only. A visible policy after a lost reply can be reported while
