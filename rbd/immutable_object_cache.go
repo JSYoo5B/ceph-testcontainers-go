@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -98,6 +100,7 @@ type ImmutableObjectCacheLease struct {
 }
 
 const immutableCacheReserveLabel = "reserve the immutable object cache lease"
+const immutableCacheRollbackTimeout = 30 * time.Second
 
 var immutableObjectCacheID = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
@@ -183,12 +186,67 @@ publish_file() {
     fi
     touch "$state/$name.published"
 }
+# No emulation: a failed syscall leaves both names alone, including across
+# mounts. GNU mv on older client images can copy and unlink on EXDEV.
+rename_noreplace() {
+    python3 -c 'import ctypes, os, sys
+lib = ctypes.CDLL(None, use_errno=True)
+rename = getattr(lib, "renameat2", None)
+if rename is None: sys.exit(38)
+rc = rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 1)
+sys.exit(ctypes.get_errno() if rc else 0)' "$1" "$2"
+}
+held_public() { printf 'held=%s\nremoved=0\n' "$1"; exit 0; }
+refuse_remove() { echo removed=0; exit 0; }
+owned_public() { test ! -L "$1" && test "$1" -ef "$state/$2.pin"; }
 check_public() {
-    ! exists "$1" || { test ! -L "$1" && test "$1" -ef "$state/$2.pin"; } ||
+    ! exists "$1" || owned_public "$1" "$2" || owned_public "$state/$2.released" "$2" ||
         ! test -f "$state/$2.published"
 }
+# Recover a no-replace rename whose reply was lost. A foreign entry may
+# return only to a vacant public name. Keep an unrecognized private entry
+# intact and report its recovery name.
+settle_handoff() {
+    slot=$state/$2.handoff captured=$state/$2.captured
+    if exists "$captured"; then
+        test ! -L "$captured" && test -f "$captured" && test "$(head -n 1 "$captured")" = "$0" || held_public "$2"
+    fi
+    if ! exists "$slot"; then
+        if exists "$captured"; then rm -f "$captured" || exit 1; fi
+        return
+    fi
+    if exists "$captured"; then
+        test "$(stat -c '%d:%i:%w:%f' "$slot")" = "$(tail -n 1 "$captured")" || held_public "$2"
+        rename_noreplace "$slot" "$1" || held_public "$2"
+        rm "$captured" || exit 1
+        refuse_remove
+    fi
+    owned_public "$slot" "$2" || held_public "$2"
+    if ! owned_public "$state/$2.released" "$2"; then
+        ln -T "$state/$2.pin" "$state/$2.released" || exit 1
+    fi
+    # Only the authenticated private directory receives an unlink.
+    rm "$slot" || exit 1
+}
 remove_public() {
-    if exists "$1" && test ! -L "$1" && test "$1" -ef "$state/$2.pin"; then rm -f "$1"; else check_public "$1" "$2"; fi
+    settle_handoff "$1" "$2"
+    if ! exists "$1" || owned_public "$state/$2.released" "$2"; then return; fi
+    if ! owned_public "$1" "$2"; then check_public "$1" "$2" || refuse_remove; return; fi
+    slot=$state/$2.handoff
+    rename_noreplace "$1" "$slot" || {
+        result=$?
+        if test "$result" = 17; then held_public "$2"; fi
+        if test "$result" = 2 && ! exists "$1" && ! exists "$slot"; then return; fi
+        exit 1
+    }
+    # Compare the inode actually moved rather than the one observed before
+    # the rename. If an outside writer won, save its identity before trying
+    # to restore the name. A crash before this record leaves the entry held.
+    if ! owned_public "$slot" "$2"; then
+        identity=$(stat -c '%d:%i:%w:%f' "$slot") || held_public "$2"
+        (set -C; printf '%s\n%s\n' "$0" "$identity" > "$state/$2.captured") || held_public "$2"
+    fi
+    settle_handoff "$1" "$2"
 }
 # Only remove known control files. In particular, never traverse an outside
 # directory that has appeared under a reservation's former name.
@@ -213,7 +271,8 @@ release_dir() {
             if exists .identity; then
                 owned_dir . "$guard" &&
                 rm -f -- launch finished owner dispatched emptied path-claim marker payload unpublished-marker \
-                    a s pid admin.pin socket.pin pidfile.pin admin.published socket.published pidfile.published &&
+                    a s pid admin.pin socket.pin pidfile.pin admin.published socket.published pidfile.published \
+                    admin.released socket.released pidfile.released &&
                 test -z "$(find . -mindepth 1 ! -name .identity -print -quit)" &&
                 printf 'drained\n' >> "$guard" && rm .identity
             else grep -qx drained "$guard"; fi &&
@@ -244,15 +303,22 @@ esac
 case "$op" in
 inspect)
     path=$1 sock=$2
+    if rename_noreplace "" "" 2>/dev/null; then exit 1
+    elif test "$?" = 2; then echo rename=1
+    else echo rename=0; fi
     if command -v flock >/dev/null 2>&1; then echo flock=1; else echo flock=0; fi
     if command -v ceph-immutable-object-cache >/dev/null 2>&1; then echo binary=1; else echo binary=0; fi
     dir=$(ceph-conf --show-config-value plugin_dir 2>/dev/null)
     if test -n "$dir" && test -f "$dir/librbd/libceph_librbd_parent_cache.so"; then echo plugin=1; else echo plugin=0; fi
-    if test -e "$sock" || test -L "$sock"; then echo socket=1; else echo socket=0; fi
     parent_kind=$(parent_state "$path") && socket_parent=$(parent_state "$sock") || exit 1
+    if test "$socket_parent" = invalid; then echo socket=invalid-parent
+    elif exists "$sock"; then echo socket=1
+    else echo socket=0; fi
     claim=$(path_claim "$path") || exit 1
     printf 'claim=%s\n' "$claim"
-    if test "$parent_kind" = invalid || test "$socket_parent" = invalid || test -L "$path" || exists "$claim"; then echo path=other
+    if test "$parent_kind" = invalid; then echo path=invalid-parent
+    elif exists "$claim"; then echo path=claimed
+    elif test -L "$path"; then echo path=other
     elif test -d "$path"; then
         contents=$(ls -A "$path") || exit 1
         if test -z "$contents"; then
@@ -317,15 +383,15 @@ start)
     id=$1 path=$2 sock=$3 size=$4 asok=$5 pidfile=$6
     cache_paths
     stage=$(dirname "$path")/.${pidfile##*/}.stage
-    pin_control || exit 1
+    conflict() { printf 'conflict=1\n'; exit 0; }
+    pin_control || conflict
     if test "$7" = empty; then stage=$path/.${pidfile##*/}.stage; fi
-    owned_dir "$stage" "$stage.witness" || exit 1
+    owned_dir "$stage" "$stage.witness" || conflict
     # Stop and start compete for one claim in the pre-existing reservation.
     # A delayed start after Restore cannot re-create that reservation.
     birth=$(cut -d' ' -f22 "/proc/$$/stat") || exit 1
     ln -sT "$$:$birth" "$state/launch" || exit 1
     trap 'touch "$state/finished"' EXIT
-    conflict() { printf 'conflict=1\n'; exit 0; }
     if exists "$sock" || exists "$asok" || exists "$pidfile"; then conflict; fi
     claim=$9
     printf '%s\n' "$claim" > "$state/path-claim" || exit 1
@@ -450,6 +516,13 @@ remove)
         fi
         rmdir "$stage/marker" || exit 1
     fi
+    # Pin the parent used for all three public names. A later change to a
+    # parent symlink cannot redirect a compensating rename.
+    exec 6<"$(dirname "$sock")" || exit 1
+    parent=/proc/$$/fd/6/.
+    test "$parent/${control##*/}" -ef "$state" || refuse_remove
+    sock=$parent/${sock##*/} asok=$parent/${asok##*/} pidfile=$parent/${pidfile##*/}
+    settle_handoff "$sock" socket; settle_handoff "$asok" admin; settle_handoff "$pidfile" pidfile
     check_public "$sock" socket && check_public "$asok" admin && check_public "$pidfile" pidfile || { echo removed=0; exit 0; }
     # A staged directory was either never published or already reclaimed.
     root=$path
@@ -489,7 +562,7 @@ remove)
         touch "$state/emptied" || exit 1
     fi
     if test "$created" = 1 && exists "$stage/data"; then rmdir "$stage/data" || exit 1; fi
-    remove_public "$sock" socket && remove_public "$asok" admin && remove_public "$pidfile" pidfile || exit 1
+    remove_public "$sock" socket; remove_public "$asok" admin; remove_public "$pidfile" pidfile
     if test "$(readlink "$alias" 2>/dev/null)" = "$control"; then rm -f "$alias" || exit 1; fi
     echo removed=1
     ;;
@@ -503,15 +576,17 @@ esac
 // in client, a container that the caller owns, and returns its lease. A
 // librbd client in the same container uses the cache when it sets the
 // lease's ClientOptions; other clients read the parents from RADOS. The
-// container needs util-linux flock, ceph-immutable-object-cache and the
-// librbd parent_cache plugin. A missing prerequisite is ceph.ErrImageCapability.
+// container needs util-linux flock, ceph-immutable-object-cache, the librbd
+// parent_cache plugin and python3 with access to libc's renameat2 syscall. A missing prerequisite is ceph.ErrImageCapability.
 // An existing socket, a non-empty cache directory or an invalid path is
 // refused with ceph.ErrInvalidRequest. Contention for the cache path or the
 // public socket during startup also returns ceph.ErrInvalidRequest; if rollback
 // fails the caller receives the lease for a later Restore. A daemon that
 // exits or never opens its socket fails the call with ceph.ErrNativeFailure,
 // and startup attempts to restore the prior state. A lost start reply or a
-// failed cleanup returns a non-nil lease with the error. Keep that lease and
+// failed cleanup returns a non-nil lease with the error. Automatic rollback
+// uses a 30-second budget subject to an earlier caller deadline; its
+// supervisor bounds any subsequent cancellation handshake. Keep that lease and
 // call Restore with a fresh bounded context; a cleanup error needs attention.
 //
 //purpose:construction,condition
@@ -525,6 +600,8 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		return nil, fmt.Errorf("inspect the immutable object cache container: %w", err)
 	}
 	switch {
+	case !state.rename:
+		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "renameat2", Err: errors.New("the immutable cache requires python3 with ctypes and libc renameat2")}
 	case !state.flock:
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "flock", Err: errors.New("the immutable cache requires util-linux flock")}
 	case !state.binary:
@@ -533,10 +610,21 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 	case !state.plugin:
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "librbd parent_cache plugin",
 			Err: errors.New("the client container has no librbd parent_cache plugin")}
-	case state.socket:
-		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache socket %s already exists", config.Socket))
+	case state.socket || state.invalidSocketParent:
+		err := fmt.Errorf("the immutable object cache socket %s already exists", config.Socket)
+		if state.invalidSocketParent {
+			err = fmt.Errorf("an ancestor of the immutable object cache socket %s is not a directory", config.Socket)
+		}
+		return nil, servicehook.Invalid(err)
 	case state.path != "none" && state.path != "empty":
-		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache path %s is not an absent or empty directory", config.Path))
+		err := fmt.Errorf("the immutable object cache path %s is not an absent or empty directory", config.Path)
+		if state.path == "claimed" {
+			err = fmt.Errorf("the immutable object cache path %s already has a lease claim at %s", config.Path, state.claim)
+		}
+		if state.path == "invalid-parent" {
+			err = fmt.Errorf("an ancestor of the immutable object cache path %s is not a directory", config.Path)
+		}
+		return nil, servicehook.Invalid(err)
 	}
 	token := uuid.NewString()
 	lease := &ImmutableObjectCacheLease{
@@ -554,7 +642,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		return lease, fmt.Errorf("claim immutable object cache path: %w", err)
 	}
 	if claimReport.Stopped {
-		return lease, errors.New("immutable object cache path claim timed out")
+		return lease.rollbackStart(ctx, errors.New("immutable object cache path claim timed out"))
 	}
 	if claimReport.ExitCode != 0 {
 		out, inspectErr := immutableObjectCacheOp(ctx, client, lease.owner, "claim-held", lease.claim)
@@ -589,10 +677,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 				lease.reservations = append(lease.reservations, directory)
 				lease.uncertainReservation = directory
 			}
-			if cleanupErr := lease.Restore(context.WithoutCancel(ctx)); cleanupErr != nil {
-				return lease, errors.Join(failure, cleanupErr)
-			}
-			return nil, failure
+			return lease.rollbackStart(ctx, failure)
 		}
 		lease.reservations = append(lease.reservations, directory)
 		if err != nil || report.Stopped {
@@ -603,30 +688,32 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 			return lease, fmt.Errorf("%s: %w", immutableCacheReserveLabel, err)
 		}
 		if report.Stopped {
-			return lease, errors.New("immutable object cache lease reservation timed out")
+			return lease.rollbackStart(ctx, errors.New("immutable object cache lease reservation timed out"))
 		}
 		out, verifyErr := immutableObjectCacheOp(ctx, client, lease.owner, "confirm-reservation", directory)
 		if verifyErr != nil {
-			return lease, verifyErr
+			return lease.rollbackStart(ctx, verifyErr)
 		}
 		reserved, verifyErr := parseImmutableObjectCacheFlag(out, "reserved")
 		if verifyErr != nil {
-			return lease, verifyErr
+			return lease.rollbackStart(ctx, verifyErr)
 		}
 		if !reserved {
 			failure := immutableCacheConflict()
-			if cleanupErr := lease.Restore(context.WithoutCancel(ctx)); cleanupErr != nil {
-				return lease, errors.Join(failure, cleanupErr)
-			}
-			return nil, failure
+			return lease.rollbackStart(ctx, failure)
 		}
 	}
 	lease.launchSent = true
 	started, err := lease.start(ctx, state)
 	if err != nil {
-		// Restore can fence a delayed launch or find the owned daemon if
-		// the script finished without a PID report.
-		return lease, fmt.Errorf("start the immutable object cache: %w", err)
+		failure := fmt.Errorf("start the immutable object cache: %w", err)
+		var native *ceph.NativeFailure
+		if errors.As(err, &native) || started.replied {
+			return lease.rollbackStart(ctx, failure)
+		}
+		// The caller retains the lease after a transport failure with no
+		// terminal reply; Restore can fence even a delayed dispatch.
+		return lease, failure
 	}
 	lease.pid = started.pid
 	if started.ready {
@@ -640,10 +727,20 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 	if started.conflict {
 		failure = immutableCacheConflict()
 	}
-	if err := lease.restore(context.WithoutCancel(ctx)); err != nil {
-		return lease, errors.Join(failure, err)
+	return lease.rollbackStart(ctx, failure)
+}
+
+func (l *ImmutableObjectCacheLease) rollbackStart(ctx context.Context, cause error) (*ImmutableObjectCacheLease, error) {
+	deadline := time.Now().Add(immutableCacheRollbackTimeout)
+	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline) {
+		deadline = caller
 	}
-	return nil, failure
+	rollback, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	defer cancel()
+	if err := l.restore(rollback); err != nil {
+		return l, errors.Join(cause, err)
+	}
+	return nil, cause
 }
 
 func immutableCacheConflict() error {
@@ -781,8 +878,11 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 // reservation, the cache directory or a published file was replaced, Restore
 // preserves the replacement and reports a conflict. Restore verifies its private
 // reservations against independent witnesses before reading or deleting them.
-// A competing listener that claimed the client socket before publication
-// keeps its address.
+// Restore moves each published name into its private reservation before
+// checking the inode it can unlink. If an outside writer replaces a name
+// during that move, the name may briefly be absent. Restore puts the
+// replacement back only if the name is vacant. If another writer already
+// bound the name, the error identifies the retained entry for recovery.
 // A repeated call after success does nothing.
 //
 //purpose:construction,lifetime
@@ -839,11 +939,26 @@ func (l *ImmutableObjectCacheLease) confirmRemoval(ctx context.Context, op strin
 	if err != nil {
 		return fmt.Errorf("remove the immutable object cache files: %w", err)
 	}
-	removed, err := parseImmutableObjectCacheFlag(out, "removed")
+	fields, err := out.fields("removed", "held")
 	if err != nil {
 		return err
 	}
+	removed, err := fields.flag("removed")
+	if err != nil {
+		return err
+	}
+	if _, held := fields.values["held"]; held && (removed || op != "remove") {
+		return fields.errorf("held", "a retained public entry requires an incomplete remove")
+	}
 	if !removed {
+		if held, ok := fields.values["held"]; ok {
+			if _, err := fields.oneOf("held", "socket", "admin", "pidfile"); err != nil {
+				return err
+			}
+			recovery := path.Join(l.pidFile+".lease", held+".handoff")
+			alias := path.Join("/tmp", "tc-ioc-"+path.Base(l.pidFile), held+".handoff")
+			return fmt.Errorf("immutable cache: retained a conflicting %s entry at %s (short path %s); inspect it and the public name before retrying", held, recovery, alias)
+		}
 		if op == "release-reservation" && l.uncertainReservation != "" {
 			return fmt.Errorf("restore immutable cache: could not authenticate reservation %s or its unpublished seed %s.pending-%s; preserve any replacement and inspect before retrying", l.uncertainReservation, l.uncertainReservation, l.owner)
 		}
@@ -865,10 +980,24 @@ func (l *ImmutableObjectCacheLease) cleanupOp(ctx context.Context, op string, ar
 		l.cleanupMarker = ""
 	}
 	argv := append([]string{"sh", "-c", immutableObjectCacheScript, l.owner, op}, args...)
-	report, err := supervised.RunShellLimited(ctx, l.client, label, 0, 1024, argv...)
+	limit := 0
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return immutableObjectCacheOutput{}, context.DeadlineExceeded
+		}
+		// The shell accepts whole seconds. Round up so it does not shorten
+		// the caller's deadline, and never pass zero for a bounded context.
+		seconds := int64((remaining-1)/time.Second) + 1
+		limit = int(min(seconds, int64(math.MaxInt)))
+	}
+	report, err := supervised.RunShellLimited(ctx, l.client, label, limit, 1024, argv...)
 	if err != nil {
 		l.cleanupMarker, _ = supervised.Unconfirmed(err)
 		return immutableObjectCacheOutput{}, err
+	}
+	if report.Stopped {
+		return immutableObjectCacheOutput{}, context.DeadlineExceeded
 	}
 	if report.ExitCode != 0 || report.StdoutTruncated {
 		return immutableObjectCacheOutput{}, fmt.Errorf("immutable cache %s command failed with exit %d", op, report.ExitCode)

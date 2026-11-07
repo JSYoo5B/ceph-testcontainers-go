@@ -183,7 +183,7 @@ func TestCachePathClaimArbitratesEquivalentEmptyPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	inspection, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
-	if err != nil || inspection.path != "other" {
+	if err != nil || inspection.path != "claimed" {
 		t.Fatalf("claimed path inspection %+v: %v", inspection, err)
 	}
 	winner.check(t, "removed=1", "unclaim", a, winner.pidfile+".lease")
@@ -200,8 +200,25 @@ func TestCacheInspectNonDirectoryAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
-	if err != nil || state.path != "other" {
+	if err != nil || state.path != "invalid-parent" {
 		t.Fatalf("ancestor inspected as %+v: %v", state, err)
+	}
+	out, err = f.command(t, "inspect", f.cache, filepath.Join(ancestor, "sock")).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
+	if err != nil || !state.invalidSocketParent || state.path != "none" {
+		t.Fatalf("socket ancestor inspected as %+v: %v", state, err)
+	}
+	f.program(t, "python3", "exit 127")
+	out, err = f.command(t, "inspect", f.cache, f.sock).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
+	if err != nil || state.rename {
+		t.Fatalf("missing syscall helper: %+v, %v", state, err)
 	}
 	if _, err = os.Stat(f.pidfile + ".lease"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("inspect mutated the filesystem: %v", err)

@@ -108,7 +108,7 @@ func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 	case "release-reservation", "forget-reservation", "unclaim":
 		out = append(out, "removed=1")
 	case "inspect":
-		out = append(out, "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64), "flock=1", "binary="+bit(f.binary), "plugin="+bit(f.plugin), "socket="+bit(f.files[a[1]] != ""))
+		out = append(out, "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64), "flock=1", "rename=1", "binary="+bit(f.binary), "plugin="+bit(f.plugin), "socket="+bit(f.files[a[1]] != ""))
 		switch kind := f.files[a[0]]; {
 		case kind == "":
 			out = append(out, "path=none")
@@ -547,13 +547,13 @@ func TestImmutableObjectCacheStartOutput(t *testing.T) {
 }
 
 func TestImmutableObjectCacheInspectAndFlagOutput(t *testing.T) {
-	if got, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", "binary=0", "plugin=1", "socket=0", "path=none", "flock=1", "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64))); err != nil ||
-		got != (immutableObjectCacheInspection{plugin: true, path: "none", flock: true, claim: "/tmp/tc-ioc-path-" + strings.Repeat("a", 64)}) {
+	if got, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", "binary=0", "plugin=1", "socket=0", "path=none", "flock=1", "rename=1", "claim=/tmp/tc-ioc-path-"+strings.Repeat("a", 64))); err != nil ||
+		got != (immutableObjectCacheInspection{plugin: true, path: "none", flock: true, rename: true, claim: "/tmp/tc-ioc-path-" + strings.Repeat("a", 64)}) {
 		t.Fatalf("inspection %+v, %v", got, err)
 	}
 	for name, lines := range map[string][]string{
-		"missing claim":  {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1"},
-		"unsafe claim":   {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1", "claim=/tmp/unrelated"},
+		"missing claim":  {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1", "rename=1"},
+		"unsafe claim":   {"binary=1", "plugin=1", "socket=0", "path=none", "flock=1", "rename=1", "claim=/tmp/unrelated"},
 		"missing plugin": {"binary=1", "socket=0", "path=none"},
 		"unknown path":   {"binary=1", "plugin=1", "socket=0", "path=dir"},
 		"malformed flag": {"binary=true", "plugin=1", "socket=0", "path=none"},

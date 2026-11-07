@@ -269,6 +269,8 @@ command -p ln "$@"`)
 type delayedCacheReservation struct {
 	*fakeCacheClient
 	root       string
+	claim      string
+	delay      string
 	saved      []string
 	failCancel bool
 }
@@ -276,7 +278,7 @@ type delayedCacheReservation struct {
 func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	switch args[2] {
 	case supervised.ShellScript:
-		if args[11] != "claim" {
+		if args[11] != c.delay || c.saved != nil {
 			return c.fakeCacheClient.Exec(ctx, args, opts...)
 		}
 		c.saved = append([]string(nil), args...)
@@ -290,6 +292,9 @@ func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts 
 		args = append([]string(nil), args...)
 		args[4] = filepath.Join(c.root, filepath.Base(args[4]))
 	default:
+		if args[4] == "inspect" {
+			return clustertest.Reply(args, 0, []byte("binary=1\nplugin=1\nflock=1\nrename=1\nsocket=0\npath=none\nclaim="+c.claim+"\n"))
+		}
 		if args[4] != "release-reservation" && args[4] != "forget-reservation" && args[4] != "unclaim" {
 			return c.fakeCacheClient.Exec(ctx, args, opts...)
 		}
@@ -302,26 +307,45 @@ func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts 
 }
 
 func TestCacheReservationReplyLossFencesLateDispatch(t *testing.T) {
-	f := newCacheShellFixture(t)
-	c := &delayedCacheReservation{fakeCacheClient: newFakeCacheClient(), root: f.root, failCancel: true}
-	lease, err := StartImmutableObjectCache(t.Context(), c, ImmutableObjectCache{Path: f.cache, Socket: f.sock})
-	if lease == nil || err == nil || lease.reserveMarker == "" || lease.launchSent {
-		t.Fatalf("lost reservation: %+v, %v", lease, err)
-	}
-	if err := os.WriteFile(f.cache, []byte("foreign"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := lease.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.CommandContext(t.Context(), c.saved[0], c.saved[1:]...).Run(); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(f.cache); err != nil || string(got) != "foreign" {
-		t.Fatalf("foreign resource after late dispatch: %q, %v", got, err)
-	}
-	entries, err := os.ReadDir(f.root)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("late reservation recreated state: %v, %v", entries, err)
+	for _, delay := range []string{"claim", "reserve"} {
+		t.Run(delay, func(t *testing.T) {
+			f := newCacheShellFixture(t)
+			c := &delayedCacheReservation{fakeCacheClient: newFakeCacheClient(), root: f.root, claim: f.claimPath(t), delay: delay, failCancel: true}
+			lease, err := StartImmutableObjectCache(t.Context(), c, ImmutableObjectCache{Path: f.cache, Socket: f.sock})
+			if lease == nil || err == nil || lease.reserveMarker == "" || lease.launchSent || len(c.saved) <= 12 || c.saved[11] != delay {
+				t.Fatalf("lost %s: %+v, %v", delay, lease, err)
+			}
+			t.Cleanup(func() {
+				if target, _ := os.Readlink(c.claim); target == lease.owner+":"+lease.pidFile+".lease" {
+					_ = os.Remove(c.claim)
+				}
+			})
+			requested := c.claim
+			if delay == "reserve" {
+				requested = lease.pidFile + ".lease"
+			}
+			if c.saved[12] != requested {
+				t.Fatalf("saved %s target %s, want %s", delay, c.saved[12], requested)
+			}
+			if err := os.WriteFile(f.cache, []byte("foreign"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := lease.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.CommandContext(t.Context(), c.saved[0], c.saved[1:]...).Run(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(requested); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("late %s recreated %s: %v", delay, requested, err)
+			}
+			if got, err := os.ReadFile(f.cache); err != nil || string(got) != "foreign" {
+				t.Fatalf("foreign resource after late %s: %q, %v", delay, got, err)
+			}
+			entries, err := os.ReadDir(f.root)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("late %s left files: %v, %v", delay, entries, err)
+			}
+		})
 	}
 }
