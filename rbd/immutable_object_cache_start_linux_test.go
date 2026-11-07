@@ -353,50 +353,59 @@ func TestCacheReservationReplyLossFencesLateDispatch(t *testing.T) {
 func TestCacheReservationProbesBothFilesystems(t *testing.T) {
 	for _, role := range []string{"socket", "cache"} {
 		for _, attempt := range []string{"first", "occupied"} {
-			t.Run(role+"/"+attempt, func(t *testing.T) {
-				f := newCacheShellFixture(t)
-				socketParent, cacheParent := filepath.Join(f.root, "runtime"), filepath.Join(f.root, "storage")
-				if err := os.Mkdir(cacheParent, 0700); err != nil {
-					t.Fatal(err)
-				}
-				control, stage := filepath.Join(socketParent, "pid.lease"), filepath.Join(cacheParent, ".pid.stage")
-				target := map[string]string{"socket": control, "cache": stage}[role]
-				f.env = append(f.env, "FAIL_SEED="+target+".pending-sh", "ATTEMPT="+attempt)
-				f.program(t, "mv", `if test "$2" = "$FAIL_SEED"; then exit 1; fi
-exec /bin/mv "$@"`)
-				f.program(t, "python3", `if test "$PWD" = "$FAIL_SEED" && test "${3:-}" = probe.from; then
-    if test "$ATTEMPT" = first || test -L probe.to; then exit 22; fi
-fi
-exec /usr/bin/python3 "$@"`)
-				dirs := []string{control}
-				if role == "cache" {
-					f.check(t, "", "reserve", control)
-					dirs = append(dirs, stage)
-				}
-				cmd := f.command(t, "reserve", target)
-				if err := cmd.Run(); err == nil || cmd.ProcessState.ExitCode() != 4 {
-					t.Fatalf("reserve %s: %v", role, err)
-				}
-				if _, err := os.Lstat(target); !os.IsNotExist(err) {
-					t.Fatalf("unsupported reservation published: %v", err)
-				}
-				f.check(t, "removed=1", "release-reservation", append([]string{target, ""}, dirs...)...)
-				f.check(t, "removed=1", "forget-reservation", dirs...)
-				for _, parent := range []string{socketParent, cacheParent} {
-					entries, err := os.ReadDir(parent)
-					if err != nil || len(entries) != 0 {
-						t.Fatalf("reservation leak %s: %v, %v", parent, entries, err)
-					}
-				}
-				for _, name := range []string{"python3", "mv"} {
-					if err := os.Remove(filepath.Join(f.root, name)); err != nil {
+			for _, fault := range []struct {
+				result, exit int
+			}{
+				{22, 4},
+				{95, 4},
+				{5, 5},
+				{0, 4},
+			} {
+				t.Run(role+"/"+attempt+"/"+strconv.Itoa(fault.result), func(t *testing.T) {
+					f := newCacheShellFixture(t)
+					socketParent, cacheParent := filepath.Join(f.root, "runtime"), filepath.Join(f.root, "storage")
+					if err := os.Mkdir(cacheParent, 0700); err != nil {
 						t.Fatal(err)
 					}
-				}
-				f.check(t, "", "reserve", target)
-				f.check(t, "removed=1", "release-reservation", "", "", target)
-				f.check(t, "removed=1", "forget-reservation", target)
-			})
+					control, stage := filepath.Join(socketParent, "pid.lease"), filepath.Join(cacheParent, ".pid.stage")
+					target := map[string]string{"socket": control, "cache": stage}[role]
+					f.env = append(f.env, "FAIL_SEED="+target+".pending-sh", "ATTEMPT="+attempt, "FAULT="+strconv.Itoa(fault.result))
+					f.program(t, "mv", `if test "$2" = "$FAIL_SEED"; then exit 1; fi
+exec /bin/mv "$@"`)
+					f.program(t, "python3", `if test "$PWD" = "$FAIL_SEED" && test "${3:-}" = probe.from; then
+    if test "$ATTEMPT" = first || test -L probe.to; then exit "$FAULT"; fi
+fi
+exec /usr/bin/python3 "$@"`)
+					dirs := []string{control}
+					if role == "cache" {
+						f.check(t, "", "reserve", control)
+						dirs = append(dirs, stage)
+					}
+					cmd := f.command(t, "reserve", target)
+					if out, err := cmd.Output(); err == nil || cmd.ProcessState.ExitCode() != fault.exit || strings.TrimSpace(string(out)) != strconv.Itoa(fault.result) {
+						t.Fatalf("reserve %s: %q, %v", role, out, err)
+					}
+					if _, err := os.Lstat(target); !os.IsNotExist(err) {
+						t.Fatalf("unsupported reservation published: %v", err)
+					}
+					f.check(t, "removed=1", "release-reservation", append([]string{target, ""}, dirs...)...)
+					f.check(t, "removed=1", "forget-reservation", dirs...)
+					for _, parent := range []string{socketParent, cacheParent} {
+						entries, err := os.ReadDir(parent)
+						if err != nil || len(entries) != 0 {
+							t.Fatalf("reservation leak %s: %v, %v", parent, entries, err)
+						}
+					}
+					for _, name := range []string{"python3", "mv"} {
+						if err := os.Remove(filepath.Join(f.root, name)); err != nil {
+							t.Fatal(err)
+						}
+					}
+					f.check(t, "", "reserve", target)
+					f.check(t, "removed=1", "release-reservation", "", "", target)
+					f.check(t, "removed=1", "forget-reservation", target)
+				})
+			}
 		}
 	}
 }

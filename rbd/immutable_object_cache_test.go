@@ -48,13 +48,15 @@ type fakeCacheClient struct {
 	// from opening its socket. execFail fails the exec of that operation
 	// after the operation ran. statusDrop leaves that field out of the status
 	// report.
-	startExit              int
-	startConflict          bool
-	unsupportedReservation string
-	heldDirectory          string
-	noSocket               bool
-	execFail               string
-	statusDrop             string
+	startExit         int
+	startConflict     bool
+	failedReservation string
+	probeExit         int
+	probeDetail       string
+	heldDirectory     string
+	noSocket          bool
+	execFail          string
+	statusDrop        string
 }
 
 func newFakeCacheClient() *fakeCacheClient {
@@ -107,8 +109,8 @@ func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 	switch op {
 	case "claim":
 	case "reserve":
-		if f.unsupportedReservation != "" && strings.HasSuffix(a[0], f.unsupportedReservation) {
-			return clustertest.Reply(args, 4, nil)
+		if f.failedReservation != "" && strings.HasSuffix(a[0], f.failedReservation) {
+			return clustertest.Reply(args, f.probeExit, []byte(f.probeDetail))
 		}
 	case "confirm-reservation":
 		out = append(out, "reserved=1")
@@ -601,17 +603,32 @@ func TestImmutableObjectCacheMalformedStatusKeepsTheLease(t *testing.T) {
 	}
 }
 
-func TestImmutableObjectCacheRejectsUnsupportedFilesystemBeforeLaunch(t *testing.T) {
-	for _, test := range []struct{ suffix, parent string }{{".lease", "/socket-fs"}, {".stage", "/cache-fs"}} {
-		t.Run(test.suffix, func(t *testing.T) {
-			c := newFakeCacheClient()
-			c.unsupportedReservation = test.suffix
-			cfg := ImmutableObjectCache{Path: "/cache-fs/data", Socket: "/socket-fs/cache.sock"}
-			lease, err := StartImmutableObjectCache(t.Context(), c, cfg)
-			if lease != nil || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || !strings.Contains(err.Error(), test.parent) || len(c.daemons) != 0 {
-				t.Fatalf("unsupported reservation: lease=%v err=%v launched=%d", lease, err, len(c.daemons))
-			}
-		})
+func TestImmutableObjectCacheReportsProbeFailureBeforeLaunch(t *testing.T) {
+	for _, mount := range []struct{ suffix, parent string }{{".lease", "/socket-fs"}, {".stage", "/cache-fs"}} {
+		for _, probe := range []struct {
+			exit        int
+			detail      string
+			unsupported bool
+		}{
+			{4, "22", true},
+			{4, "0", true},
+			{5, "5", false},
+		} {
+			t.Run(mount.suffix+"/"+probe.detail, func(t *testing.T) {
+				c := newFakeCacheClient()
+				c.failedReservation, c.probeExit, c.probeDetail = mount.suffix, probe.exit, probe.detail
+				cfg := ImmutableObjectCache{Path: "/cache-fs/data", Socket: "/socket-fs/cache.sock"}
+				lease, err := StartImmutableObjectCache(t.Context(), c, cfg)
+				diagnostic := "Linux errno " + probe.detail
+				if probe.detail == "0" {
+					diagnostic = "no-replace semantics violated"
+				}
+				if lease != nil || err == nil || errors.Is(err, ceph.ErrEnvironmentUnavailable) != probe.unsupported ||
+					!strings.Contains(err.Error(), mount.parent) || !strings.Contains(err.Error(), diagnostic) || len(c.daemons) != 0 {
+					t.Fatalf("reservation probe: lease=%v err=%v launched=%d", lease, err, len(c.daemons))
+				}
+			})
+		}
 	}
 }
 

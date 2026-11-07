@@ -196,6 +196,16 @@ if rename is None: sys.exit(38)
 rc = rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 1)
 sys.exit(ctypes.get_errno() if rc else 0)' "$1" "$2"
 }
+probe_rename() {
+    rename_noreplace probe.from probe.to
+    result=$?
+    test "$result" = "$1" && return 0
+    echo "$result"
+    case "$result" in
+        0|22|38|95) exit 4 ;; # Unexpected success, EINVAL, ENOSYS, EOPNOTSUPP
+        *) exit 5 ;;
+    esac
+}
 held_public() { printf 'held=%s\nremoved=0\n' "$1"; exit 0; }
 refuse_remove() { echo removed=0; exit 0; }
 owned_public() { test ! -L "$1" && test "$1" -ef "$state/$2.pin"; }
@@ -389,11 +399,16 @@ reserve)
     # Exercise this reservation's actual filesystem, including its refusal
     # to overwrite a different directory entry. Keep both probes private.
     (cd -P "$seed" && owned_dir . "$dir.witness" && ln -s from probe.from || exit 1
-        rename_noreplace probe.from probe.to || exit 4
-        ! exists probe.from && test "$(readlink probe.to)" = from && ln -s occupied probe.from || exit 1
-        rename_noreplace probe.from probe.to
-        test "$?" = 17 || exit 4
-        test "$(readlink probe.from)" = occupied && test "$(readlink probe.to)" = from && rm probe.from probe.to
+        probe_rename 0
+        if exists probe.from || ! test -L probe.to; then echo 0; exit 4; fi
+        moved=$(readlink probe.to) || exit 1
+        test "$moved" = from || { echo 0; exit 4; }
+        ln -s occupied probe.from || exit 1
+        probe_rename 17
+        if ! test -L probe.from || ! test -L probe.to; then echo 0; exit 4; fi
+        source=$(readlink probe.from) && dest=$(readlink probe.to) || exit 1
+        test "$source" = occupied && test "$dest" = from || { echo 0; exit 4; }
+        rm probe.from probe.to
     ) || exit $?
     # The final publication runs in the supervisor's directly reaped process.
     exec mv -nT "$seed" "$dir"
@@ -658,7 +673,8 @@ esac
 // container needs util-linux flock, ceph-immutable-object-cache, the librbd
 // parent_cache plugin and python3 with access to libc's renameat2 syscall. A missing prerequisite is ceph.ErrImageCapability.
 // Startup probes both reservation filesystems. A filesystem that cannot perform an
-// atomic no-replace rename returns ceph.ErrEnvironmentUnavailable.
+// atomic no-replace rename returns ceph.ErrEnvironmentUnavailable. Other
+// rename failures report the affected directory and the Linux errno.
 // An existing socket, a non-empty cache directory or an invalid path is
 // refused with ceph.ErrInvalidRequest. Contention for the cache path or the
 // public socket during startup also returns ceph.ErrInvalidRequest; if rollback
@@ -753,9 +769,8 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 			} else {
 				lease.reservations = append(lease.reservations, directory)
 				lease.uncertainReservation = directory
-				if report.ExitCode == 4 {
-					failure = &ceph.OperationError{Kind: ceph.ErrEnvironmentUnavailable, Capability: "RENAME_NOREPLACE",
-						Err: fmt.Errorf("the filesystem at %s could not perform an atomic no-replace rename", path.Dir(directory))}
+				if report.ExitCode == 4 || report.ExitCode == 5 {
+					failure = cacheRenameProbeError(directory, report)
 				}
 			}
 			return lease.rollbackStart(ctx, failure)
@@ -822,6 +837,23 @@ func (l *ImmutableObjectCacheLease) rollbackStart(ctx context.Context, cause err
 		return l, errors.Join(cause, err)
 	}
 	return nil, cause
+}
+
+// The client reports Linux errno values even when the Go caller runs elsewhere.
+// Zero denotes a completed syscall that violated the no-replace postconditions.
+func cacheRenameProbeError(directory string, report supervised.ShellReport) error {
+	errno, err := strconv.ParseUint(strings.TrimSpace(string(report.Stdout)), 10, 8)
+	if err != nil {
+		return fmt.Errorf("probe RENAME_NOREPLACE at %s: invalid errno report", path.Dir(directory))
+	}
+	cause := fmt.Errorf("probe RENAME_NOREPLACE at %s: Linux errno %d", path.Dir(directory), errno)
+	if errno == 0 {
+		cause = fmt.Errorf("probe RENAME_NOREPLACE at %s: no-replace semantics violated", path.Dir(directory))
+	}
+	if report.ExitCode == 4 {
+		return &ceph.OperationError{Kind: ceph.ErrEnvironmentUnavailable, Capability: "RENAME_NOREPLACE", Err: cause}
+	}
+	return cause
 }
 
 func immutableCacheConflict() error {
