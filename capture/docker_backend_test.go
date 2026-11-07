@@ -346,8 +346,16 @@ func TestRetrieveClassifiesDockerArchiveArtifacts(t *testing.T) {
 			if err := os.WriteFile(req.Output, []byte(original), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			session := &Session{backend: dockerBackend{}, helper: "helper", request: req, report: Report{MaxBytes: req.maxBytes()}}
-			err := session.retrieve(t.Context())
+			output, err := os.OpenFile(req.Output, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := output.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := &Session{backend: dockerBackend{}, helper: "helper", request: req, output: output, outputInfo: info, report: Report{MaxBytes: req.maxBytes()}}
+			err = session.retrieve(t.Context())
 			if (err == nil) != (tc.category == nil) {
 				t.Fatalf("unexpected retrieval error: %v", err)
 			}

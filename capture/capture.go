@@ -313,11 +313,13 @@ type Report struct {
 // calls Stop, also after a failed workload: no cluster Terminate knows it.
 // Stop is retryable.
 type Session struct {
-	mu      sync.Mutex
-	backend backend
-	request Request
-	target  nshelper.Target
-	helper  string
+	mu         sync.Mutex
+	backend    backend
+	request    Request
+	output     *os.File // reserved by Start and held until retrieval finishes
+	outputInfo os.FileInfo
+	target     nshelper.Target
+	helper     string
 	// probe is a probe container that could not be removed; Stop retries.
 	probe     string
 	selfEnded bool
@@ -367,7 +369,8 @@ var pollInterval = 100 * time.Millisecond
 // together with its output file; a running helper or an existing file alone
 // is not. Start the workload of interest only after Start returns. The session is bound to the target's
 // container instance and sandbox at that point and never follows a restart.
-// After a failure Start removes the helper and the output file it created.
+// On failure Start cleans up its helper. Before removing the reserved
+// output it checks that the path still identifies the file it created.
 // It returns a non-nil session with an error only when it could not remove
 // a probe or a helper that failed; the empty output file then stays, and Stop
 // retries the removal.
@@ -392,14 +395,15 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 	if err := admitTarget(state, req.Network); err != nil {
 		return nil, err
 	}
-	output, err := os.OpenFile(req.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	output, err := os.OpenFile(req.Output, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, nshelper.InvalidRequest("create the capture output: %w", err)
 	}
-	if err := output.Close(); err != nil {
-		return nil, errors.Join(fmt.Errorf("create the capture output: %w", err), os.Remove(req.Output))
+	info, err := output.Stat()
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("stat the reserved capture output: %w", err), output.Close())
 	}
-	s := &Session{backend: b, request: req, target: state}
+	s := &Session{backend: b, request: req, target: state, output: output, outputInfo: info}
 	s.report = Report{
 		ContainerID: id, Network: req.Network, Interface: req.Interface, MACAddress: state.MAC,
 		SandboxID: state.SandboxID, TargetStartedAt: state.StartedAt, HelperImage: req.HelperImage,
@@ -410,20 +414,46 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 		if s.probe != "" {
 			// The probe is still owned: Stop retries its removal.
 			s.finished = true
-			return s, err
+			return s, errors.Join(err, s.closeOutput())
 		}
-		return nil, errors.Join(err, os.Remove(req.Output))
+		return nil, errors.Join(err, s.removeReservedOutput(), s.closeOutput())
 	}
 	if err := s.startHelper(ctx, id); err != nil {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 		defer cancel()
 		removeErr := s.abort(finishCtx)
 		if removeErr != nil {
-			return s, errors.Join(err, removeErr)
+			return s, errors.Join(err, removeErr, s.closeOutput())
 		}
-		return nil, errors.Join(err, os.Remove(req.Output))
+		return nil, errors.Join(err, s.removeReservedOutput(), s.closeOutput())
 	}
 	return s, nil
+}
+
+func (s *Session) closeOutput() error {
+	err := s.output.Close()
+	s.output = nil
+	return err
+}
+
+// checkOutputIdentity compares the caller's path with the file reserved at Start.
+// All writes use the held descriptor even if the path moves after this check.
+func (s *Session) checkOutputIdentity() error {
+	info, err := os.Lstat(s.request.Output)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, s.outputInfo) {
+		return errors.New("capture output path no longer names the reserved file")
+	}
+	return nil
+}
+
+func (s *Session) removeReservedOutput() error {
+	if err := s.checkOutputIdentity(); err != nil {
+		return err
+	}
+	return os.Remove(s.request.Output)
 }
 
 // admitTarget refuses targets whose endpoint a helper cannot join.
@@ -585,9 +615,10 @@ func (s *Session) removeHelper(ctx context.Context) error {
 // Stop ends the capture with SIGTERM and waits up to the stop grace for
 // tcpdump to flush and close its file; after the grace it kills the helper
 // (EndKilled). It then compares the target with the joined generation,
-// copies the helper's file into Request.Output, checks its structure and
+// copies the helper's file into the file reserved at Start, checks its structure and
 // removes the helper. Its Docker work uses a fresh bounded context, so a
-// canceled or expired ctx does not leave the helper behind.
+// canceled or expired ctx does not leave the helper behind. A replaced output
+// path fails retrieval. Keep the reserved file at Request.Output until Stop returns.
 //
 // The report is returned also with an error. The error joins ErrFailed for
 // a capture that failed, was killed, ended early on its own, lost its target
@@ -791,48 +822,37 @@ func copyBounded(dst io.Writer, src io.Reader, limit int64) (written int64, beyo
 }
 
 // retrieve delivers the helper's file into Output and checks it.
-func (s *Session) retrieve(ctx context.Context) error {
-	beyond, err := s.deliver(ctx)
-	if err != nil {
-		return err
-	}
-	return s.checkOutput(beyond)
-}
-
-// deliver copies the helper's file into Output, at most MaxBytes of it, and
-// records the delivered bytes. It returns the byte past the bound when the
-// helper's file has one. Retrieved is set only after the copy and both
-// closes succeed.
-func (s *Session) deliver(ctx context.Context) ([]byte, error) {
+func (s *Session) retrieve(ctx context.Context) (err error) {
+	defer func() {
+		if closeErr := s.closeOutput(); closeErr != nil {
+			s.report.Retrieved, s.report.RetrievedSHA256 = false, ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	content, err := s.backend.copy(ctx, s.helper, capturePath)
 	if err != nil {
-		return nil, classifyRetrieval(ctx, err)
+		return classifyRetrieval(ctx, err)
 	}
-	output, err := os.OpenFile(s.request.Output, os.O_WRONLY|os.O_TRUNC, 0)
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("open the capture output: %w", err), content.Close())
+	if err := s.checkOutputIdentity(); err != nil {
+		return errors.Join(err, content.Close())
+	}
+	if err := s.output.Truncate(0); err != nil {
+		return errors.Join(err, content.Close())
 	}
 	digest := sha256.New()
-	written, beyond, copyErr := copyBounded(io.MultiWriter(output, digest), content, s.report.MaxBytes)
+	written, beyond, copyErr := copyBounded(io.MultiWriter(s.output, digest), content, s.report.MaxBytes)
 	s.report.RetrievedBytes = written
-	if err := errors.Join(copyErr, content.Close(), output.Close()); err != nil {
-		return nil, fmt.Errorf("retrieve the capture file: %w", err)
+	if err := errors.Join(copyErr, content.Close(), s.checkOutputIdentity()); err != nil {
+		return fmt.Errorf("retrieve the capture file: %w", err)
 	}
 	s.report.Retrieved = true
 	s.report.RetrievedSHA256 = fmt.Sprintf("%x", digest.Sum(nil))
-	return beyond, nil
-}
-
-// checkOutput checks the structure of Output followed by beyond, so that a
-// helper's file past the bound is reported as such, and records the verdict.
-func (s *Session) checkOutput(beyond []byte) error {
-	delivered, err := os.Open(s.request.Output)
-	if err != nil {
-		return fmt.Errorf("check the capture file: %w", err)
-	}
+	// Validate the same descriptor used for delivery, including the first byte
+	// beyond the configured limit when the helper exceeded it.
+	delivered := io.NewSectionReader(s.output, 0, written)
 	checked, err := pcapfile.Validate(io.MultiReader(delivered, bytes.NewReader(beyond)),
 		pcapfile.Limits{MaxFileBytes: s.report.MaxBytes, MaxRecordBytes: uint32(s.request.SnapLen)})
-	if err = errors.Join(err, delivered.Close()); err != nil {
+	if err != nil {
 		return fmt.Errorf("check the capture file: %w", err)
 	}
 	s.report.File = fileReport(checked)
@@ -907,8 +927,9 @@ func classifyStartError(ctx context.Context, label string, err error) error {
 	return classifyDocker(ctx, fmt.Errorf("%s: %w", label, err))
 }
 
-// SettlementAllowance is the longest Settle runs: the stop grace plus the
-// package's own two-minute Docker allowance (130 seconds with the default
+// SettlementAllowance bounds Docker work after Stop acquires the session lock.
+// Time queued behind another Stop or Settle is additional. The allowance
+// is the stop grace plus two minutes (130 seconds with the default
 // stop grace), whatever context Settle is given. It is what
 // finalize.Finalization.Capture admits for this session. Callers that do not use
 // a finalization call Stop instead of Settle.

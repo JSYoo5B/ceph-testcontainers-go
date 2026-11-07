@@ -18,7 +18,11 @@ func TestCaptureFileUsesWholeRetrievedIdentityAndPreservesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(data))
-	s := &Session{finished: true, request: Request{Output: path}, report: Report{Retrieved: true, RetrievedBytes: int64(len(data)), RetrievedSHA256: digest, File: FileReport{Status: FileMalformed, Complete: false, SHA256: "prefix-only"}}}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{finished: true, outputInfo: info, request: Request{Output: path}, report: Report{Retrieved: true, RetrievedBytes: int64(len(data)), RetrievedSHA256: digest, File: FileReport{Status: FileMalformed, Complete: false, SHA256: "prefix-only"}}}
 	reader, size, hash, err := s.CaptureFile(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -87,5 +91,42 @@ func TestCaptureFileDoesNotWaitForConcurrentSettlement(t *testing.T) {
 	defer s.mu.Unlock()
 	if _, _, _, err := s.CaptureFile(context.Background()); err == nil {
 		t.Fatal("busy source admitted")
+	}
+}
+
+func TestStopPreservesReplacementAtReservedOutput(t *testing.T) {
+	for _, name := range []string{"regular", "symlink"} {
+		t.Run(name, func(t *testing.T) {
+			req := request(t)
+			s, err := startFake(t, newFakeBackend(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = s.Stop(context.Background()) })
+			if err := os.Rename(req.Output, req.Output+".owned"); err != nil {
+				t.Fatal(err)
+			}
+			foreign := req.Output
+			if name == "symlink" {
+				foreign += ".foreign"
+				if err := os.Symlink(foreign, req.Output); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const marker = "belongs to the caller"
+			if err := os.WriteFile(foreign, []byte(marker), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.Stop(t.Context())
+			if err == nil || report.Retrieved || !report.HelperRemoved || s.output != nil {
+				t.Fatalf("Stop: %+v, %v", report, err)
+			}
+			if _, _, _, err := s.CaptureFile(t.Context()); err == nil {
+				t.Fatal("replacement admitted for archiving")
+			}
+			if got, err := os.ReadFile(foreign); err != nil || string(got) != marker {
+				t.Fatalf("foreign file %q, %v", got, err)
+			}
+		})
 	}
 }

@@ -14,9 +14,9 @@ import (
 // CaptureSettler is a running packet capture that a Finalization settles.
 // *capture.Session implements it.
 type CaptureSettler interface {
-	// SettlementAllowance is the longest Settle runs, independent of the
-	// context it is given. The finalization admits exactly this much for the
-	// capture; it is not taken from the checks' budget.
+	// SettlementAllowance bounds the context that finalization gives Settle.
+	// A capture.Session can also wait for a concurrent Stop before beginning
+	// its own bounded Docker work. Finalization waits for Settle to return.
 	SettlementAllowance() time.Duration
 	// Settle ends the capture, delivers its file and removes its helper. It
 	// must not abandon work that is still running when its context ends, and
