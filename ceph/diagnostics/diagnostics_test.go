@@ -753,3 +753,55 @@ func TestDiagnosticBoundaryPreservesStructuredRedaction(t *testing.T) {
 		})
 	}
 }
+
+func TestDiagnosticLogArtifactsMaskPartialPrivateKeys(t *testing.T) {
+	const begin = "-----BEGIN RSA PRIVATE KEY-----\n"
+	const end = "-----END RSA PRIVATE KEY-----\n"
+	const payload = "synthetic-base64-payload\n"
+	const marker = "[REDACTED PRIVATE KEY]"
+	const latest = "mgr: latest observation\n"
+	for _, tc := range []struct {
+		name, stream, want   string
+		byteLimit, lineLimit int
+		interrupted          bool
+		literals             []string
+	}{
+		{"missing BEGIN at byte limit", begin + payload + end + latest, marker + "\n" + latest, len(payload + end + latest), 20, false, nil},
+		{"missing BEGIN at Docker line limit", begin + payload + end + latest, marker + "\n" + latest, 1024, 3, false, nil},
+		{"missing END in a short frame", latest + begin + payload, latest + marker, 1024, 20, true, nil},
+		{"producer still emitting at EOF", latest + begin + payload, latest + marker, 1024, 20, false, nil},
+		{"complete block before open block", latest + begin + payload + end + latest + begin + payload,
+			latest + marker + "\n" + latest + marker, 1024, 20, true, nil},
+		{"both cuts and overlapping values", begin + payload + end + "token=abc status ok\n" + begin + payload,
+			marker + "\ntoken=[REDACTED] status ok\n" + marker, len(payload + end + "token=abc status ok\n" + begin + payload), 20, true, []string{"PRIVATE KEY", "abc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := diagnosticsUnitConfig(t)
+			cfg.MaxOutputBytes, cfg.LogTail = tc.byteLimit, tc.lineLimit
+			docker := diagnosticsTestDocker{
+				inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+					return dockerclient.ContainerInspectResult{}, nil
+				},
+				logs: func(_ context.Context, _ string, opts dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+					tail, err := strconv.Atoi(opts.Tail)
+					if err != nil {
+						t.Fatal(err)
+					}
+					text := lastLines(tc.stream, tail)
+					frame := diagnosticsFrame(1, text)
+					if tc.interrupted {
+						frame = diagnosticsFrame(1, text+"rest")
+						frame = frame[:len(frame)-4]
+					}
+					return io.NopCloser(bytes.NewReader(frame)), nil
+				},
+			}
+			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: tc.literals}, redact: evidence.Redactor(tc.literals)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) { return diagnosticLogs(ctx, docker, "owned", cfg) }}, &a)
+			if a.Data != tc.want || (a.Error != "") != tc.interrupted || a.Truncated != (len(tc.stream) > tc.byteLimit || tc.interrupted) {
+				t.Fatalf("log artifact %+v, want %q", a, tc.want)
+			}
+		})
+	}
+}

@@ -165,7 +165,15 @@ func isRedactionMarker(data string, start, end int) bool {
 }
 
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
-var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
+var privateKeyDelimiter = regexp.MustCompile(`-----(?:BEGIN|END) (?:[A-Z ]+)?PRIVATE KEY-----`)
+
+// VisitPrivateKeyDelimiters visits PEM private-key delimiters in source order.
+// start and end are byte offsets in the original text.
+func VisitPrivateKeyDelimiters(text string, visit func(begin bool, start, end int)) {
+	for _, m := range privateKeyDelimiter.FindAllStringIndex(text, -1) {
+		visit(strings.HasPrefix(text[m[0]:m[1]], "-----BEGIN "), m[0], m[1])
+	}
+}
 
 // Redactor masks configured values and recognized credential spans together.
 // Overlapping values are withheld as one run.
@@ -174,7 +182,7 @@ func Redactor(values []string) func(string) string {
 	slices.Sort(values)
 	values = slices.Compact(values)
 	return func(data string) string {
-		return maskOriginalSecrets(data, knownValueMask(data, values, 0, 0))
+		return maskOriginalSecrets(data, knownValueMask(data, values, 0, 0), false)
 	}
 }
 

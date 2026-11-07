@@ -11,7 +11,10 @@ import (
 // extending from the other. Use the ordinary redactor when no boundary mask
 // applies, so inserted markers are never passed through another substitution.
 func RedactLog(text string, secrets []string, missingStart, missingEnd bool, redact func(string) string) string {
-	if len(text) == 0 || (!missingStart && !missingEnd) {
+	// Docker can omit the beginning of a PEM block at its requested line
+	// count even when the retained bytes fit and the stream ends cleanly.
+	mayContainKey := strings.Contains(text, "PRIVATE KEY-----")
+	if len(text) == 0 || (!missingStart && !missingEnd && !mayContainKey) {
 		return redact(text)
 	}
 	startCut, endCut := 0, 0
@@ -30,10 +33,10 @@ func RedactLog(text string, secrets []string, missingStart, missingEnd bool, red
 			endCut = max(endCut, suffixPrefixOverlap(text, secret[:len(secret)-1]))
 		}
 	}
-	if startCut == 0 && endCut == 0 {
+	if startCut == 0 && endCut == 0 && !mayContainKey {
 		return redact(text)
 	}
-	return maskOriginalSecrets(text, knownValueMask(text, secrets, startCut, endCut))
+	return maskOriginalSecrets(text, knownValueMask(text, secrets, startCut, endCut), true)
 }
 
 // Allocate one byte per input byte only when a partial or whole literal
@@ -62,7 +65,7 @@ func knownValueMask(text string, secrets []string, startCut, endCut int) []byte 
 
 // Combine the sensitive spans on the unmodified bytes. A full configured
 // value can overlap syntax or another value just as a boundary fragment can.
-func maskOriginalSecrets(text string, masked []byte) string {
+func maskOriginalSecrets(text string, masked []byte, logWindow bool) string {
 	if masked != nil && !slices.Contains(masked, byte(0)) {
 		return "[REDACTED]"
 	}
@@ -86,13 +89,36 @@ func maskOriginalSecrets(text string, masked []byte) string {
 	for _, m := range bearerPattern.FindAllStringSubmatchIndex(text, -1) {
 		mark(m[3], m[1], 1)
 	}
-	for _, m := range privateKeyPattern.FindAllStringIndex(text, -1) {
-		mark(m[0], m[1], privateKeyByte)
-	}
+	markPrivateKeys(text, logWindow, mark)
 	if masked == nil {
 		return text
 	}
 	return renderMask(text, masked)
+}
+
+// A visible END with no BEGIN can close a block opened before the log
+// window. Withhold back to the last closed block, as for the verification
+// stream. The window can end inside an open block on a stream error or
+// while the producer is still writing it.
+func markPrivateKeys(text string, logWindow bool, mark func(start, end int, kind byte)) {
+	open, lastEnd := -1, 0
+	VisitPrivateKeyDelimiters(text, func(begin bool, start, end int) {
+		if begin {
+			if open < 0 {
+				open = start
+			}
+			return
+		}
+		if open >= 0 {
+			mark(open, end, privateKeyByte)
+		} else if logWindow {
+			mark(lastEnd, end, privateKeyByte)
+		}
+		open, lastEnd = -1, end
+	})
+	if logWindow && open >= 0 {
+		mark(open, len(text), privateKeyByte)
+	}
 }
 
 // A contiguous masked run containing a private-key block keeps its specific

@@ -101,7 +101,9 @@ type Report struct {
 // ends, every running query is stopped in the control container before the
 // call returns. Known admin and RGW secrets and every client key the cluster
 // generated (also replaced or attempted ones) are masked with RedactValues and
-// named secret patterns.
+// named secret patterns. A log window that starts or ends inside a PEM
+// private key masks the visible key material up to its END delimiter or
+// from its BEGIN delimiter.
 //
 //purpose:evidence
 func Collect(ctx context.Context, cluster *ceph.Container, config Config) (*Report, error) {
