@@ -227,7 +227,7 @@ func TestOSDRemovalAcceptsAlreadyMissingOwnedDockerContainer(t *testing.T) {
 }
 
 func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
-	for _, scenario := range []string{"last descriptor", "purged neighbor", "absent pending neighbor", "registered pending neighbor", "detaching neighbor", "foreign neighbor"} {
+	for _, scenario := range []string{"last descriptor", "purged neighbor", "absent pending neighbor", "registered pending neighbor", "detaching neighbor", "registered without container", "foreign neighbor"} {
 		t.Run(scenario, func(t *testing.T) {
 			cluster, control, daemon := newOSDLifecycleFixture()
 			switch scenario {
@@ -244,6 +244,9 @@ func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
 				cluster.fleet.osdHandles.get(4).purgeIssued = true
 			case "detaching neighbor":
 				cluster.fleet.osdHandles.get(4).detaching = true
+			case "registered without container":
+				cluster.fleet.osdHandles.get(4).Container = nil
+				control.native[4] = OSDState{ID: 4, UUID: osdLifecycleOtherUUID}
 			case "foreign neighbor":
 				state := control.native[4]
 				state.UUID = osdLifecycleForeignUUID
@@ -435,6 +438,7 @@ func (control *osdLifecycleControl) Exec(ctx context.Context, args []string, _ .
 
 type osdLifecycleDaemon struct {
 	testcontainers.Container
+	id                  int
 	control             *osdLifecycleControl
 	stops, terminations int
 	terminateErr        error
@@ -442,7 +446,9 @@ type osdLifecycleDaemon struct {
 	afterStop           func()
 }
 
-func (daemon *osdLifecycleDaemon) GetContainerID() string { return "osd-lifecycle-3" }
+func (daemon *osdLifecycleDaemon) GetContainerID() string {
+	return fmt.Sprintf("osd-lifecycle-%d", daemon.id)
+}
 
 func (daemon *osdLifecycleDaemon) Stop(ctx context.Context, _ *time.Duration) error {
 	if err := ctx.Err(); err != nil {
@@ -450,9 +456,9 @@ func (daemon *osdLifecycleDaemon) Stop(ctx context.Context, _ *time.Duration) er
 	}
 	daemon.stops++
 	if !daemon.keepUp {
-		state := daemon.control.native[3]
+		state := daemon.control.native[daemon.id]
 		state.Up = false
-		daemon.control.native[3] = state
+		daemon.control.native[daemon.id] = state
 	}
 	if daemon.afterStop != nil {
 		daemon.afterStop()
@@ -473,13 +479,13 @@ func newOSDLifecycleFixture() (*Container, *osdLifecycleControl, *osdLifecycleDa
 		3: {ID: 3, UUID: osdLifecycleUUID, Up: true, In: true, Weight: 1},
 		4: {ID: 4, UUID: osdLifecycleOtherUUID, Up: true, In: true, Weight: 1},
 	}}
-	daemon := &osdLifecycleDaemon{control: control}
+	daemon := &osdLifecycleDaemon{id: 3, control: control}
 	cluster := &Container{
 		Container: control,
 		settings:  options{startupTimeout: time.Second},
 		fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{
 			3: {Container: daemon, ID: 3, nativeUUID: osdLifecycleUUID},
-			4: {ID: 4, nativeUUID: osdLifecycleOtherUUID},
+			4: {Container: &osdLifecycleDaemon{id: 4, control: control}, ID: 4, nativeUUID: osdLifecycleOtherUUID},
 		}}},
 	}
 	return cluster, control, daemon

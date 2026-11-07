@@ -931,8 +931,8 @@ func (f osdFleet) retireOSD(ctx context.Context, osd *OSDContainer) error {
 
 // checkOSDRemovable verifies, before removeOSD fences or changes anything,
 // that osd is the registered native OSD this handle created and that another
-// owned OSD remains outside removal or detach. A purge that may have committed with a lost response is
-// settled here by a fresh, strict absence. The caller holds c.mu.
+// owned OSD retains its container and remains outside removal or detach. A purge
+// whose response was lost is settled here by a fresh, strict absence. The caller holds c.mu.
 func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
 	id := osd.ID
 	if osd.purged {
@@ -956,7 +956,7 @@ func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) erro
 		return err
 	}
 	for otherID, other := range f.osdHandles.each() {
-		if otherID == id || other == nil || other.removing || other.purgeIssued || other.purged || other.detaching {
+		if otherID == id || !other.runningCapable() {
 			continue
 		}
 		if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {

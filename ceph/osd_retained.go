@@ -213,7 +213,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	}
 	osd := handle
 	if osd.removing || osd.purged || osd.purgeIssued {
-		return nil, fmt.Errorf("osd.%d is being removed; retry OSDContainer.Remove", id)
+		return nil, invalidRequest("osd.%d is being removed; retry OSDContainer.Remove", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
