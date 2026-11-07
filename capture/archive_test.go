@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -131,48 +133,88 @@ func TestStopPreservesReplacementAtReservedOutput(t *testing.T) {
 	}
 }
 
-// rejectedProbe fails preflight after the caller changes the output path.
-type rejectedProbe struct {
+// interleavedProbe lets another writer claim the real output name after the
+// initial path check and before startup settles.
+type interleavedProbe struct {
 	*fakeBackend
-	beforeRefusal func()
+	duringProbe func()
 }
 
-func (b rejectedProbe) probe(context.Context, string, string, []string) (probeResult, string, error) {
-	b.beforeRefusal()
-	return probeResult{}, "", fmt.Errorf("capture probe failed")
+func (b interleavedProbe) probe(ctx context.Context, image, network string, argv []string) (probeResult, string, error) {
+	b.duringProbe()
+	return b.fakeBackend.probe(ctx, image, network, argv)
 }
 
-func TestStartRollbackRetainsReservedFileForRetry(t *testing.T) {
-	req := request(t)
-	original := req.Output + ".original"
-	backend := rejectedProbe{newFakeBackend(), func() {
-		if err := os.Rename(req.Output, original); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(req.Output, []byte("foreign"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}}
-	s, err := start(t.Context(), backend, fakeTarget{}, req)
-	if s == nil || err == nil {
-		t.Fatalf("Start after failed rollback: session=%p, err=%v", s, err)
-	}
-	if _, err := s.Stop(t.Context()); err == nil {
-		t.Fatal("Stop accepted a replacement")
-	}
-	if contents, err := os.ReadFile(req.Output); err != nil || string(contents) != "foreign" {
-		t.Fatalf("replacement: %q, %v", contents, err)
-	}
-	if err := os.Rename(req.Output, req.Output+".foreign"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(original, req.Output); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Stop(t.Context()); err != nil || exists(req.Output) || s.output != nil {
-		t.Fatalf("reserved output after Stop: exists=%t, open=%t, err=%v", exists(req.Output), s.output != nil, err)
-	}
-	if _, err := s.Stop(t.Context()); err != nil {
-		t.Fatal(err)
+func TestConcurrentWriterOwnsOutputAfterStartupRefusal(t *testing.T) {
+	probeFailure := errors.New("injected probe failure")
+	removalFailure := errors.New("injected helper removal failure")
+	for _, tc := range []struct {
+		name                 string
+		probeErr, removalErr error
+	}{
+		{"probe refuses", probeFailure, nil},
+		{"ready helper loses final exclusive create", nil, nil},
+		{"retry helper removal with foreign file still present", nil, removalFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := request(t)
+			writerPath := req.Output + ".foreign"
+			const sentinel = "foreign writer's bytes"
+			if err := os.WriteFile(writerPath, []byte(sentinel), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			checked := make(chan struct{})
+			claimed := make(chan error, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() {
+				select {
+				case <-checked:
+					claimed <- os.Rename(writerPath, req.Output)
+				case <-ctx.Done():
+				}
+			}()
+			f := newFakeBackend()
+			f.probeErr = tc.probeErr
+			if tc.removalErr != nil {
+				f.removeErrs = []error{tc.removalErr}
+			}
+			b := interleavedProbe{f, func() {
+				if exists(req.Output) {
+					t.Error("output was reserved before startup could succeed")
+				}
+				close(checked)
+				if err := <-claimed; err != nil {
+					t.Fatal(err)
+				}
+			}}
+			s, err := start(ctx, b, fakeTarget{}, req)
+			want := tc.probeErr
+			if want == nil {
+				want = os.ErrExist
+			}
+			if !errors.Is(err, want) || (s != nil) != (tc.removalErr != nil) {
+				t.Fatalf("Start returned %p, %v", s, err)
+			}
+			if s != nil {
+				if !errors.Is(err, tc.removalErr) || s.output != nil {
+					t.Fatalf("partial startup retained an output or lost its cleanup error: %v", err)
+				}
+				for range 2 {
+					report, stopErr := s.Stop(ctx)
+					if stopErr != nil || !report.HelperRemoved || report.Retrieved {
+						t.Fatalf("Stop: %+v, %v", report, stopErr)
+					}
+				}
+			}
+			if tc.probeErr == nil && !slices.Equal(f.removed, []string{helperID}) {
+				t.Fatalf("helper removals %v", f.removed)
+			}
+			got, readErr := os.ReadFile(req.Output)
+			if readErr != nil || string(got) != sentinel {
+				t.Fatalf("foreign file after cleanup: %q, %v", got, readErr)
+			}
+		})
 	}
 }

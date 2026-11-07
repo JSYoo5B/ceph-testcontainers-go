@@ -89,8 +89,8 @@ type Request struct {
 	// MaxFileBytes.
 	MaxPackets int
 	// Output is the path of the file that Stop writes the capture to. It must
-	// not exist; Start creates it, and its directory must exist, so parallel
-	// or repeated tests need distinct paths.
+	// not exist. Start creates it exclusively once the helper is ready, in an
+	// existing directory. Parallel or repeated tests need distinct paths.
 	Output string
 	// ReadyTimeout bounds the wait for readiness; zero is
 	// DefaultReadyTimeout.
@@ -369,11 +369,11 @@ var pollInterval = 100 * time.Millisecond
 // together with its output file; a running helper or an existing file alone
 // is not. Start the workload of interest only after Start returns. The session is bound to the target's
 // container instance and sandbox at that point and never follows a restart.
-// On failure Start cleans up its helper. Before removing the reserved
-// output it checks that the path still identifies the file it created.
-// If cleanup of the reserved file, probe or helper is incomplete, keep the
-// returned session and call Stop to retry. When probe or helper removal
-// fails, the empty output file stays with the caller.
+// Start checks Output before probing and creates it exclusively as the last
+// startup step. If another writer claims the path in the meantime, Start
+// leaves that file in place and removes its helper. A failed Start creates
+// no output file. Keep a non-nil session returned with an error and call
+// Stop to retry removal of its probe or helper.
 //
 //purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
@@ -395,38 +395,52 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 	if err := admitTarget(state, req.Network); err != nil {
 		return nil, err
 	}
-	output, err := os.OpenFile(req.Output, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := checkOutputAvailable(req.Output); err != nil {
 		return nil, nshelper.InvalidRequest("create the capture output: %w", err)
 	}
-	s := &Session{backend: b, request: req, target: state, output: output}
+	s := &Session{backend: b, request: req, target: state}
 	s.report = Report{
 		ContainerID: id, Network: req.Network, Interface: req.Interface, MACAddress: state.MAC,
 		SandboxID: state.SandboxID, TargetStartedAt: state.StartedAt, HelperImage: req.HelperImage,
 		Filter: req.Filter, SnapLen: req.SnapLen, MaxPackets: req.MaxPackets, MaxBytes: req.maxBytes(),
 		Output: req.Output, End: EndUnknown, Target: TargetUnknown,
 	}
-	if err := s.recordOutputIdentity(); err != nil {
-		return s.rollbackOutput(err)
-	}
 	if err := s.preflight(ctx, id); err != nil {
 		if s.probe != "" {
-			// The probe is still owned: Stop retries its removal.
 			s.finished = true
-			return s, errors.Join(err, s.closeOutput())
+			return s, err
 		}
-		return s.rollbackOutput(err)
+		return nil, err
 	}
-	if err := s.startHelper(ctx, id); err != nil {
-		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-		defer cancel()
-		removeErr := s.abort(finishCtx)
-		if removeErr != nil {
-			return s, errors.Join(err, removeErr, s.closeOutput())
+	err = s.startHelper(ctx, id)
+	if err == nil {
+		// All startup checks have passed. A successful reservation can go
+		// straight to the caller, so rollback never unlinks a caller's path.
+		s.output, err = os.OpenFile(req.Output, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return s, nil
 		}
-		return s.rollbackOutput(err)
+		err = nshelper.InvalidRequest("create the capture output: %w", err)
 	}
-	return s, nil
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	if removeErr := s.abort(finishCtx); removeErr != nil {
+		return s, errors.Join(err, removeErr)
+	}
+	return nil, err
+}
+
+// checkOutputAvailable catches path errors before running the probe. Only the
+// final exclusive open claims the name.
+func checkOutputAvailable(path string) error {
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return &os.PathError{Op: "open", Path: path, Err: os.ErrExist}
+	}
+	_, err := os.Stat(filepath.Dir(path))
+	return err
 }
 
 func (s *Session) closeOutput() error {
@@ -442,56 +456,16 @@ func (s *Session) checkOutputIdentity() error {
 	if err != nil {
 		return err
 	}
-	return s.matchOutput(info)
-}
-
-func (s *Session) recordOutputIdentity() error {
-	info, err := s.output.Stat()
-	if err != nil {
-		return fmt.Errorf("stat the reserved capture output: %w", err)
-	}
-	s.outputInfo = info
-	return nil
-}
-
-func (s *Session) matchOutput(pathInfo os.FileInfo) error {
 	if s.outputInfo == nil {
-		if err := s.recordOutputIdentity(); err != nil {
-			return err
+		s.outputInfo, err = s.output.Stat()
+		if err != nil {
+			return fmt.Errorf("stat the reserved capture output: %w", err)
 		}
 	}
-	if !os.SameFile(pathInfo, s.outputInfo) {
+	if !os.SameFile(info, s.outputInfo) {
 		return errors.New("capture output path no longer names the reserved file")
 	}
 	return nil
-}
-
-// A failed startup keeps the descriptor until rollback can verify and remove
-// the reserved path, or confirm that the path is already absent.
-func (s *Session) rollbackOutput(cause error) (*Session, error) {
-	s.finished = true
-	err := s.discardOutput()
-	if s.output != nil {
-		return s, errors.Join(cause, err)
-	}
-	return nil, errors.Join(cause, err)
-}
-
-func (s *Session) discardOutput() error {
-	info, err := os.Lstat(s.request.Output)
-	if errors.Is(err, os.ErrNotExist) {
-		return s.closeOutput()
-	}
-	if err != nil {
-		return err
-	}
-	if err := s.matchOutput(info); err != nil {
-		return err
-	}
-	if err := os.Remove(s.request.Output); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return s.closeOutput()
 }
 
 // admitTarget refuses targets whose endpoint a helper cannot join.
@@ -611,7 +585,7 @@ func readyLine(stderr []byte, prefix string) (string, bool) {
 	return "", false
 }
 
-// abort ends a helper that did not become ready and removes it. It returns
+// abort removes the helper after a startup failure. It returns
 // only the removal's error; the session then keeps the helper for Stop.
 func (s *Session) abort(ctx context.Context) error {
 	if s.helper == "" {
@@ -675,9 +649,6 @@ func (s *Session) Stop(ctx context.Context) (Report, error) {
 	if !s.finished {
 		s.finished = true
 		s.err = s.finish(finishCtx)
-	} else if s.output != nil {
-		// Startup rollback kept the descriptor for this retry.
-		return s.report, s.discardOutput()
 	}
 	return s.report, errors.Join(s.err, s.removeProbe(finishCtx), s.removeHelper(finishCtx))
 }
