@@ -101,8 +101,9 @@ The default image is the published, pruned official Tentacle 20.2.4 aggregate,
 pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
 Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
-Runtime CI uses these dependency roles directly. Squid 19.2.x also works, with
-the differences listed in [the releases guide](docs/guides/releases-and-images.md).
+Runtime CI uses these dependency roles directly. Umbrella 21.2.x and Squid
+19.2.x are supported too, with the differences listed in
+[the releases guide](docs/guides/releases-and-images.md).
 
 ## Installation
 
