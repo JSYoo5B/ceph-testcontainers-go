@@ -11,8 +11,10 @@ no container. See
 ## Order of use
 
 1. **Start a filesystem** and enable the module with
-   `override.SetMGRModule(ctx, cluster, "snap_schedule", true)`; wait until the
-   active MGR, which restarts to load it, answers again. For a schedule in
+   `override.SetMGRModule(ctx, cluster, "snap_schedule", true)`. The active
+   MGR restarts to load it, and `SetMGRModule` checks membership, not command
+   readiness: wait until the MGR map reports an available manager and a
+   `snap-schedule list` of the filesystem succeeds (below). For a schedule in
    minutes, also set `mgr/snap_schedule/allow_m_granularity` to `true` with
    `override.SetConfig`.
 2. **Add the schedule** with `snapschedule.Add(ctx, fs, snapschedule.Config{Path:
@@ -26,6 +28,24 @@ no container. See
    schedule the lease added; the snapshots stay.
 
 ```golang
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+for {
+	status, err := observer.ManagerStatus(ctx)
+	if err == nil && status.Available {
+		_, err = cluster.Ceph(ctx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json")
+		if err == nil {
+			break
+		}
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatalf("snap_schedule does not answer: %v", err)
+	case <-time.After(time.Second):
+	}
+}
 lease, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1m", Retention: map[string]int{"n": 3}})
 if lease != nil {
 	defer lease.Restore(cleanupCtx)
