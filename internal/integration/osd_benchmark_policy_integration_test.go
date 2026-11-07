@@ -252,6 +252,22 @@ func policyOSDSettings(t *testing.T, ctx context.Context, osd *ceph.OSDContainer
 	if values["osd_op_queue"] != "mclock_scheduler" || values["osd_mclock_skip_benchmark"] != strconv.FormatBool(skip) || values["osd_mclock_force_run_benchmark_on_init"] != "false" {
 		t.Fatalf("effective scheduler/policy/force differs: %+v", values)
 	}
+	if pinned {
+		raw, err := osd.AdminSocket(ctx, "config", "diff")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reply struct {
+			Diff map[string]map[string]json.RawMessage `json:"diff"`
+		}
+		if err := json.Unmarshal(raw, &reply); err != nil {
+			t.Fatal(err)
+		}
+		layers := reply.Diff["osd_mclock_skip_benchmark"]
+		if string(layers["file"]) != strconv.FormatBool(!skip) || string(layers["final"]) != strconv.FormatBool(skip) {
+			t.Fatalf("%s: conflicting file=%s and effective value=%s required; observed file=%s final=%s", phase, strconv.FormatBool(!skip), strconv.FormatBool(skip), layers["file"], layers["final"])
+		}
+	}
 	args := strings.Split(strings.TrimSuffix(harness.ExecOutput(t, ctx, osd, "cat", "/proc/1/cmdline"), "\x00"), "\x00")
 	found := 0
 	for _, arg := range args {
