@@ -80,5 +80,5 @@ For disposable GitHub-hosted qualification, manually dispatch **Block fault
 probe** with `public_api=true`. Set `prepare_kernel=true` only when admitting
 module setup on that disposable runner. The library never loads modules. The
 job builds the source-pinned helper without publishing it and requires actual
-Delay and EIO effects, recovery and release on both supported Ceph releases.
+Delay and EIO effects, recovery and release on every supported Ceph release.
 An unavailable target fails this qualification instead of counting as a pass.

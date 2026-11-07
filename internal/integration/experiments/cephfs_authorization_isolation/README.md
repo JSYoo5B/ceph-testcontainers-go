@@ -56,8 +56,11 @@ or exactly as CI runs the batch:
 python3 .github/scripts/tag_scenarios.py run --category topology \
   --batch cephfs_authorization_isolation \
   --package ./internal/integration/experiments/cephfs_authorization_isolation \
-  --directory artifacts/cephfs-authorization-isolation
+  --directory "artifacts/cephfs-authorization-isolation-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Pin the image by digest when the result is evidence; every probe line
 (`native probe: {...}`) is logged.

@@ -43,8 +43,10 @@ Upstream references:
 ## Tier and triggers
 
 Deliberately failing reproducer: it fails on the published images (about 100
-seconds on 20.2.4) and passes on 19.2.2 (about 55 seconds). It never runs on a
-pull request, on `main` or in periodic samples, and never gates anything.
+seconds on 20.2.4) and passes on 19.2.2 (about 55 seconds). No automatic run
+includes it (the default checks of a pull request, pushes to `main`, periodic
+samples), and it never gates anything. A maintainer can run it on demand, also
+on a pull request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=mon_log_ack`.
 - Comment: `/ci run mon_log_ack` (a non-gating run on a pull request's head).
@@ -64,8 +66,11 @@ or through the tag runner:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch mon_log_ack \
   --package ./internal/integration/experiments/mon_log_ack_peon \
-  --directory artifacts/mon-log-ack
+  --directory "artifacts/mon-log-ack-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 The log line `MON_LOG_ACK ceph=...` records the version the cluster runs; pin
 the image by digest when the result is evidence.

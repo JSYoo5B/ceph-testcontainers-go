@@ -30,18 +30,28 @@ starts no container and adds no client or receiver. See
 
 ```golang
 topic := notification.Topic{Name: "orders"}
-// The consumer is down: the event waits in RGW.
-snapshot, err := notification.Queue(ctx, gateway, topic, notification.Sample{MaxEntries: 10})
-if err != nil {
-	t.Fatal(err)
+pending := func(s notification.QueueSnapshot) bool {
+	return s.Stats.Entries > 0 && slices.ContainsFunc(s.Pending, func(e notification.PendingEntry) bool {
+		return e.Key == "orders/42" && e.EventName == "ObjectCreated:Put"
+	})
 }
-if snapshot.Stats.Entries == 0 || !slices.ContainsFunc(snapshot.Pending, func(e notification.PendingEntry) bool {
-	return e.Key == "orders/42" && e.EventName == "ObjectCreated:Put"
-}) {
-	t.Fatalf("event is not pending in RGW: %+v", snapshot)
+// The consumer is down: after the SUT's write the event becomes pending in
+// RGW, but not necessarily before the first read.
+waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+defer cancel()
+for {
+	snapshot, err := notification.Queue(waitCtx, gateway, topic, notification.Sample{MaxEntries: 10})
+	if err == nil && pending(snapshot) {
+		break
+	}
+	select {
+	case <-waitCtx.Done():
+		t.Fatalf("event is not pending in RGW: %+v, last error %v", snapshot, err)
+	case <-time.After(time.Second):
+	}
 }
-// Start the consumer, wait until it reports orders/42, then poll Queue
-// until the entry has left the queue.
+// Start the consumer, wait until it reports orders/42, then poll Queue the
+// same way until the entry has left the queue.
 ```
 
 ## Concepts and limits
@@ -61,12 +71,14 @@ if snapshot.Stats.Entries == 0 || !slices.ContainsFunc(snapshot.Pending, func(e 
   so a topic deleted and recreated with the same name, owner and queue between
   two calls, or between the reads of one call, is not detected. Account-owned
   topics are not selected by a tenant; use `Gateway.Admin` for them.
-- Outcomes stay distinct, and none is an empty queue: an invalid selection or
-  sample is `ceph.ErrInvalidRequest` before any command; a missing topic
-  matches `fs.ErrNotExist` and a refused read `fs.ErrPermission`; a topic
-  without a persistent queue is `notification.ErrNotPersistent`; a cluster
-  before Ceph 19 is `ceph.ErrUnsupported`; an unexpected native reply is an
-  unclassified error.
+- Invalid selection or sample arguments match `ceph.ErrInvalidRequest` before
+  any command runs. If the topic read shows that the topic has no persistent
+  queue, the error matches both `notification.ErrNotPersistent` and
+  `ceph.ErrInvalidRequest` via `errors.Is`.
+- A missing topic matches `fs.ErrNotExist` and a refused read matches
+  `fs.ErrPermission`. A cluster before Ceph 19 matches `ceph.ErrUnsupported`.
+  An unexpected native reply produces an unclassified error. Check the error
+  before interpreting zero entries as an empty queue.
 - Bounds: at most `MaxSampleEntries` entries. `topic dump` writes the whole
   queue (its `--max-entries` only sizes its pages), so `Queue` keeps the first
   `MaxBytes` bytes of the reply (default `DefaultSampleBytes`), discards the

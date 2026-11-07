@@ -47,8 +47,10 @@ patched RGW image.
 ## Tier and triggers
 
 Deliberately failing reproducer on the published images, with a bridge and a
-host-network variant (about 8.5 minutes for the bridge variant on 20.2.4). It never runs on a pull request, on
-`main` or in periodic samples, and never gates anything.
+host-network variant (about 8.5 minutes for the bridge variant on 20.2.4). No
+automatic run includes it (the default checks of a pull request, pushes to
+`main`, periodic samples), and it never gates anything. A maintainer can run
+it on demand, also on a pull request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=native_rgw_translation
   -f rgw_image=<patched image>` (the default batch of that workflow).
@@ -69,8 +71,11 @@ builds one. Exactly as CI runs the batch:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation \
   --package ./internal/integration/experiments/rgw_sync_policy_translation \
-  --directory artifacts/native-rgw-translation
+  --directory "artifacts/native-rgw-translation-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the RGW image digest and the gateways' `ceph --version` with the
 result.

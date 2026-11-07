@@ -19,7 +19,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
-| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on both supported releases using a source-pinned helper; not a required check |
+| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
 The ordinary runtime workflows and explicit full periodic runs call the reusable template `tagged-runtime.yml`
@@ -66,10 +66,14 @@ Without `--changed-head` the planner uses a plain merge-base comparison
 (recorded as `legacy-merge-base`). `--changed-files FILE` is a separate
 manual input.
 
-Pushes to `main` run Code checks, Docker checks and Ceph short. Every other
-batch, and every batch on Squid 19.2.5, runs in Ceph periodic within 3 hours
-of a new commit on `main`. Pushes to other branches trigger nothing. Pull
-requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
+Pushes to `main` run Code checks, Docker checks and Ceph short, and the other
+categories only in a [release phase](#release-phase). No run is scheduled per
+commit for the other batches or releases: Ceph periodic draws a daily sample
+and runs every required release-bound runtime profile on every supported
+release only when dispatched in `full` mode. That dispatch includes separate
+environment checks and excludes optional and SDK batches (see
+[Periodic runs](#periodic-runs)). Pushes to other branches
+trigger nothing. Pull requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
 and the scoped categories) and `unlabeled` (Ceph short) start real runs only
 for `ci:full` and `ci:selected-batches`.
 
@@ -237,7 +241,7 @@ planner requires the batches of a checker to cover every mode and kind.
 ### Bug compatibility selection
 
 A `ceph_bug_<id>` tag selects the compatibility path of one Ceph bug (see the
-[policy](../guides/bug-compatibility.md)); it never selects tests. The planner never
+[policy](bug-compatibility.md)); it never selects tests. The planner never
 collects it as a capability, and `all` or `native_regression` never enable
 it. Only `--bug-compatibility TAGS`, accepted by `plan`, `verify`, `compile`,
 `run`, `code`, `optional` and `buildcache`, selects one:
@@ -743,9 +747,9 @@ gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
 gh variable delete CI_RELEASE_PHASE              # after the release
 ```
 
-While it is `true`, every pull request and push to `main` runs every batch
-on Tentacle, and Ceph
-release matrix runs every category on Umbrella and Squid.
+While it is `true`, pull requests and pushes to `main` run all required
+runtime profiles on Tentacle. Ceph release matrix runs the required
+release-bound profiles on Umbrella and Squid.
 
 ### Representative campaign
 
@@ -879,7 +883,7 @@ gh workflow run "Native regressions" --ref main -f batch=native_rgw_translation 
   -f rgw_image=ghcr.io/example/ceph-rgw:patched
 ```
 
-`cephfs_fscrypt` (`TestCephFSFscrypt`) is a sixth optional experiment case,
+`cephfs_fscrypt` (`TestCephFSFscrypt`) is another optional experiment case,
 [`cephfs_fscrypt`](../../internal/integration/experiments/cephfs_fscrypt/README.md),
 that passes on the published images. Its client containers mount CephFS
 with the engine's kernel and with `ceph-fuse` and get `CAP_SYS_ADMIN` and
@@ -888,7 +892,12 @@ the ceph filesystem type registered. It refuses, naming the missing
 requirement, and never loads a module or skips. Outside the tag runner,
 build it with `go test -tags all,cephfs_fscrypt`.
 
-The other optional batches are not experiment cases:
+The following optional batches are not experiment cases. They are a
+selection: the source declares every optional batch (see
+[Optional tests](testing.md#optional-tests)), and the timing and fault
+batches are described with their features, for example in
+[Daemon timing](../guides/daemon-timing.md) and the
+[`fault/blockio` README](../../fault/blockio/README.md).
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
@@ -916,8 +925,11 @@ availability zones behind caller-owned routers on its public and cluster
 bridges, qualifies the boundary's round trips with netem, partitions it and
 reads the data back after recovery, and records whether the engine forwards
 between two Docker bridges through a container. Its helpers and routers run
-with `NET_ADMIN` and namespaced sysctls; see
-[A routed boundary between logical zones](../guides/fault-injection.md#a-routed-boundary-between-logical-zones).
+with `NET_ADMIN` and namespaced sysctls. It is the research proof behind
+`ceph.WithZoneConfig`, not the way a test builds zones; see
+[Hand-built routers](../guides/fault-injection.md#hand-built-routers-research-example)
+for what it does and [Regional zones](../guides/regional-zones.md) for the
+public fixture.
 
 `osd_encrypted_store` (`TestEncryptedBlockDeviceOSD`,
 `TestEncryptedBlockStoreKeepsACollidingMapping`) runs one BlueStore OSD on a

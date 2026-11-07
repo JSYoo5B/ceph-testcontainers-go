@@ -199,7 +199,13 @@ make test-all                       # -tags=all -count=1 -v -timeout=180m ./...
 ALL_TEST_TIMEOUT=6h make test-all
 ```
 
-It runs every scenario sequentially and takes hours. Prefer one test, a
+It runs the default suite, the tests that build with `-tags=all`, one package
+at a time (`-p 1`), and takes hours. Tests within a package still run
+concurrently when they opt in and `CEPH_TEST_PARALLEL` is set (see
+[Running tests in parallel](#running-tests-in-parallel)). The optional
+batches need their own tags and are not part of it (see
+[Optional tests](#optional-tests) and
+[Native regressions](ci.md#native-regressions)). Prefer one test, a
 [Make target](#make-targets) or one CI batch.
 
 ### One CI batch, exactly as CI runs it
@@ -317,8 +323,10 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 Use `--release 21.2.0` for Umbrella or `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
 resolve only some roles. The script pulls only missing images, never builds,
 and refuses an existing `--output-dir`. `summary.json` lists the `CEPH_TEST_*`
-values under `prepared_environment`; export them for a test, the tag runner or
-`make scenario` with `SCENARIO_IMAGE_LAYOUT=roles`.
+values under `prepared_environment`; export them for a test or the tag runner.
+`make scenario` with `SCENARIO_IMAGE_LAYOUT=roles` needs all five role
+variables, so use it only after preparing every role; with a subset, run the
+batch with `tag_scenarios.py run` or `optional` instead.
 
 ### Image compatibility checks
 
@@ -484,11 +492,11 @@ to its own files.
 | `multicluster` | Independent clusters, zones and peers |
 | `recovery` | Faults, partitions, removal and recovery |
 
-The tag is `ci_<category>`. `short` is a selection, not a time limit: it runs
-for every pull request. Other categories run on a pull request only for
-batches whose files changed. Ceph periodic runs every category on Tentacle and
-Squid, so a test must pass on both (see
-[Pull request scope](ci.md#pull-request-scope)).
+The tag is `ci_<category>`. `short` is a selection, not a time limit. Which
+batches a pull request, a push to `main` and Ceph periodic run is described
+in [Pull request scope](ci.md#pull-request-scope) and
+[Periodic runs](ci.md#periodic-runs). A test must pass on every release in
+[Supported releases](ci.md#supported-releases).
 
 ### Batches and the `//ci:` line
 
@@ -623,6 +631,10 @@ It requires `native_regression`, never compiles under plain `all`, uses the
 //go:build (all || (integration && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_my_regression)))
 ```
 
+The source is the inventory of optional batches: each is the
+`ci_batch_<name>` of a file whose constraint names `ci_optional`, and no
+document lists all of them.
+
 ### Experiment cases
 
 A test whose assertion characterizes a native behaviour across Ceph builds,
@@ -666,6 +678,98 @@ fixture parts, and `cephfs_authorization_isolation` and
   usual. A case does not get a bug tag, a weakened ordinary contract or a
   release-prefix branch because it exists.
 
+#### Images for the RGW S3 cases
+
+The RGW S3 cases (`rgw_empty_sse_header`, `rgw_ssec_multipart_completion`,
+`rgw_lifecycle_expiration_header` and `rgw_compressed_copy_accounting`)
+compare the affected Tentacle 20.2.4 with the fixed 20.2.5 and Umbrella
+21.2.0 and need the `essential`, `client` and `rgw` roles of one release. For
+a supported release (20.2.4, 21.2.0 or 19.2.5), prepare the pinned role images
+of `.github/ceph-role-images.json` and export them:
+
+```sh
+release=20.2.4
+dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
+  --release "$release" --roles essential,client,rgw --prepare-only --output-dir "$dir" \
+  --github-env "$dir/role-images.env" &&
+  . "./$dir/role-images.env" &&
+  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_RGW_IMAGE
+```
+
+Tentacle 20.2.5 has no published role images. Run it on the upstream
+aggregate that `.github/ceph-discovery-images.json` pins, with no role
+variable set:
+
+```sh
+unset SCENARIO_IMAGE_LAYOUT CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE \
+  CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE
+export CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c
+```
+
+After the selected setup succeeds, run the case's `go test` or `tag_scenarios.py optional` command from its
+manual. Each manual names the images its recorded result ran on.
+
+### Messenger coverage manifest
+
+[`messenger_coverage.json`](../../internal/integration/testdata/messenger_coverage.json)
+maps the environment requirements of a Messenger client to the tests that
+prove them; the
+[Messenger client fixtures guide](../guides/messenger-client-fixtures.md#coverage-manifest)
+describes its rows and statuses.
+
+`TestMessengerCoverageManifest` checks the manifest without Docker: every
+named test and symbol exists, covered and partial rows have cases, every test
+the daemon-to-daemon table cites is mapped, and a cited `TestName/subtest`
+runs through `t.Run` in the test, a helper or another subtest. The validator
+follows subtest names that are string literals, literal table fields in the
+same function, or `harness.NetworkModes` modes; cite the top-level test otherwise. A
+receipt marker must be in code the cited test reaches. Regenerate the reference from
+a Ceph checkout at the pinned commit:
+
+```sh
+python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
+  --commit 7f793731f1b39eb4f465e960113d2363c311b964 --release 20.2.4 \
+  --output internal/integration/testdata/messenger_reference.json
+```
+
+The declaration/native-case evidence join, which connects reference
+declarations to validated receipts, is documented in
+[`messenger_evidence.py`](../../.github/scripts/messenger_evidence.py).
+
+### OSD startup policy tests
+
+The consumer side of these policies is the
+[OSD startup calibration guide](../guides/osd-startup-benchmark.md).
+
+The internal integration harness sets `osd_mclock_skip_benchmark = true` in its
+bootstrap configuration before the initial OSDs start. The same configuration
+reaches later OSDs and retained starts. Functional tests avoid calibration I/O
+without changing the library default. Explicit storage policy takes precedence;
+a later configuration file can replace the harness default key by key.
+
+Calibration controls explicitly select Native or provide their comparison
+configuration. Tests of unselected-policy precedence use image selection without
+the harness default, so native calibration and central configuration remain
+covered independently.
+
+#### Native verification
+
+The opt-in benchmark qualifier compares native/skip on fresh disk-backed and
+tmpfs-backed BlueStore fixtures and keeps MemStore as an applicability control.
+It records initial startup, later OSD addition and same-container restart
+separately, with effective scheduler/skip/force/capacity settings, calibration
+receipts, allocated bytes, tmpfs usage and daemon RSS where observable. Client
+writes, recovery and owned cleanup remain assertions in both cohorts.
+
+The startup-policy integration test separately exercises the public typed API,
+contradictory local/central settings, initial/add/restart/retained-reopen paths
+and exact-byte I/O. Native controls retain calibration; unselected policy still
+honors existing central configuration. These tests require Linux and the
+appropriate native build tags.
+Compilation, live settings, observed calibration and full CI are different
+validation layers.
+
 ### Release differences
 
 Where the expected outcome differs between releases, the test selects it from
@@ -679,7 +783,7 @@ version, or a new major release without a row fails the test; an unlisted
 patch uses its major release's row. `TestReleaseCapabilityTable` checks these
 rules without a cluster.
 
-Command-form differences that both releases support (the cluster's internal
+Command-form differences that every supported release supports (the cluster's internal
 `cephBefore`, reached through `internal/servicehook`, and
 `multicluster.CephBefore`) belong to the fixtures and their own tests, not to
 this table.

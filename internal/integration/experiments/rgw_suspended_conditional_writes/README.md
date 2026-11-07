@@ -58,8 +58,10 @@ instead of 404 for a missing key; and it reads no precondition for
 ## Tier and triggers
 
 Deliberately failing reproducer: one run takes about 35 seconds and fails on
-the published Tentacle 20.2.4 images, the pull request default. It never runs
-on a pull request, on `main` or in periodic samples, and never gates anything.
+the published Tentacle 20.2.4 images, the pull request default. No automatic
+run includes it (the default checks of a pull request, pushes to `main`,
+periodic samples), and it never gates anything. A maintainer can run it on
+demand, also on a pull request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rgw_conditional_writes`.
 - Comment: `/ci run rgw_conditional_writes` or
@@ -84,8 +86,11 @@ or run the batch exactly as CI does:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
   --package ./internal/integration/experiments/rgw_suspended_conditional_writes \
-  --directory artifacts/rgw-conditional-writes
+  --directory "artifacts/rgw-conditional-writes-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_COND ceph=`), every step's native status and error code, and the

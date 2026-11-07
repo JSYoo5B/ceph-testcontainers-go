@@ -81,7 +81,7 @@ that outcome instead of skipping on the version string; see
 
 Feature availability, release command/output differences and behavioral bugs
 are separate compatibility questions. For future bug-specific paths, the
-[bug compatibility policy](bug-compatibility.md) requires explicit
+[bug compatibility policy](../contributing/bug-compatibility.md) requires explicit
 bug-ID build selection rather than inferring a fix from a release or image-tag
 suffix. Custom images can contain backports without changing the reported
 release. No tag is

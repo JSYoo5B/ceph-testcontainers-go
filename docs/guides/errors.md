@@ -24,7 +24,7 @@ error.
 
 | Category | Meaning | Examples |
 | --- | --- | --- |
-| `ceph.ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
+| `ceph.ErrInvalidRequest` | Refused: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
 | `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on an essential image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
@@ -34,13 +34,22 @@ The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match
 several.
 
-`ErrInvalidRequest` is a validation refusal before any change. Documented
-feature preflights, such as `WithAuth` key-type validation and `rbdmirror.Run`
-namespace mapping checks, also refuse unsupported features before changes.
-Extension capability checks run before the fault is applied. These guarantees
-belong to the documented operation or preflight; an image or environment
-error during a later step is not a promise to roll back the entire fixture.
-Always preserve a non-nil partial handle returned with an error.
+For a topic without a persistent queue, `notification.Queue` returns an error
+that matches both `notification.ErrNotPersistent` and `ceph.ErrInvalidRequest`
+with `errors.Is`.
+
+`ErrInvalidRequest` names the reason for a refusal, not when it happened. A
+refusal by argument validation or by a documented preflight comes before any
+change: `WithAuth` key-type validation and `rbdmirror.Run` namespace mapping
+checks refuse unsupported features before changes, and extension capability
+checks run before the fault is applied. A refusal found in a later step can
+follow changes of earlier steps: `dashboard.Start` installs the certificate
+and key before it refuses an existing account of the same name, and returns
+a partial handle with that error. So the category alone does not establish
+that nothing changed, and an image or environment error during a later step
+is not a promise to roll back the entire fixture either. Always preserve and
+restore a non-nil partial handle returned with an error, whatever its
+category.
 Once a native command has been sent, a lost reply leaves its effect unknown:
 the command may have run, as when Docker answers the final inspection of an
 exec after the command finished. Such a failure keeps Docker's error, and is
@@ -49,9 +58,11 @@ category for a container that disappeared or stopped; neither says that the
 command did not run.
 
 The narrower errors of the module belong to a category:
-`ceph.ErrHostNetworkUnavailable`, `fault.ErrNetemPermissionDenied` and
-`fault.ErrNetemKernelUnsupported` to `ErrEnvironmentUnavailable`, and
-`fault.ErrNetemImageUnsupported` to `ErrImageCapability`. Both forms match:
+`ceph.ErrHostNetworkUnavailable`, `fault.ErrNetemPermissionDenied`,
+`fault.ErrNetemKernelUnsupported` and `capture.ErrPermissionDenied` to
+`ErrEnvironmentUnavailable`, `fault.ErrNetemImageUnsupported` and
+`capture.ErrImageUnsupported` to `ErrImageCapability`, and
+`capture.ErrFailed` to `ErrNativeFailure`. Both forms match:
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithHostNetwork())
@@ -181,16 +192,17 @@ ships. When a module command finds that a program is missing from the image,
 Docker cannot start it, and the error is `ErrImageCapability` with the
 program in `Capability`.
 
-Optional extensions, such as the netem helper of `ApplyNetworkProfile`,
-are selected explicitly and checked before anything changes. Their errors
-separate the four cases that matter:
+Optional extensions, such as the netem helper of `ApplyNetworkProfile` and
+the packet-capture helper of `capture.Start`, are selected explicitly and
+checked before anything changes. Their errors separate the four cases that
+matter:
 
 | Case | Category | Narrower error |
 | --- | --- | --- |
-| The extension is not selected (`NetworkProfile.HelperImage` is empty) | `ErrImageCapability` | |
-| The selected image does not meet the extension's contract | `ErrImageCapability` | `ErrNetemImageUnsupported` |
-| The tools work, but the engine denies a permission or the kernel lacks a module | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied`, `ErrNetemKernelUnsupported` |
-| The extension's native command ran and failed | `ErrNativeFailure` | `*NativeFailure` of `tc` |
+| The extension is not selected (`NetworkProfile.HelperImage` or `capture.Request.HelperImage` is empty) | `ErrImageCapability` | |
+| The selected image does not meet the extension's contract | `ErrImageCapability` | `fault.ErrNetemImageUnsupported`, `capture.ErrImageUnsupported` |
+| The tools work, but the engine denies a permission or the kernel lacks a module | `ErrEnvironmentUnavailable` | `fault.ErrNetemPermissionDenied`, `fault.ErrNetemKernelUnsupported`, `capture.ErrPermissionDenied` |
+| The extension's native command ran and failed | `ErrNativeFailure` | `*NativeFailure` of `tc`, `capture.ErrFailed` |
 
 Nothing installs a missing tool or falls back to another mechanism.
 
@@ -210,6 +222,9 @@ Some errors keep their own contracts and match no category:
   `ceph.ErrInvalidRequest` and leaves the input open. A write ended by its
   context keeps the context error; some bytes may already have been sent.
   See [Standard input](native-commands.md#standard-input).
+- `dashboard.ErrGatewayRefused` means the gateway refused the Dashboard's RGW identity.
+- `dashboard.ErrGatewayUnreachable` means the Dashboard reported a gateway
+  connection failure or the probe timed out waiting for the Dashboard to answer.
 - Failed checks of the fixture's own, such as native output that it could
   not parse, or a readback that differs from the requested change.
 - A failure whose outcome is unknown, such as a container that disappeared

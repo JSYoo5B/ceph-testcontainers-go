@@ -87,32 +87,6 @@ arbitrary non-default value is not a substitute for a skip policy. Reducing
 precheck rather than make it proportionately shorter. Switching to `wpq`
 changes scheduler semantics and is not this policy.
 
-## Internal functional tests
-
-The internal integration harness sets `osd_mclock_skip_benchmark = true` in its
-bootstrap configuration before the initial OSDs start. The same configuration
-reaches later OSDs and retained starts. Functional tests avoid calibration I/O
-without changing the library default. Explicit storage policy takes precedence;
-a later configuration file can replace the harness default key by key.
-
-Calibration controls explicitly select Native or provide their comparison
-configuration. Tests of unselected-policy precedence use image selection without
-the harness default, so native calibration and central configuration remain
-covered independently.
-
-## Native verification
-
-The opt-in benchmark qualifier compares native/skip on fresh disk-backed and
-tmpfs-backed BlueStore fixtures and keeps MemStore as an applicability control.
-It records initial startup, later OSD addition and same-container restart
-separately, with effective scheduler/skip/force/capacity settings, calibration
-receipts, allocated bytes, tmpfs usage and daemon RSS where observable. Client
-writes, recovery and owned cleanup remain assertions in both cohorts.
-
-The startup-policy integration test separately exercises the public typed API,
-contradictory local/central settings, initial/add/restart/retained-reopen paths
-and exact-byte I/O. Native controls retain calibration; unselected policy still
-honors existing central configuration. These tests require Linux and the
-appropriate native build tags, as described in [Testing](../contributing/testing.md).
-Compilation, live settings, observed calibration and full CI are different
-validation layers.
+The repository's own tests and their qualification of these policies are
+described in
+[OSD startup policy tests](../contributing/testing.md#osd-startup-policy-tests).

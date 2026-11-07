@@ -97,9 +97,12 @@ recovery need the default two OSDs or more.
 - Everything in [`ceph`](../ceph/README.md) applies to the cluster. Multisite
   (one realm across clusters, zones, zonegroups, sync policy) is in
   [`rgw/multisite`](multisite/README.md).
-- Images: the `Run` image is the essential image; `ceph.ImageOptions.WithRGWImage`
-  selects the gateway image, which must contain `radosgw` and `radosgw-admin`
-  (`Gateway.Admin` runs inside the gateway). Keep every role on the same Ceph
+- Images: gateways use the cluster's RGW role. That is the `Run` image, such
+  as the aggregate `ceph.DefaultImage`, unless `ceph.ImageOptions.WithImageSet`
+  selects an `ImageSet` whose `RGW` role differs, and
+  `ceph.ImageOptions.WithRGWImage` replaces either. The gateway image must
+  contain `radosgw` and `radosgw-admin` (`Gateway.Admin` runs inside the
+  gateway). Keep every role on the same Ceph
   release and architecture. `ceph.DefaultImage` is Tentacle 20.2.4; Squid
   19.2.5 is supported (use 19.2.5, not 19.2.6, for multisite). See
   [Releases and images](../docs/guides/releases-and-images.md).
@@ -251,9 +254,7 @@ gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "s3", TLS: material},
 
 `TestRGWExternalKMS` in
 [`internal/integration/rgw`](../internal/integration/rgw/rgw_external_kms_integration_helpers_test.go)
-runs the recipe for both modes, and the experiment case
-[`rgw_kms_failure_modes`](../internal/integration/experiments/rgw_kms_failure_modes/README.md)
-records the KMS failure behaviour below. What they establish:
+runs the recipe for both modes. What the recipe relies on:
 
 - There are two TLS connections. `TLSConfig` secures the SUT's connection to
   RGW; `rgw_crypt_vault_verify_ssl` and `rgw_crypt_vault_ssl_cacert` (and
@@ -266,26 +267,21 @@ records the KMS failure behaviour below. What they establish:
   given an unrelated CA answers an encrypted GET with 500, while its sibling
   with the right CA reads the exact bytes and the unrelated one still serves
   listings and unencrypted objects.
-- RGW reads the token file on every Vault request. A revoked token makes an
-  encrypted GET fail with 403 `AccessDenied`; writing a new token next to
-  the file and renaming it over the same path (keep mode `0600`) recovers
-  the running gateway without a restart.
-- `fault.InterruptNetwork` on the Vault container cuts the KMS: encrypted
-  GETs fail with 500 while listings and unencrypted objects still work, and
-  after `Restore` the same object reads its exact bytes again. RGW keeps its
-  connection to Vault open, and a request on it waits until libcurl's
-  low-speed limit aborts it: `rgw_curl_low_speed_time`, 5 minutes by
-  default, which the test lowers to 5 seconds. Reattaching the endpoint can
-  publish Vault's port on a different host port, so resolve `PortEndpoint`
+- RGW reads the token file on every Vault request, so a test replaces a token
+  by writing the new one next to the file and renaming it over the same path
+  (keep mode `0600`), without restarting the gateway.
+- RGW keeps its connection to Vault open, so a cut KMS surfaces only when
+  libcurl's low-speed limit aborts a request: lower `rgw_curl_low_speed_time`
+  (5 minutes by default) for a test that cuts the KMS. Reattaching Vault's
+  endpoint can publish its port on another host port; resolve `PortEndpoint`
   again before the next management request.
-- With SSE-S3, RGW creates one Transit key per bucket, named by the bucket
-  ID, and tries to delete it with the bucket. A bucket DELETE answers 204
-  whatever happens to the key: when Vault refuses the key deletion the
-  bucket is gone and its key stays, and on Squid the key always stays (see
-  [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
-  Nothing retries the deletion, so a successful bucket removal is no proof
-  of key cleanup; check the key in Vault and delete an orphan as the KMS
+- With SSE-S3, a bucket DELETE is no proof that RGW removed the bucket's
+  Transit key; check the key in Vault and delete an orphan as the KMS
   operator.
+
+What RGW answers when the token is revoked or the KMS is cut, and how key
+deletion differs between releases, is recorded by the experiment case
+[`rgw_kms_failure_modes`](../internal/integration/experiments/rgw_kms_failure_modes/README.md).
 
 ## Reference
 

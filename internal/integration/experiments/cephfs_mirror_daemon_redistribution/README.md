@@ -37,8 +37,10 @@ workaround.
 ## Tier and triggers
 
 Deliberately failing reproducer on 20.2.4, with a bridge and a host-network
-variant (about 6 minutes for the bridge variant on 20.2.4). It never runs on a pull request, on `main` or
-in periodic samples, and never gates anything.
+variant (about 6 minutes for the bridge variant on 20.2.4). No automatic run
+includes it (the default checks of a pull request, pushes to `main`, periodic
+samples), and it never gates anything. A maintainer can run it on demand, also
+on a pull request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=native_shuffle`.
 - Comment: `/ci run native_shuffle`.
@@ -57,8 +59,11 @@ or exactly as CI runs the batch:
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch native_shuffle \
   --package ./internal/integration/experiments/cephfs_mirror_daemon_redistribution \
-  --directory artifacts/native-shuffle
+  --directory "artifacts/native-shuffle-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digest with the result.
 

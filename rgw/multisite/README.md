@@ -67,9 +67,8 @@ To see a zone fall behind and catch up while a fault runs,
 `ms.WatchSync(ctx, cfg, "west", "east")` polls the same observation as
 `SyncStatus`, and `group.WatchBucketSync(ctx, cfg, "pipe", "east", "west")`
 the same as `BucketSyncStatus`. Each sends changes on one channel, 5 seconds
-apart by default; one read takes over a second. The baseline is buffered
-before the call returns. Wait for it before you stop a gateway or cut the
-zone link. A zone event's `Ready` is what `WaitSyncReady` waits for, for the
+apart by default; one read takes over a second. Receive the baseline before
+you stop a gateway or cut the zone link. A zone event's `Ready` is what `WaitSyncReady` waits for, for the
 selected sources only; a bucket event's `Status.CaughtUp` is what
 `WaitBucketSyncReady` waits for.
 
@@ -77,7 +76,7 @@ Each read takes the fixture's topology lock and releases it before the event
 is sent, so the test can stop gateways, fault the link or read other status
 while the watch runs. A failed read, a gateway that cannot be reached and a
 zone that has not imported the current period are `WatchGap` events that
-keep the partial report, and the next success is `WatchResumed`.
+keep the partial report.
 
 The baseline pins what the watch observes, and these end it instead of
 reading as progress:
@@ -99,12 +98,11 @@ false. The watch keeps the committed period, the group's
 policy, the zone and the bucket instances it captured: a new committed period,
 a changed or removed group, a detached zone and a recreated bucket end it.
 
-A full buffer ends the watch with `ceph.ErrWatchOverflow`, and `Terminate`
-ends it with `ceph.ErrInvalidRequest`. No watch proves that a
-particular object arrived: compare the objects through the other zone. Call
-`Stop` before `Terminate`: it joins the watch and returns why it ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
-the lifecycle that every Watch shares.
+`Terminate` ends a watch with `ceph.ErrInvalidRequest`, so stop it first. No
+watch proves that a particular object arrived: compare the objects through
+the other zone. The lifecycle that every Watch shares (baseline, gaps,
+overflow and `Stop`) is in
+[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Incremental sync timing
 
@@ -117,17 +115,20 @@ multisite.WithConfig(multisite.Config{
 })
 ```
 
-The same `Timing` field is available in `TopologyConfig`. It applies one-second
-metadata/data sync polling arguments to the owned gateways, including later
-zones. Default fixtures keep native timing. The command-line values take
+The same `Timing` field is available in `TopologyConfig`. It sets
+`rgw_meta_sync_poll_interval` and `rgw_data_sync_poll_interval` to one second,
+instead of the twenty-second caught-up default, as arguments of the owned
+gateways, including later zones. Native notifications can wake these loops
+earlier, so the saving per operation is not fixed. Default fixtures keep native timing. The command-line values take
 precedence over central and local configuration; the gateway lifetime owns the
 condition, so termination ends it without a persistent configuration override.
 A partial fixture returned with an error still needs termination.
 
 This targets already-caught-up incremental polling. Keep metadata readiness and
 client byte checks; bootstrap, new-bucket initial sync, lease ownership, failure
-backoff and fault windows are separate conditions. See
-[Fixture daemon timing](../../docs/guides/daemon-timing.md).
+backoff, retries, readiness timeouts and fault windows are separate
+conditions. See [Fixture daemon timing](../../docs/guides/daemon-timing.md)
+for what every timing profile shares.
 
 ## Concepts and limits
 

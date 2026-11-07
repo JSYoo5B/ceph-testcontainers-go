@@ -7,9 +7,13 @@ contracts are on the package pages: [`fault`](../../fault/README.md),
 [`override`](../../override/README.md) and [`ceph`](../../ceph/README.md).
 
 Every technique works with the official Ceph image and needs no privileged
-container, except packet shaping below Ceph: that is an opt-in extension whose
-separate helper image alone gets `NET_ADMIN` (see
-[Delaying packets below Ceph](#delaying-packets-below-ceph)).
+container, with three exceptions. Packet shaping below Ceph is an opt-in
+extension whose separate helper image alone gets `NET_ADMIN` (see
+[Delaying packets below Ceph](#delaying-packets-below-ceph)); the boundary of
+a cluster with zones uses the same helper image for its routers and route
+agents (see [A routed boundary between logical zones](#a-routed-boundary-between-logical-zones)).
+Block I/O faults run a privileged keeper container from their own helper
+image (see [Delaying or failing an OSD's device](#delaying-or-failing-an-osds-device)).
 
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
@@ -18,6 +22,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | A daemon or client is alive but slow | `fault.ApplyCPULimit` | Replies and heartbeats arrive late; the process, its memory and its connections stay | Yes | `CPULimitLease.Restore` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets a container sends are delayed, dropped, rate-limited, reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow or lossy replies from that container; connections stay up | No | `NetworkProfileLease.Restore` |
+| Packets between the logical zones of one cluster are delayed, rate-limited or cut | `fault.ApplyZoneProfile` on a cluster started with `ceph.WithZoneConfig` | Slow or lost cross-zone replies; paths within a zone keep working | No | `NetworkProfileLease.Restore` |
 | Replication between two clusters stops | `rbdmirror.Daemon.InterruptPeerLink`, `cephfsmirror.Daemon.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `override.SetConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `override.SetConfig` with `osd_debug_inject_dispatch_delay_*` | The call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected | Yes | `ConfigHandle.Restore` |
@@ -25,6 +30,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | A failed OSD stays up or in | `override.SetOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosHandle.Restore` |
 | A chosen OSD serves one PG, so a fault hits the serving target | `Pool.OverridePGPrimary`, then `OSDContainer.Stop` or `fault.Pause` of that OSD | The PG's acting primary is the chosen OSD; once that OSD is down, a survivor serves the PG | Yes | `PGPrimaryOverrideHandle.Restore` |
+| An OSD's main device is slow or returns I/O errors | `fault/blockio`: `Container.AttachOSD`, then `Container.Apply` | Slow OSD operations; with EIO the OSD can abort and clients see timeouts | Not tested | `Container.Restore`, then restart the OSD |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetIn(ctx, true)` |
 | A CephFS write or truncate past a size limit fails | `cephfs.Filesystem.OverrideMaxFileSize` | EFBIG for the larger operation; smaller files stay usable | Yes | `MaxFileSizeOverrideHandle.Restore` |
@@ -486,12 +492,26 @@ own.
 
 ## A routed boundary between logical zones
 
-The fixture has no zone topology. A test can still split one cluster's
-endpoints into logical availability zones and send every packet between them
-through a boundary it owns, by composing public APIs with a few Docker
-operations of its own.
+`ceph.WithZoneConfig` places a cluster's daemons and clients in logical
+availability zones behind a routed boundary the fixture owns.
+`Container.WithZone` places a caller's client container or a service daemon
+in a zone, `Container.Zones` reports the zones, their routers and members, and
+`fault.ApplyZoneProfile` delays, rate-limits or cuts what one zone's router
+forwards on one plane. A `Loss` of 100 on every zone and plane partitions the
+zones while paths within a zone keep working. Before it shapes anything,
+`ApplyZoneProfile` checks the bridges of every configured plane, not only the
+shaped one, for containers outside the zones. [Regional zones](regional-zones.md)
+describes the topology, that check, the expected Ceph behaviour and the
+limits; start there for a test of a service across zones.
+
+### Hand-built routers (research example)
+
 `TestZoneBoundaryRegionalCluster` (`internal/integration`, optional batch
-`zone_boundary`) is the worked example.
+`zone_boundary`) builds a boundary by hand instead, from public APIs and a few
+Docker operations of its own, and `TestZoneBoundaryTwoSubnetRouting` records
+how an engine forwards between bridges. They are the research behind the
+typed topology and stay as its native proof; the steps below describe them,
+not the way to write a new test.
 
 - **Placement.** Put each zone's OSDs in their own CRUSH rack with
   `ClusterConfig.WithInitialOSDs`, and give the pool a `rack` failure domain,
@@ -536,6 +556,20 @@ unavailable with no probe run; any other failure to create a bridge fails the
 test, so a skipped mode is never mistaken for a dropped path. Nothing here
 is physically independent: one kernel, one CPU pool and one disk serve both
 zones.
+
+## Delaying or failing an OSD's device
+
+[`fault/blockio`](../../fault/blockio/README.md) owns a disposable OSD main
+device: a sparse backing file, a loop device and a device-mapper mapping
+held by a privileged keeper container from an explicitly built helper image.
+`blockio.Run` starts the backend before the cluster, `Container.AttachOSD`
+adds an OSD on that device to a cluster started without initial OSDs, and
+`Container.Apply` installs a bounded delay or EIO table that
+`Container.Restore` replaces with the linear one. The Docker host must
+already expose loop and device-mapper controls and register the targets; the
+fixture loads no kernel module. Restoring the table does not restart an OSD
+that an EIO fault aborted. The README gives the cleanup order and the native
+recipe.
 
 ## Dropping or delaying messages
 
@@ -1006,7 +1040,9 @@ them under a deadline instead of asserting once.
 
 ## Related APIs
 
-- [`fault`](../../fault/README.md): `Pause`, `ApplyCPULimit`, `InterruptNetwork`, `ApplyNetworkProfile`, `InjectObjectDataError`.
+- [`fault`](../../fault/README.md): `Pause`, `ApplyCPULimit`, `InterruptNetwork`, `ApplyNetworkProfile`, `ApplyZoneProfile`, `InjectObjectDataError`.
+- [`fault/blockio`](../../fault/blockio/README.md): delay and EIO faults on an owned OSD device.
+- [Regional zones](regional-zones.md): `ceph.WithZoneConfig`, `Container.Zones`, `Container.WithZone`.
 - [`override`](../../override/README.md): `SetConfig`, `SetMessengerPolicy`, `AddBlocklist`, `SetFullRatios`, `SetOSDFlag`.
 - [`ceph`](../../ceph/README.md): scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
 - [`rbd`](../../rbd/README.md), [`rbd/mirror`](../../rbd/mirror/README.md),

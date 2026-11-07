@@ -64,8 +64,9 @@ Documentation for a published release is available at its Git tag.
 - [`dashboard`](dashboard/README.md): the Ceph Dashboard of a cluster whose
   managers ship it, with an owned HTTPS listener and account, and the Object
   Gateway pages of one owned gateway.
-- [`fault`](fault/README.md): container pause, network delay, loss, rate,
-  packet faults and endpoint interruption on existing fixtures.
+- [`fault`](fault/README.md): container pause, CPU limits, network delay,
+  loss, rate, packet faults and endpoint interruption, zone-boundary profiles
+  and damaged replicas on existing fixtures.
   [`fault/blockio`](fault/blockio/README.md) prepares an owned disposable OSD
   main device for bounded delay and EIO faults.
 - [`override`](override/README.md): reversible cluster-wide changes with
@@ -101,8 +102,9 @@ The default image is the published, pruned official Tentacle 20.2.4 aggregate,
 pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
 Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
-Runtime CI uses these dependency roles directly. Squid 19.2.x also works, with
-the differences listed in [the releases guide](docs/guides/releases-and-images.md).
+Runtime CI uses these dependency roles directly. Umbrella 21.2.x and Squid
+19.2.x are supported too, with the differences listed in
+[the releases guide](docs/guides/releases-and-images.md).
 
 ## Installation
 
@@ -110,7 +112,8 @@ the differences listed in [the releases guide](docs/guides/releases-and-images.m
 go get github.com/JSYoo5B/ceph-testcontainers-go/ceph@latest
 ```
 
-Add `rbd`, `cephfs` or `rgw` the same way when you need them.
+The repository is one Go module, so this makes every package available,
+`rbd`, `cephfs` and `rgw` included.
 
 ## Quick start
 
@@ -150,23 +153,27 @@ func TestWithCeph(t *testing.T) {
 }
 ```
 
-The service packages start a cluster with their own defaults:
+The service packages start a cluster with their own defaults: `rbd.Run`
+creates an initialized RBD pool named `rbd`, `cephfs.Run` the filesystem
+`tc-cephfs` with one active MDS, and `rgw.Run` one S3 gateway with a generated
+test user. Like `ceph.Run`, each returns a partially started fixture together
+with its error, so register its cleanup before checking the error:
 
 ```golang
-// An initialized RBD pool named rbd.
-volumes, err := rbd.Run(ctx, ceph.DefaultImage)
-
-// The filesystem tc-cephfs with one active MDS.
-files, err := cephfs.Run(ctx, ceph.DefaultImage)
-
-// One S3 gateway with a generated test user.
 objects, err := rgw.Run(ctx, ceph.DefaultImage)
+testcontainers.CleanupContainer(t, objects)
+if err != nil {
+	t.Fatal(err)
+}
 gateways, err := rgw.Gateways(ctx, objects.Container)
 if err != nil {
 	t.Fatal(err)
 }
 gateway := gateways[0] // AccessKey, SecretKey and Region
 endpoint, err := gateway.S3Endpoint(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 To serve several services from one cluster, pass their options to `ceph.Run`:
@@ -206,7 +213,7 @@ Guides for tasks that span packages:
   feature the release lacks, a missing image tool, an engine limit and a
   failed native command apart with `errors.Is` and `errors.As`.
 - [Bug compatibility](docs/guides/bug-compatibility.md): the registered
-  `ceph_bug_<id>` tags and the policy for adding one.
+  `ceph_bug_<id>` tags.
 
 For contributors:
 
@@ -216,6 +223,8 @@ For contributors:
   failing batch.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence
   and publication checks for a candidate.
+- [Bug compatibility tags](docs/contributing/bug-compatibility.md): the
+  policy for adding, selecting and retiring a `ceph_bug_<id>` tag.
 
 ## Related projects
 
@@ -231,6 +240,6 @@ for Go.
 
 They do not contain or link Ceph. Tests pull the Ceph container images at run
 time and run the daemons and CLIs inside them; Ceph in those images is under
-its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Images
-that a test selects with `ImageOptions.WithImageSet`, `ImageOptions.WithRGWImage` or
-`ImageOptions.WithCephFSImage` keep the licenses of whoever publishes them.
+its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Any
+image a test selects, through the image argument of `Run` or an image option,
+keeps the licenses of whoever publishes it.

@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       public_api:
-        description: Qualify the public blockio API on both supported releases
+        description: Qualify the public blockio API on every supported release
         type: boolean
         default: false
       prepare_kernel:

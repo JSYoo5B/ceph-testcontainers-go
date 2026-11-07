@@ -59,8 +59,10 @@ Upstream references:
 ## Tier and triggers
 
 Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. It never runs on a pull request, on `main`
-or in periodic samples, and never gates anything.
+images, the pull request default. No automatic run includes it (the default
+checks of a pull request, pushes to `main`, periodic samples), and it never
+gates anything. A maintainer can run it on demand, also on a pull request's
+head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rgw_expiration_header`.
 - Comment: `/ci run rgw_expiration_header` or
@@ -68,27 +70,26 @@ or in periodic samples, and never gates anything.
 
 ## Running it
 
+Export the images of one release first, as
+[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
+describes, then:
+
 ```sh
-CEPH_TEST_ESSENTIAL_IMAGE=<essential role@sha256:...> \
-CEPH_TEST_CLIENT_IMAGE=<client role@sha256:...> \
-CEPH_TEST_RGW_IMAGE=<rgw role@sha256:...> \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWLifecycleExpirationHeader$' \
   ./internal/integration/experiments/rgw_lifecycle_expiration_header
 ```
 
-Resolve the role images with `run_image_matrix.py --variant official
---layout roles --release <release> --roles essential,client,rgw
---prepare-only` (see [Testing](../../../../docs/contributing/testing.md)).
-Tentacle 20.2.5 has no published role images; run it with
-`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:<index digest>` instead of
-the role variables. Or run the batch exactly as CI does:
+Or run the batch exactly as CI does:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_expiration_header \
   --package ./internal/integration/experiments/rgw_lifecycle_expiration_header \
-  --directory artifacts/rgw-expiration-header
+  --directory "artifacts/rgw-expiration-header-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+The runner refuses an existing `--directory`, so the timestamp gives each
+run, such as each release of a comparison, its own.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_EXP ceph=` and the daemon versions), every version ID with its
@@ -111,6 +112,13 @@ request.
    get no header.
 
 ## Reading the result
+
+The results below ran on the pinned images of the shared recipe: the 20.2.4
+role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
+`aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
+role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
+`9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
+client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 
 - **Pass:** every request followed the table. Tentacle 20.2.5 and Umbrella
   21.2.0 pass.

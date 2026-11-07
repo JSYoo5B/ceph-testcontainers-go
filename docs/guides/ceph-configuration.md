@@ -163,82 +163,23 @@ In `[global]` the setting makes every MGR, OSD and MDS list IPv6 first. MON
 vectors are unaffected, and both orders give concrete addresses of both
 families, which the admission check accepts.
 
-`TestDualStackAddressFamily` checks on Tentacle 20.2.4 and Squid 19.2.5:
+The RGW gateway listens on both families (`0.0.0.0:7480` and `[::]:7480`),
+and its own librados session follows the vectors like any other client. An
+MDS picks its vector directly and has no MGR-like wildcard problem. Each
+client session goes to the first entry of the daemon's vector, so with the
+sections above MGR, OSD and MDS operations run over IPv4 with one daemon and
+over IPv6 with the other, also after a failover.
 
-- every MON, the active MGR before and after a failover, and the public,
-  cluster and heartbeat vectors of every OSD advertise a concrete IPv4 and
-  IPv6 address;
-- a Python librados client in another container, pinned to the IPv4 and then
-  to the IPv6 MON addresses with `mon_host_override`, completes a MON command,
-  a `pg stat` `mgr_command` and an object write and read, and its open sockets
-  show the MON session in that family and the MGR and OSD sessions over IPv4;
-- every advertised v2 address of both families, MON, MGR and OSD, answers with
-  the Messenger v2 banner.
-
-`TestDualStackSeparateClusterNetwork` checks the same with
-`NetworkConfig.WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
-both families from the replication bridge.
-
-`TestDualStackServices` starts CephFS and RGW with two MGRs, two OSDs, an
-active and a standby MDS and one gateway, with `[mgr.b]`, `[osd.1]` and
-`[mds.tc-cephfs-1]` set to IPv6 first as above. It checks:
-
-- every MDS vector in `fs dump`, active and standby, has a concrete IPv4 and
-  IPv6 address, in the configured order. The MDS picks its vector directly
-  and has no MGR-like wildcard problem;
-- a librados client completes a `pg stat` `mgr_command` and an object write
-  and read on each OSD, before and after a MGR failover, and a libcephfs
-  client mounts and writes, fsyncs and reads a file, before and after an MDS
-  failover. Each session goes to the first entry of the daemon's vector, so
-  MGR, OSD and MDS operations complete over IPv4 with one daemon and over IPv6
-  with the other. The same TCP connection appears in the client container's
-  and in the daemon container's socket table;
-- the gateway listens on `0.0.0.0:7480` and `[::]:7480`. A client in another
-  container creates a bucket and writes and reads objects with signed S3
-  requests to both the gateway's IPv4 and IPv6 addresses, and the published
-  host port serves the same objects.
-
-The RGW's own librados session follows the vectors like any other client.
-
-`TestDualStackReplacement` replaces one daemon of each kind with a new
-container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
-
-1. [AddMonitor](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddMonitor) `c`, then [MonitorContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#MonitorContainer.Remove) `b`;
-2. [AddOSD](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddOSD) (osd.2), then [OSDContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) `0`;
-3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
-   MDS started with `MDS.AddReplacement` (see [cephfs](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#MDS.AddReplacement));
-4. [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.AddManager) `b`, then [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) `a`.
-
-`[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
-false`, so clients reach each replacement over IPv6 and the daemon it
-replaces over IPv4. One Python process keeps a librados session and a
-libcephfs mount open through all four steps. Before the first step and after
-each one it sends a MON command and a `pg stat` `mgr_command`, writes and
-reads an object on each OSD, writes, fsyncs and reads a file and reads the
-files of the earlier steps. After each step the test checks that:
-
-- the replacement advertises a concrete IPv4 and IPv6 address, and the map's
-  epoch has grown. The replacement MDS and MGR have new GIDs, and the
-  replacement MDS holds rank 0 with a later incarnation (`fs dump`), while
-  the MDS's GID and incarnation stay the same through the other steps;
-- no MON, MGR, OSD or MDS vector lists an entry, address and nonce, of a
-  replaced daemon, no vector holds `[::]`, and
-  [MonitorBootstrapAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.MonitorBootstrapAddresses) lists mon.c and not
-  mon.b;
-- the retained process completed every operation. Its two MON sessions, one
-  of librados and one of libcephfs, are on the first, IPv6, entry of a
-  current MON, its MGR, OSD and MDS sessions go to the
-  first v2 entry of the current daemons, so over IPv6 to each replacement,
-  and it has no connection left to an address that only a replaced daemon
-  advertised. Each session is matched in the daemon container's socket table
-  as above;
-- new clients whose MON session `mon_host_override` pins to mon.c's IPv4 or
-  IPv6 address complete their operations over that family.
-
-The MGR is replaced last, so the admission check of `ManagerContainer.Remove` also reads
-the vectors of mon.c and osd.2. `AddMonitor` and `AddOSD` do not run the
-check, and MDS vectors are not part of it. At the end a new process reads back
-every file and the last objects.
+For a MON, OSD or MGR, add the replacement with `AddMonitor`, `AddOSD` or
+`AddManager` and remove the old daemon with its `Remove` method. For an MDS,
+stop the old MDS, run `ceph mds fail <old-gid>`, then call
+`oldMDS.AddReplacement(ctx)` followed by `oldMDS.RemoveStopped(ctx)`.
+The replacement advertises both address families, no vector keeps an
+entry of a replaced daemon, and a client that stays connected moves its
+sessions to the current daemons. The admission check of
+`ManagerContainer.Remove` also reads the vectors of daemons added before it;
+`AddMonitor` and `AddOSD` do not run the check, and MDS vectors are not part
+of it.
 
 Docker gives the address of a removed or stopped container to a later one.
 A replacement can therefore advertise the old IP address of its predecessor
@@ -273,30 +214,16 @@ A native client does not fall back to the other family (see above), so its
 operations on that path wait instead of failing over, and they complete after
 `Restore` on the same session.
 
-`TestDualStackFamilyCut` checks this on a cluster with one MON, one MGR and
-two OSDs, where osd.1 lists IPv6 first. A client container runs two librados
-processes whose MON sessions `mon_host_override` pins to mon.a's IPv6 and
-IPv4 address. The test cuts the container's packets first to mon.a's IPv6 v2
-address and then to osd.1's. During each cut:
+The cut needs the netem helper and `NET_ADMIN`, like every
+`ApplyNetworkProfile`. While it holds, the same daemon keeps serving over the
+other family and the container's other paths keep working. After `Restore`
+the pending operation completes on the same TCP connection.
 
-- the operation on the cut path, a MON command or a read of an object whose
-  primary is osd.1, stays pending;
-- the same daemon keeps serving over IPv4: the IPv4-pinned process completes
-  MON commands, and osd.1's IPv4 v2 address and its IPv6 v1 port answer with
-  their Messenger banners while its IPv6 v2 address does not;
-- the process's other paths complete MON, MGR and object operations, and
-  netem reports dropped and no sent selected packets.
-
-After `Restore` the pending operation completes on the same TCP connection,
-matched in the daemon's socket table, and the client keeps its instance ID.
-The pending read returns the bytes of the object it started to read, compared
-by SHA-256.
-Quorum, the up OSDs, the active MGR's GID and the blocklist are unchanged,
-and a new session reads back the exact objects. Finally osd.1's container is
-stopped and started: the new process advertises both families again with a
-new nonce, and the same client reads from it over IPv6 on a new connection.
-The test needs the netem
-helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
+The native tests `TestDualStackAddressFamily`,
+`TestDualStackSeparateClusterNetwork`, `TestDualStackServices`,
+`TestDualStackReplacement` and `TestDualStackFamilyCut` in
+[`internal/integration`](../../internal/integration/) check these
+behaviours natively.
 
 ## Limitations and release differences
 
@@ -324,6 +251,7 @@ helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
 | `bluestore_block_size` | 1 GiB sparse file | `OSDStorage.WithBlockSize` |
 | `bluestore_cache_size`, autotune | 64 MiB, off | config file `[osd]` |
 | `osd_max_object_name_len`, `osd_max_object_namespace_len` | 256, 64 | config file `[osd]` |
+| `osd_crush_chooseleaf_type` | 0: the default CRUSH rule places replicas on distinct OSDs, not distinct hosts | a rule the test creates, such as `ceph osd crush rule create-replicated` with a `host` failure domain |
 | `auth_allow_insecure_global_id_reclaim` | `false` | not configurable |
 | Logging | stderr (container logs), no log files | not configurable |
 
@@ -331,7 +259,8 @@ helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
 
 - In bridge mode, MON `a` is the only Ceph daemon with published ports
   (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Only` and
-  `MessengerV2Secure`).
+  `MessengerV2Secure`), unless `ceph.WithManagerPorts` publishes ports on
+  every MGR for MGR modules such as the Dashboard.
   Native RADOS, RBD and CephFS clients must run in a `WithClient` container; a
   host process cannot reach the OSDs. RGW's HTTP endpoint is published and
   reachable from the host (see [rgw](../../rgw/README.md)).
@@ -362,11 +291,22 @@ a helper applies or restores it.
 ### Ceph releases
 
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
-- Squid 19.2.5 is supported. Ceph periodic runs every runtime category on its
-  role images, and the release matrix runs them on pull requests and `main`
-  during a release phase; the per-change workflows use Tentacle only. The `ceph` package behaves the
-  same on Squid; release-specific behaviour is in the [rbd](../../rbd/README.md),
-  [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages.
+- Umbrella 21.2.0 and Squid 19.2.5 are supported. A full Ceph periodic run
+  covers every runtime category on their role images, and the release matrix
+  runs them on pull requests and `main` during a release phase; the
+  per-change workflows use Tentacle only (see
+  [Supported releases](../contributing/ci.md#supported-releases)).
+- Most release-specific behaviour is in the [rbd](../../rbd/README.md),
+  [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages,
+  but two `ceph` operations differ too.
+  [`WithAuth`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithAuth)
+  accepts only AES keys and ciphers on an image without key type support
+  (Squid, and Tentacle before 20.2.4) and refuses another requested key type
+  with `ErrUnsupported`. A revoked client
+  ([`ClientConfig.Revoke`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Revoke))
+  that authenticated before loses its open MON session on Tentacle 20.2.4,
+  while Squid 19.2.5 keeps it answering. The open MON session behavior on
+  Umbrella 21.2.0 has not been characterized here.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
   [NetworkConfig.WithMessengerMode](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithMessengerMode)).

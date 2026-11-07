@@ -11,8 +11,10 @@ no container. See
 ## Order of use
 
 1. **Start a filesystem** and enable the module with
-   `override.SetMGRModule(ctx, cluster, "snap_schedule", true)`; wait until the
-   active MGR, which restarts to load it, answers again. For a schedule in
+   `override.SetMGRModule(ctx, cluster, "snap_schedule", true)`. The active
+   MGR restarts to load it, and `SetMGRModule` checks membership, not command
+   readiness: wait until the MGR map reports an available manager and a
+   `snap-schedule list` of the filesystem succeeds (below). For a schedule in
    minutes, also set `mgr/snap_schedule/allow_m_granularity` to `true` with
    `override.SetConfig`.
 2. **Add the schedule** with `snapschedule.Add(ctx, fs, snapschedule.Config{Path:
@@ -26,6 +28,26 @@ no container. See
    schedule the lease added; the snapshots stay.
 
 ```golang
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+readyCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+defer cancel()
+for {
+	status, err := observer.ManagerStatus(readyCtx)
+	if err == nil && status.Available {
+		_, err = cluster.Ceph(readyCtx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json")
+		if err == nil {
+			break
+		}
+	}
+	select {
+	case <-readyCtx.Done():
+		t.Fatalf("snap_schedule readiness: %v (manager available: %t, last probe error: %v)", readyCtx.Err(), status.Available, err)
+	case <-time.After(time.Second):
+	}
+}
 lease, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1m", Retention: map[string]int{"n": 3}})
 if lease != nil {
 	defer lease.Restore(cleanupCtx)
@@ -44,19 +66,15 @@ count, its first or last snapshot time or the directory's retention changes.
 This is aggregate progress, emitted only on change, not a per-snapshot event
 history: two runs between reads are one event, a read equal to the previous
 one is none, and nothing says why the module deactivated a schedule. List the
-snapshots themselves with `Lease.Snapshots`. The baseline is buffered before
-it returns. A failed read is a `ceph.WatchGap` event and the next success is
-`ceph.WatchResumed`. A deactivated schedule is a change, not the end of the
+snapshots themselves with `Lease.Snapshots`. A deactivated schedule is a change, not the end of the
 watch, since the module can activate it again. The watch has no terminal
 state; these end it with `ceph.ErrInvalidRequest`: `Restore`, a schedule the
 module no longer lists (even if added again with the same path and repeat),
 another schedule of the directory with the lease's repeat, a removed or
-replaced filesystem and cluster termination. A full buffer ends it with
-`ceph.ErrWatchOverflow`. A lease whose add was never confirmed cannot be
-watched; restore it. Call `Stop` before `Restore` and the fixture's cleanup: it
-joins the watch and returns why it ended. See
-[watching state](../../docs/guides/contexts-and-cleanup.md#watching-state) for
-the lifecycle that every Watch shares.
+replaced filesystem and cluster termination. A lease whose add was never
+confirmed cannot be watched; restore it. Stop the watch before `Restore` too.
+The lifecycle that every Watch shares (baseline, gaps, overflow and `Stop`) is
+in [watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).
 
 ## Concepts and limits
 
