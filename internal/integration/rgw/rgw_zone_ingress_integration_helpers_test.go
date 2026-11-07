@@ -5,6 +5,7 @@ package rgw_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -62,6 +63,27 @@ type ingressPolicy struct {
 	Timeout   time.Duration
 	Signer    harness.S3HTTPClient
 	Instances map[string]string
+}
+
+func (a ingressAttempt) succeeded() bool {
+	return a.CurlExit == 0 && a.Status == http.StatusOK
+}
+
+type ingressRTTs struct {
+	local, selected, unselected harness.ZoneRTT
+}
+
+func (r ingressRTTs) check(base ingressRTTs, added time.Duration) error {
+	if err := harness.CheckZoneControl(base.local, r.local); err != nil {
+		return fmt.Errorf("same-zone path: %w", err)
+	}
+	if err := harness.CheckZoneControl(base.unselected, r.unselected); err != nil {
+		return fmt.Errorf("unselected cross-zone path: %w", err)
+	}
+	if added == 0 {
+		return harness.CheckZoneControl(base.selected, r.selected)
+	}
+	return harness.CheckZoneShaped(base.selected, r.selected, added)
 }
 
 // testRGWZoneIngress answers whether an application in zone a, whose
@@ -142,7 +164,7 @@ func testRGWZoneIngress(t *testing.T) {
 	instances := map[string]string{}
 	for i := range all {
 		attempt := ingressGet(t, ctx, clientA, signer, all[i], 30*time.Second, nil)
-		if attempt.Status != http.StatusOK || attempt.SHA256 != want {
+		if !attempt.succeeded() || attempt.SHA256 != want {
 			t.Fatalf("setup GET through %s: %+v, want 200 and sha256 %s", all[i].Name, attempt, want)
 		}
 		all[i].Instance = ingressInstance(attempt.RequestID)
@@ -156,7 +178,9 @@ func testRGWZoneIngress(t *testing.T) {
 	fromA := ingressPolicy{Client: clientA, Order: []ingressGateway{all[0], all[1]}, Timeout: ingressTimeout, Signer: signer, Instances: instances}
 	fromB := ingressPolicy{Client: clientB, Order: []ingressGateway{all[1], all[0]}, Timeout: ingressTimeout, Signer: signer, Instances: instances}
 	probe := harness.NewZoneProbe(t, ctx, clientAMember.Name, clientA.GetContainerID())
-	rtt := func(phase string) (harness.ZoneRTT, harness.ZoneRTT) {
+	clientBMember, _ := harness.ZoneMemberByContainer(t, layout, clientB.GetContainerID())
+	reverse := harness.NewZoneProbe(t, ctx, clientBMember.Name, clientB.GetContainerID())
+	rtt := func(phase string) ingressRTTs {
 		t.Helper()
 		local, err := probe.ConnectRTT(ctx, all[0].Addr, 20, 2*time.Second)
 		if err != nil {
@@ -166,8 +190,14 @@ func testRGWZoneIngress(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("RTT %-10s client-a to local %s: %s; to remote %s: %s", phase, all[0].Name, local, all[1].Name, remote)
-		return local, remote
+		// Client-b to gateway-a crosses both zone routers; neither direction
+		// targets client-a or gateway-b, the peers selected by the filters.
+		unselected, err := reverse.ConnectRTT(ctx, all[0].Addr, 20, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("RTT %s local a→a %s, selected a→b %s, unselected b→a %s", phase, local, remote, unselected)
+		return ingressRTTs{local: local, selected: remote, unselected: unselected}
 	}
 	expect := func(what string, attempts []ingressAttempt, served []string) {
 		t.Helper()
@@ -180,13 +210,13 @@ func testRGWZoneIngress(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(served, ",") {
 			t.Fatalf("%s: attempts served by %q, want %q", what, got, served)
 		}
-		if last := attempts[len(attempts)-1]; last.Status != http.StatusOK || last.SHA256 != want {
+		if last := attempts[len(attempts)-1]; !last.succeeded() || last.SHA256 != want {
 			t.Fatalf("%s: the final attempt returned %d with sha256 %s, want 200 and %s", what, last.Status, last.SHA256, want)
 		}
 	}
 
 	// Baseline: each zone's client is served by its own zone's gateway.
-	baseLocal, baseRemote := rtt("baseline")
+	baseline := rtt("baseline")
 	expect("baseline from zone a", fromA.get(t, ctx), []string{all[0].Name})
 	expect("baseline from zone b", fromB.get(t, ctx), []string{all[1].Name})
 
@@ -207,17 +237,13 @@ func testRGWZoneIngress(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	shapedLocal, shapedRemote := rtt("delayed")
-	if err := harness.CheckZoneControl(baseLocal, shapedLocal); err != nil {
-		t.Fatalf("the local ingress path changed: %v", err)
-	}
-	if err := harness.CheckZoneShaped(baseRemote, shapedRemote, 2*ingressOneWay); err != nil {
-		t.Fatalf("the remote ingress path did not gain the delay once: %v", err)
+	if err := rtt("delayed").check(baseline, 2*ingressOneWay); err != nil {
+		t.Fatalf("ingress RTT during peer shaping: %v", err)
 	}
 	expect("delayed remote path, from zone a", fromA.get(t, ctx), []string{all[0].Name})
 	direct := ingressGet(t, ctx, clientA, signer, all[1], 30*time.Second, instances)
 	t.Logf("direct GET to the remote %s under the delay: status %d in %v, served by %s", all[1].Name, direct.Status, direct.Elapsed.Round(time.Millisecond), direct.Served)
-	if direct.Served != all[1].Name || direct.SHA256 != want {
+	if !direct.succeeded() || direct.Served != all[1].Name || direct.SHA256 != want {
 		t.Fatalf("the direct remote GET: %+v", direct)
 	}
 
@@ -246,7 +272,7 @@ func testRGWZoneIngress(t *testing.T) {
 	}
 	t.Logf("fallback within %v: the local attempt timed out after %v, %s served the object", elapsed.Round(time.Millisecond), fallback[0].Elapsed.Round(time.Millisecond), fallback[1].Served)
 	viaB := ingressGet(t, ctx, clientB, signer, all[0], 30*time.Second, instances)
-	if viaB.Served != all[0].Name || viaB.SHA256 != want {
+	if !viaB.succeeded() || viaB.Served != all[0].Name || viaB.SHA256 != want {
 		t.Fatalf("the zone a gateway did not serve zone b during the local cut: %+v", viaB)
 	}
 	t.Logf("the zone a gateway itself stayed healthy: served client-b in %v", viaB.Elapsed.Round(time.Millisecond))
@@ -261,11 +287,8 @@ func testRGWZoneIngress(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	restoredLocal, restoredRemote := rtt("restored")
-	for name, pair := range map[string][2]harness.ZoneRTT{"local": {baseLocal, restoredLocal}, "remote": {baseRemote, restoredRemote}} {
-		if err := harness.CheckZoneControl(pair[0], pair[1]); err != nil {
-			t.Fatalf("the %s ingress path after restoration: %v", name, err)
-		}
+	if err := rtt("restored").check(baseline, 0); err != nil {
+		t.Fatalf("ingress RTT after restoration: %v", err)
 	}
 }
 
@@ -276,7 +299,7 @@ func (p ingressPolicy) get(t *testing.T, ctx context.Context) []ingressAttempt {
 	for _, gw := range p.Order {
 		attempt := ingressGet(t, ctx, p.Client, p.Signer, gw, p.Timeout, p.Instances)
 		attempts = append(attempts, attempt)
-		if attempt.Status == http.StatusOK {
+		if attempt.succeeded() {
 			break
 		}
 	}
