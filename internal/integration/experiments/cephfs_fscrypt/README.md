@@ -135,7 +135,7 @@ its own CephX identity and its own mount:
   directory and reads it back; `b` reads the same policy. Both clients also
   accepted, from root in the client container, a policy naming a key that was
   never added (errno 0): the kernel lets a caller with `CAP_FOWNER` do that,
-  and `ceph-fuse` does not check. The test records that answer.
+  and `ceph-fuse` does not check. On the qualified client cohorts the test requires errno 0.
 - **Keyed view.** `a` reads two files byte for byte, a symlink target and a
   subdirectory under their plaintext names.
 - **Locked view.** `b` has no key (`a`'s key is absent in `b`'s key status,
@@ -175,7 +175,8 @@ its own CephX identity and its own mount:
   fscrypt (19.2.5, 20.2.4).
 - **Observed change:** the kernel subtest is refused by the policy query, a
   plaintext name or byte reaches `b` or RADOS, or the `ceph-fuse` subtest on
-  21.2.0 is refused.
+  the pinned official 21.2.0 image on Linux 6.8.0 x86-64 is refused. Other
+  FUSE client builds are characterized by their actual policy-query result.
 - **Unavailable prerequisite:** the subtest fails with `CephFS fscrypt over
   the <path> client refused: <requirement>`: `kernel ceph filesystem`,
   `ceph-fuse binary`, `/dev/fuse device`, `CAP_SYS_ADMIN`,

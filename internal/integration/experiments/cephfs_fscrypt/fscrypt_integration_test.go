@@ -62,6 +62,9 @@ func startFscryptCluster(t *testing.T, ctx context.Context) *fscryptCluster {
 	return &fscryptCluster{cluster: cluster, admin: admin, fs: fs, mds: status.Active[0].Name, version: harness.StaticFacts(cluster).CephVersion}
 }
 
+// The official FUSE build qualified with directory ioctls in the experiment.
+const qualifiedFuseImage = "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+
 // clientImage returns the image of path's client containers: the cluster's
 // client image for the kernel client, which needs only python3, and for
 // ceph-fuse the client image when it ships ceph-fuse, otherwise the
@@ -79,6 +82,9 @@ func (c *fscryptCluster) clientImage(t *testing.T, ctx context.Context, path str
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(c.version) {
 		t.Fatalf("client image %s has no ceph-fuse, and Ceph version %q names no official image", image, c.version)
+	}
+	if c.version == "21.2.0" {
+		return qualifiedFuseImage
 	}
 	return "quay.io/ceph/ceph:v" + c.version
 }
@@ -538,7 +544,8 @@ func requireLocked(t *testing.T, listing fscryptListing, n fscryptNames, view st
 			}
 		}
 	}
-	for name, errno := range listing.Lookups {
+	for _, name := range n.all() {
+		errno := listing.Lookups[name]
 		if errno != errnoENOENT {
 			t.Fatalf("%s: lookup of plaintext %q: errno %d, want ENOENT", view, name, errno)
 		}
@@ -564,13 +571,23 @@ func describe(listing fscryptListing) string {
 
 // exposed compares the keyed and the locked views by inode and reports the
 // metadata that the locked view shows as it is.
-func exposed(t *testing.T, keyed, locked fscryptListing, view string) string {
+func exposed(t *testing.T, keyed, locked fscryptListing, clientPath string, qualified bool) string {
 	t.Helper()
 	var same []string
 	for _, entry := range keyed.Entries {
 		other, ok := locked.byIno(entry.Ino)
 		if !ok {
-			t.Fatalf("%s: inode %d of %q not listed", view, entry.Ino, entry.plainName())
+			t.Fatalf("%s: inode %d of %q not listed", clientPath, entry.Ino, entry.plainName())
+		}
+		if qualified {
+			switch kind := entry.Mode & 0o170000; {
+			case other.Mode != entry.Mode || other.MtimeNS != entry.MtimeNS:
+				t.Fatalf("%s: locked mode/mtime differ on inode %d", clientPath, entry.Ino)
+			case kind == 0o100000 && other.Size != entry.Size:
+				t.Fatalf("%s: locked file size %d, want %d", clientPath, other.Size, entry.Size)
+			case kind == 0o120000 && ((clientPath == fusePath && other.Size != entry.Size) || (clientPath == kernelPath && other.Size != 96)):
+				t.Fatalf("%s: unexpected locked/keyed symlink sizes %d/%d", clientPath, other.Size, entry.Size)
+			}
 		}
 		var fields []string
 		if other.Mode == entry.Mode {
@@ -588,6 +605,52 @@ func exposed(t *testing.T, keyed, locked fscryptListing, view string) string {
 	}
 	slices.Sort(same)
 	return strings.Join(same, " ")
+}
+
+type fscryptRetained struct {
+	Before        string `json:"before"`
+	RemoveErrno   int    `json:"remove_errno"`
+	RemoveFlags   *int   `json:"remove_flags"`
+	BusyStatus    int    `json:"busy_status"`
+	Retained      string `json:"retained"`
+	RetainedErrno int    `json:"retained_errno"`
+	OtherErrno    int    `json:"other_errno"`
+	FinalErrno    int    `json:"final_errno"`
+	FinalFlags    *int   `json:"final_flags"`
+	FinalStatus   int    `json:"final_status"`
+	ReopenErrno   int    `json:"reopen_errno"`
+}
+
+func (r fscryptRetained) matches(plaintext []byte) bool {
+	return r.Before == hex.EncodeToString(plaintext) && r.RemoveErrno == 0 &&
+		r.RemoveFlags != nil && *r.RemoveFlags&removalFilesBusy != 0 && r.BusyStatus == keyIncompletelyRemoved &&
+		r.RetainedErrno == 0 && r.Retained == r.Before && r.OtherErrno == errnoENOKEY &&
+		r.FinalStatus == keyAbsent && (r.ReopenErrno == errnoENOENT || r.ReopenErrno == errnoENOKEY)
+}
+
+func TestFscryptRetainedKeyRemovalEvidence(t *testing.T) {
+	data := []byte("retained plaintext")
+	busy := removalFilesBusy
+	good := fscryptRetained{Before: hex.EncodeToString(data), RemoveFlags: &busy, BusyStatus: keyIncompletelyRemoved,
+		Retained: hex.EncodeToString(data), OtherErrno: errnoENOKEY, FinalStatus: keyAbsent, ReopenErrno: errnoENOENT}
+	if !good.matches(data) {
+		t.Fatal("valid open-file removal evidence rejected")
+	}
+	for name, alter := range map[string]func(*fscryptRetained){
+		"missing busy flag":      func(r *fscryptRetained) { r.RemoveFlags = new(int) },
+		"key already absent":     func(r *fscryptRetained) { r.BusyStatus = keyAbsent },
+		"open fd revoked":        func(r *fscryptRetained) { r.RetainedErrno = errnoENOKEY },
+		"different bytes":        func(r *fscryptRetained) { r.Retained = "00" },
+		"unrelated open failure": func(r *fscryptRetained) { r.OtherErrno = errnoEACCES },
+	} {
+		t.Run(name, func(t *testing.T) {
+			wrong := good
+			alter(&wrong)
+			if wrong.matches(data) {
+				t.Fatal("accepted inconsistent key removal evidence")
+			}
+		})
+	}
 }
 
 // testFscryptPath runs the case for one client path on c: admission, the
@@ -626,12 +689,15 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	// unencrypted directory.
 	var query fscryptPolicy
 	a.probe(t, ctx, &query, nil, "getpolicy", path, a.point+base+"/enc")
+	qualifiedKernel := admission.Machine == "x86_64" && strings.HasPrefix(admission.Kernel, "6.8.0-")
+	qualifiedFuse := qualifiedKernel && path == fusePath && c.version == "21.2.0" && image == qualifiedFuseImage
+	qualifiedMetadata := qualifiedFuse || (qualifiedKernel && path == kernelPath && slices.Contains([]string{"19.2.5", "20.2.4", "21.2.0"}, c.version))
 	refusal, classified := policyRefusal(path, query.Errno)
 	if !classified {
 		t.Fatalf("policy query on a new directory through the %s client: %+v", path, query)
 	}
 	if refusal != nil {
-		if path == kernelPath {
+		if path == kernelPath || qualifiedFuse {
 			t.Fatal(refusal)
 		}
 		// The client build lacks the fscrypt ioctls: the recorded outcome.
@@ -640,9 +706,13 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		return
 	}
 
-	// A v2 policy naming a key that was never added is refused.
+	// Record whether this privileged client accepts an identifier never added.
 	var noKey fscryptErrno
 	a.probe(t, ctx, &noKey, nil, "setpolicy", path, a.point+base+"/nokey", randomHex(t, 16))
+
+	if qualifiedMetadata && noKey.Errno != 0 {
+		t.Fatalf("privileged policy for a never-added key: errno %d", noKey.Errno)
+	}
 
 	// The real key and policy.
 	key := make([]byte, 64)
@@ -689,7 +759,7 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	}
 	locked := b.inspect(t, ctx, base+"/enc", names.all()...)
 	requireLocked(t, locked, names, "client b without the key")
-	exposedMetadata := exposed(t, keyed, locked, "client b without the key")
+	exposedMetadata := exposed(t, keyed, locked, path, qualifiedMetadata)
 	requirePlain(t, b.inspect(t, ctx, base+"/control"), names, "client b, control directory")
 
 	// A wrong key in client b.
@@ -726,25 +796,12 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	// The key is removed while client a keeps the file open. Once it is
 	// gone, the plaintext path no longer opens: ENOENT where the name no
 	// longer resolves, ENOKEY where it does but the contents stay locked.
-	var retained struct {
-		Before        string `json:"before"`
-		RemoveErrno   int    `json:"remove_errno"`
-		RemoveFlags   *int   `json:"remove_flags"`
-		BusyStatus    int    `json:"busy_status"`
-		Retained      string `json:"retained"`
-		RetainedErrno int    `json:"retained_errno"`
-		OtherErrno    int    `json:"other_errno"`
-		FinalErrno    int    `json:"final_errno"`
-		FinalFlags    *int   `json:"final_flags"`
-		FinalStatus   int    `json:"final_status"`
-		ReopenErrno   int    `json:"reopen_errno"`
-	}
+	var retained fscryptRetained
 	a.probe(t, ctx, &retained, nil, "retain", path, a.point, added.Identifier, a.point+base+"/enc/"+names.file, a.point+base+"/enc/"+names.second)
 	retainedDescription := fmt.Sprintf("remove errno=%d flags=%v status=%d; retained fd read equal=%t errno=%d; other file open errno=%d; after close remove errno=%d flags=%v status=%d; reopen errno=%d",
 		retained.RemoveErrno, deref(retained.RemoveFlags), retained.BusyStatus, retained.Retained == hex.EncodeToString(names.data), retained.RetainedErrno,
 		retained.OtherErrno, retained.FinalErrno, deref(retained.FinalFlags), retained.FinalStatus, retained.ReopenErrno)
-	if retained.Before != hex.EncodeToString(names.data) || retained.RemoveErrno != 0 || retained.FinalStatus != keyAbsent ||
-		(retained.ReopenErrno != errnoENOENT && retained.ReopenErrno != errnoENOKEY) {
+	if !retained.matches(names.data) {
 		t.Fatalf("key removal with a retained open file: %s", retainedDescription)
 	}
 	requireLocked(t, a.inspect(t, ctx, base+"/enc", names.all()...), names, "client a after the key removal")
@@ -778,6 +835,9 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		t.Fatalf("client b without the key lists the snapshots %s", describe(lockedSnaps))
 	}
 	snapVisible := lockedSnaps.Entries[0].plainName() == snapName
+	if qualifiedMetadata && snapVisible != (path == fusePath) {
+		t.Fatalf("%s: unexpected plaintext snapshot name visibility %t", path, snapVisible)
+	}
 	requireLocked(t, b.inspect(t, ctx, base+"/enc/.snap/"+lockedSnaps.Entries[0].plainName(), names.all()...), names, "client b, snapshot without the key")
 	var unsnapped fscryptErrno
 	a.probe(t, ctx, &unsnapped, nil, "rmdir", a.point+base+"/enc/.snap/"+snapName)

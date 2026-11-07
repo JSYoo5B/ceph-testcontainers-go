@@ -70,6 +70,7 @@ const (
 // the effective set and the security label.
 type fscryptAdmission struct {
 	Kernel      string `json:"kernel"`
+	Machine     string `json:"machine"`
 	KernelCeph  bool   `json:"kernel_ceph"`
 	KernelFuse  bool   `json:"kernel_fuse"`
 	CephFuse    bool   `json:"ceph_fuse"`
@@ -309,7 +310,7 @@ if command == "requests":
     emit(**REQUESTS)
 
 if command == "admit":
-    result = {"kernel": os.uname().release, "ceph_fuse": os.access("/usr/bin/ceph-fuse", os.X_OK)}
+    result = {"kernel": os.uname().release, "machine": os.uname().machine, "ceph_fuse": os.access("/usr/bin/ceph-fuse", os.X_OK)}
     with open("/proc/filesystems") as filesystems:
         types = [line.split()[-1] for line in filesystems if line.strip()]
     result["kernel_ceph"], result["kernel_fuse"] = "ceph" in types, "fuse" in types
