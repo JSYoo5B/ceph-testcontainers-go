@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -151,5 +154,116 @@ func TestRestoreCertificateRetriesLostReplyAndPreservesOutsideValue(t *testing.T
 	}
 	if err := s.restore(t.Context()); err != nil || s.registry.active != nil {
 		t.Fatalf("retry after remove took effect: %v", err)
+	}
+}
+
+// lateWriteCLI accepts a native input command and its stdin, then loses the
+// Docker reply while the command is still pending. The test controls when
+// that command changes Ceph state and when the canceler can reach it.
+type lateWriteCLI struct {
+	*restoreCLI
+	delayed      func()
+	stopFailures int
+}
+
+func (f *lateWriteCLI) GetContainerID() string { return "dashboard-control" }
+
+func (f *lateWriteCLI) State(context.Context) (*container.State, error) {
+	return &container.State{Running: true}, nil
+}
+
+type lateCommandInput struct {
+	bytes.Buffer
+	output   *io.PipeWriter
+	accepted func(string)
+}
+
+func (in *lateCommandInput) CloseWrite() error {
+	in.accepted(in.String())
+	return in.output.CloseWithError(errors.New("lost Docker reply after stdin reached the command"))
+}
+
+func (in *lateCommandInput) Close() error { return in.output.Close() }
+
+func (f *lateWriteCLI) AttachExec(_ context.Context, cmd, _ []string) (supervised.Attachment, error) {
+	at := slices.Index(cmd, "dashboard")
+	if at < 0 || at+1 >= len(cmd) {
+		return supervised.Attachment{}, errors.New("expected a Dashboard mutation")
+	}
+	verb := cmd[at+1]
+	read, output := io.Pipe()
+	in := &lateCommandInput{output: output, accepted: func(value string) {
+		f.delayed = func() {
+			switch verb {
+			case "ac-user-create":
+				f.accountName = cmd[len(cmd)-1]
+			case "set-ssl-certificate":
+				f.keys["mgr/dashboard/crt"] = value
+			case "set-ssl-certificate-key":
+				f.keys["mgr/dashboard/key"] = value
+			}
+		}
+	}}
+	return supervised.Attachment{Input: in, Output: read, ExitCode: func(context.Context) (int, error) {
+		return 0, errors.New("exec lookup unavailable")
+	}, Release: func() { _ = read.Close() }}, nil
+}
+
+func (f *lateWriteCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if len(args) > 2 && args[2] == supervised.CancelScript {
+		if f.stopFailures > 0 {
+			f.stopFailures--
+			return 0, nil, errors.New("canceler unavailable")
+		}
+		f.delayed = nil
+		return 0, nil, nil
+	}
+	return f.restoreCLI.Exec(ctx, args, opts...)
+}
+
+func TestRestoreSettlesLateDashboardWrites(t *testing.T) {
+	for _, mutation := range []string{"ac-user-create", "set-ssl-certificate", "set-ssl-certificate-key"} {
+		t.Run(mutation, func(t *testing.T) {
+			f := &lateWriteCLI{restoreCLI: &restoreCLI{keys: make(map[string]string)}, stopFailures: 2}
+			s := dashboardRestoreState(f.restoreCLI)
+			s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
+			var err error
+			if mutation == "ac-user-create" {
+				err = s.createAccount(t.Context(), runWithInput)
+			} else {
+				err = s.installCertificate(t.Context(), func(ctx context.Context, c *ceph.Container, label string, data []byte, args ...string) error {
+					if args[1] == mutation {
+						return runWithInput(ctx, c, label, data, args...)
+					}
+					f.keys["mgr/dashboard/crt"] = string(data)
+					return nil
+				})
+			}
+			var pending *ceph.NativeCommandUnstoppedError
+			if !errors.As(err, &pending) || f.delayed == nil {
+				t.Fatalf("expected an accepted write whose stop failed: %v", err)
+			}
+			if err := s.restore(t.Context()); err == nil || s.registry.active != s || s.restored || f.delayed == nil {
+				t.Fatalf("restore released a pending write: %v", err)
+			}
+			f.delayed()
+			switch mutation {
+			case "ac-user-create":
+				if f.accountName == "" || f.accountName != s.accountMarker {
+					t.Fatal("late account was not published with its creation marker")
+				}
+			case "set-ssl-certificate":
+				if f.keys["mgr/dashboard/crt"] != string(s.cert) {
+					t.Fatal("late certificate was not published")
+				}
+			case "set-ssl-certificate-key":
+				if f.keys["mgr/dashboard/key"] != string(s.key) {
+					t.Fatal("late private key was not published")
+				}
+			}
+			if err := s.restore(t.Context()); err != nil || f.accountName != "" || len(f.keys) != 0 || s.registry.active != nil || f.delayed != nil {
+				t.Fatalf("retry left account=%q, keys=%d, active=%t: %v", f.accountName, len(f.keys), s.registry.active != nil, err)
+			}
+		})
 	}
 }

@@ -87,6 +87,7 @@ type state struct {
 
 	// Restoration state, in the order Restore undoes it.
 	accountMarker string
+	accountCreate pendingMutation
 	certificate   *configKey
 	privateKey    *configKey
 	multicluster  *multiclusterState
@@ -378,10 +379,10 @@ func (s *state) installCertificate(ctx context.Context, write inputCommand) erro
 	}
 	s.certificate.installed = s.cert
 	if err := write(ctx, s.cluster, "install dashboard certificate", s.cert, "dashboard", "set-ssl-certificate", "-i", "-"); err != nil {
-		return err
+		return s.certificate.write.track(err)
 	}
 	s.privateKey.installed = s.key
-	return write(ctx, s.cluster, "install dashboard private key", s.key, "dashboard", "set-ssl-certificate-key", "-i", "-")
+	return s.privateKey.write.track(write(ctx, s.cluster, "install dashboard private key", s.key, "dashboard", "set-ssl-certificate-key", "-i", "-"))
 }
 
 // createAccount creates the owned account; an existing one is refused.
@@ -395,9 +396,32 @@ func (s *state) createAccount(ctx context.Context, write inputCommand) error {
 	// binds cleanup to this creation attempt even then.
 	s.accountMarker = "tc-dashboard-" + rand.Text()
 	if err := write(ctx, s.cluster, "create dashboard account", []byte(s.password), "dashboard", "ac-user-create", s.username, "-i", "-", s.role, s.accountMarker); err != nil {
-		return err
+		return s.accountCreate.track(err)
 	}
 	return s.checkAccount(ctx)
+}
+
+// A pendingMutation holds the specific command that could still change a
+// resource after its caller returned. Restore settles it before reading the
+// resource or issuing another write.
+type pendingMutation struct {
+	command *ceph.NativeCommandUnstoppedError
+}
+
+func (p *pendingMutation) track(err error) error {
+	errors.As(err, &p.command)
+	return err
+}
+
+func (p *pendingMutation) settle(ctx context.Context) error {
+	if p.command == nil {
+		return nil
+	}
+	if err := p.command.Stop(ctx); err != nil {
+		return err
+	}
+	p.command = nil
+	return nil
 }
 
 // runWithInput runs a ceph CLI command in the control container with input as
@@ -717,7 +741,9 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // owned account wrote it, restores the module's enabled state and the
 // listener options.
 //
-// Restore reads the account's creation marker before deleting it. A different
+// Restore first confirms that an interrupted account or TLS write can no
+// longer run before using the resource's state to complete that step. It
+// reads the account's creation marker before deleting it. A different
 // marker or an outside change to a certificate, key, listener option or
 // module state that would be overwritten is refused. External account
 // changes must not race the native read and delete commands.
@@ -880,6 +906,9 @@ func (s *state) checkAccount(ctx context.Context) error {
 }
 
 func (s *state) deleteAccount(ctx context.Context) error {
+	if err := s.accountCreate.settle(ctx); err != nil {
+		return err
+	}
 	if err := s.checkAccount(ctx); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -899,6 +928,7 @@ type configKey struct {
 	previous []byte
 	// installed is the value Start wrote, nil before it tried.
 	installed []byte
+	write     pendingMutation
 }
 
 func readConfigKey(ctx context.Context, c *ceph.Container, name string) (*configKey, error) {
@@ -917,6 +947,9 @@ func readConfigKey(ctx context.Context, c *ceph.Container, name string) (*config
 func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
 	if k.installed == nil {
 		return nil
+	}
+	if err := k.write.settle(ctx); err != nil {
+		return err
 	}
 	current, err := c.Ceph(ctx, "config-key", "get", k.name)
 	switch {
@@ -938,7 +971,7 @@ func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
 	if !k.existed {
 		_, err = c.Ceph(ctx, "config-key", "rm", k.name)
 	} else {
-		err = runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-")
+		err = k.write.track(runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-"))
 	}
 	if err != nil {
 		return fmt.Errorf("restore %s: %w", k.name, err)
