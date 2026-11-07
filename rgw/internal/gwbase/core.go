@@ -194,10 +194,14 @@ func AdminContext(ctx context.Context, cluster *ceph.Container) (context.Context
 	return ctx, func() {}
 }
 
-// SettlementContext bounds a post-mutation identity read to ten seconds.
-// Caller cancellation can race a successful command reply.
+// SettlementContext detaches a post-mutation identity read from cancellation.
+// It keeps the admin operation deadline and grants at least ten seconds from now.
 func SettlementContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	if original, ok := ctx.Deadline(); ok && original.After(deadline) {
+		deadline = original
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
 }
 
 // ScopeGateway returns the first registered gateway, in name order, that

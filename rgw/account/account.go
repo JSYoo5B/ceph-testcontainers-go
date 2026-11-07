@@ -132,8 +132,9 @@ func normalizeConfig(config Config) (Config, error) {
 // gateway g. Existing IDs are rejected and never adopted. A partial handle
 // may be returned after a native failure, but ownership requires a validated
 // creation response and native metadata version tag. After a successful create
-// reply, a separate ten-second read verifies that tag even if ctx ends. Inspect uncertain results
-// through Gateway.Admin or terminate the disposable cluster; do not migrate
+// reply, a separate read verifies the tag even if ctx ends. It keeps the admin
+// operation deadline, with at least ten seconds for readback. Inspect uncertain
+// results through Gateway.Admin or terminate the disposable cluster; do not migrate
 // users into them or blindly delete an identity whose creation was not
 // confirmed.
 //

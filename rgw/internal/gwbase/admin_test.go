@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -26,6 +27,36 @@ func TestRGWAdminLimit(t *testing.T) {
 			t.Errorf("bound %s: limit %d", bound, limit)
 		}
 	}
+}
+
+// A longer admin operation keeps its full supervisor limit. A nearly spent,
+// expired, or unbounded operation gets a bounded chance to confirm the write.
+func TestSettlementReadbackBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		for _, tc := range []struct {
+			bound time.Duration
+			want  time.Duration
+			limit int
+		}{
+			{3 * time.Minute, 3 * time.Minute, 165},
+			{time.Second, 10 * time.Second, 5},
+			{-time.Second, 10 * time.Second, 5},
+			{0, 10 * time.Second, 5},
+		} {
+			parent := t.Context()
+			if tc.bound != 0 {
+				var cancel context.CancelFunc
+				parent, cancel = context.WithTimeout(parent, tc.bound)
+				cancel()
+			}
+			ctx, stop := SettlementContext(parent)
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) != tc.want || adminLimit(ctx) != tc.limit || ctx.Err() != nil {
+				t.Errorf("input %v: deadline in %v, supervisor limit %ds, error %v", tc.bound, time.Until(deadline), adminLimit(ctx), ctx.Err())
+			}
+			stop()
+		}
+	})
 }
 
 // crashStderr is standard error of a radosgw-admin of the Tentacle 20.2.4 rgw

@@ -24,8 +24,9 @@ import (
 //testdouble:shared-double
 type CancelAtCreateReadback struct {
 	testcontainers.Container
-	Cancel  context.CancelFunc
-	created bool
+	Cancel           context.CancelFunc
+	ReadbackDeadline time.Time
+	created          bool
 }
 
 // Exec delivers the create reply before canceling at its following read.
@@ -34,6 +35,7 @@ type CancelAtCreateReadback struct {
 func (c *CancelAtCreateReadback) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if c.created {
 		c.created = false
+		c.ReadbackDeadline, _ = ctx.Deadline()
 		c.Cancel()
 		if err := ctx.Err(); err != nil {
 			return 0, nil, err

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -271,10 +272,15 @@ func TestS3KeyOperationsWaitForTheClusterOnlyUntilTheContextEnds(t *testing.T) {
 
 func TestS3KeyReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
 	g, ctr, user := newKeyTestUser(t)
-	ctx, cancel := context.WithCancel(t.Context())
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
 	defer cancel()
-	g.Container = &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Container = readback
 	key, err := user.CreateS3Key(ctx)
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
 	if err != nil || ctx.Err() == nil || ctr.count("key create") != 1 {
 		t.Fatalf("CreateS3Key = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("key create"))
 	}

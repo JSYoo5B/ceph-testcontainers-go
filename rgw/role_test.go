@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -295,10 +296,15 @@ func TestRoleCreationRefusesExistingAndInvalidRoles(t *testing.T) {
 
 func TestRoleReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
 	g, ctr := newRoleTestGateway()
-	ctx, cancel := context.WithCancel(t.Context())
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
 	defer cancel()
-	g.Container = &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Container = readback
 	role, err := g.CreateRole(ctx, RoleConfig{Name: "reader", TrustPolicy: testTrust})
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
 	if err != nil || ctx.Err() == nil || ctr.count("role create") != 1 {
 		t.Fatalf("CreateRole = %v, ctx = %v, creates = %d", err, ctx.Err(), ctr.count("role create"))
 	}

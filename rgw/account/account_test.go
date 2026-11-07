@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -118,10 +119,15 @@ func TestAccountFreshQuotaAndNonpurgeLifecycle(t *testing.T) {
 
 func TestAccountReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
 	g, ctr := newAccountTestGateway()
-	ctx, cancel := context.WithCancel(t.Context())
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(t.Context(), deadline)
 	defer cancel()
-	g.Replace(&gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel})
+	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
+	g.Replace(readback)
 	a, err := create(ctx, g.Core, Config{Name: "fixture"})
+	if !readback.ReadbackDeadline.Equal(deadline) {
+		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
+	}
 	if err != nil || ctx.Err() == nil || !a.State.Confirmed || a.State.VersionTag != ctr.VersionTag {
 		t.Fatalf("create = %v, ctx = %v, native ownership not confirmed", err, ctx.Err())
 	}

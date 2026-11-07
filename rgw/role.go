@@ -144,8 +144,9 @@ func validPolicyDocument(document string) bool {
 // in order with role-policy put, so a test can hand the role's ARN to the SUT.
 // An existing role of the same name is refused, never adopted or changed,
 // and so is a name that another role handle of this cluster still tracks.
-// Each mutation gets a separate ten-second role get to read back its outcome,
-// even if ctx ends after dispatch. No mutation is replayed:
+// Each mutation gets a separate role get to read back its outcome even if
+// ctx ends after dispatch. The read keeps the admin operation deadline,
+// with at least ten seconds for readback. No mutation is replayed:
 //
 //   - a nil error returns the role with all its policies;
 //   - a non-nil role with an error is tracked and its Remove removes what the
