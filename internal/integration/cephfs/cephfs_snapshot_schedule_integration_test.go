@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	t.Cleanup(func() { _ = progress.Stop() })
 	var status snapschedule.Status
 	var trace []string
+	var creationTimes []time.Time
 	deadline := time.After(6 * time.Minute)
 	for previous := (*snapschedule.Status)(nil); status.Created < 3 || status.Pruned < 1; {
 		var event snapschedule.LeaseWatchEvent
@@ -135,6 +137,12 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 				t.Fatalf("an unchanged status was an event: %v", trace)
 			}
 		}
+		if current.Created > status.Created {
+			if current.Created != status.Created+1 || current.Last.IsZero() {
+				t.Fatalf("missed a snapshot identity: before %d, current %+v", status.Created, current)
+			}
+			creationTimes = append(creationTimes, current.Last.UTC())
+		}
 		previous, status = current, *current
 	}
 	if err := progress.Stop(); err != nil {
@@ -148,7 +156,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) == 0 || len(snapshots) > 2 || status.First.IsZero() || !status.Last.After(status.First) {
+	if len(creationTimes) < 3 || !scheduleRetainsNewestTwo(snapshots, creationTimes) || status.First.IsZero() || !status.Last.After(status.First) {
 		t.Fatalf("snapshots %v with status %s", snapshots, status.Raw)
 	}
 	// Restore ends a running watch: the schedule is no longer the lease's.
@@ -160,14 +168,23 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
+	after, err := lease.Snapshots(ctx)
+	if err != nil || !slices.Equal(after, snapshots) {
+		t.Fatalf("snapshots immediately after Restore: %v, before %v, %v", after, snapshots, err)
+	}
 	for range restored.Events() {
 	}
 	if err := restored.Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("the watch of a restored lease ended with %v", err)
 	}
-	after, err := lease.Snapshots(ctx)
-	if err != nil || len(after) == 0 {
-		t.Fatalf("snapshots after Restore: %v, %v", after, err)
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case <-time.After(time.Minute + 5*time.Second):
+	}
+	later, err := lease.Snapshots(ctx)
+	if err != nil || !slices.Equal(later, after) {
+		t.Fatalf("snapshots one repeat after Restore: %v, before %v, %v", later, after, err)
 	}
 	// The module prints {} or, after a removal, nothing.
 	if out, err := cluster.Ceph(ctx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json"); err != nil || (strings.TrimSpace(string(out)) != "{}" && strings.TrimSpace(string(out)) != "") {
