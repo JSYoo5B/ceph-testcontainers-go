@@ -127,8 +127,12 @@ func TestCaptureFailureArchive(t *testing.T) {
 			const logLimit = 64 << 10
 			const secretSuffix = "opaque-suffix-probe"
 			const knownSecret = "diagnostic-front-cut-" + secretSuffix
-			padding := logLimit - len(secretSuffix) - 1 // include the final newline
-			client := runTarget([]string{"sh", "-c", `printf '%s%*s\n' "$1" "$2" ''; exec sleep infinity`, "log-probe", knownSecret, strconv.Itoa(padding)})
+			// Replacing two short values expands the masked tail past its byte
+			// limit, even after masking the cut at the front.
+			const shortSecret = "q7x"
+			const trailer = " q7x q7x latest observation\n"
+			padding := logLimit - len(secretSuffix) - len(trailer)
+			client := runTarget([]string{"sh", "-c", `printf '%s%*s%s' "$1" "$2" '' "$3"; exec sleep infinity`, "log-probe", knownSecret, strconv.Itoa(padding), trailer})
 			inspected, err := target.Inspect(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -158,7 +162,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 			tb := &controlledFailureTB{TB: t}
 			finalization, err := finalize.TerminateOnCleanup(tb, cluster, finalize.Config{
 				Archive: true, ArchiveDirectory: root, Scenario: "capture-raw-copy",
-				Diagnostics: diagnostics.Config{MaxOutputBytes: logLimit, RedactValues: []string{knownSecret},
+				Diagnostics: diagnostics.Config{MaxOutputBytes: logLimit, RedactValues: []string{knownSecret, shortSecret},
 					AdditionalContainers: []diagnostics.Target{{Role: "client", Name: "tail-probe", Container: client}}},
 			})
 			if err != nil {
@@ -277,7 +281,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 			truncated := []string{}
 			for _, artifact := range diagnostics.Artifacts {
 				if artifact.Kind == "container-logs" && artifact.Name == "tail-probe" {
-					foundProbe = artifact.Truncated && strings.HasPrefix(artifact.Data, "[REDACTED] ")
+					foundProbe = artifact.Truncated && len(artifact.Data) == logLimit && strings.HasSuffix(artifact.Data, " [REDACTED] [REDACTED] latest observation\n")
 				}
 				if artifact.Error != "" {
 					t.Fatalf("diagnostic error %s/%s", artifact.Kind, artifact.Name)
@@ -290,7 +294,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 				}
 			}
 			if !foundProbe {
-				t.Fatal("missing archived evidence of the redacted front-cut log")
+				t.Fatal("missing redacted log tail or its newest observation in the archive")
 			}
 			if diagnostics.Complete != (len(truncated) == 0) || len(m.Collectors) != 2 {
 				t.Fatal("unexplained diagnostic completeness")

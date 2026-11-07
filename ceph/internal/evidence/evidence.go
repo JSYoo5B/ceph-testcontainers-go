@@ -226,6 +226,19 @@ func BoundText(data string, limit int) (string, bool) {
 	return data[:end], true
 }
 
+// BoundTailText keeps the newest complete UTF-8 runes of a bounded log tail.
+func BoundTailText(data string, limit int) (string, bool) {
+	data = strings.ToValidUTF8(data, "�")
+	if len(data) <= limit {
+		return data, false
+	}
+	start := len(data) - limit
+	for start < len(data) && !utf8.RuneStart(data[start]) {
+		start++
+	}
+	return data[start:], true
+}
+
 // ErrorText returns the redacted, bounded text of err, "?" when it is empty,
 // and whether it was cut.
 func ErrorText(err error, redact func(string) string, limit int) (string, bool) {

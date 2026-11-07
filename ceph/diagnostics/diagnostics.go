@@ -53,7 +53,9 @@ type Target struct {
 
 // Artifact retains one observation, including incomplete output or
 // an individual failure. Data is text; inspect observations are JSON when not
-// truncated. Names and order are stable, but observations are not transactional.
+// truncated. Container logs retain the newest bounded text after redaction;
+// Truncated is also set when collection stops with a log stream error. Names
+// and order are stable, but observations are not transactional.
 type Artifact struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
@@ -334,6 +336,7 @@ func (run diagnosticCollection) execute(ctx context.Context, tasks []diagnosticT
 func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticTask, artifact *Artifact) {
 	if err := ctx.Err(); err != nil {
 		artifact.Error = err.Error()
+		artifact.Truncated = artifact.Kind == "container-logs"
 		return
 	}
 	probe, cancel := context.WithTimeout(ctx, run.config.OperationTimeout)
@@ -342,10 +345,13 @@ func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticT
 		err = probe.Err()
 	}
 	cancel()
-	if artifact.Kind == "container-logs" && clipped {
-		data = evidence.MaskClippedStart(data, run.snapshot.secrets)
+	bound := evidence.BoundText
+	if artifact.Kind == "container-logs" {
+		data = evidence.MaskClippedSecrets(data, run.snapshot.secrets, clipped, err != nil)
+		clipped = clipped || err != nil
+		bound = evidence.BoundTailText
 	}
-	data, outputClipped := evidence.BoundText(run.redact(data), run.config.MaxOutputBytes)
+	data, outputClipped := bound(run.redact(data), run.config.MaxOutputBytes)
 	artifact.Data, artifact.Truncated = data, clipped || outputClipped
 	if err != nil {
 		message, errorClipped := evidence.BoundText(run.redact(err.Error()), run.config.MaxOutputBytes)

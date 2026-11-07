@@ -77,5 +77,5 @@ func (r verificationLineRedaction) line(text string, truncated bool) string {
 	if !truncated {
 		return r.redact(text)
 	}
-	return r.redact(evidence.MaskClippedEnd(text, r.secrets))
+	return r.redact(evidence.MaskClippedSecrets(text, r.secrets, false, true))
 }

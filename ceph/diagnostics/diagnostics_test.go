@@ -650,3 +650,83 @@ func TestCollectDiagnosticsMasksKnownSecretCrossingLogTailBoundary(t *testing.T)
 		})
 	}
 }
+
+func TestDiagnosticLogArtifactWithIncompleteFrame(t *testing.T) {
+	const secret = "a-known-opaque-value"
+	for _, tc := range []struct {
+		name, payload, want string
+		limit               int
+		secrets             []string
+	}{
+		{"end cut", "line a-known-opa", "line [REDACTED]", 64, []string{secret}},
+		{"both ends", "old-known-opaque-value safe a-known-opa", "[REDACTED] safe [REDACTED]", len("known-opaque-value safe a-known-opa"), []string{secret}},
+		{"middle of one value", "old a-known-opa", "EDACTED]", len("nown-opa"), []string{secret}},
+		{"overlapping fragments", "old 123456789abc", "[REDACTED]", 12, []string{"prefix12345678", "6789abc-suffix"}},
+		{"overlapping whole match", "old 123456789abc", "[REDACTED]", 12, []string{"prefix1234", "3456789a", "9abc-suffix"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			frame := diagnosticsFrame(1, tc.payload+"missing end")
+			docker := diagnosticsTestDocker{
+				inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+					return dockerclient.ContainerInspectResult{}, nil // multiplexed stream
+				},
+				logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+					return io.NopCloser(bytes.NewReader(frame[:8+len(tc.payload)])), nil
+				},
+			}
+			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: tc.secrets}, redact: evidence.Redactor(tc.secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
+				return diagnosticLogs(ctx, docker, "owned", config)
+			}}, &a)
+			if a.Data != tc.want || !a.Truncated || a.Error == "" || !strings.HasPrefix(evidence.ErrLogFrameCut.Error(), a.Error) {
+				t.Fatalf("incomplete frame artifact = %+v, want %q with error and truncation", a, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiagnosticLogTailKeepsNewestBytesAfterRedaction(t *testing.T) {
+	for _, tc := range []struct {
+		name, data, want string
+		limit            int
+	}{
+		{"short fragment", "e: panic at the newest line\n", "]: panic at the newest line\n", len("e: panic at the newest line\n")},
+		{"UTF-8 cut", "🐈🐈🐈key!", "🐈[REDACTED]!", len("🐈🐈🐈key!")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := diagnosticsUnitConfig(t)
+			config.MaxOutputBytes = tc.limit
+			secrets := []string{"rgw-secret-ending-in-e", "key"}
+			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.data, true, nil }}, &a)
+			if a.Data != tc.want || !a.Truncated || !utf8.ValidString(a.Data) {
+				t.Fatalf("log tail %+v, want %q", a, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiagnosticTTYLogDeadlineMasksPartialPayload(t *testing.T) {
+	blocked := &diagnosticsBlockingReader{closed: make(chan struct{}), exited: make(chan struct{})}
+	docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+		return struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(strings.NewReader("line a-known-opa"), blocked), blocked}, nil
+	}}
+	config := diagnosticsUnitConfig(t)
+	config.OperationTimeout = 25 * time.Millisecond
+	secrets := []string{"a-known-opaque-value"}
+	run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+	a := Artifact{Kind: "container-logs"}
+	run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
+		return diagnosticLogs(ctx, docker, "owned", config)
+	}}, &a)
+	if a.Data != "line [REDACTED]" || !a.Truncated || !strings.Contains(a.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("partial TTY artifact: %+v", a)
+	}
+}
