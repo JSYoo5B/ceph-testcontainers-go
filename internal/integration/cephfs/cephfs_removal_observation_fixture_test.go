@@ -135,6 +135,14 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 	}
 }
 
+func TestCephFSRemovalObservationRejectsUnlistedCommands(t *testing.T) {
+	for _, args := range [][]string{cephCLI("mgr", "fail"), cephCLI("osd", "blocklist", "add", "client"), cephCLI("tell", "mds.a", "injectargs"), cephCLI("fs", "subvolume", "rm", "fs", "volume"), cephCLI("fs", "mirror", "disable", "fs"), {"rados", "unknown-command"}} {
+		if cephFSMutationKind(args) == "" {
+			t.Fatalf("mutating or unknown command accepted as a read: %q", args)
+		}
+	}
+}
+
 // TestCephFSObservationMutationCheckRejectsIdempotentWrite shows that the
 // observation check rejects an observational call that re-issues an
 // idempotent remove whose reply is success and whose final state is

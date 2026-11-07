@@ -188,29 +188,30 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		t.Fatalf("mutation counter is not in the native remove dispatch path: removals=%d", removals)
 	}
 	source.Container = sourceCounter
+	var released cephfsmirror.DirectoryRemovalStatus
 	cephFSRequireNoObservationalMutation(t, "directory release observation", counters, required, func() {
 		releaseCtx, releaseCancel := context.WithTimeout(ctx, 3*time.Minute)
-		released, err := receipt.WaitReleased(releaseCtx)
+		released, err = receipt.WaitReleased(releaseCtx)
 		releaseCancel()
 		if err != nil || !released.Released || !released.PolicyRemoved || released.Directory != selected || released.PeerID != expected.PeerID || released.SourceFilesystem != expected.SourceFilesystem || released.DestinationFilesystem != expected.DestinationFilesystem || released.SourceFilesystemID != expected.SourceFilesystemID || released.DestinationFilesystemID != expected.DestinationFilesystemID || len(released.Daemons) != len(originals) {
 			t.Fatalf("strict same-session public directory release: %+v %v", released, err)
 		}
-		for _, daemon := range daemons {
-			before := originals[daemon.DaemonName]
-			after := cephFSReadRemovalWitness(t, ctx, source, sourceFS, expected.SourceFilesystemID, daemon, expected.PeerID, true)
-			cephFSAssertDirectoryRemovalPeerTuple(t, ctx, daemon, sourceFS.FilesystemName, expected.SourceFilesystemID, expected.PeerID, mirror.DestinationClientEntity, destinationSite, destinationFS.FilesystemName)
-			report, present := released.Daemons[daemon.DaemonName]
-			if !present || report.State != "released" || report.Problem != "" || report.ContainerID != before.cid || report.InstanceID != before.gid || after != before {
-				t.Fatalf("directory release changed original process/watcher/peer identity: %+v before=%+v after=%+v", report, before, after)
-			}
-			if _, present := cephFSReadDirectoryRemovalStats(t, ctx, daemon, sourceFS.FilesystemName, expected.SourceFilesystemID, expected.PeerID)[selected]; present {
-				t.Fatal("public release accepted a path still tracked by an original replayer")
-			}
-		}
-		if current, err := mirror.PeerIDs(ctx); err != nil || !slices.Equal(current, peers) {
-			t.Fatal("directory release changed original peer policy", err)
-		}
 	})
+	for _, daemon := range daemons {
+		before := originals[daemon.DaemonName]
+		after := cephFSReadRemovalWitness(t, ctx, source, sourceFS, expected.SourceFilesystemID, daemon, expected.PeerID, true)
+		cephFSAssertDirectoryRemovalPeerTuple(t, ctx, daemon, sourceFS.FilesystemName, expected.SourceFilesystemID, expected.PeerID, mirror.DestinationClientEntity, destinationSite, destinationFS.FilesystemName)
+		report, present := released.Daemons[daemon.DaemonName]
+		if !present || report.State != "released" || report.Problem != "" || report.ContainerID != before.cid || report.InstanceID != before.gid || after != before {
+			t.Fatalf("directory release changed original process/watcher/peer identity: %+v before=%+v after=%+v", report, before, after)
+		}
+		if _, present := cephFSReadDirectoryRemovalStats(t, ctx, daemon, sourceFS.FilesystemName, expected.SourceFilesystemID, expected.PeerID)[selected]; present {
+			t.Fatal("public release accepted a path still tracked by an original replayer")
+		}
+	}
+	if current, err := mirror.PeerIDs(ctx); err != nil || !slices.Equal(current, peers) {
+		t.Fatal("directory release changed original peer policy", err)
+	}
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-directory-removal")
 	pending := checkpoint("while-directory-removed")
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, sourceClient, sourceFS.FilesystemName, "before-directory-removal")

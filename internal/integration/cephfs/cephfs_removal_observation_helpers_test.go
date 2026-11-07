@@ -104,6 +104,23 @@ var cephFSCephMutations = [][]string{
 // cephFSRadosMutations are the rados verbs that write objects or watches.
 var cephFSRadosMutations = []string{"put", "rm", "create", "append", "truncate", "cp", "setxattr", "rmxattr", "setomapval", "rmomapkey", "clearomap", "setomapheader"}
 
+// Each read is identified by its command and exact number of positional
+// operands. Everything outside this inventory is counted as a mutation.
+var cephFSObservationReads = []struct {
+	prefix   []string
+	operands int
+}{
+	{[]string{"fsid"}, 0},
+	{[]string{"fs", "get"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "ls"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "peer_list"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "dirmap"}, 2},
+	{[]string{"fs", "snapshot", "mirror", "daemon", "status"}, 0},
+	{[]string{"fs", "snapshot", "mirror", "show", "distribution"}, 1},
+	{[]string{"osd", "pool", "ls", "detail"}, 0},
+	{[]string{"service", "dump"}, 0},
+}
+
 // cephFSMutationKind names the state-changing command args runs, or returns
 // "" for a read. A command run under the fixture's process supervisor is
 // classified by the command it supervises, and the supervisor's canceler,
@@ -143,12 +160,20 @@ func cephFSMutationKind(args []string) string {
 				return "ceph " + strings.Join(prefix, " ")
 			}
 		}
-		return ""
+		for _, read := range cephFSObservationReads {
+			if len(words) == len(read.prefix)+read.operands && slices.Equal(words[:len(read.prefix)], read.prefix) {
+				return ""
+			}
+		}
+		return "ceph unrecognized command"
 	case "rados":
+		if len(words) == 2 && words[0] == "listwatchers" {
+			return ""
+		}
 		if len(words) > 0 && slices.Contains(cephFSRadosMutations, words[0]) {
 			return "rados " + words[0]
 		}
-		return ""
+		return "rados unrecognized command"
 	default:
 		return "exec " + args[0]
 	}

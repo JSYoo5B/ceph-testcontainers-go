@@ -155,26 +155,27 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 		t.Fatalf("mutation counter is not in the native peer_remove dispatch path: removals=%d", removals)
 	}
 	source.Container = sourceCounter
+	var drained cephfsmirror.PeerRemovalStatus
 	cephFSRequireNoObservationalMutation(t, "peer drain observation", counters, required, func() {
 		drainCtx, drainCancel := context.WithTimeout(ctx, 3*time.Minute)
-		drained, err := receipt.WaitDrained(drainCtx)
+		drained, err = receipt.WaitDrained(drainCtx)
 		drainCancel()
 		if err != nil || !drained.Drained || !drained.PolicyRemoved || drained.PeerID != originalPeer || drained.SourceFilesystem != expected.SourceFilesystem || drained.DestinationFilesystem != expected.DestinationFilesystem || drained.SourceFilesystemID != expected.SourceFilesystemID || drained.DestinationFilesystemID != expected.DestinationFilesystemID || len(drained.Daemons) != len(originals) {
 			t.Fatalf("strict same-session public peer drain: %+v %v", drained, err)
 		}
-		for _, daemon := range daemons {
-			before := originals[daemon.DaemonName]
-			after := cephFSReadRemovalWitness(t, ctx, source, sourceFS, expected.SourceFilesystemID, daemon, originalPeer, false)
-			report, present := drained.Daemons[daemon.DaemonName]
-			if !present || report.State != "drained" || report.Problem != "" || report.ContainerID != before.cid || report.InstanceID != before.gid || after != before {
-				t.Fatalf("public drain did not retain exact original CID/StartedAt/watcher/session: report=%+v before=%+v after=%+v", report, before, after)
-			}
-		}
-		currentPeers, err := mirror.PeerIDs(ctx)
-		if err != nil || len(currentPeers) != 0 {
-			t.Fatalf("drained peer still in MGR policy: %v %v", currentPeers, err)
-		}
 	})
+	for _, daemon := range daemons {
+		before := originals[daemon.DaemonName]
+		after := cephFSReadRemovalWitness(t, ctx, source, sourceFS, expected.SourceFilesystemID, daemon, originalPeer, false)
+		report, present := drained.Daemons[daemon.DaemonName]
+		if !present || report.State != "drained" || report.Problem != "" || report.ContainerID != before.cid || report.InstanceID != before.gid || after != before {
+			t.Fatalf("public drain did not retain exact original CID/StartedAt/watcher/session: report=%+v before=%+v after=%+v", report, before, after)
+		}
+	}
+	currentPeers, err := mirror.PeerIDs(ctx)
+	if err != nil || len(currentPeers) != 0 {
+		t.Fatalf("drained peer still in MGR policy: %v %v", currentPeers, err)
+	}
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "before-peer-removal")
 	pending := checkpoint("while-peer-removed")
 	harness.CephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "while-peer-removed", 10*time.Second)
