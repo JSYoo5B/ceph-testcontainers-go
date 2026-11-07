@@ -252,3 +252,25 @@ func TestZoneEntityAddressesAndActingZones(t *testing.T) {
 		t.Fatal("accepted an OSD without a zone")
 	}
 }
+
+func TestRegionalPartitionStatEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		code      int
+		out       string
+		err       error
+		cut, want bool
+	}{
+		{0, "stat size 4096", nil, false, true},
+		{0, "stat size 4095", nil, false, false},
+		{0, "stat size 4096", nil, true, false},
+		{1, "connect errno 110", nil, true, true},
+		{1, "connect errno 111", nil, true, true},
+		{1, "connect errno 13", nil, true, false},
+		{1, "stat: object not found", nil, true, false},
+		{1, "connect errno 110", errors.New("Docker exec stream ended early"), true, false},
+	} {
+		if got := checkPartitionStat(tc.code, tc.out, tc.err, tc.cut, 4096) == nil; got != tc.want {
+			t.Errorf("exit %d output %q err %v cut=%t accepted=%t, want %t", tc.code, tc.out, tc.err, tc.cut, got, tc.want)
+		}
+	}
+}
