@@ -213,7 +213,7 @@ Guides for tasks that span packages:
   feature the release lacks, a missing image tool, an engine limit and a
   failed native command apart with `errors.Is` and `errors.As`.
 - [Bug compatibility](docs/guides/bug-compatibility.md): the registered
-  `ceph_bug_<id>` tags and the policy for adding one.
+  `ceph_bug_<id>` tags.
 
 For contributors:
 
@@ -223,6 +223,8 @@ For contributors:
   failing batch.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence
   and publication checks for a candidate.
+- [Bug compatibility tags](docs/contributing/bug-compatibility.md): the
+  policy for adding, selecting and retiring a `ceph_bug_<id>` tag.
 
 ## Related projects
 

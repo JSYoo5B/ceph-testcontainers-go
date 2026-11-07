@@ -240,7 +240,7 @@ planner requires the batches of a checker to cover every mode and kind.
 ### Bug compatibility selection
 
 A `ceph_bug_<id>` tag selects the compatibility path of one Ceph bug (see the
-[policy](../guides/bug-compatibility.md)); it never selects tests. The planner never
+[policy](bug-compatibility.md)); it never selects tests. The planner never
 collects it as a capability, and `all` or `native_regression` never enable
 it. Only `--bug-compatibility TAGS`, accepted by `plan`, `verify`, `compile`,
 `run`, `code`, `optional` and `buildcache`, selects one:
