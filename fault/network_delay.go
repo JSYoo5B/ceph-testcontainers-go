@@ -2264,9 +2264,10 @@ func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Cont
 // Direction must stay Outbound.
 //
 // It refuses a cluster without zones, an unknown zone or plane, and, while
-// any container on the plane's bridge is neither a router nor a member
-// enrolled for its current start, the shaping itself: such a container
-// would reach the other zones directly (see ceph.ZoneLayout.Unzoned). The
+// any container on the bridge of any configured plane, not only delay.Plane,
+// is neither a router nor a member enrolled for its current start, the
+// shaping itself: such a container would reach the other zones directly (see
+// ceph.ZoneLayout.Unzoned). The
 // helper checks, the refusals and the errors are those of
 // ApplyNetworkProfile, and so are the lease and its restoration: Terminate
 // restores a held lease first, before the boundary is released.
