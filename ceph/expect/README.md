@@ -73,6 +73,17 @@ if err != nil {
 	t.Fatal(err) // a failed query is never a mismatch
 }
 result, err := want.Evaluate(health)
+if err != nil {
+	t.Fatal(err)
+}
+if !result.Matched {
+	t.Fatal(result) // health want require=[OSD_DOWN] nomutes=[OSD_DOWN] in HEALTH_OK with 0 checks, 0 mutes: OSD_DOWN absent
+}
+```
+
+Ceph raises many checks only after a delay and clears them at a later
+monitor tick, so a test polls with its own deadline. A cleared check does
+not prove that the fault behind it is gone.
 
 ## Pool placement groups
 
@@ -99,16 +110,18 @@ if err != nil {
 	t.Fatal(err) // a failed query is never a mismatch
 }
 result, err := want.Evaluate(snapshot)
-
-	t.Fatal(result) // mons want members [a b c] quorum [a b] in monmap [a b c] quorum [a b c]: mon.c in quorum
+if err != nil {
+	t.Fatal(err)
+}
+if !result.Matched {
+	t.Fatal(result) // ... pg 3.1 state: want active+clean, observed active+undersized+degraded; pg 3.1 acting missing osd.2: observed [0 1]
 }
 ```
 
-A quorum that is not a majority of the expected members is an invalid
-request, since a `QuorumStatus` answer always comes from a majority. A match
-does not say which MON leads or that a member out of the quorum has stopped.
-Unlike `ceph.Observer.WaitForQuorum`, which accepts any majority, an
-expectation names the members the test requires.
+Unlike `ceph.Observer.WaitForClean`, which waits for every PG of the cluster
+to report active+clean, an expectation checks one pool's PGs once. The PG
+reports arrive from the MGR asynchronously, so a match is no proof of write
+visibility or durability, and the native `PGReady` flag is not compared.
 
 ## MON quorum
 
@@ -132,13 +145,15 @@ if err != nil {
 	t.Fatal(err)
 }
 if !result.Matched {
-	t.Fatal(result) // health want require=[OSD_DOWN] nomutes=[OSD_DOWN] in HEALTH_OK with 0 checks, 0 mutes: OSD_DOWN absent
+	t.Fatal(result) // mons want members [a b c] quorum [a b] in monmap [a b c] quorum [a b c]: mon.c in quorum
 }
 ```
 
-Ceph raises many checks only after a delay and clears them at a later
-monitor tick, so a test polls with its own deadline. A cleared check does
-not prove that the fault behind it is gone.
+A quorum that is not a majority of the expected members is an invalid
+request, since a `QuorumStatus` answer always comes from a majority. A match
+does not say which MON leads or that a member out of the quorum has stopped.
+Unlike `ceph.Observer.WaitForQuorum`, which accepts any majority, an
+expectation names the members the test requires.
 
 ## MGR registrations
 
@@ -168,15 +183,6 @@ if err != nil {
 	t.Fatal(err)
 }
 if !result.Matched {
-	t.Fatal(result) // ... pg 3.1 state: want active+clean, observed active+undersized+degraded; pg 3.1 acting missing osd.2: observed [0 1]
-}
-```
-
-Unlike `ceph.Observer.WaitForClean`, which waits for every PG of the cluster
-to report active+clean, an expectation checks one pool's PGs once. The PG
-reports arrive from the MGR asynchronously, so a match is no proof of write
-visibility or durability, and the native `PGReady` flag is not compared.
-
 	t.Fatal(result) // ...: active: want mgr.b, observed mgr.a; active gid: want other than 4100, observed 4100
 }
 ```
