@@ -362,11 +362,21 @@ a helper applies or restores it.
 ### Ceph releases
 
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
-- Squid 19.2.5 is supported. Ceph periodic runs every runtime category on its
-  role images, and the release matrix runs them on pull requests and `main`
-  during a release phase; the per-change workflows use Tentacle only. The `ceph` package behaves the
-  same on Squid; release-specific behaviour is in the [rbd](../../rbd/README.md),
-  [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages.
+- Umbrella 21.2.0 and Squid 19.2.5 are supported. A full Ceph periodic run
+  covers every runtime category on their role images, and the release matrix
+  runs them on pull requests and `main` during a release phase; the
+  per-change workflows use Tentacle only (see
+  [Supported releases](../contributing/ci.md#supported-releases)).
+- Most release-specific behaviour is in the [rbd](../../rbd/README.md),
+  [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages,
+  but two `ceph` operations differ too.
+  [`WithAuth`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithAuth)
+  accepts only AES keys and ciphers on an image without key type support
+  (Squid, and Tentacle before 20.2.4) and refuses another requested key type
+  with `ErrUnsupported`. A revoked client
+  ([`ClientConfig.Revoke`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Revoke))
+  that authenticated before loses its open MON session on Tentacle, while
+  Squid keeps it answering.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
   [NetworkConfig.WithMessengerMode](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithMessengerMode)).
