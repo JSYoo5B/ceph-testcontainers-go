@@ -1,6 +1,7 @@
 //go:build all || (integration && features && (!ci || (ci_code && (!ci_batch || ci_batch_pure))))
 
-// ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30
+
 package rgw_kms_failure_modes_test
 
 import "testing"
