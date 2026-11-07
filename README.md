@@ -64,8 +64,9 @@ Documentation for a published release is available at its Git tag.
 - [`dashboard`](dashboard/README.md): the Ceph Dashboard of a cluster whose
   managers ship it, with an owned HTTPS listener and account, and the Object
   Gateway pages of one owned gateway.
-- [`fault`](fault/README.md): container pause, network delay, loss, rate,
-  packet faults and endpoint interruption on existing fixtures.
+- [`fault`](fault/README.md): container pause, CPU limits, network delay,
+  loss, rate, packet faults and endpoint interruption, zone-boundary profiles
+  and damaged replicas on existing fixtures.
   [`fault/blockio`](fault/blockio/README.md) prepares an owned disposable OSD
   main device for bounded delay and EIO faults.
 - [`override`](override/README.md): reversible cluster-wide changes with
@@ -111,7 +112,8 @@ Runtime CI uses these dependency roles directly. Umbrella 21.2.x and Squid
 go get github.com/JSYoo5B/ceph-testcontainers-go/ceph@latest
 ```
 
-Add `rbd`, `cephfs` or `rgw` the same way when you need them.
+The repository is one Go module, so this makes every package available,
+`rbd`, `cephfs` and `rgw` included.
 
 ## Quick start
 
@@ -236,6 +238,6 @@ for Go.
 
 They do not contain or link Ceph. Tests pull the Ceph container images at run
 time and run the daemons and CLIs inside them; Ceph in those images is under
-its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Images
-that a test selects with `ImageOptions.WithImageSet`, `ImageOptions.WithRGWImage` or
-`ImageOptions.WithCephFSImage` keep the licenses of whoever publishes them.
+its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Any
+image a test selects, through the image argument of `Run` or an image option,
+keeps the licenses of whoever publishes it.
