@@ -82,9 +82,10 @@ func (l GatewayLink) GoString() string { return l.String() }
 // changed. A Dashboard has at most one link; the SUT's own RGW credentials
 // are never used.
 //
-// An AddGateway that fails after creating the user returns the link together
-// with the error: its Remove undoes what AddGateway changed, and so does
-// Dashboard.Restore.
+// After attempting user creation, AddGateway may return a link with an
+// error. Keep it for Remove, or call Dashboard.Restore. Cleanup checks for
+// an unconfirmed user: an absent user needs no cleanup, and a present user
+// with unconfirmed ownership is preserved and reported.
 //
 //purpose:construction,condition
 func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*GatewayLink, error) {

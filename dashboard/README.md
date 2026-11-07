@@ -115,10 +115,11 @@ username, password := d.Credentials()
   hold the installed certificate, and refuses an outside edit, as the
   override handles do for the module and options. An existing account of the
   same name is refused, never adopted, and no role is created.
-- **Restoration.** `Restore` runs every step, returns the joined errors of
-  the refused ones and retries them on the next call; it does not disable the
-  module while the account or certificate could not be restored, because the
-  Dashboard commands need it. The module keeps its access database and token
+- **Restoration.** `Restore` verifies the Dashboard account's creation marker
+  before deletion. It keeps the module enabled until the gateway link,
+  account, multi-cluster record and certificate steps succeed. It still
+  attempts the listener options, retains the fixture slot on error and
+  retries the unfinished steps on the next call. The module keeps its access database and token
   signing key (`mgr/dashboard/accessdb_v2`, `mgr/dashboard/jwt_secret`) after
   `Restore`; they hold no fixture account.
 - **Object Gateway.** The Dashboard finds its gateway in the service map, so
