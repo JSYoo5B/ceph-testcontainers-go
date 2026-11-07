@@ -18,17 +18,8 @@ Real `ceph-mon`, `ceph-mgr` and `ceph-osd` daemons run in separate containers on
 an isolated Docker network: one MON, one MGR and two OSDs by default, each OSD
 on a sparse BlueStore file inside its container. The daemons need no privileged
 mode, host disks, LVM, Docker socket or systemd; Testcontainers itself (and
-Ryuk) still needs the Docker engine. The Go module has no go-ceph, librados or
-cgo dependency and builds with `CGO_ENABLED=0`.
-
-Requirements: Go 1.26 or later, a Docker engine that runs Linux containers, and
-access to pull the Ceph and Ryuk images. Releases follow semantic versioning;
-before v1.0.0 a minor release may change the API (see the
-[published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases)).
-
-```sh
-go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
-```
+Ryuk) still needs the Docker engine. Dependencies, requirements, installation
+and the versioning policy are in the [root README](../README.md#requirements).
 
 ## Usual order of use
 
@@ -68,6 +59,17 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    Ceph CLI in the control container, retrying only the connection to a MON
    (bounded by `ctx` and a minute), and `RunNativeCommand` runs a command
    under a supervisor that bounds its run time and output.
+   The waits (`WaitForClean`, `WaitForPGClean`, `WaitForQuorum`,
+   `WaitMGRModuleReady`) keep the cluster's startup timeout. The watches
+   (`WatchOSDs`, `Pool.WatchPGs`, `WatchHealth`, `WatchMonitors`,
+   `WatchManagers`) follow state while the SUT runs; their shared lifecycle and
+   what each one fixes by its baseline are in
+   [watching state](../docs/guides/contexts-and-cleanup.md#watching-state).
+   `Pool.OverridePGPrimary` aims a fault at a known serving OSD (see
+   [fault injection](../docs/guides/fault-injection.md)). To check one
+   captured observation against the condition the test states, use
+   [`ceph/expect`](expect/README.md), for example
+   [`expect.PGs`](expect/README.md#pool-placement-groups).
 5. **Finish.** `testcontainers.CleanupContainer` runs `Terminate`, which
    removes every owned container, network and volume. The
    [finalize](finalize/README.md) package replaces it when the test needs
@@ -166,90 +168,3 @@ give `go test` a generous `-timeout` when several clusters run in one package.
   [native commands](../docs/guides/native-commands.md),
   [regional zones](../docs/guides/regional-zones.md),
   [releases and images](../docs/guides/releases-and-images.md).
-
-`observer.ServiceContainers(ctx)` copies the tracked optional-service handles
-in service-name order, with context-bounded lock acquisition. It is an
-ownership inventory rather than a liveness query: partially started and
-terminated clusters can still expose retained handles. Successful removal
-forgets its handle; an empty inventory describes only the tracked roster. The
-returned slice is independent, and cluster teardown still owns the handles.
-
-Use `observer.WaitForClean(ctx)` for an available MGR, the owned OSD count
-with every OSD up/in, and existing PGs exactly active+clean. Use
-`observer.WaitForPGClean(ctx)` when intentionally down/out OSDs must remain
-so. `observer.WaitForQuorum(ctx)` requires a majority of the current monmap,
-and `observer.WaitMGRModuleReady(ctx, name)` checks the supported module's
-metadata and read-only command probes. These waits retain the cluster's
-startup timeout and release observation locks between polls. An observer can
-be acquired for a partial cluster without reading or changing its state.
-
-To assert the up/in state of particular OSDs in an `OSDStates` observation,
-use the optional [`ceph/expect`](expect/README.md) package: it evaluates a
-captured observation against the condition the test states and explains each
-mismatch, without querying again.
-
-To react to owned OSD state while the SUT runs, `observer.WatchOSDs(ctx, cfg)`
-polls the OSDMap in one goroutine and sends changes on one channel. The
-baseline is buffered before it returns and fixes the watched OSDs by ID and
-UUID. Wait for it before you cause the fault. A failed read is a
-`WatchGap` event and the next success is `WatchResumed`. A full buffer
-ends the watch with `ErrWatchOverflow` instead of dropping events, and so do
-identity drift and cluster termination. Call `Stop` before the fixture's
-cleanup: it joins the watch and returns why it ended. See
-[watching OSD state](../docs/guides/contexts-and-cleanup.md#watching-state).
-
-To follow one pool's reported PGs through an OSD loss or a placement change,
-`pool.WatchPGs(ctx, cfg)` repeats the `Pool.PGs` observation on the same
-watch contract. The baseline pins the original FSID and the pool's native ID;
-a split or merge is an event, and a removed, renamed or recreated pool ends
-the watch instead of being followed by name. Only PG states, ordered up and
-acting sets, primaries, the PG set, `PGReady` and pool policy are compared.
-Epochs, reported sequences and statistics travel with each event but cause
-none. A reported active+clean PG proves no write visibility or durability, so
-check those with the workload. To check one `Pool.PGs` observation for the PG
-states and placement a test states, use [`expect.PGs`](expect/README.md#pool-placement-groups).
-
-To aim a fault at, or route SUT I/O through, a known serving OSD,
-`pool.OverridePGPrimary(ctx, ceph.PGPrimary{PG: pg, OSD: osd})` makes an owned
-OSD of the PG's acting set its acting primary through the native
-pg-upmap-primary entry of that one PG of a replicated pool. Replica placement
-does not change. The call returns when the OSDMap, the serving PG (`pg query`)
-and `Pool.PGs` all report that OSD as acting primary with the PG
-active+clean. That shows which OSD serves the PG then, not that the SUT's
-client already has the new map or that the condition lasts through later
-CRUSH, weight or balancer changes. A cluster whose
-`require_min_compat_client` is below the release the running MON requires
-for the command is refused with `ErrInvalidRequest`; set
-`RaiseMinCompatClient` to let the override raise it. `Restore` puts back the
-exact prior entry (removing one that did not exist), lowers a level that the
-override raised once no other PG primary override relies on it, never clears
-other PGs' entries and refuses values changed outside the handle. It reads
-the stored state back without waiting for the old primary to serve again, so
-it also works while that OSD is stopped; see
-[override handles](../docs/guides/contexts-and-cleanup.md#override-handles).
-
-To observe a fault-specific health check appear, change its mute state and
-clear, `observer.WatchHealth(ctx, cfg)` repeats `HealthDetails` on the same
-contract with the original FSID pinned. It compares status, check codes,
-severities, counts and muted flags and the stored mutes, never message text,
-so countdowns cause no events. It never mutes or clears a check, and
-messages can contain application data, so do not print events unfiltered. To
-check one `HealthDetails` observation by check code and mute, use
-[`expect.Health`](expect/README.md#health-checks-and-mutes).
-
-To follow the control plane in the same way, `observer.WatchMonitors(ctx,
-cfg)` reports the monmap members with their advertised addresses, the quorum
-and its leader, and `observer.WatchManagers(ctx, cfg)` reports the active
-MGR's name and GID, its availability, the standbys and the service URLs of
-the same MGRMap. Both pin the cluster by its original bootstrap FSID rather
-than one daemon, so added, removed or replaced MONs and a failover are
-events, and another FSID ends the watch. A MON that stops stays a member and
-leaves the quorum; while no majority answers, the watch reports gaps, not an
-empty quorum. A map without an active manager is a successful observation,
-and an advertised URL is not proof that its listener answers. Neither watch
-takes the topology lock, so the test can stop or replace daemons while it
-runs.
-
-To check one `observer.QuorumStatus` or `observer.ManagerStatus` reading
-against the members, quorum, active MGR or standbys a test requires, use
-`expect.Monitors` and `expect.Managers` from [`ceph/expect`](expect/README.md).
