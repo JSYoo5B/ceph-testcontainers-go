@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +24,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// cancelAfterGatewayStop interrupts Apply only after Docker confirms the stop.
+// cancelAfterGatewayStop interrupts Apply and drops the reply after Docker confirms the stop.
 type cancelAfterGatewayStop struct {
 	testcontainers.Container
 	cancel context.CancelFunc
@@ -33,26 +32,37 @@ type cancelAfterGatewayStop struct {
 
 func (g cancelAfterGatewayStop) Stop(ctx context.Context, grace *time.Duration) error {
 	err := g.Container.Stop(ctx, grace)
-	if err == nil {
-		g.cancel()
+	if err != nil {
+		return err
 	}
-	return err
+	g.cancel()
+	return errors.New("injected loss of the completed Docker stop reply")
 }
 
-// losePlacementCommitReply drops the reply only after the native commit succeeds.
-type losePlacementCommitReply struct {
+// losePlacementReplies drops the first successful staging update and commit replies.
+type losePlacementReplies struct {
 	testcontainers.Container
-	commits int
+	updates, commits int
 }
 
-func (g *losePlacementCommitReply) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (g *losePlacementReplies) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, out, err := g.Container.Exec(ctx, args, opts...)
-	if err == nil && code == 0 && len(args) >= 2 && slices.Equal(args[len(args)-2:], []string{"period", "commit"}) {
+	if err == nil && code == 0 && len(args) >= 2 && args[len(args)-2] == "period" {
+		switch args[len(args)-1] {
+		case "update":
+			g.updates++
+			if g.updates > 1 {
+				return code, out, nil
+			}
+		case "commit":
+			g.commits++
+		default:
+			return code, out, nil
+		}
 		if _, err := io.Copy(io.Discard, out); err != nil {
 			return 0, nil, err
 		}
-		g.commits++
-		return 0, nil, errors.New("injected loss of the successful period commit reply")
+		return 0, nil, errors.New("injected loss of the completed native period command reply")
 	}
 	return code, out, err
 }
@@ -259,6 +269,11 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	}
 	if _, err := placement.Create(ctx, gateway, config); err == nil {
 		t.Fatal("existing placement could be overwritten")
+	}
+	// The stopped gateway cannot run radosgw-admin. Leave a peer serving the
+	// same scope so recovery can verify the startup defaults before Start.
+	if _, err := rgw.Start(ctx, cluster, rgw.Config{Name: "placement-control"}); err != nil {
+		t.Fatal(err)
 	}
 	applyCtx, cancelApply := context.WithCancel(ctx)
 	original := gateway.Container
