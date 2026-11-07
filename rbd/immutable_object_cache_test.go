@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,11 +48,13 @@ type fakeCacheClient struct {
 	// from opening its socket. execFail fails the exec of that operation
 	// after the operation ran. statusDrop leaves that field out of the status
 	// report.
-	startExit     int
-	startConflict bool
-	noSocket      bool
-	execFail      string
-	statusDrop    string
+	startExit              int
+	startConflict          bool
+	unsupportedReservation string
+	heldDirectory          string
+	noSocket               bool
+	execFail               string
+	statusDrop             string
 }
 
 func newFakeCacheClient() *fakeCacheClient {
@@ -102,7 +105,11 @@ func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 		}
 	}()
 	switch op {
-	case "claim", "reserve":
+	case "claim":
+	case "reserve":
+		if f.unsupportedReservation != "" && strings.HasSuffix(a[0], f.unsupportedReservation) {
+			return clustertest.Reply(args, 4, nil)
+		}
 	case "confirm-reservation":
 		out = append(out, "reserved=1")
 	case "release-reservation", "forget-reservation", "unclaim":
@@ -159,6 +166,10 @@ func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 		}
 		out = append(out, "stopped=1")
 	case "remove":
+		if f.heldDirectory != "" {
+			out = append(out, "removed=0", "held="+f.heldDirectory)
+			break
+		}
 		path, sock, asok, pidfile, created := a[0], a[1], a[2], a[3], a[4]
 		delete(f.files, sock)
 		delete(f.files, asok)
@@ -587,5 +598,44 @@ func TestImmutableObjectCacheMalformedStatusKeepsTheLease(t *testing.T) {
 	}
 	if err := lease.Restore(t.Context()); err != nil || client.running() != 0 {
 		t.Fatalf("Restore after a malformed status: %v, %d daemons", err, client.running())
+	}
+}
+
+func TestImmutableObjectCacheRejectsUnsupportedFilesystemBeforeLaunch(t *testing.T) {
+	for _, test := range []struct{ suffix, parent string }{{".lease", "/socket-fs"}, {".stage", "/cache-fs"}} {
+		t.Run(test.suffix, func(t *testing.T) {
+			c := newFakeCacheClient()
+			c.unsupportedReservation = test.suffix
+			cfg := ImmutableObjectCache{Path: "/cache-fs/data", Socket: "/socket-fs/cache.sock"}
+			lease, err := StartImmutableObjectCache(t.Context(), c, cfg)
+			if lease != nil || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || !strings.Contains(err.Error(), test.parent) || len(c.daemons) != 0 {
+				t.Fatalf("unsupported reservation: lease=%v err=%v launched=%d", lease, err, len(c.daemons))
+			}
+		})
+	}
+}
+
+func TestImmutableObjectCacheReportsRetainedDirectory(t *testing.T) {
+	for _, tc := range []struct{ held, parent, slot string }{{"root", "/cache-fs", "root.handoff"}, {"marker", "/cache-fs/data", "reclaimed"}} {
+		t.Run(tc.held, func(t *testing.T) {
+			c := newFakeCacheClient()
+			cfg := ImmutableObjectCache{Path: "/cache-fs/data", Socket: "/socket-fs/cache.sock"}
+			if tc.held == "marker" {
+				c.files[cfg.Path] = "dir"
+			}
+			lease, err := StartImmutableObjectCache(t.Context(), c, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.heldDirectory = tc.held
+			location := path.Join(tc.parent, "."+path.Base(lease.pidFile)+".stage", tc.slot)
+			if err := lease.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), location) {
+				t.Fatalf("expected retained location %s: %v", location, err)
+			}
+			c.heldDirectory = ""
+			if err := lease.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

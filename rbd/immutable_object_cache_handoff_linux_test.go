@@ -271,3 +271,123 @@ func TestCacheRefusesDisplacedStageBeforeLaunch(t *testing.T) {
 	f.check(t, "removed=1", "remove", f.cache, f.sock, f.asok, f.pidfile, "1")
 	f.release(t, stage)
 }
+
+func TestCacheRestoreReturnsDisplacedDirectories(t *testing.T) {
+	for _, subject := range []string{"root", "marker"} {
+		for _, outcome := range []string{"vacant", "reoccupied", "interrupted", "owned-interrupted"} {
+			t.Run(subject+"/"+outcome, func(t *testing.T) {
+				f := newCacheShellFixture(t)
+				parent, initial, created, identity := f.root, "none", "1", ""
+				public, slot := f.cache, "root.handoff"
+				if subject == "marker" {
+					if err := os.Mkdir(f.cache, 0700); err != nil {
+						t.Fatal(err)
+					}
+					parent, initial, created = f.cache, "empty", "0"
+					public, slot = filepath.Join(f.cache, ".ceph-immutable-cache"), "reclaimed"
+					out, err := f.command(t, "inspect", f.cache, f.sock).Output()
+					if err != nil {
+						t.Fatal(err)
+					}
+					info, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", strings.TrimSpace(string(out))))
+					if err != nil {
+						t.Fatal(err)
+					}
+					identity = info.identity
+				}
+				stage := filepath.Join(parent, "."+filepath.Base(f.pidfile)+".stage")
+				claim := f.claimPath(t)
+				f.check(t, "", "claim", claim, f.pidfile+".lease")
+				t.Cleanup(func() {
+					if target, _ := os.Readlink(claim); target == "sh:"+f.pidfile+".lease" {
+						_ = os.Remove(claim)
+					}
+				})
+				f.check(t, "", "reserve", f.pidfile+".lease")
+				f.check(t, "", "reserve", stage, identity)
+				f.program(t, "ceph-immutable-object-cache", "exit 1")
+				out, err := f.command(t, "start", "admin", f.cache, f.sock, "1024", f.asok, f.pidfile, initial, identity, claim).Output()
+				if err != nil || !strings.Contains(string(out), "exit=1") {
+					t.Fatalf("start %q: %v", out, err)
+				}
+				f.check(t, "stopped=1", "stop", "0", f.sock, f.pidfile)
+				owned := filepath.Join(f.root, "saved")
+				f.env = append(f.env, "SLOT="+slot, "SAVED="+owned, "OUTCOME="+outcome)
+				// This writer takes no fixture lock and runs after the source
+				// check. Invoke the real syscall before simulating a lost reply.
+				f.program(t, "python3", `if test "${4##*/}" = "$SLOT" && ! test -e "$SAVED.once"; then
+    touch "$SAVED.once" || exit 1
+    if test "$OUTCOME" != owned-interrupted; then
+        mv -T "$3" "$SAVED" && mkdir "$3" && echo first > "$3/sentinel" || exit 1
+    fi
+    command -p python3 "$@" || exit $?
+    case "$OUTCOME" in
+        reoccupied) mkdir "$3" && echo second > "$3/sentinel" || exit 1 ;;
+        owned-interrupted) mkdir "$3" && echo successor > "$3/sentinel" && kill -KILL "$PPID" ;;
+        interrupted) kill -KILL "$PPID" ;;
+    esac
+    exit 0
+fi
+exec /usr/bin/python3 "$@"`)
+				remove := func(want string) { t.Helper(); f.check(t, want, "remove", f.cache, f.sock, f.asok, f.pidfile, created) }
+				held := filepath.Join(stage, slot)
+				assertSentinel := func(dir, want string) {
+					t.Helper()
+					b, e := os.ReadFile(filepath.Join(dir, "sentinel"))
+					if e != nil || string(b) != want+"\n" {
+						t.Fatalf("sentinel at %s: %q, %v", dir, b, e)
+					}
+				}
+				if strings.Contains(outcome, "interrupted") {
+					if err := f.command(t, "remove", f.cache, f.sock, f.asok, f.pidfile, created).Run(); err == nil {
+						t.Fatal("cleanup was not interrupted")
+					}
+				}
+				switch outcome {
+				case "vacant":
+					remove("removed=0")
+				case "reoccupied":
+					remove("held=" + subject + "\nremoved=0")
+					remove("held=" + subject + "\nremoved=0")
+					assertSentinel(public, "second")
+					assertSentinel(held, "first")
+					if err := os.Rename(public, filepath.Join(f.root, "second")); err != nil {
+						t.Fatal(err)
+					}
+					remove("removed=0")
+				case "interrupted":
+					remove("held=" + subject + "\nremoved=0")
+					assertSentinel(held, "first")
+					if err := os.Rename(held, public); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if outcome != "owned-interrupted" {
+					assertSentinel(public, "first")
+					if err := os.Rename(public, filepath.Join(f.root, "first")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(owned, public); err != nil {
+						t.Fatal(err)
+					}
+				}
+				remove("removed=1")
+				remove("removed=1")
+				f.release(t, stage)
+				if outcome == "owned-interrupted" {
+					assertSentinel(public, "successor")
+					if err := os.Rename(public, filepath.Join(f.root, "successor")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if created == "1" {
+					if _, err := os.Stat(f.cache); !os.IsNotExist(err) {
+						t.Fatalf("cache survived: %v", err)
+					}
+				} else if entries, err := os.ReadDir(f.cache); err != nil || len(entries) != 0 {
+					t.Fatalf("cache dir: %v, %v", entries, err)
+				}
+			})
+		}
+	}
+}

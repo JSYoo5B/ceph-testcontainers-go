@@ -248,8 +248,46 @@ remove_public() {
     fi
     settle_handoff "$1" "$2"
 }
+# For a directory, the pinned cwd proves which inode was moved during this
+# dispatch. A replay can resume a recorded foreign return or authenticate an
+# owned directory from the durable identities recorded before publication.
+directory_return() {
+    if exists "$state/$3.captured"; then
+        test ! -L "$state/$3.captured" && test -f "$state/$3.captured" || held_public "$3"
+        if exists "$2"; then
+            test "$(cat "$state/$3.captured")" = "$0:$(stat -c '%d:%i:%w:%f' "$2")" || held_public "$3"
+            rename_noreplace "$2" "$1" || held_public "$3"
+            rm "$state/$3.captured" || exit 1
+            refuse_remove
+        fi
+        rm "$state/$3.captured" || exit 1
+    fi
+}
+take_directory() {
+    # The caller holds the expected directory open as its cwd.
+    if ! rename_noreplace "$1" "$2"; then
+        if exists "$2"; then held_public "$3"; fi
+        refuse_remove
+    fi
+    if test ! -L "$2" && test . -ef "$2"; then return; fi
+    captured_id=$(stat -c '%d:%i:%w:%f' "$2") || held_public "$3"
+    (set -C; printf '%s:%s\n' "$0" "$captured_id" > "$state/$3.captured") || held_public "$3"
+    directory_return "$1" "$2" "$3"
+}
 # Only remove known control files. In particular, never traverse an outside
 # directory that has appeared under a reservation's former name.
+drain_dir() (
+    target=$1; shift
+    test ! -L "$target" && test -d "$target" && cd -P "$target" &&
+        test ! -L "$guard" && test -f "$guard" &&
+        test "$(head -n 1 "$guard")" = "$0:$(stat -c '%d:%i:%w' .)" &&
+        if exists .identity; then
+            owned_dir . "$guard" && rm -f -- "$@" &&
+                test -z "$(find . -mindepth 1 ! -name .identity -print -quit)" &&
+                printf 'drained\n' >> "$guard" && rm .identity
+        else grep -qx drained "$guard"; fi &&
+        test . -ef "$target" && rmdir "$target"
+)
 release_dir() {
     dir=$1 guard=$dir.witness seed=$dir.pending-$0 retired=$dir.releasing-$0
     if exists "$seed"; then
@@ -257,26 +295,18 @@ release_dir() {
             test "$(cat "$seed/.identity")" = "$0:$(stat -c '%d:%i:%w' "$seed")"; then
             ln -T "$seed/.identity" "$guard" || return 1
         fi
-        owned_dir "$seed" "$guard" || return 1
-        mv -nT "$seed" "$retired" && ! exists "$seed" || return 1
+        # The filesystem may have rejected every no-replace rename. Drain
+        # the unpublished seed in place, using the independent witness.
+        drain_dir "$seed" probe.from probe.to || return 1
     fi
     if exists "$dir" && ! exists "$retired" && ! grep -qx drained "$guard" 2>/dev/null; then
         owned_dir "$dir" "$guard" || return 1
         mv -nT "$dir" "$retired" && ! exists "$dir" || return 1
     fi
     if exists "$retired"; then
-        test ! -L "$retired" && test -d "$retired" || return 1
-        (cd -P "$retired" &&
-            test "$(head -n 1 "$guard" 2>/dev/null)" = "$0:$(stat -c '%d:%i:%w' .)" &&
-            if exists .identity; then
-                owned_dir . "$guard" &&
-                rm -f -- launch finished owner dispatched emptied path-claim marker payload unpublished-marker \
-                    a s pid admin.pin socket.pin pidfile.pin admin.published socket.published pidfile.published \
-                    admin.released socket.released pidfile.released &&
-                test -z "$(find . -mindepth 1 ! -name .identity -print -quit)" &&
-                printf 'drained\n' >> "$guard" && rm .identity
-            else grep -qx drained "$guard"; fi &&
-            test . -ef "$retired" && rmdir "$retired") || return 1
+        drain_dir "$retired" launch finished owner dispatched emptied path-claim marker payload unpublished-marker \
+            a s pid admin.pin socket.pin pidfile.pin admin.published socket.published pidfile.published \
+            admin.released socket.released pidfile.released || return 1
     fi
     if exists "$guard"; then
         test ! -L "$guard" && test -f "$guard" &&
@@ -303,8 +333,7 @@ esac
 case "$op" in
 inspect)
     path=$1 sock=$2
-    if rename_noreplace "" "" 2>/dev/null; then exit 1
-    elif test "$?" = 2; then echo rename=1
+    if python3 -c 'import ctypes; ctypes.CDLL(None).renameat2' 2>/dev/null; then echo rename=1
     else echo rename=0; fi
     if command -v flock >/dev/null 2>&1; then echo flock=1; else echo flock=0; fi
     if command -v ceph-immutable-object-cache >/dev/null 2>&1; then echo binary=1; else echo binary=0; fi
@@ -357,6 +386,15 @@ reserve)
     mkdir -m 700 "$seed" || exit 1
     identity=$(stat -c '%d:%i:%w' "$seed") || exit 1
     printf '%s:%s\n' "$0" "$identity" > "$seed/.identity" && ln -T "$seed/.identity" "$dir.witness" || exit 1
+    # Exercise this reservation's actual filesystem, including its refusal
+    # to overwrite a different directory entry. Keep both probes private.
+    (cd -P "$seed" && owned_dir . "$dir.witness" && ln -s from probe.from || exit 1
+        rename_noreplace probe.from probe.to || exit 4
+        ! exists probe.from && test "$(readlink probe.to)" = from && ln -s occupied probe.from || exit 1
+        rename_noreplace probe.from probe.to
+        test "$?" = 17 || exit 4
+        test "$(readlink probe.from)" = occupied && test "$(readlink probe.to)" = from && rm probe.from probe.to
+    ) || exit $?
     # The final publication runs in the supervisor's directly reaped process.
     exec mv -nT "$seed" "$dir"
     ;;
@@ -524,9 +562,37 @@ remove)
     sock=$parent/${sock##*/} asok=$parent/${asok##*/} pidfile=$parent/${pidfile##*/}
     settle_handoff "$sock" socket; settle_handoff "$asok" admin; settle_handoff "$pidfile" pidfile
     check_public "$sock" socket && check_public "$asok" admin && check_public "$pidfile" pidfile || { echo removed=0; exit 0; }
-    # A staged directory was either never published or already reclaimed.
+    # Use the same pinned parent for capture and for a possible return.
+    # A caller-owned cache root contains its stage; a created root is its sibling.
     root=$path
-    if test "$created" = 1 && exists "$stage/data"; then root=$stage/data; fi
+    if test "$created" = 1; then
+        exec 5<"$(dirname "$path")" || exit 1
+        path=/proc/$$/fd/5/./${path##*/}
+        test "$stage" -ef "/proc/$$/fd/5/./${stage_name##*/}" || refuse_remove
+        root=$path
+        directory_return "$path" "$stage/root.handoff" root
+        if exists "$stage/root.handoff"; then
+            root=$stage/root.handoff
+            test ! -L "$root" && test -d "$root" &&
+                test "$(stat -c '%d:%i:%w' "$root")" = "$(cat "$state/owner")" || held_public root
+            if ! exists "$stage/reclaimed" && ! exists "$state/marker.captured" && ! test -f "$state/emptied"; then
+                test "$(readlink "$root/$marker/owner" 2>/dev/null)" = "$0:$control" || held_public root
+            fi
+        elif exists "$stage/data"; then root=$stage/data; fi
+    elif exists "$path"; then
+        exec 5<"$path" || refuse_remove
+        root=/proc/$$/fd/5/.
+        test "$stage" -ef "$root/${stage_name##*/}" || refuse_remove
+    fi
+    if exists "$state/marker.captured"; then
+        test ! -L "$root" && test -d "$root" &&
+            test "$(stat -c '%d:%i:%w' "$root")" = "$(cat "$state/owner")" || held_public marker
+    fi
+    directory_return "$root/$marker" "$stage/reclaimed" marker
+    if exists "$stage/reclaimed"; then
+        test ! -L "$stage/reclaimed" && test -d "$stage/reclaimed" &&
+            test "$(stat -c '%d:%i' "$stage/reclaimed")" = "$(cat "$state/marker")" || held_public marker
+    fi
     if test -s "$state/owner" && exists "$root" && ! test -f "$state/emptied" && ! exists "$stage/reclaimed"; then
         test ! -L "$root" && cd -P "$root" && test "$(stat -c '%d:%i:%w' .)" = "$(cat "$state/owner")" ||
             { echo removed=0; exit 0; }
@@ -535,13 +601,15 @@ remove)
                 test "$(stat -c '%d:%i' "$marker")" = "$(cat "$state/marker")" || { echo removed=0; exit 0; }
             if test "$created" = 1 && test "$root" = "$path"; then
                 test -z "$(find . -mindepth 1 -maxdepth 1 ! -name "$marker" -print -quit)" &&
-                    test . -ef "$path" && mv -nT "$path" "$stage/data" && test . -ef "$stage/data" ||
-                    { echo removed=0; exit 0; }
+                    test . -ef "$path" || refuse_remove
+                take_directory "$path" "$stage/root.handoff" root
+                root=$stage/root.handoff
             fi
             # Move the authenticated subtree into private staging before the
             # recursive traversal. After this transition a reused public path is
             # independent of this cleanup, including after a lost reply.
-            mv -nT "$marker" "$stage/reclaimed" && ! exists "$marker" || exit 1
+            cd -P "$marker" && test "$(stat -c '%d:%i' .)" = "$(cat "$state/marker")" || refuse_remove
+            take_directory "$root/$marker" "$stage/reclaimed" marker
         fi
     fi
     if exists "$stage/reclaimed"; then
@@ -557,11 +625,16 @@ remove)
             touch "$state/emptied" || exit 1
         fi
         if exists owner; then test "$(readlink owner)" = "$0:$control" && rm owner || exit 1; fi
-        test . -ef "$stage/reclaimed" && rmdir "$stage/reclaimed" || exit 1
+        test . -ef "$stage/reclaimed" && cd / && rmdir "$stage/reclaimed" || exit 1
     else
         touch "$state/emptied" || exit 1
     fi
     if test "$created" = 1 && exists "$stage/data"; then rmdir "$stage/data" || exit 1; fi
+    if test "$created" = 1 && exists "$stage/root.handoff"; then
+        test ! -L "$stage/root.handoff" && test "$(stat -c '%d:%i:%w' "$stage/root.handoff")" = "$(cat "$state/owner")" ||
+            held_public root
+        rmdir "$stage/root.handoff" || exit 1
+    fi
     remove_public "$sock" socket; remove_public "$asok" admin; remove_public "$pidfile" pidfile
     if test "$(readlink "$alias" 2>/dev/null)" = "$control"; then rm -f "$alias" || exit 1; fi
     echo removed=1
@@ -578,6 +651,8 @@ esac
 // lease's ClientOptions; other clients read the parents from RADOS. The
 // container needs util-linux flock, ceph-immutable-object-cache, the librbd
 // parent_cache plugin and python3 with access to libc's renameat2 syscall. A missing prerequisite is ceph.ErrImageCapability.
+// Startup probes both reservation filesystems. A filesystem that cannot perform an
+// atomic no-replace rename returns ceph.ErrEnvironmentUnavailable.
 // An existing socket, a non-empty cache directory or an invalid path is
 // refused with ceph.ErrInvalidRequest. Contention for the cache path or the
 // public socket during startup also returns ceph.ErrInvalidRequest; if rollback
@@ -658,11 +733,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		}
 		return nil, fmt.Errorf("claim immutable object cache path: exit %d", claimReport.ExitCode)
 	}
-	stageParent := config.Path
-	if lease.createdPath {
-		stageParent = path.Dir(config.Path)
-	}
-	directories := []string{lease.pidFile + ".lease", path.Join(stageParent, "."+path.Base(lease.pidFile)+".stage")}
+	directories := []string{lease.pidFile + ".lease", lease.stageDirectory()}
 	for i, directory := range directories {
 		var parentIdentity string
 		if i == 1 && !lease.createdPath {
@@ -676,6 +747,10 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 			} else {
 				lease.reservations = append(lease.reservations, directory)
 				lease.uncertainReservation = directory
+				if report.ExitCode == 4 {
+					failure = &ceph.OperationError{Kind: ceph.ErrEnvironmentUnavailable, Capability: "RENAME_NOREPLACE",
+						Err: fmt.Errorf("the filesystem at %s could not perform an atomic no-replace rename", path.Dir(directory))}
+				}
 			}
 			return lease.rollbackStart(ctx, failure)
 		}
@@ -917,7 +992,7 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 	if !l.controlsReleased {
 		var absentStage string
 		if l.resourcesRemoved && !l.createdPath {
-			absentStage = path.Join(l.config.Path, "."+path.Base(l.pidFile)+".stage")
+			absentStage = l.stageDirectory()
 		}
 		if err := l.confirmRemoval(ctx, "release-reservation", append([]string{l.uncertainReservation, absentStage}, l.reservations...)...); err != nil {
 			return err
@@ -932,6 +1007,14 @@ func (l *ImmutableObjectCacheLease) restore(ctx context.Context) error {
 	}
 	l.complete = true
 	return nil
+}
+
+func (l *ImmutableObjectCacheLease) stageDirectory() string {
+	parent := l.config.Path
+	if l.createdPath {
+		parent = path.Dir(parent)
+	}
+	return path.Join(parent, "."+path.Base(l.pidFile)+".stage")
 }
 
 func (l *ImmutableObjectCacheLease) confirmRemoval(ctx context.Context, op string, args ...string) error {
@@ -952,8 +1035,16 @@ func (l *ImmutableObjectCacheLease) confirmRemoval(ctx context.Context, op strin
 	}
 	if !removed {
 		if held, ok := fields.values["held"]; ok {
-			if _, err := fields.oneOf("held", "socket", "admin", "pidfile"); err != nil {
+			if _, err := fields.oneOf("held", "socket", "admin", "pidfile", "root", "marker"); err != nil {
 				return err
+			}
+			if held == "root" || held == "marker" {
+				slot := "reclaimed"
+				if held == "root" {
+					slot = "root.handoff"
+				}
+				recovery := path.Join(l.stageDirectory(), slot)
+				return fmt.Errorf("immutable cache: retained a conflicting %s entry at %s; inspect it and the cache path before retrying", held, recovery)
 			}
 			recovery := path.Join(l.pidFile+".lease", held+".handoff")
 			alias := path.Join("/tmp", "tc-ioc-"+path.Base(l.pidFile), held+".handoff")
