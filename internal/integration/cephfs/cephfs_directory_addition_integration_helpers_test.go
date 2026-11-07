@@ -190,22 +190,37 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		"mon", "allow r", "mgr", "allow r", "-o", readerKeyring); err != nil {
 		t.Fatal("prepare read-only directory-add identity", err)
 	}
-	refusal := &cephFSRefusedDirectoryAdd{Container: counter, filesystem: sourceFS.FilesystemName, keyring: readerKeyring}
-	source.Container = refusal
-	request, err := mirror.BeginDirectoryAddition(ctx, "/refused-add")
-	var nativeRefusal *ceph.NativeFailure
-	if request == nil || !errors.As(err, &nativeRefusal) || !errors.Is(err, errCephFSRefusalReadback) || nativeRefusal.ExitCode != 13 {
-		t.Fatalf("expected native permission refusal and interrupted readback: %v", err)
-	}
-	if retired, err := mirror.BeginDirectoryAddition(ctx, "/refused-add"); retired != nil || !errors.As(err, &nativeRefusal) || nativeRefusal.ExitCode != 13 || refusal.attempts.Load() != 1 {
-		t.Fatalf("fresh absence replayed or retained a refused request: attempts %d, err %v", refusal.attempts.Load(), err)
+	const outside = "/outside-after-refusal"
+	for _, path := range []string{"/refused-add", outside} {
+		refusal := &cephFSRefusedDirectoryAdd{Container: counter, filesystem: sourceFS.FilesystemName, directory: path, keyring: readerKeyring}
+		source.Container = refusal
+		request, err := mirror.BeginDirectoryAddition(ctx, path)
+		var nativeRefusal *ceph.NativeFailure
+		if request == nil || !errors.As(err, &nativeRefusal) || !errors.Is(err, errCephFSRefusalReadback) || nativeRefusal.ExitCode != 13 {
+			t.Fatalf("expected native permission refusal and interrupted readback: %v", err)
+		}
+		if path == outside {
+			// The caller registers the path independently after the first Begin
+			// has returned its known refusal.
+			source.Container = counter
+			if _, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "add", sourceFS.FilesystemName, path); err != nil {
+				t.Fatal(err)
+			}
+			source.Container = refusal
+			if status, err := request.Status(ctx); err != nil || !status.PolicyPresent || status.Registered {
+				t.Fatalf("outside registration before retry: %+v, %v", status, err)
+			}
+		}
+		if retired, err := mirror.BeginDirectoryAddition(ctx, path); retired != nil || !errors.As(err, &nativeRefusal) || nativeRefusal.ExitCode != 13 || refusal.attempts.Load() != 1 || slices.Contains(mirror.Directories, path) {
+			t.Fatalf("refused request for %q was replayed or claimed: attempts %d, err %v", path, refusal.attempts.Load(), err)
+		}
 	}
 	source.Container = counter
 	if _, err := source.Ceph(ctx, "auth", "del", "client.directory-add-reader"); err != nil {
 		t.Fatal(err)
 	}
 	harness.MultiClusterExecOutput(t, ctx, control, "rm", "-f", readerKeyring)
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, added}); err != nil {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil {
 		t.Fatal("native refusal changed owned or foreign policy", err)
 	}
 	if status, err := applied.Status(ctx); err != nil || !status.Registered || !status.PolicyPresent {
@@ -215,7 +230,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	if err != nil || receiver == nil || len(mirror.Daemons()) != 1 || customizers.Load() != 2 {
 		t.Fatal("registered zero-inventory intent did not permit ordinary new receiver", err)
 	}
-	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{seed, foreign, added}, 1)
+	owners := harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{seed, foreign, outside, added}, 1)
 	backlogStatus := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, added, backlog)
 	if backlogStatus.DaemonName != receiver.DaemonName || backlogStatus.InstanceID != owners[added] {
 		t.Fatal("backlog public replay attributed to another receiver")
@@ -227,7 +242,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	verify(added, backlog, "frozen-added-backlog")
 	verify(seed, seedCheckpoint, "retained-seed")
 	verify(foreign, foreignCheckpoint, "foreign-policy-retained")
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, added}); err != nil {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +264,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	if err != nil || !released.Released || !released.PolicyRemoved || released.PeerID != expected.PeerID || counter.removeDispatches.Load() != 1 {
 		t.Fatalf("new typed owned cycle failed strict live release: %+v %v", released, err)
 	}
-	harness.CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, foreign})
+	harness.CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, foreign, outside})
 	between := checkpoint(added, "backlog-after-cycle-release")
 	harness.CephFSAssertOriginalProcessSnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, script, added, between.Name, "strict-cycle-released", 5*time.Second)
 	newAddition, err := mirror.BeginDirectoryAddition(ctx, added)
@@ -289,7 +304,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	if uncertain == nil || !errors.Is(err, errCephFSDirectoryAdditionUnappliedFault) || counter.unappliedAttempts.Load() != 1 || counter.unappliedDispatches.Load() != 0 || counter.unappliedFaults.Load() != 1 || slices.Contains(mirror.Directories, unapplied) {
 		t.Fatal("unapplied attempt dispatched or published native ownership", err)
 	}
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, added}); err != nil {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil {
 		t.Fatal("unapplied native path was not independently absent", err)
 	}
 	status, err = uncertain.Status(ctx)
@@ -320,10 +335,10 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	verify(seed, seedCheckpoint, "final-seed-unchanged")
 	verify(foreign, foreignCheckpoint, "final-foreign-unchanged")
 	beforeCommands = counter.commands.Load()
-	if receipt, err := mirror.BeginDirectoryRemoval(ctx, foreign); receipt != nil || err == nil || counter.commands.Load() != beforeCommands {
+	if receipt, err := mirror.BeginDirectoryRemoval(ctx, outside); receipt != nil || err == nil || counter.commands.Load() != beforeCommands {
 		t.Fatal("native foreign policy gained privately owned removal authority", err)
 	}
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, added, unapplied}); err != nil || slices.Contains(mirror.Directories, foreign) || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added, unapplied}); err != nil || slices.Contains(mirror.Directories, foreign) || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
 		t.Fatal("final original policy/client lifecycle/fault evidence changed", err)
 	}
 	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
@@ -388,9 +403,9 @@ var errCephFSRefusalReadback = errors.New("injected failed policy readback after
 
 type cephFSRefusedDirectoryAdd struct {
 	testcontainers.Container
-	filesystem, keyring string
-	attempts            atomic.Int32
-	failRead            atomic.Bool
+	filesystem, directory, keyring string
+	attempts                       atomic.Int32
+	failRead                       atomic.Bool
 }
 
 func (f *cephFSRefusedDirectoryAdd) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -398,7 +413,7 @@ func (f *cephFSRefusedDirectoryAdd) Exec(ctx context.Context, args []string, opt
 	if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
 		native = args[3:]
 	}
-	if slices.Equal(native, []string{"fs", "snapshot", "mirror", "add", f.filesystem, "/refused-add"}) && f.attempts.Add(1) == 1 {
+	if slices.Equal(native, []string{"fs", "snapshot", "mirror", "add", f.filesystem, f.directory}) && f.attempts.Add(1) == 1 {
 		f.failRead.Store(true)
 		args = append(slices.Clone(args), "--name", "client.directory-add-reader", "--keyring", f.keyring)
 	}

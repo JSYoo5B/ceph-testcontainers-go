@@ -19,8 +19,8 @@
 // receipts share these rules:
 //   - Begin* returns (nil, err) when it refused during admission, before it
 //     recorded a receipt. BeginDirectoryAddition also returns (nil, err) after
-//     a native add fails if a fresh observation confirms the path is absent.
-//     An uncertain transport outcome retains the addition receipt.
+//     a native refusal and a successful policy readback. A present path
+//     remains caller-owned. An uncertain transport outcome retains the receipt.
 //   - When Begin* returns a receipt with an error, call the same Begin* again
 //     with the same path or peer UUID and a fresh context. The retry checks
 //     Ceph before sending another request. A directory remove that was
