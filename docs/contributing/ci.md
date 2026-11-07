@@ -69,10 +69,11 @@ manual input.
 Pushes to `main` run Code checks, Docker checks and Ceph short, and the other
 categories only in a [release phase](#release-phase). No run is scheduled per
 commit for the other batches or releases: Ceph periodic draws a daily sample
-and runs every batch on every supported release only when dispatched in
-`full` mode (see [Periodic runs](#periodic-runs)). Pushes to other branches
-trigger nothing. Pull
-requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
+and runs every required release-bound runtime profile on every supported
+release only when dispatched in `full` mode. That dispatch includes separate
+environment checks and excludes optional and SDK batches (see
+[Periodic runs](#periodic-runs)). Pushes to other branches
+trigger nothing. Pull requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
 and the scoped categories) and `unlabeled` (Ceph short) start real runs only
 for `ci:full` and `ci:selected-batches`.
 
@@ -746,9 +747,9 @@ gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
 gh variable delete CI_RELEASE_PHASE              # after the release
 ```
 
-While it is `true`, every pull request and push to `main` runs every batch
-on Tentacle, and Ceph
-release matrix runs every category on Umbrella and Squid.
+While it is `true`, pull requests and pushes to `main` run all required
+runtime profiles on Tentacle. Ceph release matrix runs the required
+release-bound profiles on Umbrella and Squid.
 
 ### Representative campaign
 
