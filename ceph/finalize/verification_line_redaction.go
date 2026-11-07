@@ -71,11 +71,7 @@ type verificationLineRedaction struct {
 	secrets []string
 }
 
-// line masks known secrets crossing the end of a truncated line before
-// applying the ordinary redactor.
+// line masks known secrets across a truncated line's boundary.
 func (r verificationLineRedaction) line(text string, truncated bool) string {
-	if !truncated {
-		return r.redact(text)
-	}
-	return r.redact(evidence.MaskClippedSecrets(text, r.secrets, false, true))
+	return evidence.RedactLog(text, r.secrets, false, truncated, r.redact)
 }

@@ -626,6 +626,8 @@ func TestCollectDiagnosticsMasksKnownSecretCrossingLogTailBoundary(t *testing.T)
 		{"cut", "old " + secret + " end", len("opaque-value end"), "[REDACTED] end"},
 		{"whole", "old " + secret + " end", len(secret + " end"), "[REDACTED] end"},
 		{"uncut suffix", "opaque-value end", 32, "opaque-value end"},
+		{"clean EOF at partial prefix", "line a-known-opa", 32, "line a-known-opa"},
+		{"front cut with clean EOF", "older line a-known-opa", len("line a-known-opa"), "line a-known-opa"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := diagnosticsUnitConfig(t)
@@ -728,5 +730,26 @@ func TestDiagnosticTTYLogDeadlineMasksPartialPayload(t *testing.T) {
 	}}, &a)
 	if a.Data != "line [REDACTED]" || !a.Truncated || !strings.Contains(a.Error, context.DeadlineExceeded.Error()) {
 		t.Fatalf("partial TTY artifact: %+v", a)
+	}
+}
+
+func TestDiagnosticBoundaryPreservesStructuredRedaction(t *testing.T) {
+	const sensitive = "sample-private-value"
+	for _, tc := range []struct{ name, text, known string }{
+		{"field", "password=" + sensitive + " end", "opaque-p"},
+		{"bearer", "Bearer " + sensitive + " end", "opaque-B"},
+		{"private key", "-----BEGIN PRIVATE KEY-----\n" + sensitive + "\n-----END PRIVATE KEY----- end", "opaque-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := diagnosticsUnitConfig(t)
+			cfg.MaxOutputBytes = len(tc.text)
+			secrets := []string{tc.known}
+			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			a := Artifact{Kind: "container-logs"}
+			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.text, true, nil }}, &a)
+			if strings.Contains(a.Data, sensitive) || !strings.Contains(a.Data, "[REDACTED") || !strings.HasSuffix(a.Data, " end") {
+				t.Fatalf("redacted artifact: %+v", a)
+			}
+		})
 	}
 }

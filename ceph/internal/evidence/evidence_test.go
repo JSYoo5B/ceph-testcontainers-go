@@ -126,3 +126,39 @@ func TestSuffixPrefixOverlap(t *testing.T) {
 		}
 	}
 }
+
+func repetitiveLogMaskTestData() (string, []string) {
+	text := strings.Repeat("a", 1<<20)
+	return text, []string{text[:4093], text[:4094], text[:4095], text[:4096]}
+}
+
+func TestMaskRepetitiveLogTail(t *testing.T) {
+	text, secrets := repetitiveLogMaskTestData()
+	if got := RedactLog(text, secrets, true, false, Redactor(secrets)); got != "[REDACTED]" {
+		t.Fatalf("mask result length %d", len(got))
+	}
+}
+
+func BenchmarkMaskRepetitiveLogTail(b *testing.B) {
+	text, secrets := repetitiveLogMaskTestData()
+	b.SetBytes(int64(len(text)))
+	redact := Redactor(secrets)
+	for b.Loop() {
+		RedactLog(text, secrets, true, false, redact)
+	}
+}
+
+func TestRedactorRecognizesCredentialsBeforeReplacingKnownValues(t *testing.T) {
+	const value = "sample-private-value"
+	for _, tc := range []struct{ input, known string }{
+		{"password=" + value, "pass"},
+		{"Bearer " + value, "Bear"},
+		{"-----BEGIN PRIVATE KEY-----\n" + value + "\n-----END PRIVATE KEY-----", "BEGIN"},
+		{"password=" + value, "private"},
+	} {
+		got := Redactor([]string{tc.known})(tc.input)
+		if strings.Contains(got, "sample") || strings.Contains(got, "-value") {
+			t.Errorf("redacted %q to %q", tc.input, got)
+		}
+	}
+}

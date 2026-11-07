@@ -170,8 +170,7 @@ func maskSecrets(data string) string {
 	var out strings.Builder
 	last := 0
 	for _, m := range secretPattern.FindAllStringSubmatchIndex(data, -1) {
-		value := data[m[4]:m[5]]
-		if value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[m[5]:], " PRIVATE KEY]") {
+		if isRedactionMarker(data, m[4], m[5]) {
 			continue
 		}
 		out.WriteString(data[last:m[4]])
@@ -182,12 +181,16 @@ func maskSecrets(data string) string {
 	return out.String()
 }
 
+func isRedactionMarker(data string, start, end int) bool {
+	value := data[start:end]
+	return value == "[REDACTED]" || value == "[REDACTED" && strings.HasPrefix(data[end:], " PRIVATE KEY]")
+}
+
 var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var privateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 
-// Redactor masks values and recognized secrets. Values are replaced in one
-// pass, longest first, so that a replacement is never rewritten again and
-// the output grows at most linearly.
+// Redactor masks configured values and recognized credential spans together.
+// Overlapping values are withheld as one run.
 func Redactor(values []string) func(string) string {
 	values = slices.DeleteFunc(slices.Clone(values), func(value string) bool { return value == "" })
 	slices.SortFunc(values, func(a, b string) int {
@@ -203,7 +206,11 @@ func Redactor(values []string) func(string) string {
 	}
 	replacer := strings.NewReplacer(pairs...)
 	return func(data string) string {
-		data = replacer.Replace(data)
+		if replacer.Replace(data) != data {
+			// Substituting a literal first can destroy the syntax that identifies
+			// an adjacent credential. Combine their spans on the original input.
+			return maskOriginalSecrets(data, values, 0, 0)
+		}
 		data = privateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
 		// Bearer tokens first: the secret pattern takes only the word after
 		// "Authorization:", which would leave the token behind it.
