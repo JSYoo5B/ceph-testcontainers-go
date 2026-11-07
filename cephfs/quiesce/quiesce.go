@@ -38,9 +38,11 @@ type State struct {
 // Set owns a newly created, unique native quiesce set. Copies share state.
 // Release confirms the captured QUIESCED version, so an outside edit or
 // expiration cannot masquerade as a consistent checkpoint. An uncertain create
-// may return a non-nil handle plus an error. Retain it for inspection and
-// release. The native timers bound a pause on a cluster that stays running.
-// Terminating the cluster disposes of its sets. Never externally edit this set ID.
+// may return a non-nil handle plus an error. If Start's readback confirmed the
+// QUIESCED version, Release can use it even after a lost create reply. If the
+// readback failed, the handle supports inspection only. The native timers
+// bound the pause and terminating the cluster disposes of its sets. Never
+// externally edit this set ID.
 type Set struct {
 	filesystem *fsbase.Core
 	state      *setRecord
@@ -72,6 +74,11 @@ func (q *Set) ID() string {
 // Existing sets and application writers remain caller-owned. Take checkpoints
 // with client/admin APIs while paused, then explicitly Release. Multiple native
 // sets can overlap paths; releasing this set does not cancel other sets.
+//
+// A create or readback error can return a Set. Use Status to inspect it. If
+// Start could not confirm the native identity, settings and version, the handle
+// cannot issue a release. A pause then ends through the native timers or
+// when the fixture is terminated.
 //
 //purpose:condition
 func Start(ctx context.Context, fs *cephfs.Filesystem, volumes []*subvolume.Subvolume, config Config) (*Set, error) {
@@ -195,6 +202,8 @@ func (e ownershipError) Error() string { return string(e) }
 // Release resumes this set's I/O only at its captured QUIESCED version, using
 // native optimistic concurrency. Expired/timed-out/canceled sets are reported as
 // errors, so a test cannot treat an interrupted checkpoint as consistent. Lost
+// create replies permit release only if Start confirmed the QUIESCED version.
+// A later Status or Watch cannot grant release authority. Lost release
 // replies can be retried. While the attempted release is RELEASING, retry
 // Release to confirm completion. Confirmed RELEASED copies become no-ops. Native set
 // records are retained by the QDB and disposed of with the cluster.

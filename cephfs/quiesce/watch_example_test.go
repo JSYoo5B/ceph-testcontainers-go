@@ -34,7 +34,9 @@ func ExampleSet_Watch() {
 	set, err := quiesce.Start(ctx, fs, []*subvolume.Subvolume{volume}, cfg)
 	if set != nil {
 		defer func() {
-			// Release checks that the checkpoint stayed consistent.
+			// A lost create reply may still have a confirmed QUIESCED version.
+			// If readback failed, Release refuses the inspection-only handle
+			// and the deferred cluster termination disposes of the set.
 			releaseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := set.Release(releaseCtx); err != nil {

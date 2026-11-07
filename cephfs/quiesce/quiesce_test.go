@@ -23,13 +23,13 @@ import (
 
 type quiesceTestControl struct {
 	*clustertest.CannedCommandContainer
-	id, state               string
-	version                 uint64
-	members                 map[string]any
-	timeout, expiration     float64
-	mutations               int
-	lostCreate, lostRelease bool
-	releaseInProgress       bool
+	id, state                          string
+	version                            uint64
+	members                            map[string]any
+	timeout, expiration                float64
+	mutations                          int
+	failQuery, lostCreate, lostRelease bool
+	releaseInProgress                  bool
 }
 
 func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -46,6 +46,9 @@ func (f *quiesceTestControl) Exec(ctx context.Context, argv []string, opts ...tc
 		return ""
 	}
 	f.Calls = append(f.Calls, slices.Clone(args))
+	if f.failQuery && slices.Contains(args, "--query") {
+		return 0, nil, errors.New("injected query failure")
+	}
 	if slices.Contains(args, "--release") {
 		f.mutations++
 		if flag("--if-version") != strconv.FormatUint(f.version, 10) {
@@ -154,6 +157,22 @@ func TestCephFSQuiesceUncertainRepliesRetainRecoveryHandle(t *testing.T) {
 	}
 	if err := q.Release(t.Context()); err != nil || control.mutations != 2 {
 		t.Fatal("release retry duplicated mutation", err)
+	}
+}
+
+func TestUnconfirmedQuiesceStartCanBeInspectedButCannotRelease(t *testing.T) {
+	fs, control, volume := quiesceFixture(t)
+	control.failQuery = true
+	q, err := start(t.Context(), fs.Core, []*volbase.Volume{volume}, Config{Timeout: time.Second, Expiration: time.Minute})
+	if err == nil || q == nil {
+		t.Fatalf("failed readback: %v, %v", q, err)
+	}
+	control.failQuery = false
+	if state, err := q.Status(t.Context()); err != nil || state.State != "QUIESCED" {
+		t.Fatalf("inspection: %+v, %v", state, err)
+	}
+	if err := q.Release(t.Context()); err == nil || control.mutations != 1 {
+		t.Fatalf("unconfirmed release: mutations=%d, err=%v", control.mutations, err)
 	}
 }
 
