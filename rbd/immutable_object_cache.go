@@ -41,7 +41,7 @@ type ImmutableObjectCache struct {
 	Path string
 	// Socket is the path of the daemon's client socket; empty means
 	// DefaultImmutableObjectCacheSocket. It must not exist, and it must not
-	// be under Path. A Linux pathname socket address permits up to 107 bytes.
+	// be under Path. The librbd client socket path is limited to 107 bytes.
 	Socket string
 	// MaxSize is immutable_object_cache_max_size in bytes; 0 means
 	// DefaultImmutableObjectCacheMaxSize. The daemon treats it as a target,
@@ -442,7 +442,7 @@ func normalizeImmutableObjectCache(client testcontainers.Container, config Immut
 	case !cleanAbsolute(config.Socket) || config.Socket == "/":
 		return config, servicehook.Invalid(fmt.Errorf("the socket %q is not a clean absolute path below /", config.Socket))
 	case len(config.Socket) > 107:
-		return config, servicehook.Invalid(errors.New("the cache socket path exceeds the 107-byte Linux pathname socket limit"))
+		return config, servicehook.Invalid(errors.New("the cache socket path exceeds the 107-byte librbd client socket limit"))
 	case config.Socket == config.Path || strings.HasPrefix(config.Socket, config.Path+"/") || strings.HasPrefix(config.Path, config.Socket+"/"):
 		return config, servicehook.Invalid(errors.New("the socket and the cache path must not contain each other"))
 	case config.MaxSize < 0:
