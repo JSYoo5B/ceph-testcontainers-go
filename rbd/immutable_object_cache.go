@@ -633,7 +633,13 @@ remove)
     if test "$created" = 1 && exists "$stage/root.handoff"; then
         test ! -L "$stage/root.handoff" && test "$(stat -c '%d:%i:%w' "$stage/root.handoff")" = "$(cat "$state/owner")" ||
             held_public root
-        rmdir "$stage/root.handoff" || exit 1
+        # A writer with an open directory can add a child even after this
+        # handoff. rmdir tests emptiness atomically. Once our own subtree is
+        # gone, return the directory with its outside children intact.
+        if ! rmdir "$stage/root.handoff" 2>/dev/null; then
+            children=$(find "$stage/root.handoff" -mindepth 1 -maxdepth 1 -printf x -quit) || held_public root
+            test -n "$children" && rename_noreplace "$stage/root.handoff" "$path" || held_public root
+        fi
     fi
     remove_public "$sock" socket; remove_public "$asok" admin; remove_public "$pidfile" pidfile
     if test "$(readlink "$alias" 2>/dev/null)" = "$control"; then rm -f "$alias" || exit 1; fi
@@ -958,6 +964,9 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 // during that move, the name may briefly be absent. Restore puts the
 // replacement back only if the name is vacant. If another writer already
 // bound the name, the error identifies the retained entry for recovery.
+// If a writer adds a child while Restore moves a lease-created cache directory,
+// Restore cleans its cache subtree and returns the directory with the child to
+// the vacant public path. An occupied path leaves the directory held for retry.
 // A repeated call after success does nothing.
 //
 //purpose:construction,lifetime

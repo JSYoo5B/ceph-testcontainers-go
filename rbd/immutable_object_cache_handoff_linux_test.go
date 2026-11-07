@@ -391,3 +391,64 @@ exec /usr/bin/python3 "$@"`)
 		}
 	}
 }
+
+func TestCacheRestoreReturnsRootWithNewChild(t *testing.T) {
+	for _, outcome := range []string{"vacant", "reoccupied", "late-child", "lost-return"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := newCacheShellFixture(t)
+			f.startForHandoff(t)
+			f.env = append(f.env, "OUTCOME="+outcome)
+			// Add the file after inspection without replacing the root inode.
+			// An independent writer may also bind the just-vacated public name.
+			f.program(t, "python3", `case "${3##*/}:${4##*/}" in
+    *:root.handoff)
+        if test "$OUTCOME" != late-child; then echo outside > "$3/child" || exit 1; fi
+        command -p python3 "$@" || exit $?
+        if test "$OUTCOME" = reoccupied; then mkdir "$3" && echo successor > "$3/other" || exit 1; fi
+        exit 0 ;;
+    root.handoff:*)
+        command -p python3 "$@" || exit $?
+        if test "$OUTCOME" = lost-return; then kill -KILL "$PPID"; fi
+        exit 0 ;;
+esac
+exec /usr/bin/python3 "$@"`)
+			if outcome == "late-child" {
+				f.program(t, "rmdir", `case "$1" in */root.handoff) echo outside > "$1/child" || exit 1 ;; esac
+exec /bin/rmdir "$@"`)
+			}
+			remove := func(want string) { t.Helper(); f.check(t, want, "remove", f.cache, f.sock, f.asok, f.pidfile, "1") }
+			read := func(name, want string) {
+				t.Helper()
+				b, err := os.ReadFile(name)
+				if err != nil || string(b) != want+"\n" {
+					t.Fatalf("file %s: %q, %v", name, b, err)
+				}
+			}
+			stage := filepath.Join(f.root, "."+filepath.Base(f.pidfile)+".stage")
+			if outcome == "reoccupied" {
+				for range 2 {
+					remove("held=root\nremoved=0")
+					read(filepath.Join(stage, "root.handoff", "child"), "outside")
+					read(filepath.Join(f.cache, "other"), "successor")
+				}
+				if err := os.Rename(f.cache, filepath.Join(f.root, "successor")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if outcome == "lost-return" {
+				if err := f.command(t, "remove", f.cache, f.sock, f.asok, f.pidfile, "1").Run(); err == nil {
+					t.Fatal("expected interruption after returning directory")
+				}
+				read(filepath.Join(f.cache, "child"), "outside")
+			}
+			remove("removed=1")
+			remove("removed=1")
+			f.release(t, stage)
+			read(filepath.Join(f.cache, "child"), "outside")
+			if entries, err := os.ReadDir(f.cache); err != nil || len(entries) != 1 || entries[0].Name() != "child" {
+				t.Fatalf("returned cache directory: %v, %v", entries, err)
+			}
+			f.assertReleased(t)
+		})
+	}
+}
