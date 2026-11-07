@@ -1,6 +1,7 @@
 package rbd
 
 import (
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -25,6 +26,13 @@ func TestCacheRestorePreservesReplacedPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			initial := tc.initial
 			root := t.TempDir()
+			closeOnCleanup := func(c io.Closer) {
+				t.Cleanup(func() {
+					if err := c.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+						t.Errorf("close cache test resource: %v", err)
+					}
+				})
+			}
 			if tc.noBirthTime {
 				stat := `#!/bin/sh
 case "$2" in
@@ -48,7 +56,7 @@ esac
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			closeOnCleanup(listener)
 			// Returning a PID and publishing the socket lets start record the
 			// files. The process has already exited when stop checks its PID.
 			path := root + ":" + os.Getenv("PATH")
@@ -84,14 +92,14 @@ done
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer signalR.Close()
-			defer signalW.Close()
+			closeOnCleanup(signalR)
+			closeOnCleanup(signalW)
 			gateR, gateW, err := os.Pipe()
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer gateR.Close()
-			defer gateW.Close()
+			closeOnCleanup(gateR)
+			closeOnCleanup(gateW)
 			inspection, err := parseImmutableObjectCacheInspection(cacheOutput("inspect", run("inspect", cache, sock)))
 			if err != nil || inspection.path != initial {
 				t.Fatalf("inspect: %+v, %v", inspection, err)
@@ -101,7 +109,9 @@ done
 			if err := start.Start(); err != nil {
 				t.Fatal(err)
 			}
-			signalW.Close()
+			if err := signalW.Close(); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := io.ReadFull(signalR, make([]byte, 1)); err != nil {
 				t.Fatal(err)
 			}
