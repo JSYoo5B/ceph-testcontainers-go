@@ -295,6 +295,12 @@ func cephFSInstallMutationCounters(t *testing.T, ctx context.Context, cluster *c
 // read through it.
 func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters, required []*cephFSMutationCounter, observe func()) {
 	t.Helper()
+	if err := cephFSCheckObservationCounters(counters, required, observe); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+}
+
+func cephFSCheckObservationCounters(counters, required []*cephFSMutationCounter, observe func()) error {
 	before := make(map[*cephFSMutationCounter]map[string]int, len(counters))
 	commands := make(map[*cephFSMutationCounter]int64, len(counters))
 	for _, counter := range append(slices.Clone(counters), required...) {
@@ -304,12 +310,13 @@ func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters, r
 	observe()
 	for _, counter := range counters {
 		if err := cephFSMutationsChanged(before[counter], counter.counts()); err != nil {
-			t.Fatalf("%s: %v", name, err)
+			return err
 		}
 	}
 	for i, counter := range required {
 		if counter.commands.Load() == commands[counter] {
-			t.Fatalf("%s issued no command through required mutation counter %d", name, i)
+			return fmt.Errorf("no command through required mutation counter %d", i)
 		}
 	}
+	return nil
 }

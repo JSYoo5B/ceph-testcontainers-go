@@ -144,6 +144,25 @@ func TestCephFSRemovalObservationRejectsUnlistedCommands(t *testing.T) {
 	}
 }
 
+func TestCephFSObservationRequiresReadsInsideTheWait(t *testing.T) {
+	counter := &cephFSMutationCounter{Container: &cephFSCommandRecorder{}}
+	required := []*cephFSMutationCounter{counter}
+	read := func() {
+		if _, _, err := counter.Exec(t.Context(), cephCLI("fsid")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read() // An independent witness before the wait cannot qualify the wait.
+	err := cephFSCheckObservationCounters(required, required, func() {})
+	read() // A later witness cannot qualify it either.
+	if err == nil || !strings.Contains(err.Error(), "no command through required") {
+		t.Fatalf("bypassed wait: %v", err)
+	}
+	if err := cephFSCheckObservationCounters(required, required, read); err != nil {
+		t.Fatalf("counted read: %v", err)
+	}
+}
+
 // TestCephFSObservationMutationCheckRejectsIdempotentWrite shows that the
 // observation check rejects an observational call that re-issues an
 // idempotent remove whose reply is success and whose final state is
