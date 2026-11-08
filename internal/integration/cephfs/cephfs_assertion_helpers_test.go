@@ -3,10 +3,46 @@
 package cephfs_test
 
 import (
+	"context"
+
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/snapschedule"
 )
+
+// A nil listing asks the watch for a newer sample. crossed reports whether an
+// attempted listing straddled a schedule change and consumed a retry.
+func readScheduleRetention(ctx context.Context, observed snapschedule.Status, creations []time.Time,
+	status func(context.Context) (snapschedule.Status, error), snapshots func(context.Context) ([]string, error),
+) ([]string, bool, error) {
+	if observed.Created < 3 || observed.Pruned != observed.Created-2 || len(creations) < 2 {
+		return nil, false, nil
+	}
+	matches := func(s snapschedule.Status) bool {
+		return s.Created == observed.Created && s.Pruned == observed.Pruned && s.Last.Equal(observed.Last) && s.First.Equal(observed.First)
+	}
+	before, err := status(ctx)
+	if err != nil || !matches(before) {
+		return nil, false, err
+	}
+	names, err := snapshots(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	after, err := status(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if !matches(after) {
+		return nil, true, nil
+	}
+	if before.First.IsZero() || !before.Last.After(before.First) || !scheduleRetainsNewestTwo(names, creations) {
+		return nil, false, fmt.Errorf("snapshots %v at stable status %d created, %d pruned; observed creation times %v", names, observed.Created, observed.Pruned, creations)
+	}
+	return names, false, nil
+}
 
 // Snapshots returns names oldest first. The scheduler uses the same UTC
 // timestamp for its native name and Last, with an optional UTC name suffix.

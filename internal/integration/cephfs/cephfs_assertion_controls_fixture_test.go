@@ -6,8 +6,11 @@ package cephfs_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/snapschedule"
 )
 
 func TestCephFSRemovalDispatchRequiresFreshCompleteIdlePolicy(t *testing.T) {
@@ -44,6 +47,48 @@ func TestCephFSRetentionRequiresBothNewestSnapshotIdentities(t *testing.T) {
 		if scheduleRetainsNewestTwo(tc.names, times) != tc.match {
 			t.Fatalf("names %v accepted=%t", tc.names, !tc.match)
 		}
+	}
+}
+
+func TestCephFSRetentionWaitsForSettledCountsAroundTheListing(t *testing.T) {
+	first := time.Date(2026, 1, 8, 14, 0, 0, 0, time.UTC)
+	times := []time.Time{first, first.Add(time.Minute), first.Add(2 * time.Minute), first.Add(3 * time.Minute)}
+	three := snapschedule.Status{Created: 3, Pruned: 1, First: first, Last: times[2]}
+	four := snapschedule.Status{Created: 4, Pruned: 2, First: first, Last: times[3]}
+	pruning := four
+	pruning.Pruned = 1
+	prunedAgain := three
+	prunedAgain.Pruned++
+	firstPair := []string{"scheduled-2026-01-08-14_01_00_UTC", "scheduled-2026-01-08-14_02_00_UTC"}
+	nextPair := []string{firstPair[1], "scheduled-2026-01-08-14_03_00_UTC"}
+	for _, tc := range []struct {
+		name                          string
+		watch, before, after          snapschedule.Status
+		names                         []string
+		reads                         int
+		crossed, accepted, wrongNames bool
+	}{
+		{"prune pending", pruning, pruning, pruning, nil, 0, false, false, false},
+		{"stale before listing", three, four, four, nil, 0, false, false, false},
+		{"creation during listing", three, three, pruning, append(slices.Clone(firstPair), nextPair[1]), 1, true, false, false},
+		{"prune during listing", three, three, prunedAgain, firstPair, 1, true, false, false},
+		{"same counts after listing", three, three, three, firstPair, 1, false, true, false},
+		{"new stable pair on retry", four, four, four, nextPair, 1, false, true, false},
+		{"wrong pair in stable window", four, four, four, firstPair, 1, false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nStatus, nLists := 0, 0
+			names, crossed, err := readScheduleRetention(t.Context(), tc.watch, times[:tc.watch.Created], func(context.Context) (snapschedule.Status, error) {
+				nStatus++
+				if nStatus == 1 {
+					return tc.before, nil
+				}
+				return tc.after, nil
+			}, func(context.Context) ([]string, error) { nLists++; return tc.names, nil })
+			if nLists != tc.reads || (names != nil) != tc.accepted || crossed != tc.crossed || (err != nil) != tc.wrongNames || (tc.accepted && !slices.Equal(names, tc.names)) {
+				t.Fatalf("listed %d times, names %v, crossed %t, error %v", nLists, names, crossed, err)
+			}
+		})
 	}
 }
 
