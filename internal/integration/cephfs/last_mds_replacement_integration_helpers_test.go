@@ -533,56 +533,10 @@ func lastMDSFailedHealth(t *testing.T, parent context.Context, cluster *ceph.Con
 func lastMDSModules(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string) {
 	t.Helper()
 	data := harness.TopologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
-	var native struct {
-		Available *bool               `json:"available"`
-		GID       *uint64             `json:"active_gid"`
-		Modules   *[]string           `json:"modules"`
-		Always    map[string][]string `json:"always_on_modules"`
-		Catalog   *[]struct {
-			Name   *string `json:"name"`
-			CanRun *bool   `json:"can_run"`
-			Error  *string `json:"error_string"`
-		} `json:"available_modules"`
+	modules, err := harness.CheckBaselineMGRModules([]byte(data))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if json.Unmarshal(data, &native) != nil || native.Available == nil || !*native.Available || native.GID == nil || *native.GID == 0 || native.Modules == nil || native.Always == nil || len(native.Always) == 0 || native.Catalog == nil {
-		t.Fatal("strict active MGR catalog unavailable")
-	}
-	required := map[string]bool{"volumes": true, "rbd_support": true, "mirroring": true}
-	for _, name := range *native.Modules {
-		if name == "" {
-			t.Fatal("empty enabled MGR module")
-		}
-		required[name] = true
-	}
-	for _, names := range native.Always {
-		if names == nil {
-			t.Fatal("null always-on release set")
-		}
-		for _, name := range names {
-			if name == "" {
-				t.Fatal("empty always-on MGR module")
-			}
-			required[name] = true
-		}
-	}
-	seen, selected := map[string]bool{}, map[string]bool{}
-	for _, module := range *native.Catalog {
-		if module.Name == nil || *module.Name == "" || seen[*module.Name] || module.CanRun == nil || module.Error == nil {
-			t.Fatal("MGR available catalog malformed")
-		}
-		seen[*module.Name] = true
-		if required[*module.Name] {
-			if !*module.CanRun || *module.Error != "" {
-				t.Fatalf("required manager payload/dependency unavailable; stop for fixed image-policy classification: module=%s can_run=%t error=%s", *module.Name, *module.CanRun, *module.Error)
-			}
-			selected[*module.Name] = true
-		}
-	}
-	for name := range required {
-		if !selected[name] {
-			t.Fatalf("required manager module absent; stop for fixed image-policy classification: %s", name)
-		}
-	}
-	encoded, _ := json.Marshal(selected)
-	t.Logf("LAST_MDS_MODULES phase=%s active_gid=%d can_run=%s", phase, *native.GID, encoded)
+	encoded, _ := json.Marshal(modules.Runnable)
+	t.Logf("LAST_MDS_MODULES phase=%s active_gid=%d can_run=%s absent_enabled=%v", phase, modules.ActiveGID, encoded, modules.AbsentEnabled)
 }
