@@ -173,7 +173,9 @@ func freezeAdminSocketOSD(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		if frozen.pause != nil {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
 			defer stop()
-			_ = frozen.pause.Resume(cleanup)
+			if err := frozen.pause.Resume(cleanup); err != nil {
+				t.Errorf("resume osd.0: %v", err)
+			}
 		}
 	})
 	return frozen
@@ -181,20 +183,21 @@ func freezeAdminSocketOSD(t *testing.T, ctx context.Context, cluster *ceph.Conta
 
 // refreeze resumes the OSD if it is paused, waits until it answers again,
 // which also drains the connections that canceled calls left in its listen
-// queue, and pauses it.
+// queue, and pauses it. Pause can return its lease with an error once Docker
+// has accepted the pause, so the lease is kept before the error is handled
+// and the registered cleanup resumes it with its own budget.
 func (f *frozenAdminSocketOSD) refreeze(t *testing.T, ctx context.Context) {
 	t.Helper()
 	f.resume(t, ctx)
 	pause, err := fault.Pause(ctx, f.cluster, f.osd)
+	f.pause = pause
 	if err != nil {
-		if pause != nil {
-			_ = pause.Resume(ctx)
-		}
 		t.Fatal(err)
 	}
-	f.pause = pause
 }
 
+// resume resumes a paused OSD and waits until it answers. A failed resume
+// keeps the lease for the registered cleanup.
 func (f *frozenAdminSocketOSD) resume(t *testing.T, ctx context.Context) {
 	t.Helper()
 	if f.pause == nil {
