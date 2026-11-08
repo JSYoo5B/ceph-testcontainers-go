@@ -7,6 +7,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"strings"
@@ -131,8 +132,15 @@ func TestWatchObjectReadbackKeepsDiagnosticsSeparate(t *testing.T) {
 		{name, "read failed", 1, false},
 	} {
 		var wire bytes.Buffer
-		_, _ = stdcopy.NewStdWriter(&wire, stdcopy.Stderr).Write([]byte(sample.stderr))
-		_, _ = stdcopy.NewStdWriter(&wire, stdcopy.Stdout).Write([]byte(sample.stdout))
+		frame := func(stream stdcopy.StdType, text string) {
+			var header [8]byte
+			header[0] = byte(stream)
+			binary.BigEndian.PutUint32(header[4:], uint32(len(text)))
+			wire.Write(header[:])
+			wire.WriteString(text)
+		}
+		frame(stdcopy.Stderr, sample.stderr)
+		frame(stdcopy.Stdout, sample.stdout)
 		if err := checkWatchObjectReadback(name, sample.code, &wire); (err == nil) != sample.want {
 			t.Errorf("stdout %q, stderr %q, exit %d: %v", sample.stdout, sample.stderr, sample.code, err)
 		}
