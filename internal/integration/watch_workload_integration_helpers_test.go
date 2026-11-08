@@ -1,8 +1,9 @@
-//go:build all || (integration && (features || topology))
+//go:build all || integration
 
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // watchWorkload plays the SUT: it writes and reads back objects through
@@ -48,19 +49,23 @@ func startWatchWorkload(ctx context.Context, client testcontainers.Container, po
 
 func watchObjectRoundTrip(ctx context.Context, client testcontainers.Container, pool, name string) error {
 	const script = `printf '%s' "$2" > /tmp/watch-input && rados -p "$1" put "$2" /tmp/watch-input && rados -p "$1" get "$2" -`
-	code, r, err := client.Exec(ctx, []string{"timeout", "120", "sh", "-c", script, "sh", pool, name}, tcexec.Multiplexed())
+	code, r, err := client.Exec(ctx, []string{"timeout", "120", "sh", "-c", script, "sh", pool, name})
 	if err != nil {
 		return err
 	}
-	out, err := io.ReadAll(r)
-	if err != nil {
+	return checkWatchObjectReadback(name, code, r)
+}
+
+func checkWatchObjectReadback(name string, code int, r io.Reader) error {
+	var out, diagnostics bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &diagnostics, r); err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("rados round trip exited %d: %s", code, out)
+		return fmt.Errorf("rados round trip exited %d: %s", code, diagnostics.Bytes())
 	}
-	if string(out) != name {
-		return fmt.Errorf("rados returned %q, want %q", out, name)
+	if out.String() != name {
+		return fmt.Errorf("rados returned %q, want %q", out.Bytes(), name)
 	}
 	return nil
 }
