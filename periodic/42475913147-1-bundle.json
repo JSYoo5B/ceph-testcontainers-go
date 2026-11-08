@@ -1,0 +1,597 @@
+{
+  "classification": "incomplete_or_failed",
+  "complete": false,
+  "elapsed_seconds": 4171.277,
+  "execution": "42475913147-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "214f7186c0a8c09a23989d164169f7936fd5c2cb154e06c25472a621d860a0c4",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "8d83c117ead69198f50533bd53a11af1395c9f958f97cc471f0ef1f6dddf3377",
+        "cell": "20.2.4/8a666dd8230f",
+        "entries": [
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_serialization-c311fb5f-2a85460a0d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_serialization",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_serialization-c311fb5f",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_serialization/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_serialization_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_serialization",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalSerialization"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-daemon_operations-51a1bb92-b99176a9a5",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "daemon_operations",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-daemon_operations-51a1bb92",
+              "image_roles": "essential,client",
+              "job_timeout": 55,
+              "network_tests": [
+                "TestManagerPrometheusExporter",
+                "TestOSDFullRatios"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/daemon_operations/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/daemon_key_rotation_integration_test.go",
+                "internal/integration/mgr_prometheus_integration_test.go",
+                "internal/integration/mgr_watch_integration_test.go",
+                "internal/integration/native_command_integration_test.go",
+                "internal/integration/osd_full_ratios_integration_test.go",
+                "internal/integration/osd_peer_path_integration_test.go",
+                "internal/integration/rados_mutation_contracts_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_daemon_operations",
+              "timeout": "45m"
+            },
+            "tests": [
+              "TestDaemonKeyRotation",
+              "TestManagerMetrics",
+              "TestManagerPrometheusExporter",
+              "TestManagerWatchReportsFailoverAndServiceAdvertisement",
+              "TestNativeCommands",
+              "TestOSDFullRatios",
+              "TestOSDReplicationPeerPathCut",
+              "TestRADOSMutationContracts"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_fixtures-1b87492c-8c6db8bb64",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_fixtures",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_fixtures-1b87492c",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 130,
+              "network_tests": [
+                "TestRGWAdminRecordsAndRateLimit",
+                "TestRGWBucketMaintenance",
+                "TestRGWNativeTLS",
+                "TestRGWProtocolBackends",
+                "TestRGWS3ClientFeatures",
+                "TestRGWTLSReplacement"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_fixtures/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_lifecycle_integration_test.go",
+                "internal/integration/rgw/rgw_admin_records_integration_test.go",
+                "internal/integration/rgw/rgw_bucket_maintenance_integration_test.go",
+                "internal/integration/rgw/rgw_protocol_backends_integration_test.go",
+                "internal/integration/rgw/rgw_rate_limit_integration_test.go",
+                "internal/integration/rgw/rgw_roles_integration_test.go",
+                "internal/integration/rgw/rgw_s3_client_features_integration_test.go",
+                "internal/integration/rgw/rgw_s3_keys_integration_test.go",
+                "internal/integration/rgw/rgw_sdk_consumer_integration_test.go",
+                "internal/integration/rgw/rgw_stable_endpoint_integration_test.go",
+                "internal/integration/rgw/rgw_tenants_accounts_integration_test.go",
+                "internal/integration/rgw/rgw_tls_integration_test.go",
+                "internal/integration/rgw/rgw_tls_replacement_integration_test.go",
+                "internal/integration/rgw/rgw_user_placement_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_fixtures",
+              "timeout": "120m"
+            },
+            "tests": [
+              "TestHostNetworkRGWTenantsAndAccounts",
+              "TestHostNetworkRGWUserPlacementPolicy",
+              "TestRGWAdminCommandLifetime",
+              "TestRGWAdminRecordsAndRateLimit",
+              "TestRGWBucketMaintenance",
+              "TestRGWNativeTLS",
+              "TestRGWOwnedRole",
+              "TestRGWProtocolBackends",
+              "TestRGWPublicSDKConsumer",
+              "TestRGWRateLimitOverride",
+              "TestRGWS3ClientFeatures",
+              "TestRGWS3KeyRotation",
+              "TestRGWStableEndpoint",
+              "TestRGWTLSReplacement",
+              "TestRGWTenantsAndAccounts",
+              "TestRGWUserPlacementPolicy"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2f0266c7dba5c18b1f8addd9d4ee25b56f4b3616a2afed6244520685391061fa",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:aac25fc48b5306425ceefaf6a46755d5820fb3f60805141334de4f99a4ea6d6c"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "64db05aa30825fb68f216769f661db037b1c1cad37ad2c2d7bde325dd8ce7333",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-08T13:29:15.501956+00:00",
+        "source_sha": "649fc9a75ee78c385d33fa5de9c2254098f5eec0",
+        "test_images": {
+          "busybox:1.37.0": "busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec",
+          "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1": "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1@sha256:bb7ea0d86f0d2c4cb5720998eac27ce9c6f8d89bc431540c1d2cc71ac51c1c9a",
+          "hashicorp/vault:1.21.4": "hashicorp/vault:1.21.4@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569",
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "8d83c117ead69198f50533bd53a11af1395c9f958f97cc471f0ef1f6dddf3377",
+        "cell": "19.2.5/8a666dd8230f",
+        "entries": [
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_serialization-c311fb5f-2a85460a0d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_serialization",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_serialization-c311fb5f",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_serialization/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_serialization_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_serialization",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalSerialization"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-daemon_operations-51a1bb92-b99176a9a5",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "daemon_operations",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-daemon_operations-51a1bb92",
+              "image_roles": "essential,client",
+              "job_timeout": 55,
+              "network_tests": [
+                "TestManagerPrometheusExporter",
+                "TestOSDFullRatios"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/daemon_operations/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/daemon_key_rotation_integration_test.go",
+                "internal/integration/mgr_prometheus_integration_test.go",
+                "internal/integration/mgr_watch_integration_test.go",
+                "internal/integration/native_command_integration_test.go",
+                "internal/integration/osd_full_ratios_integration_test.go",
+                "internal/integration/osd_peer_path_integration_test.go",
+                "internal/integration/rados_mutation_contracts_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_daemon_operations",
+              "timeout": "45m"
+            },
+            "tests": [
+              "TestDaemonKeyRotation",
+              "TestManagerMetrics",
+              "TestManagerPrometheusExporter",
+              "TestManagerWatchReportsFailoverAndServiceAdvertisement",
+              "TestNativeCommands",
+              "TestOSDFullRatios",
+              "TestOSDReplicationPeerPathCut",
+              "TestRADOSMutationContracts"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_fixtures-1b87492c-8c6db8bb64",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_fixtures",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_fixtures-1b87492c",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 130,
+              "network_tests": [
+                "TestRGWAdminRecordsAndRateLimit",
+                "TestRGWBucketMaintenance",
+                "TestRGWNativeTLS",
+                "TestRGWProtocolBackends",
+                "TestRGWS3ClientFeatures",
+                "TestRGWTLSReplacement"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_fixtures/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_lifecycle_integration_test.go",
+                "internal/integration/rgw/rgw_admin_records_integration_test.go",
+                "internal/integration/rgw/rgw_bucket_maintenance_integration_test.go",
+                "internal/integration/rgw/rgw_protocol_backends_integration_test.go",
+                "internal/integration/rgw/rgw_rate_limit_integration_test.go",
+                "internal/integration/rgw/rgw_roles_integration_test.go",
+                "internal/integration/rgw/rgw_s3_client_features_integration_test.go",
+                "internal/integration/rgw/rgw_s3_keys_integration_test.go",
+                "internal/integration/rgw/rgw_sdk_consumer_integration_test.go",
+                "internal/integration/rgw/rgw_stable_endpoint_integration_test.go",
+                "internal/integration/rgw/rgw_tenants_accounts_integration_test.go",
+                "internal/integration/rgw/rgw_tls_integration_test.go",
+                "internal/integration/rgw/rgw_tls_replacement_integration_test.go",
+                "internal/integration/rgw/rgw_user_placement_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_fixtures",
+              "timeout": "120m"
+            },
+            "tests": [
+              "TestHostNetworkRGWTenantsAndAccounts",
+              "TestHostNetworkRGWUserPlacementPolicy",
+              "TestRGWAdminCommandLifetime",
+              "TestRGWAdminRecordsAndRateLimit",
+              "TestRGWBucketMaintenance",
+              "TestRGWNativeTLS",
+              "TestRGWOwnedRole",
+              "TestRGWProtocolBackends",
+              "TestRGWPublicSDKConsumer",
+              "TestRGWRateLimitOverride",
+              "TestRGWS3ClientFeatures",
+              "TestRGWS3KeyRotation",
+              "TestRGWStableEndpoint",
+              "TestRGWTLSReplacement",
+              "TestRGWTenantsAndAccounts",
+              "TestRGWUserPlacementPolicy"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:99f0ff6e827c54a16bffc0546faeb085a94365d01d29d911214dc14818a76fe4",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:a69e1319ce8827c07c2993375e4e1ca9c51696682e68fec1aff02dbcff5649bf",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:43ee23624e7a93052b70e269287ca35dc40d980ff1df47be0a23ec8336ca8574",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:fc12831c3bbf8213ef7d37b66aa2e5989240d611c5786c636395f16b7f46dbb3",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1fbe1bd4ecc001ea91ed3771b35b871ce3d18dae58c3b5234b3da578172b4e9e"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "711b13330f815ebdec06243133141307e277eb6d3651c1f619bf5d1e70f2473a",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-08T13:29:15.501956+00:00",
+        "source_sha": "649fc9a75ee78c385d33fa5de9c2254098f5eec0",
+        "test_images": {
+          "busybox:1.37.0": "busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec",
+          "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1": "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1@sha256:bb7ea0d86f0d2c4cb5720998eac27ce9c6f8d89bc431540c1d2cc71ac51c1c9a",
+          "hashicorp/vault:1.21.4": "hashicorp/vault:1.21.4@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569",
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "8d83c117ead69198f50533bd53a11af1395c9f958f97cc471f0ef1f6dddf3377",
+        "cell": "21.2.0/8a666dd8230f",
+        "entries": [
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_serialization-c311fb5f-2a85460a0d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_serialization",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_serialization-c311fb5f",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_serialization/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_serialization_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_serialization",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalSerialization"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-daemon_operations-51a1bb92-b99176a9a5",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "daemon_operations",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-daemon_operations-51a1bb92",
+              "image_roles": "essential,client",
+              "job_timeout": 55,
+              "network_tests": [
+                "TestManagerPrometheusExporter",
+                "TestOSDFullRatios"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/daemon_operations/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/daemon_key_rotation_integration_test.go",
+                "internal/integration/mgr_prometheus_integration_test.go",
+                "internal/integration/mgr_watch_integration_test.go",
+                "internal/integration/native_command_integration_test.go",
+                "internal/integration/osd_full_ratios_integration_test.go",
+                "internal/integration/osd_peer_path_integration_test.go",
+                "internal/integration/rados_mutation_contracts_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_daemon_operations",
+              "timeout": "45m"
+            },
+            "tests": [
+              "TestDaemonKeyRotation",
+              "TestManagerMetrics",
+              "TestManagerPrometheusExporter",
+              "TestManagerWatchReportsFailoverAndServiceAdvertisement",
+              "TestNativeCommands",
+              "TestOSDFullRatios",
+              "TestOSDReplicationPeerPathCut",
+              "TestRADOSMutationContracts"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_fixtures-1b87492c-8c6db8bb64",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_fixtures",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_fixtures-1b87492c",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 130,
+              "network_tests": [
+                "TestRGWAdminRecordsAndRateLimit",
+                "TestRGWBucketMaintenance",
+                "TestRGWNativeTLS",
+                "TestRGWProtocolBackends",
+                "TestRGWS3ClientFeatures",
+                "TestRGWTLSReplacement"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_fixtures/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_lifecycle_integration_test.go",
+                "internal/integration/rgw/rgw_admin_records_integration_test.go",
+                "internal/integration/rgw/rgw_bucket_maintenance_integration_test.go",
+                "internal/integration/rgw/rgw_protocol_backends_integration_test.go",
+                "internal/integration/rgw/rgw_rate_limit_integration_test.go",
+                "internal/integration/rgw/rgw_roles_integration_test.go",
+                "internal/integration/rgw/rgw_s3_client_features_integration_test.go",
+                "internal/integration/rgw/rgw_s3_keys_integration_test.go",
+                "internal/integration/rgw/rgw_sdk_consumer_integration_test.go",
+                "internal/integration/rgw/rgw_stable_endpoint_integration_test.go",
+                "internal/integration/rgw/rgw_tenants_accounts_integration_test.go",
+                "internal/integration/rgw/rgw_tls_integration_test.go",
+                "internal/integration/rgw/rgw_tls_replacement_integration_test.go",
+                "internal/integration/rgw/rgw_user_placement_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_fixtures",
+              "timeout": "120m"
+            },
+            "tests": [
+              "TestHostNetworkRGWTenantsAndAccounts",
+              "TestHostNetworkRGWUserPlacementPolicy",
+              "TestRGWAdminCommandLifetime",
+              "TestRGWAdminRecordsAndRateLimit",
+              "TestRGWBucketMaintenance",
+              "TestRGWNativeTLS",
+              "TestRGWOwnedRole",
+              "TestRGWProtocolBackends",
+              "TestRGWPublicSDKConsumer",
+              "TestRGWRateLimitOverride",
+              "TestRGWS3ClientFeatures",
+              "TestRGWS3KeyRotation",
+              "TestRGWStableEndpoint",
+              "TestRGWTLSReplacement",
+              "TestRGWTenantsAndAccounts",
+              "TestRGWUserPlacementPolicy"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2a0b72d90e81a4102ff7c608af4a4014c76c4d776bff015ad1459215543def01",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "fd3f7b34b92ba7bc936c39f93171a4c5d92ea966516ae64de1b668bd88470fb6",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-08T13:29:15.501956+00:00",
+        "source_sha": "649fc9a75ee78c385d33fa5de9c2254098f5eec0",
+        "test_images": {
+          "busybox:1.37.0": "busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec",
+          "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1": "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1@sha256:bb7ea0d86f0d2c4cb5720998eac27ce9c6f8d89bc431540c1d2cc71ac51c1c9a",
+          "hashicorp/vault:1.21.4": "hashicorp/vault:1.21.4@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569",
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "649fc9a75ee78c385d33fa5de9c2254098f5eec0:42475913147:1",
+    "selected_at": "2026-11-08T13:29:15.501956+00:00",
+    "source_sha": "649fc9a75ee78c385d33fa5de9c2254098f5eec0"
+  },
+  "receipt_sha256": "bee5196e34dd398dd9e138f8c7bc07e527b9defcd829c700ff9beded366c6933",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "649fc9a75ee78c385d33fa5de9c2254098f5eec0",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    },
+    {
+      "classification": "incomplete_or_failed",
+      "complete": false,
+      "release": "21.2.0"
+    }
+  ]
+}
