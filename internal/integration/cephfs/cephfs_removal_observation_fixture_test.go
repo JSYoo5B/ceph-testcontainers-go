@@ -107,6 +107,7 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 		cephCLI("fs", "snapshot", "mirror", "show", "distribution", "a"),
 		cephCLI("fs", "get", "a", "--format", "json"),
 		cephCLI("fsid"),
+		cephCLI("quorum_status", "--format", "json"),
 		{"rados", "--pool", "meta", "listwatchers", "cephfs_mirror"},
 		append([]string{"python3", "-c", supervised.Script, "0", "0", "30"}, cephCLI("fs", "snapshot", "mirror", "peer_list", "a")...),
 		{"python3", "-c", supervised.CancelScript, "marker", "5"},
@@ -136,7 +137,7 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 }
 
 func TestCephFSRemovalObservationRejectsUnlistedCommands(t *testing.T) {
-	for _, args := range [][]string{cephCLI("mgr", "fail"), cephCLI("osd", "blocklist", "add", "client"), cephCLI("tell", "mds.a", "injectargs"), cephCLI("fs", "subvolume", "rm", "fs", "volume"), cephCLI("fs", "mirror", "disable", "fs"), {"rados", "unknown-command"}} {
+	for _, args := range [][]string{cephCLI("mgr", "fail"), cephCLI("quorum_status", "unexpected"), cephCLI("osd", "blocklist", "add", "client"), cephCLI("tell", "mds.a", "injectargs"), cephCLI("fs", "subvolume", "rm", "fs", "volume"), cephCLI("fs", "mirror", "disable", "fs"), {"rados", "unknown-command"}} {
 		if cephFSMutationKind(args) == "" {
 			t.Fatalf("mutating or unknown command accepted as a read: %q", args)
 		}

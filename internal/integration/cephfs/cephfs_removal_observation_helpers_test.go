@@ -111,6 +111,7 @@ var cephFSObservationReads = []struct {
 	operands int
 }{
 	{[]string{"fsid"}, 0},
+	{[]string{"quorum_status"}, 0},
 	{[]string{"fs", "get"}, 1},
 	{[]string{"fs", "snapshot", "mirror", "ls"}, 1},
 	{[]string{"fs", "snapshot", "mirror", "peer_list"}, 1},
