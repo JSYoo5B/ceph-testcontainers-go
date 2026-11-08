@@ -64,19 +64,23 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	// repeated canceled calls do not accumulate, and must leave other calls
 	// running. A cancel at any point of startup, including before the CLI is
 	// visible, must not let a CLI start afterwards.
+	//
+	// A frozen OSD never accepts either, so every CLI that connected keeps
+	// its place in the socket's listen queue after it is killed. The daemon
+	// listens with a backlog of 5, which Linux admits one beyond: on Tentacle
+	// and Umbrella the seventh connect fails with EAGAIN, and that CLI exits
+	// before it is canceled. Each group of calls therefore starts on a
+	// freshly frozen OSD, whose resume between groups drains the queue, and
+	// makes at most two connections.
 	osd := clusteraccess.OSDs(t, cluster)[0]
-	pause, err := fault.Pause(ctx, cluster, osd)
-	if err != nil {
-		if pause != nil {
-			_ = pause.Resume(ctx)
-		}
-		t.Fatal(err)
-	}
+	frozen := freezeAdminSocketOSD(t, ctx, cluster, osd, after)
 	for attempt := 1; attempt <= 3; attempt++ {
+		frozen.refreeze(t, ctx)
 		call := startAdminSocketCall(t, ctx, cluster)
 		call.cancelAndCheck(t, ctx, cluster, "attempt "+strconv.Itoa(attempt))
 		waitNoAdminSocketProcess(t, ctx, cluster)
 	}
+	frozen.refreeze(t, ctx)
 	first := startAdminSocketCall(t, ctx, cluster)
 	second := startAdminSocketCall(t, ctx, cluster, first.cli)
 	first.cancelAndCheck(t, ctx, cluster, "first of two")
@@ -87,12 +91,10 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	waitNoAdminSocketProcess(t, ctx, cluster)
 	for _, delay := range []time.Duration{0, time.Millisecond, 5 * time.Millisecond, 10 * time.Millisecond, 25 * time.Millisecond,
 		50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond} {
+		frozen.refreeze(t, ctx)
 		cancelAdminSocketCallAfter(t, ctx, cluster, delay)
 	}
-	if err := pause.Resume(ctx); err != nil {
-		t.Fatal(err)
-	}
-	waitAdminSocketOSDEpoch(t, ctx, cluster, after)
+	frozen.resume(t, ctx)
 
 	// The socket belongs to the running process: a stopped OSD has none, and
 	// the restarted process answers again.
@@ -154,6 +156,58 @@ func waitAdminSocketOSDEpoch(t *testing.T, ctx context.Context, cluster *ceph.Co
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// frozenAdminSocketOSD is osd.0 paused for canceled admin socket calls.
+type frozenAdminSocketOSD struct {
+	cluster *ceph.Container
+	osd     testcontainers.Container
+	epoch   int
+	pause   *fault.PauseLease
+}
+
+func freezeAdminSocketOSD(t *testing.T, ctx context.Context, cluster *ceph.Container, osd testcontainers.Container, epoch int) *frozenAdminSocketOSD {
+	t.Helper()
+	frozen := &frozenAdminSocketOSD{cluster: cluster, osd: osd, epoch: epoch}
+	t.Cleanup(func() {
+		if frozen.pause != nil {
+			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := frozen.pause.Resume(cleanup); err != nil {
+				t.Errorf("resume osd.0: %v", err)
+			}
+		}
+	})
+	return frozen
+}
+
+// refreeze resumes the OSD if it is paused, waits until it answers again,
+// which also drains the connections that canceled calls left in its listen
+// queue, and pauses it. Pause can return its lease with an error once Docker
+// has accepted the pause, so the lease is kept before the error is handled
+// and the registered cleanup resumes it with its own budget.
+func (f *frozenAdminSocketOSD) refreeze(t *testing.T, ctx context.Context) {
+	t.Helper()
+	f.resume(t, ctx)
+	pause, err := fault.Pause(ctx, f.cluster, f.osd)
+	f.pause = pause
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// resume resumes a paused OSD and waits until it answers. A failed resume
+// keeps the lease for the registered cleanup.
+func (f *frozenAdminSocketOSD) resume(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if f.pause == nil {
+		return
+	}
+	if err := f.pause.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.pause = nil
+	waitAdminSocketOSDEpoch(t, ctx, f.cluster, f.epoch)
 }
 
 // adminSocketOSDPath is the socket that osd.0's admin socket calls name.
