@@ -346,6 +346,8 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	write("initial")
 	initial := check("initial", receiver)
 	verify("initial")
+	cid := receiver.GetContainerID()
+	originalProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
 	// Each read can spend 30 seconds acquiring the same owner and querying
 	// Ceph. Open the receiver watch first, then both image watches. Leave
 	// room for all three baselines and the stop before the next poll.
@@ -364,7 +366,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		}
 		return e.Sequence, e.Kind
 	}}
-	receivers.await(t, time.Second, "baseline", func(e rbdmirror.ReceiverWatchEvent) bool { return e.Kind == ceph.WatchBaseline && e.Status.Ready })
+	receiverBaseline := receivers.await(t, time.Second, "baseline", func(e rbdmirror.ReceiverWatchEvent) bool { return e.Kind == ceph.WatchBaseline && e.Status.Ready })
 	// Both mappings have an image called volume. check independently pinned
 	// their distinct local and global IDs using each site's native CLI.
 	watches := make([]*rbdMirrorWatchStream[rbdmirror.ImageWatchEvent], 2)
@@ -388,14 +390,18 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			return e.Kind == ceph.WatchBaseline && e.Status.ReplayReady && e.Status.SourcePrimary
 		})
 	}
-	cid := receiver.GetContainerID()
-	originalProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
+	// An unchanged stopped state emits nothing. Finish Stop before the
+	// earliest possible poll so its changed sample cannot straddle Stop.
+	firstPoll := receiverBaseline.Started.Add(cfg.Interval)
+	stopCtx, cancelStop := context.WithDeadline(ctx, firstPoll)
 	grace := 2 * time.Second
-	if err := receiver.Stop(ctx, &grace); err != nil {
-		t.Fatal(err)
-	}
+	err = receiver.Stop(stopCtx, &grace)
 	stoppedAt := time.Now()
-	t.Logf("receiver %s Stop returned at %s", receiver.DaemonName, stoppedAt.UTC().Format(time.RFC3339Nano))
+	cancelStop()
+	if err != nil || !stoppedAt.Before(firstPoll) {
+		t.Fatalf("receiver Stop missed the first poll boundary (time left %s): %v", firstPoll.Sub(stoppedAt), err)
+	}
+	t.Logf("receiver %s Stop returned at %s, %s before the earliest next poll", receiver.DaemonName, stoppedAt.UTC().Format(time.RFC3339Nano), firstPoll.Sub(stoppedAt))
 	rbdScopedImageRawProcess(t, ctx, oracle, receiver, false)
 	nonReady("stopped-original")
 	for _, stream := range watches {
