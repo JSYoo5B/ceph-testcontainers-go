@@ -679,8 +679,8 @@ func checkPartitionStat(code int, output string, execErr error, cut bool, size i
 		}
 	}
 	if cut {
-		// Linux ETIMEDOUT or ECONNREFUSED from cluster.connect().
-		if code == 1 && (verdict == "connect errno 110" || verdict == "connect errno 111") {
+		// A full packet-loss cut must time out. A refused connection reached a peer.
+		if code == 1 && verdict == "connect errno 110" {
 			return nil
 		}
 	} else if code == 0 && verdict == fmt.Sprintf("stat size %d", size) {
