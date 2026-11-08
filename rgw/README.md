@@ -267,6 +267,10 @@ runs the recipe for both modes. What the recipe relies on:
   given an unrelated CA answers an encrypted GET with 500, while its sibling
   with the right CA reads the exact bytes and the unrelated one still serves
   listings and unencrypted objects.
+- To change a gateway's CA, replace the file and restart the gateway (`Stop`,
+  `Start`, then resolve its endpoint again). A running gateway need not read
+  the CA file again: on Umbrella it keeps answering 500 after the file is
+  replaced, while Tentacle reads the new file on the next request.
 - RGW reads the token file on every Vault request, so a test replaces a token
   by writing the new one next to the file and renaming it over the same path
   (keep mode `0600`), without restarting the gateway.

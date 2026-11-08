@@ -54,12 +54,28 @@ func rgwExternalKMS(t *testing.T) {
 		if err := rgwKMSAuditSources(audit, trusted, wrong); err != nil {
 			t.Fatal(err)
 		}
-		// Change only the Vault CA in the gateway that returned 500. The same
-		// running process must now decrypt the same object with the same token.
+		// Change only the Vault CA in the gateway that returned 500, then
+		// restart it: the same container, options, token and object must
+		// now decrypt. RGW does not promise to read the CA file again while
+		// it runs. Umbrella's radosgw, built against libcurl 8, keeps
+		// refusing after the file is replaced until it restarts; Tentacle's
+		// reads the new file at once.
 		if err := f.Gateways[1].CopyToContainer(ctx, f.Vault.CA, harness.RGWKMSCAFile, 0o600); err != nil {
 			t.Fatal("replace the unrelated Vault CA")
 		}
-		f.ReadExact(t, f.WrongCA, "same gateway after replacing its Vault CA")
+		stop := 10 * time.Second
+		if err := f.Gateways[1].Stop(ctx, &stop); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Gateways[1].Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		endpoint, err := f.Gateways[1].S3SecureEndpoint(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WrongCA.Endpoint = endpoint
+		f.ReadExact(t, f.WrongCA, "same gateway restarted after replacing its Vault CA")
 		t.Logf("SSE-KMS over verified HTTPS on both legs; Vault audit allowed=%d denied=%d", counts["tc/data/allowed"], counts["tc/data/denied"])
 	})
 
