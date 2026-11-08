@@ -1197,8 +1197,8 @@ func runCephFSLateReconnect(t *testing.T) {
 		independent.Data != hex.EncodeToString(base) || independent.Inode != baseline.Inode || independent.Client == baseline.Client {
 		t.Fatalf("independent reader: exit=%d err=%v out=%.1024s", read.ExitCode, err, read.Stdout)
 	}
-	t.Logf("CEPHFS_LATE client.%d frozen across the failover of rank 0 %s/%d -> %s/%d; states %v, up:reconnect for %s from %s; evicted and blocklisted %s; old fd errno %d, close errno %d; reader client.%d read the fsynced %d bytes",
-		baseline.Client, old.Name, old.GID, takeover.Name, takeover.GID, states, held.Round(time.Second), reconnectFirst.Round(time.Second), session.Address, acted.Errno, closed.CloseErrno, independent.Client, len(base))
+	t.Logf("CEPHFS_LATE client.%d frozen across the failover of rank 0 %s/%d -> %s/%d; takeover reconnect timeout %s -> %s; states %v, up:reconnect for %s from %s; evicted and blocklisted %s; old fd errno %d, close errno %d; reader client.%d read the fsynced %d bytes",
+		baseline.Client, old.Name, old.GID, takeover.Name, takeover.GID, ordinary, effective.Value, states, held.Round(time.Second), reconnectFirst.Round(time.Second), session.Address, acted.Errno, closed.CloseErrno, independent.Client, len(base))
 
 	if err := daemon.Start(ctx); err != nil {
 		t.Fatal("restart killed MDS:", err)
