@@ -264,6 +264,8 @@ func TestRegionalPartitionStatEvidence(t *testing.T) {
 		{0, "stat size 4095", nil, false, false},
 		{0, "stat size 4096", nil, true, false},
 		{1, "connect errno 110", nil, true, true},
+		{1, "connect errno 110\nmonclient(hunting): authenticate timed out after 15", nil, true, true},
+		{1, "connect errno 110\nconnect errno 13", nil, true, false},
 		{1, "connect errno 111", nil, true, true},
 		{1, "connect errno 13", nil, true, false},
 		{1, "stat: object not found", nil, true, false},

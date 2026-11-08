@@ -667,14 +667,23 @@ func checkPartitionStat(code int, output string, execErr error, cut bool, size i
 	if execErr != nil {
 		return fmt.Errorf("run or read the stat probe: %w", execErr)
 	}
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	last := lines[len(lines)-1]
+	// The Ceph logger can append its authentication diagnostic on stderr
+	// after Python has flushed the verdict on stdout. Docker combines both.
+	var verdict string
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.HasPrefix(line, "connect errno ") || strings.HasPrefix(line, "stat size ") {
+			if verdict != "" {
+				return fmt.Errorf("multiple stat verdicts: %q", output)
+			}
+			verdict = line
+		}
+	}
 	if cut {
 		// Linux ETIMEDOUT or ECONNREFUSED from cluster.connect().
-		if code == 1 && (last == "connect errno 110" || last == "connect errno 111") {
+		if code == 1 && (verdict == "connect errno 110" || verdict == "connect errno 111") {
 			return nil
 		}
-	} else if code == 0 && last == fmt.Sprintf("stat size %d", size) {
+	} else if code == 0 && verdict == fmt.Sprintf("stat size %d", size) {
 		return nil
 	}
 	return fmt.Errorf("stat with cut=%t returned exit %d: %q", cut, code, output)
