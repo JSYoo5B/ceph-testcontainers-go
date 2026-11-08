@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -75,27 +77,24 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 	if l, e, s, err := readLogAckLayout(t, ctx, cluster, mons); err != nil || l != leader || e != epoch || fmt.Sprint(s) != fmt.Sprint(sessions) {
 		t.Fatalf("the layout changed before the window: leader mon.%s, election epoch %d, sessions %v: %v", l, e, s, err)
 	}
+	marker := "tc-mon-log-ack-window-" + uuid.NewString()
+	harness.MustCeph(t, ctx, cluster, "log", marker)
 	for _, o := range osds {
 		logAckSocket(t, ctx, cluster, fmt.Sprintf("osd.%d", o.ID), "scrub_purged_snaps")
 	}
 
 	// The entries are committed: the leader has them in the cluster log.
-	control := clusteraccess.ControlContainer(t, cluster)
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(time.Second) {
-		out := harness.ExecOutput(t, ctx, control, "ceph", "log", "last", "200", "debug", "cluster")
-		missing := []string{}
-		for entity := range roles {
-			if !slices.ContainsFunc(strings.Split(out, "\n"), func(line string) bool {
-				return strings.Contains(line, " "+entity+" ("+entity+") ") && strings.Contains(line, "purged_snaps scrub ok")
-			}) {
-				missing = append(missing, entity)
-			}
+		out := harness.MustCeph(t, ctx, cluster, "log", "last", "200", "debug", "cluster", "--format", "json")
+		missing, err := missingScrubCommits(out, marker, roles)
+		if err != nil {
+			t.Fatal(err)
 		}
 		if len(missing) == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cluster log has no entries of %v:\n%s", missing, out)
+			t.Fatalf("cluster log has no scrub completion for %v after %s", missing, marker)
 		}
 	}
 

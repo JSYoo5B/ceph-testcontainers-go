@@ -28,6 +28,25 @@ const (
 	squidWrongKey = `2026-10-31T00:12:24.238+0000 ffffaa557120 -1 monclient(hunting): handle_auth_bad_method server allowed_methods [2] but i only support [2]`
 )
 
+func TestFreshOSDReadRequiresConnectPermissionErrno(t *testing.T) {
+	for _, sample := range []struct {
+		code   int
+		stdout string
+		want   bool
+	}{
+		{1, "connect errno 13\n", true},
+		{1, "connect errno 1\n", true},
+		{1, squidWrongKey, false}, // The Squid diagnostic alone carries no errno.
+		{1, "connect errno 110\n", false},
+		{1, "read errno 13\n", false},
+		{0, "connect errno 13\n", false},
+	} {
+		if got := osdReadAuthRefused(sample.code, []byte(sample.stdout)); got != sample.want {
+			t.Errorf("exit %d stdout %q: refusal %t, want %t", sample.code, sample.stdout, got, sample.want)
+		}
+	}
+}
+
 // causeRecord builds a record with one capture per MON, each holding the
 // cause lines about entity among lines.
 func causeRecord(entity, stderr string, lines ...string) authCauseRecord {

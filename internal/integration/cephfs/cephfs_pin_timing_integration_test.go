@@ -58,6 +58,8 @@ func TestCephFSPinTimingQualification(t *testing.T) {
 			bases := map[string]bool{path.Dir(volume.Path): true}
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "write", []string{volume.Path})
 			t.Log("PIN_TIMING_DESIGN order=ABBA ticks=5,1,1,5 handoffs=16 comparison=within-cluster")
+			handoffs := map[int]time.Duration{}
+			completedTrials := 0
 			for trial, seconds := range []int{5, 1, 1, 5} {
 				t.Run(fmt.Sprintf("trial-%d-tick-%d", trial, seconds), func(t *testing.T) {
 					start := time.Now()
@@ -88,13 +90,12 @@ func TestCephFSPinTimingQualification(t *testing.T) {
 						if len(changes) != 2 {
 							t.Fatalf("profile handles=%d, want2", len(changes))
 						}
-					} else {
-						for _, mds := range status.Active {
-							if !mds.Owned {
-								t.Fatal("unowned MDS")
-							}
-							pinTimingEffective(t, ctx, cluster, "mds."+mds.Name, 5)
+					}
+					for _, mds := range status.Active {
+						if !mds.Owned {
+							t.Fatal("unowned MDS")
 						}
+						pinTimingEffective(t, ctx, cluster, "mds."+mds.Name, seconds)
 					}
 					for _, rank := range []int{1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0} {
 						started := time.Now()
@@ -116,7 +117,13 @@ func TestCephFSPinTimingQualification(t *testing.T) {
 						}
 						t.Logf("PIN_TIMING_HANDOFF ceph=%s tick=%d rank=%d elapsed=%s", facts.CephVersion, seconds, rank, elapsed)
 					}
+					handoffs[seconds] += total
+					completedTrials++
 				})
+			}
+			// A -run filter may select a single trial. Compare only full ABBA runs.
+			if completedTrials == 4 && !t.Failed() && (handoffs[1] <= 0 || handoffs[1] >= handoffs[5]) {
+				t.Fatalf("balanced handoff totals: tick 1 %s, tick 5 %s", handoffs[1], handoffs[5])
 			}
 		})
 	}

@@ -632,6 +632,7 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 	paths []zonePath, base map[string]zoneRTT, osdB int, zoneOfOSD map[int]string, helperImage string,
 ) zoneObject {
 	t.Helper()
+	requirePartitionStat(t, ctx, clientB, zonePool, "zone-object-1", zoneObjectSize, false)
 	zoneShapeAll(t, ctx, b, []string{"a", "b"}, fault.NetworkProfile{HelperImage: helperImage, Loss: 100})
 	cutAt := time.Now()
 	zoneLeaseStatus(t, ctx, b, "partitioned")
@@ -698,12 +699,7 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 		return ok, fmt.Sprintf("PG %s state %s acting %v primary osd.%d", served.PGID, served.State, served.Acting, served.ActingPrimary)
 	})
 	second := zoneWriteDuringPartition(t, ctx, pool, clientA)
-	start := time.Now()
-	code, out, err := zoneExec(ctx, clientB, "rados", "--client-mount-timeout", "15", "-p", zonePool, "stat", "zone-object-1")
-	t.Logf("client-b in zone B during the partition: rados stat exit %d after %v: %s (%v)", code, time.Since(start).Round(time.Second), zoneTail(out), err)
-	if err == nil && code == 0 {
-		t.Fatal("client-b reached the cluster across the partitioned boundary")
-	}
+	requirePartitionStat(t, ctx, clientB, zonePool, "zone-object-1", zoneObjectSize, true)
 	if err := b.restoreLeases(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -715,6 +711,7 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 	if err := observer.WaitForClean(recoverCtx); err != nil {
 		t.Fatalf("recovery after the partition: %v", err)
 	}
+	requirePartitionStat(t, ctx, clientB, zonePool, "zone-object-1", zoneObjectSize, false)
 	pg := zoneSinglePG(t, ctx, pool)
 	zones, err := actingZones(pg.Acting, zoneOfOSD)
 	if err != nil || len(zones["a"]) != 1 || len(zones["b"]) != 1 {
@@ -738,11 +735,6 @@ func zoneWriteDuringPartition(t *testing.T, ctx context.Context, pool *ceph.Pool
 	}
 	t.Logf("client-a wrote %s during the partition in %v: acknowledged", name, time.Since(start).Round(time.Millisecond))
 	return zoneObject{Name: name, SHA256: strings.Fields(sum)[0]}
-}
-
-func zoneTail(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	return strings.Join(lines[max(0, len(lines)-2):], " | ")
 }
 
 // zonePartialTeardown first checks that the released boundary left the

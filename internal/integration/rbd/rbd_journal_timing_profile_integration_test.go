@@ -19,7 +19,8 @@ import (
 
 // TestRBDJournalTimingProfile verifies the public startup condition independently
 // of the central-config qualification probe. A conflicting central value stays
-// unchanged throughout the owned daemon's one-second polling lifetime.
+// unchanged throughout the owned daemon's one-second polling lifetime. Replay latency
+// is recorded as a measurement only; this test has no latency threshold.
 func TestRBDJournalTimingProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()

@@ -5,7 +5,9 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -114,5 +117,32 @@ func TestNotificationEventsAreReadWithinTheirPhase(t *testing.T) {
 	}
 	if missing := harness.MissingNotificationEvents(want, []string{"ObjectRemoved:Delete in/a"}); len(missing) != 1 {
 		t.Fatalf("missing %v", missing)
+	}
+}
+
+func TestWatchObjectReadbackKeepsDiagnosticsSeparate(t *testing.T) {
+	const name = "watch-3"
+	for _, sample := range []struct {
+		stdout, stderr string
+		code           int
+		want           bool
+	}{
+		{name, "monclient hunting", 0, true},
+		{"watch-2", name, 0, false},
+		{name, "read failed", 1, false},
+	} {
+		var wire bytes.Buffer
+		frame := func(stream stdcopy.StdType, text string) {
+			var header [8]byte
+			header[0] = byte(stream)
+			binary.BigEndian.PutUint32(header[4:], uint32(len(text)))
+			wire.Write(header[:])
+			wire.WriteString(text)
+		}
+		frame(stdcopy.Stderr, sample.stderr)
+		frame(stdcopy.Stdout, sample.stdout)
+		if err := checkWatchObjectReadback(name, sample.code, &wire); (err == nil) != sample.want {
+			t.Errorf("stdout %q, stderr %q, exit %d: %v", sample.stdout, sample.stderr, sample.code, err)
+		}
 	}
 }

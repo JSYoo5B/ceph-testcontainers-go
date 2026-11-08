@@ -348,12 +348,68 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	verify("initial")
 	cid := receiver.GetContainerID()
 	originalProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
-	grace := 2 * time.Second
-	if err := receiver.Stop(ctx, &grace); err != nil {
+	// Each read can spend 30 seconds acquiring the same owner and querying
+	// Ceph. Open the receiver watch first, then both image watches. Leave
+	// room for all three baselines and the stop before the next poll.
+	cfg := ceph.WatchConfig{Interval: 2 * time.Minute, Buffer: 64}
+	began := time.Now()
+	rw, err := views[1].WatchReceivers(ctx, cfg, receiver.DaemonName)
+	t.Logf("receiver %s watch baseline: elapsed=%s deadline=%t err=%v", mappings[1][0], time.Since(began), errors.Is(err, context.DeadlineExceeded), err)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = rw.Stop() })
+	receivers := &rbdMirrorWatchStream[rbdmirror.ReceiverWatchEvent]{name: "bound receiver", events: rw.Events(), stop: rw.Stop, meta: func(e rbdmirror.ReceiverWatchEvent) (uint64, ceph.WatchEventKind) {
+		r := e.Status
+		if e.Kind != ceph.WatchGap && (r.Pool != pool || r.SourceFSID != sourceStatus.FSID || r.DestinationFSID != destinationStatus.FSID || r.SourceNamespace != mappings[1][0] || r.DestinationNamespace != mappings[1][1] || r.PeerID != identity.PeerUUID || len(r.ExpectedDaemons) != 1 || r.ExpectedDaemons[0] != receiver.DaemonName || r.Daemons[receiver.DaemonName].ContainerID != receiver.GetContainerID()) {
+			t.Fatalf("bound receiver lost its mapping, peer or cohort: %+v", r)
+		}
+		return e.Sequence, e.Kind
+	}}
+	receiverBaseline := receivers.await(t, time.Second, "baseline", func(e rbdmirror.ReceiverWatchEvent) bool { return e.Kind == ceph.WatchBaseline && e.Status.Ready })
+	// Both mappings have an image called volume. check independently pinned
+	// their distinct local and global IDs using each site's native CLI.
+	watches := make([]*rbdMirrorWatchStream[rbdmirror.ImageWatchEvent], 2)
+	for i := range watches {
+		began := time.Now()
+		w, err := views[i].WatchImage(ctx, cfg, "volume")
+		t.Logf("image %s watch baseline: elapsed=%s deadline=%t err=%v", mappings[i][0], time.Since(began), errors.Is(err, context.DeadlineExceeded), err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = w.Stop() })
+		watches[i] = &rbdMirrorWatchStream[rbdmirror.ImageWatchEvent]{name: mappings[i][0], events: w.Events(), stop: w.Stop, meta: func(e rbdmirror.ImageWatchEvent) (uint64, ceph.WatchEventKind) {
+			if e.Kind != ceph.WatchGap {
+				if err := checkScopedWatchImage(initial[i], e.Status); err != nil {
+					t.Fatalf("watch for %v: %v", mappings[i], err)
+				}
+			}
+			return e.Sequence, e.Kind
+		}}
+		watches[i].await(t, time.Second, "baseline", func(e rbdmirror.ImageWatchEvent) bool {
+			return e.Kind == ceph.WatchBaseline && e.Status.ReplayReady && e.Status.SourcePrimary
+		})
+	}
+	// An unchanged stopped state emits nothing. Finish Stop before the
+	// earliest possible poll so its changed sample cannot straddle Stop.
+	firstPoll := receiverBaseline.Started.Add(cfg.Interval)
+	stopCtx, cancelStop := context.WithDeadline(ctx, firstPoll)
+	grace := 2 * time.Second
+	err = receiver.Stop(stopCtx, &grace)
+	stoppedAt := time.Now()
+	cancelStop()
+	if err != nil || !stoppedAt.Before(firstPoll) {
+		t.Fatalf("receiver Stop missed the first poll boundary (time left %s): %v", firstPoll.Sub(stoppedAt), err)
+	}
+	t.Logf("receiver %s Stop returned at %s, %s before the earliest next poll", receiver.DaemonName, stoppedAt.UTC().Format(time.RFC3339Nano), firstPoll.Sub(stoppedAt))
 	rbdScopedImageRawProcess(t, ctx, oracle, receiver, false)
 	nonReady("stopped-original")
+	for _, stream := range watches {
+		stream.await(t, 4*time.Minute, "same receiver stopped", func(e rbdmirror.ImageWatchEvent) bool { return scopedImageObservedStop(e, stoppedAt) })
+	}
+	receivers.await(t, 4*time.Minute, "same receiver stopped", func(e rbdmirror.ReceiverWatchEvent) bool {
+		return !e.Started.Before(stoppedAt) && !e.Status.Ready && !e.Status.Daemons[receiver.DaemonName].Running
+	})
 	write("same-cid-restart")
 	if err := receiver.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -367,6 +423,27 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		t.Fatalf("same-CID restart did not retain container and create fresh task/instance: %v %v", fresh, freshErr)
 	}
 	verify("same-cid-restart")
+	// Write and checkpoint only ns-a/volume. Its sibling keeps its earlier
+	// bytes and checkpoint. Watch reports replay state and identity; data
+	// delivery is proved independently for each image after the restart.
+	prior := checkpoints[0]
+	payloads[0] = rbdScopedImagePayload(0, "selected-watch-checkpoint")
+	harness.RBDScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, mappings[0][0], "volume", 0, payloads[0])
+	checkpoints[0] = harness.RBDReceiverNativeSnapshot(t, ctx, sourceClient, pool, mappings[0][0], "volume")
+	if checkpoints[0] <= prior {
+		t.Fatalf("selected image checkpoint %d follows %d", checkpoints[0], prior)
+	}
+	verify("selected-watch-checkpoint")
+	for i, stream := range watches {
+		stream.await(t, 4*time.Minute, "new receiving instance", func(e rbdmirror.ImageWatchEvent) bool {
+			return e.Status.ReplayReady && e.Status.InstanceID == restarted[i].InstanceID
+		})
+		stream.finish(t)
+	}
+	receivers.await(t, 4*time.Minute, "new receiving instance", func(e rbdmirror.ReceiverWatchEvent) bool {
+		return e.Status.Ready && e.Status.Daemons[receiver.DaemonName].InstanceID == restarted[1].InstanceID
+	})
+	receivers.finish(t)
 	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}

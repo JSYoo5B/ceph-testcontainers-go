@@ -101,7 +101,10 @@ native timing. Snapshot replay is notification-driven and outside the
 profile. A journal player captures its wait interval; a
 central configuration change cannot be assumed to retime an existing player.
 The condition ends when the owned daemon terminates and does not persist in the
-cluster configuration database. A partial mirror returned with an error still
+cluster configuration database. The qualification tests record update latency
+for fresh replay instances. They assert receiver configuration and replicated
+bytes; elapsed time is descriptive and carries no performance guarantee.
+A partial mirror returned with an error still
 needs termination.
 
 Initial enrollment, periodic discovery (pool peer refresh and image state

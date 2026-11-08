@@ -115,3 +115,28 @@ func TestRoutedLogAck(t *testing.T) {
 		t.Fatalf("an ack that never came through the peon: %q %q", tid, why)
 	}
 }
+
+func TestCommittedScrubsMustFollowThisWindowsMarker(t *testing.T) {
+	const first = `{"name":"osd.0","rank":"osd.0","channel":"cluster","message":"purged_snaps scrub ok"}`
+	const second = `{"name":"osd.1","rank":"osd.1","channel":"cluster","message":"purged_snaps scrub ok"}`
+	const marker = `{"channel":"cluster","message":"window-b"}`
+	roles := map[string]string{"osd.0": "leader", "osd.1": "peon"}
+	for _, tc := range []struct {
+		name          string
+		log           string
+		want          []string
+		markerMissing bool
+	}{
+		{"prior-window", "[" + first + "," + second + "," + marker + "]", []string{"osd.0", "osd.1"}, false},
+		{"one-current", "[" + first + "," + marker + "," + second + "]", []string{"osd.0"}, false},
+		{"all-current", "[" + marker + "," + first + "," + second + "]", nil, false},
+		{"marker-rolled-out", "[" + first + "," + second + "]", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			missing, err := missingScrubCommits([]byte(tc.log), "window-b", roles)
+			if (err != nil) != tc.markerMissing || !slices.Equal(missing, tc.want) {
+				t.Fatalf("missing %v, error %v", missing, err)
+			}
+		})
+	}
+}

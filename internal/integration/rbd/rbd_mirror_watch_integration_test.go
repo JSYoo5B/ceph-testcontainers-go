@@ -10,8 +10,8 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
-// The receiver and image watches observe the elected receiver's stop, the
-// survivor's election and replay, and the same container's restart, while
+// The receiver and image watches observe the baseline replayer's stop, the
+// survivor's replay, a change of elected leader, and the same container's restart, while
 // the destination data independently proves the replay that followed.
 func TestMultiClusterRBDMirrorWatch(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {

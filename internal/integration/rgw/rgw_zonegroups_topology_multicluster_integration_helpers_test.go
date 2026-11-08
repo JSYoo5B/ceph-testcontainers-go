@@ -88,7 +88,7 @@ func rgwTopologyS3(t *testing.T, ctx context.Context, zone multisite.Zone) harne
 	return harness.S3HTTPClient{Endpoint: endpoint, AccessKey: zone.Gateway.AccessKey, SecretKey: zone.Gateway.SecretKey, Region: zone.Gateway.Region, HTTP: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture) {
+func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture, host bool) {
 	t.Helper()
 	expected := fixture.Zonegroups()
 	for _, local := range fixture.Zones() {
@@ -125,14 +125,15 @@ func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multis
 					t.Fatalf("native group identity/membership differs: %s", want.Name)
 				}
 				for _, zone := range want.Zones {
-					if zone.Name == want.MasterZone && (group.MasterZone != zone.ID || !slices.Equal(group.Endpoints, []string{zone.PeerEndpoint})) {
+					endpoint := rgwAdvertisedEndpoint(t, ctx, zone, host)
+					if zone.Name == want.MasterZone && (group.MasterZone != zone.ID || !rgwPeriodHasEndpoint(group.Endpoints, zone.PeerEndpoint, endpoint)) {
 						t.Fatal("native local group master/endpoint differs")
 					}
 					if !slices.ContainsFunc(group.Zones, func(actual struct {
 						Name, ID  string
 						Endpoints []string `json:"endpoints"`
 					}) bool {
-						return actual.Name == zone.Name && actual.ID == zone.ID && slices.Equal(actual.Endpoints, []string{zone.PeerEndpoint})
+						return actual.Name == zone.Name && actual.ID == zone.ID && rgwPeriodHasEndpoint(actual.Endpoints, zone.PeerEndpoint, endpoint)
 					}) {
 						t.Fatalf("native period omitted zone %s", zone.Name)
 					}
@@ -158,7 +159,7 @@ func testRGWInitialZonegroupsTopology(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, host)
 	zones := fixture.Zones()
 	if len(zones) != 2 || zones[0].Name != "a" || fixture.Source != zones[0].Gateway || zones[0].Zonegroup != "us" || zones[1].Zonegroup != "eu" {
 		t.Fatalf("named realm/local masters were lost: %+v", zones)
@@ -188,7 +189,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if group.ID == "" || len(group.Zones) != 1 || group.Zones[0].Zonegroup != "eu" {
 		t.Fatalf("new local-master region missing: %+v", group)
 	}
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, host)
 	zones := fixture.Zones()
 	clients := make(map[string]harness.S3HTTPClient)
 	for _, zone := range zones {
@@ -266,7 +267,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if _, err := fixture.AddZone(ctx, rgwGateway, multisite.ZoneConfig{Name: "b", Cluster: clusters[1]}); err == nil {
 		t.Fatal("detached storage adopted as fresh")
 	}
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, host)
 	after := harness.MultiClusterExecOutput(t, ctx, harness.ToolkitContainer(t, clusters[1]), "rados", "-p", pool, "get", key, "-")
 	if !bytes.Equal(after, before) {
 		t.Fatal("zone detachment removed or changed retained native object data")

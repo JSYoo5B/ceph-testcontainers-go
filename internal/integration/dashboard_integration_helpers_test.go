@@ -16,6 +16,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"io/fs"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -467,6 +468,11 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	if !readDashboardState(t, ctx, cluster).Enabled {
 		t.Fatal("the refused Restore disabled the module")
 	}
+	// The outside TLS edit keeps the module available after its account
+	// cleanup, so the original username can be queried directly.
+	if _, err := cluster.Ceph(ctx, "dashboard", "ac-user-show", username); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("restored Dashboard account %s: want ENOENT, got %v", username, err)
+	}
 	runDashboardCommand(t, ctx, cluster, material.CertificatePEM, "dashboard", "set-ssl-certificate", "-i", "-")
 	if err := d.Restore(ctx); err != nil {
 		t.Fatal(err)
@@ -578,6 +584,10 @@ func testDashboardRGWGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	linkUser := link.User().ID()
+	linkMetadata := "user:" + linkUser
+	if _, err := gateway.Admin(ctx, "metadata", "get", linkMetadata); err != nil {
+		t.Fatalf("read metadata for the active link user %s: %v", linkUser, err)
+	}
 	info, err := link.User().Info(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -691,8 +701,8 @@ func testDashboardRGWGateway(t *testing.T) {
 	if err := link.Check(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("Check after Remove: %v", err)
 	}
-	if _, err := gateway.Admin(ctx, "user", "info", "--uid", linkUser); err == nil {
-		t.Fatalf("the link's RGW user %s remains", linkUser)
+	if _, err := gateway.Admin(ctx, "metadata", "get", linkMetadata); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("removed link user %s: want ENOENT, got %v", linkUser, err)
 	}
 	if after := readDashboardState(t, ctx, cluster); !slices.Equal(after.Options, beforeLink.Options) {
 		t.Fatalf("manager options after Remove %v, before AddGateway %v", after.Options, beforeLink.Options)

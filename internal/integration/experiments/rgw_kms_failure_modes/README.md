@@ -17,7 +17,7 @@ side fails:
 | --- | --- |
 | `token-replacement` | After Vault revokes the token, an encrypted GET fails with 403 `AccessDenied`. Writing a new token next to the file and renaming it over the same path recovers the running gateway. |
 | `kms-network-cut` | With Vault disconnected (`fault.InterruptNetwork`), an encrypted GET fails with 500 once libcurl's low-speed limit aborts the kept connection (`rgw_curl_low_speed_time` is lowered to 5 s); plain objects and listings still work. After `Restore` the object reads its exact bytes again at the same address; Vault's host port can change. |
-| `sse-s3` | RGW creates one Transit key per bucket, named by the bucket ID. A bucket DELETE answers 204 whatever happens to the key: with deletion refused the key stays and nothing retries. On Squid 19.2.5 the key stays even with permission (RGW logs `Unable to remove KEK ID ... got -22`); Tentacle 20.2.4 and Umbrella 21.2.0 delete it. |
+| `sse-s3` | RGW creates one Transit key per bucket, named by the bucket ID. A bucket DELETE answers 204 whatever happens to the key: with deletion refused the key stays and the audit records no further delete attempt for five seconds after permission is restored. On Squid 19.2.5 the key stays even with permission (RGW logs `Unable to remove KEK ID ... got -22`); Tentacle 20.2.4 and Umbrella 21.2.0 delete it. |
 
 The `sse-s3` subtest does not branch on the release: it reads the outcome from
 Vault's audit log and the key state from Vault, and accepts only the two

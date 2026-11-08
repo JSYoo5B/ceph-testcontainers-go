@@ -104,6 +104,24 @@ var cephFSCephMutations = [][]string{
 // cephFSRadosMutations are the rados verbs that write objects or watches.
 var cephFSRadosMutations = []string{"put", "rm", "create", "append", "truncate", "cp", "setxattr", "rmxattr", "setomapval", "rmomapkey", "clearomap", "setomapheader"}
 
+// Each read is identified by its command and exact number of positional
+// operands. Everything outside this inventory is counted as a mutation.
+var cephFSObservationReads = []struct {
+	prefix   []string
+	operands int
+}{
+	{[]string{"fsid"}, 0},
+	{[]string{"quorum_status"}, 0},
+	{[]string{"fs", "get"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "ls"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "peer_list"}, 1},
+	{[]string{"fs", "snapshot", "mirror", "dirmap"}, 2},
+	{[]string{"fs", "snapshot", "mirror", "daemon", "status"}, 0},
+	{[]string{"fs", "snapshot", "mirror", "show", "distribution"}, 1},
+	{[]string{"osd", "pool", "ls", "detail"}, 0},
+	{[]string{"service", "dump"}, 0},
+}
+
 // cephFSMutationKind names the state-changing command args runs, or returns
 // "" for a read. A command run under the fixture's process supervisor is
 // classified by the command it supervises, and the supervisor's canceler,
@@ -143,12 +161,20 @@ func cephFSMutationKind(args []string) string {
 				return "ceph " + strings.Join(prefix, " ")
 			}
 		}
-		return ""
+		for _, read := range cephFSObservationReads {
+			if len(words) == len(read.prefix)+read.operands && slices.Equal(words[:len(read.prefix)], read.prefix) {
+				return ""
+			}
+		}
+		return "ceph unrecognized command"
 	case "rados":
+		if len(words) == 2 && words[0] == "listwatchers" {
+			return ""
+		}
 		if len(words) > 0 && slices.Contains(cephFSRadosMutations, words[0]) {
 			return "rados " + words[0]
 		}
-		return ""
+		return "rados unrecognized command"
 	default:
 		return "exec " + args[0]
 	}
@@ -269,6 +295,12 @@ func cephFSInstallMutationCounters(t *testing.T, ctx context.Context, cluster *c
 // read through it.
 func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters, required []*cephFSMutationCounter, observe func()) {
 	t.Helper()
+	if err := cephFSCheckObservationCounters(counters, required, observe); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+}
+
+func cephFSCheckObservationCounters(counters, required []*cephFSMutationCounter, observe func()) error {
 	before := make(map[*cephFSMutationCounter]map[string]int, len(counters))
 	commands := make(map[*cephFSMutationCounter]int64, len(counters))
 	for _, counter := range append(slices.Clone(counters), required...) {
@@ -278,12 +310,13 @@ func cephFSRequireNoObservationalMutation(t *testing.T, name string, counters, r
 	observe()
 	for _, counter := range counters {
 		if err := cephFSMutationsChanged(before[counter], counter.counts()); err != nil {
-			t.Fatalf("%s: %v", name, err)
+			return err
 		}
 	}
 	for i, counter := range required {
 		if counter.commands.Load() == commands[counter] {
-			t.Fatalf("%s issued no command through required mutation counter %d", name, i)
+			return fmt.Errorf("no command through required mutation counter %d", i)
 		}
 	}
+	return nil
 }

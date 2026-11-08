@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,16 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyFrom := &runtimeComposition{osd: osd, journal: journal}
+	defaultValue, err := copyFrom.get(ctx, "osd_copyfrom_max_chunk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultChunk, err := strconv.Atoi(defaultValue)
+	if err != nil || defaultChunk <= size {
+		t.Fatalf("default chunk %q must exceed the %d-byte control", defaultValue, size)
+	}
+	mustRados("rados -p " + pool + " cp copy-src copy-baseline")
+	copyGetChunks(t, ctx, osd, "copy-src", "copy-baseline", defaultChunk, 1)
 	if err := copyFrom.apply(ctx, "osd_copyfrom_max_chunk", "32768"); err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +142,15 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 	if err := copyFrom.apply(ctx, "osd_debug_inject_copyfrom_error", "true"); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := rados(2*time.Minute, "rados -p "+pool+" cp copy-src copy-injected"); err != nil || result.ExitCode == 0 {
-		t.Fatalf("the copy succeeded with the injector on: %v %+v", err, result)
+	mark = osdLogLength(t, ctx, osd)
+	if result, err := rados(2*time.Minute, "rados -p "+pool+" cp copy-src copy-injected"); err != nil || result.ExitCode == 0 || !strings.Contains(string(result.Stderr), "(5) Input/output error") {
+		t.Fatalf("injected copy did not report EIO: exit %d, %v: %s", result.ExitCode, err, result.Stderr)
+	}
+	if !strings.Contains(osdLogSince(t, ctx, osd, mark), "injecting copyfrom failure") {
+		t.Fatal("no copy-from injection in the target OSD's log during the failed copy")
+	}
+	if result, err := rados(time.Minute, "rados -p "+pool+" stat copy-injected"); err != nil || result.ExitCode == 0 || !strings.Contains(string(result.Stderr), "(2) No such file or directory") {
+		t.Fatalf("stat of failed copy did not report ENOENT: exit %d, %v: %s", result.ExitCode, err, result.Stderr)
 	}
 	if err := copyFrom.restore(ctx); err != nil {
 		t.Fatal(err)
@@ -141,6 +159,7 @@ func TestOSDRuntimeFaultComposition(t *testing.T) {
 	if got := copied("copy-restored"); got != source {
 		t.Fatalf("the restored copy differs: %s, source %s", got, source)
 	}
+	copyGetChunks(t, ctx, osd, "copy-src", "copy-restored", defaultChunk, 1)
 	if err := history.restore(ctx); err != nil {
 		t.Fatal(err)
 	}

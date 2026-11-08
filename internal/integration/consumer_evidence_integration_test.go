@@ -38,11 +38,12 @@ type ipcReply struct {
 
 // ipcReady is the ready line of the ipcfixture protocol.
 type ipcReady struct {
-	FSID       string   `json:"fsid"`
-	Monitors   []string `json:"monitors"`
-	Managers   []string `json:"managers"`
-	Containers []string `json:"containers"`
-	Network    string   `json:"network"`
+	DaemonContainers map[string]string `json:"daemon_containers"`
+	FSID             string            `json:"fsid"`
+	Monitors         []string          `json:"monitors"`
+	Managers         []string          `json:"managers"`
+	Containers       []string          `json:"containers"`
+	Network          string            `json:"network"`
 }
 
 // The public-API consumer example of internal/consumerevidence runs as a
@@ -51,7 +52,9 @@ type ipcReady struct {
 // stand-in SUT's rejection; the first-failure bundle of that rejection is
 // complete, keeps the rejection, finds the target MGR registered and leaves
 // generation equality unverified; the restart of the active MGR is accepted
-// with its MgrMap changes kept. The driver then sends a failure signal and
+// with its MgrMap changes kept. The driver stops that MGR again, observes
+// its absent slot with a successful control on the survivor, and waits for
+// a clean gate after the stopped MGR rejoins. It sends a failure signal and
 // closes: the fixture writes its diagnostics before Terminate and still exits
 // with status 1. The driver checks the cleanup itself through Docker:
 // every container, volume and network that it saw is gone.
@@ -177,13 +180,24 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 		}
 	}
 
-	gate := func(label string) {
+	readGate := func(label string) (consumerevidence.GateReceipt, error) {
 		t.Helper()
 		send("gate " + label)
+		reply := next("gate")
 		var receipt consumerevidence.GateReceipt
-		decode(next("gate"), &receipt)
-		if !receipt.Complete || receipt.FixtureError != "" || len(receipt.Daemons) != 2 || receipt.GenerationEquality != consumerevidence.GenerationUnavailable {
-			t.Fatalf("gate %s: %+v", label, receipt)
+		if err := json.Unmarshal(reply.Result, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if !reply.OK {
+			return receipt, errors.New(reply.Error)
+		}
+		return receipt, nil
+	}
+	gate := func(label string) {
+		t.Helper()
+		receipt, err := readGate(label)
+		if err != nil || !receipt.Complete || receipt.FixtureError != "" || !consumerActiveControl(receipt) || len(receipt.Daemons) != 2 || receipt.GenerationEquality != consumerevidence.GenerationUnavailable {
+			t.Fatalf("gate %s: %+v, %v", label, receipt, err)
 		}
 		for _, daemon := range receipt.Daemons {
 			if daemon.Slot != consumerevidence.SlotRegistered || len(daemon.BeaconMonitors) == 0 {
@@ -230,6 +244,9 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 	send("transition")
 	var receipt consumerevidence.TransitionReceipt
 	decode(next("transition"), &receipt)
+	if receipt.Result != consumerevidence.SampleAccepted || len(receipt.Changes) < 2 {
+		t.Fatalf("transition receipt %+v", receipt)
+	}
 	restarted := receipt.Changes[len(receipt.Changes)-1]
 	gid, frozen := uint64(0), uint64(0)
 	for _, registration := range append([]consumerevidence.Registration{restarted.Active}, restarted.Standbys...) {
@@ -240,11 +257,52 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 	if receipt.Frozen.Map.Active.Name == receipt.Restarted {
 		frozen = receipt.Frozen.Map.Active.GID
 	}
-	if receipt.Result != consumerevidence.SampleAccepted || len(receipt.Changes) < 2 || gid == 0 || gid == frozen {
+	if gid == 0 || gid == frozen {
 		t.Fatalf("transition receipt %+v", receipt)
 	}
 	t.Logf("MGR_TRANSITION_RECEIPT mgr.%s GID %d -> %d over %d observed maps, %d epochs not observed, counts %v",
 		receipt.Restarted, frozen, gid, len(receipt.Changes), receipt.EpochsNotObserved, receipt.Counts)
+
+	// Stop the restarted process. Its container remains owned, but the MONs
+	// remove its MGR slot. The other MGR must still answer the native control.
+	manager := "mgr." + receipt.Restarted
+	id := seen.DaemonContainers[manager]
+	if id == "" || !slices.Contains(seen.Containers, id) {
+		t.Fatalf("missing owned container for %s", manager)
+	}
+	if _, err := docker.ContainerStop(ctx, id, mobycl.ContainerStopOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	awaitGate := func(label string, accept func(consumerevidence.GateReceipt) bool) {
+		t.Helper()
+		deadline, done := context.WithTimeout(ctx, 3*time.Minute)
+		defer done()
+		for {
+			g, err := readGate(label)
+			if err == nil && g.Complete && consumerActiveControl(g) && accept(g) {
+				t.Logf("MGR_KEYRING_GATE %s: control %+v, daemons %+v, fixture error %q", label, g.Control, g.Daemons, g.FixtureError)
+				return
+			}
+			select {
+			case <-deadline.Done():
+				t.Fatalf("gate %s for %s: %+v, %v: %v", label, manager, g, err, deadline.Err())
+			case <-time.After(time.Second):
+			}
+		}
+	}
+	awaitGate("stopped-after-restart", func(g consumerevidence.GateReceipt) bool {
+		return strings.Contains(g.FixtureError, manager+" ("+consumerevidence.SlotAbsent+")") && slices.ContainsFunc(g.Daemons, func(d consumerevidence.GateDaemon) bool {
+			return d.Daemon == manager && d.Slot == consumerevidence.SlotAbsent && d.Stale
+		})
+	})
+	if _, err := docker.ContainerStart(ctx, id, mobycl.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	awaitGate("rejoined", func(g consumerevidence.GateReceipt) bool {
+		return g.FixtureError == "" && slices.ContainsFunc(g.Daemons, func(d consumerevidence.GateDaemon) bool {
+			return d.Daemon == manager && d.Slot == consumerevidence.SlotRegistered && d.GID != 0 && d.GID != gid
+		})
+	})
 
 	send("fail consumer-signal")
 	if reply := next("fail"); !reply.OK {
@@ -255,7 +313,7 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 	err = fixture.Wait()
 	exited = true
 	var exit *exec.ExitError
-	if finished.OK || !strings.Contains(finished.Error, "driver failure signal: consumer-signal") || !errors.As(err, &exit) || exit.ExitCode() != 1 {
+	if finished.OK || finished.Error != "driver failure signal: consumer-signal" || !errors.As(err, &exit) || exit.ExitCode() != 1 {
 		t.Fatalf("finished %+v, exit %v", finished, err)
 	}
 	report, err := os.ReadFile(filepath.Join(out, "diagnostics.json"))
@@ -263,8 +321,16 @@ func TestConsumerEvidenceIPCFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var diagnosed diagnostics.Report
-	if err := json.Unmarshal(report, &diagnosed); err != nil || len(diagnosed.Artifacts) == 0 {
+	if err := json.Unmarshal(report, &diagnosed); err != nil {
 		t.Fatalf("diagnostics report of %d bytes: %v", len(report), err)
+	}
+
+	for role, names := range map[string][]string{"mon": seen.Monitors, "mgr": seen.Managers} {
+		for _, name := range names {
+			if err := consumerRunningInspection(diagnosed, role, name, seen.DaemonContainers[role+"."+name]); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	for _, id := range seen.Containers {

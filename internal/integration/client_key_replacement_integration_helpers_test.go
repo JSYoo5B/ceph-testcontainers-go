@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -110,17 +111,54 @@ func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	return payload
 }
 
-// osdRead reads heldObject as client in ctr with a fresh connection, and
-// returns the exit code and the bytes.
+// freshOSDRead reports the errno from connect separately from a later pool
+// or object read failure. Squid's rados CLI can print only MonClient's
+// method negotiation diagnostic on an authentication refusal.
+const freshOSDRead = `import sys, rados
+user, pool, namespace, name = sys.argv[1:]
+cluster = rados.Rados(rados_id=user, conffile="/etc/ceph/ceph.conf",
+                      conf={"client_mount_timeout":"10", "rados_osd_op_timeout":"10"})
+try:
+    cluster.connect(timeout=10)
+except rados.Error as error:
+    print("connect errno", abs(error.errno or 0))
+    sys.exit(1)
+try:
+    with cluster.open_ioctx(pool) as io:
+        io.set_namespace(namespace)
+        size, _ = io.stat(name)
+        sys.stdout.buffer.write(io.read(name, size))
+finally:
+    cluster.shutdown()
+`
+
+// osdRead returns the bytes from a fresh librados client or its connect
+// verdict. Only stdout carries the probe result. Ceph writes logs to stderr.
 func osdRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig) (int, []byte) {
 	t.Helper()
-	code, reader, err := ctr.Exec(ctx, []string{"sh", "-c", `rados --id "$1" --client_mount_timeout 10 -p "$2" -N "$3" get "$4" /tmp/read-object && cat /tmp/read-object`,
-		"sh", client.User(), heldPool, heldNamespace, heldObject}, tcexec.Multiplexed())
+	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", freshOSDRead, client.User(), heldPool, heldNamespace, heldObject})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _ := io.ReadAll(reader)
-	return code, out
+	var out, diagnostics bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &diagnostics, reader); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 && !osdReadAuthRefused(code, out.Bytes()) {
+		t.Fatalf("fresh OSD read: exit %d, stdout %q, stderr %s", code, out.Bytes(), diagnostics.Bytes())
+	}
+	return code, out.Bytes()
+}
+
+func osdReadAuthRefused(code int, out []byte) bool {
+	return code == 1 && (string(out) == "connect errno 13\n" || string(out) == "connect errno 1\n")
+}
+
+func requireOSDReadAuthRefusal(t *testing.T, ctx context.Context, holder testcontainers.Container, client *ceph.ClientConfig) {
+	t.Helper()
+	if code, _ := osdRead(t, ctx, holder, client); code == 0 {
+		t.Fatal("the fresh client read the object with the old key")
+	}
 }
 
 // clientKeyMonTicketTTL makes a held session renew its MON ticket, and so
@@ -179,9 +217,7 @@ func runClientKeyReplacement(t *testing.T) {
 			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client with the old key authenticated: %s", out)
 			}
-			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
-				t.Fatal("a fresh client with the old key read from the OSD")
-			}
+			requireOSDReadAuthRefusal(t, ctx, holder, client)
 			fresh := startClientContainer(t, ctx, cluster, next)
 			for _, command := range [][]string{{"mon", "stat"}, {"pg", "stat"}} {
 				if code, out := clientCommand(t, ctx, fresh, next, command...); code != 0 {
@@ -236,6 +272,7 @@ func runClientKeyReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 		holder := startClientContainer(t, ctx, cluster, client)
+		mons := authenticatedMonitorOverrides(t, ctx, cluster, holder, client)
 		// Calls canceled at different points leave the key that the next
 		// call confirms, or a key the next call replaces.
 		current := client
@@ -263,7 +300,7 @@ func runClientKeyReplacement(t *testing.T) {
 			current = resolved
 		}
 		fresh := startClientContainer(t, ctx, cluster, current)
-		for _, mon := range monitorOverrides(t, ctx, cluster) {
+		for _, mon := range mons {
 			if code, out := clientCommand(t, ctx, fresh, current, "--mon_host_override", mon, "mon", "stat"); code != 0 {
 				t.Fatalf("the new key through %s: exit %d: %s", mon, code, out)
 			}
@@ -534,9 +571,9 @@ func waitHeldRenewalRejected(t *testing.T, ctx context.Context, ctr testcontaine
 	return 0, false
 }
 
-// monitorOverrides returns, per MON, the address vector that
-// mon_host_override takes.
-func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container) []string {
+// authenticatedMonitorOverrides checks the original holder's key through
+// each of the three MON endpoints before the identity changes.
+func authenticatedMonitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container, holder testcontainers.Container, client *ceph.ClientConfig) []string {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	var dump struct {
@@ -546,7 +583,7 @@ func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container
 			} `json:"public_addrs"`
 		} `json:"mons"`
 	}
-	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Mons) == 0 {
+	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Mons) != 3 {
 		t.Fatalf("mon dump: %v", err)
 	}
 	var overrides []string
@@ -555,7 +592,14 @@ func monitorOverrides(t *testing.T, ctx context.Context, cluster *ceph.Container
 		for _, addr := range mon.PublicAddrs.Addrvec {
 			addrs = append(addrs, fmt.Sprintf("%s:%s", addr.Type, addr.Addr))
 		}
-		overrides = append(overrides, "["+strings.Join(addrs, ",")+"]")
+		endpoint := "[" + strings.Join(addrs, ",") + "]"
+		if len(addrs) == 0 || slices.Contains(overrides, endpoint) {
+			t.Fatalf("empty or duplicate MON address vector %q", endpoint)
+		}
+		if code, out := clientCommand(t, ctx, holder, client, "--mon_host_override", endpoint, "mon", "stat"); code != 0 {
+			t.Fatalf("the original holder could not authenticate through %s: exit %d: %s", endpoint, code, out)
+		}
+		overrides = append(overrides, endpoint)
 	}
 	return overrides
 }

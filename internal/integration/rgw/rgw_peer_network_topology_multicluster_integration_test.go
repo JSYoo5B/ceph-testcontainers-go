@@ -44,7 +44,7 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	seed := bytes.Repeat([]byte("same native zone and local storage across a peer network cut\n"), 64)
 	a.Request(t, ctx, http.MethodPut, bucket+"/seed", seed, http.StatusOK)
 	waitMultisiteObject(t, ctx, b, bucket+"/seed", http.StatusOK, seed)
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, false)
 	beforePeriod, err := fixture.ZoneAdmin(ctx, "a", "period", "get", "--format", "json")
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 			t.Fatalf("peer endpoint cut changed the native committed period in %s: %v", zone.Name, err)
 		}
 	}
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, false)
 	t.Log("RGW peer HTTP bridge removed/restored with original IP/aliases and unchanged process/period: local reads+writes continued, cross-zone updates stayed absent during isolation, bidirectional native catch-up passed")
 }
 
@@ -273,7 +273,7 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 			t.Fatalf("the zone link cut changed the committed period in %s: %v", zone.Name, err)
 		}
 	}
-	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	rgwAssertZonegroupPeriod(t, ctx, fixture, false)
 	if got := a.Request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusOK); !bytes.Equal(got, fromA) {
 		t.Fatal("zone a lost its own object")
 	}

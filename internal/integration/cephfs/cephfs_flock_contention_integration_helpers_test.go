@@ -239,7 +239,7 @@ func testCephFSFlockContention(t *testing.T) {
 	if still := mdsWaitingFlock(t, ctx, m, wait); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
 		t.Fatalf("waiting flock changed: %+v, before %+v", still, waiting)
 	}
-	if contender.Published(ctx, 3) {
+	if contender.Published(t, ctx, 3) {
 		t.Fatal("the contender's blocking lock returned while the holder held the lock")
 	}
 

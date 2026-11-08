@@ -20,7 +20,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// TestRBDJournalPollingTiming compares fresh journal replay instances because
+// TestRBDJournalPollingTiming records descriptive timings for fresh journal replay instances because
 // start_live_replay captures rbd_mirror_journal_poll_age. A daemon config
 // readback is not evidence that an already enrolled image changed its poll age.
 func TestRBDJournalPollingTiming(t *testing.T) {

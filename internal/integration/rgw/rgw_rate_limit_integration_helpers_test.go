@@ -209,8 +209,18 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	requireAdmitted("control bucket read", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, sut, control) })
 	requireAdmitted("other user read", func(callCtx context.Context) harness.RGWBackendResponse { return get(callCtx, other, otherBucket) })
 
-	if second, err := users[0].OverrideRateLimit(ctx, rgw.RateLimitScope{Bucket: limited}, read); err == nil || second.Restore(ctx) != nil {
-		t.Fatal("an overlapping override of the same bucket was not refused")
+	second, refusal := users[0].OverrideRateLimit(ctx, rgw.RateLimitScope{Bucket: limited}, rgw.RateLimit{Enabled: true, MaxReadOps: 5})
+	if refusal == nil || refusal.Error() != "restore the existing rate-limit override of this scope first" || second == nil {
+		t.Fatalf("overlapping bucket override: %v", refusal)
+	}
+	if policy := readPolicy(bucketScope(limited)...); !equalPolicy(policy, applied) {
+		t.Fatalf("refused overlap changed the native bucket policy before Restore: %v, want %v", policy, applied)
+	}
+	if err := second.Restore(ctx); err != nil {
+		t.Fatalf("restore refused handle: %v", err)
+	}
+	if policy := readPolicy(bucketScope(limited)...); !equalPolicy(policy, applied) {
+		t.Fatalf("Restore of the refused overlap changed the native bucket policy: %v, want %v", policy, applied)
 	}
 	// An outside edit is refused instead of overwritten.
 	harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "5"}, bucketScope(limited)...)...)

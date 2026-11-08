@@ -150,7 +150,13 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 // harness.NewMultiClusterPair deliberately uses the job-selected role layout.
 func pollTimingAggregatePair(t *testing.T, ctx context.Context, options ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container) {
 	t.Helper()
-	clusters := make([]*ceph.Container, 2)
+	clusters := pollTimingClusters(t, ctx, 2, options...)
+	return clusters[0], clusters[1]
+}
+
+func pollTimingClusters(t *testing.T, ctx context.Context, count int, options ...testcontainers.ContainerCustomizer) []*ceph.Container {
+	t.Helper()
+	clusters := make([]*ceph.Container, count)
 	for index := range clusters {
 		opts := append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: pollTimingAggregateImage})), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip))}, options...)
 		cluster, err := ceph.Run(ctx, pollTimingAggregateImage, opts...)
@@ -168,8 +174,8 @@ func pollTimingAggregatePair(t *testing.T, ctx context.Context, options ...testc
 		}
 		clusters[index] = cluster
 	}
-	states := make([]string, 2)
-	for index, cluster := range clusters {
+	states := make(map[string]bool, count)
+	for _, cluster := range clusters {
 		observer, err := ceph.Observe(cluster)
 		if err != nil {
 			t.Fatal(err)
@@ -178,12 +184,12 @@ func pollTimingAggregatePair(t *testing.T, ctx context.Context, options ...testc
 		if err != nil {
 			t.Fatal(err)
 		}
-		states[index] = state.FSID
+		if state.FSID == "" || states[state.FSID] {
+			t.Fatal("polling qualification clusters are not independent")
+		}
+		states[state.FSID] = true
 	}
-	if states[0] == "" || states[1] == "" || states[0] == states[1] {
-		t.Fatal("polling qualification clusters are not independent")
-	}
-	return clusters[0], clusters[1]
+	return clusters
 }
 
 func pollTimingCaughtUp(t *testing.T, ctx context.Context, link *multisite.Fixture) {
@@ -197,29 +203,57 @@ func pollTimingCaughtUp(t *testing.T, ctx context.Context, link *multisite.Fixtu
 
 func pollTimingEffective(t *testing.T, parent context.Context, gateway *rgw.Gateway, want int) {
 	t.Helper()
+	pollTimingSettings(t, parent, gateway, map[string]int{
+		"rgw_meta_sync_poll_interval": want, "rgw_data_sync_poll_interval": want, "rgw_sync_lease_period": 30,
+	})
+}
+
+func pollTimingStartupEffective(t *testing.T, ctx context.Context, gateway *rgw.Gateway) {
+	t.Helper()
+	pollTimingSettings(t, ctx, gateway, map[string]int{"rgw_meta_sync_poll_interval": 1, "rgw_data_sync_poll_interval": 1})
+}
+
+func pollTimingSettings(t *testing.T, parent context.Context, gateway *rgw.Gateway, settings map[string]int) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	asok := gatewayAsok(t, ctx, gateway)
-	for _, setting := range []struct {
-		name  string
-		value int
-	}{{"rgw_meta_sync_poll_interval", want}, {"rgw_data_sync_poll_interval", want}, {"rgw_sync_lease_period", 30}} {
+	// Restart can leave the previous process's socket file in /var/run.
+	// Match the listening UNIX socket inode to the daemon's open descriptors.
+	asok := strings.TrimSpace(harness.ExecOutput(t, ctx, gateway, "python3", "-c", `
+import os
+sockets = set()
+for fd in os.listdir("/proc/1/fd"):
+    try:
+        target = os.readlink("/proc/1/fd/" + fd)
+    except FileNotFoundError:
+        continue
+    if target.startswith("socket:["):
+        sockets.add(target[8:-1])
+with open("/proc/net/unix") as table:
+    paths = [fields[7] for line in table if len(fields := line.split()) == 8
+             and fields[3] == "00010000" and fields[4] == "0001"
+             and fields[6] in sockets and fields[7].endswith(".asok")]
+if len(paths) != 1:
+    raise SystemExit("expected one listening admin socket owned by gateway PID 1")
+print(paths[0])
+`))
+	for name, want := range settings {
 		var last string
 		for {
-			raw := harness.ExecOutput(t, ctx, gateway, "ceph", "--admin-daemon", asok, "config", "get", setting.name)
+			raw := harness.ExecOutput(t, ctx, gateway, "ceph", "--admin-daemon", asok, "config", "get", name)
 			var values map[string]any
 			if err := json.Unmarshal([]byte(raw), &values); err != nil {
 				t.Fatalf("gateway effective configuration: %v", err)
 			}
-			last = fmt.Sprint(values[setting.name])
+			last = fmt.Sprint(values[name])
 			value, err := strconv.ParseFloat(strings.TrimSpace(last), 64)
-			if err == nil && value == float64(setting.value) {
-				t.Logf("RGW_POLL_EFFECTIVE option=%s value=%g", setting.name, value)
+			if err == nil && value == float64(want) {
+				t.Logf("RGW_POLL_EFFECTIVE option=%s value=%g", name, value)
 				break
 			}
 			select {
 			case <-ctx.Done():
-				t.Fatalf("effective %s=%s, want%d", setting.name, last, setting.value)
+				t.Fatalf("effective %s=%s, want%d", name, last, want)
 			case <-time.After(200 * time.Millisecond):
 			}
 		}
@@ -227,7 +261,7 @@ func pollTimingEffective(t *testing.T, parent context.Context, gateway *rgw.Gate
 }
 
 // TestRGWStartupPollTimingProfile exercises the public startup condition;
-// its version/argument verification requires no Ceph CLI in the RGW role.
+// the qualifier separately reads the running daemons through their admin sockets.
 func TestRGWStartupPollTimingProfile(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		t.Run(mode.Name, func(t *testing.T) {
@@ -279,6 +313,7 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 					t.Fatal(err)
 				}
 				clients[i] = harness.S3HTTPClient{Endpoint: endpoint, AccessKey: link.Source.AccessKey, SecretKey: link.Source.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 20 * time.Second}}
+				pollTimingStartupEffective(t, ctx, gateway)
 				// Public Run has verified the actual binary version and PID1 arguments.
 				args := harness.ExecOutput(t, ctx, gateway, "cat", "/proc/1/cmdline")
 				if !strings.Contains(args, "--rgw-meta-sync-poll-interval\x001\x00") || !strings.Contains(args, "--rgw-data-sync-poll-interval\x001\x00") {
@@ -318,5 +353,42 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 			}
 			t.Log("RGW startup timing: owned commandline, bidirectional bytes, overwrite, delete, cleanup and no persistent timing entries verified")
 		})
+	}
+}
+
+// TestRGWTopologyStartupTimingEffectiveValues checks the same startup profile
+// on both initial gateways and on a new zone that inherits it from the topology.
+func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
+	defer cancel()
+	clusters := pollTimingClusters(t, ctx, 3, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	link, err := multisite.Run(ctx, pollTimingAggregateImage, multisite.WithTopology(multisite.TopologyConfig{
+		Zones:          []multisite.ZoneConfig{{Name: "source", Cluster: clusters[0]}, {Name: "destination", Cluster: clusters[1]}},
+		MetadataMaster: "source", Timing: multisite.TimingProfile{IncrementalSync: true},
+	}))
+	if link != nil {
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer stop()
+			if err := link.Terminate(cleanup); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, zone := range link.Zones() {
+		pollTimingStartupEffective(t, ctx, zone.Gateway)
+	}
+	if _, err := link.AddZone(ctx, pollTimingAggregateImage, multisite.ZoneConfig{Name: "added", Cluster: clusters[2]}); err != nil {
+		t.Fatal(err)
+	}
+	zones := link.Zones()
+	if len(zones) != 3 {
+		t.Fatalf("after AddZone: got %d owned gateways", len(zones))
+	}
+	for _, zone := range zones {
+		pollTimingStartupEffective(t, ctx, zone.Gateway)
 	}
 }

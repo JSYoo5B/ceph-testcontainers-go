@@ -197,3 +197,39 @@ func routedLogAck(log []byte, entity string, sent uint64) (string, string) {
 	}
 	return "", why
 }
+
+// missingScrubCommits checks the cluster log's commit order within one
+// channel. The marker must still be in the returned tail to bound the window.
+func missingScrubCommits(data []byte, marker string, roles map[string]string) ([]string, error) {
+	var entries []struct {
+		Name, Rank, Channel, Message string
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("decode cluster log entries: %w", err)
+	}
+	inWindow := false
+	committed := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.Channel != "cluster" {
+			continue
+		}
+		if entry.Message == marker {
+			inWindow = true
+			continue
+		}
+		if inWindow && entry.Name == entry.Rank && entry.Message == "purged_snaps scrub ok" {
+			committed[entry.Name] = true
+		}
+	}
+	if !inWindow {
+		return nil, fmt.Errorf("measurement marker %q is missing from the committed cluster log tail", marker)
+	}
+	var missing []string
+	for entity := range roles {
+		if !committed[entity] {
+			missing = append(missing, entity)
+		}
+	}
+	slices.Sort(missing)
+	return missing, nil
+}

@@ -704,7 +704,7 @@ func testCephFSFuseMount(t *testing.T) {
 	if still := mdsWaitingFlock(t, ctx, m, wait); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
 		t.Fatalf("waiting fcntl lock changed: %+v, before %+v", still, waiting)
 	}
-	if contender.Published(ctx, 4) {
+	if contender.Published(t, ctx, 4) {
 		t.Fatal("the contender's F_SETLKW returned while the holder held the lock")
 	}
 	unlocked := time.Now()

@@ -6,9 +6,11 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
+
 	"slices"
 	"strconv"
 	"strings"
@@ -41,6 +43,13 @@ func TestImmutableObjectCache(t *testing.T) {
 	}
 	if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 		t.Fatal(err)
+	}
+	for _, setting := range [][2]string{{"osd_op_history_size", "10000"}, {"osd_op_history_duration", "3600"}} {
+		harness.MustCeph(t, ctx, cluster, "config", "set", "osd", setting[0], setting[1])
+	}
+	osds, err := cluster.OSDs(ctx)
+	if err != nil || len(osds) != 1 {
+		t.Fatalf("expected one serving OSD: %v, %v", osds, err)
 	}
 	const id = "ioc-client"
 	identity, err := cluster.CreateClient(ctx, id, ceph.ClientCaps{Mon: "profile rbd", OSD: "profile rbd pool=" + pool})
@@ -82,7 +91,33 @@ func TestImmutableObjectCache(t *testing.T) {
 	if digest, err := export("tc-missing", nil); err == nil || !strings.Contains(err.Error(), "rbd export exited") {
 		t.Fatalf("the export of a missing image returned digest %q, %v", digest, err)
 	}
+	var parent struct {
+		Prefix string `json:"block_name_prefix"`
+	}
+	if err := json.Unmarshal([]byte(rbdCLI("info", pool+"/parent", "--format", "json")), &parent); err != nil || parent.Prefix == "" {
+		t.Fatalf("parent data object prefix: %+v, %v", parent, err)
+	}
+	objects := make(map[string]bool, 16)
+	for i := range 16 {
+		objects[fmt.Sprintf("%s.%016x", parent.Prefix, i)] = true
+	}
+	history := func() map[string]string {
+		t.Helper()
+		out, err := osds[0].AdminSocket(ctx, "dump_historic_ops")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reads, err := harness.RBDDataReadsInHistory(out, objects)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reads
+	}
+	beforeParent := history()
 	want := checksum("parent@base", nil)
+	if err := immutableCacheReadDelta(beforeParent, history(), 16); err != nil {
+		t.Fatal(err)
+	}
 	// The daemon reads each parent object from RADOS once and writes it into
 	// its cache directory after the client's read returned, so the last
 	// files can appear a moment later. More than 16 RADOS reads fails at
@@ -132,8 +167,12 @@ func TestImmutableObjectCache(t *testing.T) {
 	daemon := immutableObjectCacheDaemon(t, ctx, client, lease, status)
 	cached := readThrough(lease)
 	first := cached.Value
+	beforeHit := history()
 	if got := checksum("child", lease.ClientOptions()); got != want {
 		t.Fatalf("the second read has checksum %s", got)
+	}
+	if err := immutableCacheReadDelta(beforeHit, history(), 0); err != nil {
+		t.Fatal(err)
 	}
 	if again, err := lease.Status(ctx); err != nil || again.RADOSReads != first.RADOSReads || again.CachedObjects != 16 {
 		t.Fatalf("status after the second read: %+v, %v", again, err)
@@ -147,8 +186,12 @@ func TestImmutableObjectCache(t *testing.T) {
 	if err != nil || stopped.Running || stopped.CachedObjects != 16 {
 		t.Fatalf("status after Stop: %+v, %v", stopped, err)
 	}
+	beforeFallback := history()
 	if got := checksum("child", lease.ClientOptions()); got != want {
 		t.Fatalf("the read without the daemon has checksum %s", got)
+	}
+	if err := immutableCacheReadDelta(beforeFallback, history(), 16); err != nil {
+		t.Fatal(err)
 	}
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)

@@ -206,7 +206,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	waiting := mdsWaitingFlock(t, ctx, m.cephFSSingleMDS, flockWait{client: contender.client, rule: 2, inode: holder.inode})
 	// The receipt is checked after the MDS showed the request waiting, so a
 	// lock granted at once would already have published it.
-	if contender.Published(ctx, 4) {
+	if contender.Published(t, ctx, 4) {
 		t.Fatal("the contender's blocking lock returned while the holder held the lock")
 	}
 	if released := holder.run(t, ctx, 1); released.Errno != 0 {

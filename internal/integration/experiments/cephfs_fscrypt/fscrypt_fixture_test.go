@@ -6,6 +6,7 @@ package cephfs_fscrypt_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os/exec"
@@ -182,5 +183,66 @@ func TestFscryptEmergencyUnmountReportsWhatRemains(t *testing.T) {
 				t.Fatalf("error %v, want one containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestFscryptRetainedKeyRemovalEvidence(t *testing.T) {
+	data := []byte("retained plaintext")
+	busy := removalFilesBusy
+	good := fscryptRetained{Before: hex.EncodeToString(data), RemoveFlags: &busy, BusyStatus: keyIncompletelyRemoved,
+		Retained: hex.EncodeToString(data), OtherErrno: errnoENOKEY, FinalStatus: keyAbsent, ReopenErrno: errnoENOENT}
+	if !good.matches(data) {
+		t.Fatal("valid open-file removal evidence rejected")
+	}
+	for name, alter := range map[string]func(*fscryptRetained){
+		"missing busy flag":      func(r *fscryptRetained) { r.RemoveFlags = new(int) },
+		"key already absent":     func(r *fscryptRetained) { r.BusyStatus = keyAbsent },
+		"open fd revoked":        func(r *fscryptRetained) { r.RetainedErrno = errnoENOKEY },
+		"different bytes":        func(r *fscryptRetained) { r.Retained = "00" },
+		"unrelated open failure": func(r *fscryptRetained) { r.OtherErrno = errnoEACCES },
+	} {
+		t.Run(name, func(t *testing.T) {
+			wrong := good
+			alter(&wrong)
+			if wrong.matches(data) {
+				t.Fatal("accepted inconsistent key removal evidence")
+			}
+		})
+	}
+}
+
+func TestFscryptFuseQualificationMatchesTheObservedClient(t *testing.T) {
+	admission := fscryptAdmission{Machine: "x86_64", Kernel: "6.8.0-117-generic"}
+	if !admission.qualifiedView(fusePath, "21.2.0", qualifiedFuseImage) {
+		t.Fatal("qualified FUSE client lost its required capability check")
+	}
+	for _, tc := range []struct{ version, image string }{{"21.2.0", "custom-client"}, {"21.2.1", qualifiedFuseImage}} {
+		if admission.qualifiedView(fusePath, tc.version, tc.image) {
+			t.Fatal("unqualified build was assigned the reference FUSE behavior")
+		}
+	}
+	admission.Machine = "aarch64"
+	if admission.qualifiedView(fusePath, "21.2.0", qualifiedFuseImage) {
+		t.Fatal("unqualified platform was assigned the reference FUSE behavior")
+	}
+}
+
+func TestFscryptLockedMetadataDistinguishesClientViews(t *testing.T) {
+	file := fscryptEntry{Mode: 0o100600, Size: 4096, MtimeNS: 42}
+	for _, alter := range []func(*fscryptEntry){
+		func(e *fscryptEntry) { e.Mode++ }, func(e *fscryptEntry) { e.MtimeNS++ }, func(e *fscryptEntry) { e.Size-- },
+	} {
+		locked := file
+		alter(&locked)
+		if file.checkLockedMetadata(kernelPath, locked) == nil {
+			t.Fatal("accepted changed metadata")
+		}
+	}
+	link := fscryptEntry{Mode: 0o120777, Size: 39}
+	encoded := link
+	encoded.Size = 96
+	if link.checkLockedMetadata(kernelPath, encoded) != nil || link.checkLockedMetadata(fusePath, link) != nil ||
+		link.checkLockedMetadata(kernelPath, link) == nil || link.checkLockedMetadata(fusePath, encoded) == nil {
+		t.Fatal("incorrect locked symlink size qualification")
 	}
 }

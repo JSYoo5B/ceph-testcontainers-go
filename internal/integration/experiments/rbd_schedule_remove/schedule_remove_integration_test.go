@@ -45,7 +45,7 @@ for prefix,base in (('',['rbd','trash','purge','schedule']),('mirror-',['rbd','m
  try:
   before=run(prefix+'present-before',base+['ls','-R','--format','json']);assert before.returncode==0 and json.loads(before.stdout)!=[]
   for case,argv in (('present-invalid-interval',['remove','dummy']),('present-invalid-start',['remove','1d','dummy'])):
-   p=run(prefix+case,base+argv);assert p.returncode!=0,prefix+case+' accepted malformed input with a schedule present'
+   p=run(prefix+case,base+argv);assert p.returncode==22,(prefix+case,p.returncode,p.stderr)
   after=run(prefix+'present-after',base+['ls','-R','--format','json']);assert after.returncode==0 and json.loads(before.stdout)==json.loads(after.stdout)
  finally:
   p=run(prefix+'cleanup',base+['remove','2d']);assert p.returncode==0

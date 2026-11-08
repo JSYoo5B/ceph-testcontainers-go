@@ -55,6 +55,28 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// List the same subvolume name in two groups. The default group's
+	// fixture snapshot is a bystander to the two snapshots of the selected group.
+	grouped, err := subvolume.Create(ctx, fs, subvolume.Config{Name: source.Name, GroupName: group.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupedSnapshot, err := grouped.CreateSnapshot(ctx, "group-checkpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.MustCeph(t, ctx, cluster, "fs", "subvolume", "snapshot", "create", filesystem, grouped.Name, "external", "--group_name", group.Name)
+	names, err := grouped.Snapshots(ctx)
+	if err != nil || !slices.Equal(slices.Sorted(slices.Values(names)), []string{"external", "group-checkpoint"}) {
+		t.Fatalf("snapshots of %s/%s: %v, %v", group.Name, grouped.Name, names, err)
+	}
+	harness.MustCeph(t, ctx, cluster, "fs", "subvolume", "snapshot", "rm", filesystem, grouped.Name, "external", "--group_name", group.Name)
+	if err := groupedSnapshot.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := grouped.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
 	snapshotInfo, err := subvolume.SnapshotInfo(ctx, fs, source.Name, source.GroupName, snapshot.Name)
 	if err != nil || snapshotInfo.HasPendingClones || snapshotInfo.Path != snapshot.Path || snapshotInfo.DataPool != fs.DataPool {
 		t.Fatalf("unexpected initial snapshot: %+v error=%v", snapshotInfo, err)

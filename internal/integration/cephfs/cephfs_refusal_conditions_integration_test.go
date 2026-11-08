@@ -16,8 +16,9 @@ import (
 // with new sessions refused, a new mount fails with EPERM while a session
 // opened before keeps writing, but one that must reconnect to a failed-over
 // MDS is dropped and blocklisted. The FSMap ID stays the original one, an
-// outside edit is refused, and after each Restore the same operations
-// succeed again.
+// outside edit is refused, and after Restore a new session mounts. A second
+// holder keeps its session address and can write across failover without the
+// refusal setting.
 func TestCephFSRefusalConditions(t *testing.T) {
 	harness.ParallelWhenEnabled(t)
 	testCephFSRefusalConditions(t)

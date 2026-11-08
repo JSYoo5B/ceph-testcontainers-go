@@ -7,6 +7,7 @@ package integration_test
 import (
 	"bytes"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,5 +90,37 @@ exec `+realRM+` "$@"`)
 				t.Fatalf("temporary export directory remains: %v, want %v", remains, tc.directoryRemains)
 			}
 		})
+	}
+}
+
+func TestRBDParentReadHistoryRejectsCacheBypass(t *testing.T) {
+	objects := map[string]bool{"rbd_data.12.0000": true}
+	read := func(out string) map[string]string {
+		t.Helper()
+		ops, err := harness.RBDDataReadsInHistory([]byte(out), objects)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ops
+	}
+	before := read(`{"ops":[
+        {"description":"osd_op(client.1 ::rbd_data.12.0000:head [write 0~1])","initiated_at":"1"},
+        {"description":"osd_op(client.1 ::rbd_data.12.00000:head [read 0~1])","initiated_at":"2"}
+    ]}`)
+	after := read(`{"ops":[{"description":"osd_op(client.1 ::rbd_data.12.0000:head [sparse-read 0~1])","initiated_at":"3"}]}`)
+	if err := immutableCacheReadDelta(before, before, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := immutableCacheReadDelta(before, after, 0); err == nil {
+		t.Fatal("accepted a parent OSD read during a cache hit")
+	}
+	if err := immutableCacheReadDelta(before, after, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := immutableCacheReadDelta(after, before, 0); err == nil {
+		t.Fatal("accepted truncated history")
+	}
+	if _, err := harness.RBDDataReadsInHistory([]byte(`{}`), objects); err == nil {
+		t.Fatal("accepted missing ops")
 	}
 }

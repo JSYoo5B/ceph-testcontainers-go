@@ -5,6 +5,7 @@ package cephfs_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,9 +141,10 @@ func testCephFSMDSReadOnlyFault(t *testing.T) {
 	}
 	early, cancelEarly := context.WithTimeout(ctx, 5*time.Second)
 	holder, err := fault.WaitReplaced(early)
+	ended := early.Err()
 	cancelEarly()
-	if err == nil {
-		t.Fatalf("WaitReplaced succeeded while the read-only process holds rank 0: %+v", holder)
+	if !errors.Is(ended, context.DeadlineExceeded) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("original holder still owns rank 0: WaitReplaced returned %+v, %v (context %v)", holder, err, ended)
 	}
 
 	kill := time.Duration(0)

@@ -57,9 +57,7 @@ func testClientRevocation(t *testing.T) {
 			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client of the revoked identity authenticated: %s", out)
 			}
-			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
-				t.Fatal("a fresh client of the revoked identity read from the OSD")
-			}
+			requireOSDReadAuthRefusal(t, ctx, holder, client)
 			if _, err := client.Capabilities(ctx); err == nil {
 				t.Fatal("ClientCapabilities accepted the revoked descriptor")
 			}
@@ -183,7 +181,7 @@ func testClientRevocation(t *testing.T) {
 		}
 		original := authEntry(t, ctx, cluster, client.Name())
 		holder := startClientContainer(t, ctx, cluster, client)
-		mons := monitorOverrides(t, ctx, cluster)
+		mons := authenticatedMonitorOverrides(t, ctx, cluster, holder, client)
 		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)

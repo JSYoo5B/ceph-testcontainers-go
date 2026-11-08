@@ -130,7 +130,7 @@ func rgwKMSFailureModes(t *testing.T) {
 		// from Vault, never inferred from the S3 response.
 		removed := rgwSSES3Bucket(t, ctx, f.Trusted, f.Gateways[0], f.Vault, "tc-sse-s3-removed")
 		deleteBucket("tc-sse-s3-removed")
-		first := rgwSSES3KeyAudit(f.Vault.Audit(t, ctx), "tctransit/keys/"+removed)
+		first := rgwSSES3KeyAudit(t, f.Vault.Audit(t, ctx), "tctransit/keys/"+removed)
 		retained := f.Vault.Do(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+removed, nil).Code == http.StatusOK
 		switch {
 		case first.configured == 0:
@@ -146,20 +146,35 @@ func rgwKMSFailureModes(t *testing.T) {
 		f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+harness.RGWSSES3Control, nil, http.StatusOK)
 
 		// A f.Bucket DELETE that RGW reports as successful while Vault refuses the
-		// key deletion leaves the key behind. Nothing retries it.
+		// key deletion leaves the key behind. Observe whether RGW retries after permission returns.
 		orphan := rgwSSES3Bucket(t, ctx, f.Trusted, f.Gateways[0], f.Vault, "tc-sse-s3-orphan")
 		harness.RGWSSES3SetPolicy(t, ctx, f.Vault, false)
 		deleteBucket("tc-sse-s3-orphan")
 		f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusOK)
 		f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+harness.RGWSSES3Control, nil, http.StatusOK)
-		second := rgwSSES3KeyAudit(f.Vault.Audit(t, ctx), "tctransit/keys/"+orphan)
+		second := rgwSSES3KeyAudit(t, f.Vault.Audit(t, ctx), "tctransit/keys/"+orphan)
 		if second.configured == 0 || second.deleted != 0 || (retained && second.refused != 0) || (!retained && second.refused == 0) {
 			t.Fatalf("refused key deletion: audited config updates=%d deletions=%d refused=%d", second.configured, second.deleted, second.refused)
 		}
 		harness.RGWSSES3SetPolicy(t, ctx, f.Vault, true)
 		// Restoring the permission does not remove the orphan: the f.Bucket it
 		// belonged to no longer exists.
-		f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusOK)
+		for until := time.Now().Add(5 * time.Second); ; {
+			final := !time.Now().Before(until)
+			observation := rgwSSES3KeyAudit(t, f.Vault.Audit(t, ctx), "tctransit/keys/"+orphan)
+			if observation != second {
+				t.Fatal("Transit key audit changed after deletion permission returned")
+			}
+			f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+orphan, nil, http.StatusOK)
+			if final {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(min(time.Second, time.Until(until))):
+			}
+		}
 		removeOrphan(orphan)
 		f.Vault.Call(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+harness.RGWSSES3Control, nil, http.StatusOK)
 		t.Logf("SSE-S3 f.Bucket DELETE 204 with key deletion refused=%d: orphan Transit key removed by the KMS operator", second.refused)
@@ -212,9 +227,10 @@ func rgwSSES3Bucket(t *testing.T, ctx context.Context, client harness.S3HTTPClie
 
 // rgwSSES3KeyOutcome counts the completed Vault requests on one Transit key
 // that bucket deletion makes.
-type rgwSSES3KeyOutcome struct{ configured, deleted, refused int }
+type rgwSSES3KeyOutcome struct{ configured, deleted, refused, attempts int }
 
-func rgwSSES3KeyAudit(audit []byte, path string) rgwSSES3KeyOutcome {
+func rgwSSES3KeyAudit(t *testing.T, audit []byte, path string) rgwSSES3KeyOutcome {
+	t.Helper()
 	var outcome rgwSSES3KeyOutcome
 	for _, line := range bytes.Split(audit, []byte("\n")) {
 		var event struct {
@@ -225,7 +241,16 @@ func rgwSSES3KeyAudit(audit []byte, path string) rgwSSES3KeyOutcome {
 				Operation string `json:"operation"`
 			} `json:"request"`
 		}
-		if json.Unmarshal(line, &event) != nil || event.Type != "response" {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		if json.Unmarshal(line, &event) != nil {
+			t.Fatal("malformed Transit audit record")
+		}
+		if event.Type == "request" && event.Request.Path == path && event.Request.Operation == "delete" {
+			outcome.attempts++
+		}
+		if event.Type != "response" {
 			continue
 		}
 		switch {

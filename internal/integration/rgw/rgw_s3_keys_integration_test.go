@@ -7,6 +7,8 @@ package rgw_test
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"maps"
 	"net/http"
 	"testing"
 	"time"
@@ -23,7 +25,7 @@ import (
 // and the new one accepted with the original object intact, and the
 // test's own SigV4 client and the native user record confirm it
 // independently. Key commands that fail after their change are settled
-// without being replayed, a canceled call creates nothing, the last fixture
+// without being replayed, cancellation after dispatch settles a created key, the last fixture
 // key cannot be revoked, and removing the user leaves another user intact.
 func TestRGWS3KeyRotation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
@@ -161,6 +163,23 @@ func TestRGWS3KeyRotation(t *testing.T) {
 
 	// Partial failures: radosgw-admin reports a failure after its change.
 	arm := installRGWKeyFaultShim(t, ctx, gateway)
+	arm("pause-key")
+	settled, cancelErr := cancelRGWCreate(t, ctx, gateway, owner.CreateS3Key)
+	if !errors.Is(cancelErr, context.Canceled) || settled == nil {
+		t.Fatalf("cancel after native key create: handle=%t error=%v", settled != nil, cancelErr)
+	}
+	afterCancel := rgwNativeKeys(t, ctx, gateway, owner.ID())
+	access, secret, credErr := settled.Credentials()
+	if credErr != nil || secret == "" || afterCancel[access] != secret || keys[access] != "" {
+		t.Fatal("canceled key creation did not return its confirmed native key")
+	}
+	delete(afterCancel, access)
+	if !maps.Equal(afterCancel, keys) {
+		t.Fatal("canceled key creation changed other keys or created extra keys")
+	}
+	if err := settled.Revoke(ctx); err != nil || !maps.Equal(rgwNativeKeys(t, ctx, gateway, owner.ID()), keys) {
+		t.Fatalf("remove settled key: %v", err)
+	}
 	arm("create")
 	partial, err := owner.CreateS3Key(ctx)
 	if err == nil || partial == nil {
@@ -191,14 +210,17 @@ func TestRGWS3KeyRotation(t *testing.T) {
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket+"/"+object, nil, http.StatusNoContent)
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket+"/after-rotation", nil, http.StatusNoContent)
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket, nil, http.StatusNoContent)
+	if _, err := gateway.Admin(ctx, "metadata", "get", "user:"+owner.ID()); err != nil {
+		t.Fatalf("read user metadata before removal: %v", err)
+	}
 	if err := owner.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := second.Revoke(ctx); err != nil {
 		t.Fatalf("revoking a key of a removed user: %v", err)
 	}
-	if _, err := gateway.Admin(ctx, "user", "info", "--uid", owner.ID()); err == nil {
-		t.Fatal("the removed user is still present")
+	if _, err := gateway.Admin(ctx, "metadata", "get", "user:"+owner.ID()); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("removed user metadata: got %v, want ENOENT", err)
 	}
 	rgwFixtureWaitStatus(t, ctx, nativeS3, "/", http.StatusForbidden)
 	if _, err := bystander.Info(ctx); err != nil {

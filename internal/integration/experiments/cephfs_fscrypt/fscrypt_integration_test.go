@@ -75,10 +75,39 @@ func (c *fscryptCluster) clientImage(t *testing.T, ctx context.Context, path str
 	if code, _, err := harness.SessionExec(ctx, c.admin, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
 		t.Fatal(err)
 	} else if code == 0 {
+		if c.version == "21.2.0" {
+			// Matrix preparation can pass the same official image by local
+			// image ID or another tag. Check the image actually in use.
+			docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := docker.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			running, err := c.admin.Inspect(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			built, err := docker.ImageInspect(ctx, running.Image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(built.RepoDigests, qualifiedFuseImage) {
+				return qualifiedFuseImage
+			}
+		}
 		return image
+	} else if code != 1 {
+		t.Fatalf("check for ceph-fuse in the client image: exit %d", code)
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(c.version) {
 		t.Fatalf("client image %s has no ceph-fuse, and Ceph version %q names no official image", image, c.version)
+	}
+	if c.version == "21.2.0" {
+		return qualifiedFuseImage
 	}
 	return "quay.io/ceph/ceph:v" + c.version
 }
@@ -374,32 +403,6 @@ type fscryptKeyStatus struct {
 	Users  int `json:"users"`
 }
 
-// Key status values of FS_IOC_GET_ENCRYPTION_KEY_STATUS and the removal
-// status flags of FS_IOC_REMOVE_ENCRYPTION_KEY.
-const (
-	keyAbsent              = 1
-	keyPresent             = 2
-	keyIncompletelyRemoved = 3
-	removalFilesBusy       = 1
-)
-
-type fscryptEntry struct {
-	Name     string `json:"name"`
-	Mode     uint32 `json:"mode"`
-	Size     int64  `json:"size"`
-	Ino      uint64 `json:"ino"`
-	MtimeNS  int64  `json:"mtime_ns"`
-	Data     string `json:"data"`
-	Target   string `json:"target"`
-	Children *int   `json:"children"`
-	Errno    int    `json:"errno"`
-}
-
-func (e fscryptEntry) plainName() string {
-	name, _ := hex.DecodeString(e.Name)
-	return string(name)
-}
-
 type fscryptListing struct {
 	Errno   int            `json:"errno"`
 	Entries []fscryptEntry `json:"entries"`
@@ -538,7 +541,8 @@ func requireLocked(t *testing.T, listing fscryptListing, n fscryptNames, view st
 			}
 		}
 	}
-	for name, errno := range listing.Lookups {
+	for _, name := range n.all() {
+		errno := listing.Lookups[name]
 		if errno != errnoENOENT {
 			t.Fatalf("%s: lookup of plaintext %q: errno %d, want ENOENT", view, name, errno)
 		}
@@ -564,13 +568,18 @@ func describe(listing fscryptListing) string {
 
 // exposed compares the keyed and the locked views by inode and reports the
 // metadata that the locked view shows as it is.
-func exposed(t *testing.T, keyed, locked fscryptListing, view string) string {
+func exposed(t *testing.T, keyed, locked fscryptListing, clientPath string, qualified bool) string {
 	t.Helper()
 	var same []string
 	for _, entry := range keyed.Entries {
 		other, ok := locked.byIno(entry.Ino)
 		if !ok {
-			t.Fatalf("%s: inode %d of %q not listed", view, entry.Ino, entry.plainName())
+			t.Fatalf("%s: inode %d of %q not listed", clientPath, entry.Ino, entry.plainName())
+		}
+		if qualified {
+			if err := entry.checkLockedMetadata(clientPath, other); err != nil {
+				t.Fatal(err)
+			}
 		}
 		var fields []string
 		if other.Mode == entry.Mode {
@@ -626,12 +635,13 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	// unencrypted directory.
 	var query fscryptPolicy
 	a.probe(t, ctx, &query, nil, "getpolicy", path, a.point+base+"/enc")
+	qualifiedMetadata := admission.qualifiedView(path, c.version, image)
 	refusal, classified := policyRefusal(path, query.Errno)
 	if !classified {
 		t.Fatalf("policy query on a new directory through the %s client: %+v", path, query)
 	}
 	if refusal != nil {
-		if path == kernelPath {
+		if path == kernelPath || qualifiedMetadata {
 			t.Fatal(refusal)
 		}
 		// The client build lacks the fscrypt ioctls: the recorded outcome.
@@ -640,9 +650,13 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		return
 	}
 
-	// A v2 policy naming a key that was never added is refused.
+	// Record whether this privileged client accepts an identifier never added.
 	var noKey fscryptErrno
 	a.probe(t, ctx, &noKey, nil, "setpolicy", path, a.point+base+"/nokey", randomHex(t, 16))
+
+	if qualifiedMetadata && noKey.Errno != 0 {
+		t.Fatalf("privileged policy for a never-added key: errno %d", noKey.Errno)
+	}
 
 	// The real key and policy.
 	key := make([]byte, 64)
@@ -689,7 +703,7 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	}
 	locked := b.inspect(t, ctx, base+"/enc", names.all()...)
 	requireLocked(t, locked, names, "client b without the key")
-	exposedMetadata := exposed(t, keyed, locked, "client b without the key")
+	exposedMetadata := exposed(t, keyed, locked, path, qualifiedMetadata)
 	requirePlain(t, b.inspect(t, ctx, base+"/control"), names, "client b, control directory")
 
 	// A wrong key in client b.
@@ -726,25 +740,12 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	// The key is removed while client a keeps the file open. Once it is
 	// gone, the plaintext path no longer opens: ENOENT where the name no
 	// longer resolves, ENOKEY where it does but the contents stay locked.
-	var retained struct {
-		Before        string `json:"before"`
-		RemoveErrno   int    `json:"remove_errno"`
-		RemoveFlags   *int   `json:"remove_flags"`
-		BusyStatus    int    `json:"busy_status"`
-		Retained      string `json:"retained"`
-		RetainedErrno int    `json:"retained_errno"`
-		OtherErrno    int    `json:"other_errno"`
-		FinalErrno    int    `json:"final_errno"`
-		FinalFlags    *int   `json:"final_flags"`
-		FinalStatus   int    `json:"final_status"`
-		ReopenErrno   int    `json:"reopen_errno"`
-	}
+	var retained fscryptRetained
 	a.probe(t, ctx, &retained, nil, "retain", path, a.point, added.Identifier, a.point+base+"/enc/"+names.file, a.point+base+"/enc/"+names.second)
 	retainedDescription := fmt.Sprintf("remove errno=%d flags=%v status=%d; retained fd read equal=%t errno=%d; other file open errno=%d; after close remove errno=%d flags=%v status=%d; reopen errno=%d",
 		retained.RemoveErrno, deref(retained.RemoveFlags), retained.BusyStatus, retained.Retained == hex.EncodeToString(names.data), retained.RetainedErrno,
 		retained.OtherErrno, retained.FinalErrno, deref(retained.FinalFlags), retained.FinalStatus, retained.ReopenErrno)
-	if retained.Before != hex.EncodeToString(names.data) || retained.RemoveErrno != 0 || retained.FinalStatus != keyAbsent ||
-		(retained.ReopenErrno != errnoENOENT && retained.ReopenErrno != errnoENOKEY) {
+	if !retained.matches(names.data) {
 		t.Fatalf("key removal with a retained open file: %s", retainedDescription)
 	}
 	requireLocked(t, a.inspect(t, ctx, base+"/enc", names.all()...), names, "client a after the key removal")
@@ -778,6 +779,9 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		t.Fatalf("client b without the key lists the snapshots %s", describe(lockedSnaps))
 	}
 	snapVisible := lockedSnaps.Entries[0].plainName() == snapName
+	if qualifiedMetadata && snapVisible != (path == fusePath) {
+		t.Fatalf("%s: unexpected plaintext snapshot name visibility %t", path, snapVisible)
+	}
 	requireLocked(t, b.inspect(t, ctx, base+"/enc/.snap/"+lockedSnaps.Entries[0].plainName(), names.all()...), names, "client b, snapshot without the key")
 	var unsnapped fscryptErrno
 	a.probe(t, ctx, &unsnapped, nil, "rmdir", a.point+base+"/enc/.snap/"+snapName)

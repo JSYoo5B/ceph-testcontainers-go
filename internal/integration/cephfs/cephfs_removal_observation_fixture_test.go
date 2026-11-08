@@ -107,6 +107,7 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 		cephCLI("fs", "snapshot", "mirror", "show", "distribution", "a"),
 		cephCLI("fs", "get", "a", "--format", "json"),
 		cephCLI("fsid"),
+		cephCLI("quorum_status", "--format", "json"),
 		{"rados", "--pool", "meta", "listwatchers", "cephfs_mirror"},
 		append([]string{"python3", "-c", supervised.Script, "0", "0", "30"}, cephCLI("fs", "snapshot", "mirror", "peer_list", "a")...),
 		{"python3", "-c", supervised.CancelScript, "marker", "5"},
@@ -132,6 +133,33 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 		if kind := cephFSMutationKind(args); kind != want {
 			t.Errorf("%q classified as %q, want %q", args, kind, want)
 		}
+	}
+}
+
+func TestCephFSRemovalObservationRejectsUnlistedCommands(t *testing.T) {
+	for _, args := range [][]string{cephCLI("mgr", "fail"), cephCLI("quorum_status", "unexpected"), cephCLI("osd", "blocklist", "add", "client"), cephCLI("tell", "mds.a", "injectargs"), cephCLI("fs", "subvolume", "rm", "fs", "volume"), cephCLI("fs", "mirror", "disable", "fs"), {"rados", "unknown-command"}} {
+		if cephFSMutationKind(args) == "" {
+			t.Fatalf("mutating or unknown command accepted as a read: %q", args)
+		}
+	}
+}
+
+func TestCephFSObservationRequiresReadsInsideTheWait(t *testing.T) {
+	counter := &cephFSMutationCounter{Container: &cephFSCommandRecorder{}}
+	required := []*cephFSMutationCounter{counter}
+	read := func() {
+		if _, _, err := counter.Exec(t.Context(), cephCLI("fsid")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read() // An independent witness before the wait cannot qualify the wait.
+	err := cephFSCheckObservationCounters(required, required, func() {})
+	read() // A later witness cannot qualify it either.
+	if err == nil || !strings.Contains(err.Error(), "no command through required") {
+		t.Fatalf("bypassed wait: %v", err)
+	}
+	if err := cephFSCheckObservationCounters(required, required, read); err != nil {
+		t.Fatalf("counted read: %v", err)
 	}
 }
 

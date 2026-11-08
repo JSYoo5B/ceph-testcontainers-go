@@ -147,7 +147,7 @@ finally:
 	wait := flockWait{client: clientB, rule: 1, inode: holder.inode}
 	waiting := mdsWaitingFlock(t, ctx, m, wait)
 	receipt["waiting_before"] = map[string]any{"tid": waiting.tid, "flag_point": waiting.flagPoint, "description": waiting.description}
-	if contender.Published(ctx, 3) {
+	if contender.Published(t, ctx, 3) {
 		t.Fatal("the contender's F_SETLKW returned before the takeover")
 	}
 
@@ -181,7 +181,7 @@ finally:
 		t.Fatalf("the new MDS does not hold client.%d's replayed F_SETLKW as tid %d: %+v", clientB, waiting.tid, replayed)
 	}
 	receipt["waiting_after"] = map[string]any{"tid": replayed.tid, "flag_point": replayed.flagPoint, "description": replayed.description}
-	if contender.Published(ctx, 3) {
+	if contender.Published(t, ctx, 3) {
 		t.Fatal("the contender's F_SETLKW returned while the holder still held the lock after the takeover")
 	}
 

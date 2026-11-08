@@ -328,10 +328,10 @@ func testCephFSNewSessionRefusal(t *testing.T, ctx context.Context, cluster *cep
 }
 
 // A session that must reconnect to a restarted MDS during the refusal counts
-// as a new one: the MDS drops it and the client is blocklisted, so its I/O
-// does not come back after Restore. A new session after Restore works.
+// as a new one: the MDS drops it and the client is blocklisted. After
+// Restore, a control session survives another failover and writes.
 func testCephFSReconnectRefusal(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, fs *cephfs.Filesystem) {
-	// This holder never passes its "write" gate: its I/O would block for good.
+	// Keep this holder mounted so the test can identify its dropped session.
 	holder := startCephFSActor(t, ctx, cluster, client, cephFSRefusalHolder, fs.FilesystemName, "/tmp/refusal-reconnect", "/refusal/reconnect")
 	opened := holder.Receipt(t, ctx, 1)
 	session := findCephFSSession(t, ctx, fs, strconv.FormatUint(opened.Client, 10))
@@ -375,4 +375,33 @@ func testCephFSReconnectRefusal(t *testing.T, ctx context.Context, cluster *ceph
 	if after := runCephFSRefusalProbe(t, ctx, client, fs, "mount", 0, "-"); after.Errno != 0 || after.Client == 0 {
 		t.Fatalf("new session after the failover and Restore = %+v", after)
 	}
+
+	control := startCephFSActor(t, ctx, cluster, client, cephFSRefusalHolder, fs.FilesystemName, "/tmp/reconnect-control", "/refusal/control")
+	id := strconv.FormatUint(control.Receipt(t, ctx, 1).Client, 10)
+	prior := findCephFSSession(t, ctx, fs, id)
+	mds, err := fs.MDSStatus(ctx)
+	if err != nil || len(mds.Active) != 1 || prior == nil || prior.Address == "" {
+		t.Fatalf("control session %s or active rank missing: %+v, %v", id, mds, err)
+	}
+	harness.MustCeph(t, ctx, cluster, "mds", "fail", fs.FilesystemName+":0")
+	_, err = harness.Observe(ctx, 3*time.Minute, 20*time.Second, time.Second, func(probe context.Context) (bool, bool, error) {
+		current, err := fs.MDSStatus(probe)
+		ready := err == nil && len(current.Active) == 1 && current.Active[0].Rank == mds.Active[0].Rank && current.Active[0].GID != mds.Active[0].GID
+		return ready, ready, err
+	})
+	if err != nil {
+		t.Fatal("control MDS did not fail over:", err)
+	}
+	control.Open(t, ctx, "write")
+	written := control.Receipt(t, ctx, 2)
+	after := findCephFSSession(t, ctx, fs, id)
+	if written.Errno != 0 || written.Size != int64(len("existing-session")) || after == nil || after.Address != prior.Address || after.State != "open" {
+		t.Fatalf("ordinary reconnect lost the session or failed its write: before %+v, after %+v, write %+v", prior, after, written)
+	}
+	control.Open(t, ctx, "finish")
+	if !control.Receipt(t, ctx, 3).Closed {
+		t.Fatal("control session did not close")
+	}
+	control.Wait(t, ctx)
+
 }

@@ -370,7 +370,7 @@ func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context
 		gateCtx, cancel := context.WithTimeout(ctx, time.Second)
 		err := op.run(gateCtx)
 		cancel()
-		if err == nil || counter.commands.Load() != before {
+		if err == nil || !strings.Contains(err.Error(), "explicit CephFS directory addition is incomplete") || counter.commands.Load() != before {
 			t.Fatalf("pending %s reached native CLI or was accepted: %v", op.name, err)
 		}
 	}

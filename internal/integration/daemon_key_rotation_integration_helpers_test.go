@@ -46,6 +46,15 @@ func runDaemonKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	leftover := pendingKey(t, ctx, cluster, "osd.0")
+	generation := func(ctr testcontainers.Container) string {
+		t.Helper()
+		state, err := ctr.State(ctx)
+		if err != nil || state == nil || !state.Running || state.StartedAt == "" {
+			t.Fatalf("read daemon generation: %+v, %v", state, err)
+		}
+		return ctr.GetContainerID() + "@" + state.StartedAt
+	}
+	osdGeneration, mgrGeneration := generation(osd), generation(mgr)
 	for _, daemon := range []struct {
 		name     string
 		ctr      testcontainers.Container
@@ -77,8 +86,42 @@ func runDaemonKeyRotation(t *testing.T) {
 	if _, err := cluster.Ceph(ctx, "tell", "osd.0", "version"); err != nil {
 		t.Fatalf("the OSD stopped answering after the rotation: %v", err)
 	}
-	// A restart authenticates with the keyring files only.
+	// Restart the sole MON to discard its sessions. Each new CephX handshake
+	// answers a fresh server challenge with the entity key, even when the
+	// client presents its old ticket to reclaim its global ID.
 	stop := 10 * time.Second
+	mon := harness.MonitorHandle(t, ctx, cluster, "a")
+	if err := mon.Stop(ctx, &stop); err != nil {
+		t.Fatal(err)
+	}
+	if err := mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seen, err := harness.Observe(ctx, 2*time.Minute, 10*time.Second, time.Second, func(probe context.Context) ([]monReplacementSession, bool, error) {
+		raw, err := mon.AdminSocket(probe, "sessions")
+		if err != nil {
+			return nil, false, err
+		}
+		sessions, err := parseWarmSessions("a", raw)
+		if err != nil {
+			return nil, false, err
+		}
+		authenticated := func(name, kind string) bool {
+			return slices.ContainsFunc(sessions, func(s monReplacementSession) bool {
+				return s.Name == name && s.ConType == kind && s.Authenticated && s.Open && s.GlobalID != 0
+			})
+		}
+		return sessions, authenticated("osd.0", "osd") && authenticated("mgr.a", "mgr"), nil
+	})
+	if err != nil {
+		t.Fatalf("rotated daemons did not establish new authenticated MON sessions: %+v, %v", seen.Value, err)
+	}
+	waitRotatedDaemonsUp(t, ctx, cluster)
+	if generation(osd) != osdGeneration || generation(mgr) != mgrGeneration {
+		t.Fatal("a rotated daemon restarted during MON reauthentication")
+	}
+
+	// A daemon restart authenticates with the keyring files only.
 	for _, ctr := range []testcontainers.Container{osd, mgr} {
 		if err := ctr.Stop(ctx, &stop); err != nil {
 			t.Fatal(err)
@@ -140,7 +183,7 @@ func runDaemonKeyRotation(t *testing.T) {
 	current := authKey(t, ctx, cluster, "osd.0")
 	signalContainer(t, ctx, osd, "STOP")
 	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
-	err := osdHandle(t, callCtx, cluster, 0).RotateKey(callCtx)
+	err = osdHandle(t, callCtx, cluster, 0).RotateKey(callCtx)
 	callCancel()
 	signalContainer(t, ctx, osd, "CONT")
 	if err == nil || !strings.Contains(err.Error(), "RotateKey again") {

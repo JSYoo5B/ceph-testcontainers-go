@@ -333,7 +333,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if len(state.clientData) != 0 || state.caps.Size != uint64(len(whole)) || state.mdsSize != uint64(len(base)) {
 		t.Fatalf("want the writer's data acked, its flush of %d bytes held and the MDS at %d: %s", len(whole), len(base), state.raw)
 	}
-	if writer.Published(ctx, 3) || waiter.Published(ctx, 2) {
+	if writer.Published(t, ctx, 3) || waiter.Published(t, ctx, 2) {
 		t.Fatalf("a held call returned during the cut: %s", state.raw)
 	}
 	for _, session := range []cephfssession.Session{writerSession, waiterSession} {

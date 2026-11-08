@@ -40,6 +40,12 @@ func TestCephFSMDSDebugLevel(t *testing.T) {
 		}
 		return values[option]
 	}
+	set := func(name, option, value string) {
+		t.Helper()
+		if _, err := m.Cluster.Ceph(ctx, "tell", "mds."+name, "config", "set", option, value); err != nil {
+			t.Fatal(err)
+		}
+	}
 	open := func(name, option, level string) *override.DebugLevelHandle {
 		t.Helper()
 		h, err := override.SetDebugLevel(ctx, m.Cluster, override.DebugLevelSetting{Daemon: "mds." + name, Name: option, Level: level})
@@ -86,27 +92,50 @@ func TestCephFSMDSDebugLevel(t *testing.T) {
 	}
 
 	// Failover: the active MDS respawns, the standby takes rank 0 in place.
+	originalStandby := tell(standby.Name, "debug_mds")
+	const activeMarker, standbyMarker, respawnMarker = "2/2", "4/4", "7/7"
+	set(active.Name, "debug_mds", activeMarker)
+	if got := tell(active.Name, "debug_mds"); got != activeMarker {
+		t.Fatalf("active marker read back as %q", got)
+	}
+	set(standby.Name, "debug_mds", standbyMarker)
+	priorStandby := tell(standby.Name, "debug_mds")
+	if priorStandby != standbyMarker {
+		t.Fatalf("standby marker read back as %q", priorStandby)
+	}
 	failed := open(active.Name, "debug_mds", "10/10")
+	if r := failed.Receipt(); r.Prior != activeMarker || r.GID != active.GID {
+		t.Fatalf("active window %+v, independently observed prior %q", r, activeMarker)
+	}
 	kept := open(standby.Name, "debug_mds", "10/10")
-	priorStandby := kept.Receipt().Prior
-	if kept.Receipt().GID != standby.GID {
-		t.Fatalf("standby receipt %+v, standby %+v", kept.Receipt(), standby)
+	if r := kept.Receipt(); r.Prior != priorStandby || r.GID != standby.GID || tell(standby.Name, "debug_mds") != "10/10" {
+		t.Fatalf("standby window %+v, independently observed prior %q", r, priorStandby)
 	}
 	if _, err := m.Cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(active.GID, 10)); err != nil {
 		t.Fatal(err)
 	}
 	respawned := waitMDSRespawned(t, ctx, m.FS, active, standby)
+	respawnPrior := tell(active.Name, "debug_mds")
+	if respawnPrior == "10/10" {
+		t.Fatalf("respawned MDS GID %d kept the old window's level", respawned.GID)
+	}
+	set(active.Name, "debug_mds", respawnMarker)
+	if got := tell(active.Name, "debug_mds"); got != respawnMarker {
+		t.Fatalf("respawned MDS marker read back as %q", got)
+	}
 	if err := failed.Restore(ctx); err == nil || failed.Receipt().State != override.DebugLevelTargetChanged {
 		t.Fatalf("restore into a respawned MDS: %v %+v", err, failed.Receipt())
 	}
 	logReceipt(failed)
-	if level := tell(active.Name, "debug_mds"); level == "10/10" {
-		t.Fatalf("respawned mds.%s (GID %d) still shows the window's level", active.Name, respawned.GID)
+	if got := tell(active.Name, "debug_mds"); got != respawnMarker {
+		t.Fatalf("restore changed the marker on respawned MDS GID %d: got %q, want %q", respawned.GID, got, respawnMarker)
 	}
+	set(active.Name, "debug_mds", respawnPrior)
 	if err := kept.Restore(ctx); err != nil || kept.Receipt().State != override.DebugLevelRestored || tell(standby.Name, "debug_mds") != priorStandby {
 		t.Fatalf("restore of the promoted standby: %v %+v", err, kept.Receipt())
 	}
 	logReceipt(kept)
+	set(standby.Name, "debug_mds", originalStandby)
 }
 
 // waitMDSRespawned waits until the former standby serves rank 0 with its own

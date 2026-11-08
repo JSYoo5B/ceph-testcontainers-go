@@ -389,6 +389,9 @@ func checkRegionalRoutes(t *testing.T, ctx context.Context, top *regionalTopolog
 						}
 						want := netip.Addr{}
 						if to.Name != from.Name {
+							if !plane.via.IsValid() {
+								t.Fatalf("zone %s has no %s router address", from.Name, plane.name)
+							}
 							want = plane.via
 						}
 						got, err := top.probes[member.Name].RouteGet(ctx, plane.dest)
@@ -643,6 +646,58 @@ func regionalExec(ctx context.Context, ctr testcontainers.Container, args ...str
 	return code, strings.TrimSpace(string(out)), err
 }
 
+// A fresh librados session separates a refused connection from a failed stat.
+// Only connect errors emit the errno marker; lookup and transport failures have
+// no such verdict. The same client, pool and object are used in all phases.
+const partitionStatScript = `import sys, rados
+cluster = rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"client_mount_timeout":"15", "rados_osd_op_timeout":"30"})
+try:
+    cluster.connect()
+except rados.Error as error:
+    print("connect errno", abs(error.errno or 0))
+    sys.exit(1)
+try:
+    with cluster.open_ioctx(sys.argv[1]) as io:
+        print("stat size", io.stat(sys.argv[2])[0])
+finally:
+    cluster.shutdown()
+`
+
+func checkPartitionStat(code int, output string, execErr error, cut bool, size int) error {
+	if execErr != nil {
+		return fmt.Errorf("run or read the stat probe: %w", execErr)
+	}
+	// The Ceph logger can append its authentication diagnostic on stderr
+	// after Python has flushed the verdict on stdout. Docker combines both.
+	var verdict string
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.HasPrefix(line, "connect errno ") || strings.HasPrefix(line, "stat size ") {
+			if verdict != "" {
+				return fmt.Errorf("multiple stat verdicts: %q", output)
+			}
+			verdict = line
+		}
+	}
+	if cut {
+		// A full packet-loss cut must time out. A refused connection reached a peer.
+		if code == 1 && verdict == "connect errno 110" {
+			return nil
+		}
+	} else if code == 0 && verdict == fmt.Sprintf("stat size %d", size) {
+		return nil
+	}
+	return fmt.Errorf("stat with cut=%t returned exit %d: %q", cut, code, output)
+}
+
+func requirePartitionStat(t *testing.T, ctx context.Context, client testcontainers.Container, pool, object string, size int, cut bool) {
+	t.Helper()
+	code, output, err := regionalExec(ctx, client, "python3", "-c", partitionStatScript, pool, object)
+	if err := checkPartitionStat(code, output, err, cut, size); err != nil {
+		t.Fatalf("client-b stat %s/%s: %v", pool, object, err)
+	}
+	t.Logf("client-b stat %s/%s cut=%t exit=%d: %s", pool, object, cut, code, output)
+}
+
 // regionalPartition drops every packet that crosses the boundary, in both
 // directions on both planes, and observes same-zone reachability, the zone b
 // OSD marked down by the two zone a reporters, the PG served from zone a, a
@@ -650,6 +705,7 @@ func regionalExec(ctx context.Context, ctr testcontainers.Container, args ...str
 // restores the boundary and waits for recovery.
 func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology, paths []regionalPath, base map[string]harness.ZoneRTT) regionalObject {
 	t.Helper()
+	requirePartitionStat(t, ctx, top.clientB, regionalPool, "regional-object-1", regionalObjectSize, false)
 	leases := regionalShape(t, ctx, top, []string{"a", "b"}, fault.NetworkProfile{HelperImage: top.helper, Loss: 100})
 	cutAt := time.Now()
 	regionalLeaseStatus(t, ctx, "partitioned", leases)
@@ -720,12 +776,7 @@ func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology,
 		t.Fatalf("client-a write during the partition: exit %d %q %v", code, out, err)
 	}
 	t.Logf("client-a wrote %s during the partition in %v: acknowledged", name, time.Since(start).Round(time.Millisecond))
-	start = time.Now()
-	code, out, err := regionalExec(ctx, top.clientB, "rados", "--client-mount-timeout", "15", "-p", regionalPool, "stat", "regional-object-1")
-	t.Logf("client-b in zone b during the partition: rados stat exit %d after %v: %s (%v)", code, time.Since(start).Round(time.Second), out, err)
-	if err == nil && code == 0 {
-		t.Fatal("client-b reached the cluster across the partitioned boundary")
-	}
+	requirePartitionStat(t, ctx, top.clientB, regionalPool, "regional-object-1", regionalObjectSize, true)
 	regionalRestore(t, ctx, leases)
 	restoredAt := time.Now()
 	waitFor(fmt.Sprintf("osd.%d up again", top.osdB), 5*time.Minute, osdUp(true))
@@ -734,6 +785,7 @@ func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology,
 	if err := top.observer.WaitForClean(recoverCtx); err != nil {
 		t.Fatalf("recovery after the partition: %v", err)
 	}
+	requirePartitionStat(t, ctx, top.clientB, regionalPool, "regional-object-1", regionalObjectSize, false)
 	pg := regionalSinglePG(t, ctx, top.pool)
 	if zones := top.actingZones(pg.Acting); len(zones["a"]) != 1 || len(zones["b"]) != 1 {
 		t.Fatalf("after recovery PG %s acting %v does not span the zones", pg.PGID, pg.Acting)
@@ -789,23 +841,12 @@ func checkRegionalRestart(t *testing.T, ctx context.Context, top *regionalTopolo
 	if zone != "b" {
 		t.Fatalf("%s rejoined zone %s", name, zone)
 	}
-	probe := harness.NewZoneProbe(t, ctx, name+" restarted", member.ContainerID)
-	mon, _ := harness.ZoneMember(t, top.layout, "mon.a")
-	router := harness.ZoneRouter(t, top.layout, "b")
-	got, err := probe.RouteGet(ctx, mon.PublicAddress)
-	if err != nil {
-		t.Fatal(err)
+	peer, _ := harness.ZoneMember(t, top.layout, fmt.Sprintf("osd.%d", top.osdA0))
+	if !peer.ClusterAddress.IsValid() || !member.PublicAddress.IsValid() || !member.ClusterAddress.IsValid() {
+		t.Fatalf("incomplete addresses for dual-plane lookup after restarting %s: member %+v peer %+v", name, member, peer)
 	}
-	if got.Via != router.PublicAddress {
-		t.Fatalf("the restarted %s reaches mon.a via %v, want the zone b router %v", name, got.Via, router.PublicAddress)
-	}
-	back, err := top.probes["mon.a"].RouteGet(ctx, member.PublicAddress)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := harness.ZoneRouter(t, top.layout, "a").PublicAddress; back.Via != want {
-		t.Fatalf("mon.a reaches the restarted %s via %v, want the zone a router %v", name, back.Via, want)
-	}
+	top.probes[name] = harness.NewZoneProbe(t, ctx, name+" restarted", member.ContainerID)
+	checkRegionalRoutes(t, ctx, top)
 	if err := top.observer.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}

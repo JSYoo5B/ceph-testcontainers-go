@@ -4,10 +4,13 @@ package cephfs_fscrypt_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -70,6 +73,7 @@ const (
 // the effective set and the security label.
 type fscryptAdmission struct {
 	Kernel      string `json:"kernel"`
+	Machine     string `json:"machine"`
 	KernelCeph  bool   `json:"kernel_ceph"`
 	KernelFuse  bool   `json:"kernel_fuse"`
 	CephFuse    bool   `json:"ceph_fuse"`
@@ -309,7 +313,7 @@ if command == "requests":
     emit(**REQUESTS)
 
 if command == "admit":
-    result = {"kernel": os.uname().release, "ceph_fuse": os.access("/usr/bin/ceph-fuse", os.X_OK)}
+    result = {"kernel": os.uname().release, "machine": os.uname().machine, "ceph_fuse": os.access("/usr/bin/ceph-fuse", os.X_OK)}
     with open("/proc/filesystems") as filesystems:
         types = [line.split()[-1] for line in filesystems if line.strip()]
     result["kernel_ceph"], result["kernel_fuse"] = "ceph" in types, "fuse" in types
@@ -483,3 +487,91 @@ if command == "rmdir":
 
 emit(errno=-1, error="unknown command " + command)
 `
+
+// The official FUSE build qualified with directory ioctls in the experiment.
+const qualifiedFuseImage = "quay.io/ceph/ceph@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+
+// Key status values of FS_IOC_GET_ENCRYPTION_KEY_STATUS and the removal
+// status flags of FS_IOC_REMOVE_ENCRYPTION_KEY.
+const (
+	keyAbsent              = 1
+	keyPresent             = 2
+	keyIncompletelyRemoved = 3
+	removalFilesBusy       = 1
+)
+
+type fscryptRetained struct {
+	Before        string `json:"before"`
+	RemoveErrno   int    `json:"remove_errno"`
+	RemoveFlags   *int   `json:"remove_flags"`
+	BusyStatus    int    `json:"busy_status"`
+	Retained      string `json:"retained"`
+	RetainedErrno int    `json:"retained_errno"`
+	OtherErrno    int    `json:"other_errno"`
+	FinalErrno    int    `json:"final_errno"`
+	FinalFlags    *int   `json:"final_flags"`
+	FinalStatus   int    `json:"final_status"`
+	ReopenErrno   int    `json:"reopen_errno"`
+}
+
+func (r fscryptRetained) matches(plaintext []byte) bool {
+	return r.Before == hex.EncodeToString(plaintext) && r.RemoveErrno == 0 &&
+		r.RemoveFlags != nil && *r.RemoveFlags&removalFilesBusy != 0 && r.BusyStatus == keyIncompletelyRemoved &&
+		r.RetainedErrno == 0 && r.Retained == r.Before && r.OtherErrno == errnoENOKEY &&
+		r.FinalStatus == keyAbsent && (r.ReopenErrno == errnoENOENT || r.ReopenErrno == errnoENOKEY)
+}
+
+// qualifiedView identifies the observed client cohorts for metadata and the
+// privileged empty-directory policy. Other builds still run the capability probe.
+func (a fscryptAdmission) qualifiedView(clientPath, version, image string) bool {
+	if a.Machine != "x86_64" || !strings.HasPrefix(a.Kernel, "6.8.0-") {
+		return false
+	}
+	switch clientPath {
+	case kernelPath:
+		return slices.Contains([]string{"19.2.5", "20.2.4", "21.2.0"}, version)
+	case fusePath:
+		return version == "21.2.0" && image == qualifiedFuseImage
+	default:
+		return false
+	}
+}
+
+type fscryptEntry struct {
+	Name     string `json:"name"`
+	Mode     uint32 `json:"mode"`
+	Size     int64  `json:"size"`
+	Ino      uint64 `json:"ino"`
+	MtimeNS  int64  `json:"mtime_ns"`
+	Data     string `json:"data"`
+	Target   string `json:"target"`
+	Children *int   `json:"children"`
+	Errno    int    `json:"errno"`
+}
+
+func (e fscryptEntry) plainName() string {
+	name, _ := hex.DecodeString(e.Name)
+	return string(name)
+}
+
+// The fixture uses a 39-byte symlink target. On the qualified kernel build
+// its encoded target occupies 96 bytes. FUSE exposes the plaintext length.
+func (keyed fscryptEntry) checkLockedMetadata(clientPath string, locked fscryptEntry) error {
+	if locked.Mode != keyed.Mode || locked.MtimeNS != keyed.MtimeNS {
+		return fmt.Errorf("%s: locked mode/mtime differ on inode %d", clientPath, keyed.Ino)
+	}
+	want := keyed.Size
+	switch keyed.Mode & 0o170000 {
+	case 0o100000:
+	case 0o120000:
+		if clientPath == kernelPath {
+			want = 96
+		}
+	default:
+		return nil
+	}
+	if locked.Size != want {
+		return fmt.Errorf("%s: locked inode %d size %d, want %d", clientPath, keyed.Ino, locked.Size, want)
+	}
+	return nil
+}

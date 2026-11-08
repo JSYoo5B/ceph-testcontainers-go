@@ -322,7 +322,7 @@ func runCephFSOSDInterruption(t *testing.T, opts ...testcontainers.ContainerCust
 	}) {
 		t.Fatalf("the waiter does not hold its mkdir: %s", state.raw)
 	}
-	if writer.Published(ctx, 3) || waiter.Published(ctx, 2) {
+	if writer.Published(t, ctx, 3) || waiter.Published(t, ctx, 2) {
 		t.Fatalf("a held call returned while the OSD was frozen: %s", state.raw)
 	}
 	for _, session := range []struct {

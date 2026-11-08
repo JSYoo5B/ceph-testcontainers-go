@@ -109,7 +109,12 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := harness.CephFSIsolationJSON(t, ctx, newClient(only), isolationCapProbe, only.User(), only.KeyringPath(), harness.CephFSIsolationFSB, "only")
+	restrictedClient := newClient(only)
+	control := harness.CephFSIsolationJSON(t, ctx, restrictedClient, isolationCapProbe, only.User(), only.KeyringPath(), harness.CephFSIsolationFSA, "only")
+	if control["mount"] != "ok" || control["read"] != "seed-of-"+harness.CephFSIsolationFSA || control["create"] != "ok" || control["mkdir"] != "ok" {
+		t.Fatalf("per-filesystem principal failed on its authorized filesystem: %v", control)
+	}
+	result := harness.CephFSIsolationJSON(t, ctx, restrictedClient, isolationCapProbe, only.User(), only.KeyringPath(), harness.CephFSIsolationFSB, "only")
 	if result["mount"] != "EPERM" {
 		t.Fatalf("a principal without an %s clause mounted it: %v", harness.CephFSIsolationFSB, result)
 	}

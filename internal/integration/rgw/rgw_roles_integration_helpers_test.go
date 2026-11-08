@@ -98,6 +98,25 @@ func rgwRoles(t *testing.T) {
 	}
 	rgwRequireRoleAbsent(t, ctx, gateway, "tc-canceled")
 
+	arm := installRGWKeyFaultShim(t, ctx, gateway)
+	arm("pause-role")
+	settled, cancelErr := cancelRGWCreate(t, ctx, gateway, func(call context.Context) (*rgw.Role, error) {
+		return gateway.CreateRole(call, rgw.RoleConfig{Name: "tc-cancel-dispatched", TrustPolicy: trust})
+	})
+	if !errors.Is(cancelErr, context.Canceled) || settled == nil {
+		t.Fatalf("cancel after native role create: handle=%t error=%v", settled != nil, cancelErr)
+	}
+	confirmed, arnErr := settled.ARN()
+	document := rgwRoleDocument(t, ctx, gateway, "tc-cancel-dispatched")
+	if arnErr != nil || confirmed == "" || document.ARN != confirmed || document.ID == "" || document.Trust != trust || len(document.Policies) != 0 {
+		t.Fatalf("native role differs from the settled handle: %v", arnErr)
+	}
+	if err := settled.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rgwRequireRoleAbsent(t, ctx, gateway, "tc-cancel-dispatched")
+	removeRGWKeyFaultShim(t, ctx, gateway)
+
 	role, err := gateway.CreateRole(ctx, rgw.RoleConfig{Name: "tc-reader", Path: "/fixture/", TrustPolicy: trust,
 		Policies: []rgw.RolePolicy{{Name: "read-allowed", Document: read}}})
 	if err != nil {

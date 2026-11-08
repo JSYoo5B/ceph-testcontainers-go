@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +106,12 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	t.Cleanup(func() { _ = progress.Stop() })
 	var status snapschedule.Status
 	var trace []string
-	deadline := time.After(6 * time.Minute)
-	for previous := (*snapschedule.Status)(nil); status.Created < 3 || status.Pruned < 1; {
+	var creationTimes []time.Time
+	retentionCtx, endRetention := context.WithTimeout(ctx, 6*time.Minute)
+	defer endRetention()
+	var snapshots []string
+	retried := false
+	for previous := (*snapschedule.Status)(nil); snapshots == nil; {
 		var event snapschedule.LeaseWatchEvent
 		select {
 		case received, ok := <-progress.Events():
@@ -114,7 +119,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 				t.Fatalf("the schedule watch ended: %v after %v", progress.Stop(), trace)
 			}
 			event = received
-		case <-deadline:
+		case <-retentionCtx.Done():
 			t.Fatalf("the schedule took %d and pruned %d snapshots: %s; events %v", status.Created, status.Pruned, status.Raw, trace)
 		}
 		if event.Kind == ceph.WatchGap {
@@ -135,22 +140,34 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 				t.Fatalf("an unchanged status was an event: %v", trace)
 			}
 		}
+		if current.Created > status.Created {
+			if current.Last.IsZero() {
+				t.Fatal("a creation has no native timestamp")
+			}
+			// A polling watch can skip creations. Start a fresh pair and
+			// wait for its successor before judging the two newest names.
+			if current.Created != status.Created+1 {
+				creationTimes = nil
+			}
+			creationTimes = append(creationTimes, current.Last.UTC())
+		}
 		previous, status = current, *current
+		var crossed bool
+		snapshots, crossed, err = readScheduleRetention(retentionCtx, status, creationTimes, lease.Status, lease.Snapshots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if crossed {
+			if retried {
+				t.Fatalf("two snapshot listings crossed a schedule change; events %v", trace)
+			}
+			retried = true
+		}
 	}
 	if err := progress.Stop(); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("CEPHFS_SNAP_SCHEDULE_WATCH %v", trace)
-	if final, err := lease.Status(ctx); err != nil || final.Created < status.Created {
-		t.Fatalf("status after the watch: %+v, %v", final, err)
-	}
-	snapshots, err := lease.Snapshots(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshots) == 0 || len(snapshots) > 2 || status.First.IsZero() || !status.Last.After(status.First) {
-		t.Fatalf("snapshots %v with status %s", snapshots, status.Raw)
-	}
 	// Restore ends a running watch: the schedule is no longer the lease's.
 	restored, err := lease.Watch(ctx, ceph.WatchConfig{Interval: time.Second})
 	if err != nil {
@@ -160,14 +177,23 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
+	after, err := lease.Snapshots(ctx)
+	if err != nil || !slices.Equal(after, snapshots) {
+		t.Fatalf("snapshots immediately after Restore: %v, before %v, %v", after, snapshots, err)
+	}
 	for range restored.Events() {
 	}
 	if err := restored.Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("the watch of a restored lease ended with %v", err)
 	}
-	after, err := lease.Snapshots(ctx)
-	if err != nil || len(after) == 0 {
-		t.Fatalf("snapshots after Restore: %v, %v", after, err)
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case <-time.After(time.Minute + 5*time.Second):
+	}
+	later, err := lease.Snapshots(ctx)
+	if err != nil || !slices.Equal(later, after) {
+		t.Fatalf("snapshots one repeat after Restore: %v, before %v, %v", later, after, err)
 	}
 	// The module prints {} or, after a removal, nothing.
 	if out, err := cluster.Ceph(ctx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json"); err != nil || (strings.TrimSpace(string(out)) != "{}" && strings.TrimSpace(string(out)) != "") {

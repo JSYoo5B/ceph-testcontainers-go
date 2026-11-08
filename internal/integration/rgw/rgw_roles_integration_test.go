@@ -13,7 +13,7 @@ import "testing"
 // credentials read the allowed object and are refused for another object
 // and for a write. Native readback confirms the role's identity, trust and
 // policy. The fixture refuses a caller's role of the same name and a role
-// carrying a caller's policy, creates nothing on a canceled call, removes a
+// carrying a caller's policy, settles a creation canceled after dispatch, removes a
 // role whose policy RGW refused, and its Remove leaves the caller's role
 // unchanged while STS refuses the removed role.
 func TestRGWOwnedRole(t *testing.T) {

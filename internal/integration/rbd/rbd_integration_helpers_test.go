@@ -12,6 +12,8 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
+	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -181,4 +183,21 @@ func requireRBDNamespaceMappingRefused(t *testing.T, err error, cluster *ceph.Co
 	if refusal := harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRBDNamespaceMapping, detail); !strings.HasSuffix(refusal.Target, " cluster") {
 		t.Fatalf("namespace mapping refusal names %q, want the cluster that lacks the option", refusal.Target)
 	}
+}
+
+func checkScopedWatchImage(pinned, observed rbdmirror.ImageStatus) error {
+	expected := rbdmirrorexpect.Image{Select: pinned, Replaying: observed.ReplayReady}
+	r, err := expected.Evaluate(observed)
+	if err != nil {
+		return err
+	}
+	if !r.Matched || !observed.SourcePrimary || observed.DestinationPrimary {
+		return fmt.Errorf("image watch crossed namespace or role: %+v", r)
+	}
+	return nil
+}
+
+func scopedImageObservedStop(e rbdmirror.ImageWatchEvent, stoppedAt time.Time) bool {
+	return (e.Kind == ceph.WatchChanged || e.Kind == ceph.WatchResumed) &&
+		!e.Started.Before(stoppedAt) && !e.Status.ReplayReady
 }

@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 // otherwise successful run and is reported on standard error, while an
 // export or hash failure keeps its own status. Arguments: the image, then
 // the rbd command with its options.
-const rbdExportDigest = `dir=$(mktemp -d) || exit 125
+const rbdExportDigest = `dir=$(mktemp -d "${TMPDIR:-/tmp}/rbd-export.XXXXXXXX") || exit 125
 trap 'rm -rf "$dir"; exit 143' HUP INT TERM
 image=$1
 shift
@@ -69,4 +70,22 @@ func rbdExportResult(image string, code int, stdout, stderr []byte) (string, err
 		return "", fmt.Errorf("export %s: md5sum printed %q: %s", image, stdout[:min(len(stdout), 256)], diagnostics)
 	}
 	return fields[0], nil
+}
+
+func immutableCacheReadDelta(before, after map[string]string, want int) error {
+	seen := map[string]bool{}
+	for key := range before {
+		if _, ok := after[key]; !ok {
+			return errors.New("OSD history lost a previously observed parent read")
+		}
+	}
+	for key, object := range after {
+		if _, ok := before[key]; !ok {
+			seen[object] = true
+		}
+	}
+	if len(seen) != want {
+		return fmt.Errorf("OSD read %d distinct parent data objects, want %d: %v", len(seen), want, seen)
+	}
+	return nil
 }
