@@ -23,9 +23,9 @@ type BaselineMGRModules struct {
 
 // CheckBaselineMGRModules checks the MGR modules of one `ceph mgr dump
 // --format json` against the essential role's baseline: the always-on
-// modules of every release set the map publishes, and volumes, rbd_support
-// and mirroring. Each must be in the active manager's catalog and able to
-// run.
+// modules of every release set the map publishes, and volumes, rbd_support,
+// mirroring and snap_schedule, the set the image publication check requires.
+// Each must be in the active manager's catalog and able to run.
 //
 // The enabled list also names the release's mgr_initial_modules defaults
 // (iostat, nfs and nvmeof since Squid). The essential role need not ship
@@ -48,7 +48,7 @@ func CheckBaselineMGRModules(data []byte) (BaselineMGRModules, error) {
 		*native.ActiveGID == 0 || native.Modules == nil || len(native.AlwaysOn) == 0 || native.Catalog == nil {
 		return BaselineMGRModules{}, errors.New("strict active MGR catalog unavailable")
 	}
-	required := map[string]bool{"volumes": true, "rbd_support": true, "mirroring": true}
+	required := map[string]bool{"volumes": true, "rbd_support": true, "mirroring": true, "snap_schedule": true}
 	for _, names := range native.AlwaysOn {
 		if names == nil {
 			return BaselineMGRModules{}, errors.New("null always-on release set")

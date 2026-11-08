@@ -66,12 +66,12 @@ func TestCheckBaselineMGRModulesAcceptsTheEssentialContract(t *testing.T) {
 			if got.ActiveGID != 4130 || !slices.Equal(got.AbsentEnabled, tc.absent) {
 				t.Fatalf("got %+v, want absent %v", got, tc.absent)
 			}
-			for _, module := range append(slices.Clone(baselineAlwaysOn), "mirroring") {
+			for _, module := range append(slices.Clone(baselineAlwaysOn), "mirroring", "snap_schedule") {
 				if !got.Runnable[module] {
 					t.Fatalf("%s not checked: %+v", module, got)
 				}
 			}
-			if got.Runnable["snap_schedule"] || got.Runnable["prometheus"] {
+			if got.Runnable["prometheus"] {
 				t.Fatalf("a module outside the baseline and the enabled list was checked: %+v", got)
 			}
 		})
@@ -86,8 +86,11 @@ func TestCheckBaselineMGRModulesRefusesAMissingOrBrokenModule(t *testing.T) {
 		data []byte
 		want string
 	}{
-		"always-on module absent":     {mgrDumpFixture(t, without("volumes"), nil), "baseline manager module absent; stop for fixed image-policy classification: volumes"},
-		"mirroring absent":            {mgrDumpFixture(t, without("mirroring"), nil), "baseline manager module absent; stop for fixed image-policy classification: mirroring"},
+		"always-on module absent": {mgrDumpFixture(t, without("volumes"), nil), "baseline manager module absent; stop for fixed image-policy classification: volumes"},
+		"mirroring absent":        {mgrDumpFixture(t, without("mirroring"), nil), "baseline manager module absent; stop for fixed image-policy classification: mirroring"},
+		"snap_schedule absent":    {mgrDumpFixture(t, without("snap_schedule"), nil), "baseline manager module absent; stop for fixed image-policy classification: snap_schedule"},
+		"snap_schedule cannot run": {mgrDumpFixture(t, tentacleEssentialCatalog, map[string]string{"snap_schedule": "No module named 'x'"}),
+			"module=snap_schedule can_run=false"},
 		"always-on module cannot run": {mgrDumpFixture(t, tentacleEssentialCatalog, map[string]string{"progress": "No module named 'x'"}), "module=progress can_run=false"},
 		"shipped enabled module cannot run": {mgrDumpFixture(t, tentacleEssentialCatalog, map[string]string{"nfs": "No module named 'x'"}),
 			"module=nfs can_run=false"},
