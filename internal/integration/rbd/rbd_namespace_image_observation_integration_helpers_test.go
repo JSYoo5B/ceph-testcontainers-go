@@ -723,64 +723,12 @@ func rbdScopedImageHealth(t *testing.T, parent context.Context, cluster *ceph.Co
 	if err != nil || code != 0 {
 		t.Fatalf("native required manager module read failed: exit=%d error=%v detail=%s", code, err, data)
 	}
-	var native struct {
-		Available        *bool               `json:"available"`
-		ActiveGID        *uint64             `json:"active_gid"`
-		Modules          *[]string           `json:"modules"`
-		AlwaysOn         map[string][]string `json:"always_on_modules"`
-		AvailableModules *[]struct {
-			Name   *string `json:"name"`
-			CanRun *bool   `json:"can_run"`
-			Error  *string `json:"error_string"`
-		} `json:"available_modules"`
+	modules, err := harness.CheckBaselineMGRModules([]byte(data))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal(data, &native); err != nil || native.Available == nil || !*native.Available || native.ActiveGID == nil || *native.ActiveGID == 0 || native.Modules == nil || native.AlwaysOn == nil || native.AvailableModules == nil {
-		t.Fatal("strict native active manager module catalog unavailable", err)
-	}
-	required := map[string]bool{"volumes": true, "rbd_support": true, "mirroring": true}
-	for _, name := range *native.Modules {
-		if name == "" {
-			t.Fatal("empty enabled manager module name")
-		}
-		required[name] = true
-	}
-	// The native map publishes release sets; checking their union is bounded
-	// and retains every always-on component published by this pinned release.
-	if len(native.AlwaysOn) == 0 {
-		t.Fatal("native always-on manager release sets unavailable")
-	}
-	for _, names := range native.AlwaysOn {
-		if names == nil {
-			t.Fatal("null native always-on release set")
-		}
-		for _, name := range names {
-			if name == "" {
-				t.Fatal("empty native always-on module name")
-			}
-			required[name] = true
-		}
-	}
-	seen := map[string]bool{}
-	selected := map[string]bool{}
-	for _, module := range *native.AvailableModules {
-		if module.Name == nil || *module.Name == "" || module.CanRun == nil || module.Error == nil || seen[*module.Name] {
-			t.Fatal("strict native manager available-module catalog malformed")
-		}
-		seen[*module.Name] = true
-		if required[*module.Name] {
-			if !*module.CanRun || *module.Error != "" {
-				t.Fatalf("observed required manager module/dependency failure; stop for fixed image-policy classification: module=%s can_run=%t error=%s", *module.Name, *module.CanRun, *module.Error)
-			}
-			selected[*module.Name] = true
-		}
-	}
-	for name := range required {
-		if !selected[name] {
-			t.Fatalf("observed required manager module absent from catalog; stop for fixed image-policy classification: %s", name)
-		}
-	}
-	encoded, _ := json.Marshal(selected)
-	t.Logf("RBD_NAMESPACE_IMAGE_MODULES role=%s phase=%s active_gid=%d can_run=%s", role, phase, *native.ActiveGID, encoded)
+	encoded, _ := json.Marshal(modules.Runnable)
+	t.Logf("RBD_NAMESPACE_IMAGE_MODULES role=%s phase=%s active_gid=%d can_run=%s absent_enabled=%v", role, phase, modules.ActiveGID, encoded, modules.AbsentEnabled)
 }
 
 func rbdScopedImageFullCID(cid string) bool {

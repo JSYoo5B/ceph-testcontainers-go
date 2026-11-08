@@ -415,7 +415,12 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   `Observer.WaitMGRModuleReady` knows only built-in modules; probe a module of
   your own through its own command. The Dashboard, which the official image
   ships and essential does not, is prepared by the
-  [`dashboard`](../../dashboard/README.md) package.
+  [`dashboard`](../../dashboard/README.md) package. The prometheus module
+  that `Observer.ManagerMetrics` scrapes is not a baseline module either.
+- The enabled list of `ceph mgr dump` also names the release's
+  `mgr_initial_modules` defaults (iostat, nfs and nvmeof since Squid). The
+  essential role need not ship them; a manager without them stays
+  `HEALTH_OK`, and `Observer.MGRModules` lists them as enabled.
 
 `TestMGRImageOfficialSlot`, `TestMGRImageWithoutEssentialManager` and
 `TestMGRImageConsumerModule` (batch `mgr_image`) run the official image in the

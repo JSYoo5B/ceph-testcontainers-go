@@ -80,6 +80,19 @@ print(len(body))`, metrics)
 	}
 }
 
+// newPrometheusCluster starts a service cluster whose managers run the
+// official image of the essential image's release, with the integration
+// images for the other daemons. The prometheus module is not a baseline
+// module of the essential role, so a role image need not ship it; the
+// official image does.
+func newPrometheusCluster(t *testing.T, ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
+	t.Helper()
+	images := harness.IntegrationImageSet(t)
+	images.MGR = officialMGRImage(t, ctx, mgrImageDocker(t, ctx), essentialBase(images))
+	opts = append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), harness.FunctionalOSDConfig(t)}, opts...)
+	return harness.NewServiceClusterWithOptions(t, "", opts...)
+}
+
 // testManagerWatch stops the active one of two managers and observes the
 // standby take over with its own GID, advertise the Prometheus service from
 // its own address, and the stopped manager register again as a standby with
@@ -89,7 +102,7 @@ print(len(body))`, metrics)
 func testManagerWatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(2)))
+	cluster, client := newPrometheusCluster(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(2)))
 	observer := harness.ObserveCluster(cluster)
 	managers := clusteraccess.Managers(t, cluster)
 	if len(managers) != 2 {
