@@ -125,7 +125,7 @@ func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multis
 					t.Fatalf("native group identity/membership differs: %s", want.Name)
 				}
 				for _, zone := range want.Zones {
-					endpoint := rgwPeriodEndpoint(t, ctx, zone, host)
+					endpoint := rgwAdvertisedEndpoint(t, ctx, zone, host)
 					if zone.Name == want.MasterZone && (group.MasterZone != zone.ID || !rgwPeriodHasEndpoint(group.Endpoints, zone.PeerEndpoint, endpoint)) {
 						t.Fatal("native local group master/endpoint differs")
 					}

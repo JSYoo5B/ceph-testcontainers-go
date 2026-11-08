@@ -77,7 +77,7 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	for _, zone := range zones {
 		rgwAssertSingleRegionPeriod(t, ctx, multisite, zone.Name, zones, host)
 	}
-	t.Logf("S3 endpoints source=%s destination=%s; daemon endpoints source=%s destination=%s; committed period master and zone endpoints verified", sourceEndpoint, destinationEndpoint, sourcePeer, destinationPeer)
+	t.Logf("S3 endpoints source=%s destination=%s; advertised daemon endpoints source=%s destination=%s; committed master and zone endpoint metadata checked", sourceEndpoint, destinationEndpoint, sourcePeer, destinationPeer)
 	sourceS3 := harness.S3HTTPClient{Endpoint: sourceEndpoint, AccessKey: sourceRGW.AccessKey, SecretKey: sourceRGW.SecretKey, Region: sourceRGW.Region, HTTP: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
 	destinationS3.Endpoint = destinationEndpoint

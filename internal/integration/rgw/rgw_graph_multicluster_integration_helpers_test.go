@@ -102,7 +102,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	clients := make([]harness.S3HTTPClient, len(zones))
 	for i, zone := range zones {
 		if zone.ID == "" || ids[zone.ID] || zone.PeerEndpoint == "" || peers[zone.PeerEndpoint] {
-			t.Fatalf("zone identity/listener is not distinct: %+v", zone)
+			t.Fatalf("zone identity/advertised endpoint is not distinct: %+v", zone)
 		}
 		ids[zone.ID], peers[zone.PeerEndpoint] = true, true
 		rgwAssertSingleRegionPeriod(t, ctx, fixture, zone.Name, zones, host)
@@ -196,7 +196,7 @@ func rgwAssertSingleRegionPeriod(t *testing.T, ctx context.Context, fixture *mul
 		t.Fatalf("native zone count/master mismatch in %s", name)
 	}
 	for _, want := range expected {
-		endpoint := rgwPeriodEndpoint(t, ctx, want, host)
+		endpoint := rgwAdvertisedEndpoint(t, ctx, want, host)
 		found := false
 		for _, actual := range group.Zones {
 			if actual.Name == want.Name && actual.ID == want.ID && rgwPeriodHasEndpoint(actual.Endpoints, want.PeerEndpoint, endpoint) {
@@ -209,7 +209,9 @@ func rgwAssertSingleRegionPeriod(t *testing.T, ctx context.Context, fixture *mul
 	}
 }
 
-func rgwPeriodEndpoint(t *testing.T, ctx context.Context, zone multisite.Zone, host bool) string {
+// In host mode DaemonEndpoint reports the gateway's configured address and
+// port. Compare those advertised values with the committed period.
+func rgwAdvertisedEndpoint(t *testing.T, ctx context.Context, zone multisite.Zone, host bool) string {
 	t.Helper()
 	if !host {
 		return zone.PeerEndpoint
@@ -221,6 +223,6 @@ func rgwPeriodEndpoint(t *testing.T, ctx context.Context, zone multisite.Zone, h
 	return endpoint
 }
 
-func rgwPeriodHasEndpoint(committed []string, reserved, listener string) bool {
-	return listener != "" && listener == reserved && len(committed) == 1 && committed[0] == listener
+func rgwPeriodHasEndpoint(committed []string, reserved, advertised string) bool {
+	return advertised != "" && advertised == reserved && len(committed) == 1 && committed[0] == advertised
 }
