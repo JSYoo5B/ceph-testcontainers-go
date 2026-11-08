@@ -143,20 +143,40 @@ func TestRGWBackendRoleAbsenceAcceptsOnlyNativeENOENT(t *testing.T) {
 
 func TestWrongKMSCARejectsAuditFromWrongOrUnknownPeer(t *testing.T) {
 	const good, bad = "192.0.2.10", "192.0.2.11"
-	request := func(addr string) []byte {
-		data, err := json.Marshal(map[string]any{"type": "request", "auth": map[string]any{"policies": []string{"rgw-read-owned"}},
-			"request": map[string]string{"operation": "read", "path": "tc/data/allowed", "remote_address": addr}})
+	request := func(addr string, policies ...string) []byte {
+		event := map[string]any{"type": "request", "request": map[string]string{
+			"operation": "read", "path": "tc/data/allowed", "remote_address": addr,
+		}}
+		if len(policies) > 0 {
+			event["auth"] = map[string]any{"policies": policies}
+		}
+		data, err := json.Marshal(event)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return append(data, '\n')
 	}
-	if err := rgwKMSAuditSources(request(good), good, bad); err != nil {
+	trusted := request(good, "rgw-read-owned")
+	if err := rgwKMSAuditSources(trusted, good, bad); err != nil {
 		t.Fatal(err)
 	}
-	for _, audit := range [][]byte{nil, request(""), request(bad), append(request(good), request(bad)...)} {
-		if rgwKMSAuditSources(audit, good, bad) == nil {
-			t.Fatal("audit attributed a wrong or missing peer to the trusted gateway")
-		}
+	for _, tc := range []struct {
+		name   string
+		events [][]byte
+	}{
+		{"empty audit", nil},
+		{"trusted without auth", [][]byte{request(good)}},
+		{"trusted with other policy", [][]byte{request(good, "other-policy")}},
+		{"missing peer", [][]byte{request("", "rgw-read-owned")}},
+		{"wrong peer without auth", [][]byte{trusted, request(bad)}},
+		{"wrong peer with other policy", [][]byte{trusted, request(bad, "other-policy")}},
+		{"wrong peer with expected policy", [][]byte{trusted, request(bad, "rgw-read-owned")}},
+		{"unknown peer with expected policy", [][]byte{trusted, request("192.0.2.40", "rgw-read-owned")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if rgwKMSAuditSources(bytes.Join(tc.events, nil), good, bad) == nil {
+				t.Fatal("accepted a wrong-CA request or an invalid positive control")
+			}
+		})
 	}
 }

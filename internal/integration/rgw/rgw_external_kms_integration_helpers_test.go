@@ -66,15 +66,16 @@ func rgwExternalKMS(t *testing.T) {
 	f.Close(t)
 }
 
-// rgwKMSAuditSources attributes every attempt on the selected key to the
-// trusted gateway, including requests for which Vault never sent a response.
+// rgwKMSAuditSources rejects every selected-key read from the wrong-CA peer,
+// including attempts with no authenticated identity or response. The positive
+// control counts the trusted gateway's expected token policy separately.
 func rgwKMSAuditSources(data []byte, trusted, wrong string) error {
 	good, err := netip.ParseAddr(trusted)
 	if err != nil {
 		return errors.New("trusted gateway address unavailable")
 	}
 	bad, err := netip.ParseAddr(wrong)
-	if err != nil || good == bad {
+	if err != nil || good.Unmap() == bad.Unmap() {
 		return errors.New("gateways need distinct Vault peers")
 	}
 	reads := 0
@@ -93,15 +94,22 @@ func rgwKMSAuditSources(data []byte, trusted, wrong string) error {
 		if json.Unmarshal(line, &event) != nil {
 			return errors.New("malformed Vault audit record")
 		}
-		if event.Type != "request" || event.Request.Path != "tc/data/allowed" || event.Request.Operation != "read" ||
-			!slices.Equal(event.Auth.Policies, []string{"rgw-read-owned"}) {
+		if event.Type != "request" || event.Request.Path != "tc/data/allowed" || event.Request.Operation != "read" {
 			continue
 		}
 		peer, err := netip.ParseAddr(event.Request.Remote)
-		if err != nil || peer.Unmap() != good.Unmap() {
-			return errors.New("Vault received a selected-key request from outside the trusted gateway")
+		if err != nil {
+			return errors.New("Vault selected-key request has no usable peer address")
 		}
-		reads++
+		if peer.Unmap() == bad.Unmap() {
+			return errors.New("Vault received a selected-key request from the wrong-CA gateway")
+		}
+		if slices.Equal(event.Auth.Policies, []string{"rgw-read-owned"}) {
+			if peer.Unmap() != good.Unmap() {
+				return errors.New("Vault received the expected token policy from an unexpected peer")
+			}
+			reads++
+		}
 	}
 	if reads == 0 {
 		return errors.New("no Vault read attributed to the trusted gateway")
