@@ -627,6 +627,15 @@ func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group
 	return data, err
 }
 
+// nativeAbsentError is a radosgw-admin failure with exit status 2 (ENOENT)
+// and no output: the command found no such entry, for example `bucket stats`
+// of a bucket that the zone has not imported. Callers that read it as an
+// absent entry test for it with errors.As; for every other caller it is the
+// failure it wraps.
+type nativeAbsentError struct{ error }
+
+func (e nativeAbsentError) Unwrap() error { return e.error }
+
 func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -649,8 +658,12 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 		return nil, err
 	}
 	if code != 0 {
-		return nil, clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
+		err := clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
 			servicehook.NativeFailure(args[0], code, nil, stderr.Bytes()))
+		if code == 2 && stdout.Len() == 0 {
+			return nil, nativeAbsentError{err}
+		}
+		return nil, err
 	}
 	if status {
 		warnings := strings.ToLower(stderr.String())

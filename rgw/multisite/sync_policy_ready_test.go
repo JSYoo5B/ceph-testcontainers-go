@@ -21,10 +21,14 @@ import (
 // the existing fake's global caught-up status must not stand in for import.
 type rgwPolicyImportCLI struct {
 	*rgwSyncCLI
-	localPolicy                   map[string]any
-	localPeriod                   map[string]any
-	localBuckets                  map[string]string
-	missingBuckets                map[string]bool
+	localPolicy  map[string]any
+	localPeriod  map[string]any
+	localBuckets map[string]string
+	// missingBuckets answers bucket stats as radosgw-admin does for a bucket
+	// the destination has not imported: exit 2, no output, an error on
+	// stderr. failedBuckets fails the same read with output, which is a
+	// failed read rather than an absent bucket.
+	missingBuckets, failedBuckets map[string]bool
 	policyLagReads, localReads    int
 	localMetadataID, localGroupID string
 	malformedStats                bool
@@ -55,6 +59,15 @@ func policyImportRaw(data string) io.Reader {
 	return bytes.NewReader(stream.Bytes())
 }
 
+func policyImportStderr(data string) io.Reader {
+	var stream bytes.Buffer
+	header := [8]byte{byte(stdcopy.Stderr)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
+	stream.Write(header[:])
+	stream.WriteString(data)
+	return bytes.NewReader(stream.Bytes())
+}
+
 func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if c.onExec != nil {
 		c.onExec(ctx, args)
@@ -69,6 +82,10 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 	if syncTestCommand(args, "bucket", "stats") {
 		name := syncTestFlag(args, "--bucket")
 		if c.missingBuckets[name] {
+			c.calls = append(c.calls, slices.Clone(args))
+			return 2, policyImportStderr("failure: (2002) Unknown error 2002: secret-marker\n"), nil
+		}
+		if c.failedBuckets[name] {
 			c.calls = append(c.calls, slices.Clone(args))
 			return 2, policyImportJSON(map[string]any{"secret": "missing native metadata secret-marker"}), nil
 		}
@@ -217,6 +234,11 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 			}
 			if scenario == "policy" && (!state.PeriodImported || state.PolicyImported || !state.BucketsImported) {
 				t.Fatal("policy lag was confused with period/bucket readiness")
+			}
+			// A destination bucket not imported yet is a stage that the read
+			// reports, not a failed read.
+			if scenario == "destination-bucket" && (!state.PeriodImported || !state.PolicyImported || state.BucketsImported) {
+				t.Fatalf("a destination bucket not imported yet was not reported as the bucket stage: %+v", state)
 			}
 			requirePolicyImportReadOnly(t, cli.calls[before:])
 		})

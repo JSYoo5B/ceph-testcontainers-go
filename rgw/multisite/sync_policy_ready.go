@@ -300,9 +300,17 @@ func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneS
 	return result, false, nil
 }
 
+// policyReadyBucket reports whether the destination has imported bucket. A
+// bucket the destination does not know yet is that stage of the import, not a
+// failed read: `bucket stats` exits 2 with no output until its metadata sync
+// writes the bucket, which can take longer than one read's QueryTimeout.
 func (g *SyncGroup) policyReadyBucket(ctx context.Context, zone *rgwZoneState, bucket SyncBucketIdentity) (bool, bool, error) {
 	f := g.owner
 	data, err := f.syncPolicyAdmin(ctx, zone, g.scope.Zonegroup, "bucket", "stats", "--bucket", syncScopedBucketName(SyncPolicyScope{Bucket: bucket.Name, Tenant: bucket.Tenant}))
+	var absent nativeAbsentError
+	if errors.As(err, &absent) {
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, err
 	}
