@@ -213,11 +213,14 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	if refusal == nil || refusal.Error() != "restore the existing rate-limit override of this scope first" || second == nil {
 		t.Fatalf("overlapping bucket override: %v", refusal)
 	}
+	if policy := readPolicy(bucketScope(limited)...); !equalPolicy(policy, applied) {
+		t.Fatalf("refused overlap changed the native bucket policy before Restore: %v, want %v", policy, applied)
+	}
 	if err := second.Restore(ctx); err != nil {
 		t.Fatalf("restore refused handle: %v", err)
 	}
 	if policy := readPolicy(bucketScope(limited)...); !equalPolicy(policy, applied) {
-		t.Fatalf("overlap changed the active native policy: %v, want %v", policy, applied)
+		t.Fatalf("Restore of the refused overlap changed the native bucket policy: %v, want %v", policy, applied)
 	}
 	// An outside edit is refused instead of overwritten.
 	harness.RGWBackendAdmin(t, ctx, gateway, append([]string{"ratelimit", "set", "--max-read-ops", "5"}, bucketScope(limited)...)...)
