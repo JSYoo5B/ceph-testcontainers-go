@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -110,27 +111,53 @@ func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	return payload
 }
 
-// osdRead reads heldObject as client in ctr with a fresh connection, and
-// returns the exit code and the bytes.
+// freshOSDRead reports the errno from connect separately from a later pool
+// or object read failure. Squid's rados CLI can print only MonClient's
+// method negotiation diagnostic on an authentication refusal.
+const freshOSDRead = `import sys, rados
+user, pool, namespace, name = sys.argv[1:]
+cluster = rados.Rados(rados_id=user, conffile="/etc/ceph/ceph.conf",
+                      conf={"client_mount_timeout":"10", "rados_osd_op_timeout":"10"})
+try:
+    cluster.connect(timeout=10)
+except rados.Error as error:
+    print("connect errno", abs(error.errno or 0))
+    sys.exit(1)
+try:
+    with cluster.open_ioctx(pool) as io:
+        io.set_namespace(namespace)
+        size, _ = io.stat(name)
+        sys.stdout.buffer.write(io.read(name, size))
+finally:
+    cluster.shutdown()
+`
+
+// osdRead returns the bytes from a fresh librados client or its connect
+// verdict. Only stdout carries the probe result. Ceph writes logs to stderr.
 func osdRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, client *ceph.ClientConfig) (int, []byte) {
 	t.Helper()
-	code, reader, err := ctr.Exec(ctx, []string{"sh", "-c", `rados --id "$1" --client_mount_timeout 10 -p "$2" -N "$3" get "$4" /tmp/read-object && cat /tmp/read-object`,
-		"sh", client.User(), heldPool, heldNamespace, heldObject}, tcexec.Multiplexed())
+	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", freshOSDRead, client.User(), heldPool, heldNamespace, heldObject})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := io.ReadAll(reader)
-	if err != nil {
+	var out, diagnostics bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &diagnostics, reader); err != nil {
 		t.Fatal(err)
 	}
-	return code, out
+	if code != 0 && !osdReadAuthRefused(code, out.Bytes()) {
+		t.Fatalf("fresh OSD read: exit %d, stdout %q, stderr %s", code, out.Bytes(), diagnostics.Bytes())
+	}
+	return code, out.Bytes()
+}
+
+func osdReadAuthRefused(code int, out []byte) bool {
+	return code == 1 && (string(out) == "connect errno 13\n" || string(out) == "connect errno 1\n")
 }
 
 func requireOSDReadAuthRefusal(t *testing.T, ctx context.Context, holder testcontainers.Container, client *ceph.ClientConfig) {
 	t.Helper()
-	code, out := osdRead(t, ctx, holder, client)
-	if code == 0 || !(bytes.Contains(out, []byte("(13) Permission denied")) || bytes.Contains(out, []byte("(1) Operation not permitted"))) {
-		t.Fatalf("expected an OSD read authentication refusal, got exit %d: %s", code, out)
+	if code, _ := osdRead(t, ctx, holder, client); code == 0 {
+		t.Fatal("the fresh client read the object with the old key")
 	}
 }
 
