@@ -35,7 +35,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := harness.NewServiceCluster(t, opts...)
+			cluster, client := newPrometheusCluster(t, ctx, opts...)
 			managers := clusteraccess.Managers(t, cluster)
 			if len(managers) != 2 {
 				t.Fatalf("two managers expected, got %d", len(managers))
@@ -179,7 +179,7 @@ print(len(body))`, metrics)
 func TestManagerMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2).WithPoolDefaults(1, 1)))
+	cluster, client := newPrometheusCluster(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2).WithPoolDefaults(1, 1)))
 	if _, err := harness.ObserveCluster(cluster).ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("metrics without the module: %v", err)
 	}
