@@ -206,6 +206,15 @@ These affect commands or client libraries you run yourself, not the typed API:
   19.2.5 keeps the copy compressed. See `TestRGWCompressedCopyAccounting`
   (batch `rgw_compressed_copy`, experiment case
   [`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)).
+- **Every release, part reads of a multipart object in a non-default storage
+  class.** When a multipart upload is made in a storage class whose data pool
+  is not the default one, `GET ?partNumber=N` and `HEAD ?partNumber=N`
+  answer `400 InvalidPart` for every valid part, while a whole-object GET
+  returns every byte; a `STANDARD` object answers each part. Squid 19.2.5,
+  Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0 do this. See
+  `TestRGWMultipartPartStorageClass` (batch `rgw_multipart_part_class`,
+  experiment case
+  [`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)).
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
