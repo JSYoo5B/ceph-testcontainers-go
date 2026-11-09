@@ -9,6 +9,8 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // CephFSPeerStatusDirectories reads one reply of `fs mirror peer status
@@ -16,8 +18,12 @@ import (
 // oracles that read the daemon independently of the fixture. Squid and
 // Tentacle print that flat object. Umbrella 21.2.0 nests each entry as
 // {"metrics": {directory: {"peer": {peer: entry}}}}; the nested shape must
-// name only the queried peer.
+// name only the queried peer. Duplicate keys are refused at any depth before
+// map decoding, which keeps only the last one, could hide a directory.
 func CephFSPeerStatusDirectories(data []byte, peerID string) (map[string]json.RawMessage, error) {
+	if err := strictjson.Check(data, strictjson.Options{}); err != nil {
+		return nil, errors.Join(fmt.Errorf("peer status is not strict JSON: %s", data), err)
+	}
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return nil, fmt.Errorf("peer status is not an object: %s", data)

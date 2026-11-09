@@ -42,7 +42,10 @@ func TestCephFSPeerStatusDirectoriesReadsTheNativeShapes(t *testing.T) {
 			t.Fatalf("%s: sync_bytes %s holds 131200", name, entry.Last.Bytes)
 		}
 	}
-	for _, data := range []string{`{"metrics":{"/f":{"peer":{"other":{}}}}}`, `{"metrics":{},"/f":{}}`, `{"metrics":[]}`, `null`} {
+	for _, data := range []string{`{"metrics":{"/f":{"peer":{"other":{}}}}}`, `{"metrics":{},"/f":{}}`, `{"metrics":[]}`, `null`,
+		`{"metrics":{"/f":{"peer":{"` + peer + `":{"state":"idle"}}}},"metrics":{}}`,
+		`{"metrics":{"/f":{"peer":{"` + peer + `":{}}},"/f":{"peer":{}}}}`,
+		`{"/f":{"state":"idle"},"/f":{}}`} {
 		if entries, err := harness.CephFSPeerStatusDirectories([]byte(data), peer); err == nil {
 			t.Errorf("%s: accepted as %v", data, entries)
 		}
