@@ -102,6 +102,20 @@ def cpu_eligible(baseline, architecture, run=read_command):
     return result.returncode == 0 and bool(re.search(r'x86-64-v3 \(supported, searched\)', result.stdout))
 
 
+def role_environment(plan, prepared):
+    """The CEPH_TEST_* variables of the prepared images. A historical
+    aggregate serves the five dependency roles; the published role images
+    serve every role the plan references, optional ones too, and
+    SCENARIO_IMAGE_ROLES names exactly the roles supplied."""
+    if 'reference' in plan['images']:
+        roles = tuple(images.ROLE_ENV)
+    else:
+        roles = images.parse_roles(','.join(plan['images']['references']))
+    environment = {images.DECLARABLE_ROLE_ENV[role]: prepared.get(role, prepared.get('all'))['image_id'] for role in roles}
+    environment.update(SCENARIO_IMAGE_LAYOUT='roles', SCENARIO_IMAGE_ROLES=','.join(roles))
+    return environment
+
+
 def prepare_images(plan, directory, deadline=None):
     directory.mkdir(parents=True, exist_ok=False)
     def remaining(limit):
@@ -152,8 +166,7 @@ def prepare_images(plan, directory, deadline=None):
                 raise RuntimeError('cannot create the owned helper image alias')
         else:
             raise RuntimeError('helper image alias inspection failed')
-    environment = {name: prepared.get(role, prepared.get('all'))['image_id'] for role, name in images.ROLE_ENV.items()}
-    environment.update(SCENARIO_IMAGE_LAYOUT='roles', SCENARIO_IMAGE_ROLES=','.join(images.ROLE_ENV))
+    environment = role_environment(plan, prepared)
     result = {'schema': 1, 'release': plan['release'], 'platform': platform, 'images': prepared,
               'pulls': pulls, 'prepared_environment': environment, 'preparation_passed': True}
     selection.write(directory / 'summary.json', result)
@@ -232,7 +245,7 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
     started = time.monotonic()
     deadline = started + plan['budget_seconds'] if deadline is None else deadline
     environment = tags.go_environment()
-    for key in images.ROLE_ENV.values():
+    for key in images.DECLARABLE_ROLE_ENV.values():
         environment.pop(key, None)
     environment.pop('CEPH_TEST_IMAGE', None)
     # Execute independent fixtures sequentially inside this one allocation.

@@ -38,6 +38,22 @@ class SelectionTests(unittest.TestCase):
     def plan(self, mode='rotate', **kwargs):
         return self.bundle(mode, **kwargs)['runs'][0]
 
+    def test_published_role_plans_supply_the_optional_roles(self):
+        plan = self.plan()
+        self.assertEqual(list(plan['images']['references']), list(executor.images.published_roles('official')))
+        prepared = {role: {'image_id': 'sha256:' + str(number) * 64}
+                    for number, role in enumerate(plan['images']['references'], 1)}
+        environment = executor.role_environment(plan, prepared)
+        self.assertEqual(environment['SCENARIO_IMAGE_ROLES'], 'essential,client,cephfs,rbd-aux,rgw,mgr-modules')
+        self.assertEqual(environment['CEPH_TEST_MGR_MODULES_IMAGE'], prepared['mgr-modules']['image_id'])
+        # A historical aggregate serves the five dependency roles and declares
+        # no optional role, so a test that needs one fails instead of falling
+        # back to the aggregate.
+        aggregate = {'images': {'reference': 'r@sha256:' + 'f' * 64}}
+        environment = executor.role_environment(aggregate, {'all': {'image_id': 'sha256:' + 'f' * 64}})
+        self.assertEqual(environment['SCENARIO_IMAGE_ROLES'], 'essential,client,cephfs,rbd-aux,rgw')
+        self.assertNotIn('CEPH_TEST_MGR_MODULES_IMAGE', environment)
+
     def test_draw_is_small_distinct_and_reproducible(self):
         for mode in ('rotate','discovery'):
             first = self.bundle(mode)

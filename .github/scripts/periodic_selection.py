@@ -60,7 +60,7 @@ def image_identity(release, discovery):
     if discovery:
         return inventory[release]
     return {'eligibility': 'available', 'layout': 'roles',
-            'references': images.image_references('official', 'roles', release),
+            'references': images.image_references('official', 'roles', release, images.published_roles('official')),
             'cpu_baseline': inventory.get(release, {}).get('cpu_baseline', {})}
 
 def entry(profile, tests, network, core=False):

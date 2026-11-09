@@ -38,9 +38,10 @@ class PinTests(unittest.TestCase):
     def test_every_role_tag_of_the_release_is_pinned_to_a_digest(self):
         registry = self.registry()
         digests = campaign.pin("19.2.5", registry)
-        self.assertEqual(list(digests), list(run_image_matrix.ROLE_ENV))
+        # The optional roles of the official variant are pinned too.
+        self.assertEqual(list(digests), list(run_image_matrix.ROLE_ENV) + ["mgr-modules"])
         self.assertEqual([call[4] for call in registry.calls],
-                         list(run_image_matrix.image_references("official", "roles", "19.2.5").values()))
+                         list(run_image_matrix.image_references("official", "roles", "19.2.5", tuple(digests)).values()))
         # The pins are what the image preparation accepts.
         text = ",".join(role + "=" + digest for role, digest in digests.items())
         self.assertEqual(run_image_matrix.parse_digests(text), digests)
@@ -62,7 +63,7 @@ class PinTests(unittest.TestCase):
             lines = output.read_text().splitlines()
             self.assertEqual(lines[0], "release=20.2.4")
             self.assertEqual(sorted(run_image_matrix.parse_digests(lines[1].split("=", 1)[1])),
-                             sorted(run_image_matrix.ROLE_ENV))
+                             sorted(run_image_matrix.published_roles("official")))
             with mock.patch.object(campaign.subprocess, "run", self.registry(broken=["x"])), \
                     mock.patch.object(campaign, "pin", side_effect=RuntimeError("boom")), \
                     mock.patch("sys.stderr", new=io.StringIO()):
