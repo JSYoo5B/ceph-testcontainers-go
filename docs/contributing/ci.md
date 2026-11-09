@@ -168,6 +168,15 @@ Consequences:
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch); uploads `code-tag-coverage` |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck`; uploads `vulncheck-go-<version>` |
 
+golangci-lint is the release that `code.yml` pins by version and archive
+SHA-256. The `golangci-lint` action installs it for this job and for the
+structural review collector: it verifies the archive restored from the
+Actions cache, or downloads it with up to five attempts that retry only
+transport failures and 429/5xx answers, and the lint step itself downloads
+nothing. To move to another release, change both callers' `version` and
+`sha256` (from the release's `checksums.txt`) and the Makefile comment;
+`test_golangci_lint_install.py` checks that they agree.
+
 The Python tests include `test_tag_scenarios.py` for the planner and
 `test_scenario_shards.py`, which checks the workflow files: one workflow per
 category, no test-name lists in workflows, budgets taken from the source,

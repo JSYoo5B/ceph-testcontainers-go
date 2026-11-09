@@ -122,10 +122,17 @@ jobs:
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Vet Go packages
         run: make vet
+      # The pinned release comes from a verified cached archive, so the lint
+      # step makes no download (issue 647).
+      - name: Install the pinned linter
+        uses: ./.github/actions/golangci-lint
+        with:
+          version: v2.15.0
+          sha256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
       - name: Lint Go packages with every build tag
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.15.0
+          install-mode: none
           args: --timeout=15m
       - name: Compile all and explicit optional tags without Docker
         run: make tag-compile
