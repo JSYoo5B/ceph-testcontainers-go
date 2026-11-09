@@ -1,0 +1,72 @@
+name: Bug report
+description: A fixture, API or documentation problem with a reproduction.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Answer "unknown" or "not applicable" for anything that does not apply. Redact hostnames, private addresses, account paths and credentials from all output. Compatibility experiments and research questions go in a blank issue instead (see CONTRIBUTING.md).
+  - type: input
+    id: module
+    attributes:
+      label: Module version or commit
+      description: The ceph-testcontainers-go version from go.mod, or the commit SHA.
+      placeholder: v0.5.0, or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: release
+    attributes:
+      label: Ceph release and image
+      description: The release and the image references or digests the test used (the default image, role images, or another image passed to Run).
+      placeholder: 20.2.4, ceph.DefaultImage
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Host OS and architecture, Docker engine and version (Linux engine or Docker Desktop), and the Go version.
+      placeholder: Linux amd64, Docker 29.x, Go 1.26.x
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network mode
+      options:
+        - bridge
+        - host
+        - both
+        - unknown or not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest test code or command sequence that shows the problem, and how often it happens.
+      render: go
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: The error, the observed state, or the wrong output.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Redacted logs, test output or native command output, trimmed to the lines that show the problem.
+      render: text
+    validations:
+      required: false

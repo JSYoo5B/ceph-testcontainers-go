@@ -79,6 +79,19 @@ requests only repeats CI without adding value. Review is done by an agent, so
 the size of a pull request is not a review problem. Do not split work to avoid
 merge conflicts; resolve conflicts yourself.
 
+## Issue and pull request bodies (for CLI and API authors)
+
+GitHub applies the [bug report form](.github/ISSUE_TEMPLATE/bug_report.yml) and
+the [pull request template](.github/pull_request_template.md) only to web
+submissions. Before creating a bug report or a pull request through `gh` or
+the API, read the applicable file and compose the body from its fields or
+headings, in its order. Write "unknown" for an input you do not have, "not
+applicable" for a check that does not apply, and list unverified cases under
+the template's heading for them; do not drop a field or heading. A
+compatibility experiment or research question keeps the free-form path that
+[CONTRIBUTING.md](CONTRIBUTING.md) describes. The templates are the one
+maintained field list; do not copy their fields here.
+
 ## Release compatibility
 
 Keep published release tags immutable. Make corrections on `main` and publish
