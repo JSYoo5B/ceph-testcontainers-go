@@ -217,6 +217,8 @@ Guides for tasks that span packages:
 
 For contributors:
 
+- [Contributing](CONTRIBUTING.md): reporting a problem, proposing a change,
+  the first checks without Docker and when native evidence is needed.
 - [Testing](docs/contributing/testing.md): running and writing unit and
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
