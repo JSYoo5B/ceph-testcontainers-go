@@ -302,6 +302,25 @@ class MatrixTests(unittest.TestCase):
                 self.assertFalse(self.summary()["preparation_passed"])
                 self.assertEqual(self.summary()["images"], {})
 
+    def test_a_declared_optional_role_is_prepared_and_exported(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "mgr-modules,client,essential",
+                                      "--github-env", str(env_file)]), 0)
+        report = self.summary()
+        self.assertEqual(report["roles"], ["essential", "client", "mgr-modules"])
+        self.assertEqual(list(report["prepared_environment"]),
+                         ["CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_MGR_MODULES_IMAGE"])
+        self.assertEqual(report["prepared_environment"]["CEPH_TEST_MGR_MODULES_IMAGE"], report["images"]["mgr-modules"]["image_id"])
+        self.assertTrue(env_file.read_text().endswith("CEPH_TEST_MGR_MODULES_IMAGE=" + report["images"]["mgr-modules"]["image_id"] + "\n"))
+        # Only the official variant publishes it; another variant refuses the
+        # declaration before it pulls anything.
+        self.output = self.root / "artifacts" / "debian"
+        self.runtime.capture_commands.clear()
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--variant", "debian",
+                                      "--roles", "essential,mgr-modules"]), 1)
+        self.assertIn("publishes no mgr-modules role", self.summary()["error"])
+        self.assertFalse([command for command in self.runtime.capture_commands if command[1:3] == ["image", "inspect"]])
+
     def test_roles_are_validated_before_tools_or_output(self):
         for arguments in (["--prepare-only", "--layout", "roles", "--roles", "client"],
                           ["--prepare-only", "--layout", "roles", "--roles", "essential,essential"],
@@ -660,8 +679,34 @@ class RoleSelectionTests(unittest.TestCase):
                 override = "sha256:" + "f" * 64
                 self.assertEqual(runner.pin_references(refs,{"essential":override})["essential"],runner.REGISTRY+"@"+override)
 
+    def test_mgr_modules_is_an_optional_role_of_the_official_variant(self):
+        self.assertEqual(runner.published_roles("official"), tuple(runner.ROLE_ENV) + ("mgr-modules",))
+        self.assertEqual(runner.published_roles("debian"), tuple(runner.ROLE_ENV))
+        for release in runner.RELEASES:
+            with self.subTest(release=release):
+                pins = runner.published_role_pins(release)
+                self.assertEqual(runner.image_references("official", "roles", release, ("essential", "mgr-modules")),
+                                 {role: runner.REGISTRY + "@" + pins[role] for role in ("essential", "mgr-modules")})
+                for variant in ("debian", "ubuntu"):
+                    with self.assertRaisesRegex(ValueError, "publishes no mgr-modules role"):
+                        runner.image_references(variant, "roles", release, ("essential", "mgr-modules"))
+        # The pins of a variant are exactly the roles it publishes.
+        data = json.loads((SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
+        for variant, change in (("official", lambda pins: pins.pop("mgr-modules")),
+                                ("debian", lambda pins: pins.update({"mgr-modules": "sha256:" + "e" * 64}))):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(runner, "ROOT", Path(directory)):
+                edited = json.loads(json.dumps(data))
+                change(edited["images"]["20.2.4"][variant])
+                (Path(directory) / ".github").mkdir()
+                (Path(directory) / ".github/ceph-role-images.json").write_text(json.dumps(edited))
+                with self.assertRaisesRegex(ValueError, "pins are incomplete"):
+                    runner.published_role_pins("20.2.4", variant)
+
     def test_unknown_role_and_missing_essential_are_refused(self):
         self.assertEqual(runner.parse_arguments([]).roles, tuple(runner.ROLE_ENV))
+        self.assertEqual(runner.parse_arguments(["--layout", "roles", "--prepare-only", "--roles", "essential,mgr-modules"]).roles,
+                         ("essential", "mgr-modules"))
         # Retired and incomplete selections: control and osd are not roles now.
         for roles in ("control", "client", "essential,osd", "essential,client,client"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

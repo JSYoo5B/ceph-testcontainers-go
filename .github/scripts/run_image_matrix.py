@@ -48,6 +48,14 @@ CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
 RELEASE = "20.2.4"
 OFFICIAL_IMAGE = RELEASES[RELEASE]
 ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
+# Optional roles: a batch gets one only by declaring it, and only the listed
+# variants publish it. mgr-modules is the official MGR module bundle that
+# ships the modules outside the essential baseline, such as prometheus.
+OPTIONAL_ROLE_ENV = {"mgr-modules": "CEPH_TEST_MGR_MODULES_IMAGE"}
+OPTIONAL_ROLE_VARIANTS = {"mgr-modules": ("official",)}
+# Every declarable role in contract order: the five dependency roles, then the
+# optional ones.
+DECLARABLE_ROLE_ENV = {**ROLE_ENV, **OPTIONAL_ROLE_ENV}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
 DEFAULT_IMAGE = REGISTRY + "@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 EXPECTED_TESTS = (
@@ -89,7 +97,8 @@ def parse_arguments(argv=None):
     parser.add_argument("--github-env", type=Path,
                         help="Append the resolved role IDs to this file; requires --prepare-only")
     parser.add_argument("--roles",
-                        help="Comma-separated roles to prepare, essential included; default all five dependency roles. "
+                        help="Comma-separated roles to prepare, essential included; default all five dependency roles, "
+                             "never an optional role. "
                              "Requires --prepare-only and --layout roles")
     parser.add_argument("--digests", default="",
                         help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
@@ -118,10 +127,17 @@ def parse_arguments(argv=None):
 def parse_roles(text):
     """Return declared roles in contract order, including its core role."""
     roles = text.split(",")
-    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "essential" not in roles:
-        raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV)
+    if any(role not in DECLARABLE_ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "essential" not in roles:
+        raise ValueError("--roles must list distinct roles of " + ",".join(DECLARABLE_ROLE_ENV)
                          + ", " + "essential" + " included")
-    return tuple(role for role in ROLE_ENV if role in roles)
+    return tuple(role for role in DECLARABLE_ROLE_ENV if role in roles)
+
+
+def published_roles(variant):
+    """The roles a variant publishes: the five dependency roles and the
+    optional roles of that variant, in contract order."""
+    return tuple(role for role in DECLARABLE_ROLE_ENV
+                 if role in ROLE_ENV or variant in OPTIONAL_ROLE_VARIANTS[role])
 
 
 def parse_digests(text):
@@ -129,8 +145,8 @@ def parse_digests(text):
     digests = {}
     for item in filter(None, (text or "").split(",")):
         role, _, digest = item.partition("=")
-        if role not in ROLE_ENV or role in digests or DIGEST.fullmatch(digest) is None:
-            raise ValueError("--digests takes distinct role=sha256:<64 hex> pins of " + ",".join(ROLE_ENV))
+        if role not in DECLARABLE_ROLE_ENV or role in digests or DIGEST.fullmatch(digest) is None:
+            raise ValueError("--digests takes distinct role=sha256:<64 hex> pins of " + ",".join(DECLARABLE_ROLE_ENV))
         digests[role] = digest
     return digests
 
@@ -144,10 +160,12 @@ def pin_references(references, digests):
 
 
 def published_role_pins(release, variant="official"):
-    """Immutable indexes of the published role images."""
+    """Immutable indexes of the published role images: every role the
+    variant publishes and the aggregate, no other."""
     data = json.loads((ROOT / ".github/ceph-role-images.json").read_text())
     pins = data.get("images", {}).get(release, {}).get(variant, {})
-    if (data.get("schema") != 1 or set(pins) != set(ROLE_ENV) | {"all"}
+    if (data.get("schema") != 1 or variant not in ("official", "debian", "ubuntu")
+            or set(pins) != set(published_roles(variant)) | {"all"}
             or any(not isinstance(value, str) or DIGEST.fullmatch(value) is None for value in pins.values())):
         raise ValueError("published role pins are incomplete or invalid for " + release + "/" + variant)
     return pins
@@ -159,6 +177,9 @@ def image_references(variant, layout, release, roles=None):
         raise ValueError("unsupported image matrix cell")
     if layout == "all" and roles != tuple(ROLE_ENV):
         raise ValueError("the all layout serves every role")
+    if not set(roles) <= set(published_roles(variant)):
+        raise ValueError("the " + variant + " variant publishes no " + ",".join(sorted(set(roles) - set(published_roles(variant))))
+                         + " role")
     pins = published_role_pins(release, variant)
     return {role: REGISTRY + "@" + pins[role] for role in (("all",) if layout == "all" else roles)}
 
@@ -245,7 +266,7 @@ def completed_tests(path, module):
 
 def append_role_environment(path, environment, roles=None):
     roles = tuple(ROLE_ENV) if roles is None else roles
-    image_names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
+    image_names = [DECLARABLE_ROLE_ENV[role] for role in DECLARABLE_ROLE_ENV if role in roles]
     names = image_names
     core = "essential"
     if (core not in roles or set(environment) != set(names)
@@ -370,7 +391,7 @@ def main(argv=None):
         summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]
                     for role in args.roles}
-        environment = {ROLE_ENV[role]: image for role, image in selected.items()}
+        environment = {DECLARABLE_ROLE_ENV[role]: image for role, image in selected.items()}
         if args.prepare_only:
             summary["prepared_environment"] = environment
             if args.github_env is not None:
