@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"time"
@@ -301,18 +300,11 @@ func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneS
 	return result, false, nil
 }
 
-// rgwNoSuchBucket is the whole stderr of `radosgw-admin bucket stats` for a
-// bucket the zone does not know: RGW's ERR_NO_SUCH_BUCKET (2002), which libc
-// does not name, with exit status 2 and no stdout. Squid 19.2.5, Tentacle
-// 20.2.4 and Umbrella 21.2.0 print exactly this line.
-var rgwNoSuchBucket = regexp.MustCompile(`\Afailure: \(2002\) Unknown error 2002: ?\n?\z`)
-
-// bucketStatsAbsent reports whether err is that native answer of `bucket
-// stats`. Any other failure, including exit 2 with another diagnostic such as
-// a missing keyring or configuration, is not.
+// bucketStatsAbsent reports whether err is the ERR_NO_SUCH_BUCKET answer of
+// `bucket stats` (rgwNoSuchBucketAnswer).
 func bucketStatsAbsent(err error) bool {
-	var exit nativeExitError
-	return errors.As(err, &exit) && exit.code == 2 && len(exit.stdout) == 0 && rgwNoSuchBucket.Match(exit.stderr)
+	var absent noSuchBucketError
+	return errors.As(err, &absent)
 }
 
 // policyReadyBucket reports whether the destination has imported bucket. A

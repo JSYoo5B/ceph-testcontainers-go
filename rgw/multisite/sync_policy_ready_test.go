@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -389,30 +390,64 @@ func TestRGWBucketSyncPolicyReadyRetriesAFailedMasterRead(t *testing.T) {
 }
 
 // Only the native ERR_NO_SUCH_BUCKET answer of bucket stats is an absent
-// bucket; every other failure stays a failure, and none shows its output.
-func TestBucketStatsAbsentRecognizesOnlyTheNoSuchBucketAnswer(t *testing.T) {
-	exit := func(code int, stdout, stderr string) error {
-		return nativeExitError{error: errors.New("RGW native command exited; output is redacted"), code: code, stdout: []byte(stdout), stderr: []byte(stderr)}
-	}
+// bucket; every other failure stays a failure.
+func TestRGWNoSuchBucketAnswerRecognizesOnlyThatAnswer(t *testing.T) {
 	for name, test := range map[string]struct {
-		err    error
-		absent bool
+		code           int
+		stdout, stderr string
+		absent         bool
 	}{
-		"no such bucket":           {exit(2, "", "failure: (2002) Unknown error 2002: \n"), true},
-		"no such bucket, no space": {exit(2, "", "failure: (2002) Unknown error 2002:"), true},
-		"missing keyring":          {exit(2, "", "auth: unable to find a keyring on /k: (2) No such file or directory\n"), false},
-		"ENOENT of another entry":  {exit(2, "", "ERROR: can't get key: (2) No such file or directory\n"), false},
-		"extra diagnostic":         {exit(2, "", "warning\nfailure: (2002) Unknown error 2002: \n"), false},
-		"output":                   {exit(2, "{}", "failure: (2002) Unknown error 2002: \n"), false},
-		"other status":             {exit(1, "", "failure: (2002) Unknown error 2002: \n"), false},
-		"not an exit":              {errors.New("RGW native command failed; output is redacted"), false},
-		"nil":                      {nil, false},
+		"no such bucket":           {2, "", "failure: (2002) Unknown error 2002: \n", true},
+		"no such bucket, no space": {2, "", "failure: (2002) Unknown error 2002:", true},
+		"missing keyring":          {2, "", "auth: unable to find a keyring on /k: (2) No such file or directory\n", false},
+		"ENOENT of another entry":  {2, "", "ERROR: can't get key: (2) No such file or directory\n", false},
+		"extra diagnostic":         {2, "", "warning\nfailure: (2002) Unknown error 2002: \n", false},
+		"output":                   {2, "{}", "failure: (2002) Unknown error 2002: \n", false},
+		"other status":             {1, "", "failure: (2002) Unknown error 2002: \n", false},
 	} {
-		if got := bucketStatsAbsent(test.err); got != test.absent {
+		if got := rgwNoSuchBucketAnswer(test.code, []byte(test.stdout), []byte(test.stderr)); got != test.absent {
 			t.Errorf("%s: absent %t, want %t", name, got, test.absent)
 		}
-		if test.err != nil && strings.Contains(test.err.Error(), "2002") {
-			t.Errorf("%s: the error shows native output: %v", name, test.err)
+	}
+	if bucketStatsAbsent(nil) || bucketStatsAbsent(errors.New("RGW native command failed; output is redacted")) {
+		t.Fatal("an error without the decision read as an absent bucket")
+	}
+}
+
+// A failed native command returns no byte of its output in any formatting of
+// the error chain, the absent-bucket decision included.
+func TestRGWNativeFailureKeepsNoOutput(t *testing.T) {
+	_, cli, _ := newRGWPolicyImportFixture(t)
+	const marker = "secret-marker"
+	// The Go-syntax bytes of the marker, as %#v prints a byte slice field.
+	goBytes := strings.TrimSuffix(strings.TrimPrefix(fmt.Sprintf("%#v", []byte(marker)), "[]byte{"), "}")
+	args := []string{"radosgw-admin", "--zone-id", "dest-id", "--format", "json", "bucket", "stats", "--bucket", "bucket"}
+	for name, set := range map[string]func(){
+		"absent": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = map[string]bool{"bucket": true}, nil, nil
+		},
+		"stderr only": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = nil, map[string]bool{"bucket": true}, nil
+		},
+		"output": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = nil, nil, map[string]bool{"bucket": true}
+		},
+	} {
+		set()
+		_, err := syncNativeExecMode(t.Context(), cli, false, args...)
+		if err == nil {
+			t.Fatalf("%s: no failure", name)
+		}
+		if bucketStatsAbsent(err) != (name == "absent") {
+			t.Fatalf("%s: absent decision %t", name, bucketStatsAbsent(err))
+		}
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+			for chained := error(err); chained != nil; chained = errors.Unwrap(chained) {
+				if text := fmt.Sprintf(verb, chained); strings.Contains(text, marker) || strings.Contains(text, fmt.Sprintf("%x", marker)) ||
+					strings.Contains(text, "2002") || strings.Contains(text, goBytes) {
+					t.Fatalf("%s: %s of %T shows native output: %s", name, verb, chained, text)
+				}
+			}
 		}
 	}
 }
