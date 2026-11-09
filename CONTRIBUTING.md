@@ -39,8 +39,19 @@ Before writing code, read:
 
 ## First checks, without Docker
 
-These run on any machine with Go, Python 3 and
-[golangci-lint](https://golangci-lint.run/) and start no container:
+These start no container. They need:
+
+- GNU make (or a compatible `make`);
+- Go 1.21 or newer, which downloads the `toolchain` version that
+  [go.mod](go.mod) names when the installed one is older (unless
+  `GOTOOLCHAIN=local` is set);
+- a C toolchain that cgo can use (`gcc` or `clang` as `CC`) on a platform the
+  race detector supports, such as linux/amd64, linux/arm64, darwin/amd64 or
+  darwin/arm64: `make check` runs `make race`, which sets `CGO_ENABLED=1` and
+  fails to build `runtime/cgo` without it;
+- Python 3;
+- [golangci-lint](https://golangci-lint.run/) v2, at the version the Code
+  checks workflow pins (`.github/workflows/code.yml`).
 
 ```sh
 make check   # unit tests, race detector, vet and tagged compilation
