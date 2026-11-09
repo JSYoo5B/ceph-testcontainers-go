@@ -3,9 +3,12 @@
 package rbd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"slices"
 	"strings"
@@ -41,8 +44,8 @@ type localityRead struct {
 	Effective        string
 	Elapsed          time.Duration
 	SHA256           string
-	// Evidence is each OSD's op history and read counter change around the
-	// read, and Servers the OSDs it attributes the read to.
+	// Evidence is each OSD's op history, replies and read counter change
+	// around the read, and Servers the OSDs it attributes the read to.
 	Evidence map[int]harness.RBDReadEvidence
 	Servers  []int
 }
@@ -54,11 +57,12 @@ type localityRead struct {
 // client is in a. The boundary delays only the client's packets to and from
 // the zone b OSD. Each read is a fresh rbd process without cache, and the
 // OSD that served it is the one whose op history gained a read of that data
-// object or whose read counters returned the whole object (issue 650: on
-// some runs the serving replica recorded no history entry); a replica read
-// must also show in the replica's replica_read_served counter where the
-// release reports it. The bytes, the acting set and the shaping are checked
-// around it.
+// object or whose debug_ms 1 log shows a reply to a read request of it
+// (issue 650: on some runs the serving replica recorded no history entry).
+// The OSD read counters only bound that evidence, and a replica read must
+// also show in the replica's replica_read_served counter where the release
+// reports it. The bytes, the acting set and the shaping are checked around
+// it.
 func testRBDZoneLocality(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
@@ -229,7 +233,7 @@ func testRBDZoneLocality(t *testing.T) {
 	}
 	targets := []*ceph.OSDContainer{osdA, osdB}
 	for i, read := range reads {
-		got := localityReadOnce(t, ctx, client, targets, object, read.policy, read.location, i)
+		got := localityReadOnce(t, ctx, client, clientMember.PublicAddress, targets, object, read.policy, read.location, i)
 		t.Logf("read %d: policy %s, declared location %q, effective %s: %v, sha256 %s; served by OSDs %v",
 			i, read.policy, read.location, got.Effective, got.Elapsed.Round(time.Millisecond), got.SHA256, got.Servers)
 		if got.SHA256 != want {
@@ -333,14 +337,48 @@ func newReads(before, after map[string]string) []string {
 	return added
 }
 
+// localityLog is an OSD's whole container log.
+func localityLog(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) []byte {
+	t.Helper()
+	logs, err := osd.Logs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(logs)
+	if err := errors.Join(err, logs.Close()); err != nil {
+		t.Fatalf("osd.%d log: %v", osd.ID, err)
+	}
+	return data
+}
+
+// localityDebugMS sets the OSD's debug_ms through its admin socket and
+// returns the value it had.
+func localityDebugMS(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, value string) string {
+	t.Helper()
+	out, err := osd.AdminSocket(ctx, "config", "get", "debug_ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(out, &got); err != nil || got["debug_ms"] == "" {
+		t.Fatalf("osd.%d debug_ms: %s %v", osd.ID, out, err)
+	}
+	if _, err := osd.AdminSocket(ctx, "config", "set", "debug_ms", value); err != nil {
+		t.Fatal(err)
+	}
+	return got["debug_ms"]
+}
+
 // localityReadOnce reads the image with a fresh rbd process without cache,
 // with policy and the declared CRUSH location, and attributes its data read
-// with harness.RBDReadServers. When a serving OSD's history has no entry for
-// the read, the history is observed again for a bounded time, and the raw
-// entries that name the object are logged from before, after and the later
-// observation, so that a delayed, unrecorded or differently described
-// request can be told apart.
-func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.Container, osds []*ceph.OSDContainer, object, policy, location string, n int) localityRead {
+// with harness.RBDReadServers. Each OSD logs its messages at debug_ms 1 for
+// the read, and the log window after the read gives the replies to the
+// client's reads of the object. When an OSD replied without a history entry, or no OSD has
+// either, the history is observed again for a bounded time; entries that
+// appear then count, and the raw entries that name the object are logged
+// from before, after and the later observation, so that a delayed,
+// unrecorded or differently described request can be told apart.
+func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.Container, clientAddr netip.Addr, osds []*ceph.OSDContainer, object, policy, location string, n int) localityRead {
 	t.Helper()
 	args := []string{"--rbd_cache=false", "--rbd_read_from_replica_policy=" + policy}
 	if location != "" {
@@ -352,7 +390,21 @@ func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.C
 		effective = append(effective, key+"="+strings.TrimSpace(value))
 	}
 	before := map[int]localityOSDView{}
+	logs := map[int][]byte{}
 	for _, osd := range osds {
+		previous := localityDebugMS(t, ctx, osd, "1/5")
+		restored := false
+		restore := func(ctx context.Context) {
+			if !restored {
+				restored = true
+				if _, err := osd.AdminSocket(ctx, "config", "set", "debug_ms", previous); err != nil {
+					t.Errorf("osd.%d: restore debug_ms %s: %v", osd.ID, previous, err)
+				}
+			}
+		}
+		t.Cleanup(func() { restore(context.Background()) })
+		defer restore(ctx)
+		logs[osd.ID] = localityLog(t, ctx, osd)
 		before[osd.ID] = localityObserve(t, ctx, osd, object)
 	}
 	path := fmt.Sprintf("/tmp/locality-read-%d", n)
@@ -364,31 +416,49 @@ func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.C
 	after := map[int]localityOSDView{}
 	for _, osd := range osds {
 		after[osd.ID] = localityObserve(t, ctx, osd, object)
-		read.Evidence[osd.ID] = harness.RBDReadEvidence{History: newReads(before[osd.ID].Reads, after[osd.ID].Reads), Before: before[osd.ID].Counters, After: after[osd.ID].Counters}
+		full := localityLog(t, ctx, osd)
+		if !bytes.HasPrefix(full, logs[osd.ID]) {
+			t.Fatalf("read %d: osd.%d log of %d bytes does not continue the %d bytes before the read", n, osd.ID, len(full), len(logs[osd.ID]))
+		}
+		window := full[len(logs[osd.ID]):]
+		replies, err := harness.RBDDataReadReplies(window, object, clientAddr)
+		if err != nil {
+			t.Fatalf("read %d: osd.%d log: %v", n, osd.ID, err)
+		}
+		for line := range strings.SplitSeq(string(window), "\n") {
+			if strings.Contains(line, object) && strings.Contains(line, "osd_op_reply(") {
+				t.Logf("read %d: osd.%d log: %s", n, osd.ID, line)
+			}
+		}
+		read.Evidence[osd.ID] = harness.RBDReadEvidence{History: newReads(before[osd.ID].Reads, after[osd.ID].Reads), Replies: replies, Before: before[osd.ID].Counters, After: after[osd.ID].Counters}
 	}
-	var err error
-	if read.Servers, err = harness.RBDReadServers(read.Evidence, localitySize); err != nil {
-		t.Fatalf("read %d: %v", n, err)
+	none := true
+	for _, e := range read.Evidence {
+		none = none && len(e.History) == 0 && len(e.Replies) == 0
 	}
 	for _, osd := range osds {
 		e := read.Evidence[osd.ID]
-		replica, reported := e.ReplicaServed()
-		t.Logf("read %d: osd.%d history gained %v; returned %d bytes in %d reads; replica reads served %d (reported %v)",
-			n, osd.ID, e.History, e.OutBytes(), e.After.OpR-e.Before.OpR, replica, reported)
-	}
-	var unrecorded []*ceph.OSDContainer
-	for _, osd := range osds {
-		if slices.Contains(read.Servers, osd.ID) && len(read.Evidence[osd.ID].History) == 0 {
-			unrecorded = append(unrecorded, osd)
+		if len(e.History) > 0 || (len(e.Replies) == 0 && !none) {
+			continue
 		}
-	}
-	for _, osd := range unrecorded {
 		late, err := harness.Observe(ctx, 10*time.Second, 5*time.Second, time.Second, func(probeCtx context.Context) (localityOSDView, bool, error) {
 			view := localityObserve(t, probeCtx, osd, object)
 			return view, len(newReads(before[osd.ID].Reads, view.Reads)) > 0, nil
 		})
-		t.Logf("read %d: osd.%d served by its counters without a history entry; history entries naming %s before %q, after %q; after %v more, %q (a read appeared: %v)",
-			n, osd.ID, object, before[osd.ID].Raw, after[osd.ID].Raw, late.Elapsed.Round(time.Second), late.Value.Raw, err == nil)
+		e.History = newReads(before[osd.ID].Reads, late.Value.Reads)
+		read.Evidence[osd.ID] = e
+		t.Logf("read %d: osd.%d had no history entry after the read (replies %+v); history entries naming %s before %q, after %q; after %v more, %q (a read appeared: %v)",
+			n, osd.ID, e.Replies, object, before[osd.ID].Raw, after[osd.ID].Raw, late.Elapsed.Round(time.Second), late.Value.Raw, err == nil)
+	}
+	for _, osd := range osds {
+		e := read.Evidence[osd.ID]
+		replica, reported := e.ReplicaServed()
+		t.Logf("read %d: osd.%d history gained %v; replied %+v; returned %d bytes in %d reads; replica reads served %d (reported %v)",
+			n, osd.ID, e.History, e.Replies, e.OutBytes(), e.After.OpR-e.Before.OpR, replica, reported)
+	}
+	var err error
+	if read.Servers, err = harness.RBDReadServers(read.Evidence, localitySize); err != nil {
+		t.Fatalf("read %d: %v", n, err)
 	}
 	return read
 }
