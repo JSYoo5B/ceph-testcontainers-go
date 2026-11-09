@@ -159,6 +159,15 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := (&copy).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The removal reaches the destination through its metadata sync, like
+	// any other policy change. Write the object it must exclude only after
+	// the destination's bucket instance no longer carries the group, so the
+	// absence below does not depend on that import winning a race with the
+	// object's data sync.
+	watchOwnedBucketPolicyImport(t, ctx, bucket, nil)
+	if status, err := (&copy).WaitBucketPolicyReady(ctx, "destination"); err != nil || !status.Imported {
+		t.Fatalf("a copy of the removed handle did not observe the imported removal: %+v %v", status, err)
+	}
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/reports/after-removal", payload, http.StatusOK)
 	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/reports/after-removal"})
 	if got := destinationS3.Request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {
