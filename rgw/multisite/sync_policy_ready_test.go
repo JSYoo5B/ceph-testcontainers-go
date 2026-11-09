@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -21,13 +22,18 @@ import (
 // the existing fake's global caught-up status must not stand in for import.
 type rgwPolicyImportCLI struct {
 	*rgwSyncCLI
-	localPolicy                   map[string]any
-	localPeriod                   map[string]any
-	localBuckets                  map[string]string
-	missingBuckets                map[string]bool
-	policyLagReads, localReads    int
-	localMetadataID, localGroupID string
-	malformedStats                bool
+	localPolicy  map[string]any
+	localPeriod  map[string]any
+	localBuckets map[string]string
+	// missingBuckets answers bucket stats as radosgw-admin does for a bucket
+	// the destination has not imported: exit 2, no output and the
+	// ERR_NO_SUCH_BUCKET line on stderr. failedBuckets fails the same read
+	// with output, and stderrFailedBuckets with exit 2, no output and another
+	// diagnostic; both are failed reads rather than an absent bucket.
+	missingBuckets, failedBuckets, stderrFailedBuckets map[string]bool
+	policyLagReads, localReads                         int
+	localMetadataID, localGroupID                      string
+	malformedStats                                     bool
 	// rawStats, when set, is served verbatim as the destination bucket stats,
 	// so a test can send repeated or case-aliased keys a map cannot hold.
 	rawStats          string
@@ -55,6 +61,15 @@ func policyImportRaw(data string) io.Reader {
 	return bytes.NewReader(stream.Bytes())
 }
 
+func policyImportStderr(data string) io.Reader {
+	var stream bytes.Buffer
+	header := [8]byte{byte(stdcopy.Stderr)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
+	stream.Write(header[:])
+	stream.WriteString(data)
+	return bytes.NewReader(stream.Bytes())
+}
+
 func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if c.onExec != nil {
 		c.onExec(ctx, args)
@@ -69,6 +84,14 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 	if syncTestCommand(args, "bucket", "stats") {
 		name := syncTestFlag(args, "--bucket")
 		if c.missingBuckets[name] {
+			c.calls = append(c.calls, slices.Clone(args))
+			return 2, policyImportStderr("failure: (2002) Unknown error 2002: \n"), nil
+		}
+		if c.stderrFailedBuckets[name] {
+			c.calls = append(c.calls, slices.Clone(args))
+			return 2, policyImportStderr("monclient: unable to find a keyring on /etc/ceph/secret-marker.keyring: (2) No such file or directory\n"), nil
+		}
+		if c.failedBuckets[name] {
 			c.calls = append(c.calls, slices.Clone(args))
 			return 2, policyImportJSON(map[string]any{"secret": "missing native metadata secret-marker"}), nil
 		}
@@ -218,6 +241,11 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 			if scenario == "policy" && (!state.PeriodImported || state.PolicyImported || !state.BucketsImported) {
 				t.Fatal("policy lag was confused with period/bucket readiness")
 			}
+			// A destination bucket not imported yet is a stage that the read
+			// reports, not a failed read.
+			if scenario == "destination-bucket" && (!state.PeriodImported || !state.PolicyImported || state.BucketsImported) {
+				t.Fatalf("a destination bucket not imported yet was not reported as the bucket stage: %+v", state)
+			}
 			requirePolicyImportReadOnly(t, cli.calls[before:])
 		})
 	}
@@ -358,5 +386,68 @@ func TestRGWBucketSyncPolicyReadyRetriesAFailedMasterRead(t *testing.T) {
 	state, err := g.WaitBucketPolicyReady(ctx, "destination")
 	if err != nil || !state.Imported || !failed || cli.remainingReadFailures != 0 {
 		t.Fatalf("a failed master read ended the wait: %+v %v", state, err)
+	}
+}
+
+// Only the native ERR_NO_SUCH_BUCKET answer of bucket stats is an absent
+// bucket; every other failure stays a failure.
+func TestRGWNoSuchBucketAnswerRecognizesOnlyThatAnswer(t *testing.T) {
+	for name, test := range map[string]struct {
+		code           int
+		stdout, stderr string
+		absent         bool
+	}{
+		"no such bucket":           {2, "", "failure: (2002) Unknown error 2002: \n", true},
+		"no such bucket, no space": {2, "", "failure: (2002) Unknown error 2002:", true},
+		"missing keyring":          {2, "", "auth: unable to find a keyring on /k: (2) No such file or directory\n", false},
+		"ENOENT of another entry":  {2, "", "ERROR: can't get key: (2) No such file or directory\n", false},
+		"extra diagnostic":         {2, "", "warning\nfailure: (2002) Unknown error 2002: \n", false},
+		"output":                   {2, "{}", "failure: (2002) Unknown error 2002: \n", false},
+		"other status":             {1, "", "failure: (2002) Unknown error 2002: \n", false},
+	} {
+		if got := rgwNoSuchBucketAnswer(test.code, []byte(test.stdout), []byte(test.stderr)); got != test.absent {
+			t.Errorf("%s: absent %t, want %t", name, got, test.absent)
+		}
+	}
+	if bucketStatsAbsent(nil) || bucketStatsAbsent(errors.New("RGW native command failed; output is redacted")) {
+		t.Fatal("an error without the decision read as an absent bucket")
+	}
+}
+
+// A failed native command returns no byte of its output in any formatting of
+// the error chain, the absent-bucket decision included.
+func TestRGWNativeFailureKeepsNoOutput(t *testing.T) {
+	_, cli, _ := newRGWPolicyImportFixture(t)
+	const marker = "secret-marker"
+	// The Go-syntax bytes of the marker, as %#v prints a byte slice field.
+	goBytes := strings.TrimSuffix(strings.TrimPrefix(fmt.Sprintf("%#v", []byte(marker)), "[]byte{"), "}")
+	args := []string{"radosgw-admin", "--zone-id", "dest-id", "--format", "json", "bucket", "stats", "--bucket", "bucket"}
+	for name, set := range map[string]func(){
+		"absent": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = map[string]bool{"bucket": true}, nil, nil
+		},
+		"stderr only": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = nil, map[string]bool{"bucket": true}, nil
+		},
+		"output": func() {
+			cli.missingBuckets, cli.stderrFailedBuckets, cli.failedBuckets = nil, nil, map[string]bool{"bucket": true}
+		},
+	} {
+		set()
+		_, err := syncNativeExecMode(t.Context(), cli, false, args...)
+		if err == nil {
+			t.Fatalf("%s: no failure", name)
+		}
+		if bucketStatsAbsent(err) != (name == "absent") {
+			t.Fatalf("%s: absent decision %t", name, bucketStatsAbsent(err))
+		}
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+			for chained := error(err); chained != nil; chained = errors.Unwrap(chained) {
+				if text := fmt.Sprintf(verb, chained); strings.Contains(text, marker) || strings.Contains(text, fmt.Sprintf("%x", marker)) ||
+					strings.Contains(text, "2002") || strings.Contains(text, goBytes) {
+					t.Fatalf("%s: %s of %T shows native output: %s", name, verb, chained, text)
+				}
+			}
+		}
 	}
 }

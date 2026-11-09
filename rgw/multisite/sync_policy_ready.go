@@ -300,9 +300,24 @@ func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneS
 	return result, false, nil
 }
 
+// bucketStatsAbsent reports whether err is the ERR_NO_SUCH_BUCKET answer of
+// `bucket stats` (rgwNoSuchBucketAnswer).
+func bucketStatsAbsent(err error) bool {
+	var absent noSuchBucketError
+	return errors.As(err, &absent)
+}
+
+// policyReadyBucket reports whether the destination has imported bucket. A
+// bucket the destination does not know yet is that stage of the import, not a
+// failed read: `bucket stats` answers ERR_NO_SUCH_BUCKET until the
+// destination's metadata sync writes the bucket, which can take longer than
+// one read's QueryTimeout. Every other failure of the read stays a failure.
 func (g *SyncGroup) policyReadyBucket(ctx context.Context, zone *rgwZoneState, bucket SyncBucketIdentity) (bool, bool, error) {
 	f := g.owner
 	data, err := f.syncPolicyAdmin(ctx, zone, g.scope.Zonegroup, "bucket", "stats", "--bucket", syncScopedBucketName(SyncPolicyScope{Bucket: bucket.Name, Tenant: bucket.Tenant}))
+	if bucketStatsAbsent(err) {
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, err
 	}

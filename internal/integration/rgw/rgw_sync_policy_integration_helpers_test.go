@@ -97,7 +97,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := bucket.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	watchOwnedBucketPolicyImport(t, ctx, bucket)
+	watchOwnedBucketPolicyImport(t, ctx, bucket, nil)
 	payload := bytes.Repeat([]byte("owned RGW selective sync fixture\n"), 2048)
 	for _, path := range []string{selected + "/published/selected", selected + "/private/excluded", localOnly + "/published/excluded"} {
 		sourceS3.Request(t, ctx, http.MethodPut, path, payload, http.StatusOK)
@@ -121,7 +121,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := bucket.SetStatus(ctx, multisite.SyncForbidden); err != nil {
 		t.Fatal(err)
 	}
-	watchOwnedBucketPolicyImport(t, ctx, bucket)
+	watchOwnedBucketPolicyImport(t, ctx, bucket, nil)
 	waitOwnedBucketDisabled(t, ctx, link, bucket, "prefix")
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/while-forbidden", payload, http.StatusOK)
 	harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destinationS3, Path: selected + "/published/while-forbidden"})
@@ -131,7 +131,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := bucket.SetStatus(ctx, multisite.SyncEnabled); err != nil {
 		t.Fatal(err)
 	}
-	watchOwnedBucketPolicyImport(t, ctx, bucket)
+	watchOwnedBucketPolicyImport(t, ctx, bucket, nil)
 	if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := bucket.SetPipePrefix(ctx, "prefix", "reports/"); err != nil {
 		t.Fatal(err)
 	}
-	watchOwnedBucketPolicyImport(t, ctx, bucket)
+	watchOwnedBucketPolicyImport(t, ctx, bucket, nil)
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/reports/after-update", payload, http.StatusOK)
 	sourceS3.Request(t, ctx, http.MethodPut, selected+"/published/after-update", payload, http.StatusOK)
 	harness.WaitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusOK, payload)
@@ -192,6 +192,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if got := sourceS3.Request(t, ctx, http.MethodGet, reused+"/replacement", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("recreated bucket removal guard changed replacement payload")
 	}
+	watchOwnedBucketPolicyImportOfAnUnimportedBucket(t, ctx, link, sourceS3, &destinationS3)
 	// Directional native identity is a pair; symmetrical removal uses its
 	// owned name. Exercise both without broadening the directional pipe.
 	if err := global.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
@@ -213,7 +214,8 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 // destination with WatchBucketPolicy until the watch ends after its imported
 // status. An already-imported baseline is a complete, valid watch: native
 // import timing is not controlled here, so earlier stages are only logged.
-func watchOwnedBucketPolicyImport(t *testing.T, ctx context.Context, group *multisite.SyncGroup) {
+// onBaseline, when set, runs on the baseline before the next event is read.
+func watchOwnedBucketPolicyImport(t *testing.T, ctx context.Context, group *multisite.SyncGroup, onBaseline func(multisite.BucketPolicyWatchEvent)) {
 	t.Helper()
 	started := time.Now()
 	w, err := group.WatchBucketPolicy(ctx, ceph.WatchConfig{Interval: time.Second, Buffer: 256}, "destination")
@@ -235,6 +237,9 @@ func watchOwnedBucketPolicyImport(t *testing.T, ctx context.Context, group *mult
 			t.Logf("policy import watch event %d %s period=%t policy=%t buckets=%t imported=%t err=%s", e.Sequence, e.Kind, e.Status.PeriodImported, e.Status.PolicyImported, e.Status.BucketsImported, e.Status.Imported, harness.RGWSyncDiagnosticError(e.Err))
 			if e.Sequence == 1 {
 				first = e
+				if onBaseline != nil {
+					onBaseline(e)
+				}
 			}
 			if e.Status.PeriodID != first.Status.PeriodID || e.Status.RealmEpoch != first.Status.RealmEpoch || e.Status.Bucket != first.Status.Bucket || e.Status.ZoneID != first.Status.ZoneID {
 				t.Fatalf("the policy import watch changed identity: %+v %+v", first.Status, e.Status)
@@ -304,4 +309,41 @@ func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multisite.
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// watchOwnedBucketPolicyImportOfAnUnimportedBucket watches the policy of a
+// bucket that the destination cannot import yet. The destination's metadata
+// sync runs in its gateway, so with that gateway stopped the bucket created
+// next stays unknown to the destination, as an import slower than one read's
+// QueryTimeout looks. The watch must start at the bucket stage and observe the
+// import after the gateway is back. It runs last among the data checks: the
+// gateway restart is not part of the other assertions.
+func watchOwnedBucketPolicyImportOfAnUnimportedBucket(t *testing.T, ctx context.Context, link *multisite.Fixture, sourceS3 harness.S3HTTPClient, destinationS3 *harness.S3HTTPClient) {
+	t.Helper()
+	const name = "tc-owned-unimported"
+	fenceRGWScenarioGateway(t, ctx, link.Destination)
+	sourceS3.Request(t, ctx, http.MethodPut, "/"+name, nil, http.StatusOK)
+	group, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: name}, multisite.SyncGroupConfig{ID: "unimported", Status: multisite.SyncEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := group.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "all", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := group.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	watchOwnedBucketPolicyImport(t, ctx, group, func(baseline multisite.BucketPolicyWatchEvent) {
+		if baseline.Err != nil || !baseline.Status.PeriodImported || baseline.Status.BucketsImported || baseline.Status.Imported {
+			t.Fatalf("the destination with a stopped gateway reported the new bucket imported: %+v", baseline)
+		}
+		// Past one read's 30-second QueryTimeout, which bounded the first
+		// read while a bucket not imported yet was a failed read.
+		time.Sleep(35 * time.Second)
+		restartRGWScenarioGateway(t, ctx, link.Destination, destinationS3)
+	})
+	if err := group.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("the import watch started while the destination had not imported the bucket, and observed the import after its gateway restarted")
 }

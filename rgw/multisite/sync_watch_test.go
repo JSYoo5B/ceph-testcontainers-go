@@ -305,14 +305,22 @@ func TestRGWWatchBucketPolicyReportsStagesUntilImported(t *testing.T) {
 	if period.Kind != ceph.WatchChanged || !period.Status.PeriodImported || period.Status.PolicyImported || !period.Status.BucketsImported || period.Status.Imported {
 		t.Fatalf("period stage %+v", period)
 	}
+	// A bucket the destination does not know is the bucket stage of a
+	// successful read; a failed read of the same bucket is a gap.
 	underTopology(f, func() { cli.missingBuckets = map[string]bool{"bucket": true} })
+	missing := nextSyncEvent(t, w.Events())
+	if missing.Kind != ceph.WatchChanged || missing.Err != nil || !missing.Status.PeriodImported || missing.Status.PolicyImported || missing.Status.BucketsImported || missing.Status.Imported {
+		t.Fatalf("bucket stage %+v", missing)
+	}
+	// Exit 2 with no output but another diagnostic is a gap, not the stage.
+	underTopology(f, func() { cli.missingBuckets, cli.stderrFailedBuckets = nil, map[string]bool{"bucket": true} })
 	gap := nextSyncEvent(t, w.Events())
 	if gap.Kind != ceph.WatchGap || gap.Err == nil || !gap.Status.PeriodImported || gap.Status.BucketsImported || gap.Status.Imported || strings.Contains(gap.Err.Error(), "secret-marker") {
 		t.Fatalf("gap %+v", gap)
 	}
-	underTopology(f, func() { cli.missingBuckets, cli.policyLagReads = nil, 0 })
+	underTopology(f, func() { cli.stderrFailedBuckets, cli.policyLagReads = nil, 0 })
 	imported := nextSyncEvent(t, w.Events())
-	if imported.Kind != ceph.WatchResumed || !imported.Status.Imported || !imported.Status.PolicyImported || imported.Sequence != 4 || imported.Status.Buckets[0].ID != "bucket-original" {
+	if imported.Kind != ceph.WatchResumed || !imported.Status.Imported || !imported.Status.PolicyImported || imported.Sequence != 5 || imported.Status.Buckets[0].ID != "bucket-original" {
 		t.Fatalf("imported %+v", imported)
 	}
 	if _, ok := <-w.Events(); ok {
@@ -410,15 +418,20 @@ func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {
 	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "source"); err == nil || w != nil || len(cli.calls) != before {
 		t.Fatalf("a zone outside the pipes' destinations started %v %v", w, err)
 	}
-	// A first read that never succeeds within QueryTimeout starts nothing.
-	cli.missingBuckets = map[string]bool{"bucket": true}
+	// A first read that never succeeds within QueryTimeout starts nothing,
+	// including a failure with exit 2 and no output whose diagnostic is not
+	// the absent bucket.
 	cfg := syncWatchTestConfig
 	cfg.QueryTimeout = 1500 * time.Millisecond
-	if w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination"); !errors.Is(err, context.DeadlineExceeded) || w != nil || strings.Contains(err.Error(), "secret-marker") {
-		t.Fatalf("failed baseline started %v %v", w, err)
+	for name, fail := range map[string]*map[string]bool{"output": &cli.failedBuckets, "stderr only": &cli.stderrFailedBuckets} {
+		*fail = map[string]bool{"bucket": true}
+		if w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination"); !errors.Is(err, context.DeadlineExceeded) || w != nil || strings.Contains(err.Error(), "secret-marker") {
+			t.Fatalf("%s: failed baseline started %v %v", name, w, err)
+		}
+		*fail = nil
 	}
 	// A first read that would end the watch is not retried.
-	cli.missingBuckets, cli.bucketID = nil, "bucket-recreated"
+	cli.bucketID = "bucket-recreated"
 	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); !errors.Is(err, errSyncBucketRecreated) || w != nil {
 		t.Fatalf("recreated bucket baseline started %v %v", w, err)
 	}
@@ -426,12 +439,12 @@ func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {
 
 func TestRGWWatchBucketPolicyRetriesAFailedFirstRead(t *testing.T) {
 	f, cli, g := newRGWPolicyImportFixture(t)
-	cli.missingBuckets = map[string]bool{"bucket": true}
+	cli.failedBuckets = map[string]bool{"bucket": true}
 	retried := false
 	cli.onExec = func(_ context.Context, args []string) {
 		if !retried && syncTestFlag(args, "--zone-id") == "dest-id" && syncTestCommand(args, "bucket", "stats") {
 			// The lock is free between the attempts of the first read.
-			go underTopology(f, func() { cli.missingBuckets, retried = nil, true })
+			go underTopology(f, func() { cli.failedBuckets, retried = nil, true })
 		}
 	}
 	w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
@@ -441,6 +454,38 @@ func TestRGWWatchBucketPolicyRetriesAFailedFirstRead(t *testing.T) {
 	baseline := nextSyncEvent(t, w.Events())
 	if baseline.Kind != ceph.WatchBaseline || !baseline.Status.Imported || !retried {
 		t.Fatalf("baseline %+v retried=%t", baseline, retried)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A destination that has not imported the group's bucket answers the first
+// read, however long its import takes: the watch starts at the bucket stage
+// under a QueryTimeout shorter than the import, and reports the import.
+func TestRGWWatchBucketPolicyStartsBeforeTheDestinationImportsTheBucket(t *testing.T) {
+	f, cli, g := newRGWPolicyImportFixture(t)
+	cli.missingBuckets = map[string]bool{"bucket": true}
+	cfg := syncWatchTestConfig
+	cfg.QueryTimeout = 1500 * time.Millisecond
+	w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := nextSyncEvent(t, w.Events())
+	if baseline.Kind != ceph.WatchBaseline || baseline.Err != nil || !baseline.Status.PeriodImported || baseline.Status.PolicyImported || baseline.Status.BucketsImported || baseline.Status.Imported {
+		t.Fatalf("baseline %+v", baseline)
+	}
+	// Longer than QueryTimeout: still the same stage, so no event.
+	select {
+	case e := <-w.Events():
+		t.Fatalf("event while the bucket was not imported %+v", e)
+	case <-time.After(2 * cfg.QueryTimeout):
+	}
+	underTopology(f, func() { cli.missingBuckets = nil })
+	imported := nextSyncEvent(t, w.Events())
+	if imported.Kind != ceph.WatchChanged || !imported.Status.Imported || imported.Sequence != 2 {
+		t.Fatalf("imported %+v", imported)
 	}
 	if err := w.Stop(); err != nil {
 		t.Fatal(err)

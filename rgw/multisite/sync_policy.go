@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -627,6 +628,26 @@ func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group
 	return data, err
 }
 
+// rgwNoSuchBucket is the whole stderr of radosgw-admin for a bucket the zone
+// does not know: RGW's ERR_NO_SUCH_BUCKET (2002), which libc does not name,
+// with exit status 2 and no stdout. Squid 19.2.5, Tentacle 20.2.4 and
+// Umbrella 21.2.0 print exactly this line for `bucket stats`.
+var rgwNoSuchBucket = regexp.MustCompile(`\Afailure: \(2002\) Unknown error 2002: ?\n?\z`)
+
+// rgwNoSuchBucketAnswer reports whether a failed command's exit status and
+// output are that answer. Any other failure, including exit 2 with another
+// diagnostic such as a missing keyring or configuration, is not.
+func rgwNoSuchBucketAnswer(code int, stdout, stderr []byte) bool {
+	return code == 2 && len(stdout) == 0 && rgwNoSuchBucket.Match(stderr)
+}
+
+// noSuchBucketError is the redacted failure of a command that answered
+// ERR_NO_SUCH_BUCKET. It carries only that decision, never the output, so no
+// formatting of the error chain can recover what the command printed.
+type noSuchBucketError struct{ error }
+
+func (e noSuchBucketError) Unwrap() error { return e.error }
+
 func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -649,8 +670,12 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 		return nil, err
 	}
 	if code != 0 {
-		return nil, clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
+		err := clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
 			servicehook.NativeFailure(args[0], code, nil, stderr.Bytes()))
+		if rgwNoSuchBucketAnswer(code, stdout.Bytes(), stderr.Bytes()) {
+			return nil, noSuchBucketError{err}
+		}
+		return nil, err
 	}
 	if status {
 		warnings := strings.ToLower(stderr.String())
