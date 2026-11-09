@@ -250,8 +250,8 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 					}
 				}
 			}
-			if beyond := c.readPart(t, http.MethodGet, test.bucket, len(parts)+1, nil); beyond.Status < 400 {
-				t.Errorf("part %d of a %d-part object was not refused: %s", len(parts)+1, len(parts), beyond)
+			if beyond := c.readPart(t, http.MethodGet, test.bucket, len(parts)+1, nil); !beyondRefused(beyond) {
+				t.Errorf("part %d of a %d-part object was not refused as 400 InvalidPart: %s", len(parts)+1, len(parts), beyond)
 			}
 		})
 	}

@@ -2,8 +2,9 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWMultipartPartStorageClass`, optional batch
-`rgw_multipart_part_class`. Pure test of the part read classification
-(`TestPartOK`, batch `pure`).
+`rgw_multipart_part_class`. Pure tests of the part read classification
+and of the out-of-range control (`TestPartOK` and `TestBeyondRefused`, batch
+`pure`).
 
 ## Use case and native contract
 
@@ -13,7 +14,7 @@ later reads ranges of them by part, as parallel downloaders do with
 `GET ?partNumber=N` and `HEAD ?partNumber=N`. Every valid part number of a
 completed upload must answer that part: its length, the object's part count
 (`x-amz-mp-parts-count`) and, for a GET, its bytes. A part number beyond the
-last part must be refused.
+last part must be refused as out of range.
 
 The zone of the case adds the storage class `COLD` to `default-placement` on
 its own data pool, `tc-mp.cold.data`. Two buckets each hold one object made
@@ -96,8 +97,11 @@ object's head and tail placement rules (`RGW_MP placement`), its whole read
 2. Oracle, per object: GET and HEAD of parts 1 and 2 must answer 200 or 206
    with the part's length and `x-amz-mp-parts-count: 2`; a GET must return
    the part's bytes (`partOK`).
-3. Refusal control: GET of part 3 must answer an error status; both objects
-   answer `400 InvalidPart`.
+3. Refusal control: GET of part 3 must answer `400` with the S3 code
+   `InvalidPart`, which both objects answer on every measured build
+   (`beyondRefused`). Another error, such as `403 AccessDenied` or
+   `503 ServiceUnavailable`, does not show that the part number was out of
+   range and fails the control.
 
 ## Reading the result
 

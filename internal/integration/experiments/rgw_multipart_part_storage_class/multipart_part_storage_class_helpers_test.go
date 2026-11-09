@@ -35,3 +35,11 @@ func partOK(read mpRead, want []byte) bool {
 	}
 	return read.Method != http.MethodGet || read.BodyMatches
 }
+
+// beyondRefused reports whether a GET of a part number past the last part
+// was refused as out of range: 400 with the S3 code InvalidPart, as every
+// measured build answers it. An authorization or server failure does not
+// show that the part number was out of range.
+func beyondRefused(read mpRead) bool {
+	return read.Method == http.MethodGet && read.Status == http.StatusBadRequest && read.Code == "InvalidPart"
+}

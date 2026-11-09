@@ -34,3 +34,27 @@ func TestPartOK(t *testing.T) {
 		}
 	}
 }
+
+// The out-of-range control passes only with the refusal every measured build
+// gives, 400 InvalidPart; other errors leave the control inconclusive.
+func TestBeyondRefused(t *testing.T) {
+	refused := mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusBadRequest, Length: 238, Code: "InvalidPart"}
+	for name, test := range map[string]struct {
+		read mpRead
+		ok   bool
+	}{
+		"invalid part":        {refused, true},
+		"access denied":       {mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusForbidden, Code: "AccessDenied"}, false},
+		"signature mismatch":  {mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusForbidden, Code: "SignatureDoesNotMatch"}, false},
+		"service unavailable": {mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusServiceUnavailable, Code: "ServiceUnavailable"}, false},
+		"internal error":      {mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusInternalServerError, Code: "InternalError"}, false},
+		"other 400":           {func() mpRead { r := refused; r.Code = "InvalidArgument"; return r }(), false},
+		"400 without code":    {func() mpRead { r := refused; r.Code = ""; return r }(), false},
+		"answered":            {mpRead{Method: http.MethodGet, Part: 3, Status: http.StatusPartialContent, Length: 1, PartsCount: "2"}, false},
+		"head":                {func() mpRead { r := refused; r.Method = http.MethodHead; return r }(), false},
+	} {
+		if got := beyondRefused(test.read); got != test.ok {
+			t.Errorf("%s: beyondRefused(%s) = %t, want %t", name, test.read, got, test.ok)
+		}
+	}
+}
