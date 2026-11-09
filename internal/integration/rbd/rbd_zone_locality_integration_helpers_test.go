@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -233,7 +234,7 @@ func testRBDZoneLocality(t *testing.T) {
 	}
 	targets := []*ceph.OSDContainer{osdA, osdB}
 	for i, read := range reads {
-		got := localityReadOnce(t, ctx, client, clientMember.PublicAddress, targets, object, read.policy, read.location, i)
+		got := localityReadOnce(t, ctx, cluster, client, clientMember.PublicAddress, targets, object, read.policy, read.location, i)
 		t.Logf("read %d: policy %s, declared location %q, effective %s: %v, sha256 %s; served by OSDs %v",
 			i, read.policy, read.location, got.Effective, got.Elapsed.Round(time.Millisecond), got.SHA256, got.Servers)
 		if got.SHA256 != want {
@@ -351,34 +352,16 @@ func localityLog(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) []by
 	return data
 }
 
-// localityDebugMS sets the OSD's debug_ms through its admin socket and
-// returns the value it had.
-func localityDebugMS(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, value string) string {
-	t.Helper()
-	out, err := osd.AdminSocket(ctx, "config", "get", "debug_ms")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]string
-	if err := json.Unmarshal(out, &got); err != nil || got["debug_ms"] == "" {
-		t.Fatalf("osd.%d debug_ms: %s %v", osd.ID, out, err)
-	}
-	if _, err := osd.AdminSocket(ctx, "config", "set", "debug_ms", value); err != nil {
-		t.Fatal(err)
-	}
-	return got["debug_ms"]
-}
-
 // localityReadOnce reads the image with a fresh rbd process without cache,
 // with policy and the declared CRUSH location, and attributes its data read
 // with harness.RBDReadServers. Each OSD logs its messages at debug_ms 1 for
-// the read, and the log window after the read gives the replies to the
+// the read, through an override.SetDebugLevel window, and the log window after the read gives the replies to the
 // client's reads of the object. When an OSD replied without a history entry, or no OSD has
 // either, the history is observed again for a bounded time; entries that
 // appear then count, and the raw entries that name the object are logged
 // from before, after and the later observation, so that a delayed,
 // unrecorded or differently described request can be told apart.
-func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.Container, clientAddr netip.Addr, osds []*ceph.OSDContainer, object, policy, location string, n int) localityRead {
+func localityReadOnce(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, clientAddr netip.Addr, osds []*ceph.OSDContainer, object, policy, location string, n int) localityRead {
 	t.Helper()
 	args := []string{"--rbd_cache=false", "--rbd_read_from_replica_policy=" + policy}
 	if location != "" {
@@ -392,18 +375,29 @@ func localityReadOnce(t *testing.T, ctx context.Context, client testcontainers.C
 	before := map[int]localityOSDView{}
 	logs := map[int][]byte{}
 	for _, osd := range osds {
-		previous := localityDebugMS(t, ctx, osd, "1/5")
+		// The handle keeps the prior level even when the set's reply is
+		// lost, and each restoration uses a fresh bounded context, so the
+		// cleanup still restores a window the read's own restoration could
+		// not, and reports what it could not restore.
+		handle, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: fmt.Sprintf("osd.%d", osd.ID), Name: "debug_ms", Level: "1/5"})
 		restored := false
-		restore := func(ctx context.Context) {
-			if !restored {
-				restored = true
-				if _, err := osd.AdminSocket(ctx, "config", "set", "debug_ms", previous); err != nil {
-					t.Errorf("osd.%d: restore debug_ms %s: %v", osd.ID, previous, err)
-				}
+		restore := func() {
+			if restored {
+				return
 			}
+			restoreCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := handle.Restore(restoreCtx); err != nil {
+				t.Errorf("osd.%d: restore debug_ms: %v", osd.ID, err)
+				return
+			}
+			restored = true
 		}
-		t.Cleanup(func() { restore(context.Background()) })
-		defer restore(ctx)
+		t.Cleanup(restore)
+		defer restore()
+		if err != nil {
+			t.Fatalf("osd.%d: raise debug_ms: %v", osd.ID, err)
+		}
 		logs[osd.ID] = localityLog(t, ctx, osd)
 		before[osd.ID] = localityObserve(t, ctx, osd, object)
 	}
