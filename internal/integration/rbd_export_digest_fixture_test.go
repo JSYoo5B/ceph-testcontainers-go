@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -122,5 +123,91 @@ func TestRBDParentReadHistoryRejectsCacheBypass(t *testing.T) {
 	}
 	if _, err := harness.RBDDataReadsInHistory([]byte(`{}`), objects); err == nil {
 		t.Fatal("accepted missing ops")
+	}
+}
+
+// TestRBDReadServersAttributesByHistoryOrCounters covers the attribution of
+// TestRBDZoneLocality with recorded perf dump and op history shapes: the
+// issue 650 case, where the serving replica's history gained nothing but its
+// counters returned the whole object, attributes the read to the replica;
+// reads that two OSDs claim, or none, are not attributed to one; and
+// contradicting or malformed evidence is refused.
+func TestRBDReadServersAttributesByHistoryOrCounters(t *testing.T) {
+	const size = 4 << 20
+	counters := func(t *testing.T, out string) harness.OSDReadCounters {
+		t.Helper()
+		c, err := harness.ParseOSDReadCounters([]byte(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	// Tentacle osd.0 around a localized read it served, and osd.1 around
+	// the same read, which only read the image header.
+	replicaBefore := counters(t, `{"osd":{"op":0,"op_r":0,"op_r_out_bytes":0,"replica_read":0,"replica_read_served":0}}`)
+	replicaAfter := counters(t, `{"osd":{"op":1,"op_r":1,"op_r_out_bytes":4194328,"replica_read":1,"replica_read_served":1}}`)
+	primaryBefore := counters(t, `{"osd":{"op_r":57,"op_r_out_bytes":4195560,"replica_read_served":0}}`)
+	primaryAfter := counters(t, `{"osd":{"op_r":68,"op_r_out_bytes":4195799,"replica_read_served":0}}`)
+	// A release without the replica counter.
+	unreported := counters(t, `{"osd":{"op_r":3,"op_r_out_bytes":12}}`)
+	if unreported.ReplicaReadServed != nil {
+		t.Fatal("reported an absent replica_read_served")
+	}
+	entry := []string{"2026-11-09T12:04:34.867152+0000 osd_op(client.4210.0:12 ... [sparse-read 0~4194304 [fadvise_nocache]] ... localize_reads ...)"}
+
+	for _, tc := range []struct {
+		name     string
+		evidence map[int]harness.RBDReadEvidence
+		servers  []int
+		err      string
+	}{
+		{name: "history and counters", servers: []int{0}, evidence: map[int]harness.RBDReadEvidence{
+			0: {History: entry, Before: replicaBefore, After: replicaAfter},
+			1: {Before: primaryBefore, After: primaryAfter}}},
+		{name: "counters without a history entry (issue 650)", servers: []int{0}, evidence: map[int]harness.RBDReadEvidence{
+			0: {Before: replicaBefore, After: replicaAfter},
+			1: {Before: primaryBefore, After: primaryAfter}}},
+		{name: "two OSDs returned the object", servers: []int{0, 1}, evidence: map[int]harness.RBDReadEvidence{
+			0: {Before: replicaBefore, After: replicaAfter},
+			1: {Before: primaryBefore, After: counters(t, `{"osd":{"op_r":68,"op_r_out_bytes":8390366}}`)}}},
+		{name: "no OSD returned the object", evidence: map[int]harness.RBDReadEvidence{
+			0: {Before: replicaBefore, After: replicaBefore},
+			1: {Before: primaryBefore, After: primaryAfter}}},
+		{name: "history on an OSD that returned too little", err: "less than", evidence: map[int]harness.RBDReadEvidence{
+			1: {History: entry, Before: primaryBefore, After: primaryAfter}}},
+		{name: "counters reset", err: "backwards", evidence: map[int]harness.RBDReadEvidence{
+			1: {Before: primaryAfter, After: unreported}}},
+		{name: "replica counter reset", err: "replica_read_served went backwards", evidence: map[int]harness.RBDReadEvidence{
+			0: {Before: counters(t, `{"osd":{"op_r":0,"op_r_out_bytes":0,"replica_read_served":2}}`), After: replicaAfter}}},
+		{name: "unreported replica counter", servers: []int{0}, evidence: map[int]harness.RBDReadEvidence{
+			0: {Before: replicaBefore, After: replicaAfter},
+			1: {Before: unreported, After: unreported}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			servers, err := harness.RBDReadServers(tc.evidence, size)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("got %v, %v, want an error with %q", servers, err, tc.err)
+				}
+				return
+			}
+			if err != nil || !slices.Equal(servers, tc.servers) {
+				t.Fatalf("got %v, %v, want %v", servers, err, tc.servers)
+			}
+		})
+	}
+
+	e := harness.RBDReadEvidence{Before: replicaBefore, After: replicaAfter}
+	if served, ok := e.ReplicaServed(); !ok || served != 1 || e.OutBytes() != 4194328 {
+		t.Fatalf("replica evidence: %d %v, %d bytes", served, ok, e.OutBytes())
+	}
+	if _, ok := (harness.RBDReadEvidence{Before: unreported, After: replicaAfter}).ReplicaServed(); ok {
+		t.Fatal("reported a replica read count from one observation")
+	}
+	for _, out := range []string{`{}`, `{"osd":{"op_r":1}}`, `{"osd":{"op_r":1,"op_r_out_bytes":-1}}`, `{"osd":{"op_r":1.5,"op_r_out_bytes":1}}`,
+		`{"osd":{"op_r":1,"op_r_out_bytes":1,"replica_read_served":"x"}}`, `not json`} {
+		if c, err := harness.ParseOSDReadCounters([]byte(out)); err == nil {
+			t.Errorf("accepted %s as %+v", out, c)
+		}
 	}
 }
