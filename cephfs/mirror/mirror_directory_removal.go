@@ -600,6 +600,9 @@ func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWit
 	if err != nil {
 		return "unavailable", cephFSObserveQuery("read original CephFS directory release peer stats", err)
 	}
+	if data, err = cephFSPeerStatusDirectories(data, r.scope.peerID); err != nil {
+		return "unavailable", err
+	}
 	present, err := decodeCephFSDirectoryRemovalStats(data, r.directory)
 	if err != nil {
 		return "unavailable", err
@@ -637,7 +640,8 @@ func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWit
 	return "released", nil
 }
 
-// Native peer_status is a flat object. Refuse a duplicate key at any depth
+// Native peer_status is a flat object once cephFSPeerStatusDirectories has
+// read Umbrella's nested shape. Refuse a duplicate key at any depth
 // before map decoding can overwrite one, stream the paths to require each to be
 // canonical, and validate every entry with the existing production replay
 // decoder before treating selected path absence as cycle-unregister evidence.
