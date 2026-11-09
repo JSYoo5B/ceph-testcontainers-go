@@ -13,8 +13,10 @@ import (
 
 // BucketSyncPolicyStatus describes the captured master's configuration and
 // its import into one selected destination. Buckets contains copied, distinct
-// native instances required by pipes selecting that destination. It contains
-// no policy maps, credentials, object names or sync markers.
+// native instances required by pipes selecting that destination.
+// PolicyImported reports that the destination's instance of Bucket carries the
+// captured group, or no such group for a removed handle. It contains no policy
+// maps, credentials, object names or sync markers.
 type BucketSyncPolicyStatus struct {
 	RealmID, PeriodID, ZonegroupID, GroupID, Zone, ZoneID string
 	RealmEpoch                                            uint64
@@ -26,7 +28,11 @@ type BucketSyncPolicyStatus struct {
 
 // WaitBucketPolicyReady waits up to four minutes, bounded by ctx including
 // mutex queue time, for an unchanged owned bucket group's metadata to import
-// into an explicit attached destination selected by its pipes. It checks the
+// into an explicit attached destination selected by its pipes. On a handle
+// removed through the fixture it waits for the removal instead: the
+// destination's instance of the group's bucket no longer carries the group,
+// and Buckets is that bucket alone. The destination must be one the pipes
+// selected when the group was removed. It checks the
 // exact committed period, source-scope group snapshot, and all referenced
 // source/destination bucket instances needed by that destination. Admission
 // reads the master once and returns any error immediately. After admission,
@@ -37,10 +43,11 @@ type BucketSyncPolicyStatus struct {
 // This read-only prerequisite does not attest effective discovery hints, data
 // checkpoints, payloads or permissions, or replay objects written before the
 // policy was imported. It does not pull periods, restart gateways or mutate
-// replication state. Use it after creating pipes and before selected writes.
+// replication state. Use it after creating pipes and before selected writes,
+// and after Remove and before writes that the removal must exclude.
 //
-// Zonegroup groups, removed handles, pending mutations and zones outside the
-// pipes' destinations are refused.
+// Zonegroup groups, pending mutations and zones outside the pipes'
+// destinations are refused.
 //
 //purpose:observation
 func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error) {
@@ -85,10 +92,11 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 // its admission: the handle, the master's committed period and the group
 // snapshot captured then, and the identities every result carries.
 type policyImportTarget struct {
-	group  *SyncGroup
-	period map[string]any
-	want   map[string]any
-	status BucketSyncPolicyStatus
+	group   *SyncGroup
+	period  map[string]any
+	want    map[string]any
+	removed bool
+	status  BucketSyncPolicyStatus
 }
 
 // admitPolicyImport validates the handle and the destination and captures
@@ -97,7 +105,7 @@ type policyImportTarget struct {
 // identities resolved so far.
 func (g *SyncGroup) admitPolicyImport(ctx context.Context, destinationZone string) (*policyImportTarget, BucketSyncPolicyStatus, error) {
 	f := g.owner
-	if err := f.validateSyncGroup(g, false); err != nil {
+	if err := f.validateSyncGroup(g, true); err != nil {
 		return nil, BucketSyncPolicyStatus{}, err
 	}
 	if g.scope.Bucket == "" || g.bucketID == "" || g.state.pending != nil {
@@ -122,7 +130,7 @@ func (g *SyncGroup) admitPolicyImport(ctx context.Context, destinationZone strin
 	if err != nil {
 		return nil, status, err
 	}
-	return &policyImportTarget{group: g, period: syncJSONClone(period), want: syncJSONClone(g.state.group), status: status}, status, nil
+	return &policyImportTarget{group: g, period: syncJSONClone(period), want: syncJSONClone(g.state.group), removed: g.state.removed, status: status}, status, nil
 }
 
 // policyImportDestination is the attached owned zone of g's zonegroup named
@@ -145,7 +153,7 @@ func (t *policyImportTarget) sample(ctx context.Context) (BucketSyncPolicyStatus
 	f := g.owner
 	status := t.status
 	status.Buckets = slices.Clone(status.Buckets)
-	if err := f.validateSyncGroup(g, false); err != nil {
+	if err := f.validateSyncGroup(g, t.removed); err != nil {
 		return status, true, err
 	}
 	if g.state.pending != nil || !reflect.DeepEqual(g.state.group, t.want) {
@@ -158,12 +166,20 @@ func (t *policyImportTarget) sample(ctx context.Context) (BucketSyncPolicyStatus
 	return g.policyReadyStatus(ctx, destination, t.period, t.want, status)
 }
 
+// syncPolicyReadyBuckets returns the bucket instances whose import the
+// destination needs, after checking that the group's pipes select it. For a
+// removed handle the pipes are those of the last confirmed group, and only
+// the group's own bucket, which stored the policy, is needed.
 func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIdentity, error) {
 	scope := SyncBucketIdentity{Name: g.scope.Bucket, Tenant: g.scope.Tenant, ID: g.bucketID}
 	buckets := []SyncBucketIdentity{scope}
 	seen := map[SyncBucketIdentity]bool{scope: true}
 	names := map[string]string{scope.Tenant + "/" + scope.Name: scope.ID}
-	pipes, ok := g.state.group["pipes"].([]any)
+	group := g.state.group
+	if g.state.removed {
+		group = g.state.removedGroup
+	}
+	pipes, ok := group["pipes"].([]any)
 	if !ok {
 		return nil, errors.New("RGW owned policy pipes are malformed")
 	}
@@ -196,6 +212,9 @@ func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIde
 	}
 	if !selected {
 		return nil, errors.New("RGW destination is outside the owned policy pipes")
+	}
+	if g.state.removed {
+		return []SyncBucketIdentity{scope}, nil
 	}
 	sort.Slice(buckets, func(i, j int) bool {
 		if buckets[i].Tenant != buckets[j].Tenant {

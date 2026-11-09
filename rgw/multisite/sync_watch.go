@@ -480,7 +480,8 @@ func (w *BucketPolicyWatch) Stop() error {
 // group's policy as the fixture confirmed it, the destination zone and the
 // referenced source and destination bucket instances. Start the watch after
 // the policy change, as you would WaitBucketPolicyReady; a baseline that is
-// already imported is the only event.
+// already imported is the only event. A watch of a handle removed through the
+// fixture reports the import of the removal, as WaitBucketPolicyReady does.
 //
 // Each read takes the fixture's topology lock for one bounded observation and
 // holds it neither while the event is sent nor between reads, so the test may
@@ -490,8 +491,9 @@ func (w *BucketPolicyWatch) Stop() error {
 // successful read is WatchResumed. The watch ends with a nil cause after it
 // has sent the first imported status. These end it instead: ctx ending, Stop,
 // Terminate (ceph.ErrInvalidRequest), a full buffer (ceph.ErrWatchOverflow),
-// the group removed or changed through the fixture or a pending change on it,
-// the destination no longer attached, the group's native policy changed on
+// the group changed through the fixture or a pending change on it, the group
+// removed through the fixture after the watch started, the destination no
+// longer attached, the group's native policy changed on
 // the master, a referenced bucket recreated under the same name, a destination
 // period of another realm, and a committed period on the master other than
 // the captured one, as any sync policy or topology commit makes: watch the

@@ -127,6 +127,9 @@ type rgwSyncGroupState struct {
 	group              map[string]any
 	period             map[string]any
 	pending            *rgwSyncPending
+	// removedGroup is the last confirmed group of a removed handle. Its pipes
+	// name the destinations whose import of the removal can be observed.
+	removedGroup map[string]any
 }
 
 type rgwSyncPending struct {
@@ -444,7 +447,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	}
 	actual := syncNativeGroup(before, g.ID())
 	if actual == nil {
-		g.state.group = nil
+		g.state.removedGroup, g.state.group = g.state.group, nil
 		g.state.removed = true
 		return nil
 	}
@@ -461,7 +464,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	if !reflect.DeepEqual(syncPolicyReplace(before, g.ID(), nil), after) {
 		return errors.New("RGW sync group removal readback differs")
 	}
-	g.state.group = nil
+	g.state.removedGroup, g.state.group = g.state.group, nil
 	g.state.removed = true
 	return nil
 }

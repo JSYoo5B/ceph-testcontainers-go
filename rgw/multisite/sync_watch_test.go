@@ -351,7 +351,7 @@ func TestRGWWatchBucketPolicyEndsAtAnImportedBaseline(t *testing.T) {
 }
 
 func TestRGWWatchBucketPolicyEndsOnPinnedChanges(t *testing.T) {
-	for _, change := range []string{"period", "recreated", "native-policy", "fixture-group", "detached", "terminated"} {
+	for _, change := range []string{"period", "recreated", "native-policy", "fixture-group", "fixture-removal", "detached", "terminated"} {
 		t.Run(change, func(t *testing.T) {
 			f, cli, g := newRGWPolicyImportFixture(t)
 			cli.policyLagReads = 1000
@@ -364,6 +364,13 @@ func TestRGWWatchBucketPolicyEndsOnPinnedChanges(t *testing.T) {
 			}
 			if change == "fixture-group" {
 				if err := g.SetStatus(t.Context(), SyncAllowed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A watch of the group's import ends when the group is removed;
+			// the removal's import is a new watch of the removed handle.
+			if change == "fixture-removal" {
+				if err := g.Remove(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -401,6 +408,38 @@ func TestRGWWatchBucketPolicyEndsOnPinnedChanges(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A watch of a removed handle reports the removal's import: the destination
+// still carrying the group, then its bucket without it, which ends the watch.
+func TestRGWWatchBucketPolicyReportsTheImportOfARemoval(t *testing.T) {
+	f, cli, g := newRGWPolicyImportFixture(t)
+	stale := syncJSONClone(cli.bucketPolicy)
+	if err := g.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cli.localPolicy = stale
+	before := len(cli.calls)
+	w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := nextSyncEvent(t, w.Events())
+	if baseline.Kind != ceph.WatchBaseline || !baseline.Status.PeriodImported || baseline.Status.PolicyImported || baseline.Status.Imported || len(baseline.Status.Buckets) != 1 {
+		t.Fatalf("baseline %+v", baseline)
+	}
+	underTopology(f, func() { cli.localPolicy = map[string]any{"groups": []any{}} })
+	imported := nextSyncEvent(t, w.Events())
+	if imported.Kind != ceph.WatchChanged || !imported.Status.Imported || !imported.Status.PolicyImported {
+		t.Fatalf("imported %+v", imported)
+	}
+	if _, ok := <-w.Events(); ok {
+		t.Fatal("the watch continued after the imported removal")
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("an imported removal ended the watch with %v", err)
+	}
+	requirePolicyImportReadOnly(t, cli.calls[before:])
 }
 
 func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {

@@ -303,7 +303,11 @@ func TestRGWBucketSyncPolicyReadyRejectsInvalidAdmissionBeforeCommands(t *testin
 			case "unowned":
 				g = &SyncGroup{}
 			case "removed":
-				g.state.removed = true
+				// A removed handle keeps the destinations its pipes selected.
+				if err := g.Remove(ctx); err != nil {
+					t.Fatal(err)
+				}
+				zone = "source"
 			case "pending":
 				g.state.pending = &rgwSyncPending{}
 			case "global":
@@ -322,6 +326,45 @@ func TestRGWBucketSyncPolicyReadyRejectsInvalidAdmissionBeforeCommands(t *testin
 				t.Fatal("invalid observer admission invoked native commands")
 			}
 		})
+	}
+}
+
+// A handle removed through the fixture observes the removal's import: the
+// destination's instance of the group's bucket must stop carrying the group.
+// Only that bucket is needed, so a pipe's other bucket that the destination
+// lacks does not hold the wait.
+func TestRGWBucketSyncPolicyReadyObservesARemoval(t *testing.T) {
+	_, cli, g := newRGWPolicyImportFixture(t)
+	cli.additionalBuckets = map[string]string{"output": "output-original"}
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "translated", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
+		t.Fatal(err)
+	}
+	stale := syncJSONClone(cli.bucketPolicy)
+	copy := *g
+	if err := g.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cli.localPolicy, cli.missingBuckets = stale, map[string]bool{"output": true}
+	before := len(cli.calls)
+	ctx := clustertest.NewSignalDeadline(t.Context())
+	cli.onExec = expireAfterDestinationObservation(ctx)
+	state, err := g.WaitBucketPolicyReady(ctx, "destination")
+	scope := SyncBucketIdentity{Name: "bucket", ID: "bucket-original"}
+	if !errors.Is(err, context.DeadlineExceeded) || state.Imported || !state.PeriodImported || state.PolicyImported || !state.BucketsImported || !slices.Equal(state.Buckets, []SyncBucketIdentity{scope}) {
+		t.Fatalf("a destination that still carries the removed group read as its removal: %+v %v", state, err)
+	}
+	cli.onExec, cli.localPolicy = nil, map[string]any{"groups": []any{}}
+	state, err = copy.WaitBucketPolicyReady(t.Context(), "destination")
+	if err != nil || !state.Imported || !state.PolicyImported || state.Bucket != scope || !slices.Equal(state.Buckets, []SyncBucketIdentity{scope}) {
+		t.Fatalf("the imported removal was not observed through a copy of the handle: %+v %v", state, err)
+	}
+	requirePolicyImportReadOnly(t, cli.calls[before:])
+	// The group back on the master is not the removal the handle confirmed.
+	cli.bucketPolicy = stale
+	ctx2, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if state, err := g.WaitBucketPolicyReady(ctx2, "destination"); err == nil || errors.Is(err, context.DeadlineExceeded) || state.Imported {
+		t.Fatalf("a group recreated on the master was adopted as the removal: %+v %v", state, err)
 	}
 }
 
