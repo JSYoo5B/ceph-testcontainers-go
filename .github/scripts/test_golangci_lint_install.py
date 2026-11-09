@@ -1,9 +1,10 @@
-"""The pinned golangci-lint installer; no network."""
+"""The pinned golangci-lint installer and the workflows that use it; no network."""
 
 import hashlib
 import importlib.util
 import io
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -16,6 +17,7 @@ SPEC = importlib.util.spec_from_file_location("golangci_lint_install",
 lint = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(lint)
 
+ROOT = Path(__file__).resolve().parents[2]
 VERSION = "2.15.0"
 
 
@@ -168,6 +170,35 @@ class InstallTests(unittest.TestCase):
         for version, digest in (("latest", DIGEST), ("v2.15", DIGEST), ("v2.15.0", "ABC"), ("v2.15.0", DIGEST.upper())):
             with self.subTest(version=version, digest=digest), self.assertRaises(lint.InstallError):
                 self.install(Opener(), version=version, digest=digest)
+
+
+class WorkflowTests(unittest.TestCase):
+    """Both callers install one pin through the action, and the lint step downloads nothing."""
+
+    def pins(self, workflow):
+        text = (ROOT / ".github/workflows" / workflow).read_text()
+        return text, re.findall(r"uses: \./\.github/actions/golangci-lint\n\s+with:\n\s+version: (\S+)\n"
+                                r"\s+sha256: ([0-9a-f]{64})\n", text)
+
+    def test_callers_share_one_pin(self):
+        code, code_pins = self.pins("code.yml")
+        structural, structural_pins = self.pins("structural-collect.yml")
+        self.assertEqual(len(code_pins), 1)
+        self.assertEqual(code_pins, structural_pins)
+        self.assertNotIn("install-only", structural)
+
+    def test_the_lint_step_uses_the_installed_binary(self):
+        code, _ = self.pins("code.yml")
+        steps = re.findall(r"uses: golangci/golangci-lint-action@\S+\n\s+with:\n((?:\s{10}.*\n)+)", code)
+        self.assertEqual(len(steps), 1)
+        self.assertIn("install-mode: none", steps[0])
+        self.assertNotIn("version:", steps[0])
+        self.assertLess(code.index("uses: ./.github/actions/golangci-lint"),
+                        code.index("uses: golangci/golangci-lint-action@"))
+
+    def test_the_makefile_names_the_pinned_version(self):
+        _, pins = self.pins("code.yml")
+        self.assertIn("golangci-lint %s with" % pins[0][0], (ROOT / "Makefile").read_text())
 
 
 if __name__ == "__main__":

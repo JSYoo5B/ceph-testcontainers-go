@@ -1,0 +1,37 @@
+name: Install the pinned golangci-lint
+description: Put a checksum-verified golangci-lint release on PATH, cached by version and SHA-256
+inputs:
+  version:
+    description: Exact release, such as v2.15.0
+    required: true
+  sha256:
+    description: SHA-256 of golangci-lint-<version>-linux-amd64.tar.gz from the release's checksums file
+    required: true
+runs:
+  using: composite
+  steps:
+    # The key names the archive's SHA-256, and the installer checks it again,
+    # so a restored archive is the pinned one or is discarded.
+    - name: Restore the golangci-lint archive
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/golangci-lint-dist
+        key: golangci-lint-dist-${{ runner.os }}-${{ inputs.version }}-${{ inputs.sha256 }}
+    - name: Verify or download the golangci-lint archive
+      id: install
+      shell: bash
+      env:
+        LINT_VERSION: ${{ inputs.version }}
+        LINT_SHA256: ${{ inputs.sha256 }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/../../scripts/golangci_lint_install.py"
+        --version "$LINT_VERSION" --sha256 "$LINT_SHA256"
+        --cache-dir "$HOME/.cache/golangci-lint-dist" --bin-dir "$RUNNER_TEMP/golangci-lint/bin"
+    - name: Save the golangci-lint archive
+      if: steps.install.outputs.downloaded == 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/golangci-lint-dist
+        key: golangci-lint-dist-${{ runner.os }}-${{ inputs.version }}-${{ inputs.sha256 }}

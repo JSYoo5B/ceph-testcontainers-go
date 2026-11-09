@@ -58,10 +58,10 @@ jobs:
       # The same pinned linter as Code checks' lint step.
       - name: Install the pinned linter
         if: steps.scope.outputs.eligible == 'true'
-        uses: golangci/golangci-lint-action@v9
+        uses: ./.github/actions/golangci-lint
         with:
           version: v2.15.0
-          install-only: true
+          sha256: 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
       - name: Collect report-only structural review evidence
         id: structural
         if: steps.scope.outputs.eligible == 'true'
