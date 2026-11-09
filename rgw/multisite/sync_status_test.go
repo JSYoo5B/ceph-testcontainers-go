@@ -105,6 +105,33 @@ func TestRGWSyncWaitHonorsCancellationAndExplicitSources(t *testing.T) {
 	}
 }
 
+// TestRGWSyncReadyKeepsObservationWhenDeadlineCutsAnAttempt covers a wait
+// whose deadline passes while a later observation fails: the wait returns the
+// earlier complete observation and reports both it and the failed attempt,
+// instead of the failed attempt's partial state and the deadline alone.
+func TestRGWSyncReadyKeepsObservationWhenDeadlineCutsAnAttempt(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, strings.Replace(rgwReadyText, "data is caught up with source", "data is behind on 1 shards", 1)
+	deadline := clustertest.NewSignalDeadline(t.Context())
+	observations := 0
+	cli.onExec = func(_ context.Context, args []string) {
+		if syncTestFlag(args, "--zone-id") != "dest-id" || !syncTestCommand(args, "period", "get") {
+			return
+		}
+		if observations++; observations == 2 {
+			cli.stderrOutput = "ERROR: could not find remote sync shard status for shard_id=17; secret-marker\n"
+			deadline.Expire()
+		}
+	}
+	last, err := f.WaitSyncReady(deadline, "destination", "source")
+	if !errors.Is(err, context.DeadlineExceeded) || observations != 2 || len(last.DataSources) != 1 || last.DataSources[0].CaughtUp || last.DataSources[0].BehindShards != 1 {
+		t.Fatalf("the cut attempt replaced the last observation: %+v %v (observations %d)", last, err, observations)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "BehindShards:1") || strings.Contains(msg, "last_error=<nil>") || strings.Contains(msg, "secret-marker") {
+		t.Fatalf("error does not report the observation and the failed attempt, or exposes native output: %v", err)
+	}
+}
+
 func TestRGWSyncReadyStdoutDoesNotHideFailedRemoteComparisonOnStderr(t *testing.T) {
 	f, cli, _, _ := newRGWSyncTestFixture()
 	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
