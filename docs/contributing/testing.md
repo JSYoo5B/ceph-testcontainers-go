@@ -285,9 +285,9 @@ test sequential. Any other value fails the test. CI uses `2`.
 ## Choosing images
 
 CI supplies image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`,
-`CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`
-and `CEPH_TEST_RGW_IMAGE`, only for the roles the batch declares. A missing
-selected role never falls back to essential.
+`CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`,
+`CEPH_TEST_RGW_IMAGE` and `CEPH_TEST_MGR_MODULES_IMAGE`, only for the roles
+the batch declares. A missing selected role never falls back to essential.
 
 Without role variables a local run uses `ceph.DefaultImage` for every role, or
 the aggregate image in `CEPH_TEST_IMAGE`. For split images, set essential and
@@ -511,9 +511,13 @@ in [Pull request scope](ci.md#pull-request-scope) and
 - `checker=` and `case=` are reserved for the strict completion checkers of
   the CephFS quiescence/recovery and RBD receiver batches.
 - `image-roles=` lists the role images the batch needs (`essential`, `client`,
-  `cephfs`, `rbd-aux`, `rgw`; `essential` required). Without it CI prepares
-  all five. RADOS/RBD uses `essential,client`, CephFS adds `cephfs`,
-  mirrors and caches add `rbd-aux`, gateways add `rgw`.
+  `cephfs`, `rbd-aux`, `rgw`, `mgr-modules`; `essential` required). Without it
+  CI prepares the five dependency roles. RADOS/RBD uses `essential,client`,
+  CephFS adds `cephfs`, mirrors and caches add `rbd-aux`, gateways add `rgw`.
+  `mgr-modules` is optional and never a default: it is the official MGR
+  module bundle with the modules outside the essential baseline, such as
+  prometheus, and only the official variant publishes it. A test reads it with
+  `harness.MGRModulesImage` and puts it in `ImageSet.MGR`.
 - `representative=<theme>` (`topology`, `auth`, `mirroring`, `recovery`,
   `flaky`) adds the batch to the periodic campaign (see
   [Representative campaign](ci.md#representative-campaign)). Choose short

@@ -43,6 +43,21 @@ func EssentialImage(t *testing.T) string {
 	return image
 }
 
+// MGRModulesImage is the image of the optional mgr-modules role: the official
+// MGR module bundle, which ships the modules outside the essential baseline,
+// such as prometheus. A batch whose tests need one declares the role and CI
+// supplies CEPH_TEST_MGR_MODULES_IMAGE; a role run without it fails here,
+// before any cluster starts, instead of falling back to the essential or the
+// official image. A local aggregate run uses its aggregate image.
+func MGRModulesImage(t *testing.T) string {
+	t.Helper()
+	image, err := IntegrationImage(os.Getenv, "CEPH_TEST_MGR_MODULES_IMAGE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return image
+}
+
 // IntegrationImages selects fixture images and skips mClock startup calibration
 // for functional tests. Explicit storage policy and later config files can
 // override this local default before the first OSD starts.

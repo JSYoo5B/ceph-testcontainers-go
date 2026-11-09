@@ -12,6 +12,7 @@
         "cephfs": "sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80",
         "client": "sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
         "essential": "sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+        "mgr-modules": "sha256:5d21a0332c762a3654b4bb312dd9c4ff7bce2801ca3d72408f452ce6594eb01a",
         "rbd-aux": "sha256:2f0266c7dba5c18b1f8addd9d4ee25b56f4b3616a2afed6244520685391061fa",
         "rgw": "sha256:aac25fc48b5306425ceefaf6a46755d5820fb3f60805141334de4f99a4ea6d6c"
       },
@@ -38,6 +39,7 @@
         "cephfs": "sha256:99f0ff6e827c54a16bffc0546faeb085a94365d01d29d911214dc14818a76fe4",
         "client": "sha256:a69e1319ce8827c07c2993375e4e1ca9c51696682e68fec1aff02dbcff5649bf",
         "essential": "sha256:43ee23624e7a93052b70e269287ca35dc40d980ff1df47be0a23ec8336ca8574",
+        "mgr-modules": "sha256:2f09ef5a8ac79aa9fe33bc5f19d41ec07b4b080a3a163a65a9c85e0f3cd745db",
         "rbd-aux": "sha256:fc12831c3bbf8213ef7d37b66aa2e5989240d611c5786c636395f16b7f46dbb3",
         "rgw": "sha256:1fbe1bd4ecc001ea91ed3771b35b871ce3d18dae58c3b5234b3da578172b4e9e"
       },
@@ -64,6 +66,7 @@
         "cephfs": "sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973",
         "client": "sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
         "essential": "sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+        "mgr-modules": "sha256:253468209466033e1826cc56d94ac33d98413a6835b6abc33646a1ed1cd7088f",
         "rbd-aux": "sha256:2a0b72d90e81a4102ff7c608af4a4014c76c4d776bff015ad1459215543def01",
         "rgw": "sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
       },

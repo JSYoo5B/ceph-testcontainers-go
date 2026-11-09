@@ -27,6 +27,11 @@ func TestIntegrationImage(t *testing.T) {
 		"selected client":   {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": essential, "CEPH_TEST_CLIENT_IMAGE": client}, "CEPH_TEST_CLIENT_IMAGE", client, ""},
 		"undeclared role":   {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_RGW_IMAGE", "", "CEPH_TEST_RGW_IMAGE is required"},
 		"missing essential": {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles"}, "CEPH_TEST_ESSENTIAL_IMAGE", "", "CEPH_TEST_ESSENTIAL_IMAGE is required"},
+		// The optional mgr-modules role: supplied when declared, never
+		// replaced by the essential image when a role run lacks it.
+		"mgr-modules":           {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": essential, "CEPH_TEST_MGR_MODULES_IMAGE": client}, "CEPH_TEST_MGR_MODULES_IMAGE", client, ""},
+		"missing mgr-modules":   {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_MGR_MODULES_IMAGE", "", "CEPH_TEST_MGR_MODULES_IMAGE is required"},
+		"aggregate mgr-modules": {map[string]string{"CEPH_TEST_IMAGE": essential}, "CEPH_TEST_MGR_MODULES_IMAGE", essential, ""},
 	} {
 		image, err := harness.IntegrationImage(func(key string) string { return test.env[key] }, test.variable)
 		if test.err != "" {

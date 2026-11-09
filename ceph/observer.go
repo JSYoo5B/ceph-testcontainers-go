@@ -506,8 +506,10 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 // parses the Prometheus text exposition format. It never enables the module:
 // enable it with override.SetMGRModule first, and wait until ManagerServices
 // lists it. The module is not a baseline module of the essential role, so
-// run the managers from an image that ships it, such as the official image
-// of the release in ImageSet.MGR. A module that serves no endpoint is ErrInvalidRequest. The
+// run the managers from an image that ships it in ImageSet.MGR: the
+// mgr-modules role image of the release, which the official variant
+// publishes, or the official image. A module that serves no endpoint is
+// ErrInvalidRequest. The
 // scrape runs in the control container, on the cluster's network, at the
 // address that ManagerServices advertises; it is bounded to 30 seconds and
 // 32 MiB, and a failed fetch or unparsable output is a *NativeFailure or an

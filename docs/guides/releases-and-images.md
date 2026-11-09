@@ -374,14 +374,15 @@ MGR modules with the MGR image. Caller-owned external clients remain caller-owne
 active and standby candidates of `Run` and the managers that `AddManager`
 adds later. It replaces the whole MGR container, not a sidecar. Empty, it is
 Essential (with `All`, the All image), so a set without it runs managers as
-before; no other role has a default. Use it to run the official image, which
-ships modules that the essential role image omits, or a consumer image built
-from it with additional modules, together with the role images of the other
-daemons:
+before; no other role has a default. Use it to run an image that ships
+modules the essential role image omits, together with the role images of the
+other daemons: the `mgr-modules` role image of the release, which the official
+variant publishes and the role digest map pins, the official image, or a
+consumer image built from either with additional modules:
 
 ```go
-// officialRef is the official image of the same release, such as quay.io/ceph/ceph:v20.2.4 pinned by digest.
-images := ceph.ImageSet{Essential: essentialRef, Client: clientRef, MGR: officialRef}
+// mgrModulesRef is the mgr-modules role image of the same release, pinned by digest.
+images := ceph.ImageSet{Essential: essentialRef, Client: clientRef, MGR: mgrModulesRef}
 cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)))
 // FactsOf(cluster).Images.MGR is the MGR image; every ManagerContainer.Image reports it.
 ```
@@ -416,7 +417,8 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   your own through its own command. The Dashboard, which the official image
   ships and essential does not, is prepared by the
   [`dashboard`](../../dashboard/README.md) package. The prometheus module
-  that `Observer.ManagerMetrics` scrapes is not a baseline module either.
+  that `Observer.ManagerMetrics` scrapes is not a baseline module either;
+  the `mgr-modules` role ships it.
 - The enabled list of `ceph mgr dump` also names the release's
   `mgr_initial_modules` defaults (iostat, nfs and nvmeof since Squid). The
   essential role need not ship them; a manager without them stays
@@ -426,7 +428,13 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
 `TestMGRImageConsumerModule` (batch `mgr_image`) run the official image in the
 MGR slot, an essential image without `ceph-mgr`, and a consumer image built
 from the official image with one small module, including a module whose
-dependency is missing and a module option value that Ceph refuses.
+dependency is missing and a module option value that Ceph refuses. In the same
+batch, `TestManagerPrometheusExporter`, `TestManagerMetrics` and
+`TestManagerWatchReportsFailoverAndServiceAdvertisement` run their managers
+from the `mgr-modules` role image. The batch declares
+`image-roles=essential,client,mgr-modules`, so CI supplies
+`CEPH_TEST_MGR_MODULES_IMAGE`; a role run without it fails before any cluster
+starts, rather than falling back to the essential or the official image.
 
 `RunNativeCommand` requires Python in the actual target container, and keeps
 explicit capability checks. Selecting a toolkit does not add utilities to a

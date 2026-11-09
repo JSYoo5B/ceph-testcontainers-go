@@ -35,8 +35,10 @@ def resolve(reference, run=None):
 
 
 def pin(release, run=None):
-    """role -> digest for every published role image of the release."""
-    references = run_image_matrix.image_references("official", "roles", release)
+    """role -> digest for every published role image of the release,
+    optional roles included."""
+    references = run_image_matrix.image_references("official", "roles", release,
+                                                   run_image_matrix.published_roles("official"))
     return {role: resolve(reference, run) for role, reference in references.items()}
 
 
