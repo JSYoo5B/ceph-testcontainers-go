@@ -15,7 +15,8 @@ import (
 // its import into one selected destination. Buckets contains copied, distinct
 // native instances required by pipes selecting that destination.
 // PolicyImported reports that the destination's instance of Bucket carries the
-// captured group, or no such group for a removed handle. It contains no policy
+// captured group, or no such group for a removed handle, at an object version
+// no older than the master's instance had when the observation began. It contains no policy
 // maps, credentials, object names or sync markers.
 type BucketSyncPolicyStatus struct {
 	RealmID, PeriodID, ZonegroupID, GroupID, Zone, ZoneID string
@@ -33,7 +34,8 @@ type BucketSyncPolicyStatus struct {
 // destination's instance of the group's bucket no longer carries the group,
 // and Buckets is that bucket alone. The destination must be one the pipes
 // selected when the group was removed. It checks the
-// exact committed period, source-scope group snapshot, and all referenced
+// exact committed period, source-scope group snapshot at an instance object
+// version no older than the master's at admission, and all referenced
 // source/destination bucket instances needed by that destination. Admission
 // reads the master once and returns any error immediately. After admission,
 // missing or older local metadata and transient read failures are retried. Recreated instances and changed
@@ -89,12 +91,17 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 }
 
 // policyImportTarget is what one observation of a policy import keeps from
-// its admission: the handle, the master's committed period and the group
-// snapshot captured then, and the identities every result carries.
+// its admission: the handle, the master's committed period, the group
+// snapshot and the object version of the master's bucket instance captured
+// then, and the identities every result carries. The version orders a
+// destination snapshot after the captured change: a destination still on an
+// earlier write of the instance, such as one taken before the group existed,
+// can carry the same group or the same absence of it.
 type policyImportTarget struct {
 	group   *SyncGroup
 	period  map[string]any
 	want    map[string]any
+	version rgwObjectVersion
 	removed bool
 	status  BucketSyncPolicyStatus
 }
@@ -124,13 +131,17 @@ func (g *SyncGroup) admitPolicyImport(ctx context.Context, destinationZone strin
 	if err == nil {
 		status.PeriodID, status.RealmEpoch, err = syncCommittedPeriodIdentity(period)
 	}
+	var instance *rgwBucketInstance
 	if err == nil {
-		_, _, err = g.checkPolicyReadyMaster(ctx, period, buckets)
+		_, instance, _, err = g.checkPolicyReadyMaster(ctx, period, buckets)
+	}
+	if err == nil && !instance.version.set {
+		err = errors.New("RGW master bucket instance metadata lacks its object version")
 	}
 	if err != nil {
 		return nil, status, err
 	}
-	return &policyImportTarget{group: g, period: syncJSONClone(period), want: syncJSONClone(g.state.group), removed: g.state.removed, status: status}, status, nil
+	return &policyImportTarget{group: g, period: syncJSONClone(period), want: syncJSONClone(g.state.group), version: instance.version, removed: g.state.removed, status: status}, status, nil
 }
 
 // policyImportDestination is the attached owned zone of g's zonegroup named
@@ -163,7 +174,7 @@ func (t *policyImportTarget) sample(ctx context.Context) (BucketSyncPolicyStatus
 	if destination == nil || destination.ID != t.status.ZoneID {
 		return status, true, errors.New("RGW policy import destination is no longer the attached owned zone")
 	}
-	return g.policyReadyStatus(ctx, destination, t.period, t.want, status)
+	return g.policyReadyStatus(ctx, destination, t.period, t.want, t.version, status)
 }
 
 // syncPolicyReadyBuckets returns the bucket instances whose import the
@@ -227,39 +238,39 @@ func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIde
 
 // checkPolicyReadyMaster checks that the master still has the captured
 // committed period, the owned group and the referenced bucket instances, and
-// returns the master. A failed read is not fatal; a different period, group or
-// recreated bucket is.
-func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[string]any, buckets []SyncBucketIdentity) (*rgwZoneState, bool, error) {
+// returns the master and its instance of the group's bucket. A failed read is
+// not fatal; a different period, group or recreated bucket is.
+func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[string]any, buckets []SyncBucketIdentity) (*rgwZoneState, *rgwBucketInstance, bool, error) {
 	f := g.owner
 	master, current, err := f.syncPolicyMaster(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if !reflect.DeepEqual(current, period) {
-		return nil, true, errors.New("RGW master committed period changed during policy import observation")
+		return nil, nil, true, errors.New("RGW master committed period changed during policy import observation")
 	}
 	// The instances come first: the policy read also refuses a recreated
 	// bucket, but without telling it apart from a failed read.
 	for _, bucket := range buckets {
 		if err := g.checkBucketInstance(ctx, master, bucket); err != nil {
-			return nil, errors.Is(err, errSyncBucketRecreated), err
+			return nil, nil, errors.Is(err, errSyncBucketRecreated), err
 		}
 	}
-	policy, _, err := g.policyDocument(ctx, master)
+	policy, instance, err := g.policyDocument(ctx, master)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if !reflect.DeepEqual(syncNativeGroup(policy, g.ID()), g.state.group) {
-		return nil, true, errors.New("RGW owned master bucket policy changed during import observation")
+		return nil, nil, true, errors.New("RGW owned master bucket policy changed during import observation")
 	}
-	return master, false, nil
+	return master, instance, false, nil
 }
 
-func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
+func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneState, period, wantGroup map[string]any, version rgwObjectVersion, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
 	f := g.owner
 	result.Buckets = slices.Clone(result.Buckets)
 	result.PeriodImported, result.PolicyImported, result.BucketsImported, result.Imported = false, false, false, false
-	master, fatal, err := g.checkPolicyReadyMaster(ctx, period, result.Buckets)
+	master, _, fatal, err := g.checkPolicyReadyMaster(ctx, period, result.Buckets)
 	if err != nil {
 		return result, fatal, err
 	}
@@ -304,7 +315,9 @@ func (g *SyncGroup) policyReadyStatus(ctx context.Context, destination *rgwZoneS
 	if err != nil {
 		return result, true, err
 	}
-	result.PolicyImported = reflect.DeepEqual(syncNativeGroup(instance.policy, g.ID()), wantGroup)
+	// The group comparison alone would accept a destination snapshot older
+	// than the captured change that happens to agree with it.
+	result.PolicyImported = instance.version.atLeast(version) && reflect.DeepEqual(syncNativeGroup(instance.policy, g.ID()), wantGroup)
 	for _, bucket := range result.Buckets {
 		found, fatal, err := g.policyReadyBucket(ctx, destination, bucket)
 		if err != nil || !found {

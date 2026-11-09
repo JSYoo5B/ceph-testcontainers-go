@@ -105,7 +105,11 @@ imports it as any other change of the bucket's metadata. Call
 `WaitBucketPolicyReady` or `WatchBucketPolicy` on the removed handle to wait
 for that import: it is complete when the destination's instance of the
 group's bucket no longer carries the group. The destination must be one the
-group's pipes selected. Write objects that the removal must exclude only
+group's pipes selected. Every policy import, a removal included, also needs
+the destination's instance at an object version (the metadata `ver`) no older
+than the master's when the observation began. A destination snapshot from
+before the group was created has no group either, and only that version tells
+the two apart. Write objects that the removal must exclude only
 after that.
 
 `Terminate` ends a watch with `ceph.ErrInvalidRequest`, so stop it first. No

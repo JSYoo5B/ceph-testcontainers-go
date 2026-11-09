@@ -33,7 +33,13 @@ type rgwPolicyImportCLI struct {
 	missingBuckets, failedBuckets, stderrFailedBuckets map[string]bool
 	policyLagReads, localReads                         int
 	localMetadataID, localGroupID                      string
-	malformedStats                                     bool
+	// versionLag serves the destination instance that many writes behind
+	// the master, and versionTag, when set, under another version line;
+	// rawVersion, when set, replaces the native "ver" member verbatim.
+	versionLag     int
+	versionTag     string
+	rawVersion     any
+	malformedStats bool
 	// rawStats, when set, is served verbatim as the destination bucket stats,
 	// so a test can send repeated or case-aliased keys a map cannot hold.
 	rawStats          string
@@ -136,7 +142,14 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 		if c.onLocalPolicyRead != nil {
 			c.onLocalPolicyRead()
 		}
-		return 0, policyImportJSON(map[string]any{"key": key, "data": map[string]any{"bucket_info": map[string]any{"bucket": map[string]any{"name": name, "tenant": tenant, "bucket_id": id}, "zonegroup": "group-id", "sync_policy": policy}}}), nil
+		version := any(rgwTestObjectVersion(c.bucketVersion - c.versionLag))
+		if c.versionTag != "" {
+			version.(map[string]any)["tag"] = c.versionTag
+		}
+		if c.rawVersion != nil {
+			version = c.rawVersion
+		}
+		return 0, policyImportJSON(map[string]any{"key": key, "ver": version, "data": map[string]any{"bucket_info": map[string]any{"bucket": map[string]any{"name": name, "tenant": tenant, "bucket_id": id}, "zonegroup": "group-id", "sync_policy": policy}}}), nil
 	}
 	return c.rgwSyncCLI.Exec(ctx, args, opts...)
 }
@@ -366,6 +379,79 @@ func TestRGWBucketSyncPolicyReadyObservesARemoval(t *testing.T) {
 	if state, err := g.WaitBucketPolicyReady(ctx2, "destination"); err == nil || errors.Is(err, context.DeadlineExceeded) || state.Imported {
 		t.Fatalf("a group recreated on the master was adopted as the removal: %+v %v", state, err)
 	}
+}
+
+// A destination snapshot older than the captured change can agree with it: one
+// taken before the group existed has no group, as a removal does. Only the
+// instance's object version orders the snapshot after the change.
+func TestRGWBucketSyncPolicyReadyOrdersTheDestinationAfterTheChange(t *testing.T) {
+	expectLag := func(t *testing.T, cli *rgwPolicyImportCLI, g *SyncGroup, what string) {
+		t.Helper()
+		ctx := clustertest.NewSignalDeadline(t.Context())
+		cli.onExec = expireAfterDestinationObservation(ctx)
+		defer func() { cli.onExec = nil }()
+		state, err := g.WaitBucketPolicyReady(ctx, "destination")
+		if !errors.Is(err, context.DeadlineExceeded) || state.Imported || state.PolicyImported || !state.PeriodImported || !state.BucketsImported {
+			t.Fatalf("%s read as imported: %+v %v", what, state, err)
+		}
+	}
+	t.Run("removal before the creation was imported", func(t *testing.T) {
+		_, cli, g := newRGWPolicyImportFixture(t)
+		// The destination knows the bucket but is still on its first write,
+		// from before the group was created.
+		cli.localPolicy = map[string]any{"groups": []any{}}
+		copy := *g
+		if err := g.Remove(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		cli.versionLag = cli.bucketVersion
+		expectLag(t, cli, g, "a destination snapshot from before the group's creation")
+		cli.versionLag = 0
+		before := len(cli.calls)
+		state, err := copy.WaitBucketPolicyReady(t.Context(), "destination")
+		if err != nil || !state.Imported || !state.PolicyImported {
+			t.Fatalf("the removal imported at the master's version was not observed: %+v %v", state, err)
+		}
+		requirePolicyImportReadOnly(t, cli.calls[before:])
+	})
+	t.Run("same group at an older write", func(t *testing.T) {
+		_, cli, g := newRGWPolicyImportFixture(t)
+		cli.versionLag = 1
+		expectLag(t, cli, g, "an identical group at an earlier write of the instance")
+	})
+	t.Run("another version line", func(t *testing.T) {
+		_, cli, g := newRGWPolicyImportFixture(t)
+		cli.versionTag, cli.versionLag = "other-tag", -5
+		expectLag(t, cli, g, "a newer write of another version line")
+	})
+	for name, raw := range map[string]any{"missing": map[string]any{}, "numeric tag": map[string]any{"tag": 7, "ver": json.Number("9")}, "empty tag": map[string]any{"tag": "", "ver": json.Number("9")}, "string ver": map[string]any{"tag": "instance-tag", "ver": "9"}, "negative ver": map[string]any{"tag": "instance-tag", "ver": json.Number("-1")}, "fractional ver": map[string]any{"tag": "instance-tag", "ver": json.Number("9.5")}, "not an object": "instance-tag:9"} {
+		t.Run("malformed destination "+name, func(t *testing.T) {
+			_, cli, g := newRGWPolicyImportFixture(t)
+			cli.rawVersion = raw
+			expectLag(t, cli, g, "a destination instance without a usable version")
+		})
+	}
+	t.Run("newer write of the same line", func(t *testing.T) {
+		_, cli, g := newRGWPolicyImportFixture(t)
+		cli.versionLag = -1
+		if state, err := g.WaitBucketPolicyReady(t.Context(), "destination"); err != nil || !state.Imported {
+			t.Fatalf("a destination past the captured write was refused: %+v %v", state, err)
+		}
+	})
+	t.Run("master without a version", func(t *testing.T) {
+		_, cli, g := newRGWPolicyImportFixture(t)
+		cli.rawBucketVersion = map[string]any{"tag": "instance-tag"}
+		before := len(cli.calls)
+		state, err := g.WaitBucketPolicyReady(t.Context(), "destination")
+		if err == nil || !strings.Contains(err.Error(), "object version") || state.Imported {
+			t.Fatalf("admission accepted a master instance without an object version: %+v %v", state, err)
+		}
+		for _, args := range cli.calls[before:] {
+			if syncTestFlag(args, "--zone-id") == "dest-id" {
+				t.Fatalf("admission read the destination before refusing: %v", args)
+			}
+		}
+	})
 }
 
 func TestRGWBucketSyncPolicyReadyBoundsMutexQueueAndCancellationAfterRead(t *testing.T) {

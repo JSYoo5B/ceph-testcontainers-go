@@ -21,12 +21,23 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// rgwTestObjectVersion is the native "ver" member of a fake bucket instance
+// at write count ver.
+func rgwTestObjectVersion(ver int) map[string]any {
+	return map[string]any{"tag": "instance-tag", "ver": json.Number(fmt.Sprint(ver + 1))}
+}
+
 type rgwSyncCLI struct {
 	testcontainers.Container
-	group, current, staging                          map[string]any
-	bucketID                                         string
-	bucketTenant                                     string
-	bucketPolicy                                     map[string]any
+	group, current, staging map[string]any
+	bucketID                string
+	bucketTenant            string
+	bucketPolicy            map[string]any
+	// bucketVersion counts the writes of the bucket instance, served as its
+	// native object version under bucketVersionTag.
+	bucketVersion int
+	// rawBucketVersion, when set, replaces the served "ver" member verbatim.
+	rawBucketVersion                                 any
 	calls                                            [][]string
 	stagingExit                                      int
 	badSymmetry                                      bool
@@ -160,7 +171,11 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 		if names := strings.SplitN(name, "/", 2); len(names) == 2 {
 			tenant, name = names[0], names[1]
 		}
-		result = map[string]any{"key": key, "data": map[string]any{"bucket_info": map[string]any{"bucket": map[string]any{"name": name, "tenant": tenant, "bucket_id": components[1]}, "zonegroup": "group-id", "sync_policy": c.bucketPolicy, "owner": "legacy-owner", "placement_rule": "tiered"}}}
+		var version any = rgwTestObjectVersion(c.bucketVersion)
+		if c.rawBucketVersion != nil {
+			version = c.rawBucketVersion
+		}
+		result = map[string]any{"key": key, "ver": version, "data": map[string]any{"bucket_info": map[string]any{"bucket": map[string]any{"name": name, "tenant": tenant, "bucket_id": components[1]}, "zonegroup": "group-id", "sync_policy": c.bucketPolicy, "owner": "legacy-owner", "placement_rule": "tiered"}}}
 	case syncTestCommand(args, "sync", "group"):
 		if c.failBeforeMutation {
 			return 0, nil, errors.New("native command did not start; secret")
@@ -240,6 +255,7 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 		policy = syncPolicyReplace(policy, id, group)
 		if syncTestFlag(args, "--bucket") != "" {
 			c.bucketPolicy = policy
+			c.bucketVersion++
 		} else {
 			c.group["sync_policy"] = policy
 		}
