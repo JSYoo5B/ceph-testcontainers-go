@@ -204,8 +204,8 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 		t.Fatalf("%s is not reported synced: %+v, %v", second.Name, reported.Value, err)
 	}
 	final := reported.Value
-	if final.Synced != baseline.Synced+1 || final.LastBytes != cephFSPathCutBytes {
-		t.Fatalf("after the restore: %+v, before %+v; want one more snapshot synced with %d bytes copied", final, baseline, cephFSPathCutBytes)
+	if copied, err := harness.CephFSSyncBytesContains(final.LastBytes, cephFSPathCutBytes); final.Synced != baseline.Synced+1 || !copied || err != nil {
+		t.Fatalf("after the restore: %+v (sync_bytes %s), before %+v; want one more snapshot synced with %d bytes copied: %v", final, final.LastBytes, baseline, cephFSPathCutBytes, err)
 	}
 	remapped, err := harness.Observe(ctx, 2*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (string, bool, error) {
 		mapping, err := cephFSMirrorDirmapState(probeCtx, source, sourceFS.FilesystemName)
@@ -214,7 +214,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the MGR does not map /federation again: %s, %v", remapped.Value, err)
 	}
-	t.Logf("CEPHFS_MIRROR_PATH_RECEIPT osd.%d dropped %d packets to cephfs-mirror %s (%s) on the source network, the MDS path left intact; for %d samples over 30 s the daemon stayed %s on %s/%d with last synced %s/%d (%d synced) while the source client wrote, snapshotted and read %s through osd.%d and the MDS; MGR dirmap states after the cut %v; the destination had no %s; %s after the restore it arrived with the new bytes, the daemon reported it synced (%d synced, %d bytes copied) and the MGR mapped /federation again",
+	t.Logf("CEPHFS_MIRROR_PATH_RECEIPT osd.%d dropped %d packets to cephfs-mirror %s (%s) on the source network, the MDS path left intact; for %d samples over 30 s the daemon stayed %s on %s/%d with last synced %s/%d (%d synced) while the source client wrote, snapshotted and read %s through osd.%d and the MDS; MGR dirmap states after the cut %v; the destination had no %s; %s after the restore it arrived with the new bytes, the daemon reported it synced (%d synced, sync_bytes %s) and the MGR mapped /federation again",
 		osd.ID, cut.Drops, daemon.DaemonName, peer, samples, during.State, second.Name, second.ID, first.Name, first.ID, baseline.Synced, second.Name, osd.ID, mappings, second.Name, took, final.Synced, final.LastBytes)
 }
 
@@ -241,8 +241,10 @@ func cephFSMirrorDaemonAddress(t *testing.T, ctx context.Context, daemon *cephfs
 type cephFSMirrorReplay struct {
 	State         string
 	Current, Last cephfsmirror.Snapshot
-	LastBytes     uint64
-	Synced        uint64
+	// LastBytes is the native sync_bytes of the last synced snapshot: the
+	// exact count on Squid and Tentacle, a rounded byte text on Umbrella.
+	LastBytes json.RawMessage
+	Synced    uint64
 }
 
 // cephFSMirrorPeerReplay reads the daemon's peer status for /federation
@@ -257,21 +259,22 @@ func cephFSMirrorPeerReplay(ctx context.Context, daemon *cephfsmirror.Daemon, id
 		return cephFSMirrorReplay{}, fmt.Errorf("peer status: exit %d: %s, %v", code, out, err)
 	}
 	type snapshot struct {
-		ID    uint64 `json:"id"`
-		Name  string `json:"name"`
-		Bytes uint64 `json:"sync_bytes"`
+		ID    uint64          `json:"id"`
+		Name  string          `json:"name"`
+		Bytes json.RawMessage `json:"sync_bytes"`
 	}
-	var status map[string]struct {
+	directories, err := harness.CephFSPeerStatusDirectories(out, identity.PeerID)
+	if err != nil {
+		return cephFSMirrorReplay{}, err
+	}
+	var entry struct {
 		State   string    `json:"state"`
 		Current *snapshot `json:"current_syncing_snap"`
 		Last    *snapshot `json:"last_synced_snap"`
 		Synced  *uint64   `json:"snaps_synced"`
 	}
-	if err := json.Unmarshal(out, &status); err != nil {
-		return cephFSMirrorReplay{}, fmt.Errorf("decode peer status %s: %w", out, err)
-	}
-	entry, ok := status["/federation"]
-	if !ok || entry.State == "" || entry.Last == nil || entry.Synced == nil {
+	raw, ok := directories["/federation"]
+	if !ok || json.Unmarshal(raw, &entry) != nil || entry.State == "" || entry.Last == nil || entry.Synced == nil {
 		return cephFSMirrorReplay{}, fmt.Errorf("peer status has no synced /federation: %s", out)
 	}
 	replay := cephFSMirrorReplay{State: entry.State, Last: cephfsmirror.Snapshot{ID: entry.Last.ID, Name: entry.Last.Name}, LastBytes: entry.Last.Bytes, Synced: *entry.Synced}

@@ -623,6 +623,11 @@ _, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10)) // GID fr
   `peer_list`, `daemon status` and `show distribution` on the source; each
   mirror daemon's admin socket (`/var/run/ceph/cephfs-mirror.asok`) takes
   `fs mirror status <fs>@<fscid>` and `fs mirror peer status <fs>@<fscid> <peer>`.
+  Squid and Tentacle print the peer status as `{directory: entry}`; Umbrella
+  21.2.0 nests the same entry as `{"metrics": {directory: {"peer": {peer:
+  entry}}}}` and prints `sync_bytes`, `sync_duration` and `sync_time_stamp`
+  as rounded text. `DirectoryStatus`, `WatchDirectory` and a directory
+  removal's release observation read both shapes.
 - Retained snapshots (`fs subvolume rm --retain-snapshots`) and custom metadata
   have no typed API. On Ceph 20.2.4 a `snapshot-retained` subvolume has no live
   path and refuses custom metadata calls; snapshots and clones do not copy a

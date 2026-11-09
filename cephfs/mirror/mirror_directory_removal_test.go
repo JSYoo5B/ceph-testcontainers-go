@@ -167,6 +167,8 @@ func TestCephFSDirectoryRemovalProductionExactCycleRelease(t *testing.T) {
 		directoryRemovalTracked,
 		`{"/owned":{"state":"failed","failure_reason":"copy","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`,
 		`{"/owned":{"state":"syncing","current_syncing_snap":{"id":7,"name":"checkpoint"},"snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`,
+		// Umbrella nests the same entry under metrics and the peer.
+		umbrellaPeerStatus(directoryRemovalTracked),
 	} {
 		a.stats = stats
 		st, err := r.Status(t.Context())
@@ -179,7 +181,8 @@ func TestCephFSDirectoryRemovalProductionExactCycleRelease(t *testing.T) {
 	if err != nil || st.Released || st.Daemons["b"].State != "tracked" {
 		t.Fatalf("checked mapped owner only: %+v %v", st, err)
 	}
-	b.stats = `{}`
+	// An Umbrella reply without the directory releases it as the flat {} does.
+	b.stats = `{"metrics":{}}`
 	st, err = r.WaitReleased(t.Context())
 	if err != nil || !st.Released || !st.PolicyRemoved || !r.completed || st.Directory != "/owned" || st.PeerID != cephFSObserverDraftPeer || st.SourceFilesystemID != 1 || st.DestinationFilesystemID != 2 || len(st.Daemons) != 2 {
 		t.Fatalf("normal original cohort release: %+v %v", st, err)
@@ -491,7 +494,8 @@ func TestCephFSDirectoryRemovalProductionCommonGuardRetainsFreshRetry(t *testing
 }
 
 func TestCephFSDirectoryRemovalProductionSchemaIdentityAndCohortFailClosed(t *testing.T) {
-	cases := []string{"null-policy", "policy-alias", "policy-duplicate", "stats-null", "stats-error", "stats-wrapper", "stats-malformed-unrelated", "stats-alias", "stats-duplicate", "stats-trailing", "peer-MON-removed", "peer-MGR-removed", "peer-command-removed", "restart", "replacement", "watcher-retired", "foreign-watcher", "FSID", "filesystem", "metadata", "cohort-expansion", "cohort-retirement"}
+	cases := []string{"null-policy", "policy-alias", "policy-duplicate", "stats-null", "stats-error", "stats-wrapper", "stats-malformed-unrelated", "stats-alias", "stats-duplicate", "stats-trailing",
+		"stats-metrics-mixed", "stats-metrics-other-peer", "stats-metrics-extra-key", "stats-metrics-duplicate", "peer-MON-removed", "peer-MGR-removed", "peer-command-removed", "restart", "replacement", "watcher-retired", "foreign-watcher", "FSID", "filesystem", "metadata", "cohort-expansion", "cohort-retirement"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			r, m, s, d, a, b := beginDirectoryRemovalFixture(t)
@@ -517,6 +521,14 @@ func TestCephFSDirectoryRemovalProductionSchemaIdentityAndCohortFailClosed(t *te
 				a.stats = `{"/other":{"state":"idle","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0},"/other":{"state":"idle","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`
 			case "stats-trailing":
 				a.stats = `{} {}`
+			case "stats-metrics-mixed":
+				a.stats = `{"metrics":{},"/owned":{"state":"idle","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`
+			case "stats-metrics-other-peer":
+				a.stats = `{"metrics":{"/other":{"peer":{"another-peer":{"state":"idle","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}}}}`
+			case "stats-metrics-extra-key":
+				a.stats = strings.Replace(umbrellaPeerStatus(`{"/other":{"state":"idle","snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`), `{"peer":`, `{"rate":1,"peer":`, 1)
+			case "stats-metrics-duplicate":
+				a.stats = `{"metrics":{"/other":{"peer":{}},"/other":{"peer":{}}}}`
 			case "peer-MON-removed":
 				s.fsPeers = `{}`
 			case "peer-MGR-removed":

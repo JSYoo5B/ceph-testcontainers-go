@@ -231,6 +231,9 @@ func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daem
 	if err != nil {
 		return cephFSObserveQuery("read CephFS mirror directory replay", err)
 	}
+	if data, err = cephFSPeerStatusDirectories(data, mirror.peerID); err != nil {
+		return err
+	}
 	replay, present, err := decodeCephFSObservedReplay(data, directory)
 	if err != nil {
 		return err

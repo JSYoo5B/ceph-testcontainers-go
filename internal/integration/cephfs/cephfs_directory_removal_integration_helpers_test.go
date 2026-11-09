@@ -292,8 +292,8 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 func cephFSReadDirectoryRemovalStats(t *testing.T, ctx context.Context, daemon *cephfsmirror.Daemon, filesystem string, id int, peer string) map[string]json.RawMessage {
 	t.Helper()
 	data := harness.MultiClusterExecOutput(t, ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", filesystem, id), peer)
-	var result map[string]json.RawMessage
-	if json.Unmarshal(data, &result) != nil || result == nil {
+	result, err := harness.CephFSPeerStatusDirectories(data, peer)
+	if err != nil {
 		t.Fatal("independent peer directory stats missing")
 	}
 	for directory, raw := range result {
