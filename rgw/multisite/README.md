@@ -97,7 +97,20 @@ the watch starts however long the zone's metadata sync takes; a read that
 fails is retried within `QueryTimeout` for the baseline and is a `WatchGap`
 later. The watch keeps the committed period, the group's
 policy, the zone and the bucket instances it captured: a new committed period,
-a changed or removed group, a detached zone and a recreated bucket end it.
+a changed group, a group removed after the watch started, a detached zone and
+a recreated bucket end it.
+
+A bucket group's `Remove` takes effect without a commit, and the destination
+imports it as any other change of the bucket's metadata. Call
+`WaitBucketPolicyReady` or `WatchBucketPolicy` on the removed handle to wait
+for that import: it is complete when the destination's instance of the
+group's bucket no longer carries the group. The destination must be one the
+group's pipes selected. Every policy import, a removal included, also needs
+the destination's instance at an object version (the metadata `ver`) no older
+than the master's when the observation began. A destination snapshot from
+before the group was created has no group either, and only that version tells
+the two apart. Write objects that the removal must exclude only
+after that.
 
 `Terminate` ends a watch with `ceph.ErrInvalidRequest`, so stop it first. No
 watch proves that a particular object arrived: compare the objects through

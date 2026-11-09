@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -127,6 +128,9 @@ type rgwSyncGroupState struct {
 	group              map[string]any
 	period             map[string]any
 	pending            *rgwSyncPending
+	// removedGroup is the last confirmed group of a removed handle. Its pipes
+	// name the destinations whose import of the removal can be observed.
+	removedGroup map[string]any
 }
 
 type rgwSyncPending struct {
@@ -444,7 +448,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	}
 	actual := syncNativeGroup(before, g.ID())
 	if actual == nil {
-		g.state.group = nil
+		g.state.removedGroup, g.state.group = g.state.group, nil
 		g.state.removed = true
 		return nil
 	}
@@ -461,7 +465,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	if !reflect.DeepEqual(syncPolicyReplace(before, g.ID(), nil), after) {
 		return errors.New("RGW sync group removal readback differs")
 	}
-	g.state.group = nil
+	g.state.removedGroup, g.state.group = g.state.group, nil
 	g.state.removed = true
 	return nil
 }
@@ -766,6 +770,39 @@ func (g *SyncGroup) policyDocument(ctx context.Context, master *rgwZoneState) (m
 type rgwBucketInstance struct {
 	Owner, PlacementRule nativeString
 	policy               map[string]any
+	// version is the document's object version, the "ver" member that every
+	// write of the instance advances and metadata sync copies from the master.
+	version rgwObjectVersion
+}
+
+// rgwObjectVersion is a native RADOS object version: tag names the object's
+// version line and ver counts its writes. set is false unless the document
+// carried a string tag and an unsigned integer ver.
+type rgwObjectVersion struct {
+	tag string
+	ver uint64
+	set bool
+}
+
+// atLeast reports whether v is a write of the same version line no older than
+// min. Two unset versions never compare.
+func (v rgwObjectVersion) atLeast(min rgwObjectVersion) bool {
+	return v.set && min.set && v.tag == min.tag && v.ver >= min.ver
+}
+
+// decodeObjectVersion reads the "ver" member of a native metadata document.
+func decodeObjectVersion(metadata nativeDoc) rgwObjectVersion {
+	ver := metadata.object("ver")
+	tag := ver.member("tag")
+	number, ok := ver["ver"].(json.Number)
+	if !tag.set || tag.value == "" || !ok {
+		return rgwObjectVersion{}
+	}
+	count, err := strconv.ParseUint(number.String(), 10, 64)
+	if err != nil {
+		return rgwObjectVersion{}
+	}
+	return rgwObjectVersion{tag: tag.value, ver: count, set: true}
 }
 
 // decodeBucketInstance decodes the instance document of key. matched is false
@@ -789,7 +826,7 @@ func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInst
 	if err != nil {
 		return nil, true, err
 	}
-	return &rgwBucketInstance{Owner: info.member("owner"), PlacementRule: info.member("placement_rule"), policy: policy}, true, nil
+	return &rgwBucketInstance{Owner: info.member("owner"), PlacementRule: info.member("placement_rule"), policy: policy, version: decodeObjectVersion(metadata)}, true, nil
 }
 
 func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
