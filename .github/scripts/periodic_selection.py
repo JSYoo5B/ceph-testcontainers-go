@@ -55,10 +55,20 @@ def patch_inventory():
             raise ValueError('unknown image eligibility')
     return data['releases']
 
-def image_identity(release, discovery):
+def image_identity(release, discovery, entries=()):
+    """The image identity of a plan. A historical aggregate serves only the
+    five dependency roles: whether one ships the modules of an optional role
+    is not established, so a plan whose entries declare one is not eligible
+    on it rather than run on a guessed image."""
     inventory = patch_inventory()
     if discovery:
-        return inventory[release]
+        row = dict(inventory[release])
+        optional = sorted({role for item in entries if item['profile']['image_roles']
+                           for role in images.parse_roles(item['profile']['image_roles'])
+                           if role in images.OPTIONAL_ROLE_ENV})
+        if optional and row['eligibility'] == 'available':
+            row.update(eligibility='artifact_unavailable', unavailable_roles=optional)
+        return row
     return {'eligibility': 'available', 'layout': 'roles',
             'references': images.image_references('official', 'roles', release, images.published_roles('official')),
             'cpu_baseline': inventory.get(release, {}).get('cpu_baseline', {})}
@@ -90,7 +100,7 @@ def validate_plan(plan, catalog):
             or plan.get('maximum_runner_minutes') != sum(RUNNER_MINUTES.values())
             or plan.get('budget_seconds') != BUDGET_SECONDS or not plan.get('entries')):
         raise ValueError('invalid, stale or unbounded periodic plan')
-    expected_images = image_identity(plan['release'], 'reference' in plan['images'])
+    expected_images = image_identity(plan['release'], 'reference' in plan['images'], plan['entries'])
     if plan['images'] != expected_images:
         raise ValueError('planned images differ from the source pins')
     profiles = {p['id']: p for p in tags.discover(catalog)['include'] + tags.discover_optional(catalog)['include']}
@@ -236,7 +246,7 @@ def sample_plan(catalog, source_sha, mode, now, release='', profiles='', tests='
         plan = {'schema':SCHEMA,'mode':mode,'source_sha':source_sha,'selected_at':now.isoformat(),
                 'cell':version+'/'+digest([e['id'] for e in chosen])[:12],
                 'reason':'explicit_target' if mode == 'targeted' else 'random_sample',
-                'release':version,'images':image_identity(version,mode == 'discovery' or version not in images.RELEASES),
+                'release':version,'images':image_identity(version,mode == 'discovery' or version not in images.RELEASES,chosen),
                 'platform':'linux/amd64','entries':chosen,'catalogue_sha256':digest(catalog),
                 'budget_seconds':BUDGET_SECONDS,'maximum_runner_minutes':sum(RUNNER_MINUTES.values()),
                 'scope':'flaky_discovery_sample_not_support'}

@@ -108,6 +108,34 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.plan('targeted', release='19.2.2', profiles=e['profile']['id'], tests=changed)
 
+    def test_a_historical_aggregate_is_ineligible_for_an_optional_role(self):
+        mgr = next(p for p in tags.discover(self.catalog)['include'] if p['batch'] == 'mgr_image')
+        self.assertIn('mgr-modules', mgr['image_roles'].split(','))
+        plan = self.plan('targeted', release='19.2.2', profiles=mgr['id'], tests='TestManagerMetrics,TestManagerPrometheusExporter')
+        self.assertEqual(plan['images']['eligibility'], 'artifact_unavailable')
+        self.assertEqual(plan['images']['unavailable_roles'], ['mgr-modules'])
+        self.assertIn('reference', plan['images'])
+        sample.validate_plan(plan, self.catalog)
+        # The executor stops on the planned ineligibility before it prepares
+        # any image or exports a role environment.
+        info = mock.Mock(returncode=0, stdout=json.dumps({'OSType': 'linux', 'Architecture': 'x86_64'}))
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(executor, 'read_command', return_value=info), \
+                mock.patch.object(executor, 'cpu_eligible', return_value=True), \
+                mock.patch.object(executor, 'role_environment') as environment, \
+                self.assertRaisesRegex(RuntimeError, 'artifact_unavailable: the historical aggregate supplies no mgr-modules role'):
+            executor.prepare_images(plan, Path(directory) / 'images')
+        environment.assert_not_called()
+        # The same profile on a published release keeps its role images, and
+        # a profile without an optional role stays eligible on the aggregate.
+        published = self.plan('targeted', release='20.2.4', profiles=mgr['id'], tests='TestManagerMetrics')
+        self.assertEqual(published['images']['eligibility'], 'available')
+        self.assertIn('mgr-modules', published['images']['references'])
+        other = next(e for e in self.plan()['entries'] if e['profile']['checker'] == 'none' and 'mgr-modules' not in e['profile']['image_roles'])
+        historical = self.plan('targeted', release='19.2.2', profiles=other['profile']['id'], tests=other['tests'][0])
+        self.assertEqual(historical['images']['eligibility'], 'available')
+        self.assertNotIn('unavailable_roles', historical['images'])
+
     def test_plan_rejects_changed_source_images_selection_and_native_budget(self):
         original = self.plan()
         sample.validate_plan(original, self.catalog)

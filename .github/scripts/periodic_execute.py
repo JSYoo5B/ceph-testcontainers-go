@@ -134,6 +134,9 @@ def prepare_images(plan, directory, deadline=None):
     if not cpu_eligible(plan['images'].get('cpu_baseline', {}), platform.split('/')[1], read):
         raise RuntimeError('environment_ineligible: image CPU baseline is unavailable')
     if plan['images']['eligibility'] != 'available':
+        if plan['images'].get('unavailable_roles'):
+            raise RuntimeError('artifact_unavailable: the historical aggregate supplies no '
+                               + ','.join(plan['images']['unavailable_roles']) + ' role')
         raise RuntimeError('artifact_unavailable: catalogue has no usable image')
     if plan.get('test_images_error'):
         raise RuntimeError('artifact_resolution_failure: helper image identities were not resolved')
