@@ -907,7 +907,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "native_shuffle", "rbd_demote_restart",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_expiration_header",
-                                           "rgw_ssec_completion"])
+                                           "rgw_multipart_part_class", "rgw_ssec_completion"])
         # Every choice is an optional profile that no required plan selects;
         # the reproducers among them compile only with native_regression.
         for choice in choices:
