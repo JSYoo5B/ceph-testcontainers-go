@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -869,8 +869,10 @@ that reproduce an unpatched upstream defect and fail on the published images:
 ([`rgw_empty_sse_header`](../../internal/integration/experiments/rgw_empty_sse_header/README.md)),
 `rgw_expiration_header`
 ([`rgw_lifecycle_expiration_header`](../../internal/integration/experiments/rgw_lifecycle_expiration_header/README.md))
-and `rgw_compressed_copy`
-([`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)).
+`rgw_compressed_copy`
+([`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md))
+and `rgw_multipart_part_class`
+([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)).
 Each case's `README.md` gives its trigger, controls, command and the meaning
 of each outcome; [Experiment case tiers](#experiment-case-tiers) says when
 each one runs.
@@ -969,6 +971,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | deliberately failing reproducer | 29 s (fails at `empty-new-key` and `empty-overwrite`); 30 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `batch=rgw_empty_sse_header` |
 | `rgw_lifecycle_expiration_header` (`optional/rgw_expiration_header`) | deliberately failing reproducer | 29 s (fails in both subtests); 30 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_expiration_header [on umbrella]` | never | `batch=rgw_expiration_header` |
 | `rgw_compressed_copy_accounting` (`optional/rgw_compressed_copy`) | deliberately failing reproducer, edits the zone and restarts the gateway | 40 s (fails at the uncompressed destination); 39 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_compressed_copy [on umbrella]` | never | `batch=rgw_compressed_copy` |
+| `rgw_multipart_part_storage_class` (`optional/rgw_multipart_part_class`) | deliberately failing reproducer, edits the zone and restarts the gateway | 38 s (fails at `cold-storage-class`); also fails on 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run rgw_multipart_part_class [on <release>]` | never | `batch=rgw_multipart_part_class` |
 | `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
 | `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 
