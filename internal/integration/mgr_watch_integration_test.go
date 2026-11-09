@@ -1,6 +1,6 @@
-//go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_daemon_operations))))
+//go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_mgr_image))))
 
-//ci: timeout=45m job-timeout=55 image-roles=essential,client
+//ci: timeout=40m job-timeout=55 image-roles=essential,client,mgr-modules
 
 package integration_test
 

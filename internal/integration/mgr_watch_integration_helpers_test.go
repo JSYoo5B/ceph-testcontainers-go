@@ -81,14 +81,15 @@ print(len(body))`, metrics)
 }
 
 // newPrometheusCluster starts a service cluster whose managers run the
-// official image of the essential image's release, with the integration
-// images for the other daemons. The prometheus module is not a baseline
-// module of the essential role, so a role image need not ship it; the
-// official image does.
+// mgr-modules role image, with the integration images for the other daemons.
+// The prometheus module is not a baseline module of the essential role, so
+// the essential image need not ship it; the mgr-modules role does, and a
+// batch of these tests declares it.
 func newPrometheusCluster(t *testing.T, ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
 	images := harness.IntegrationImageSet(t)
-	images.MGR = officialMGRImage(t, ctx, mgrImageDocker(t, ctx), essentialBase(images))
+	images.MGR = harness.MGRModulesImage(t)
+	t.Logf("MGR slot image: %s", images.MGR)
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), harness.FunctionalOSDConfig(t)}, opts...)
 	return harness.NewServiceClusterWithOptions(t, "", opts...)
 }

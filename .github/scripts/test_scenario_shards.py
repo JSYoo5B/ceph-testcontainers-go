@@ -286,8 +286,12 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 continue
             roles = profile["image_roles"].split(",")
             self.assertEqual(roles[0], "essential", profile["id"])
-            self.assertTrue(set(roles) <= {"essential", "client", "cephfs", "rbd-aux", "rgw"}, profile["id"])
+            self.assertTrue(set(roles) <= {"essential", "client", "cephfs", "rbd-aux", "rgw", "mgr-modules"}, profile["id"])
         scoped = {profile["batch"]: profile["image_roles"] for profile in profiles}
+        # The optional mgr-modules role reaches only the batch that declares
+        # it: the MGR image batch, whose prometheus tests need its modules.
+        self.assertEqual(scoped["mgr_image"], "essential,client,mgr-modules")
+        self.assertEqual([batch for batch, roles in scoped.items() if "mgr-modules" in roles.split(",")], ["mgr_image"])
         self.assertEqual(scoped["daemon_basics"], "essential,client,rbd-aux")
         self.assertEqual(scoped["network_faults"], "essential,client")
         self.assertEqual(scoped["cephfs_clients"], "essential,client,cephfs,rbd-aux,rgw")
