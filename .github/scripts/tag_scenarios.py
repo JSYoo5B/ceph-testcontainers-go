@@ -35,8 +35,10 @@ CHECKERS = {
 }
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
 # Published role images, in the order of their CEPH_TEST_* variables. A Ceph
-# batch that declares no image-roles gets all five dependency roles.
-IMAGE_ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
+# batch that declares no image-roles gets all five dependency roles; an
+# optional role (mgr-modules) only by declaring it.
+DEFAULT_IMAGE_ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
+IMAGE_ROLES = DEFAULT_IMAGE_ROLES + ("mgr-modules",)
 # Docker network modes a test can declare with networkModes(t, ...).
 NETWORKS = ("host", "bridge")
 NETWORK_SCOPES = ("default", "all")
@@ -411,7 +413,7 @@ def resolve_image_roles(profile):
             raise ValueError(profile["profile"] + ": image-roles needs a Ceph runtime profile")
         profile["image_roles"] = ""
     elif declared is None:
-        profile["image_roles"] = ",".join(IMAGE_ROLES)
+        profile["image_roles"] = ",".join(DEFAULT_IMAGE_ROLES)
 
 
 def package_path(file):

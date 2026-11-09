@@ -171,7 +171,13 @@ class TagPlannerTests(unittest.TestCase):
         plan = engine.discover([fixture(), declared])
         roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
         self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "routing": "essential,cephfs"})
-        self.assertEqual(engine.IMAGE_ROLES, ("essential", "client", "cephfs", "rbd-aux", "rgw"))
+        self.assertEqual(engine.DEFAULT_IMAGE_ROLES, ("essential", "client", "cephfs", "rbd-aux", "rgw"))
+        self.assertEqual(engine.IMAGE_ROLES, engine.DEFAULT_IMAGE_ROLES + ("mgr-modules",))
+        # An optional role is granted only to a batch that declares it.
+        declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=mgr-modules,essential,client"]
+        plan = engine.discover([fixture(), declared])
+        roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
+        self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "routing": "essential,client,mgr-modules"})
         # The values are retired or malformed names and must be refused.
         for value in ("osd", "control,control", "control,client", "control,", "Control"):
             with self.subTest(roles=value), self.assertRaisesRegex(ValueError, "image-roles must list"):
