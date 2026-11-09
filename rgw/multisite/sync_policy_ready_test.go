@@ -25,13 +25,14 @@ type rgwPolicyImportCLI struct {
 	localPeriod  map[string]any
 	localBuckets map[string]string
 	// missingBuckets answers bucket stats as radosgw-admin does for a bucket
-	// the destination has not imported: exit 2, no output, an error on
-	// stderr. failedBuckets fails the same read with output, which is a
-	// failed read rather than an absent bucket.
-	missingBuckets, failedBuckets map[string]bool
-	policyLagReads, localReads    int
-	localMetadataID, localGroupID string
-	malformedStats                bool
+	// the destination has not imported: exit 2, no output and the
+	// ERR_NO_SUCH_BUCKET line on stderr. failedBuckets fails the same read
+	// with output, and stderrFailedBuckets with exit 2, no output and another
+	// diagnostic; both are failed reads rather than an absent bucket.
+	missingBuckets, failedBuckets, stderrFailedBuckets map[string]bool
+	policyLagReads, localReads                         int
+	localMetadataID, localGroupID                      string
+	malformedStats                                     bool
 	// rawStats, when set, is served verbatim as the destination bucket stats,
 	// so a test can send repeated or case-aliased keys a map cannot hold.
 	rawStats          string
@@ -83,7 +84,11 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 		name := syncTestFlag(args, "--bucket")
 		if c.missingBuckets[name] {
 			c.calls = append(c.calls, slices.Clone(args))
-			return 2, policyImportStderr("failure: (2002) Unknown error 2002: secret-marker\n"), nil
+			return 2, policyImportStderr("failure: (2002) Unknown error 2002: \n"), nil
+		}
+		if c.stderrFailedBuckets[name] {
+			c.calls = append(c.calls, slices.Clone(args))
+			return 2, policyImportStderr("monclient: unable to find a keyring on /etc/ceph/secret-marker.keyring: (2) No such file or directory\n"), nil
 		}
 		if c.failedBuckets[name] {
 			c.calls = append(c.calls, slices.Clone(args))
@@ -380,5 +385,34 @@ func TestRGWBucketSyncPolicyReadyRetriesAFailedMasterRead(t *testing.T) {
 	state, err := g.WaitBucketPolicyReady(ctx, "destination")
 	if err != nil || !state.Imported || !failed || cli.remainingReadFailures != 0 {
 		t.Fatalf("a failed master read ended the wait: %+v %v", state, err)
+	}
+}
+
+// Only the native ERR_NO_SUCH_BUCKET answer of bucket stats is an absent
+// bucket; every other failure stays a failure, and none shows its output.
+func TestBucketStatsAbsentRecognizesOnlyTheNoSuchBucketAnswer(t *testing.T) {
+	exit := func(code int, stdout, stderr string) error {
+		return nativeExitError{error: errors.New("RGW native command exited; output is redacted"), code: code, stdout: []byte(stdout), stderr: []byte(stderr)}
+	}
+	for name, test := range map[string]struct {
+		err    error
+		absent bool
+	}{
+		"no such bucket":           {exit(2, "", "failure: (2002) Unknown error 2002: \n"), true},
+		"no such bucket, no space": {exit(2, "", "failure: (2002) Unknown error 2002:"), true},
+		"missing keyring":          {exit(2, "", "auth: unable to find a keyring on /k: (2) No such file or directory\n"), false},
+		"ENOENT of another entry":  {exit(2, "", "ERROR: can't get key: (2) No such file or directory\n"), false},
+		"extra diagnostic":         {exit(2, "", "warning\nfailure: (2002) Unknown error 2002: \n"), false},
+		"output":                   {exit(2, "{}", "failure: (2002) Unknown error 2002: \n"), false},
+		"other status":             {exit(1, "", "failure: (2002) Unknown error 2002: \n"), false},
+		"not an exit":              {errors.New("RGW native command failed; output is redacted"), false},
+		"nil":                      {nil, false},
+	} {
+		if got := bucketStatsAbsent(test.err); got != test.absent {
+			t.Errorf("%s: absent %t, want %t", name, got, test.absent)
+		}
+		if test.err != nil && strings.Contains(test.err.Error(), "2002") {
+			t.Errorf("%s: the error shows native output: %v", name, test.err)
+		}
 	}
 }

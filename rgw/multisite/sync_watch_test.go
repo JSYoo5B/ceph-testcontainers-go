@@ -312,12 +312,13 @@ func TestRGWWatchBucketPolicyReportsStagesUntilImported(t *testing.T) {
 	if missing.Kind != ceph.WatchChanged || missing.Err != nil || !missing.Status.PeriodImported || missing.Status.PolicyImported || missing.Status.BucketsImported || missing.Status.Imported {
 		t.Fatalf("bucket stage %+v", missing)
 	}
-	underTopology(f, func() { cli.missingBuckets, cli.failedBuckets = nil, map[string]bool{"bucket": true} })
+	// Exit 2 with no output but another diagnostic is a gap, not the stage.
+	underTopology(f, func() { cli.missingBuckets, cli.stderrFailedBuckets = nil, map[string]bool{"bucket": true} })
 	gap := nextSyncEvent(t, w.Events())
 	if gap.Kind != ceph.WatchGap || gap.Err == nil || !gap.Status.PeriodImported || gap.Status.BucketsImported || gap.Status.Imported || strings.Contains(gap.Err.Error(), "secret-marker") {
 		t.Fatalf("gap %+v", gap)
 	}
-	underTopology(f, func() { cli.failedBuckets, cli.policyLagReads = nil, 0 })
+	underTopology(f, func() { cli.stderrFailedBuckets, cli.policyLagReads = nil, 0 })
 	imported := nextSyncEvent(t, w.Events())
 	if imported.Kind != ceph.WatchResumed || !imported.Status.Imported || !imported.Status.PolicyImported || imported.Sequence != 5 || imported.Status.Buckets[0].ID != "bucket-original" {
 		t.Fatalf("imported %+v", imported)
@@ -417,15 +418,20 @@ func TestRGWWatchBucketPolicyRefusesInvalidRequests(t *testing.T) {
 	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "source"); err == nil || w != nil || len(cli.calls) != before {
 		t.Fatalf("a zone outside the pipes' destinations started %v %v", w, err)
 	}
-	// A first read that never succeeds within QueryTimeout starts nothing.
-	cli.failedBuckets = map[string]bool{"bucket": true}
+	// A first read that never succeeds within QueryTimeout starts nothing,
+	// including a failure with exit 2 and no output whose diagnostic is not
+	// the absent bucket.
 	cfg := syncWatchTestConfig
 	cfg.QueryTimeout = 1500 * time.Millisecond
-	if w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination"); !errors.Is(err, context.DeadlineExceeded) || w != nil || strings.Contains(err.Error(), "secret-marker") {
-		t.Fatalf("failed baseline started %v %v", w, err)
+	for name, fail := range map[string]*map[string]bool{"output": &cli.failedBuckets, "stderr only": &cli.stderrFailedBuckets} {
+		*fail = map[string]bool{"bucket": true}
+		if w, err := g.WatchBucketPolicy(t.Context(), cfg, "destination"); !errors.Is(err, context.DeadlineExceeded) || w != nil || strings.Contains(err.Error(), "secret-marker") {
+			t.Fatalf("%s: failed baseline started %v %v", name, w, err)
+		}
+		*fail = nil
 	}
 	// A first read that would end the watch is not retried.
-	cli.failedBuckets, cli.bucketID = nil, "bucket-recreated"
+	cli.bucketID = "bucket-recreated"
 	if w, err := g.WatchBucketPolicy(t.Context(), syncWatchTestConfig, "destination"); !errors.Is(err, errSyncBucketRecreated) || w != nil {
 		t.Fatalf("recreated bucket baseline started %v %v", w, err)
 	}

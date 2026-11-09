@@ -627,14 +627,17 @@ func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group
 	return data, err
 }
 
-// nativeAbsentError is a radosgw-admin failure with exit status 2 (ENOENT)
-// and no output: the command found no such entry, for example `bucket stats`
-// of a bucket that the zone has not imported. Callers that read it as an
-// absent entry test for it with errors.As; for every other caller it is the
-// failure it wraps.
-type nativeAbsentError struct{ error }
+// nativeExitError is a radosgw-admin command that exited non-zero. It keeps
+// the exit status and the raw output for a caller that must tell one known
+// native diagnostic from every other failure, and is the redacted failure it
+// wraps for everyone else: Error never includes the output.
+type nativeExitError struct {
+	error
+	code           int
+	stdout, stderr []byte
+}
 
-func (e nativeAbsentError) Unwrap() error { return e.error }
+func (e nativeExitError) Unwrap() error { return e.error }
 
 func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -660,10 +663,7 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 	if code != 0 {
 		err := clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
 			servicehook.NativeFailure(args[0], code, nil, stderr.Bytes()))
-		if code == 2 && stdout.Len() == 0 {
-			return nil, nativeAbsentError{err}
-		}
-		return nil, err
+		return nil, nativeExitError{error: err, code: code, stdout: stdout.Bytes(), stderr: stderr.Bytes()}
 	}
 	if status {
 		warnings := strings.ToLower(stderr.String())
