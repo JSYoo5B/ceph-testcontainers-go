@@ -14,6 +14,7 @@ on:
           - cephfs_statfs_mixed_quota
           - mon_log_ack
           - rbd_demote_restart
+          - rbd_trash_purge_timezone
           - rgw_conditional_writes
           - rgw_ssec_completion
           - rgw_empty_sse_header

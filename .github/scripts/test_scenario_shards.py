@@ -911,6 +911,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "cephfs_statfs_mixed_quota",
                                            "failure_archive", "mon_log_ack", "native_rgw_translation",
                                            "native_shuffle", "rbd_demote_restart",
+                                           "rbd_trash_purge_timezone",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_expiration_header",
                                            "rgw_multipart_part_class", "rgw_ssec_completion"])
