@@ -1,7 +1,8 @@
 # Fixture daemon timing
 
 Timing profiles prepare disposable fixture state. They shorten selected daemon
-waits whose native behavior has been checked; they do not accelerate clocks,
+waits whose native behavior has been checked, or, for the RGW sync lease
+period, replace a wait the fixture itself shortened; they do not accelerate clocks,
 physical I/O, authentication expiry or failure detection. Every profile is
 opt-in and the ordinary fixture keeps its normal timing.
 
@@ -9,6 +10,7 @@ opt-in and the ordinary fixture keeps its normal timing.
 | --- | --- | --- |
 | Repeated directory-pin handoffs | `fs.OverrideTiming(ctx, cephfs.TimingProfile{DirectoryPins: true})` | Current owned active MDSs; restore the returned configuration handles |
 | Incremental RGW multisite sync | `multisite.Config{Timing: multisite.TimingProfile{IncrementalSync: true}}` through `WithConfig` | Gateways started by this fixture, including its added zones |
+| A zone that does not answer for longer than half the gateways' 30-second sync lease period | `multisite.TopologyConfig{Timing: multisite.TimingProfile{SyncLeasePeriod: 5 * time.Minute}}` through `WithTopology`, or the same field of `multisite.Config` | Gateways started by this fixture, including its added zones |
 | RBD journal replay polling | `rbdmirror.Config{Timing: rbdmirror.TimingProfile{JournalPolling: true}}` through `WithConfig` | Journal receiver daemons started by this mirror |
 
 The startup profiles apply native arguments only to their owned daemons. They
@@ -27,7 +29,8 @@ Each package documents its profile beside the operations it shortens: the
 qualified releases and native settings, what the profile leaves at native
 timing, how its condition ends and what a test must still check. See
 [CephFS directory-pin timing](../../cephfs/README.md#directory-pin-timing),
-[RGW incremental sync timing](../../rgw/multisite/README.md#incremental-sync-timing)
+[RGW incremental sync timing](../../rgw/multisite/README.md#incremental-sync-timing),
+[RGW sync lease period](../../rgw/multisite/README.md#sync-lease-period)
 and [RBD journal polling timing](../../rbd/mirror/README.md#journal-polling-timing).
 
 ## Delays that define the assertion

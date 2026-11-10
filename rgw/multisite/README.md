@@ -144,6 +144,35 @@ backoff, retries, readiness timeouts and fault windows are separate
 conditions. See [Fixture daemon timing](../../docs/guides/daemon-timing.md)
 for what every timing profile shares.
 
+## Sync lease period
+
+Fixture gateways start with `rgw_sync_lease_period` 30 instead of the native
+120 seconds, so that sync resumes soon after a gateway restart: a killed
+gateway's sync shard leases stay taken until they expire. A gateway renews
+each lease every half period and counts it as lost after one period without
+a renewal, and it renews none while its reads of a source zone that does not
+answer wait. A zone link cut or a paused source gateway that lasts longer
+than about 15 seconds can therefore cost a zone's shards their leases, and
+with them reach the native defect described under
+[known release-specific issues](../../docs/guides/releases-and-images.md#known-release-specific-issues),
+which leaves the zone behind until its gateway restarts.
+
+A test that keeps a zone from answering for longer selects a period of more
+than twice that time, counted until the gateway's connections work again
+(TCP retransmits after a cut can take as long again as the cut):
+
+```golang
+multisite.WithTopology(multisite.TopologyConfig{
+    Zones:  zones,
+    Timing: multisite.TimingProfile{SyncLeasePeriod: 5 * time.Minute},
+})
+```
+
+The period is a whole number of seconds, at least 30, on every supported
+release; it is an argument of the owned gateways, including later zones, and
+ends with them. Sync after a restart of such a gateway can stall for one
+period. `IncrementalSync` and `SyncLeasePeriod` are independent.
+
 ## Concepts and limits
 
 - Both zones accept writes and deletes replicate too, so a replica is not a

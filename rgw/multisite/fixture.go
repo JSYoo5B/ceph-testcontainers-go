@@ -35,7 +35,8 @@ type Config struct {
 	Realm, Zonegroup, SourceZone, DestinationZone string
 	// SetupImage explicitly selects the RGW administration runtime.
 	SetupImage string
-	// Timing selects startup polling for every gateway this fixture owns.
+	// Timing selects startup polling and the sync lease period for every
+	// gateway this fixture owns.
 	Timing               TimingProfile
 	destinationZonegroup string
 }
@@ -142,6 +143,7 @@ func WithTopology(config TopologyConfig) Option {
 // Timing.IncrementalSync fixes qualified idle polling for each owned gateway
 // from startup, including subsequently added zones. It is qualified only for
 // Ceph 20.2.4 and preserves the fixture's sync lease duration.
+// Timing.SyncLeasePeriod replaces that duration on every release.
 //
 //purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
@@ -160,6 +162,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 
 // runPair configures a two-zone realm; runTopology builds larger ones on it.
 func runPair(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
+	if err := config.Timing.validate(); err != nil {
+		return nil, err
+	}
 	setup, err := preparePair(ctx, image, config)
 	if err != nil {
 		return nil, err

@@ -488,7 +488,8 @@ with a `Peer` and a `Direction`, or for RGW
 [`multisite.Fixture.ApplyZoneLinkProfile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite#Fixture.ApplyZoneLinkProfile),
 which shapes only the packets one zone's gateway sends to another zone's
 gateway. The peer zone then stops receiving changes while it still pulls its
-own.
+own. For a cut of more than about 15 seconds, start the realm with a longer
+[sync lease period](../../rgw/multisite/README.md#sync-lease-period).
 
 ## A routed boundary between logical zones
 
