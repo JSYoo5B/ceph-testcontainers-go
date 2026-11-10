@@ -29,9 +29,8 @@ end of its manifest reports is 1, where a manifest of N > 1 parts reports
 N + 1. A gateway that takes that id for one more than the part count
 computes a part count of 0, and its walk over the stripes of the requested
 part, which stops at the first stripe of a later part, never ends, because
-no later part exists. The request gets no answer and one gateway thread
-keeps a core busy. The fix returns a count of at least 1 and stops the walk
-at the end of the manifest
+no later part exists. That is the mechanism the upstream fix describes; it
+returns a count of at least 1 and stops the walk at the end of the manifest
 ([tracker 66705](https://tracker.ceph.com/issues/66705),
 [fix](https://github.com/ceph/ceph/pull/58288)). The defect was in the
 Squid release candidate 19.1.0; 19.2.0 and every later release contain the
@@ -86,8 +85,9 @@ python3 .github/scripts/tag_scenarios.py run --category topology \
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as
-uploaded (`RGW_SP object=`), every numbered read (`RGW_SP read`) and, after
-a read without an answer, the gateway process (`RGW_SP stall`).
+uploaded (`RGW_SP object=`), every numbered read, sent or not
+(`RGW_SP read`) and, after a read without an answer, the gateway process
+(`RGW_SP stall`).
 
 ## Observations and controls
 
@@ -105,14 +105,19 @@ a read without an answer, the gateway process (`RGW_SP stall`).
 3. Oracle, per single-part object: GET and then HEAD of part 1 must answer
    200 or 206 with the part's length, a part count of 1 and, for a GET, the
    part's bytes (`judgeOnlyPart`).
-4. A read without an answer within its deadline is not the defect by
-   itself. The test reads the start time and the CPU time of the gateway's
-   process 1 before the read, after the deadline and three seconds later. It
-   reports `observed defect` only when all three are the same process and
-   that process used at least 0.8 of a core in those three seconds; an idle,
-   restarted or unreadable gateway is `another fault`. The subtest of that
-   object stops at such a read, because the request still holds a gateway
-   thread; the other object is still read.
+4. A read without an answer within its deadline fails the contract when
+   the gateway process that received it is still the one running: the test
+   reads the start time and the CPU time of the gateway's process 1 before
+   the read, after the deadline and three seconds later, and a restarted or
+   unreadable gateway is `another fault` instead. The `observed defect` it
+   reports says only that the read was not answered. The CPU share in its
+   message is counted for the whole process, earlier unanswered reads of
+   the run included (`earlier-unanswered`), and is no call trace of the
+   request, so the message states that the cause inside the gateway is not
+   established. The subtest of that object stops at such a read, because
+   the request may still hold a gateway thread, and prints a `not sent` line
+   for each read it leaves out (the HEAD of part 1 after a GET, and the GET
+   of part 2); the other object is still read.
 5. Health, after each answered read of part 1: process 1 has the start time
    it had before the read, and a whole-object GET returns the object.
    Otherwise `another fault`.
@@ -139,20 +144,25 @@ without the fix. Linux amd64, bridge, one run per build.
   part count of 2. Squid 19.2.0 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and
   Umbrella 21.2.0 pass (31 to 38 s each).
 - **Observed defect:** a read of part 1 is answered with another status,
-  length, body or part count, or gets no answer while the same gateway
-  process keeps a core busy. The release candidate 19.1.0 does the latter:
-  the two-part control passes, then GET of part 1 of `single-small` gets no
-  answer in 30 s while the same process uses 1.00 of a core, and GET of part
-  1 of `single-large` gets none either while it uses 2.00 (the first request
-  still spins). The run takes 163 s and the cleanup succeeds. No supported
-  release does this.
+  length, body or part count, or is not answered at all. The release
+  candidate 19.1.0 does not answer the GET: the two-part control passes,
+  then GET of part 1 of `single-small` and GET of part 1 of `single-large`
+  each get no answer in 30 s from the same gateway process. HEAD of part 1
+  and GET of part 2 were not sent for either object on that build, so the
+  result is about GET only. In the three seconds after each deadline the
+  whole process used 1.00 of a core after the first and 2.00 after the
+  second, which includes whatever the first request left running. No call
+  trace was taken, so the runs do not show where in the gateway the
+  requests are; that they loop in the manifest walk is the upstream
+  description, not a finding of this case. The run takes about 166 s and
+  the cleanup succeeds. No supported release does this.
 - **Control failed:** numbered reads do not work on the gateway. Reef 18.2.7
   answers every `?partNumber` read of the two-part object, part 3 included,
   with 200 and the whole object (5,308,416 bytes, no part count), so it does
   not read by part number and the single-part objects are not read.
-- **Another fault:** a read gets no answer and the gateway is idle, was
-  restarted or cannot be read, the request fails in transport, or the
-  gateway is not the same healthy process after a read.
+- **Another fault:** a read gets no answer and the gateway was restarted or
+  cannot be read, the request fails in transport, or the gateway is not the
+  same healthy process after a read.
 - **Not reproduced:** a pass on a build claimed to be affected. Check the
   condition line of step 1: the ETag suffix and the manifest rules show that
   the object has one part.
@@ -167,6 +177,8 @@ left open, deletes the three objects and the bucket, and reports a failure as
 network profile, ranged GETs combined with a part number, versioned buckets,
 encrypted or compressed objects, copies of a single-part object and other
 storage classes. On the affected build each object's subtest stops at the
-GET, so its HEAD of part 1 was not sent. A read without an answer from an
-idle or restarted gateway was not produced natively; those judgements are
-covered by the Docker-free tests only.
+GET, so HEAD of part 1 is untested there. The case takes no native call
+trace (the images carry no debugger), so it never names the cause of a
+read without an answer. A read without an answer from a restarted gateway
+was not produced natively; that judgement is covered by the Docker-free
+tests only.

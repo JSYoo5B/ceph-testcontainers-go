@@ -39,6 +39,8 @@ type spCase struct {
 	gateway *rgw.Gateway
 	client  harness.S3HTTPClient
 	uploads map[string]string
+	// unanswered counts the numbered reads that ended without an answer.
+	unanswered int
 }
 
 func (c *spCase) signed(t *testing.T, ctx context.Context, method, path string, payload []byte) harness.RGWBackendResponse {
@@ -153,7 +155,7 @@ func (c *spCase) process(t *testing.T) (spProcess, error) {
 }
 
 // stall measures the gateway after a part read that got no answer.
-func (c *spCase) stall(t *testing.T, before spProcess, ticks uint64) *spStall {
+func (c *spCase) stall(t *testing.T, before spProcess, ticks uint64, earlier int) *spStall {
 	t.Helper()
 	first, err := c.process(t)
 	if err != nil {
@@ -171,9 +173,9 @@ func (c *spCase) stall(t *testing.T, before spProcess, ticks uint64) *spStall {
 		t.Logf("RGW_SP stall: the gateway process cannot be read: %v", err)
 		return nil
 	}
-	s := &spStall{Before: before, First: first, Second: second, Window: time.Since(started), TicksPerSecond: ticks}
-	t.Logf("RGW_SP stall start=%d,%d,%d cpu-ticks=%d,%d window=%s ticks-per-second=%d busy=%.2f",
-		before.Start, first.Start, second.Start, first.CPU, second.CPU, s.Window.Round(time.Millisecond), ticks, s.busy())
+	s := &spStall{Before: before, First: first, Second: second, Window: time.Since(started), TicksPerSecond: ticks, Earlier: earlier}
+	t.Logf("RGW_SP stall start=%d,%d,%d cpu-ticks=%d,%d,%d window=%s ticks-per-second=%d process-busy=%.2f earlier-unanswered=%d",
+		before.Start, first.Start, second.Start, before.CPU, first.CPU, second.CPU, s.Window.Round(time.Millisecond), ticks, s.busy(), earlier)
 	return s
 }
 
@@ -210,8 +212,9 @@ func (c *spCase) cleanup(t *testing.T, buckets, objects []string) {
 // GET, its bytes. Two such objects are read, one of a single stripe and one
 // of three. A two-part object is the control for numbered reads, and the
 // part number after the last part of every object must be refused. Each
-// numbered read has its own deadline; a read without an answer is the
-// defect only when the same gateway process keeps a core busy afterwards.
+// numbered read has its own deadline. A read without an answer fails the
+// contract; the process-wide CPU time recorded with it does not establish
+// the cause inside the gateway.
 func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -298,12 +301,21 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 				read := c.readPart(t, method, o.name, 1, part)
 				var stall *spStall
 				if read.TimedOut {
-					stall = c.stall(t, before, ticks)
+					stall = c.stall(t, before, ticks, c.unanswered)
+					c.unanswered++
 				}
 				if verdict := judgeOnlyPart(read, len(part), stall); verdict != "" {
 					if read.TimedOut || read.Err != "" {
-						// A request that did not end holds a gateway
-						// thread, so this object is not read again.
+						// A request that did not end may still hold a
+						// gateway thread, so this object is not read
+						// again. Every method the subtest leaves out gets
+						// its own line.
+						if method == http.MethodGet {
+							t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodHead, Part: 1,
+								NotSent: "the GET of part 1 ended without an answer; HEAD is untested for this object"})
+						}
+						t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodGet, Part: 2,
+							NotSent: "a read of part 1 ended without an answer; the refusal of part 2 is untested for this object"})
 						t.Fatal(verdict)
 					}
 					t.Error(verdict)

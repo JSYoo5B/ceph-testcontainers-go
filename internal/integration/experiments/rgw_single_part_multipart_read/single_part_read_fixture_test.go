@@ -50,27 +50,28 @@ func TestJudgeOnlyPart(t *testing.T) {
 		"206 part":          {good, nil, ""},
 		"200 part":          {with(func(r *spRead) { r.Status = http.StatusOK }), nil, ""},
 		"head without body": {with(func(r *spRead) { r.Method, r.BodyMatches = http.MethodHead, false }), nil, ""},
-		// The answers of a gateway that takes the last part id of a
-		// single-part manifest for one more than the count.
-		"no answer, a core busy":    {lost, stalled(7, 300), "observed defect: "},
-		"no answer, most of a core": {lost, stalled(7, 250), "observed defect: "},
-		"part count 0":              {with(func(r *spRead) { r.PartsCount = "0" }), nil, "observed defect: "},
-		"no part count":             {with(func(r *spRead) { r.PartsCount = "" }), nil, "observed defect: "},
-		"part count of two":         {with(func(r *spRead) { r.PartsCount = "2" }), nil, "observed defect: "},
-		"invalid part":              {spRead{Method: http.MethodGet, Part: 1, Status: http.StatusBadRequest, Length: 238, Code: "InvalidPart"}, nil, "observed defect: "},
-		"another length":            {with(func(r *spRead) { r.Length = size - 1 }), nil, "observed defect: "},
-		"other bytes":               {with(func(r *spRead) { r.BodyMatches = false }), nil, "observed defect: "},
-		"head, another length":      {with(func(r *spRead) { r.Method, r.BodyMatches, r.Length = http.MethodHead, false, 0 }), nil, "observed defect: "},
-		// A timeout alone does not show a loop in the gateway.
-		"no answer, not inspected":   {lost, nil, "another fault: "},
-		"no answer, idle gateway":    {lost, stalled(7, 6), "another fault: "},
-		"no answer, under the bound": {lost, stalled(7, 230), "another fault: "},
-		"no answer, new process":     {lost, stalled(8, 300), "another fault: "},
+		// A read without an answer from the process that received it
+		// fails the contract whatever the process-wide CPU time is: busy,
+		// idle, or busy with an earlier unanswered request.
+		"no answer, a core busy":        {lost, stalled(7, 300), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: "},
+		"no answer, idle gateway":       {lost, stalled(7, 6), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: "},
+		"no answer, earlier one counts": {lost, func() *spStall { s := stalled(7, 600); s.Earlier = 1; return s }(), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: the whole process used 2.00 of a core in the 3s after the deadline, with 1 earlier unanswered read(s)"},
+		"no answer, no tick rate":       {lost, &spStall{Second: spProcess{CPU: 300}, Window: 3 * time.Second}, "observed defect: "},
+		// Wrong answers.
+		"part count 0":         {with(func(r *spRead) { r.PartsCount = "0" }), nil, "observed defect: the only part of the upload is answered with a part count"},
+		"no part count":        {with(func(r *spRead) { r.PartsCount = "" }), nil, "observed defect: "},
+		"part count of two":    {with(func(r *spRead) { r.PartsCount = "2" }), nil, "observed defect: "},
+		"invalid part":         {spRead{Method: http.MethodGet, Part: 1, Status: http.StatusBadRequest, Length: 238, Code: "InvalidPart"}, nil, "observed defect: the only part of the upload is not answered"},
+		"another length":       {with(func(r *spRead) { r.Length = size - 1 }), nil, "observed defect: "},
+		"other bytes":          {with(func(r *spRead) { r.BodyMatches = false }), nil, "observed defect: "},
+		"head, another length": {with(func(r *spRead) { r.Method, r.BodyMatches, r.Length = http.MethodHead, false, 0 }), nil, "observed defect: "},
+		// The gateway that should have answered cannot be named.
+		"no answer, not inspected": {lost, nil, "another fault: "},
+		"no answer, new process":   {lost, stalled(8, 300), "another fault: "},
 		"no answer, restarted before the samples": {lost, &spStall{Before: spProcess{Start: 6}, First: spProcess{Start: 7}, Second: spProcess{Start: 7, CPU: 300},
 			Window: 3 * time.Second, TicksPerSecond: 100}, "another fault: "},
-		"no answer, no tick rate":  {lost, &spStall{Second: spProcess{CPU: 300}, Window: 3 * time.Second}, "another fault: "},
-		"no answer, cpu went back": {lost, &spStall{First: spProcess{CPU: 300}, Window: 3 * time.Second, TicksPerSecond: 100}, "another fault: "},
-		"connection refused":       {spRead{Method: http.MethodGet, Part: 1, Err: "connection refused"}, nil, "another fault: "},
+		"not sent":           {spRead{Method: http.MethodHead, Part: 1, NotSent: "the GET did not end"}, nil, "another fault: HEAD partNumber=1 not sent: the GET did not end"},
+		"connection refused": {spRead{Method: http.MethodGet, Part: 1, Err: "connection refused"}, nil, "another fault: "},
 	} {
 		got := judgeOnlyPart(test.read, size, test.stall)
 		if test.want == "" && got != "" || test.want != "" && !strings.HasPrefix(got, test.want) {
@@ -95,6 +96,7 @@ func TestJudgeControls(t *testing.T) {
 		"other bytes":       {with(func(r *spRead) { r.BodyMatches = false }), false},
 		"invalid part":      {spRead{Method: http.MethodGet, Part: 1, Status: http.StatusBadRequest, Length: 238, Code: "InvalidPart"}, false},
 		"no answer":         {spRead{Method: http.MethodGet, Part: 1, TimedOut: true}, false},
+		"not sent":          {spRead{Method: http.MethodGet, Part: 1, NotSent: "x"}, false},
 		"transport error":   {spRead{Method: http.MethodGet, Part: 1, Err: "reset"}, false},
 	} {
 		if got := judgeControlPart(test.read, size); (got == "") != test.ok || got != "" && !strings.HasPrefix(got, "control failed: ") {
@@ -114,6 +116,7 @@ func TestJudgeControls(t *testing.T) {
 		"answered":            {spRead{Method: http.MethodGet, Part: 2, Status: http.StatusPartialContent, Length: 1, PartsCount: "1"}, false},
 		"head":                {func() spRead { r := refused; r.Method = http.MethodHead; return r }(), false},
 		"no answer":           {spRead{Method: http.MethodGet, Part: 2, TimedOut: true}, false},
+		"not sent":            {spRead{Method: http.MethodGet, Part: 2, NotSent: "x"}, false},
 	} {
 		if got := judgeBeyond(test.read); (got == "") != test.ok || got != "" && !strings.HasPrefix(got, "control failed: ") {
 			t.Errorf("%s: %q, want ok %t", name, got, test.ok)

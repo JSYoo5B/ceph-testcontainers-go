@@ -15,6 +15,8 @@ import (
 type spRead struct {
 	Method string
 	Part   int
+	// NotSent is why the request was never made, when it was not.
+	NotSent string
 	// TimedOut is a request that got no answer within Deadline; Err is any
 	// other transport failure.
 	TimedOut bool
@@ -30,6 +32,8 @@ type spRead struct {
 
 func (r spRead) String() string {
 	switch {
+	case r.NotSent != "":
+		return fmt.Sprintf("%s partNumber=%d not sent: %s", r.Method, r.Part, r.NotSent)
 	case r.TimedOut:
 		return fmt.Sprintf("%s partNumber=%d no answer within %s", r.Method, r.Part, r.Deadline)
 	case r.Err != "":
@@ -78,9 +82,14 @@ type spStall struct {
 	Window                time.Duration
 	// TicksPerSecond is the clock tick rate the CPU times are counted in.
 	TicksPerSecond uint64
+	// Earlier is the number of reads of this run that had already ended
+	// without an answer. Whatever they left running in the gateway is part
+	// of the process-wide CPU time, too.
+	Earlier int
 }
 
-// busy is the share of one core that process 1 used during the window.
+// busy is the share of one core that the whole of process 1 used during
+// the window. It is an observation about the process, not about the request.
 func (s spStall) busy() float64 {
 	if s.Window <= 0 || s.TicksPerSecond == 0 || s.Second.CPU < s.First.CPU {
 		return 0
@@ -88,25 +97,26 @@ func (s spStall) busy() float64 {
 	return float64(s.Second.CPU-s.First.CPU) / float64(s.TicksPerSecond) / s.Window.Seconds()
 }
 
-// spSpinning is the least share of one core that counts as a thread that
-// never yields. An idle gateway of the case uses a few percent.
-const spSpinning = 0.8
-
 // judgeOnlyPart judges a read of part 1 of an object whose upload had one
 // part of want bytes. It returns "" for the part's own answer: 200 or 206,
 // its length, a part count of 1 and, for a GET, its bytes. A read without an
-// answer is the defect only when the same gateway process kept a core busy
-// afterwards; a client timeout alone does not show a loop in the gateway.
+// answer from the gateway process that received it fails the contract, and
+// that is all it shows: the CPU time of the process is reported with it, but
+// it is counted for the whole process, earlier unanswered requests
+// included, and is no call trace of this request. The verdict therefore
+// leaves the cause inside the gateway open.
 func judgeOnlyPart(read spRead, want int, stall *spStall) string {
 	switch {
+	case read.NotSent != "":
+		return fmt.Sprintf("another fault: %s", read)
 	case read.TimedOut && stall == nil:
 		return fmt.Sprintf("another fault: %s, and the gateway was not inspected", read)
 	case read.TimedOut && (stall.Before.Start != stall.First.Start || stall.First.Start != stall.Second.Start):
 		return fmt.Sprintf("another fault: %s, and the gateway process is not the one that received the request", read)
-	case read.TimedOut && stall.busy() < spSpinning:
-		return fmt.Sprintf("another fault: %s, and the gateway process used %.2f of a core in the %s after it, which does not show a loop", read, stall.busy(), stall.Window.Round(time.Millisecond))
 	case read.TimedOut:
-		return fmt.Sprintf("observed defect: %s, and the same gateway process used %.2f of a core in the %s after it", read, stall.busy(), stall.Window.Round(time.Millisecond))
+		return fmt.Sprintf("observed defect: %s from the gateway process that received it. The cause inside the gateway is not established: "+
+			"the whole process used %.2f of a core in the %s after the deadline, with %d earlier unanswered read(s) of this run counted in, and no call trace of the request was taken",
+			read, stall.busy(), stall.Window.Round(time.Millisecond), stall.Earlier)
 	case read.Err != "":
 		return fmt.Sprintf("another fault: %s", read)
 	case read.Status != http.StatusOK && read.Status != http.StatusPartialContent,
@@ -121,7 +131,7 @@ func judgeOnlyPart(read spRead, want int, stall *spStall) string {
 // judgeControlPart judges a read of a part of the two-part control object,
 // whose numbered reads answer on every measured build.
 func judgeControlPart(read spRead, want int) string {
-	if read.TimedOut || read.Err != "" || read.Status != http.StatusOK && read.Status != http.StatusPartialContent ||
+	if read.NotSent != "" || read.TimedOut || read.Err != "" || read.Status != http.StatusOK && read.Status != http.StatusPartialContent ||
 		read.Length != int64(want) || read.PartsCount != "2" || read.Method == http.MethodGet && !read.BodyMatches {
 		return fmt.Sprintf("control failed: a part of the two-part object is not answered with its %d bytes and a part count of 2: %s", want, read)
 	}
@@ -132,7 +142,7 @@ func judgeControlPart(read spRead, want int) string {
 // must be refused as out of range: 400 with the S3 code InvalidPart. Another
 // error does not show that the part number was out of range.
 func judgeBeyond(read spRead) string {
-	if read.TimedOut || read.Err != "" || read.Method != http.MethodGet || read.Status != http.StatusBadRequest || read.Code != "InvalidPart" {
+	if read.NotSent != "" || read.TimedOut || read.Err != "" || read.Method != http.MethodGet || read.Status != http.StatusBadRequest || read.Code != "InvalidPart" {
 		return fmt.Sprintf("control failed: a part number after the last part is not refused as 400 InvalidPart: %s", read)
 	}
 	return ""
