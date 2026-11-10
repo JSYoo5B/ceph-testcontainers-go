@@ -254,6 +254,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   and refuse `aes256k` before any change with `ceph.ErrUnsupported`, naming
   `ceph-authtool --key-type` as the capability. The repository tests this
   with 20.2.3.
+- **Tentacle 20.2.4, libcephfs statfs below a byte quota and a nearer file
+  quota.** At a directory that has only `ceph.quota.max_files`, below a
+  directory with `ceph.quota.max_bytes`, statfs reports the capacity and the
+  free space of the data pool, not of the byte quota. Directories with a
+  byte quota of their own, or with no quota of their own below one, report
+  the quota. Squid 19.2.5, Tentacle 20.2.5 and Umbrella 21.2.0 report the
+  parent's byte quota there too. A test that reads capacity through statfs
+  on 20.2.4 should read it at the directory that has the byte quota. See
+  `TestCephFSStatfsWithNestedByteAndFileQuotas` (batch
+  `cephfs_statfs_mixed_quota`, experiment case
+  [`cephfs_statfs_mixed_quota`](../../internal/integration/experiments/cephfs_statfs_mixed_quota/README.md)).
 - **Tentacle 20.2.4, CephFS mirror daemons.** When another `cephfs-mirror`
   daemon joins, the MGR `mirroring` module fails to redistribute directories
   that are already assigned (`'DirectoryState' object is not subscriptable`).
