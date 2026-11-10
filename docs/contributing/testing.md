@@ -685,10 +685,11 @@ fixture parts, and `cephfs_authorization_isolation` and
 #### Images for the RGW S3 cases
 
 The RGW S3 cases (`rgw_empty_sse_header`, `rgw_ssec_multipart_completion`,
-`rgw_lifecycle_expiration_header`, `rgw_compressed_copy_accounting` and
-`rgw_multipart_part_storage_class`) compare releases: most compare the
-affected Tentacle 20.2.4 with the fixed 20.2.5 and Umbrella 21.2.0, and
-`rgw_multipart_part_storage_class` fails on all of them. Each needs the
+`rgw_lifecycle_expiration_header`, `rgw_compressed_copy_accounting`,
+`rgw_multipart_part_storage_class` and `rgw_single_part_multipart_read`)
+compare releases: most compare the affected Tentacle 20.2.4 with the fixed
+20.2.5 and Umbrella 21.2.0, `rgw_multipart_part_storage_class` fails on all
+of them and `rgw_single_part_multipart_read` passes on all of them. Each needs the
 `essential`, `client` and `rgw` roles of one release. For
 a supported release (20.2.4, 21.2.0 or 19.2.5), prepare the pinned role images
 of `.github/ceph-role-images.json` and export them:
