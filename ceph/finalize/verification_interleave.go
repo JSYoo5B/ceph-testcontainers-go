@@ -19,7 +19,8 @@ import (
 // of the entry. Without the rest, neither the header nor its message has an
 // envelope, and a message that quotes a severity marker is a gap.
 //
-// verificationDeinterleaver restores such entries on one stream: a line that
+// verificationDeinterleaver restores such entries on one stream, and only
+// the standard error of a MON is read through it: a line that
 // holds a daemon line after its start is held as a fragment, and the line
 // that follows the fragments completes them when the heads of the fragments
 // and that line form a cluster log entry whose header holds every split.
@@ -41,6 +42,10 @@ type verificationFragment struct {
 	stamp, head, daemon string
 	data                []byte
 }
+
+// verificationSplitRole is the role of the containers whose standard error
+// is read through the deinterleaver.
+const verificationSplitRole = "mon"
 
 // maxVerificationFragments bounds the fragments held for one entry; the
 // header of an entry has fewer pieces than that.

@@ -161,3 +161,68 @@ func TestVerificationDoesNotSplitMessages(t *testing.T) {
 		}
 	})
 }
+
+// Entries are restored only on a MON's standard error. Two lines of another
+// daemon, or of a MON's standard output, are two records: an intact record
+// whose message quotes a daemon line, and a diagnostic with a marker and no
+// envelope, which stays a gap.
+func TestVerificationRestoresOnlyAMonitorsStandardError(t *testing.T) {
+	quoting := clusterLogLine(true, "cluster", "INF", daemonLogLine("cluster", "INF", "sentinel"))
+	const diagnostic = "sentinel diagnostic [ERR] without an envelope"
+	frames := func(stream byte) []byte {
+		var raw []byte
+		for i, text := range []string{quoting, diagnostic} {
+			raw = append(raw, diagnosticsFrame(stream, verifyStart.Add(2*time.Minute+time.Duration(i)*time.Millisecond).Format(time.RFC3339Nano)+" "+text+"\n")...)
+		}
+		return raw
+	}
+	for name, write := range map[string]func(fx *verifyFixture) string{
+		"an OSD's standard error": func(fx *verifyFixture) string {
+			fx.line("osd0", 2*time.Minute, quoting)
+			fx.line("osd0", 2*time.Minute+time.Millisecond, diagnostic)
+			return "osd.0"
+		},
+		"a MON's standard output": func(fx *verifyFixture) string {
+			fx.docker.containers["mon"].rawLogs = frames(1)
+			return "mon.a"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newVerifyFixture()
+			fx.config.ArchiveLogs = true
+			source := write(fx)
+			v := fx.activate(t)
+			report := fx.evaluate(t, v)
+			if len(report.Logs.Findings) != 0 || !strings.Contains(gapReasons(report.Logs), "1 log lines carry an [ERR], [SEC] or [WRN] marker without a supported log envelope") {
+				t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
+			}
+			var got []string
+			for _, line := range report.logLines {
+				if line.Source == source && (line.Text == quoting || line.Text == diagnostic) {
+					got = append(got, line.Text)
+				}
+			}
+			if !slices.Equal(got, []string{quoting, diagnostic}) {
+				t.Fatalf("%s lines %q", source, got)
+			}
+		})
+	}
+	// The same two lines on a MON's standard error are a split entry, and
+	// with a TTY the MON's one stream is read the same way.
+	for name, prepare := range map[string]func(fx *verifyFixture){
+		"a MON's standard error": func(*verifyFixture) {},
+		"a MON's TTY":            func(fx *verifyFixture) { fx.docker.containers["mon"].tty = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newVerifyFixture()
+			prepare(fx)
+			fx.line("mon", 2*time.Minute, quoting)
+			fx.line("mon", 2*time.Minute+time.Millisecond, diagnostic)
+			v := fx.activate(t)
+			report := fx.evaluate(t, v)
+			if len(report.Logs.Findings) != 0 || len(report.Logs.Gaps) != 0 {
+				t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
+			}
+		})
+	}
+}

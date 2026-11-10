@@ -73,7 +73,8 @@ type VerificationConfig struct {
 //
 // A MON writes the second form to its standard error in pieces, and its own
 // daemon lines can land between the pieces of the header, so one entry can
-// be split over several lines. Such an entry is restored before it is
+// be split over several lines. Such an entry is restored, on the standard
+// error of a MON only (a MON's whole output with a TTY), before it is
 // classified: a line that ends with a whole daemon line after a head, and the
 // line after one or more of them, are joined into the entry when every split
 // lies in the entry's header. The daemon lines are read on their own. A split

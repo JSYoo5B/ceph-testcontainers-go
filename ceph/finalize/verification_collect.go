@@ -536,10 +536,18 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		}
 		held = append(held, h)
 	}
-	// A MON's cluster log entries can be split by its own daemon lines; the
-	// deinterleaver restores them before any line is classified.
+	// A MON's cluster log entries can be split by its own daemon lines on
+	// its standard error; the deinterleaver restores them before any line
+	// is classified. Only that stream of a MON is read this way (with a TTY
+	// it arrives as the one stream there is): the split is established for
+	// no other daemon, and two lines of another one are two records.
 	restore := newVerificationDeinterleaver(line)
-	stdout, stderr := &verificationLines{stream: "stdout", emit: restore.line}, &verificationLines{stream: "stderr", emit: restore.line}
+	stdout, stderr := &verificationLines{stream: "stdout", emit: line}, &verificationLines{stream: "stderr", emit: line}
+	if target.Role == verificationSplitRole {
+		if stderr.emit = restore.line; tty {
+			stdout.emit = restore.line
+		}
+	}
 	err = evidence.DemuxLogs(counted, tty, stdout, stderr)
 	// A stream that the limit or an error ended can stop inside a line.
 	ended := err != nil || counted.n > config.MaxLogBytes
