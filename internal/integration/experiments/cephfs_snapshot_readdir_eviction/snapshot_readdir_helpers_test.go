@@ -113,15 +113,42 @@ func snapshotDiffer(want, other, got []string) snapshotDifference {
 	return d
 }
 
+// snapshotFirstFault says what keeps the first entries of a listing, in the
+// order the client returned them, from being distinct names of want, or ""
+// when they are. A listing keeps the order of its handle, so these are the
+// entries read before the lookups elsewhere.
+func snapshotFirstFault(want, names []string, first int) string {
+	if len(names) < first {
+		return fmt.Sprintf("the listing holds %d entries", len(names))
+	}
+	wanted := make(map[string]bool, len(want))
+	for _, name := range want {
+		wanted[name] = true
+	}
+	seen := map[string]bool{}
+	for i, name := range names[:first] {
+		switch {
+		case !wanted[name]:
+			return fmt.Sprintf("entry %d is %q", i, name)
+		case seen[name]:
+			return fmt.Sprintf("entry %d returns %q again", i, name)
+		}
+		seen[name] = true
+	}
+	return ""
+}
+
 // judgeSnapshotListings compares the listings of a client with the default
 // cache (control) and of one with a cache of snapshotCache entries (trigger)
 // with the names of the snapshot and of the live directory. Its error
 // starts with "condition not established" when a client did not read as the
 // case requires or the trigger client kept its dentry of the snapshot, with
 // "control failed" when the control client's snapshot listing or either
-// live listing is not exact, with "another fault" when the trigger's
-// snapshot listing is wrong without holding a live name, and with "observed
-// defect" when it holds live names.
+// live listing is not exact, with "another fault" when the entries the
+// trigger client read before it dropped the dentry are not distinct names of
+// the snapshot or its snapshot listing is wrong without holding a live name,
+// and with "observed defect" when the entries read after that hold live
+// names.
 func judgeSnapshotListings(want, live []string, control, trigger snapshotListing) error {
 	for _, listing := range []struct {
 		name string
@@ -154,6 +181,9 @@ func judgeSnapshotListings(want, live []string, control, trigger snapshotListing
 			return fmt.Errorf("control failed: the live listing of the %s client: %s", listing.name, d)
 		}
 	}
+	if fault := snapshotFirstFault(want, trigger.Names, trigger.First); fault != "" {
+		return fmt.Errorf("another fault: the trigger client's first %d entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: %s", trigger.First, fault)
+	}
 	d := snapshotDiffer(want, live, trigger.Names)
 	switch {
 	case d.exact():
@@ -161,5 +191,5 @@ func judgeSnapshotListings(want, live []string, control, trigger snapshotListing
 	case len(d.Live) == 0:
 		return fmt.Errorf("another fault: the snapshot listing after the client dropped its dentry of the snapshot holds no live name and is not the snapshot: %s; %d of its %d readdir requests did not name the snapshot", d, trigger.HeadRequests, trigger.Requests)
 	}
-	return fmt.Errorf("observed defect: the snapshot listing after the client dropped its dentry of the snapshot holds names of the live directory: %s; %d of its %d readdir requests did not name the snapshot", d, trigger.HeadRequests, trigger.Requests)
+	return fmt.Errorf("observed defect: the first %d entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: %s; %d of its %d readdir requests did not name the snapshot", trigger.First, d, trigger.HeadRequests, trigger.Requests)
 }

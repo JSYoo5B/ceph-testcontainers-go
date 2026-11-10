@@ -29,8 +29,20 @@ func TestJudgeSnapshotListings(t *testing.T) {
 		{name: "exact in another order", change: func(_, trigger *snapshotListing) { slices.Reverse(trigger.Names) }},
 		{name: "live names in the trigger's snapshot listing", change: func(_, trigger *snapshotListing) {
 			trigger.Names, trigger.HeadRequests = mixed, 2
-		}, want: "observed defect: the snapshot listing after the client dropped its dentry of the snapshot holds names of the live directory: 3024 entries returned, 1539 of the wanted names found, missing 1461 (snap-1539, snap-1540, snap-1541, ...), returned twice 0 [], names of the other directory state 1485 (live-1515, live-1516, live-1517, ...), unknown 0 []; 2 of its 3 readdir requests did not name the snapshot"},
+		}, want: "observed defect: the first 50 entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: 3024 entries returned, 1539 of the wanted names found, missing 1461 (snap-1539, snap-1540, snap-1541, ...), returned twice 0 [], names of the other directory state 1485 (live-1515, live-1516, live-1517, ...), unknown 0 []; 2 of its 3 readdir requests did not name the snapshot"},
 		{name: "one live name beside the whole snapshot", change: func(_, trigger *snapshotListing) { trigger.Names = append(trigger.Names, "live-0007") }, want: "observed defect: "},
+		{name: "a live name in the continuation only", change: func(_, trigger *snapshotListing) { trigger.Names[snapshotFirst] = "live-0007" }, want: "observed defect: "},
+		// Contamination before the lookups is not what the dropped dentry
+		// did, whatever follows it.
+		{name: "a live name before the lookups only", change: func(_, trigger *snapshotListing) { trigger.Names[0] = "live-0007" }, want: `another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: entry 0 is "live-0007"`},
+		{name: "a live name as the last entry before the lookups", change: func(_, trigger *snapshotListing) { trigger.Names[snapshotFirst-1] = "live-0007" }, want: `another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: entry 49 is "live-0007"`},
+		{name: "a live name before the lookups and live names after", change: func(_, trigger *snapshotListing) {
+			trigger.Names, trigger.HeadRequests = slices.Clone(mixed), 2
+			trigger.Names[0] = "live-0007"
+		}, want: "another fault: the trigger client's first 50 entries"},
+		{name: "a name twice before the lookups", change: func(_, trigger *snapshotListing) { trigger.Names[3] = trigger.Names[2] }, want: `another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: entry 3 returns "snap-0002" again`},
+		{name: "an unknown name before the lookups", change: func(_, trigger *snapshotListing) { trigger.Names[10] = "stray" }, want: `another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: entry 10 is "stray"`},
+		{name: "fewer entries than read first", change: func(_, trigger *snapshotListing) { trigger.Names = trigger.Names[:snapshotFirst-1] }, want: "another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: the listing holds 49 entries"},
 		{name: "a missing name only", change: func(_, trigger *snapshotListing) { trigger.Names = trigger.Names[1:] }, want: "another fault: the snapshot listing after the client dropped its dentry of the snapshot holds no live name and is not the snapshot: 2999 entries returned, 2999 of the wanted names found, missing 1 [snap-0000]"},
 		{name: "a name twice only", change: func(_, trigger *snapshotListing) { trigger.Names = append(trigger.Names, "snap-0001") }, want: "another fault: "},
 		{name: "an unknown name only", change: func(_, trigger *snapshotListing) { trigger.Names = append(trigger.Names, "stray") }, want: "another fault: "},

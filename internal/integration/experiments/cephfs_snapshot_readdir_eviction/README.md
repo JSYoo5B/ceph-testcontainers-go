@@ -159,8 +159,9 @@ than a tick, do not open the window.
 
 - **Pass:** the trigger client dropped its dentry of the snapshot and still
   listed exactly the snapshot.
-- **Observed bug:** the failure starts with `observed defect:` and gives
-  the counts of the trigger's snapshot listing: entries returned, snapshot
+- **Observed bug:** the failure starts with `observed defect:`: the first
+  50 entries are distinct names of the snapshot, and the entries read after
+  the dentry was dropped hold live names. It gives the counts of the trigger's snapshot listing: entries returned, snapshot
   names found and missing, and live names, with a few of each, and how many
   of the handle's readdir requests did not name the snapshot. The receipt
   (`CEPHFS_SNAPSHOT_READDIR_EVICTION_RECEIPT`) quotes the client's log line
@@ -178,9 +179,12 @@ than a tick, do not open the window.
 - **Control failed:** the failure starts with `control failed`: the client
   with the default cache did not list the snapshot exactly, or a live
   listing is wrong. The trigger's result then says nothing.
-- **Another fault:** the failure starts with `another fault:`: the
-  trigger's snapshot listing is wrong (a missing, repeated or unknown name)
-  without any live name in it. It is not the defect of this case.
+- **Another fault:** the failure starts with `another fault:`: one of the
+  trigger's first 50 entries, which it read before it dropped the dentry,
+  is not a name of the snapshot or repeats one, or its snapshot listing is
+  wrong (a missing, repeated or unknown name) without any live name in it.
+  It is not the defect of this case: a live name among the first 50 entries
+  came before the window opened.
 
 ## Cleanup and limits
 
