@@ -235,12 +235,19 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 		t.Fatal("zone b did not read its retained object during the cut")
 	}
 	// The unselected direction: a reads b's new object from b's gateway,
-	// while b, every second, still lacks a's object; the cut ends as soon as
-	// both directions are shown.
+	// while b, every second, still lacks a's object. The absence is timed
+	// from b's first 404 after a's PUT to its last one before Restore, and
+	// lasts at least 12 seconds while the other checks run; the cut ends as
+	// soon as both directions are shown and that time is reached.
 	missing := 0
+	var firstAbsent, lastAbsent time.Time
 	lacks := func() {
 		t.Helper()
 		b.Request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusNotFound)
+		lastAbsent = time.Now()
+		if missing == 0 {
+			firstAbsent = lastAbsent
+		}
 		missing++
 	}
 	for {
@@ -279,10 +286,17 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync status during the cut: b %+v, a %+v: %v", behind.Value.b.DataSources, behind.Value.a.DataSources, err)
 	}
-	lacks()
-	if lacked := time.Since(cutAt); lacked < 12*time.Second {
-		t.Fatalf("the cut showed b lacking a's object for only %v", lacked)
+	for time.Since(firstAbsent) < 12*time.Second {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Second):
+		}
+		lacks()
 	}
+	// The last 404, right before Restore.
+	lacks()
+	absent := lastAbsent.Sub(firstAbsent).Round(time.Millisecond)
 	cut, err := lease.Status(ctx)
 	if err != nil || !cut.Applied || cut.Drops == 0 {
 		t.Fatalf("netem status during the cut: %+v, %v", cut, err)
@@ -341,9 +355,9 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	if got := a.Request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusOK); !bytes.Equal(got, fromA) {
 		t.Fatal("zone a lost its own object")
 	}
-	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object in %d reads over %s; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), and both gateways kept their processes and the period",
+	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object in %d reads over %s from its first 404 to its last before Restore; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), and both gateways kept their processes and the period",
 		lease.ContainerID, lease.NetworkName, cut.Drops, lease.Peers, window, cut.Filters, len(fromB), readBack,
-		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, missing, window, len(fromA), caughtUp, dataSource(synced, "a"))
+		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, missing, absent, len(fromA), caughtUp, dataSource(synced, "a"))
 }
 
 // zoneLinkSync is one look at both zones' sync status.
