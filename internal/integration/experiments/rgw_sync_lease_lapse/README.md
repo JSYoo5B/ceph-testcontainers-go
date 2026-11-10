@@ -170,8 +170,13 @@ connection stays up.
 
 ## Cleanup and limits
 
-Paused gateways are resumed before the realm is terminated; the realm and
-the clusters are terminated by their cleanups. The settings changed at run
+A gateway counts as paused from before the engine is asked to pause it
+until the engine reports it as running again, so a request that failed or
+whose answer was lost leaves it owed a resume. Gateways still owed one are
+resumed before the realm is terminated, and one that stays paused fails the
+test. A round goes on only after the engine reported the pause or the
+resume it asked for. The realm and the clusters are terminated by their
+cleanups. The settings changed at run
 time live in the gateway processes and end with them.
 
 Not covered: host networking, arm64, a source that drops packets instead of

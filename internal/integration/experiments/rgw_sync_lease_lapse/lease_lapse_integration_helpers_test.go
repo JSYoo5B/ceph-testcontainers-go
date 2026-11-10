@@ -108,7 +108,9 @@ func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 			defer stop()
 			// A paused gateway cannot be stopped in an orderly way.
 			for name := range l.paused {
-				l.unpause(cleanup, name)
+				if err := l.resume(cleanup, name); err != nil {
+					t.Error(err)
+				}
 			}
 			if err := fixture.Terminate(cleanup); err != nil {
 				t.Errorf("terminate the realm: %v", err)
@@ -189,26 +191,54 @@ func (l *leaseLapse) gatewayExec(zone int, script string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// pause freezes every process of a zone's gateway container.
+// pause freezes every process of a zone's gateway container. The gateway is
+// recorded as owed a resume before the engine is asked: a request whose
+// answer is lost can still have frozen the container. The time returned is
+// taken after the engine reported the container paused.
 func (l *leaseLapse) pause(name string) time.Time {
 	l.t.Helper()
-	if _, err := l.docker.ContainerPause(l.ctx, l.gateway(name).GetContainerID(), mobycl.ContainerPauseOptions{}); err != nil {
-		l.t.Fatalf("pause the gateway of zone %s: %v", name, err)
-	}
 	l.paused[name] = true
+	_, err := l.docker.ContainerPause(l.ctx, l.gateway(name).GetContainerID(), mobycl.ContainerPauseOptions{})
+	paused, seen := l.frozen(l.ctx, name)
+	if err != nil || seen != nil || !paused {
+		l.t.Fatalf("pause the gateway of zone %s: request %v; the engine reports paused=%t (%v)", name, err, paused, seen)
+	}
 	return time.Now()
 }
 
 // unpause resumes a zone's gateway container and returns the time right
-// before it asked for that: the gateway runs again no earlier.
-func (l *leaseLapse) unpause(ctx context.Context, name string) time.Time {
+// before it asked for that: the gateway runs again no earlier. A round goes
+// on only with a gateway the engine reports as running.
+func (l *leaseLapse) unpause(name string) time.Time {
 	l.t.Helper()
 	asked := time.Now()
-	if _, err := l.docker.ContainerUnpause(ctx, l.gateway(name).GetContainerID(), mobycl.ContainerUnpauseOptions{}); err != nil {
-		l.t.Errorf("unpause the gateway of zone %s: %v", name, err)
+	if err := l.resume(l.ctx, name); err != nil {
+		l.t.Fatal(err)
+	}
+	return asked
+}
+
+// resume asks the engine to resume a zone's gateway container and drops the
+// gateway from those owed a resume only when the engine then reports it as
+// not paused, whatever the request returned. Otherwise the gateway stays
+// owed, and the cleanup tries again.
+func (l *leaseLapse) resume(ctx context.Context, name string) error {
+	_, err := l.docker.ContainerUnpause(ctx, l.gateway(name).GetContainerID(), mobycl.ContainerUnpauseOptions{})
+	paused, seen := l.frozen(ctx, name)
+	if seen != nil || paused {
+		return fmt.Errorf("unpause the gateway of zone %s: request %v; the engine reports paused=%t (%v)", name, err, paused, seen)
 	}
 	delete(l.paused, name)
-	return asked
+	return nil
+}
+
+// frozen reads from the engine whether a zone's gateway container is paused.
+func (l *leaseLapse) frozen(ctx context.Context, name string) (bool, error) {
+	state, err := l.gateway(name).State(ctx)
+	if err != nil {
+		return false, err
+	}
+	return state.Paused, nil
 }
 
 func (l *leaseLapse) gateway(name string) testcontainers.Container {
@@ -324,11 +354,11 @@ func (l *leaseLapse) round(name string, freeze time.Duration, holdSource bool) *
 	}
 	if !holdSource {
 		l.wait(freeze)
-		round.Resumed = l.unpause(l.ctx, "b")
+		round.Resumed = l.unpause("b")
 		return round
 	}
 	l.pause("a")
-	running := l.unpause(l.ctx, "b").Truncate(time.Millisecond)
+	running := l.unpause("b").Truncate(time.Millisecond)
 	// Each shard reads within rgw_data_sync_poll_interval, 20 seconds.
 	waiting, err := harness.Observe(l.ctx, 50*time.Second, 20*time.Second, 2*time.Second, func(context.Context) (int, bool, error) {
 		waiting := 0
@@ -344,7 +374,7 @@ func (l *leaseLapse) round(name string, freeze time.Duration, holdSource bool) *
 	}
 	round.Frozen = time.Now()
 	l.wait(freeze)
-	round.Resumed = l.unpause(l.ctx, "a")
+	round.Resumed = l.unpause("a")
 	l.t.Logf("round %s: %d of zone b's shards waited in a read of zone a's data log for %s", name, waiting.Value, round.Resumed.Sub(round.Frozen).Round(time.Millisecond))
 	return round
 }
