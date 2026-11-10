@@ -51,7 +51,8 @@ type VerificationConfig struct {
 	// refused.
 	RedactValues []string
 	// ArchiveLogs keeps every line of the window that the log check reads,
-	// events or not, redacted and in the order received, and the failure
+	// events or not, redacted and in the order received (an entry split by
+	// daemon lines as restored, see LogEvent), and the failure
 	// archive writes them next to the report. They have the log check's
 	// coverage: its gaps (a restarted, removed or rotating source, the
 	// MaxLogBytes limit, a cut stream) apply to them as well.
@@ -69,6 +70,17 @@ type VerificationConfig struct {
 // (YYYY-MM-DDThh:mm:ss) with three or six fractional digits and a numeric
 // timezone (±hhmm). The parser accepts offset hours up to 12 west or 14 east
 // and offset minutes from 00 to 59.
+//
+// A MON writes the second form to its standard error in pieces, and its own
+// daemon lines can land between the pieces of the header, so one entry can
+// be split over several lines. Such an entry is restored, on the standard
+// error of a MON only (a MON's whole output with a TTY), before it is
+// classified: a line that ends with a whole daemon line after a head, and the
+// line after one or more of them, are joined into the entry when every split
+// lies in the entry's header. The daemon lines are read on their own. A split
+// inside a message is not restored, since a message can quote any text.
+// A line with a log envelope of its own is a record and is never joined as
+// the rest of an entry.
 type LogEvent string
 
 const (
@@ -859,13 +871,13 @@ func evaluateVerificationCheck(events []verificationEvent, rules []*verification
 
 var verificationNotes = []string{
 	"The window starts at the activation and ends at the evaluation, on the Docker engine's clock; bootstrap before it and the cleanups and termination after it are outside the window.",
-	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered. A cluster log entry is an event by the severity of its log envelope, and only the daemon log and cluster log forms of the pinned Tentacle source are recognized; a line with a severity marker in another form is a gap.",
+	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered. A cluster log entry is an event by the severity of its log envelope, and only the daemon log and cluster log forms of the pinned Tentacle source are recognized, with a MON's cluster log entries restored when its daemon lines split their header; a line with a severity marker in another form is a gap.",
 	"A crash is new when its crash ID was not in that container's crash directory at activation. Crashes of removed containers and of containers added after the activation are not covered, and are reported as gaps.",
 	"Clean is evidence for these sources and this window, not proof that no daemon failed. Scrub results and recovery waits are not verified.",
 	"The bug compatibility selection is a build property that the library does not see.",
 }
 
-const archivedLogsNote = "With ArchiveLogs, the failure archive keeps every line of the window that the log check read, events or not, in verification-<n>-<name>-logs.jsonl, in the order received; the log check's gaps apply to those lines as well, and a source without lines there was not read."
+const archivedLogsNote = "With ArchiveLogs, the failure archive keeps every line of the window that the log check read, events or not, in verification-<n>-<name>-logs.jsonl, in the order received, with split cluster log entries restored; the log check's gaps apply to those lines as well, and a source without lines there was not read."
 
 func (v *Verification) evaluate(o *verificationObservation) *VerificationReport {
 	b := v.baseline
