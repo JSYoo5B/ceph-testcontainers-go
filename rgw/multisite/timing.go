@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,9 +36,11 @@ type TimingProfile struct {
 	// cut, a paused gateway) for longer than half of 30 seconds, to more
 	// than twice that time. A killed gateway's leases stay taken until
 	// they expire, so sync after a gateway restart can stall for one
-	// period. It must be a whole number of seconds, at least 30. It is
-	// fixed for the lifetime of each owned gateway, including added zones,
-	// on every release, and sets no persistent configuration entry.
+	// period. It must be a whole number of seconds, at least 30 and at most
+	// 238609294 (the most the gateway's lease arithmetic holds, about seven
+	// and a half years). It is fixed for the lifetime of each owned gateway,
+	// including added zones, on every release, and sets no persistent
+	// configuration entry.
 	SyncLeasePeriod time.Duration
 }
 
@@ -50,13 +53,22 @@ const (
 // profile (ceph/internal/scripts/rgw.sh).
 const defaultSyncLease = 30 * time.Second
 
-// validate rejects a sync lease period the startup script cannot apply.
+// maxSyncLease is the longest period a gateway implements as given. The
+// option is a 64-bit integer, but the lease coroutine takes it as a 32-bit
+// signed number of seconds and derives its renewal tolerance as nine tenths
+// of it, multiplying first; a longer period overflows that product, and one
+// beyond 32 bits is narrowed to another period altogether.
+const maxSyncLease = math.MaxInt32 / 9 * time.Second
+
+// validate rejects a sync lease period the startup script cannot apply or
+// the gateway cannot implement.
 func (p TimingProfile) validate() error {
 	if p.SyncLeasePeriod == 0 {
 		return nil
 	}
-	if p.SyncLeasePeriod < defaultSyncLease || p.SyncLeasePeriod%time.Second != 0 {
-		return multisiteInvalid(fmt.Errorf("RGW sync lease period must be a whole number of seconds, at least %s (got %s)", defaultSyncLease, p.SyncLeasePeriod))
+	if p.SyncLeasePeriod < defaultSyncLease || p.SyncLeasePeriod > maxSyncLease || p.SyncLeasePeriod%time.Second != 0 {
+		return multisiteInvalid(fmt.Errorf("RGW sync lease period must be a whole number of seconds from %d to %d (got %s)",
+			defaultSyncLease/time.Second, maxSyncLease/time.Second, p.SyncLeasePeriod))
 	}
 	return nil
 }

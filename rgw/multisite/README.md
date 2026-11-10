@@ -168,7 +168,8 @@ multisite.WithTopology(multisite.TopologyConfig{
 })
 ```
 
-The period is a whole number of seconds, at least 30, on every supported
+The period is a whole number of seconds from 30 to 238609294 (the most the
+gateway's 32-bit lease arithmetic holds), on every supported
 release; it is an argument of the owned gateways, including later zones, and
 ends with them. Sync after a restart of such a gateway can stall for one
 period. `IncrementalSync` and `SyncLeasePeriod` are independent.

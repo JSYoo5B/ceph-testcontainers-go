@@ -27,9 +27,15 @@ set -- radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring 
 # needs a period that outlasts it.
 case "${CEPH_RGW_SYNC_LEASE_PERIOD:-}" in
     "") lease=30 ;;
-    *[!0-9]* | 0*) echo "invalid RGW sync lease period" >&2; exit 1 ;;
+    *[!0-9]* | 0* | ??????????*) echo "invalid RGW sync lease period" >&2; exit 1 ;;
     *) lease=$CEPH_RGW_SYNC_LEASE_PERIOD ;;
 esac
+# The gateway takes the period as a 32-bit signed number of seconds and
+# multiplies it by nine for its renewal tolerance.
+if [ "$lease" -gt 238609294 ]; then
+    echo "invalid RGW sync lease period" >&2
+    exit 1
+fi
 if [ -n "${CEPH_RGW_REALM:-}" ]; then
     set -- "$@" --rgw-realm "$CEPH_RGW_REALM" --rgw-sync-obj-etag-verify true \
         --rgw-sync-lease-period "$lease" \

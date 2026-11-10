@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +184,11 @@ func TestTimingProfileSyncLeasePeriodIsValidatedBeforeAnythingStarts(t *testing.
 	}{
 		{0, false}, {30 * time.Second, false}, {5 * time.Minute, false},
 		{29 * time.Second, true}, {time.Second, true}, {-time.Minute, true}, {30*time.Second + time.Millisecond, true},
+		// The longest period whose nine-fold product a gateway's 32-bit
+		// signed arithmetic holds, and the first ones it does not.
+		{238609294 * time.Second, false}, {238609295 * time.Second, true},
+		{math.MaxInt32 * time.Second, true}, {(math.MaxInt32 + 1) * time.Second, true},
+		{math.MaxUint32 * time.Second, true}, {4294967296 * time.Second, true}, {4294967326 * time.Second, true},
 	} {
 		err := (TimingProfile{SyncLeasePeriod: test.period}).validate()
 		if (err != nil) != test.wantErr || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -285,14 +291,14 @@ func TestTimingProfileScriptAppliesTheSyncLeasePeriod(t *testing.T) {
 		data, err := cmd.CombinedOutput()
 		return strings.Fields(string(data)), err
 	}
-	for value, want := range map[string]string{"": "30", "300": "300", "45": "45"} {
+	for value, want := range map[string]string{"": "30", "300": "300", "45": "45", "238609294": "238609294"} {
 		args, err := run("CEPH_RGW_REALM=realm", syncLeaseEnv+"="+value)
 		lease := slices.Index(args, "--rgw-sync-lease-period")
 		if err != nil || lease < 0 || args[lease+1] != want || strings.Count(strings.Join(args, " "), "--rgw-sync-lease-period") != 1 {
 			t.Fatalf("marker %q: %v, args %q", value, err, args)
 		}
 	}
-	for _, value := range []string{"0", "030", "-5", "1.5", "30s", "3 0"} {
+	for _, value := range []string{"0", "030", "-5", "1.5", "30s", "3 0", "238609295", "2147483648", "4294967296", "99999999999999999999999"} {
 		if args, err := run("CEPH_RGW_REALM=realm", syncLeaseEnv+"="+value); err == nil || slices.Contains(args, "radosgw") || slices.Contains(args, "--rgw-realm") {
 			t.Fatalf("marker %q started the gateway: %q", value, args)
 		}
