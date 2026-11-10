@@ -162,12 +162,8 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 // answer for the object, its sync status, the data log shards on which its
 // markers differ from a's data log, its bucket sync status and its sync
 // errors is logged, so that a catch-up that does not finish shows where it
-// stopped. One native outcome is accepted instead of the catch-up (issue
-// 652): b's sync thread stalled during the cut past its sync leases, and
-// the data log shards that found their leases lost moved past entries they
-// did not sync. Then every shard still behind must have lost its lease, and
-// after a restart of b's gateway, which rereads the stored markers, b must
-// catch up. It needs the netem helper
+// stopped, and which shards lost their sync leases during the cut (issue
+// 659); a lost lease is reported, not accepted. It needs the netem helper
 // (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage) and an engine
 // that grants it NET_ADMIN.
 func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
@@ -316,45 +312,14 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	gatewayState := func(shards []int) string {
 		return zoneLinkGatewayState(ctx, probe, zones[1].Gateway, peer, cutAt, strings.TrimPrefix(bucket, "/"), shards)
 	}
-	restarted := false
 	if last, ok := zoneLinkCatchUp(t, ctx, fixture, b, strings.TrimPrefix(bucket, "/"), "from-a", fromA, 3*time.Minute, gatewayState); !ok {
 		// During the cut zone b's sync thread can stall past its 30-second
-		// sync leases. A data log shard that finds its lease lost in the
-		// middle of a batch of entries leaves the rest of the batch unsynced
-		// but still moves its marker past them, and syncs them again only
-		// when it rereads its stored marker (issue 652). This is the only
-		// cause of a missing catch-up the test accepts: every shard still
-		// behind must have lost its lease since the cut, and then a restart
-		// of zone b's gateway must catch up.
-		shards := zoneLinkShards(last)
-		lost := zoneLinkLostLeases(ctx, zones[1].Gateway, cutAt)
-		for _, shard := range shards {
-			if !lost[shard] {
-				t.Fatalf("zone b did not catch up with a within 3m0s of Restore, and data log shard %d, still behind, did not lose its sync lease since the cut (lost: %v): object %s; %s; data log shards behind a: %s", shard, lost, last.Object, last.Status, last.Lag)
-			}
-		}
-		if len(shards) == 0 {
-			t.Fatalf("zone b did not catch up with a within 3m0s of Restore without a data log shard behind: object %s; %s", last.Object, last.Status)
-		}
-		t.Logf("RGW_ZONE_LINK_LEASE_LAPSE data log shards %v of zone b lost their sync leases during the cut and stayed behind a for 3m0s after Restore; restarting zone b's gateway", shards)
-		stop := 2 * time.Second
-		if err := zones[1].Gateway.Stop(ctx, &stop); err != nil {
-			t.Fatal(err)
-		}
-		if err := zones[1].Gateway.Start(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if b.Endpoint, err = zones[1].Gateway.S3Endpoint(ctx); err != nil {
-			t.Fatal(err)
-		}
-		state, err := zones[1].Gateway.State(ctx)
-		if err != nil || !state.Running {
-			t.Fatalf("zone b's gateway after its restart: %+v, %v", state, err)
-		}
-		pids["b"], restarted = state.Pid, true
-		if last, ok := zoneLinkCatchUp(t, ctx, fixture, b, strings.TrimPrefix(bucket, "/"), "from-a", fromA, 6*time.Minute, gatewayState); !ok {
-			t.Fatalf("zone b did not catch up with a within 6m0s of its gateway restart: object %s; %s; data log shards behind a: %s", last.Object, last.Status, last.Lag)
-		}
+		// sync leases, and a data log shard that finds its lease lost in the
+		// middle of a batch can move its marker past entries it did not sync
+		// (issue 659). A lost lease is reported to help attribute the
+		// failure; it is not accepted as a cause.
+		t.Fatalf("zone b did not catch up with a within 3m0s of Restore: object %s; %s; data log shards behind a: %s; shards that lost their sync lease since the cut: %v",
+			last.Object, last.Status, last.Lag, zoneLinkLostLeases(ctx, zones[1].Gateway, cutAt))
 	}
 	caughtUp := time.Since(restored).Round(time.Millisecond)
 	t.Logf("zone b's gateway sync leases since the cut: %s", zoneLinkLeaseLog(ctx, zones[1].Gateway, cutAt))
@@ -376,9 +341,9 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	if got := a.Request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusOK); !bytes.Equal(got, fromA) {
 		t.Fatal("zone a lost its own object")
 	}
-	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object in %d reads over %s; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), zone b's gateway was restarted after a sync lease lapse: %v, and both gateways kept their processes (since that restart) and the period",
+	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object in %d reads over %s; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), and both gateways kept their processes and the period",
 		lease.ContainerID, lease.NetworkName, cut.Drops, lease.Peers, window, cut.Filters, len(fromB), readBack,
-		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, missing, window, len(fromA), caughtUp, dataSource(synced, "a"), restarted)
+		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, missing, window, len(fromA), caughtUp, dataSource(synced, "a"))
 }
 
 // zoneLinkSync is one look at both zones' sync status.
