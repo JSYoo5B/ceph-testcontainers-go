@@ -5,7 +5,6 @@
 package capturearchive_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -24,43 +23,22 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
-	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// The reference helper source is explicit; the SDK chooses no default image.
-const helperSource = "https://github.com/JSYoo5B/ceph-testcontainers-images.git#cbee3950dfab150b196fb5b4bf955045079f9fc9:image/extensions/capture"
+// helperImage is the published reference helper of packet-capture contract
+// 1, which the test uses without CEPH_TEST_CAPTURE_IMAGE; the SDK chooses no
+// default image.
+const helperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-capture-v1"
 
-func captureHelper(t *testing.T, ctx context.Context) string {
+func captureHelper(t *testing.T) string {
 	t.Helper()
-	if image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE"); image != "" {
-		return image
+	image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE")
+	if image == "" {
+		image = helperImage
 	}
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = docker.Close() }()
-	tag := "ceph-testcontainers-capture-helper:cbee3950"
-	result, err := docker.ImageBuild(ctx, nil, mobycl.ImageBuildOptions{RemoteContext: helperSource, Tags: []string{tag}, Remove: true, ForceRemove: true})
-	if err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	defer func() { _ = result.Body.Close() }()
-	scanner := bufio.NewScanner(result.Body)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for scanner.Scan() {
-		var message struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &message) == nil && message.Error != "" {
-			t.Fatalf("build the capture helper: %s", message.Error)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	return tag
+	t.Logf("capture helper: %s", image)
+	return image
 }
 
 // controlledFailureTB records an intentional workload failure without failing
@@ -89,7 +67,7 @@ func (tb *controlledFailureTB) finish() {
 func TestCaptureFailureArchive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	helper := captureHelper(t, ctx)
+	helper := captureHelper(t)
 	for _, raw := range []bool{false, true} {
 		t.Run(fmt.Sprintf("raw_%t", raw), func(t *testing.T) {
 			bridge, err := dockerbridge.New(ctx)

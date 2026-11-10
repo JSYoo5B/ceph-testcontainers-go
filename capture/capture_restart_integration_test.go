@@ -189,7 +189,7 @@ func readFile(t *testing.T, report capture.Report) []byte {
 func TestCaptureAcrossTargetRestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	helper := captureHelper(t, ctx)
+	helper := captureHelper(t)
 	bridge, err := dockerbridge.New(ctx)
 	if bridge != nil {
 		t.Cleanup(func() {
