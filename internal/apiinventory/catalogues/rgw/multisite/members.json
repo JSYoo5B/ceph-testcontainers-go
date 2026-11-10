@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw/multisite",
-  "count": 135,
+  "count": 136,
   "types": {
     "rgw/multisite.BucketPolicyWatchEvent": [
       "BucketPolicyWatchEvent.Err field error",
@@ -150,7 +150,8 @@
       "SyncWatchEvent.Status field SyncStatus"
     ],
     "rgw/multisite.TimingProfile": [
-      "TimingProfile.IncrementalSync field bool"
+      "TimingProfile.IncrementalSync field bool",
+      "TimingProfile.SyncLeasePeriod field time.Duration"
     ],
     "rgw/multisite.TopologyConfig": [
       "TopologyConfig.MasterZonegroup field string",
