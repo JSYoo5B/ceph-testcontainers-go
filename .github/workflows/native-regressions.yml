@@ -12,6 +12,7 @@ on:
           - native_shuffle
           - cephfs_dangling_symlink_create
           - cephfs_statfs_mixed_quota
+          - cephfs_snapshot_readdir_eviction
           - mon_log_ack
           - rbd_demote_restart
           - rbd_trash_purge_timezone
