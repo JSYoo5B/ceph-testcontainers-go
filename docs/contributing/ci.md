@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_sync_lease_lapse`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_statfs_mixed_quota`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_sync_lease_lapse`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -860,12 +860,14 @@ with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
 for the deliberately failing ones, through `Native regressions`, which runs
 the one batch its `batch` input names.
 
-Eleven optional batches are [experiment cases](testing.md#experiment-cases)
+Twelve optional batches are [experiment cases](testing.md#experiment-cases)
 that reproduce an unpatched upstream defect and fail on the published images:
 `native_rgw_translation`
 ([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
 `native_shuffle`
 ([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
+`cephfs_statfs_mixed_quota`
+([`cephfs_statfs_mixed_quota`](../../internal/integration/experiments/cephfs_statfs_mixed_quota/README.md)),
 `mon_log_ack`
 ([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
 `rbd_demote_restart`
@@ -970,6 +972,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `cephfs_statfs_mixed_quota` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_sync_lease_lapse` log reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
 | `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | cheap, deterministic characterization of fixed defects | 104 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `targeted` |
@@ -977,6 +980,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
 | `cephfs_fscrypt` (`optional/cephfs_fscrypt`) | privileged client containers and a host kernel module; passes on the published images | 46 s; 51 s on 19.2.5, 55 s on 21.2.0 | 30m | never | `/ci run cephfs_fscrypt [on <release>]` | never | no |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
+| `cephfs_statfs_mixed_quota` (`optional/cephfs_statfs_mixed_quota`) | deliberately failing reproducer | 33 s (fails at `parent/child`); 34 s on 21.2.0 and 40 s on 19.2.5 (pass) | 20m | never | `/ci run cephfs_statfs_mixed_quota [on umbrella]` | never | `batch=cephfs_statfs_mixed_quota` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | deliberately failing reproducer | 35 s (fails in the suspended subtests); 36 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `batch=rgw_conditional_writes` |
 | `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | deliberately failing reproducer, HTTPS | 31 s (fails at `no-checksum-omitted-key`); 33 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `batch=rgw_ssec_completion` |
