@@ -99,7 +99,9 @@ func joinSplitClusterEntries(lines []string, split *int) []string {
 		}
 		if len(held) > 0 {
 			joined := head + line
-			if m := rawClusterEnvelope.FindStringIndex(joined); m != nil && len(head) <= m[1] {
+			// A line with an envelope of its own is a record, not the rest.
+			whole := rawDaemonEnvelope.MatchString(line) || rawClusterEnvelope.MatchString(line)
+			if m := rawClusterEnvelope.FindStringIndex(joined); !whole && m != nil && len(head) <= m[1] {
 				for _, h := range held {
 					at := rawDaemonLineStart.FindStringIndex(h)
 					out = append(out, h[at[0]:])

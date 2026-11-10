@@ -483,7 +483,8 @@ never a guessed event. The MON writes its cluster log line in pieces, and
 its own daemon lines can land between the pieces of the header and split the
 entry over several lines; such an entry is joined again before it is
 classified, but a line split inside a message is not, since a message can
-quote any text. The grammar is in the godoc of
+quote any text, and a line with a log envelope of its own stays a record of
+its own. The grammar is in the godoc of
 [`finalize.LogEvent`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#LogEvent).
 Other releases and outputs (for example journald or syslog)
 are not recognized.

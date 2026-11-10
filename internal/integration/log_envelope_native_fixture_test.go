@@ -188,4 +188,15 @@ func TestEnvelopeRawCountsJoinEntriesSplitByDaemonLines(t *testing.T) {
 	if got := rawEnvelopeCounts([]string{quoting, "(mon.0) 18 : cluster [INF] " + token + " [WRN]"}, token); got.Split != 0 || got.Priorities["INF"] != 1 || got.Unrecognized != 1 {
 		t.Fatalf("quoting counts %+v", got)
 	}
+	// A record after a record whose whole message is a quoted daemon line is
+	// counted on its own, not joined as that record's message.
+	whole := "cluster 2026-11-10T00:33:13.319590+0000 mon.a (mon.0) 17 : cluster [INF] " + daemon
+	for _, next := range []string{
+		"cluster 2026-11-10T00:33:13.419590+0000 mon.a (mon.0) 18 : cluster [WRN] " + token,
+		"2026-11-10T00:33:14.439+0000 7d9025c0d640  0 log_channel(cluster) log [WRN] : " + token,
+	} {
+		if got := rawEnvelopeCounts([]string{whole, next}, token); got.Split != 0 || got.Priorities["INF"] != 1 || got.Priorities["WRN"] != 1 || got.Unrecognized != 0 {
+			t.Fatalf("adjacent record counts %+v", got)
+		}
+	}
 }

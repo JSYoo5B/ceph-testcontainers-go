@@ -78,6 +78,8 @@ type VerificationConfig struct {
 // line after one or more of them, are joined into the entry when every split
 // lies in the entry's header. The daemon lines are read on their own. A split
 // inside a message is not restored, since a message can quote any text.
+// A line with a log envelope of its own is a record and is never joined as
+// the rest of an entry.
 type LogEvent string
 
 const (

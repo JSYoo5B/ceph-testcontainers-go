@@ -111,6 +111,36 @@ func TestVerificationDoesNotSplitMessages(t *testing.T) {
 			t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
 		}
 	})
+	// A record whose whole message is a quoted daemon line ends its header
+	// where the daemon line starts, like a fragment. The record after it is
+	// a record of its own and keeps its event.
+	for name, next := range map[string]string{
+		"a cluster record after a record quoting a daemon line": clusterLogLine(true, "cluster", "WRN", "Health check failed: noout flag(s) set (OSDMAP_FLAGS)"),
+		"a daemon record after a record quoting a daemon line":  daemonLogLine("cluster", "WRN", "Health check failed: noout flag(s) set (OSDMAP_FLAGS)"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newVerifyFixture()
+			fx.config.ArchiveLogs = true
+			v := fx.activate(t)
+			quoting := clusterLogLine(true, "cluster", "INF", daemonLogLine("cluster", "INF", "sentinel"))
+			fx.line("mon", 2*time.Minute, quoting)
+			fx.line("mon", 2*time.Minute+time.Millisecond, next)
+			report := fx.evaluate(t, v)
+			if len(report.Logs.Gaps) != 0 || len(report.Logs.Findings) != 1 || report.Logs.Findings[0].Event != string(LogClusterWarning) ||
+				!strings.Contains(report.Logs.Findings[0].Text, "Health check failed") {
+				t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
+			}
+			var got []string
+			for _, line := range report.logLines {
+				if line.Source == "mon.a" {
+					got = append(got, line.Text)
+				}
+			}
+			if want := []string{daemonLogLine("cluster", "INF", "osd.0 boot"), quoting, next}; !slices.Equal(got, want) {
+				t.Fatalf("mon.a lines\n%q\nwant\n%q", got, want)
+			}
+		})
+	}
 	t.Run("a head without its rest", func(t *testing.T) {
 		fx := newVerifyFixture()
 		v := fx.activate(t)

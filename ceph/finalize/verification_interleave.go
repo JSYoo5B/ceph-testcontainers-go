@@ -26,7 +26,9 @@ import (
 // The daemon lines and the entry are then emitted as separate lines, the
 // entry with the Docker timestamp of its first fragment. Anything else is
 // emitted unchanged: a split inside a message is not restored, since a
-// message may quote any text, including a daemon line.
+// message may quote any text, including a daemon line. A line that has a log
+// envelope of its own is a record, not the rest of an entry, and the fragments
+// before it are emitted unchanged.
 type verificationDeinterleaver struct {
 	emit    func(stream string, data []byte, long, ended bool)
 	pending map[string][]verificationFragment
@@ -70,6 +72,14 @@ func (d *verificationDeinterleaver) line(stream string, data []byte, long, ended
 		return
 	}
 	if fragments := d.pending[stream]; len(fragments) > 0 {
+		// A line that is a whole record on its own is never the rest of an
+		// entry: a record whose message is a quoted daemon line looks like
+		// a fragment, and joining the record after it would hide that record.
+		if _, whole := parseVerificationEnvelope(text); whole {
+			d.flush(stream)
+			d.emit(stream, data, long, ended)
+			return
+		}
 		if entry, ok := restoreClusterEntry(fragments, text); ok {
 			d.pending[stream] = nil
 			for _, fragment := range fragments {
