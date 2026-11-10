@@ -279,6 +279,18 @@ These affect commands or client libraries you run yourself, not the typed API:
   and refuse `aes256k` before any change with `ceph.ErrUnsupported`, naming
   `ceph-authtool --key-type` as the capability. The repository tests this
   with 20.2.3.
+- **Squid 19.2.3 and later, libcephfs creation at a dangling symlink.**
+  `mkdir`, `symlink`, `link` and `mknod` through libcephfs follow a symlink
+  at the new name when its target does not exist: they succeed and make the
+  entry at the symlink's target, where POSIX requires `EEXIST` with nothing
+  made. A symlink whose target exists and any other occupied name report
+  `EEXIST`. Squid 19.2.3 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and Umbrella
+  21.2.0 all do this; Squid 19.2.2 reports `EEXIST`. A test that relies on `EEXIST` to detect an occupied
+  name through libcephfs should check the name with `lstat` first, and a
+  test that plants a symlink as an obstacle should point it at an existing
+  entry. See `TestCephFSCreateAtADanglingSymlink` (batch
+  `cephfs_dangling_symlink_create`, experiment case
+  [`cephfs_dangling_symlink_create`](../../internal/integration/experiments/cephfs_dangling_symlink_create/README.md)).
 - **Tentacle 20.2.4, libcephfs statfs below a byte quota and a nearer file
   quota.** At a directory that has only `ceph.quota.max_files`, below a
   directory with `ceph.quota.max_bytes`, statfs reports the capacity and the
