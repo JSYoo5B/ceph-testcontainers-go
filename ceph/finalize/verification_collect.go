@@ -452,7 +452,8 @@ const maxVerificationLine = 64 << 10
 
 // readVerificationLogs streams the container's log lines from start to end
 // with Docker's timestamps and emits each line that is an event. keep, when
-// not nil, receives every line of the window in the order received. Both run
+// not nil, receives every line of the window in the order received, with
+// split cluster log entries restored (verificationDeinterleaver). Both run
 // after the stream is read, since a private key's end can withhold earlier
 // lines. It returns the bytes read, the lines of the window and an error
 // when the stream could not be read in full, exceeded MaxLogBytes, or held a
@@ -535,12 +536,16 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		}
 		held = append(held, h)
 	}
-	stdout, stderr := &verificationLines{stream: "stdout", emit: line}, &verificationLines{stream: "stderr", emit: line}
+	// A MON's cluster log entries can be split by its own daemon lines; the
+	// deinterleaver restores them before any line is classified.
+	restore := newVerificationDeinterleaver(line)
+	stdout, stderr := &verificationLines{stream: "stdout", emit: restore.line}, &verificationLines{stream: "stderr", emit: restore.line}
 	err = evidence.DemuxLogs(counted, tty, stdout, stderr)
 	// A stream that the limit or an error ended can stop inside a line.
 	ended := err != nil || counted.n > config.MaxLogBytes
 	stdout.finish(ended)
 	stderr.finish(ended)
+	restore.finish()
 	for _, h := range held {
 		if h.line != nil {
 			keep(*h.line)
