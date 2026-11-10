@@ -229,6 +229,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestMultiClusterRGWDataSyncAfterSyncLeaseLapse` (batch
   `rgw_sync_lease_lapse`, experiment case
   [`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md)).
+- **Squid 19.2.5 and Tentacle 20.2.4, a bucket's object lock rule in other
+  zones.** A default retention rule applied to a bucket with
+  `PUT ?object-lock` stays in the zone it was applied in: after metadata
+  sync the other zones answer `GET ?object-lock` with object lock enabled
+  and no rule, and the bucket record they store holds none. Tentacle 20.2.5
+  and Umbrella 21.2.0 answer the same rule in every zone, also after a
+  change of it. A test that relies on a default retention outside the zone
+  it wrote to must read the configuration from that zone first. See
+  `TestMultiClusterRGWBucketObjectLockSync` (batch `rgw_object_lock_sync`,
+  experiment case
+  [`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)).
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
