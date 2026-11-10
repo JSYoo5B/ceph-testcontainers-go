@@ -913,7 +913,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "rbd_trash_purge_timezone",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_expiration_header",
-                                           "rgw_multipart_part_class", "rgw_ssec_completion"])
+                                           "rgw_multipart_part_class", "rgw_ssec_completion",
+                                           "rgw_sync_lease_lapse"])
         # Every choice is an optional profile that no required plan selects;
         # the reproducers among them compile only with native_regression.
         for choice in choices:

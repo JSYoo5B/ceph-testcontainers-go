@@ -20,6 +20,7 @@ on:
           - rgw_expiration_header
           - rgw_compressed_copy
           - rgw_multipart_part_class
+          - rgw_sync_lease_lapse
           - failure_archive
       rgw_image:
         description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
