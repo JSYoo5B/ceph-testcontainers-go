@@ -3,8 +3,9 @@
 Owner: RGW. Kind: cross-build characterization of a fixed upstream defect.
 Test: `TestRGWSinglePartMultipartNumberedRead`, batch
 `topology/rgw_single_part_read`. Pure tests of the judgement and of the
-process reading (`TestJudgeOnlyPart`, `TestJudgeControls` and
-`TestParseProcessStat`, batch `pure`).
+process reading, and of the phases of a read against a stub transport
+(`TestJudgeOnlyPart`, `TestJudgeControls`, `TestParseProcessStat` and
+`TestSendPartReadPhases`, batch `pure`).
 
 ## Use case and native contract
 
@@ -86,7 +87,7 @@ python3 .github/scripts/tag_scenarios.py run --category topology \
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as
 uploaded (`RGW_SP object=`), every numbered read, sent or not
-(`RGW_SP read`) and, after a read without an answer, the gateway process
+(`RGW_SP read`) and, after a read that did not end, the gateway process
 (`RGW_SP stall`).
 
 ## Observations and controls
@@ -105,17 +106,20 @@ uploaded (`RGW_SP object=`), every numbered read, sent or not
 3. Oracle, per single-part object: GET and then HEAD of part 1 must answer
    200 or 206 with the part's length, a part count of 1 and, for a GET, the
    part's bytes (`judgeOnlyPart`).
-4. A read without an answer within its deadline fails the contract when
-   the gateway process that received it is still the one running: the test
-   reads the start time and the CPU time of the gateway's process 1 before
-   the read, after the deadline and three seconds later, and a restarted or
-   unreadable gateway is `another fault` instead. The `observed defect` it
-   reports says only that the read was not answered. The CPU share in its
-   message is counted for the whole process, earlier unanswered reads of
+4. A read that does not end within its deadline is recorded with the phase
+   the client had reached: the request was not written to a connection; it
+   was written and no response header arrived; or the header arrived and
+   the body did not end, in which case the status and header values
+   received are kept. A request that was never written shows nothing about
+   the gateway and is `another fault`. For the other two the test reads the
+   start time and the CPU time of the gateway's process 1 before the read,
+   after the deadline and three seconds later: with the same process still
+   running the read is `observed defect`, with a restarted or unreadable
+   gateway `another fault`. The verdict names no cause. The CPU share in
+   its message is counted for the whole process, earlier unended reads of
    the run included (`earlier-unanswered`), and is no call trace of the
-   request, so the message states that the cause inside the gateway is not
-   established. The subtest of that object stops at such a read, because
-   the request may still hold a gateway thread, and prints a `not sent` line
+   request. The subtest of that object stops at such a read, because the
+   request may still hold a gateway thread, and prints a `not sent` line
    for each read it leaves out (the HEAD of part 1 after a GET, and the GET
    of part 2); the other object is still read.
 5. Health, after each answered read of part 1: process 1 has the start time
@@ -147,20 +151,22 @@ without the fix. Linux amd64, bridge, one run per build.
   length, body or part count, or is not answered at all. The release
   candidate 19.1.0 does not answer the GET: the two-part control passes,
   then GET of part 1 of `single-small` and GET of part 1 of `single-large`
-  each get no answer in 30 s from the same gateway process. HEAD of part 1
+  are each written to a connection to the gateway and get no response
+  header in 30 s, with the same gateway process running. HEAD of part 1
   and GET of part 2 were not sent for either object on that build, so the
   result is about GET only. In the three seconds after each deadline the
   whole process used 1.00 of a core after the first and 2.00 after the
   second, which includes whatever the first request left running. No call
   trace was taken, so the runs do not show where in the gateway the
   requests are; that they loop in the manifest walk is the upstream
-  description, not a finding of this case. The run takes about 166 s and
+  description, not a finding of this case. The run takes about 156 s and
   the cleanup succeeds. No supported release does this.
 - **Control failed:** numbered reads do not work on the gateway. Reef 18.2.7
   answers every `?partNumber` read of the two-part object, part 3 included,
   with 200 and the whole object (5,308,416 bytes, no part count), so it does
   not read by part number and the single-part objects are not read.
-- **Another fault:** a read gets no answer and the gateway was restarted or
+- **Another fault:** a read was not written to a connection within its
+  deadline, a read does not end and the gateway was restarted or
   cannot be read, the request fails in transport, or the gateway is not the
   same healthy process after a read.
 - **Not reproduced:** a pass on a build claimed to be affected. Check the
@@ -179,6 +185,7 @@ encrypted or compressed objects, copies of a single-part object and other
 storage classes. On the affected build each object's subtest stops at the
 GET, so HEAD of part 1 is untested there. The case takes no native call
 trace (the images carry no debugger), so it never names the cause of a
-read without an answer. A read without an answer from a restarted gateway
-was not produced natively; that judgement is covered by the Docker-free
-tests only.
+read that did not end. A read that the client never wrote, one whose body
+stalled after the header, and one that did not end on a restarted gateway
+were not produced natively; those are covered by the Docker-free tests
+only.

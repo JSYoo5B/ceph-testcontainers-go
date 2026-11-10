@@ -6,6 +6,7 @@ package rgw_single_part_multipart_read_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,8 @@ func TestJudgeOnlyPart(t *testing.T) {
 	const size = 64 << 10
 	good := spRead{Method: http.MethodGet, Part: 1, Deadline: 30 * time.Second, Status: http.StatusPartialContent, Length: size, PartsCount: "1", BodyMatches: true}
 	with := func(change func(*spRead)) spRead { r := good; change(&r); return r }
-	lost := spRead{Method: http.MethodGet, Part: 1, Deadline: 30 * time.Second, TimedOut: true}
+	lost := spRead{Method: http.MethodGet, Part: 1, Deadline: 30 * time.Second, TimedOut: true, Phase: spSent}
+	const lostText = "observed defect: GET partNumber=1 not ended within 30s (the request was written to a connection and no response header arrived), and the gateway process is the one that ran before the request. The cause is not established: "
 	// One core for three seconds at 100 ticks a second is 300 ticks.
 	stalled := func(start2 uint64, ticks uint64) *spStall {
 		return &spStall{Before: spProcess{Start: 7, CPU: 100}, First: spProcess{Start: 7, CPU: 3100},
@@ -50,13 +52,22 @@ func TestJudgeOnlyPart(t *testing.T) {
 		"206 part":          {good, nil, ""},
 		"200 part":          {with(func(r *spRead) { r.Status = http.StatusOK }), nil, ""},
 		"head without body": {with(func(r *spRead) { r.Method, r.BodyMatches = http.MethodHead, false }), nil, ""},
-		// A read without an answer from the process that received it
-		// fails the contract whatever the process-wide CPU time is: busy,
-		// idle, or busy with an earlier unanswered request.
-		"no answer, a core busy":        {lost, stalled(7, 300), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: "},
-		"no answer, idle gateway":       {lost, stalled(7, 6), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: "},
-		"no answer, earlier one counts": {lost, func() *spStall { s := stalled(7, 600); s.Earlier = 1; return s }(), "observed defect: GET partNumber=1 no answer within 30s from the gateway process that received it. The cause inside the gateway is not established: the whole process used 2.00 of a core in the 3s after the deadline, with 1 earlier unanswered read(s)"},
-		"no answer, no tick rate":       {lost, &spStall{Second: spProcess{CPU: 300}, Window: 3 * time.Second}, "observed defect: "},
+		// A read that was written to the gateway and did not end fails
+		// the contract whatever the process-wide CPU time is: busy, idle,
+		// or busy with an earlier unended request.
+		"sent, a core busy":        {lost, stalled(7, 300), lostText},
+		"sent, idle gateway":       {lost, stalled(7, 6), lostText},
+		"sent, earlier one counts": {lost, func() *spStall { s := stalled(7, 600); s.Earlier = 1; return s }(), lostText + "the whole process used 2.00 of a core in the 3s after the deadline, with 1 earlier unended read(s)"},
+		"sent, no tick rate":       {lost, &spStall{Second: spProcess{CPU: 300}, Window: 3 * time.Second}, lostText},
+		// So does one whose header arrived; the status received is kept.
+		"header, stalled body": {with(func(r *spRead) { r.TimedOut, r.Phase, r.BodyBytes, r.BodyMatches = true, spBody, 3, false }), stalled(7, 6),
+			"observed defect: GET partNumber=1 not ended within 30s (the response header arrived and the body did not end): status=206 content-length=65536 parts-count=\"1\" body-bytes-read=3, and the gateway process"},
+		// A request that the client never wrote shows nothing about the
+		// gateway, however the gateway looks.
+		"unsent, idle gateway":  {with(func(r *spRead) { *r = lost; r.Phase = spUnsent }), stalled(7, 6), "another fault: GET partNumber=1 not ended within 30s (the request was not written to a connection). Nothing shows that the request reached the gateway"},
+		"unsent, a core busy":   {with(func(r *spRead) { *r = lost; r.Phase = spUnsent }), stalled(7, 300), "another fault: "},
+		"unsent, not inspected": {with(func(r *spRead) { *r = lost; r.Phase = spUnsent }), nil, "another fault: "},
+		"no phase recorded":     {with(func(r *spRead) { *r = lost; r.Phase = "" }), stalled(7, 300), "another fault: "},
 		// Wrong answers.
 		"part count 0":         {with(func(r *spRead) { r.PartsCount = "0" }), nil, "observed defect: the only part of the upload is answered with a part count"},
 		"no part count":        {with(func(r *spRead) { r.PartsCount = "" }), nil, "observed defect: "},
@@ -66,9 +77,9 @@ func TestJudgeOnlyPart(t *testing.T) {
 		"other bytes":          {with(func(r *spRead) { r.BodyMatches = false }), nil, "observed defect: "},
 		"head, another length": {with(func(r *spRead) { r.Method, r.BodyMatches, r.Length = http.MethodHead, false, 0 }), nil, "observed defect: "},
 		// The gateway that should have answered cannot be named.
-		"no answer, not inspected": {lost, nil, "another fault: "},
-		"no answer, new process":   {lost, stalled(8, 300), "another fault: "},
-		"no answer, restarted before the samples": {lost, &spStall{Before: spProcess{Start: 6}, First: spProcess{Start: 7}, Second: spProcess{Start: 7, CPU: 300},
+		"sent, not inspected": {lost, nil, "another fault: "},
+		"sent, new process":   {lost, stalled(8, 300), "another fault: "},
+		"sent, restarted before the samples": {lost, &spStall{Before: spProcess{Start: 6}, First: spProcess{Start: 7}, Second: spProcess{Start: 7, CPU: 300},
 			Window: 3 * time.Second, TicksPerSecond: 100}, "another fault: "},
 		"not sent":           {spRead{Method: http.MethodHead, Part: 1, NotSent: "the GET did not end"}, nil, "another fault: HEAD partNumber=1 not sent: the GET did not end"},
 		"connection refused": {spRead{Method: http.MethodGet, Part: 1, Err: "connection refused"}, nil, "another fault: "},
@@ -123,3 +134,76 @@ func TestJudgeControls(t *testing.T) {
 		}
 	}
 }
+
+// sendPartRead tells apart a request that never left the client, one that
+// was written and got no header, and one whose header arrived before the
+// body stalled, and keeps the status of the last.
+func TestSendPartReadPhases(t *testing.T) {
+	const deadline = 300 * time.Millisecond
+	part := []byte("0123456789")
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/silent":
+			<-release
+		case "/stalled":
+			w.Header().Set("Content-Length", "10")
+			w.Header().Set("X-Amz-Mp-Parts-Count", "1")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(part[:3])
+			w.(http.Flusher).Flush()
+			<-release
+		case "/refused":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("<Error><Code>InvalidPart</Code></Error>"))
+		default:
+			w.Header().Set("X-Amz-Mp-Parts-Count", "1")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(part)
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	// A transport that never gets as far as a connection.
+	stuck := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	code := func(body []byte) string {
+		if strings.Contains(string(body), "InvalidPart") {
+			return "InvalidPart"
+		}
+		return ""
+	}
+	for name, test := range map[string]struct {
+		client *http.Client
+		path   string
+		want   spRead
+	}{
+		"expires before delivery": {stuck, "/answered", spRead{TimedOut: true, Phase: spUnsent}},
+		"written, no header":      {server.Client(), "/silent", spRead{TimedOut: true, Phase: spSent}},
+		"header, stalled body":    {server.Client(), "/stalled", spRead{TimedOut: true, Phase: spBody, Status: http.StatusPartialContent, Length: 10, PartsCount: "1", BodyBytes: 3}},
+		"answered":                {server.Client(), "/answered", spRead{Status: http.StatusPartialContent, Length: 10, PartsCount: "1", BodyMatches: true}},
+		"refused":                 {server.Client(), "/refused", spRead{Status: http.StatusBadRequest, Length: 39, Code: "InvalidPart"}},
+	} {
+		request, err := http.NewRequest(http.MethodGet, server.URL+test.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		test.want.Method, test.want.Part, test.want.Deadline = http.MethodGet, 1, deadline
+		got := sendPartRead(t.Context(), test.client, request, spRead{Method: http.MethodGet, Part: 1, Deadline: deadline}, part, code)
+		if got != test.want {
+			t.Errorf("%s: %+v, want %+v", name, got, test.want)
+		}
+	}
+	// Another transport failure is not a deadline.
+	server.CloseClientConnections()
+	request, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:1/unreachable", nil)
+	if got := sendPartRead(t.Context(), &http.Client{}, request, spRead{Method: http.MethodGet, Part: 1, Deadline: deadline}, part, code); got.TimedOut || got.Err == "" {
+		t.Errorf("refused connection: %+v", got)
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

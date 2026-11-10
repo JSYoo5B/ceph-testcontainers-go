@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,7 +38,7 @@ type spCase struct {
 	gateway *rgw.Gateway
 	client  harness.S3HTTPClient
 	uploads map[string]string
-	// unanswered counts the numbered reads that ended without an answer.
+	// unanswered counts the numbered reads that hit their deadline.
 	unanswered int
 }
 
@@ -106,33 +105,15 @@ func (c *spCase) manifestParts(t *testing.T, object string) []int {
 }
 
 // readPart sends one GET or HEAD of a part number with its own deadline and
-// records the answer, or that there was none.
+// records the answer, or the phase in which the deadline ended.
 func (c *spCase) readPart(t *testing.T, method, object string, part int, want []byte) spRead {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(c.ctx, spReadDeadline)
-	defer cancel()
-	read := spRead{Method: method, Part: part, Deadline: spReadDeadline}
-	request, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("%s/%s/%s?partNumber=%d", c.client.Endpoint, spBucket, object, part), nil)
+	request, err := http.NewRequest(method, fmt.Sprintf("%s/%s/%s?partNumber=%d", c.client.Endpoint, spBucket, object, part), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	harness.S3FeatureSign(request, c.client, nil, time.Now().UTC(), "s3")
-	var body []byte
-	response, err := c.client.HTTP.Do(request)
-	if err == nil {
-		body, err = io.ReadAll(response.Body)
-		_ = response.Body.Close()
-	}
-	switch {
-	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
-		read.TimedOut = true
-	case err != nil:
-		read.Err = err.Error()
-	default:
-		read.Status, read.PartsCount, read.Code = response.StatusCode, response.Header.Get("X-Amz-Mp-Parts-Count"), harness.RGWBackendErrorCode(body)
-		read.Length, _ = strconv.ParseInt(response.Header.Get("Content-Length"), 10, 64)
-		read.BodyMatches = method == http.MethodGet && want != nil && bytes.Equal(body, want)
-	}
+	read := sendPartRead(c.ctx, c.client.HTTP, request, spRead{Method: method, Part: part, Deadline: spReadDeadline}, want, harness.RGWBackendErrorCode)
 	t.Logf("RGW_SP read object=%s %s", object, read)
 	return read
 }
@@ -212,9 +193,9 @@ func (c *spCase) cleanup(t *testing.T, buckets, objects []string) {
 // GET, its bytes. Two such objects are read, one of a single stripe and one
 // of three. A two-part object is the control for numbered reads, and the
 // part number after the last part of every object must be refused. Each
-// numbered read has its own deadline. A read without an answer fails the
-// contract; the process-wide CPU time recorded with it does not establish
-// the cause inside the gateway.
+// numbered read has its own deadline. A read that the client wrote to the
+// gateway and that did not end fails the contract; the process-wide CPU
+// time recorded with it does not establish the cause.
 func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -312,10 +293,10 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 						// its own line.
 						if method == http.MethodGet {
 							t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodHead, Part: 1,
-								NotSent: "the GET of part 1 ended without an answer; HEAD is untested for this object"})
+								NotSent: "the GET of part 1 did not end; HEAD is untested for this object"})
 						}
 						t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodGet, Part: 2,
-							NotSent: "a read of part 1 ended without an answer; the refusal of part 2 is untested for this object"})
+							NotSent: "a read of part 1 did not end; the refusal of part 2 is untested for this object"})
 						t.Fatal(verdict)
 					}
 					t.Error(verdict)

@@ -3,11 +3,30 @@
 package rgw_single_part_multipart_read_test
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+)
+
+// How far a request had come when its deadline ended.
+const (
+	// spUnsent: the client had not written the request to a connection. It
+	// may never have had one. Nothing shows that the request reached the
+	// gateway.
+	spUnsent = "the request was not written to a connection"
+	// spSent: the client had written the whole request to a connection to
+	// the gateway, and no response header had arrived.
+	spSent = "the request was written to a connection and no response header arrived"
+	// spBody: the response header had arrived, and the body had not ended.
+	spBody = "the response header arrived and the body did not end"
 )
 
 // spRead is one GET or HEAD of a part number: RGW's answer, or the way the
@@ -17,11 +36,16 @@ type spRead struct {
 	Part   int
 	// NotSent is why the request was never made, when it was not.
 	NotSent string
-	// TimedOut is a request that got no answer within Deadline; Err is any
-	// other transport failure.
-	TimedOut bool
-	Deadline time.Duration
-	Err      string
+	// TimedOut is a request that did not end within Deadline, and Phase
+	// (spUnsent, spSent or spBody) is how far it had come. After spBody the
+	// status and the header values are the ones received, and BodyBytes is
+	// the length of the body read so far. Err is any other transport
+	// failure.
+	TimedOut  bool
+	Phase     string
+	BodyBytes int
+	Deadline  time.Duration
+	Err       string
 
 	Status      int
 	Length      int64
@@ -34,13 +58,53 @@ func (r spRead) String() string {
 	switch {
 	case r.NotSent != "":
 		return fmt.Sprintf("%s partNumber=%d not sent: %s", r.Method, r.Part, r.NotSent)
+	case r.TimedOut && r.Phase == spBody:
+		return fmt.Sprintf("%s partNumber=%d not ended within %s (%s): status=%d content-length=%d parts-count=%q body-bytes-read=%d",
+			r.Method, r.Part, r.Deadline, r.Phase, r.Status, r.Length, r.PartsCount, r.BodyBytes)
 	case r.TimedOut:
-		return fmt.Sprintf("%s partNumber=%d no answer within %s", r.Method, r.Part, r.Deadline)
+		return fmt.Sprintf("%s partNumber=%d not ended within %s (%s)", r.Method, r.Part, r.Deadline, r.Phase)
 	case r.Err != "":
 		return fmt.Sprintf("%s partNumber=%d transport error %q", r.Method, r.Part, r.Err)
 	}
 	return fmt.Sprintf("%s partNumber=%d status=%d content-length=%d parts-count=%q code=%q body-matches=%t",
 		r.Method, r.Part, r.Status, r.Length, r.PartsCount, r.Code, r.BodyMatches)
+}
+
+// sendPartRead sends the prepared request with read.Deadline as its own
+// deadline and completes read with the answer, or with the phase in which
+// the deadline ended. errorCode extracts the S3 error code of a body.
+func sendPartRead(parent context.Context, client *http.Client, request *http.Request, read spRead, want []byte, errorCode func([]byte) string) spRead {
+	ctx, cancel := context.WithTimeout(parent, read.Deadline)
+	defer cancel()
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			wrote.Store(true)
+		}
+	}}
+	var body []byte
+	response, err := client.Do(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if err == nil {
+		read.Status, read.PartsCount = response.StatusCode, response.Header.Get("X-Amz-Mp-Parts-Count")
+		read.Length, _ = strconv.ParseInt(response.Header.Get("Content-Length"), 10, 64)
+		body, err = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+	}
+	switch {
+	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		read.TimedOut, read.Phase = true, spUnsent
+		if response != nil {
+			read.Phase, read.BodyBytes = spBody, len(body)
+		} else if wrote.Load() {
+			read.Phase = spSent
+		}
+	case err != nil:
+		read.Err = err.Error()
+	default:
+		read.Code = errorCode(body)
+		read.BodyMatches = request.Method == http.MethodGet && want != nil && bytes.Equal(body, want)
+	}
+	return read
 }
 
 // spProcess is one reading of the gateway's process 1: when it started and
@@ -82,8 +146,8 @@ type spStall struct {
 	Window                time.Duration
 	// TicksPerSecond is the clock tick rate the CPU times are counted in.
 	TicksPerSecond uint64
-	// Earlier is the number of reads of this run that had already ended
-	// without an answer. Whatever they left running in the gateway is part
+	// Earlier is the number of reads of this run that had already hit
+	// their deadline. Whatever they left running in the gateway is part
 	// of the process-wide CPU time, too.
 	Earlier int
 }
@@ -99,23 +163,28 @@ func (s spStall) busy() float64 {
 
 // judgeOnlyPart judges a read of part 1 of an object whose upload had one
 // part of want bytes. It returns "" for the part's own answer: 200 or 206,
-// its length, a part count of 1 and, for a GET, its bytes. A read without an
-// answer from the gateway process that received it fails the contract, and
-// that is all it shows: the CPU time of the process is reported with it, but
-// it is counted for the whole process, earlier unanswered requests
-// included, and is no call trace of this request. The verdict therefore
-// leaves the cause inside the gateway open.
+// its length, a part count of 1 and, for a GET, its bytes.
+//
+// A read that did not end within its deadline fails the contract only when
+// the client had written the request to a connection to the gateway, or had
+// its response header, and the gateway process is still the one that was
+// running before. A request that was never written shows nothing about the
+// gateway. In no case does the verdict name a cause: the CPU time reported
+// with it is counted for the whole process, earlier unended requests
+// included, and is no call trace of this request.
 func judgeOnlyPart(read spRead, want int, stall *spStall) string {
 	switch {
 	case read.NotSent != "":
 		return fmt.Sprintf("another fault: %s", read)
+	case read.TimedOut && read.Phase != spSent && read.Phase != spBody:
+		return fmt.Sprintf("another fault: %s. Nothing shows that the request reached the gateway, so the read says nothing about it", read)
 	case read.TimedOut && stall == nil:
 		return fmt.Sprintf("another fault: %s, and the gateway was not inspected", read)
 	case read.TimedOut && (stall.Before.Start != stall.First.Start || stall.First.Start != stall.Second.Start):
-		return fmt.Sprintf("another fault: %s, and the gateway process is not the one that received the request", read)
+		return fmt.Sprintf("another fault: %s, and the gateway process is not the one that ran before the request", read)
 	case read.TimedOut:
-		return fmt.Sprintf("observed defect: %s from the gateway process that received it. The cause inside the gateway is not established: "+
-			"the whole process used %.2f of a core in the %s after the deadline, with %d earlier unanswered read(s) of this run counted in, and no call trace of the request was taken",
+		return fmt.Sprintf("observed defect: %s, and the gateway process is the one that ran before the request. The cause is not established: "+
+			"the whole process used %.2f of a core in the %s after the deadline, with %d earlier unended read(s) of this run counted in, and no call trace of the request was taken",
 			read, stall.busy(), stall.Window.Round(time.Millisecond), stall.Earlier)
 	case read.Err != "":
 		return fmt.Sprintf("another fault: %s", read)
