@@ -6,7 +6,6 @@ package capture_test
 
 import (
 	"archive/tar"
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,46 +25,23 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// Without CEPH_TEST_CAPTURE_IMAGE the test builds contract 1's reference
-// helper from the same pinned ceph-testcontainers-images source as the
-// capture package's ordinary scenario.
+// killedCaptureHelperImage is the published reference helper of packet-capture
+// contract 1, which the test uses without CEPH_TEST_CAPTURE_IMAGE, as the
+// capture package's ordinary scenario does.
 const (
-	killedCaptureHelperSource = "https://github.com/JSYoo5B/ceph-testcontainers-images.git#cbee3950dfab150b196fb5b4bf955045079f9fc9:image/extensions/capture"
-	killedCaptureHelperTag    = "ceph-testcontainers-capture-helper:cbee3950"
+	killedCaptureHelperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-capture-v1"
 	// killedCaptureFile is the helper's capture file as contract 1 fixes it.
 	killedCaptureFile = "/tmp/ceph-testcontainers-capture.pcap"
 )
 
-func killedCaptureImage(t *testing.T, ctx context.Context) string {
+func killedCaptureImage(t *testing.T) string {
 	t.Helper()
-	if image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE"); image != "" {
-		return image
+	image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE")
+	if image == "" {
+		image = killedCaptureHelperImage
 	}
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = docker.Close() }()
-	result, err := docker.ImageBuild(ctx, nil, mobycl.ImageBuildOptions{RemoteContext: killedCaptureHelperSource,
-		Tags: []string{killedCaptureHelperTag}, Remove: true, ForceRemove: true})
-	if err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	defer func() { _ = result.Body.Close() }()
-	scanner := bufio.NewScanner(result.Body)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for scanner.Scan() {
-		var message struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &message) == nil && message.Error != "" {
-			t.Fatalf("build the capture helper: %s", message.Error)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	return killedCaptureHelperTag
+	t.Logf("capture helper: %s", image)
+	return image
 }
 
 func killedCaptureRun(t *testing.T, ctx context.Context, network string, cmd ...string) testcontainers.Container {
@@ -175,7 +151,7 @@ func killedCaptureRequests(ctx context.Context, client testcontainers.Container)
 func TestCaptureKilledHelperObservation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	helper := killedCaptureImage(t, ctx)
+	helper := killedCaptureImage(t)
 	bridge, err := dockerbridge.New(ctx)
 	if bridge != nil {
 		t.Cleanup(func() {
