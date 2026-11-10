@@ -10,6 +10,7 @@ on:
         options:
           - native_rgw_translation
           - native_shuffle
+          - cephfs_statfs_mixed_quota
           - mon_log_ack
           - rbd_demote_restart
           - rbd_trash_purge_timezone
