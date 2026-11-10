@@ -219,7 +219,9 @@ These affect commands or client libraries you run yourself, not the typed API:
   for longer than the sync lease period.** While 100 of a gateway's reads
   of one source zone's data log wait for an answer, the gateway renews none
   of its sync leases. When the source answers after more than
-  `rgw_sync_lease_period` (30 seconds for fixture gateways, 120 by default),
+  `rgw_sync_lease_period` (30 seconds for fixture gateways unless
+  [`TimingProfile.SyncLeasePeriod`](../../rgw/multisite/README.md#sync-lease-period)
+  selects another, 120 by default),
   a shard that finds its lease lost inside the batch it read moves its
   position past the batch without syncing it: the objects stay missing in
   the destination, `sync status` keeps the shard behind and the error list
