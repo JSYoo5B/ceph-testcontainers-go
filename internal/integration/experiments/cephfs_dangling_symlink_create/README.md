@@ -128,8 +128,9 @@ client, so what it reads is what the filesystem holds.
    operation each `link` is a symlink with the case's target, and
    `there/absent` does not exist.
 2. Control, unused name: the operation succeeds at `fresh`, and `fresh` is
-   an entry of the operation's type. The client can create in the
-   directory.
+   what the operation makes: an entry of its type that, for `link`, has the
+   inode of `source` and, for `symlink`, the text the operation was given
+   (`made-by-the-case`). The client can create in the directory.
 3. Control, regular file: the operation reports `EEXIST` at `occupied`,
    which stays a regular file.
 4. Control, symlink to an existing file: the operation reports `EEXIST` at
@@ -149,19 +150,21 @@ of its own release.
 
 Five releases failed with `observed defect:` in all eight cases, after
 every control held: Tentacle 20.2.4 in 34 s, Tentacle 20.2.5 in 34 s,
-Umbrella 21.2.0 in 35 s, Squid 19.2.5 in 40 s and Squid 19.2.3 in 107 s
-with the pull of its image. In each case the operation at `link` returned
+Umbrella 21.2.0 in 35 s, Squid 19.2.5 in 40 s and Squid 19.2.3 in 41 s. In
+each case the operation at `link` returned
 success, `link` stayed the same symlink, and `there/absent` was a directory
 (`mkdir`), a symlink (`symlink`), a hard link of `source` (`link`) or a
-regular file (`mknod`). Squid 19.2.2 passed (92 s with the pull): all eight
+regular file (`mknod`). Squid 19.2.2 passed (41 s): all eight
 operations reported `EEXIST` and made nothing. The behaviour changes
 between 19.2.2 and 19.2.3.
 
 - **Pass:** every operation reported `EEXIST` at the dangling symlink and
   made nothing. Squid 19.2.2 passes; no later release that was run does.
 - **Observed bug:** the failure starts with `observed defect:` and names
-  each case in which the operation succeeded and an entry of its type is at
-  the symlink's target, with the symlink unchanged.
+  each case in which the operation succeeded and what it makes is at the
+  symlink's target, with the symlink unchanged. As at `fresh`, a file there
+  counts for `link` only with the inode of `source`, and a symlink for
+  `symlink` only with the given text.
 - **Not reproduced:** a pass on a build claimed to be affected. Check in
   the receipts (`CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT`) that every
   `link_before` is a symlink with its target and every `target_before` is
@@ -179,8 +182,9 @@ between 19.2.2 and 19.2.3.
   dangling symlink then says nothing.
 - **Another fault:** the failure starts with `another fault:`: at a
   dangling symlink the result is neither `EEXIST` with nothing made nor
-  success with an entry of the operation's type at the target, such as
-  another errno, a replaced symlink, or an entry of another type. It is not
+  success with what the operation makes at the target, such as another
+  errno, a replaced symlink, an entry of another type, a file that is not a
+  link of `source` or a symlink with another text. It is not
   the defect of this case.
 
 ## Cleanup and limits

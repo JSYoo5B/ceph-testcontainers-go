@@ -24,12 +24,13 @@ const createRoot = "/dangling-symlink-create"
 // files and symlinks. "act" reads each dangling symlink and its target and
 // then runs the case's operation at an unused name, at a regular file, at a
 // symlink to an existing file and at the dangling symlink, keeping each
-// errno. "observe" reads every name of each case with lstat and readlink
-// and lists the directory of the symlink's target. "remove" removes
+// errno; a symlink it makes has the text it is given. "observe" reads every
+// name of each case, "source" among them, with lstat and readlink and lists
+// the directory of the symlink's target. "remove" removes
 // everything below the root and reports what is left.
 const createScript = `import cephfs,errno,json,os,stat,sys
 mode,filesystem,root=sys.argv[1],sys.argv[2],sys.argv[3]
-cases=json.loads(sys.argv[4])
+cases,payload=json.loads(sys.argv[4]),sys.argv[5].encode()
 fs=cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout","30")
 fs.mount(filesystem_name=filesystem.encode())
@@ -66,7 +67,7 @@ def create(case,name):
         if case["op"]=="mkdir":
             fs.mkdir(path,0o755)
         elif case["op"]=="symlink":
-            fs.symlink(b"made-by-the-case",path)
+            fs.symlink(payload,path)
         elif case["op"]=="link":
             fs.link(at(case,"source"),path)
         else:
@@ -105,7 +106,7 @@ try:
     elif mode=="observe":
         for case in cases:
             seen=dict(op=case["op"],form=case["form"],target=entry(at(case,"there","absent")),there=names(at(case,"there")))
-            for name in ("fresh","occupied","live","kept","link"):
+            for name in ("fresh","occupied","live","kept","source","link"):
                 seen[name]=entry(at(case,name))
             out["cases"].append(seen)
     else:
@@ -144,7 +145,7 @@ func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	}
 	run := func(ctx context.Context, mode string, into any) (string, error) {
 		result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-			Argv:    []string{"python3", "-c", createScript, mode, fs.FilesystemName, createRoot, string(spec)},
+			Argv:    []string{"python3", "-c", createScript, mode, fs.FilesystemName, createRoot, string(spec), createPayload},
 			Timeout: 3 * time.Minute, MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "CephFS create at a symlink " + mode,
 		})
 		out := string(result.Stdout)

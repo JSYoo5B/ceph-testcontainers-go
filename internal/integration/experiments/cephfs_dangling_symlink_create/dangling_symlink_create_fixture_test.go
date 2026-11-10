@@ -19,11 +19,18 @@ func createReports(cases []createCase) ([]createAct, []createSeen) {
 	for i, c := range cases {
 		link := createEntry{Type: "symlink", Inode: uint64(100 + i), Target: c.LinkTarget}
 		acts = append(acts, createAct{Op: c.Op, Form: c.Form, LinkBefore: link, Occupied: exists, Live: exists, Link: exists})
+		source := createEntry{Type: "file", Inode: uint64(600 + i)}
 		fresh := createEntry{Type: createTypes[c.Op], Inode: uint64(200 + i)}
+		switch c.Op {
+		case "link":
+			fresh.Inode = source.Inode
+		case "symlink":
+			fresh.Target = createPayload
+		}
 		seen = append(seen, createSeen{
 			Op: c.Op, Form: c.Form, Fresh: fresh, Occupied: createEntry{Type: "file", Inode: uint64(300 + i)},
 			Live: createEntry{Type: "symlink", Inode: uint64(400 + i), Target: c.LiveTarget},
-			Kept: createEntry{Type: "file", Inode: uint64(500 + i)}, Link: link,
+			Kept: createEntry{Type: "file", Inode: uint64(500 + i)}, Source: source, Link: link,
 		})
 	}
 	return acts, seen
@@ -39,7 +46,13 @@ func TestJudgeCreate(t *testing.T) {
 	through := func(i int) func(acts []createAct, seen []createSeen) {
 		return func(acts []createAct, seen []createSeen) {
 			acts[i].Link = 0
-			seen[i].Target, seen[i].There = createEntry{Type: createTypes[cases[i].Op], Inode: 900}, []string{"absent"}
+			// What the operation makes at an unused name, at another
+			// inode unless it is a hard link.
+			made := seen[i].Fresh
+			if cases[i].Op != "link" {
+				made.Inode = 900
+			}
+			seen[i].Target, seen[i].There = made, []string{"absent"}
 		}
 	}
 	for _, tc := range []struct {
@@ -64,6 +77,14 @@ func TestJudgeCreate(t *testing.T) {
 			through(2)(acts, seen)
 			seen[2].Target.Type = "file"
 		}, want: "another fault: "},
+		{name: "a file at the target that is not a link of the source", change: func(acts []createAct, seen []createSeen) {
+			through(0)(acts, seen)
+			seen[0].Target.Inode = 901
+		}, want: "another fault: "},
+		{name: "a symlink at the target with another text", change: func(acts []createAct, seen []createSeen) {
+			through(7)(acts, seen)
+			seen[7].Target.Target = "elsewhere"
+		}, want: "another fault: "},
 		{name: "the symlink replaced", change: func(_ []createAct, seen []createSeen) { seen[7].Link.Inode = 7 }, want: "another fault: "},
 		{name: "another name beside the target", change: func(_ []createAct, seen []createSeen) { seen[1].There = []string{"other"} }, want: "another fault: "},
 		{name: "a fault outranks a defect", change: func(acts []createAct, seen []createSeen) {
@@ -74,6 +95,9 @@ func TestJudgeCreate(t *testing.T) {
 			through(2)(acts, seen)
 			acts[2].Fresh, seen[2].Fresh = int(syscall.EACCES), createEntry{}
 		}, want: "control failed: mkdir/relative at an unused name"},
+		{name: "a file at the unused name that is not a link of the source", change: func(_ []createAct, seen []createSeen) { seen[1].Fresh.Inode = 901 }, want: "control failed: link/absolute at an unused name"},
+		{name: "a link of a source that is no file", change: func(_ []createAct, seen []createSeen) { seen[0].Source.Type = "" }, want: "control failed: link/relative at an unused name"},
+		{name: "a symlink at the unused name with another text", change: func(_ []createAct, seen []createSeen) { seen[6].Fresh.Target = "elsewhere" }, want: "control failed: symlink/relative at an unused name"},
 		{name: "regular file not reported", change: func(acts []createAct, _ []createSeen) { acts[4].Occupied = 0 }, want: "control failed: mknod/relative at a regular file"},
 		{name: "regular file replaced", change: func(_ []createAct, seen []createSeen) { seen[3].Occupied.Type = "dir" }, want: "control failed: mkdir/absolute at a regular file"},
 		{name: "live symlink not reported", change: func(acts []createAct, _ []createSeen) { acts[7].Live = 0 }, want: "control failed: symlink/absolute at a symlink to an existing file"},
