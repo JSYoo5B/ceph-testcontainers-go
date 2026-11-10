@@ -163,9 +163,26 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 // markers differ from a's data log, its bucket sync status and its sync
 // errors is logged, so that a catch-up that does not finish shows where it
 // stopped, and which shards lost their sync leases during the cut (issue
-// 659); a lost lease is reported, not accepted. It needs the netem helper
+// 659); a lost lease is reported, not accepted. The gateways run with a
+// sync lease period of zoneLinkLeasePeriod, which the cut does not come
+// near. It needs the netem helper
 // (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage) and an engine
 // that grants it NET_ADMIN.
+//
+// zoneLinkLeasePeriod is the sync lease period of this test's gateways.
+// While zone b's reads of a's data log wait for packets that are dropped,
+// its gateway renews no sync lease, from about one poll interval after the
+// cut until TCP retransmits after Restore, which can be as long again as
+// the cut. A gateway renews a lease every half period and counts it as lost
+// after one period without a renewal, so a lease is lost when that time
+// exceeds half a period. With the fixture's 30 seconds the cut of this
+// test, about 42 seconds, is enough, and a data log shard that finds its
+// lease lost in the middle of a batch moves its marker past entries it did
+// not sync (experiment case rgw_sync_lease_lapse): zone b then stays behind
+// for good, which is a native defect and not what this test is about. With
+// five minutes the gateway would have to renew nothing for two and a half.
+const zoneLinkLeasePeriod = 5 * time.Minute
+
 func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -173,7 +190,8 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
 	fixture, err := multisite.Run(ctx, rgwGateway, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
-		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+		Zones:  []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+		Timing: multisite.TimingProfile{SyncLeasePeriod: zoneLinkLeasePeriod},
 	}))
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
@@ -327,17 +345,13 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 		return zoneLinkGatewayState(ctx, probe, zones[1].Gateway, peer, cutAt, strings.TrimPrefix(bucket, "/"), shards)
 	}
 	if last, ok := zoneLinkCatchUp(t, ctx, fixture, b, strings.TrimPrefix(bucket, "/"), "from-a", fromA, 3*time.Minute, gatewayState); !ok {
-		// While 100 of zone b's reads of a's data log wait for an answer,
-		// its gateway renews no sync lease. After more than the 30-second
-		// lease period a data log shard that finds its lease lost in the
-		// middle of a batch moves its marker past entries it did not sync
-		// (experiment case rgw_sync_lease_lapse). A lost lease is reported
-		// to help attribute the failure; it is not accepted as a cause.
-		t.Fatalf("zone b did not catch up with a within 3m0s of Restore: object %s; %s; data log shards behind a: %s; shards that lost their sync lease since the cut: %v",
-			last.Object, last.Status, last.Lag, zoneLinkLostLeases(ctx, zones[1].Gateway, cutAt))
+		// A lost lease is reported to help attribute the failure (see
+		// zoneLinkLeasePeriod); it is not accepted as a cause.
+		t.Fatalf("zone b did not catch up with a within 3m0s of Restore, %s after a cut of %s with a sync lease period of %s: object %s; %s; data log shards behind a: %s; shards that lost their sync lease since the cut: %v",
+			time.Since(restored).Round(time.Second), window, zoneLinkLeasePeriod, last.Object, last.Status, last.Lag, zoneLinkLostLeases(ctx, zones[1].Gateway, cutAt))
 	}
 	caughtUp := time.Since(restored).Round(time.Millisecond)
-	t.Logf("zone b's gateway sync leases since the cut: %s", zoneLinkLeaseLog(ctx, zones[1].Gateway, cutAt))
+	t.Logf("zone b's gateway sync leases since the cut of %s (lease period %s): %s", window, zoneLinkLeasePeriod, zoneLinkLeaseLog(ctx, zones[1].Gateway, cutAt))
 	synced, err := fixture.WaitSyncReady(ctx, "b", "a")
 	if err != nil {
 		t.Fatalf("zone b's sync status after Restore: %+v: %v", synced.DataSources, err)

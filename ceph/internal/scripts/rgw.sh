@@ -22,9 +22,23 @@ set -- radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring 
 # Multisite setup restarts gateways after the final period commit. A killed
 # process keeps its sync shard leases until they expire, so the native 120
 # second lease would stall replication for two minutes after each restart.
+# The multisite fixture owns the replacement of that period: a test whose
+# gateway stops renewing leases for a while (a source that does not answer)
+# needs a period that outlasts it.
+case "${CEPH_RGW_SYNC_LEASE_PERIOD:-}" in
+    "") lease=30 ;;
+    *[!0-9]* | 0* | ??????????*) echo "invalid RGW sync lease period" >&2; exit 1 ;;
+    *) lease=$CEPH_RGW_SYNC_LEASE_PERIOD ;;
+esac
+# The gateway takes the period as a 32-bit signed number of seconds and
+# multiplies it by nine for its renewal tolerance.
+if [ "$lease" -gt 238609294 ]; then
+    echo "invalid RGW sync lease period" >&2
+    exit 1
+fi
 if [ -n "${CEPH_RGW_REALM:-}" ]; then
     set -- "$@" --rgw-realm "$CEPH_RGW_REALM" --rgw-sync-obj-etag-verify true \
-        --rgw-sync-lease-period 30 \
+        --rgw-sync-lease-period "$lease" \
         --osd-pool-default-pg-num 1 --osd-pool-default-pgp-num 0
 fi
 # The multisite fixture owns this startup condition. It changes future idle
