@@ -220,6 +220,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
   99 roles list correctly, and Squid 19.2.5 and Umbrella 21.2.0 list 105.
   Read a known role with `role get` instead; the fixture never lists roles.
+- **Every release, Python `RBD().trash_purge` with a cutoff.** The binding
+  reads the calendar fields of `expire_ts` as local time of the client
+  process, so a timezone-aware UTC cutoff lands at the instant minus the
+  client's UTC offset. Nine hours ahead of UTC an image whose deferment
+  ended four hours before the cutoff stays in the trash; nine hours behind,
+  an image whose deferment ends five hours after it is removed. Squid
+  19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 do this. Run such a purge with
+  `TZ=UTC`, or pass a naive datetime of the client's local time. See
+  `TestRBDTrashPurgeCutoffAcrossClientTimezones` (batch
+  `rbd_trash_purge_timezone`, experiment case
+  [`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)).
 - **Squid 19.2.5, SSE-S3 key left in Vault.** Deleting a bucket with
   SSE-S3 default encryption marks its Vault Transit key deletable and stops
   there: the gateway logs `Unable to remove KEK ID ... got -22` and sends no
