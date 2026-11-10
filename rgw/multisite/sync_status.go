@@ -65,7 +65,9 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 
 // WaitSyncReady waits up to four minutes, bounded by the caller's context, for
 // metadata and the explicitly requested source-zone data streams to catch up.
-// No sources means metadata-only readiness. Native sync leases survive abrupt
+// No sources means metadata-only readiness. When the wait ends unready it
+// returns the latest complete observation, and its error reports that
+// observation and the latest attempt's error. Native sync leases survive abrupt
 // gateway restarts until expiration, so this method does not change lease TTLs,
 // unlock objects or restart daemons to shorten normal recovery.
 //
@@ -94,21 +96,30 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	if _, err := f.syncStatusZones(zoneName, sourceZones); err != nil {
 		return SyncStatus{}, err
 	}
+	// last is the latest complete observation; an attempt that failed, or
+	// that the deadline cut short, does not replace it, and its error is
+	// reported with it.
 	var last SyncStatus
 	var lastErr error
+	expired := func(err error) (SyncStatus, error) {
+		return last, fmt.Errorf("wait RGW zone %s sync readiness: %w; metadata_ready=%t; data=%+v; last_error=%v", zoneName, err, last.Metadata.CaughtUp, last.DataSources, lastErr)
+	}
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
-		last, lastErr = f.syncStatus(attemptCtx, zoneName)
+		status, err := f.syncStatus(attemptCtx, zoneName)
 		attemptCancel()
+		if lastErr = err; err == nil {
+			last = status
+		}
 		if err := ctx.Err(); err != nil {
-			return last, fmt.Errorf("wait RGW zone %s sync readiness: %w", zoneName, err)
+			return expired(err)
 		}
 		if lastErr == nil && syncStatusReady(last, sourceZones) {
 			return last, nil
 		}
 		select {
 		case <-ctx.Done():
-			return last, fmt.Errorf("wait RGW zone %s sync readiness: %w; metadata_ready=%t; last_error=%v", zoneName, ctx.Err(), last.Metadata.CaughtUp, lastErr)
+			return expired(ctx.Err())
 		case <-time.After(time.Second):
 		}
 	}
