@@ -18,10 +18,10 @@ import (
 )
 
 // trashPurgeDelays are the deferment delays of the images of one pool, by
-// image name. The cutoff of the purge lies trashPurgeCutoff after the
-// images were moved to the trash, between the second and the third
-// deadline. A cutoff read nine hours early falls between the first and the
-// second, and one read nine hours late between the third and the fourth.
+// image name. The cutoff of the purge lies trashPurgeCutoff after the last
+// image was moved to the trash, between the second and the third deadline.
+// A cutoff read trashPurgeShift early falls between the first and the
+// second, and one read that much late between the third and the fourth.
 var trashPurgeDelays = map[string]time.Duration{
 	"due-10m": 10 * time.Minute,
 	"due-6h":  6 * time.Hour,
@@ -29,49 +29,80 @@ var trashPurgeDelays = map[string]time.Duration{
 	"due-30h": 30 * time.Hour,
 }
 
-const trashPurgeCutoff = 10 * time.Hour
+const (
+	trashPurgeCutoff = 10 * time.Hour
+	trashPurgeShift  = 9 * time.Hour
+	// trashPurgeMargin is how far every deadline of every pool must lie
+	// from the cutoff and from the cutoff shifted either way.
+	trashPurgeMargin = 30 * time.Minute
+)
 
-// trashPurgeScript moves the images to the trash of a pool, purges it with
-// a timezone-aware datetime of a fixed instant and reports the deadlines the
-// cluster recorded and the images left. It runs in the client process
-// timezone its environment gives it.
+// trashPurgeScript has two modes. "move" creates the images of a pool, moves
+// them to its trash and reports the trash. "purge" purges the trash of a
+// pool with a timezone-aware datetime of the instant it is given, in seconds
+// since the epoch, and reports the trash before and after. It runs in the
+// client process timezone its environment gives it.
 const trashPurgeScript = `import calendar,datetime,json,sys,time
 import rados,rbd
-pool,cutoff_after=sys.argv[1],int(sys.argv[2])
-delays=json.loads(sys.argv[3])
+mode,pool=sys.argv[1],sys.argv[2]
 def epoch(d):
     return int(d.timestamp()) if d.tzinfo else calendar.timegm(d.timetuple())
+def trash(r,ioctx):
+    return sorted(({'id':e['id'],'name':e['name'],'deadline':epoch(e['deferment_end_time'])} for e in r.trash_list(ioctx)),key=lambda e:e['name'])
 with rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_osd_op_timeout':'30','rados_mon_op_timeout':'30'}) as cluster:
     with cluster.open_ioctx(pool) as ioctx:
         r=rbd.RBD()
-        moved=int(time.time())
-        for name,delay in delays.items():
-            r.create(ioctx,name,1<<20)
-            r.trash_move(ioctx,name,delay)
-        deadlines={e['name']:epoch(e['deferment_end_time']) for e in r.trash_list(ioctx)}
-        cutoff=datetime.datetime.fromtimestamp(moved+cutoff_after,datetime.timezone.utc)
-        r.trash_purge(ioctx,cutoff)
-        retained=sorted(e['name'] for e in r.trash_list(ioctx))
-        print(json.dumps({'tzname':time.tzname[0],'utc_offset':-time.timezone,'moved':moved,'cutoff':int(cutoff.timestamp()),'cutoff_text':cutoff.isoformat(),'mktime':int(time.mktime(cutoff.timetuple())),'deadlines':deadlines,'retained':retained}))
+        out={'tzname':time.tzname[0],'utc_offset':-time.timezone}
+        if mode=='move':
+            out['started']=int(time.time())
+            for name,delay in json.loads(sys.argv[3]).items():
+                r.create(ioctx,name,1<<20)
+                r.trash_move(ioctx,name,delay)
+            out['moved']=int(time.time())
+            out['before']=trash(r,ioctx)
+        else:
+            cutoff=datetime.datetime.fromtimestamp(int(sys.argv[3]),datetime.timezone.utc)
+            out.update({'cutoff':int(cutoff.timestamp()),'cutoff_text':cutoff.isoformat(),'mktime':int(time.mktime(cutoff.timetuple()))})
+            out['before']=trash(r,ioctx)
+            r.trash_purge(ioctx,cutoff)
+            out['after']=trash(r,ioctx)
+        print(json.dumps(out))
 `
 
-// trashPurgeOutcome is what trashPurgeScript reports, with times in seconds
-// since the epoch. MkTime is the local-time reading of the cutoff's fields.
-type trashPurgeOutcome struct {
-	TZName     string           `json:"tzname"`
-	UTCOffset  int64            `json:"utc_offset"`
-	Moved      int64            `json:"moved"`
-	Cutoff     int64            `json:"cutoff"`
-	CutoffText string           `json:"cutoff_text"`
-	MkTime     int64            `json:"mktime"`
-	Deadlines  map[string]int64 `json:"deadlines"`
-	Retained   []string         `json:"retained"`
+// trashPurgeEntry is one image in a pool's trash, with its deadline in
+// seconds since the epoch.
+type trashPurgeEntry struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Deadline int64  `json:"deadline"`
 }
 
+// trashPurgeOutcome is what trashPurgeScript reports, with times in seconds
+// since the epoch. Started and Moved bound the moves to the trash. MkTime is
+// the local-time reading of the cutoff's fields.
+type trashPurgeOutcome struct {
+	TZName     string            `json:"tzname"`
+	UTCOffset  int64             `json:"utc_offset"`
+	Started    int64             `json:"started"`
+	Moved      int64             `json:"moved"`
+	Cutoff     int64             `json:"cutoff"`
+	CutoffText string            `json:"cutoff_text"`
+	MkTime     int64             `json:"mktime"`
+	Before     []trashPurgeEntry `json:"before"`
+	After      []trashPurgeEntry `json:"after"`
+}
+
+// trashPurgeZones are the client timezones. POSIX timezone strings need no
+// zone database: "TST-9" is nine hours ahead of UTC and "TST9" nine behind.
+var trashPurgeZones = []struct {
+	name, tz string
+	offset   int64
+}{{"utc", "UTC0", 0}, {"ahead-9h", "TST-9", 9 * 3600}, {"behind-9h", "TST9", -9 * 3600}}
+
 // TestRBDTrashPurgeCutoffAcrossClientTimezones purges equivalent trash
-// contents with the same timezone-aware cutoff from client processes in
-// three timezones and requires each to remove exactly the images whose
-// deferment ended by that instant.
+// contents with one timezone-aware cutoff from client processes in three
+// timezones and requires each to remove exactly the images whose deferment
+// ended by that instant.
 func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -80,6 +111,15 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("client: %s", harness.ExecOutput(t, ctx, client, "ceph", "--version"))
+	script := func(t *testing.T, tz string, args ...string) (trashPurgeOutcome, string) {
+		t.Helper()
+		out := harness.ExecOutput(t, ctx, client, append([]string{"env", "TZ=" + tz, "python3", "-c", trashPurgeScript}, args...)...)
+		var got trashPurgeOutcome
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return got, out
+	}
 	delays := map[string]int64{}
 	for name, delay := range trashPurgeDelays {
 		delays[name] = int64(delay / time.Second)
@@ -88,59 +128,109 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// POSIX timezone strings need no zone database: "TST-9" is nine hours
-	// ahead of UTC and "TST9" nine hours behind.
-	for _, zone := range []struct {
-		name, tz string
-		offset   int64
-	}{{"utc", "UTC0", 0}, {"ahead-9h", "TST-9", 9 * 3600}, {"behind-9h", "TST9", -9 * 3600}} {
+
+	// Every pool gets its images in the trash before any purge, by a
+	// process in UTC, so that one cutoff can be chosen for all of them.
+	moved := map[string][]trashPurgeEntry{}
+	var last int64
+	for _, zone := range trashPurgeZones {
+		pool := trashPurgePool(zone.name)
+		if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Application: "rbd"}); err != nil {
+			t.Fatal(err)
+		}
+		got, out := script(t, "UTC0", "move", pool, string(encoded))
+		if len(got.Before) != len(delays) {
+			t.Fatalf("condition not established: the trash of %s holds %d images, want %d: %s", pool, len(got.Before), len(delays), out)
+		}
+		for _, entry := range got.Before {
+			delay, ok := delays[entry.Name]
+			if !ok || entry.ID == "" || entry.Deadline < got.Started+delay-120 || entry.Deadline > got.Moved+delay+120 {
+				t.Fatalf("condition not established: %s in the trash of %s has the deadline %d, want its delay after the moves (%d to %d) within two minutes: %s", trashPurgeName(entry), pool, entry.Deadline, got.Started, got.Moved, out)
+			}
+		}
+		moved[pool], last = got.Before, max(last, got.Moved)
+	}
+	// The one cutoff of all three purges. Every recorded deadline of every
+	// pool must lie clear of it and of where a shifted reading puts it, with
+	// the same images on either side in each pool.
+	cutoff := last + int64(trashPurgeCutoff/time.Second)
+	if err := trashPurgeBracket(moved, cutoff); err != nil {
+		t.Fatalf("condition not established: %v", err)
+	}
+	t.Logf("cutoff of every purge: %d (%s)", cutoff, time.Unix(cutoff, 0).UTC().Format(time.RFC3339))
+
+	for _, zone := range trashPurgeZones {
 		t.Run(zone.name, func(t *testing.T) {
-			pool := "tc-trash-purge-" + zone.name
-			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Application: "rbd"}); err != nil {
-				t.Fatal(err)
-			}
-			before := time.Now().Unix()
-			out := harness.ExecOutput(t, ctx, client, "env", "TZ="+zone.tz, "python3", "-c", trashPurgeScript, pool, fmt.Sprint(int64(trashPurgeCutoff/time.Second)), string(encoded))
-			after := time.Now().Unix()
-			var got trashPurgeOutcome
-			if err := json.Unmarshal([]byte(out), &got); err != nil {
-				t.Fatalf("%v: %s", err, out)
-			}
-			// Conditions: the client process ran in the timezone, the
-			// cluster recorded each deadline at its delay after the move,
-			// whatever the timezone, and the cutoff is the fixed instant.
+			pool := trashPurgePool(zone.name)
+			got, out := script(t, zone.tz, "purge", pool, fmt.Sprint(cutoff))
+			// Conditions: the client process ran in the timezone, it built
+			// its datetime from the one cutoff, and it found the trash as
+			// the moves left it, with the deadlines read the same in its
+			// timezone.
 			if got.UTCOffset != zone.offset {
 				t.Fatalf("condition not established: the client's UTC offset is %d s, want %d: %s", got.UTCOffset, zone.offset, out)
 			}
-			if got.Moved < before-60 || got.Moved > after+60 || got.Cutoff != got.Moved+int64(trashPurgeCutoff/time.Second) || len(got.Deadlines) != len(trashPurgeDelays) {
-				t.Fatalf("condition not established: moved %d (test clock %d to %d), cutoff %d, deadlines %v", got.Moved, before, after, got.Cutoff, got.Deadlines)
+			if got.Cutoff != cutoff {
+				t.Fatalf("condition not established: the client purged with the cutoff %d, want %d: %s", got.Cutoff, cutoff, out)
+			}
+			if !slices.Equal(got.Before, moved[pool]) {
+				t.Fatalf("condition not established: the trash before the purge is %v, and the moves left %v", got.Before, moved[pool])
 			}
 			var want []string
-			for name, delay := range delays {
-				deadline, ok := got.Deadlines[name]
-				if !ok || deadline < got.Moved+delay-120 || deadline > got.Moved+delay+120 {
-					t.Fatalf("condition not established: the deadline of %s is %d, want %d within two minutes: %s", name, deadline, got.Moved+delay, out)
-				}
-				if deadline > got.Cutoff {
-					want = append(want, name)
+			for _, entry := range moved[pool] {
+				if entry.Deadline > cutoff {
+					want = append(want, trashPurgeName(entry))
 				}
 			}
-			slices.Sort(want)
-			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %s; the cutoff's fields read as local time are %+dh from it; deadlines after the move %v; retained %v, by the instant %v",
-				zone.tz, got.UTCOffset/3600, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(got), got.Retained, want)
-			if !slices.Equal(got.Retained, want) {
+			var retained []string
+			for _, entry := range got.After {
+				retained = append(retained, trashPurgeName(entry))
+			}
+			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %d (%s); the cutoff's fields read as local time are %+dh from it; deadlines from the cutoff %v; retained %v, by the instant %v",
+				zone.tz, got.UTCOffset/3600, got.Cutoff, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(moved[pool], cutoff), retained, want)
+			if !slices.Equal(retained, want) {
 				t.Fatalf("observed defect: a client process %+d h from UTC purged with a cutoff %+d h from the instant it passed: the trash retains %v, and by the instant it must retain %v",
-					got.UTCOffset/3600, (got.MkTime-got.Cutoff)/3600, got.Retained, want)
+					got.UTCOffset/3600, (got.MkTime-got.Cutoff)/3600, retained, want)
 			}
 		})
 	}
 }
 
-// trashPurgeRelative formats each deadline as its distance from the move.
-func trashPurgeRelative(got trashPurgeOutcome) []string {
+func trashPurgePool(zone string) string { return "tc-trash-purge-" + zone }
+
+// trashPurgeName names a trash entry by its image name and its ID.
+func trashPurgeName(entry trashPurgeEntry) string { return entry.Name + "(" + entry.ID + ")" }
+
+// trashPurgeBracket checks that, in every pool, no deadline lies within
+// trashPurgeMargin of the cutoff or of the cutoff shifted by trashPurgeShift
+// either way, and that the cutoff has the two shortest delays before it, the
+// early reading one and the late reading three.
+func trashPurgeBracket(pools map[string][]trashPurgeEntry, cutoff int64) error {
+	shift, margin := int64(trashPurgeShift/time.Second), int64(trashPurgeMargin/time.Second)
+	for _, pool := range slices.Sorted(maps.Keys(pools)) {
+		for at, due := range map[int64]int{cutoff - shift: 1, cutoff: 2, cutoff + shift: 3} {
+			ended := 0
+			for _, entry := range pools[pool] {
+				if entry.Deadline > at-margin && entry.Deadline < at+margin {
+					return fmt.Errorf("%s in the trash of %s has the deadline %d, within %s of %d (the cutoff %d shifted by %s)", trashPurgeName(entry), pool, entry.Deadline, trashPurgeMargin, at, cutoff, time.Duration(at-cutoff)*time.Second)
+				}
+				if entry.Deadline <= at {
+					ended++
+				}
+			}
+			if ended != due {
+				return fmt.Errorf("%d deadlines in the trash of %s end by %d (the cutoff %d shifted by %s), want %d: %v", ended, pool, at, cutoff, time.Duration(at-cutoff)*time.Second, due, pools[pool])
+			}
+		}
+	}
+	return nil
+}
+
+// trashPurgeRelative formats each deadline as its distance from the cutoff.
+func trashPurgeRelative(entries []trashPurgeEntry, cutoff int64) []string {
 	var out []string
-	for _, name := range slices.Sorted(maps.Keys(got.Deadlines)) {
-		out = append(out, fmt.Sprintf("%s=%s", name, time.Duration(got.Deadlines[name]-got.Moved)*time.Second))
+	for _, entry := range entries {
+		out = append(out, fmt.Sprintf("%s=%s", entry.Name, time.Duration(entry.Deadline-cutoff)*time.Second))
 	}
 	return out
 }

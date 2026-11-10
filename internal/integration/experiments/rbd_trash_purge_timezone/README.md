@@ -75,24 +75,33 @@ the result.
 
 ## Observations and controls
 
-Each subtest has a pool of its own and runs one Python process with its
-`TZ`. The process creates four images, moves them to the trash with
-deferment delays of 10 minutes, 6, 15 and 30 hours, reads the deadlines the
-cluster recorded, purges with a UTC-aware cutoff 10 hours after the move,
-and lists what the trash retains.
+Each client timezone has a pool of its own. Before any purge, one Python
+process per pool, in UTC, creates four images and moves them to the trash
+with deferment delays of 10 minutes, 6, 15 and 30 hours, and reports each
+trash entry's ID, name and recorded deadline. The test then fixes one
+cutoff for all three purges: 10 hours after the last move, in seconds since
+the epoch. Each subtest runs one Python process with its `TZ`, which reads
+the trash, purges with the UTC-aware datetime of that cutoff and lists what
+the trash retains. Entries are compared by name and ID.
 
-1. Conditions, in every subtest: the process reports the UTC offset of its
-   timezone; the cutoff is the move plus 10 hours as an instant; every
-   recorded deadline is the move plus its delay within two minutes, read
-   the same in each timezone.
-2. Control `utc`: the trash retains the 15-hour and 30-hour images. The
+1. Conditions before the first purge, in every pool: every recorded
+   deadline is the move plus its delay within two minutes; no deadline is
+   within 30 minutes of the cutoff or of the cutoff nine hours earlier or
+   later; two deadlines end by the cutoff, one by the earlier instant and
+   three by the later one.
+2. Conditions in every subtest: the process reports the UTC offset of its
+   timezone; the instant of its datetime is the one cutoff; the trash it
+   reads before the purge has the IDs, names and deadlines the moves
+   reported, so a deadline reads the same in each timezone.
+3. Control `utc`: the trash retains the 15-hour and 30-hour images. The
    binding, the purge and the listing work as the contract says.
-3. `ahead-9h` and `behind-9h`: the trash must retain the same two images.
+4. `ahead-9h` and `behind-9h`: the trash must retain the same two entries.
 
-The cutoff sits four and five hours from the nearest deadlines, and a
+The cutoff sits about four and five hours from the nearest deadlines, and a
 nine-hour shift moves it across exactly one of them in either direction, so
-clock differences of minutes do not change an outcome. The 10-minute image
-is removed and the 30-hour image retained in every timezone.
+the seconds between the moves of the pools do not change an outcome. The
+10-minute image is removed and the 30-hour image retained in every
+timezone.
 
 ## Reading the result
 
@@ -109,8 +118,9 @@ is removed and the 30-hour image retained in every timezone.
   or the client's `python3` lacks the `rbd` module. The test or the script
   fails before a receipt.
 - **Condition not established:** the failure starts with
-  `condition not established`: the process did not run in the timezone, or
-  a deadline or the cutoff is not where the round needs it.
+  `condition not established`: a deadline is not where the cutoff needs
+  it, the process did not run in the timezone or did not purge with the one
+  cutoff, or the trash changed between the moves and the purge.
 
 ## Cleanup and limits
 
