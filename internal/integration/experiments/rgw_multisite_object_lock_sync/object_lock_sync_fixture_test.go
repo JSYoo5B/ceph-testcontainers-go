@@ -5,6 +5,7 @@
 package rgw_multisite_object_lock_sync_test
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -93,5 +94,51 @@ func TestJudgeLockReads(t *testing.T) {
 				t.Errorf("%s, judge %d: %q, want prefix %q", name, i, verdict, prefix)
 			}
 		}
+	}
+}
+
+func TestJudgeVersioning(t *testing.T) {
+	for name, test := range map[string]struct {
+		status int
+		body   string
+		err    error
+		ok     bool
+	}{
+		"enabled":           {http.StatusOK, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>`, nil, true},
+		"enabled, indented": {http.StatusOK, "<?xml version=\"1.0\"?>\n<VersioningConfiguration>\n  <Status>Enabled</Status>\n  <MfaDelete>Disabled</MfaDelete>\n</VersioningConfiguration>", nil, true},
+		"suspended":         {http.StatusOK, `<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>`, nil, false},
+		"never versioned":   {http.StatusOK, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`, nil, false},
+		"another document":  {http.StatusOK, `<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`, nil, false},
+		"empty":             {http.StatusOK, "", nil, false},
+		"denied":            {http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`, nil, false},
+		"enabled in a 500":  {http.StatusInternalServerError, `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`, nil, false},
+		"transport":         {0, "", errors.New("reset"), false},
+	} {
+		got := judgeVersioning(test.status, []byte(test.body), test.err)
+		if (got == "") != test.ok || got != "" && !strings.HasPrefix(got, "condition not established: ") {
+			t.Errorf("%s: %q, want ok %t", name, got, test.ok)
+		}
+	}
+}
+
+// The body kept as evidence is bounded and tells apart bodies that parse to
+// the same configuration.
+func TestRawBody(t *testing.T) {
+	enabledOnly := []byte("<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>")
+	otherLayout := []byte("<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rules><Retention><Mode>GOVERNANCE</Mode></Retention></Rules></ObjectLockConfiguration>")
+	a, errA := parseLockConfig(enabledOnly)
+	b, errB := parseLockConfig(otherLayout)
+	if errA != nil || errB != nil || a != b {
+		t.Fatalf("the two bodies should parse alike: %+v %v, %+v %v", a, errA, b, errB)
+	}
+	if rawBody(enabledOnly) == rawBody(otherLayout) || !strings.Contains(rawBody(otherLayout), "<Rules>") {
+		t.Fatalf("raw bodies do not tell the layouts apart: %s", rawBody(otherLayout))
+	}
+	long := []byte(strings.Repeat("x", 3*lockRawBound))
+	if got := rawBody(long); len(got) > lockRawBound+64 || !strings.HasSuffix(got, "(cut, 3072 bytes in all)") {
+		t.Fatalf("long body kept as %d characters: …%s", len(got), got[len(got)-40:])
+	}
+	if got := rawBody([]byte("line one\nline two")); strings.Contains(got, "\n") {
+		t.Fatalf("raw body spans lines: %s", got)
 	}
 }

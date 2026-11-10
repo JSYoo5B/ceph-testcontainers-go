@@ -2,8 +2,10 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestMultiClusterRGWBucketObjectLockSync`, optional batch
-`rgw_object_lock_sync`. Pure tests of the configuration reader and of the
-judgement (`TestParseLockConfig` and `TestJudgeLockReads`, batch `pure`).
+`rgw_object_lock_sync`. Pure tests of the configuration reader, of the
+judgement, of the versioning prerequisite and of the raw body kept as
+evidence (`TestParseLockConfig`, `TestJudgeLockReads`, `TestJudgeVersioning`
+and `TestRawBody`, batch `pure`).
 
 ## Use case and native contract
 
@@ -83,17 +85,22 @@ python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
 Record the image digests with the result; the log names the Ceph version of
 both clusters (`RGW_LOCK ceph=`), each zone's ID and gateway binary
 (`RGW_LOCK zone=`), the canary (`RGW_LOCK canary`), every configuration read
-(`RGW_LOCK read step=`), each metadata checkpoint (`RGW_LOCK checkpoint`)
-and the bucket record in each zone (`RGW_LOCK stored`).
+(`RGW_LOCK read step=`) with the raw body of the reads that are judged
+(`RGW_LOCK raw`), the versioning read-back (`RGW_LOCK versioning`), each
+metadata checkpoint (`RGW_LOCK checkpoint`) and the bucket record in each
+zone (`RGW_LOCK stored`).
 
 ## Observations and controls
 
 1. Condition: zone `b`'s sync becomes ready, both buckets exist in zone `b`,
    and the canary object written to `tc-plain` in zone `a` is read from zone
    `b` with its bytes. That shows the data path apart from any
-   configuration. `tc-lock` answers "enabled, no rule" in zone `a` before a
-   rule is applied. Otherwise the test fails with
-   `condition not established`.
+   configuration. Before a rule is applied, `tc-lock` answers "enabled, no
+   rule" in zone `a`, and zone `a` reads back its versioning as `Enabled`
+   (`GET ?versioning`, `judgeVersioning`): object lock requires versioning,
+   and a bucket that reports object lock without it is not the prerequisite
+   the zones are compared for. Zone `b`'s versioning answer is recorded.
+   Otherwise the test fails with `condition not established`.
 2. Per step (`initial`, then `update`): the configuration is applied in zone
    `a` and zone `a` must read it back (`judgeSource`), again
    `condition not established` otherwise.
@@ -108,7 +115,12 @@ and the bucket record in each zone (`RGW_LOCK stored`).
    (`judgeDestination`). Only an answer about the configuration is the
    defect: `404 ObjectLockConfigurationNotFoundError`, or another
    configuration. A transport failure, a refusal such as `403 AccessDenied`,
-   `NoSuchBucket` or an unsupported operation is `another fault`.
+   `NoSuchBucket` or an unsupported operation is `another fault`. The
+   response body of zone `a`'s read-back and of zone `b`'s last read is
+   logged as received, cut to 1024 bytes and without any request header
+   (`RGW_LOCK raw`), because the parsed fields cannot tell every body
+   apart: a rule in a layout the reader does not know parses like no rule.
+   The bodies of the other polls are not logged.
 5. Control, per step: `tc-plain` must answer
    `404 ObjectLockConfigurationNotFoundError` in both zones, and zone `a` is
    read once more after the wait. Otherwise `control failed` or

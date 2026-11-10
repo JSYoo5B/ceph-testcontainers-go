@@ -92,7 +92,7 @@ func (c *lockCase) read(ctx context.Context, zone, bucket string) lockRead {
 		read.Err = err.Error()
 		return read
 	}
-	read.Status, read.Code = status, harness.RGWBackendErrorCode(body)
+	read.Status, read.Code, read.Raw = status, harness.RGWBackendErrorCode(body), rawBody(body)
 	if status == http.StatusOK {
 		if read.Config, err = parseLockConfig(body); err != nil {
 			read.Unparsed = err.Error()
@@ -161,6 +161,7 @@ func (c *lockCase) propagate(step, marker string, want lockConfig) string {
 	c.must("a", http.MethodPut, "/"+lockBucket+"?object-lock", body, http.Header{"Content-Md5": {base64.StdEncoding.EncodeToString(sum[:])}}, http.StatusOK)
 	source := c.read(c.ctx, "a", lockBucket)
 	c.t.Logf("RGW_LOCK read step=%s %s", step, source)
+	c.t.Logf("RGW_LOCK raw step=%s zone=a bucket=%s body=%s", step, lockBucket, source.Raw)
 	if verdict := judgeSource(source, want); verdict != "" {
 		c.t.Fatal(verdict)
 	}
@@ -170,6 +171,8 @@ func (c *lockCase) propagate(step, marker string, want lockConfig) string {
 		return read, read.has(want), nil
 	})
 	c.t.Logf("RGW_LOCK read step=%s %s reads=%d after=%s", step, seen.Value, seen.Attempts, seen.Elapsed.Round(time.Millisecond))
+	// The body of the last read only, not of every poll.
+	c.t.Logf("RGW_LOCK raw step=%s zone=b bucket=%s body=%s", step, lockBucket, seen.Value.Raw)
 	for _, zone := range []string{"a", "b"} {
 		id, hasLock := c.stored(zone, lockBucket)
 		c.t.Logf("RGW_LOCK stored step=%s zone=%s bucket=%s instance=%s metadata-has-obj_lock=%t", step, zone, lockBucket, id, hasLock)
@@ -303,7 +306,19 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	if !before.has(lockConfig{Enabled: true}) {
 		t.Fatalf("condition not established: the bucket created with object lock does not answer an enabled configuration without a rule in zone a: %s", before)
 	}
-	t.Logf("RGW_LOCK read step=created %s", c.read(ctx, "b", lockBucket))
+	t.Logf("RGW_LOCK raw step=created zone=a bucket=%s body=%s", lockBucket, before.Raw)
+	created := c.read(ctx, "b", lockBucket)
+	t.Logf("RGW_LOCK read step=created %s", created)
+	t.Logf("RGW_LOCK raw step=created zone=b bucket=%s body=%s", lockBucket, created.Raw)
+	// Object lock requires versioning. The source must read it back as
+	// enabled before any rule is applied; zone b's answer is recorded.
+	for _, zone := range []string{"a", "b"} {
+		status, body, err := c.do(ctx, zone, http.MethodGet, "/"+lockBucket+"?versioning", nil, nil)
+		t.Logf("RGW_LOCK versioning zone=%s bucket=%s status=%d error=%v body=%s", zone, lockBucket, status, err, rawBody(body))
+		if verdict := judgeVersioning(status, body, err); zone == "a" && verdict != "" {
+			t.Fatal(verdict)
+		}
+	}
 
 	first := lockConfig{Enabled: true, Mode: "GOVERNANCE", Days: 1}
 	second := lockConfig{Enabled: true, Mode: "COMPLIANCE", Years: 1}

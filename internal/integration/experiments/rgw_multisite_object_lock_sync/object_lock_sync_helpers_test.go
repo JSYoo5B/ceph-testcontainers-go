@@ -72,6 +72,52 @@ type lockRead struct {
 	// Config is the parsed body of a 200; Unparsed is why it is not.
 	Config   lockConfig
 	Unparsed string
+	// Raw is the response body as received, cut to lockRawBound bytes. The
+	// parsed fields cannot tell every body apart: a rule in a layout the
+	// reader does not know parses like no rule at all.
+	Raw string
+}
+
+// lockRawBound bounds the response body kept as evidence. A configuration
+// of the case is about 250 bytes.
+const lockRawBound = 1024
+
+// rawBody is the body as evidence: bounded, on one line.
+func rawBody(body []byte) string {
+	cut := ""
+	if len(body) > lockRawBound {
+		body, cut = body[:lockRawBound], fmt.Sprintf(" (cut, %d bytes in all)", len(body))
+	}
+	return fmt.Sprintf("%q%s", body, cut)
+}
+
+// parseVersioning reads the Status of a GET ?versioning body. A bucket that
+// never had versioning answers a configuration without a Status, which is
+// returned as "".
+func parseVersioning(body []byte) (string, error) {
+	var doc struct {
+		XMLName xml.Name `xml:"VersioningConfiguration"`
+		Status  string   `xml:"Status"`
+	}
+	if err := xml.Unmarshal(body, &doc); err != nil {
+		return "", err
+	}
+	return doc.Status, nil
+}
+
+// judgeVersioning judges the read-back of the versioning state of the
+// bucket made with object lock, in the zone it was made in. Object lock
+// requires versioning; a bucket that reports object lock without it is not
+// the prerequisite the case compares zones for.
+func judgeVersioning(status int, body []byte, err error) string {
+	if err != nil || status != http.StatusOK {
+		return fmt.Sprintf("condition not established: the source zone does not answer the versioning of the bucket made with object lock: status=%d error=%v", status, err)
+	}
+	state, err := parseVersioning(body)
+	if err != nil || state != "Enabled" {
+		return fmt.Sprintf("condition not established: the bucket made with object lock does not have versioning enabled in the source zone: status %q, body %s (%v)", state, rawBody(body), err)
+	}
+	return ""
 }
 
 func (r lockRead) String() string {
