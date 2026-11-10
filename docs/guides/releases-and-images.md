@@ -265,6 +265,21 @@ These affect commands or client libraries you run yourself, not the typed API:
   and refuse `aes256k` before any change with `ceph.ErrUnsupported`, naming
   `ceph-authtool --key-type` as the capability. The repository tests this
   with 20.2.3.
+- **Every release that was run, libcephfs snapshot listing with a small
+  client cache.** A libcephfs directory handle of a snapshot
+  (`dir/.snap/name`) with more entries than one readdir reply returns
+  entries of the live directory, and loses most of the snapshot's, once the
+  client has trimmed its dentry of the snapshot: the cache holds more than
+  `client_cache_size` dentries and a client tick (one second) passes
+  between two requests of the handle. Nothing reports an error. Squid
+  19.2.2 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0 all do
+  this with `client_cache_size` 100; with the default of 16384 and fewer
+  cached entries than that the listing is exact. A test that lists a
+  snapshot through libcephfs should keep the default cache size, or read
+  the whole listing before it does anything else on the mount. See
+  `TestCephFSSnapshotListingAcrossCacheEviction` (batch
+  `cephfs_snapshot_readdir_eviction`, experiment case
+  [`cephfs_snapshot_readdir_eviction`](../../internal/integration/experiments/cephfs_snapshot_readdir_eviction/README.md)).
 - **Tentacle 20.2.4, libcephfs statfs below a byte quota and a nearer file
   quota.** At a directory that has only `ceph.quota.max_files`, below a
   directory with `ceph.quota.max_bytes`, statfs reports the capacity and the
