@@ -22,6 +22,7 @@ on:
           - rgw_expiration_header
           - rgw_compressed_copy
           - rgw_multipart_part_class
+          - rgw_object_lock_sync
           - rgw_sync_lease_lapse
           - failure_archive
       rgw_image:

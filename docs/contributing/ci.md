@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -889,7 +889,9 @@ that reproduce an unpatched upstream defect and fail on the published images:
 `rgw_compressed_copy`
 ([`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)),
 `rgw_multipart_part_class`
-([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md))
+([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)),
+`rgw_object_lock_sync`
+([`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md))
 and `rgw_sync_lease_lapse`
 ([`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md)).
 Each case's `README.md` gives its trigger, controls, command and the meaning
@@ -977,6 +979,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 
 | Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `rgw_multisite_object_lock_sync` configuration reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_dangling_symlink_create` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_statfs_mixed_quota` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
@@ -1001,6 +1004,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_compressed_copy_accounting` (`optional/rgw_compressed_copy`) | deliberately failing reproducer, edits the zone and restarts the gateway | 40 s (fails at the uncompressed destination); 39 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_compressed_copy [on umbrella]` | never | `batch=rgw_compressed_copy` |
 | `rgw_multipart_part_storage_class` (`optional/rgw_multipart_part_class`) | deliberately failing reproducer, edits the zone and restarts the gateway | 38 s (fails at `cold-storage-class`); also fails on 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run rgw_multipart_part_class [on <release>]` | never | `batch=rgw_multipart_part_class` |
 | `rgw_sync_lease_lapse` (`optional/rgw_sync_lease_lapse`) | deliberately failing reproducer, two clusters, pauses the gateways | 527 s (fails in the `lapse` round after both controls); 553 s on 19.2.5, 526 s on 21.2.0 | 40m | never | `/ci run rgw_sync_lease_lapse [on <release>]` | never | `batch=rgw_sync_lease_lapse` |
+| `rgw_multisite_object_lock_sync` (`optional/rgw_object_lock_sync`) | deliberately failing reproducer, two clusters | 217 s (fails at the `initial` step after a 2 minute read of zone b); also fails on 19.2.5; 100 s on 20.2.5 and 80 s on 21.2.0 (pass) | 30m | never | `/ci run rgw_object_lock_sync [on <release>]` | never | `batch=rgw_object_lock_sync` |
 | `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
 | `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 
