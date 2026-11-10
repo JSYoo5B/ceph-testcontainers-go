@@ -59,9 +59,64 @@ type envelopeRaw struct {
 	Priorities   map[string]int
 	Unrecognized int
 	Echo         int
+	// Split counts the cluster log entries joined from lines that the MON's
+	// own daemon lines split.
+	Split int
+	// Lines holds bounded excerpts of the first unrecognized lines, so that
+	// a gap names the line that caused it.
+	Lines []string
 }
 
+// The bound on the unrecognized lines kept, and on each excerpt's bytes.
+const (
+	envelopeRawLines   = 4
+	envelopeRawExcerpt = 512
+)
+
 var rawSeverityMarker = regexp.MustCompile(`\[(ERR|SEC|WRN)\]`)
+
+// rawDaemonLineStart is the start of a daemon line (stamp with three
+// fractional digits, thread, level) inside another line.
+var rawDaemonLineStart = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4} +[0-9a-f]+ +-?\d+ `)
+
+// joinSplitClusterEntries undoes the split of the MON's cluster log lines
+// that it writes to its standard error in pieces: a daemon line written
+// between two pieces of an entry's header ends the line that holds the head,
+// and the entry's rest is on the next line without a daemon line. Each daemon
+// line is returned on its own, and the heads and the rest as one line when
+// the join is a cluster log line whose header holds every split; otherwise
+// the lines are returned as read. split counts the joined entries.
+func joinSplitClusterEntries(lines []string, split *int) []string {
+	var out, held []string
+	head := ""
+	flush := func() {
+		out, held, head = append(out, held...), nil, ""
+	}
+	for _, line := range lines {
+		if at := rawDaemonLineStart.FindStringIndex(line); at != nil && at[0] > 0 {
+			held, head = append(held, line), head+line[:at[0]]
+			continue
+		}
+		if len(held) > 0 {
+			joined := head + line
+			// A line with an envelope of its own is a record, not the rest.
+			whole := rawDaemonEnvelope.MatchString(line) || rawClusterEnvelope.MatchString(line)
+			if m := rawClusterEnvelope.FindStringIndex(joined); !whole && m != nil && len(head) <= m[1] {
+				for _, h := range held {
+					at := rawDaemonLineStart.FindStringIndex(h)
+					out = append(out, h[at[0]:])
+				}
+				out, held, head = append(out, joined), nil, ""
+				*split++
+				continue
+			}
+			flush()
+		}
+		out = append(out, line)
+	}
+	flush()
+	return out
+}
 
 // rawEnvelopeCounts classifies the lines that contain token.
 func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
@@ -69,7 +124,7 @@ func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
 	if token == "" {
 		return raw
 	}
-	for _, line := range lines {
+	for _, line := range joinSplitClusterEntries(lines, &raw.Split) {
 		if !strings.Contains(line, token) {
 			continue
 		}
@@ -80,6 +135,9 @@ func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
 		if match == nil {
 			if rawSeverityMarker.MatchString(line) {
 				raw.Unrecognized++
+				if len(raw.Lines) < envelopeRawLines {
+					raw.Lines = append(raw.Lines, envelopeExcerpt(line))
+				}
 			} else {
 				raw.Echo++
 			}
@@ -88,6 +146,15 @@ func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
 		raw.Priorities[match[1]]++
 	}
 	return raw
+}
+
+// envelopeExcerpt bounds one raw line to envelopeRawExcerpt bytes and quotes
+// it, so that control characters and a cut multibyte rune stay visible.
+func envelopeExcerpt(line string) string {
+	if len(line) > envelopeRawExcerpt {
+		return fmt.Sprintf("%q... (%d bytes)", line[:envelopeRawExcerpt], len(line))
+	}
+	return fmt.Sprintf("%q", line)
 }
 
 // judgeEnvelopeEvidence decides whether one report and the raw counts of the
@@ -161,7 +228,7 @@ func judgeEnvelopeEvidence(report *finalize.VerificationReport, token string, pr
 		}
 	}
 	if quoted.Unrecognized != 0 {
-		fail("%d MON lines carry the token and a literal severity marker outside any recognized envelope, which the verifier reports as a gap: %+v", quoted.Unrecognized, quoted)
+		fail("%d MON lines carry the token and a literal severity marker outside any recognized envelope, which the verifier reports as a gap: %+v; lines: %s", quoted.Unrecognized, quoted, strings.Join(quoted.Lines, ", "))
 	}
 	if len(problems) == 0 {
 		return nil
