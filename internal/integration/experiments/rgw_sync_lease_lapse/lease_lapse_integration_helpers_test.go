@@ -191,24 +191,24 @@ func (l *leaseLapse) gatewayExec(zone int, script string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// pause freezes every process of a zone's gateway container. The gateway is
-// recorded as owed a resume before the engine is asked: a request whose
-// answer is lost can still have frozen the container. The time returned is
-// taken after the engine reported the container paused.
+// pause freezes a zone's gateway container: every connection stays up, and
+// nothing is answered. The gateway is recorded as owed a resume before the
+// engine is asked: a request whose answer is lost can still have frozen the
+// container. The time returned is taken after the engine reported the
+// container paused.
 func (l *leaseLapse) pause(name string) time.Time {
 	l.t.Helper()
 	l.paused[name] = true
 	_, err := l.docker.ContainerPause(l.ctx, l.gateway(name).GetContainerID(), mobycl.ContainerPauseOptions{})
-	paused, seen := l.frozen(l.ctx, name)
-	if err != nil || seen != nil || !paused {
-		l.t.Fatalf("pause the gateway of zone %s: request %v; the engine reports paused=%t (%v)", name, err, paused, seen)
+	if err := l.settle(l.ctx, name, true, err); err != nil {
+		l.t.Fatal(err)
 	}
 	return time.Now()
 }
 
 // unpause resumes a zone's gateway container and returns the time right
 // before it asked for that: the gateway runs again no earlier. A round goes
-// on only with a gateway the engine reports as running.
+// on only with a gateway the engine reports as running and not paused.
 func (l *leaseLapse) unpause(name string) time.Time {
 	l.t.Helper()
 	asked := time.Now()
@@ -218,27 +218,33 @@ func (l *leaseLapse) unpause(name string) time.Time {
 	return asked
 }
 
-// resume asks the engine to resume a zone's gateway container and drops the
-// gateway from those owed a resume only when the engine then reports it as
-// not paused, whatever the request returned. Otherwise the gateway stays
-// owed, and the cleanup tries again.
+// resume asks the engine to resume a zone's gateway container. It returns an
+// error unless the engine then reports the container as running and not
+// paused, whatever the request returned.
 func (l *leaseLapse) resume(ctx context.Context, name string) error {
 	_, err := l.docker.ContainerUnpause(ctx, l.gateway(name).GetContainerID(), mobycl.ContainerUnpauseOptions{})
-	paused, seen := l.frozen(ctx, name)
-	if seen != nil || paused {
-		return fmt.Errorf("unpause the gateway of zone %s: request %v; the engine reports paused=%t (%v)", name, err, paused, seen)
-	}
-	delete(l.paused, name)
-	return nil
+	return l.settle(ctx, name, false, err)
 }
 
-// frozen reads from the engine whether a zone's gateway container is paused.
-func (l *leaseLapse) frozen(ctx context.Context, name string) (bool, error) {
+// settle reads a zone's gateway container from the engine after a pause
+// (wantPaused) or a resume was asked for and records whether the gateway is
+// owed a resume as judgeGateway decides. A state that cannot be read leaves
+// the record as it is, and the cleanup tries again.
+func (l *leaseLapse) settle(ctx context.Context, name string, wantPaused bool, request error) error {
 	state, err := l.gateway(name).State(ctx)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("the gateway container of zone %s: request %v; reading its state: %w", name, request, err)
 	}
-	return state.Paused, nil
+	owed, err := judgeGateway(name, wantPaused, gatewayRun{Running: state.Running, Paused: state.Paused, Status: string(state.Status), ExitCode: state.ExitCode})
+	if owed {
+		l.paused[name] = true
+	} else {
+		delete(l.paused, name)
+	}
+	if err != nil {
+		return fmt.Errorf("%w; the request returned %v", err, request)
+	}
+	return nil
 }
 
 func (l *leaseLapse) gateway(name string) testcontainers.Container {

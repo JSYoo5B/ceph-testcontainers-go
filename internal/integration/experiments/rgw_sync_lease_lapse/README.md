@@ -2,8 +2,9 @@
 
 Owner: RGW multisite. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestMultiClusterRGWDataSyncAfterSyncLeaseLapse`, optional batch
-`rgw_sync_lease_lapse`. The log reader it relies on has Docker-free tests in
-the same package (`code/pure`).
+`rgw_sync_lease_lapse`. The log reader it relies on and its reading of a
+gateway container's state have Docker-free tests in the same package
+(`code/pure`).
 
 ## Use case and native contract
 
@@ -160,8 +161,9 @@ connection stays up.
   `condition not established`: a shard of zone b read nothing before a
   round, the writes added no data log entry, fewer than 100 shards came to
   wait in a read, a control round's shards did not lose or keep their
-  leases as the round requires, or no shard of the round found its lease
-  lost inside a batch in round 3. Only 100 of the 128 shards get to read
+  leases as the round requires, no shard of the round found its lease
+  lost inside a batch in round 3, or a gateway container stopped while a
+  round paused or resumed it. Only 100 of the 128 shards get to read
   while zone a does not answer, so a shard of the round can be among the
   other 28; with six buckets at least one has waited in a read in every run
   so far. It is not a reproduction and not a pass.
@@ -171,13 +173,16 @@ connection stays up.
 ## Cleanup and limits
 
 A gateway counts as paused from before the engine is asked to pause it
-until the engine reports it as running again, so a request that failed or
-whose answer was lost leaves it owed a resume. Gateways still owed one are
-resumed before the realm is terminated, and one that stays paused fails the
-test. A round goes on only after the engine reported the pause or the
-resume it asked for. The realm and the clusters are terminated by their
-cleanups. The settings changed at run
-time live in the gateway processes and end with them.
+until the engine reports its container as not paused, so a request that
+failed or whose answer was lost leaves it owed a resume. Gateways still owed
+one are resumed before the realm is terminated, and one that stays paused
+fails the test. A round goes on only with a gateway container the engine
+reports as running, paused after a pause and not paused after a resume. A
+container that stopped is not frozen and is owed nothing, but the round
+fails with `condition not established`: that gateway neither stays silent
+with its connections up nor answers again. The realm and the clusters are
+terminated by their cleanups. The settings changed at run time live in the
+gateway processes and end with them.
 
 Not covered: host networking, arm64, a source that drops packets instead of
 not answering (the case in which the defect was first seen), more than one
