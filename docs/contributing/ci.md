@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -866,6 +866,8 @@ that reproduce an unpatched upstream defect and fail on the published images:
 ([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
 `native_shuffle`
 ([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
+`cephfs_dangling_symlink_create`
+([`cephfs_dangling_symlink_create`](../../internal/integration/experiments/cephfs_dangling_symlink_create/README.md)),
 `cephfs_statfs_mixed_quota`
 ([`cephfs_statfs_mixed_quota`](../../internal/integration/experiments/cephfs_statfs_mixed_quota/README.md)),
 `cephfs_snapshot_readdir_eviction`
@@ -976,6 +978,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `cephfs_dangling_symlink_create` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_statfs_mixed_quota` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_snapshot_readdir_eviction` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
@@ -986,6 +989,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
 | `cephfs_fscrypt` (`optional/cephfs_fscrypt`) | privileged client containers and a host kernel module; passes on the published images | 46 s; 51 s on 19.2.5, 55 s on 21.2.0 | 30m | never | `/ci run cephfs_fscrypt [on <release>]` | never | no |
 | `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
+| `cephfs_dangling_symlink_create` (`optional/cephfs_dangling_symlink_create`) | deliberately failing reproducer | 34 s (fails in all eight cases); also fails on 19.2.3, 19.2.5, 20.2.5 and 21.2.0; passes on 19.2.2 | 20m | never | `/ci run cephfs_dangling_symlink_create [on <release>]` | never | `batch=cephfs_dangling_symlink_create` |
 | `cephfs_statfs_mixed_quota` (`optional/cephfs_statfs_mixed_quota`) | deliberately failing reproducer | 33 s (fails at `parent/child`); 34 s on 21.2.0 and 40 s on 19.2.5 (pass) | 20m | never | `/ci run cephfs_statfs_mixed_quota [on umbrella]` | never | `batch=cephfs_statfs_mixed_quota` |
 | `cephfs_snapshot_readdir_eviction` (`optional/cephfs_snapshot_readdir_eviction`) | deliberately failing reproducer | 47 s (fails with live names in the snapshot listing); also fails on 19.2.2, 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run cephfs_snapshot_readdir_eviction [on <release>]` | never | `batch=cephfs_snapshot_readdir_eviction` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |

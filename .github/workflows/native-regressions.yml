@@ -10,6 +10,7 @@ on:
         options:
           - native_rgw_translation
           - native_shuffle
+          - cephfs_dangling_symlink_create
           - cephfs_statfs_mixed_quota
           - cephfs_snapshot_readdir_eviction
           - mon_log_ack
