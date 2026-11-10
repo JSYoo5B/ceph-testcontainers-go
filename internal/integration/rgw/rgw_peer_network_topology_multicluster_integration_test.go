@@ -327,11 +327,12 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 		return zoneLinkGatewayState(ctx, probe, zones[1].Gateway, peer, cutAt, strings.TrimPrefix(bucket, "/"), shards)
 	}
 	if last, ok := zoneLinkCatchUp(t, ctx, fixture, b, strings.TrimPrefix(bucket, "/"), "from-a", fromA, 3*time.Minute, gatewayState); !ok {
-		// During the cut zone b's sync thread can stall past its 30-second
-		// sync leases, and a data log shard that finds its lease lost in the
-		// middle of a batch can move its marker past entries it did not sync
-		// (issue 659). A lost lease is reported to help attribute the
-		// failure; it is not accepted as a cause.
+		// While 100 of zone b's reads of a's data log wait for an answer,
+		// its gateway renews no sync lease. After more than the 30-second
+		// lease period a data log shard that finds its lease lost in the
+		// middle of a batch moves its marker past entries it did not sync
+		// (experiment case rgw_sync_lease_lapse). A lost lease is reported
+		// to help attribute the failure; it is not accepted as a cause.
 		t.Fatalf("zone b did not catch up with a within 3m0s of Restore: object %s; %s; data log shards behind a: %s; shards that lost their sync lease since the cut: %v",
 			last.Object, last.Status, last.Lag, zoneLinkLostLeases(ctx, zones[1].Gateway, cutAt))
 	}

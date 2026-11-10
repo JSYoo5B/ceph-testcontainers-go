@@ -215,6 +215,20 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestRGWMultipartPartStorageClass` (batch `rgw_multipart_part_class`,
   experiment case
   [`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)).
+- **Every release, multisite data sync after a source that did not answer
+  for longer than the sync lease period.** While 100 of a gateway's reads
+  of one source zone's data log wait for an answer, the gateway renews none
+  of its sync leases. When the source answers after more than
+  `rgw_sync_lease_period` (30 seconds for fixture gateways, 120 by default),
+  a shard that finds its lease lost inside the batch it read moves its
+  position past the batch without syncing it: the objects stay missing in
+  the destination, `sync status` keeps the shard behind and the error list
+  stays empty until the destination's gateway is restarted or a later change
+  of the same bucket shard arrives. Squid 19.2.5, Tentacle 20.2.4 and
+  Umbrella 21.2.0 do this. See
+  `TestMultiClusterRGWDataSyncAfterSyncLeaseLapse` (batch
+  `rgw_sync_lease_lapse`, experiment case
+  [`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md)).
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
