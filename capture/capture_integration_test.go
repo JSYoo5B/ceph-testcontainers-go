@@ -5,7 +5,6 @@
 package capture_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -27,41 +26,19 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// Without CEPH_TEST_CAPTURE_IMAGE the test builds contract 1's reference
-// helper from pinned ceph-testcontainers-images source. The engine runs
-// that repository's Dockerfile.
-const helperSource = "https://github.com/JSYoo5B/ceph-testcontainers-images.git#cbee3950dfab150b196fb5b4bf955045079f9fc9:image/extensions/capture"
+// helperImage is the published reference helper of packet-capture contract
+// 1, which the test uses without CEPH_TEST_CAPTURE_IMAGE. The capture package
+// itself selects no helper.
+const helperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-capture-v1"
 
-func captureHelper(t *testing.T, ctx context.Context) string {
+func captureHelper(t *testing.T) string {
 	t.Helper()
-	if image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE"); image != "" {
-		return image
+	image := os.Getenv("CEPH_TEST_CAPTURE_IMAGE")
+	if image == "" {
+		image = helperImage
 	}
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = docker.Close() }()
-	tag := "ceph-testcontainers-capture-helper:cbee3950"
-	result, err := docker.ImageBuild(ctx, nil, mobycl.ImageBuildOptions{RemoteContext: helperSource, Tags: []string{tag}, Remove: true, ForceRemove: true})
-	if err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	defer func() { _ = result.Body.Close() }()
-	scanner := bufio.NewScanner(result.Body)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for scanner.Scan() {
-		var message struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &message) == nil && message.Error != "" {
-			t.Fatalf("build the capture helper: %s", message.Error)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("build the capture helper: %v", err)
-	}
-	return tag
+	t.Logf("capture helper: %s", image)
+	return image
 }
 
 type flow struct {
@@ -232,7 +209,7 @@ func logReport(t *testing.T, report capture.Report, err error) {
 func TestCaptureTargetTraffic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	helper := captureHelper(t, ctx)
+	helper := captureHelper(t)
 	bridge, err := dockerbridge.New(ctx)
 	if bridge != nil {
 		t.Cleanup(func() {
