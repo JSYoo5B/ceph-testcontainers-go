@@ -973,6 +973,7 @@ unless noted; the batch budget is the `//ci:` timeout.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_statfs_mixed_quota` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
 | `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | cheap, deterministic characterization of fixed defects | 104 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `targeted` |
 | `rbd_encrypted_clone_flatten` (`topology/rbd_encrypted_clone_flatten`) | cheap, deterministic characterization | 75 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rbd_encrypted_clone_flatten [on <release>]` | `rotate` may draw it | `targeted` |

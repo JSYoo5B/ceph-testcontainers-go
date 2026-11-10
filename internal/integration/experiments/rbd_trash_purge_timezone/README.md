@@ -2,7 +2,8 @@
 
 Owner: RBD. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRBDTrashPurgeCutoffAcrossClientTimezones`, optional batch
-`rbd_trash_purge_timezone`.
+`rbd_trash_purge_timezone`. Its judgement of what a purge retained has
+Docker-free tests in the same package (`code/pure`).
 
 ## Use case and native contract
 
@@ -92,10 +93,20 @@ the trash retains. Entries are compared by name and ID.
 2. Conditions in every subtest: the process reports the UTC offset of its
    timezone; the instant of its datetime is the one cutoff; the trash it
    reads before the purge has the IDs, names and deadlines the moves
-   reported, so a deadline reads the same in each timezone.
+   reported, so a deadline reads the same in each timezone; the cutoff's
+   fields read as the process's local time (`time.mktime`) name the instant
+   its UTC offset before the cutoff.
 3. Control `utc`: the trash retains the 15-hour and 30-hour images. The
-   binding, the purge and the listing work as the contract says.
+   binding, the purge and the listing work as the contract says. It runs
+   first; when it fails, the other pools are not purged.
 4. `ahead-9h` and `behind-9h`: the trash must retain the same two entries.
+
+What a purge retained is compared with two sets predicted from the trash
+before it: the entries whose deadline is after the cutoff, and the entries
+whose deadline is after the instant the cutoff's fields name as local time.
+Only a purge away from UTC that retained the second set is reported as the
+defect. A purge that retained neither set, such as one that removed nothing
+or everything, is another fault.
 
 The cutoff sits about four and five hours from the nearest deadlines, and a
 nine-hour shift moves it across exactly one of them in either direction, so
@@ -107,7 +118,8 @@ timezone.
 
 - **Pass:** all three subtests retained the 15-hour and 30-hour images. No
   published image passes today.
-- **Observed bug:** the failure starts with `observed defect:`. Nine hours
+- **Observed bug:** the failure starts with `observed defect:`: the trash
+  retains what the cutoff's fields read as local time keep. Nine hours
   ahead of UTC the 6-hour image is retained as well; nine hours behind,
   only the 30-hour image is, so an image whose deferment ends five hours
   after the cutoff was removed. The receipt
@@ -120,7 +132,15 @@ timezone.
 - **Condition not established:** the failure starts with
   `condition not established`: a deadline is not where the cutoff needs
   it, the process did not run in the timezone or did not purge with the one
-  cutoff, or the trash changed between the moves and the purge.
+  cutoff, the trash changed between the moves and the purge, or the
+  cutoff's fields read as local time are not the client's UTC offset from
+  it.
+- **Control failed:** the failure starts with `control failed`: the purge
+  from UTC did not retain exactly the 15-hour and 30-hour images. The other
+  subtests fail with the same prefix without purging.
+- **Another fault:** the failure starts with `another fault:`: a purge away
+  from UTC retained neither the entries the cutoff keeps nor the entries
+  its local reading keeps. It is not the defect of this case.
 
 ## Cleanup and limits
 

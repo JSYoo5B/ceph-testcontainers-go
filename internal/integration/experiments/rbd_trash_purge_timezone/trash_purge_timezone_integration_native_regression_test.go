@@ -69,14 +69,6 @@ with rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.
         print(json.dumps(out))
 `
 
-// trashPurgeEntry is one image in a pool's trash, with its deadline in
-// seconds since the epoch.
-type trashPurgeEntry struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Deadline int64  `json:"deadline"`
-}
-
 // trashPurgeOutcome is what trashPurgeScript reports, with times in seconds
 // since the epoch. Started and Moved bound the moves to the trash. MkTime is
 // the local-time reading of the cutoff's fields.
@@ -102,7 +94,8 @@ var trashPurgeZones = []struct {
 // TestRBDTrashPurgeCutoffAcrossClientTimezones purges equivalent trash
 // contents with one timezone-aware cutoff from client processes in three
 // timezones and requires each to remove exactly the images whose deferment
-// ended by that instant.
+// ended by that instant. judgeTrashPurge tells the failed UTC control and a
+// result no reading of the cutoff explains from the timezone shift.
 func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -159,9 +152,15 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	}
 	t.Logf("cutoff of every purge: %d (%s)", cutoff, time.Unix(cutoff, 0).UTC().Format(time.RFC3339))
 
+	// The purge from UTC is the control and runs first. The other purges
+	// are judged only after it removed what the instant requires.
+	control := true
 	for _, zone := range trashPurgeZones {
-		t.Run(zone.name, func(t *testing.T) {
+		passed := t.Run(zone.name, func(t *testing.T) {
 			pool := trashPurgePool(zone.name)
+			if !control {
+				t.Fatalf("control failed: the purge from a client process in UTC failed, and the trash of %s was not purged", pool)
+			}
 			got, out := script(t, zone.tz, "purge", pool, fmt.Sprint(cutoff))
 			// Conditions: the client process ran in the timezone, it built
 			// its datetime from the one cutoff, and it found the trash as
@@ -176,30 +175,24 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 			if !slices.Equal(got.Before, moved[pool]) {
 				t.Fatalf("condition not established: the trash before the purge is %v, and the moves left %v", got.Before, moved[pool])
 			}
-			var want []string
-			for _, entry := range moved[pool] {
-				if entry.Deadline > cutoff {
-					want = append(want, trashPurgeName(entry))
-				}
+			// The fields of the cutoff read as the client's local time name
+			// an instant the client's UTC offset earlier.
+			if got.MkTime-got.Cutoff != -zone.offset {
+				t.Fatalf("condition not established: the cutoff's fields read as local time are %d s from the cutoff, want %d: %s", got.MkTime-got.Cutoff, -zone.offset, out)
 			}
-			var retained []string
-			for _, entry := range got.After {
-				retained = append(retained, trashPurgeName(entry))
-			}
-			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %d (%s); the cutoff's fields read as local time are %+dh from it; deadlines from the cutoff %v; retained %v, by the instant %v",
-				zone.tz, got.UTCOffset/3600, got.Cutoff, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(moved[pool], cutoff), retained, want)
-			if !slices.Equal(retained, want) {
-				t.Fatalf("observed defect: a client process %+d h from UTC purged with a cutoff %+d h from the instant it passed: the trash retains %v, and by the instant it must retain %v",
-					got.UTCOffset/3600, (got.MkTime-got.Cutoff)/3600, retained, want)
+			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %d (%s); the cutoff's fields read as local time are %+dh from it; deadlines from the cutoff %v; retained %v, by the instant %v, by the local reading %v",
+				zone.tz, got.UTCOffset/3600, got.Cutoff, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(moved[pool], cutoff), trashPurgeNames(got.After), trashPurgeKept(moved[pool], cutoff), trashPurgeKept(moved[pool], got.MkTime))
+			if err := judgeTrashPurge(got.UTCOffset, got.Cutoff, got.MkTime, moved[pool], got.After); err != nil {
+				t.Fatal(err)
 			}
 		})
+		if zone.offset == 0 {
+			control = passed
+		}
 	}
 }
 
 func trashPurgePool(zone string) string { return "tc-trash-purge-" + zone }
-
-// trashPurgeName names a trash entry by its image name and its ID.
-func trashPurgeName(entry trashPurgeEntry) string { return entry.Name + "(" + entry.ID + ")" }
 
 // trashPurgeBracket checks that, in every pool, no deadline lies within
 // trashPurgeMargin of the cutoff or of the cutoff shifted by trashPurgeShift
