@@ -186,7 +186,7 @@ func requireRBDNamespaceMappingRefused(t *testing.T, err error, cluster *ceph.Co
 }
 
 func checkScopedWatchImage(pinned, observed rbdmirror.ImageStatus) error {
-	expected := rbdexpect.Image{Select: pinned, Replaying: observed.ReplayReady}
+	expected := rbdexpect.MirrorImage{Select: pinned, Replaying: observed.ReplayReady}
 	r, err := expected.Evaluate(observed)
 	if err != nil {
 		return err

@@ -11,7 +11,7 @@
 //	if err != nil {
 //		t.Fatal(err) // a failed query is never a mismatch
 //	}
-//	result, err := expect.Image{Select: baseline, Replaying: true, NewInstance: true}.Evaluate(status)
+//	result, err := expect.MirrorImage{Select: baseline, Replaying: true, NewInstance: true}.Evaluate(status)
 //	if err != nil {
 //		t.Fatal(err) // an invalid expectation or a malformed observation
 //	}

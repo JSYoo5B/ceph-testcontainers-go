@@ -80,7 +80,7 @@ func runMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontainer
 		t.Fatal(err)
 	}
 	restarted := harness.RBDMirrorReplayReady(t, ctx, forward, name, rbdmirror.ModeJournal, "", "")
-	if result, err := (rbdexpect.Image{Select: initialReplay, Replaying: true, NewInstance: true}).Evaluate(restarted); err != nil || !result.Matched {
+	if result, err := (rbdexpect.MirrorImage{Select: initialReplay, Replaying: true, NewInstance: true}).Evaluate(restarted); err != nil || !result.Matched {
 		t.Fatalf("receiver restart changed images or retained a stale process instance: %v %v", result, err)
 	}
 	harness.RBDJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, name, backlog)

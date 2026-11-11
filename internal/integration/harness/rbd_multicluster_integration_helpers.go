@@ -24,10 +24,10 @@ import (
 func RBDMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Container, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
-	var result rbdexpect.ImageEvaluation
+	var result rbdexpect.MirrorImageEvaluation
 	if err == nil {
 		want := rbdmirror.ImageStatus{Name: name, Mode: mode, SourceNamespace: sourceNamespace, DestinationNamespace: destinationNamespace}
-		result, err = rbdexpect.Image{Select: want, Replaying: true}.Evaluate(status)
+		result, err = rbdexpect.MirrorImage{Select: want, Replaying: true}.Evaluate(status)
 	}
 	if err != nil || !result.Matched {
 		logRBDMirrorImageState(t, ctx, link, status.Pool, sourceNamespace, destinationNamespace, name)

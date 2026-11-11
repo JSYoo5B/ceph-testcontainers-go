@@ -234,7 +234,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	second := harness.RBDMultiClusterPayload(2<<20, 73)
 	harness.RBDScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, rbdMirrorWatchPool, "", "volume", 0, second)
 	checkpoint := harness.RBDReceiverNativeSnapshot(t, ctx, sourceClient, rbdMirrorWatchPool, "", "volume")
-	replay := rbdexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor, NewInstance: true}
+	replay := rbdexpect.MirrorImage{Select: imageBaseline.Status, Replaying: true, Daemon: survivor, NewInstance: true}
 	replaying := images.await(t, 4*time.Minute, "replayer moved", func(e rbdmirror.ImageWatchEvent) bool {
 		result, err := replay.Evaluate(e.Status)
 		if err != nil {

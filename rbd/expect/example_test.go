@@ -31,7 +31,7 @@ func ExampleReceivers_Evaluate() {
 
 // A receiver restart must leave the image pair in place and replay it
 // through a new receiving instance.
-func ExampleImage_Evaluate() {
+func ExampleMirrorImage_Evaluate() {
 	baseline := mirror.ImageStatus{
 		Pool: "volumes", Name: "volume", Mode: mirror.ModeJournal,
 		GlobalID: "6c1b8f9e-0000-4000-8000-000000000001", SourceImageID: "1a2b", DestinationImageID: "3c4d",
@@ -40,7 +40,7 @@ func ExampleImage_Evaluate() {
 	}
 	restarted := baseline
 	restarted.State, restarted.ReplayReady = "up+starting_replay", false
-	result, err := expect.Image{Select: baseline, Replaying: true, NewInstance: true}.Evaluate(restarted)
+	result, err := expect.MirrorImage{Select: baseline, Replaying: true, NewInstance: true}.Evaluate(restarted)
 	if err != nil {
 		panic(err)
 	}
