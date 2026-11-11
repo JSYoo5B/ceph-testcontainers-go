@@ -102,10 +102,14 @@ particular API is kept belongs in that API's own doc comment, not here.
   conditions differ, and each one's doc comment states the difference.
 - A pure evaluation of a captured observation against a condition the test
   states, with an explanation of each mismatch, goes in the `expect` package
-  of the service that owns the observation type: `ceph/expect` for
-  `ceph.OSDState`, `cephfs/expect` for `cephfs.FilesystemStatus`. The
-  dependency runs from `<service>/expect` to its service, never back, and no
-  central package imports every service. The observation type, its query,
+  of the Ceph service the observation belongs to: `ceph/expect` for
+  `ceph.OSDState`, `cephfs/expect` for `cephfs.FilesystemStatus`,
+  `rbd/expect` for `mirror.ImageStatus`. A service has one `expect` package,
+  so its extensions (such as `rbd/mirror`) do not get their own; the
+  evaluation names say which extension they read (`MirrorImage`), and an
+  `expect` package exists only once the service has an evaluation. The
+  dependency runs from `<service>/expect` to the service and its extensions,
+  never back, and no central package imports every service. The observation type, its query,
   its readiness wait and its Watch stay with the service. An evaluation has
   one `Evaluate` that does no I/O, wait or retry and needs no `testing.T`. An
   invalid expectation is `ErrInvalidRequest`, and a malformed observation is

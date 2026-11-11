@@ -1,11 +1,13 @@
-# Mirror expect
+# RBD expect
 
 Import `github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect` alongside
 `rbd/mirror` when a test wants a precise verdict on a receiver or image replay
 observation it already captured, with an explanation of each mismatch. A link
 needs nothing from this package to run, and a test that only runs, observes
-or watches a link can ignore it. See
-[API purpose and purpose tags](../../../docs/guides/api-purpose.md) for where
+or watches a link can ignore it. Package `rbd` does not import it, so a test
+that uses only `rbd` does not depend on it. It imports `rbd/mirror` for the
+observation types. See
+[API purpose and purpose tags](../../docs/guides/api-purpose.md) for where
 this fits.
 
 Every expectation has one `Evaluate` method that reads only its arguments: no
@@ -61,7 +63,7 @@ while the stopped member stays in the cohort.
 
 ## Image replay
 
-`expect.Image` states what one `ImageStatus` observation, from `ImageStatus`,
+`expect.MirrorImage` states what one `ImageStatus` observation, from `ImageStatus`,
 `WaitReplayReady` or a `WatchImage` event, must report for an image. `Select`
 names the image and its namespaces; an earlier observation as `Select` also
 pins the mode and the global, source and destination image IDs, so a
@@ -73,7 +75,7 @@ the receiver that must replay the image, and `NewInstance` requires a
 receiving instance other than the selected one.
 
 ```golang
-result, err := expect.Image{Select: initial, Replaying: true, NewInstance: true}.Evaluate(restarted)
+result, err := expect.MirrorImage{Select: initial, Replaying: true, NewInstance: true}.Evaluate(restarted)
 if err != nil {
 	t.Fatal(err)
 }

@@ -1,8 +1,9 @@
-// Package expect evaluates captured observations of an rbd-mirror link
-// against the conditions a test states, and explains each mismatch.
+// Package expect evaluates captured observations of RBD fixtures against the
+// conditions a test states, and explains each mismatch. Its evaluations read
+// the rbd-mirror link observations of package rbd/mirror.
 //
 // It is optional: running, observing and watching a link needs only package
-// mirror. A test that wants a precise verdict on one observation, such as
+// mirror, and package rbd does not import it. A test that wants a precise verdict on one observation, such as
 // "the survivor leads while the stopped member stays in the cohort" or "the
 // same image pair replays through a new receiving instance", states it as an
 // expectation and evaluates the observation it already has:
