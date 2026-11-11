@@ -4,22 +4,22 @@
   "package": "rbd/expect",
   "count": 27,
   "types": {
-    "rbd/expect.Image": [
-      "Image.Daemon field string",
-      "Image.NewInstance field bool",
-      "Image.Replaying field bool",
-      "Image.Select field mirror.ImageStatus"
+    "rbd/expect.MirrorImage": [
+      "MirrorImage.Daemon field string",
+      "MirrorImage.NewInstance field bool",
+      "MirrorImage.Replaying field bool",
+      "MirrorImage.Select field mirror.ImageStatus"
     ],
-    "rbd/expect.ImageEvaluation": [
-      "ImageEvaluation.Expectation field Image",
-      "ImageEvaluation.Matched field bool",
-      "ImageEvaluation.Mismatches field []ImageMismatch",
-      "ImageEvaluation.Observed field mirror.ImageStatus"
+    "rbd/expect.MirrorImageEvaluation": [
+      "MirrorImageEvaluation.Expectation field MirrorImage",
+      "MirrorImageEvaluation.Matched field bool",
+      "MirrorImageEvaluation.Mismatches field []MirrorImageMismatch",
+      "MirrorImageEvaluation.Observed field mirror.ImageStatus"
     ],
-    "rbd/expect.ImageMismatch": [
-      "ImageMismatch.Observed field string",
-      "ImageMismatch.Reason field ImageMismatchReason",
-      "ImageMismatch.Want field string"
+    "rbd/expect.MirrorImageMismatch": [
+      "MirrorImageMismatch.Observed field string",
+      "MirrorImageMismatch.Reason field MirrorImageMismatchReason",
+      "MirrorImageMismatch.Want field string"
     ],
     "rbd/expect.ReceiverDaemon": [
       "ReceiverDaemon.Baseline field mirror.ReceiverDaemonStatus",
