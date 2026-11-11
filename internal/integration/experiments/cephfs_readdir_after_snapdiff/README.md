@@ -98,8 +98,9 @@ python3 .github/scripts/tag_scenarios.py optional --batch cephfs_readdir_after_s
 The test logs the client's `ceph --version`, the release its `cephfs`
 module reports and whether the module has `opensnapdiff`; record the image
 digests with the result. One `CEPHFS_READDIR_AFTER_SNAPDIFF_RECEIPT` line
-per directory gives every listing with its positions (`name->hash+count`)
-and the snapdiff's entries.
+per directory gives every listing with its positions
+(`name->hash+count (raw 0x…)`, or `name->frag …` for a position without the
+hash-order marker) and the snapdiff's entries.
 
 ## Observations and controls
 
@@ -112,11 +113,15 @@ A third client, a fresh mount, lists both snapshots once.
 1. Condition, per directory: the warm mount's first listing and the fresh
    mount's listing are the two names, each once, and the snapdiff names the
    changed file and nothing else. Otherwise `condition not established`.
-2. Condition, the layout: in the first listing the two names of `trigger`
-   have the same hash in their positions and the changed one is the second
-   of them; the two names of `control` have different hashes. The test
-   reads the hashes from the positions the client reports (`d_off`) and
-   computes none itself.
+2. Condition, the layout: the positions of both first listings carry the
+   client's marker of a hash-ordered listing (all eight bits above the 24
+   of the hash are set). Without it the same bits name the fragment the
+   entry was read from, and two entries of one fragment would look like a
+   shared hash. With it, the two names of `trigger` have the same hash and
+   the changed one is the second of them, and the two names of `control`
+   have different hashes. The test reads all of this from the positions
+   the client reports (`d_off`) and computes no hash itself; the receipt
+   prints every position decoded and raw.
 3. Oracle: the warm mount's second listing of `trigger` holds exactly the
    two names. A missing name, a repeated one or a foreign one is
    `observed defect`.
@@ -134,7 +139,8 @@ and on the official images of 20.2.5 (`sha256:4337ac8ac81d…`) and 19.2.2
 release.
 
 - **Observed bug:** the warm mount's first listing of `trigger` holds both
-  names at positions of one hash (`7f4abf`, counts 3 and 4); the snapdiff
+  names at hash-ordered positions of one hash (`7f4abf`, counts 3 and 4,
+  raw `0xff7f4abf0000003` and `0xff7f4abf0000004`); the snapdiff
   names `collision_2690` alone; the second listing holds `collision_2379`
   only. The fresh mount lists both names, and `control`, whose names have
   the hashes `6769c5` and `f51016`, is listed in full after its snapdiff.

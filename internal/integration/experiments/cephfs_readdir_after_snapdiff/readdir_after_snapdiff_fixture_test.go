@@ -9,9 +9,16 @@ import (
 	"testing"
 )
 
-// at builds a hash-ordered position: the hash above 28 bits of count.
+// at builds a hash-ordered position as the client does: the marker, the
+// hash and the count.
 func at(name string, hash, count uint64) dirEntry {
-	return dirEntry{Name: name, Next: hash<<28 | count}
+	return dirEntry{Name: name, Next: positionHashOrder | hash<<28 | count}
+}
+
+// inFragment builds a position of a listing that is not hash-ordered: the
+// fragment where a hash would be, no marker.
+func inFragment(name string, fragment, count uint64) dirEntry {
+	return dirEntry{Name: name, Next: fragment<<28 | count}
 }
 
 func TestJudgeAfterSnapdiff(t *testing.T) {
@@ -37,7 +44,7 @@ func TestJudgeAfterSnapdiff(t *testing.T) {
 		// What Tentacle 20.2.4 returned: the changed entry is gone from
 		// the second listing of the colliding pair.
 		"second name missing": {change: func(trigger, _ *dirRun) { trigger.After = triggerBoth[:1] },
-			want: "observed defect: after a snapdiff that named only collision_2690, the warm mount lists the snapshot whose two names share a dentry hash as 1 entries [collision_2379], missing [collision_2690], more than once [], not of the snapshot []"},
+			want: "observed defect: after a snapdiff that named only collision_2690, the warm mount lists the snapshot whose two names share a dentry hash as 1 entries [collision_2379], missing [collision_2690], more than once [], not of the snapshot [] (positions [collision_2379->7f4abf+3 (raw 0xff7f4abf0000003)], before the snapdiff [collision_2379->7f4abf+3 (raw 0xff7f4abf0000003) collision_2690->7f4abf+4 (raw 0xff7f4abf0000004)])"},
 		"first name twice": {change: func(trigger, _ *dirRun) { trigger.After = []dirEntry{triggerBoth[0], triggerBoth[0]} },
 			want: "observed defect: after a snapdiff that named only collision_2690, the warm mount lists the snapshot whose two names share a dentry hash as 2 entries [collision_2379 collision_2379], missing [collision_2690], more than once [collision_2379 x2]"},
 		"both and one again": {change: func(trigger, _ *dirRun) { trigger.After = append(triggerBoth[:2:2], triggerBoth[1]) }, want: "observed defect: "},
@@ -55,6 +62,24 @@ func TestJudgeAfterSnapdiff(t *testing.T) {
 		"empty diff":                  {change: func(trigger, _ *dirRun) { trigger.Diff = nil }, want: "condition not established: the snapdiff of the trigger directory names no entry"},
 		"diff names the unchanged":    {change: func(trigger, _ *dirRun) { trigger.Diff = append(trigger.Diff, diffEntry{"collision_2379", 3}) }, want: "condition not established: the snapdiff of the trigger directory names"},
 		"control diff empty":          {change: func(_, control *dirRun) { control.Diff = nil }, want: "condition not established: the snapdiff of the control directory names no entry"},
+		// Without the hash-order marker the bits above the count name the
+		// fragment. Two entries of one fragment look like a shared hash
+		// there, and must not pass as the trigger layout, whatever the
+		// second listing holds.
+		"trigger listed in fragment order": {change: func(trigger, _ *dirRun) {
+			trigger.Before = []dirEntry{inFragment("collision_2379", 0x7f4abf, 3), inFragment("collision_2690", 0x7f4abf, 4)}
+			trigger.After = trigger.Before[:1]
+		}, want: "condition not established: the first listings are not hash-ordered, so their positions name fragments, not dentry hashes: trigger [collision_2379->frag 7f4abf+3 (raw 0x7f4abf0000003) collision_2690->frag 7f4abf+4 (raw 0x7f4abf0000004)]"},
+		"trigger in the leftmost fragment": {change: func(trigger, _ *dirRun) {
+			trigger.Before = []dirEntry{inFragment("collision_2379", 0, 3), inFragment("collision_2690", 0, 4)}
+			trigger.After = trigger.Before[:1]
+		}, want: "condition not established: the first listings are not hash-ordered"},
+		"one trigger entry without the marker": {change: func(trigger, _ *dirRun) {
+			trigger.Before = []dirEntry{triggerBoth[0], inFragment("collision_2690", 0x7f4abf, 4)}
+		}, want: "condition not established: the first listings are not hash-ordered"},
+		"control listed in fragment order": {change: func(_, control *dirRun) {
+			control.Before = []dirEntry{inFragment("plain_first", 1, 3), inFragment("plain_second", 2, 3)}
+		}, want: "condition not established: the first listings are not hash-ordered"},
 		"no shared hash": {change: func(trigger, _ *dirRun) {
 			trigger.Before = []dirEntry{at("collision_2379", 0x7f4abf, 3), at("collision_2690", 0x7f4ac0, 3)}
 		}, want: "condition not established: the two names of the trigger directory do not share a dentry hash"},
@@ -84,10 +109,16 @@ func TestJudgeAfterSnapdiff(t *testing.T) {
 }
 
 func TestDirEntryHash(t *testing.T) {
-	// The position 0x7f4abf0000003 with the flag bits of a hash-ordered
-	// position above it: the hash is the 24 bits above the count.
-	entry := dirEntry{Name: "x", Next: 0xFF<<52 | 0x7f4abf<<28 | 3}
-	if entry.hashOf() != 0x7f4abf || positions([]dirEntry{entry}) != "[x->7f4abf+3]" {
-		t.Fatalf("hash %x, positions %s", entry.hashOf(), positions([]dirEntry{entry}))
+	// A hash-ordered position: the marker, the hash, the count.
+	hashed := dirEntry{Name: "x", Next: 0xFF<<52 | 0x7f4abf<<28 | 3}
+	if !hashed.hashOrdered() || hashed.hashOf() != 0x7f4abf || positions([]dirEntry{hashed}) != "[x->7f4abf+3 (raw 0xff7f4abf0000003)]" {
+		t.Fatalf("hash-ordered: %t %x %s", hashed.hashOrdered(), hashed.hashOf(), positions([]dirEntry{hashed}))
+	}
+	// The same bits without the marker are a fragment, and a marker that
+	// is not complete is none.
+	for _, next := range []uint64{0x7f4abf<<28 | 3, 0x7F<<52 | 0x7f4abf<<28 | 3, 0xFE<<52 | 3, 3} {
+		if e := (dirEntry{Name: "x", Next: next}); e.hashOrdered() || !strings.Contains(positions([]dirEntry{e}), "->frag ") {
+			t.Fatalf("position %#x counts as hash-ordered: %s", next, positions([]dirEntry{e}))
+		}
 	}
 }

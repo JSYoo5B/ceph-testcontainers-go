@@ -15,9 +15,35 @@ type dirEntry struct {
 	Next uint64 `json:"next"`
 }
 
-// hashOf is the dentry hash in a hash-ordered directory position: the 24
-// bits above the 28 bits that count entries of one hash.
-func (e dirEntry) hashOf() uint64 { return e.Next >> 28 & 0xFFFFFF }
+// A libcephfs directory position has a count in its low 28 bits and, above
+// them, either a dentry hash or a fragment. The client marks a hash-ordered
+// position by setting all eight bits above the 24 of the hash, which no
+// fragment has; without the marker the same bits name the fragment that
+// the entry was read from, and two entries of one fragment carry the same
+// value there whatever their names hash to.
+const (
+	positionCountBits = 28
+	positionHashBits  = 24
+	positionHashOrder = uint64(0xFF) << (positionCountBits + positionHashBits)
+)
+
+// hashOrdered reports whether the position carries the marker of a
+// hash-ordered listing. Only then is hashOf a dentry hash.
+func (e dirEntry) hashOrdered() bool { return e.Next&positionHashOrder == positionHashOrder }
+
+// hashOf is the 24 bits above the count: the dentry hash of a hash-ordered
+// position, and the fragment of any other.
+func (e dirEntry) hashOf() uint64 { return e.Next >> positionCountBits & (1<<positionHashBits - 1) }
+
+// allHashOrdered reports whether every entry's position is hash-ordered.
+func allHashOrdered(entries []dirEntry) bool {
+	for _, e := range entries {
+		if !e.hashOrdered() {
+			return false
+		}
+	}
+	return true
+}
 
 // diffEntry is one entry of a snapdiff stream: the name and the snapshot
 // the entry's state belongs to.
@@ -113,7 +139,12 @@ func judgeAfterSnapdiff(triggerNames, controlNames []string, changedTrigger, cha
 		}
 	}
 	// The layout that the case is about, read from the positions the
-	// client itself gave for the first listings.
+	// client itself gave for the first listings. A position says something
+	// about a dentry hash only when it is hash-ordered.
+	if !allHashOrdered(trigger.Before) || !allHashOrdered(control.Before) {
+		return fmt.Sprintf("condition not established: the first listings are not hash-ordered, so their positions name fragments, not dentry hashes: trigger %s, control %s",
+			positions(trigger.Before), positions(control.Before))
+	}
 	if len(trigger.Before) != 2 || trigger.Before[0].hashOf() != trigger.Before[1].hashOf() {
 		return fmt.Sprintf("condition not established: the two names of the trigger directory do not share a dentry hash: positions %s", positions(trigger.Before))
 	}
@@ -136,12 +167,17 @@ func judgeAfterSnapdiff(triggerNames, controlNames []string, changedTrigger, cha
 		changedTrigger, describe(triggerNames, entryNames(trigger.After)), positions(trigger.After), positions(trigger.Before))
 }
 
-// positions prints each entry with the hash and the count of its next
-// position.
+// positions prints each entry with its next position: the hash (or, in a
+// position without the hash-order marker, the fragment, shown as "frag")
+// and the count, and the raw value as the client gave it.
 func positions(entries []dirEntry) string {
 	parts := make([]string, len(entries))
 	for i, e := range entries {
-		parts[i] = fmt.Sprintf("%s->%06x+%d", e.Name, e.hashOf(), e.Next&(1<<28-1))
+		kind := "frag "
+		if e.hashOrdered() {
+			kind = ""
+		}
+		parts[i] = fmt.Sprintf("%s->%s%06x+%d (raw %#x)", e.Name, kind, e.hashOf(), e.Next&(1<<positionCountBits-1), e.Next)
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }
