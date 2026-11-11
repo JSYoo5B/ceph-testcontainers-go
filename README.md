@@ -36,7 +36,7 @@ Documentation for a published release is available at its Git tag.
   backup and restore.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
-    - [`rbd/mirror/expect`](rbd/mirror/expect/README.md): pure evaluations of
+    - [`rbd/expect`](rbd/expect/README.md): pure evaluations of
       captured receiver and image replay observations, with mismatch
       explanations.
 - [`cephfs`](cephfs/README.md): filesystems, MDS topology and data pools.

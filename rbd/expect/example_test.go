@@ -2,8 +2,8 @@ package expect_test
 
 import (
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 )
 
 // After the leader stops, the survivor must lead while the stopped member

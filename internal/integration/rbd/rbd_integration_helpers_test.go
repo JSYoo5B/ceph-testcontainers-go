@@ -12,8 +12,8 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -186,7 +186,7 @@ func requireRBDNamespaceMappingRefused(t *testing.T, err error, cluster *ceph.Co
 }
 
 func checkScopedWatchImage(pinned, observed rbdmirror.ImageStatus) error {
-	expected := rbdmirrorexpect.Image{Select: pinned, Replaying: observed.ReplayReady}
+	expected := rbdexpect.Image{Select: pinned, Replaying: observed.ReplayReady}
 	r, err := expected.Evaluate(observed)
 	if err != nil {
 		return err

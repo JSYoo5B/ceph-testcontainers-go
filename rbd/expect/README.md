@@ -1,6 +1,6 @@
 # Mirror expect
 
-Import `github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect` alongside
+Import `github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect` alongside
 `rbd/mirror` when a test wants a precise verdict on a receiver or image replay
 observation it already captured, with an explanation of each mismatch. A link
 needs nothing from this package to run, and a test that only runs, observes

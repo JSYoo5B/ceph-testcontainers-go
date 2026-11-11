@@ -11,8 +11,8 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -207,7 +207,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	stoppedAt := time.Now()
-	election := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: survivor, Running: true}, {Name: victim}}, Leader: survivor}
+	election := rbdexpect.Receivers{Select: []rbdexpect.ReceiverDaemon{{Name: survivor, Running: true}, {Name: victim}}, Leader: survivor}
 	elected := receivers.await(t, 4*time.Minute, "survivor election", func(e rbdmirror.ReceiverWatchEvent) bool {
 		result, err := election.Evaluate(e.Status)
 		if err != nil {
@@ -225,7 +225,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatalf("survivor readiness = %+v, %v", status, err)
 	}
-	if result, err := (rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: survivor, Running: true}}, Leader: survivor}).Evaluate(status); err != nil || !result.Matched {
+	if result, err := (rbdexpect.Receivers{Select: []rbdexpect.ReceiverDaemon{{Name: survivor, Running: true}}, Leader: survivor}).Evaluate(status); err != nil || !result.Matched {
 		t.Fatalf("survivor readiness: %v %v", result, err)
 	}
 
@@ -234,7 +234,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 	second := harness.RBDMultiClusterPayload(2<<20, 73)
 	harness.RBDScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, rbdMirrorWatchPool, "", "volume", 0, second)
 	checkpoint := harness.RBDReceiverNativeSnapshot(t, ctx, sourceClient, rbdMirrorWatchPool, "", "volume")
-	replay := rbdmirrorexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor, NewInstance: true}
+	replay := rbdexpect.Image{Select: imageBaseline.Status, Replaying: true, Daemon: survivor, NewInstance: true}
 	replaying := images.await(t, 4*time.Minute, "replayer moved", func(e rbdmirror.ImageWatchEvent) bool {
 		result, err := replay.Evaluate(e.Status)
 		if err != nil {
@@ -250,7 +250,7 @@ func testRBDMirrorWatch(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	restartedAt := time.Now()
-	restart := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: victim, Baseline: victimBefore, Running: true, NewInstance: true}}, Ready: true}
+	restart := rbdexpect.Receivers{Select: []rbdexpect.ReceiverDaemon{{Name: victim, Baseline: victimBefore, Running: true, NewInstance: true}}, Ready: true}
 	restarted := receivers.await(t, 4*time.Minute, "same-container restart", func(e rbdmirror.ReceiverWatchEvent) bool {
 		result, err := restart.Evaluate(e.Status)
 		if err != nil {

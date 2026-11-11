@@ -17,8 +17,8 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -260,7 +260,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			}
 			seenSource[image.sourceID], seenDestination[image.destinationID], seenGlobal[image.globalID] = true, true, true
 			images[index] = image
-			native := rbdmirrorexpect.Image{Select: rbdmirror.ImageStatus{Pool: pool, Name: "volume", SourceNamespace: mappings[index][0], DestinationNamespace: mappings[index][1], Mode: rbdmirror.Mode(mode),
+			native := rbdexpect.Image{Select: rbdmirror.ImageStatus{Pool: pool, Name: "volume", SourceNamespace: mappings[index][0], DestinationNamespace: mappings[index][1], Mode: rbdmirror.Mode(mode),
 				SourceImageID: image.sourceID, DestinationImageID: image.destinationID, GlobalID: image.globalID}, Replaying: true, Daemon: worker.DaemonName}
 			for _, observed := range []rbdmirror.ImageStatus{waited, report} {
 				if result, err := native.Evaluate(observed); err != nil || !result.Matched {
@@ -279,9 +279,9 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			t.Logf("RBD_NAMESPACE_IMAGE_READY %s", encoded)
 		}
 		legacy, err := owner.ImageStatus(ctx, "volume")
-		var result rbdmirrorexpect.ImageEvaluation
+		var result rbdexpect.ImageEvaluation
 		if err == nil {
-			result, err = rbdmirrorexpect.Image{Select: reports[0], Replaying: true}.Evaluate(legacy)
+			result, err = rbdexpect.Image{Select: reports[0], Replaying: true}.Evaluate(legacy)
 		}
 		if err != nil || !result.Matched {
 			t.Fatalf("legacy owner escaped original mapping/mode: %v %v", result, err)
@@ -323,11 +323,11 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		for index, view := range views {
 			report, err := view.ImageStatus(ctx, "volume")
 			expected := images[index]
-			var result rbdmirrorexpect.ImageEvaluation
+			var result rbdexpect.ImageEvaluation
 			if err == nil {
 				pinned := rbdmirror.ImageStatus{Pool: pool, Name: "volume", SourceNamespace: mappings[index][0], DestinationNamespace: mappings[index][1],
 					SourceImageID: expected.sourceID, DestinationImageID: expected.destinationID, GlobalID: expected.globalID}
-				result, err = rbdmirrorexpect.Image{Select: pinned}.Evaluate(report)
+				result, err = rbdexpect.Image{Select: pinned}.Evaluate(report)
 			}
 			if err != nil || !result.Matched {
 				t.Fatalf("%s stale native report became ready/adopted images: %v %v", phase, result, err)
@@ -418,7 +418,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	currentProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
 	before, beforeErr := time.Parse(time.RFC3339Nano, originalProcess.startedAt)
 	after, afterErr := time.Parse(time.RFC3339Nano, currentProcess.startedAt)
-	fresh, freshErr := rbdmirrorexpect.Image{Select: initial[0], Replaying: true, NewInstance: true}.Evaluate(restarted[0])
+	fresh, freshErr := rbdexpect.Image{Select: initial[0], Replaying: true, NewInstance: true}.Evaluate(restarted[0])
 	if receiver.GetContainerID() != cid || freshErr != nil || !fresh.Matched || beforeErr != nil || afterErr != nil || !after.After(before) {
 		t.Fatalf("same-CID restart did not retain container and create fresh task/instance: %v %v", fresh, freshErr)
 	}
@@ -458,7 +458,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		t.Fatal("explicit replacement changed original owner/customizer semantics", err)
 	}
 	replaced := check("explicit-replacement", replacement)
-	if result, err := (rbdmirrorexpect.Image{Select: restarted[0], Replaying: true, NewInstance: true}).Evaluate(replaced[0]); err != nil || !result.Matched {
+	if result, err := (rbdexpect.Image{Select: restarted[0], Replaying: true, NewInstance: true}).Evaluate(replaced[0]); err != nil || !result.Matched {
 		t.Fatalf("new container adopted the retired original native instance: %v %v", result, err)
 	}
 	verify("explicit-replacement")
