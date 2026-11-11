@@ -908,6 +908,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("        type: choice\n        default: native_rgw_translation\n", workflow)
         choices = re.findall(r"(?m)^          - ([a-z0-9_]+)$", workflow)
         self.assertEqual(sorted(choices), ["cephfs_dangling_symlink_create",
+                                           "cephfs_readdir_after_snapdiff",
                                            "cephfs_snapshot_readdir_eviction", "cephfs_statfs_mixed_quota",
                                            "failure_archive", "mon_log_ack", "native_rgw_translation",
                                            "native_shuffle", "rbd_demote_restart",

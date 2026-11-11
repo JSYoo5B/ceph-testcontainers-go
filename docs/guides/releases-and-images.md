@@ -319,6 +319,19 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestCephFSSnapshotListingAcrossCacheEviction` (batch
   `cephfs_snapshot_readdir_eviction`, experiment case
   [`cephfs_snapshot_readdir_eviction`](../../internal/integration/experiments/cephfs_snapshot_readdir_eviction/README.md)).
+- **Every release that was run, libcephfs snapshot listing after a snapdiff
+  on the same mount.** When two names of a directory have the same dentry
+  hash and the second of them changed between two snapshots, a libcephfs
+  mount that has listed the later snapshot and then reads a snapdiff of the
+  directory (`opensnapdiff`) lists that snapshot without the changed name
+  afterwards. Nothing reports an error, and a fresh mount lists both names.
+  Squid 19.2.2 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0
+  all do this; directories whose names have different hashes are listed in
+  full. A test that lists a snapshot through libcephfs after a snapdiff
+  should use a mount that did not read the snapdiff. See
+  `TestCephFSListingAfterSnapdiff` (batch `cephfs_readdir_after_snapdiff`,
+  experiment case
+  [`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)).
 - **Tentacle 20.2.4, libcephfs statfs below a byte quota and a nearer file
   quota.** At a directory that has only `ceph.quota.max_files`, below a
   directory with `ceph.quota.max_bytes`, statfs reports the capacity and the

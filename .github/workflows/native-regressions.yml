@@ -11,6 +11,7 @@ on:
           - native_rgw_translation
           - native_shuffle
           - cephfs_dangling_symlink_create
+          - cephfs_readdir_after_snapdiff
           - cephfs_statfs_mixed_quota
           - cephfs_snapshot_readdir_eviction
           - mon_log_ack
