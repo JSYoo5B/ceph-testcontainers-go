@@ -7,6 +7,7 @@ package mon_log_ack_peon_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +139,36 @@ func TestCommittedScrubsMustFollowThisWindowsMarker(t *testing.T) {
 				t.Fatalf("missing %v, error %v", missing, err)
 			}
 		})
+	}
+}
+
+func TestJudgeLogAck(t *testing.T) {
+	roles := map[string]string{"osd.0": "leader", "osd.1": "peon", "osd.2": "peon"}
+	acked := map[string]string{"osd.1": "acknowledged through mon.b tid 7", "osd.2": "acknowledged through mon.c tid 9"}
+	lost := map[string][]string{"mon.b": {"198:34"}, "mon.c": nil}
+	for _, c := range []struct {
+		name    string
+		roles   map[string]string
+		unacked []string
+		routes  map[string]string
+		symptom bool
+		fault   string
+	}{
+		{"every OSD acknowledged through its peon", roles, nil, acked, false, ""},
+		{"peon-connected OSD never acknowledged", roles, []string{"osd.1"}, map[string]string{"osd.1": "the MLogAck of tid 198 was discarded", "osd.2": acked["osd.2"]}, true, ""},
+		{"leader-connected control not acknowledged", roles, []string{"osd.0", "osd.1"}, acked, false, "control failed:"},
+		{"peon-connected OSD acknowledged another way", roles, nil, map[string]string{"osd.1": "no MLog of osd.1 was forwarded", "osd.2": acked["osd.2"]}, false, "another fault:"},
+		{"no peon-connected OSD", map[string]string{"osd.0": "leader"}, nil, nil, false, "condition not established:"},
+	} {
+		symptom, detail, err := judgeLogAck(c.roles, c.unacked, c.routes, lost)
+		if c.fault != "" {
+			if err == nil || !strings.HasPrefix(err.Error(), c.fault) {
+				t.Errorf("%s: %v, want %s", c.name, err, c.fault)
+			}
+			continue
+		}
+		if err != nil || symptom != c.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", c.name, symptom, detail, err, c.symptom)
+		}
 	}
 }

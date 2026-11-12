@@ -233,3 +233,44 @@ func missingScrubCommits(data []byte, marker string, roles map[string]string) ([
 	slices.Sort(missing)
 	return missing, nil
 }
+
+// judgeLogAck judges a stable window. The leader-connected OSDs are the
+// control: an unacknowledged one makes the oracle invalid (control failed).
+// The documented symptom is a peon-connected OSD whose committed entries were
+// never acknowledged. Every OSD acknowledged, each peon-connected one through
+// the MLogAck its peon routed back, means the symptom is absent. A
+// peon-connected OSD acknowledged some other way is another fault: no
+// verdict.
+func judgeLogAck(roles map[string]string, unacked []string, routes map[string]string, lost map[string][]string) (symptom bool, detail string, err error) {
+	var leaderless []string
+	for _, entity := range unacked {
+		if roles[entity] == "leader" {
+			leaderless = append(leaderless, entity)
+		}
+	}
+	if len(leaderless) != 0 {
+		return false, "", fmt.Errorf("control failed: the leader-connected OSDs %v were not acknowledged", leaderless)
+	}
+	if len(unacked) != 0 {
+		counts := map[string]int{}
+		for mon, acks := range lost {
+			counts[mon] = len(acks)
+		}
+		return true, fmt.Sprintf("the cluster log entries of the peon-connected OSDs %v were committed but never acknowledged (%v); the peons discarded routed MLogAcks %v", unacked, routes, counts), nil
+	}
+	var peons []string
+	for entity, role := range roles {
+		if role != "peon" {
+			continue
+		}
+		if !strings.HasPrefix(routes[entity], "acknowledged through") {
+			return false, "", fmt.Errorf("another fault: %s was acknowledged, but not through its peon: %s", entity, routes[entity])
+		}
+		peons = append(peons, entity)
+	}
+	if len(peons) == 0 {
+		return false, "", fmt.Errorf("condition not established: no peon-connected OSD in roles %v", roles)
+	}
+	slices.Sort(peons)
+	return false, fmt.Sprintf("every OSD was acknowledged, the peon-connected OSDs %v through their peons (%v)", peons, routes), nil
+}

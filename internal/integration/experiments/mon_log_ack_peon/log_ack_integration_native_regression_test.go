@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,10 +22,11 @@ import (
 
 // TestMONLogAckThroughPeon requires every OSD's cluster log entries to be
 // acknowledged, whether its MON session is with the leader or with a peon
-// that forwards them (issue 389). It fails on images whose leader also calls
-// no_reply for a forwarded MLog, such as 20.2.4: the leader commits the
-// peon-forwarded MLog, but the peon discards the MLogAck, so the OSD's
-// LogClient queue is never trimmed. It passes on 19.2.2.
+// that forwards them (issue 389), and reports the mon_log_ack_peon verdict.
+// It is REPRODUCED on images whose leader also calls no_reply for a
+// forwarded MLog, such as 20.2.4: the leader commits the peon-forwarded MLog,
+// but the peon discards the MLogAck, so the OSD's LogClient queue is never
+// trimmed. It is NOT_REPRODUCED on 19.2.2.
 //
 // Three MONs and three OSDs start. If the OSDs' sessions do not include one
 // with the leader and one with a peon, the MON holding most of them is
@@ -39,12 +39,13 @@ import (
 func TestMONLogAckThroughPeon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "mon_log_ack_peon", "peon-ack")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3)))
 	t.Logf("MON_LOG_ACK ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	mons := clusteraccess.Monitors(t, cluster)
 	osds := clusteraccess.OSDs(t, cluster)
 
-	leader, epoch, sessions := arrangeLogAckSessions(t, ctx, cluster, mons)
+	leader, epoch, sessions := arrangeLogAckSessions(t, repro, ctx, cluster, mons)
 	roles := map[string]string{}
 	for _, o := range osds {
 		entity := fmt.Sprintf("osd.%d", o.ID)
@@ -75,7 +76,7 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 		offsets[fmt.Sprintf("osd.%d", o.ID)] = len(logAckContainerLog(t, ctx, o))
 	}
 	if l, e, s, err := readLogAckLayout(t, ctx, cluster, mons); err != nil || l != leader || e != epoch || fmt.Sprint(s) != fmt.Sprint(sessions) {
-		t.Fatalf("the layout changed before the window: leader mon.%s, election epoch %d, sessions %v: %v", l, e, s, err)
+		repro.Inconclusive(t, "condition not established: the layout changed before the window: leader mon.%s, election epoch %d, sessions %v: %v", l, e, s, err)
 	}
 	marker := "tc-mon-log-ack-window-" + uuid.NewString()
 	harness.MustCeph(t, ctx, cluster, "log", marker)
@@ -94,7 +95,7 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cluster log has no scrub completion for %v after %s", missing, marker)
+			repro.Inconclusive(t, "condition not established: cluster log has no scrub completion for %v after %s", missing, marker)
 		}
 	}
 
@@ -149,39 +150,28 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 		"routes": routes, "transitions": transitions, "lost_routed_acks": lost})
 	t.Logf("MON_LOG_ACK_RECEIPT %s", receipt)
 	if layoutErr != nil || len(transitions) != 0 || after != leader || afterEpoch != epoch || fmt.Sprint(afterSessions) != fmt.Sprint(sessions) {
-		t.Fatalf("the window changed, so the comparison is invalid: leader mon.%s -> mon.%s, election epoch %d -> %d, sessions %v -> %v, session transitions %v: %v",
+		repro.Inconclusive(t, "condition not established: the window changed, so the comparison is invalid: leader mon.%s -> mon.%s, election epoch %d -> %d, sessions %v -> %v, session transitions %v: %v",
 			leader, after, epoch, afterEpoch, sessions, afterSessions, transitions, layoutErr)
 	}
-	var peonless []string
-	for _, entity := range unacked {
-		if roles[entity] == "leader" {
-			peonless = append(peonless, entity)
-		}
+	symptom, detail, err := judgeLogAck(roles, unacked, routes, lost)
+	switch {
+	case err != nil:
+		repro.Inconclusive(t, "%v (progress %v)", err, progress)
+	case symptom:
+		repro.Symptom(t, "peon-ack", "%s", detail)
+	default:
+		repro.Absent(t, "peon-ack", "%s", detail)
 	}
-	if len(peonless) != 0 {
-		t.Fatalf("the leader-connected OSDs %v were not acknowledged, so the oracle is invalid: %v", peonless, progress)
-	}
-	if len(unacked) != 0 {
-		counts := map[string]int{}
-		for mon, acks := range lost {
-			counts[mon] = len(acks)
-		}
-		t.Fatalf("the cluster log entries of the peon-connected OSDs %v were committed but never acknowledged (%v); the peons discarded routed MLogAcks %v", unacked, routes, counts)
-	}
-	for entity, role := range roles {
-		if role == "peon" && !strings.HasPrefix(routes[entity], "acknowledged through") {
-			t.Fatalf("%s was acknowledged, but not through its peon: %s", entity, routes[entity])
-		}
-	}
+	repro.Conclude()
 }
 
 // arrangeLogAckSessions waits for a stable three-MON quorum whose OSD
 // sessions include one with the leader and one with a peon, restarting the
 // MON with the most OSD sessions, at most four times, until they do.
-func arrangeLogAckSessions(t *testing.T, ctx context.Context, cluster *ceph.Container, mons []*ceph.MonitorContainer) (string, int, map[string]logAckSessionID) {
+func arrangeLogAckSessions(t *testing.T, repro *harness.Reproduction, ctx context.Context, cluster *ceph.Container, mons []*ceph.MonitorContainer) (string, int, map[string]logAckSessionID) {
 	t.Helper()
 	for attempt := 0; ; attempt++ {
-		leader, epoch, sessions := logAckLayout(t, ctx, cluster, mons)
+		leader, epoch, sessions := logAckLayout(t, repro, ctx, cluster, mons)
 		count := map[string]int{}
 		roles := map[string]bool{}
 		for _, id := range sessions {
@@ -192,7 +182,7 @@ func arrangeLogAckSessions(t *testing.T, ctx context.Context, cluster *ceph.Cont
 			return leader, epoch, sessions
 		}
 		if attempt == 4 {
-			t.Fatalf("no arrangement with OSD sessions on the leader and on a peon after %d restarts: leader mon.%s, sessions %v", attempt, leader, sessions)
+			repro.Inconclusive(t, "unavailable prerequisite: no arrangement with OSD sessions on the leader and on a peon after %d restarts: leader mon.%s, sessions %v", attempt, leader, sessions)
 		}
 		busiest := ""
 		for mon, n := range count {
@@ -252,7 +242,7 @@ func readLogAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container
 
 // logAckLayout waits until readLogAckLayout reads the same layout twice in a
 // row, five seconds apart. It is used only before the window.
-func logAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container, mons []*ceph.MonitorContainer) (string, int, map[string]logAckSessionID) {
+func logAckLayout(t *testing.T, repro *harness.Reproduction, ctx context.Context, cluster *ceph.Container, mons []*ceph.MonitorContainer) (string, int, map[string]logAckSessionID) {
 	t.Helper()
 	var last error
 	for deadline := time.Now().Add(3 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
@@ -268,7 +258,7 @@ func logAckLayout(t *testing.T, ctx context.Context, cluster *ceph.Container, mo
 		}
 		last = err
 	}
-	t.Fatalf("no stable three-MON layout: %v", last)
+	repro.Inconclusive(t, "unavailable prerequisite: no stable three-MON layout: %v", last)
 	return "", 0, nil
 }
 
