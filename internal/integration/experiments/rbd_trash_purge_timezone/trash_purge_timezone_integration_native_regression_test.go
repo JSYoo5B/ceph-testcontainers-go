@@ -94,11 +94,14 @@ var trashPurgeZones = []struct {
 // TestRBDTrashPurgeCutoffAcrossClientTimezones purges equivalent trash
 // contents with one timezone-aware cutoff from client processes in three
 // timezones and requires each to remove exactly the images whose deferment
-// ended by that instant. judgeTrashPurge tells the failed UTC control and a
-// result no reading of the cutoff explains from the timezone shift.
+// ended by that instant. It reports one rbd_trash_purge_timezone verdict
+// with the observations ahead-9h and behind-9h; the purge from UTC is their
+// control. judgeTrashPurge tells the failed UTC control and a result no
+// reading of the cutoff explains from the timezone shift.
 func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rbd_trash_purge_timezone", "ahead-9h", "behind-9h")
 	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
@@ -133,12 +136,12 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 		}
 		got, out := script(t, "UTC0", "move", pool, string(encoded))
 		if len(got.Before) != len(delays) {
-			t.Fatalf("condition not established: the trash of %s holds %d images, want %d: %s", pool, len(got.Before), len(delays), out)
+			repro.Inconclusive(t, "condition not established: the trash of %s holds %d images, want %d: %s", pool, len(got.Before), len(delays), out)
 		}
 		for _, entry := range got.Before {
 			delay, ok := delays[entry.Name]
 			if !ok || entry.ID == "" || entry.Deadline < got.Started+delay-120 || entry.Deadline > got.Moved+delay+120 {
-				t.Fatalf("condition not established: %s in the trash of %s has the deadline %d, want its delay after the moves (%d to %d) within two minutes: %s", trashPurgeName(entry), pool, entry.Deadline, got.Started, got.Moved, out)
+				repro.Inconclusive(t, "condition not established: %s in the trash of %s has the deadline %d, want its delay after the moves (%d to %d) within two minutes: %s", trashPurgeName(entry), pool, entry.Deadline, got.Started, got.Moved, out)
 			}
 		}
 		moved[pool], last = got.Before, max(last, got.Moved)
@@ -148,7 +151,7 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	// the same images on either side in each pool.
 	cutoff := last + int64(trashPurgeCutoff/time.Second)
 	if err := trashPurgeBracket(moved, cutoff); err != nil {
-		t.Fatalf("condition not established: %v", err)
+		repro.Inconclusive(t, "condition not established: %v", err)
 	}
 	t.Logf("cutoff of every purge: %d (%s)", cutoff, time.Unix(cutoff, 0).UTC().Format(time.RFC3339))
 
@@ -159,7 +162,7 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 		passed := t.Run(zone.name, func(t *testing.T) {
 			pool := trashPurgePool(zone.name)
 			if !control {
-				t.Fatalf("control failed: the purge from a client process in UTC failed, and the trash of %s was not purged", pool)
+				repro.Inconclusive(t, "control failed: the purge from a client process in UTC failed, and the trash of %s was not purged", pool)
 			}
 			got, out := script(t, zone.tz, "purge", pool, fmt.Sprint(cutoff))
 			// Conditions: the client process ran in the timezone, it built
@@ -167,29 +170,38 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 			// the moves left it, with the deadlines read the same in its
 			// timezone.
 			if got.UTCOffset != zone.offset {
-				t.Fatalf("condition not established: the client's UTC offset is %d s, want %d: %s", got.UTCOffset, zone.offset, out)
+				repro.Inconclusive(t, "condition not established: the client's UTC offset is %d s, want %d: %s", got.UTCOffset, zone.offset, out)
 			}
 			if got.Cutoff != cutoff {
-				t.Fatalf("condition not established: the client purged with the cutoff %d, want %d: %s", got.Cutoff, cutoff, out)
+				repro.Inconclusive(t, "condition not established: the client purged with the cutoff %d, want %d: %s", got.Cutoff, cutoff, out)
 			}
 			if !slices.Equal(got.Before, moved[pool]) {
-				t.Fatalf("condition not established: the trash before the purge is %v, and the moves left %v", got.Before, moved[pool])
+				repro.Inconclusive(t, "condition not established: the trash before the purge is %v, and the moves left %v", got.Before, moved[pool])
 			}
 			// The fields of the cutoff read as the client's local time name
 			// an instant the client's UTC offset earlier.
 			if got.MkTime-got.Cutoff != -zone.offset {
-				t.Fatalf("condition not established: the cutoff's fields read as local time are %d s from the cutoff, want %d: %s", got.MkTime-got.Cutoff, -zone.offset, out)
+				repro.Inconclusive(t, "condition not established: the cutoff's fields read as local time are %d s from the cutoff, want %d: %s", got.MkTime-got.Cutoff, -zone.offset, out)
 			}
 			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %d (%s); the cutoff's fields read as local time are %+dh from it; deadlines from the cutoff %v; retained %v, by the instant %v, by the local reading %v",
 				zone.tz, got.UTCOffset/3600, got.Cutoff, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(moved[pool], cutoff), trashPurgeNames(got.After), trashPurgeKept(moved[pool], cutoff), trashPurgeKept(moved[pool], got.MkTime))
-			if err := judgeTrashPurge(got.UTCOffset, got.Cutoff, got.MkTime, moved[pool], got.After); err != nil {
-				t.Fatal(err)
+			symptom, detail, err := judgeTrashPurge(got.UTCOffset, got.Cutoff, got.MkTime, moved[pool], got.After)
+			switch {
+			case err != nil:
+				repro.Inconclusive(t, "%v", err)
+			case zone.offset == 0:
+				t.Logf("control held: %s", detail)
+			case symptom:
+				repro.Symptom(t, zone.name, "%s", detail)
+			default:
+				repro.Absent(t, zone.name, "%s", detail)
 			}
 		})
 		if zone.offset == 0 {
 			control = passed
 		}
 	}
+	repro.Conclude()
 }
 
 func trashPurgePool(zone string) string { return "tc-trash-purge-" + zone }

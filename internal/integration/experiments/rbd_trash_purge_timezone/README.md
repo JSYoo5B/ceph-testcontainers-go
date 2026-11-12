@@ -25,7 +25,7 @@ it passed.
 Squid 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 have the same conversion.
 Upstream reference: [tracker 80938](https://tracker.ceph.com/issues/80938).
 
-The test fails on every published image in the two subtests away from UTC.
+Every published image reproduces it in the two subtests away from UTC.
 That is the expected result for an unpatched defect; it is not a fixture
 failure. The `rbd trash purge --expires-before` command does not use this
 conversion and is not covered.
@@ -41,9 +41,10 @@ conversion and is not covered.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 40 seconds (38 s on
-Tentacle 20.2.4, 37 s on Umbrella 21.2.0, 45 s on Squid 19.2.5) and fails in
-the `ahead-9h` and `behind-9h` subtests on every published image. No
+Deliberately failing reproducer (without an expectation): one run takes
+about 40 seconds (38 s on Tentacle 20.2.4, 37 s on Umbrella 21.2.0, 45 s on
+Squid 19.2.5) and fails in the `ahead-9h` and `behind-9h` subtests on every
+published image. No
 automatic run includes it (the default checks of a pull request, pushes to
 `main`, periodic samples), and it never gates anything. A maintainer can
 run it on demand, also on a pull request's head with the comment below.
@@ -63,6 +64,16 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 or, exactly as CI runs the batch:
 
 ```sh
+python3 .github/scripts/tag_scenarios.py optional --batch rbd_trash_purge_timezone \
+  --package ./internal/integration/experiments/rbd_trash_purge_timezone \
+  --directory "artifacts/rbd-trash-purge-timezone-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+To check the reproducer against an affected build, declare the expected
+verdict; the run then passes only on that verdict:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rbd_trash_purge_timezone=REPRODUCED \
 python3 .github/scripts/tag_scenarios.py optional --batch rbd_trash_purge_timezone \
   --package ./internal/integration/experiments/rbd_trash_purge_timezone \
   --directory "artifacts/rbd-trash-purge-timezone-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -114,33 +125,42 @@ the seconds between the moves of the pools do not change an outcome. The
 10-minute image is removed and the 30-hour image retained in every
 timezone.
 
-## Reading the result
+## Verdict
 
-- **Pass:** all three subtests retained the 15-hour and 30-hour images. No
-  published image passes today.
-- **Observed bug:** the failure starts with `observed defect:`: the trash
-  retains what the cutoff's fields read as local time keep. Nine hours
-  ahead of UTC the 6-hour image is retained as well; nine hours behind,
-  only the 30-hour image is, so an image whose deferment ends five hours
-  after the cutoff was removed. The receipt
-  (`RBD_TRASH_PURGE_TIMEZONE_RECEIPT`) gives the shift of the cutoff.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  receipts: each must name its UTC offset.
-- **Unavailable prerequisite:** the cluster or its client does not start,
-  or the client's `python3` lacks the `rbd` module. The test or the script
-  fails before a receipt.
-- **Condition not established:** the failure starts with
-  `condition not established`: a deadline is not where the cutoff needs
-  it, the process did not run in the timezone or did not purge with the one
+The test reports one unit, `rbd_trash_purge_timezone`, in one
+`REPRODUCTION_VERDICT` line, with the observations `ahead-9h` and
+`behind-9h`. Both subtests evaluate the same conversion with the same
+trigger and the same UTC control; they differ only in the sign of the
+shift, and a build that fixes the conversion fixes both directions, so they
+are one unit and a row expects one verdict for the case. `utc` is the
+control, not an observation.
+
+- **REPRODUCED:** a purge away from UTC retained what the cutoff's fields
+  read as local time keep (the `ahead-9h` or `behind-9h` subtest fails with
+  `observed defect:`). Nine hours ahead of UTC the 6-hour image is retained
+  as well; nine hours behind, only the 30-hour image is, so an image whose
+  deferment ends five hours after the cutoff was removed. The receipt
+  (`RBD_TRASH_PURGE_TIMEZONE_RECEIPT`) gives the shift of the cutoff. Every
+  published image gives this verdict.
+- **NOT_REPRODUCED:** the UTC control held and both purges away from UTC
+  retained the 15-hour and 30-hour images. Check the receipts: each must
+  name its UTC offset.
+- **INCONCLUSIVE:** the reason names the category. Unavailable
+  prerequisite: the cluster or its client does not start, or the client's
+  `python3` lacks the `rbd` module (the test ends before a verdict).
+  Condition not established: a deadline is not where the cutoff needs it,
+  the process did not run in the timezone or did not purge with the one
   cutoff, the trash changed between the moves and the purge, or the
   cutoff's fields read as local time are not the client's UTC offset from
-  it.
-- **Control failed:** the failure starts with `control failed`: the purge
-  from UTC did not retain exactly the 15-hour and 30-hour images. The other
-  subtests fail with the same prefix without purging.
-- **Another fault:** the failure starts with `another fault:`: a purge away
-  from UTC retained neither the entries the cutoff keeps nor the entries
-  its local reading keeps. It is not the defect of this case.
+  it. Control failed: the purge from UTC did not retain exactly the 15-hour
+  and 30-hour images; the other subtests are not purged. Another fault: a
+  purge away from UTC retained neither the entries the cutoff keeps nor the
+  entries its local reading keeps.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the observing
+subtest, absence passes it and an inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=rbd_trash_purge_timezone=<REPRODUCED|NOT_REPRODUCED>`
+only that verdict passes.
 
 ## Cleanup and limits
 
