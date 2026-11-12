@@ -47,8 +47,8 @@ unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
-Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
+Deliberately failing reproducer: one run takes about 35 seconds and
+reproduces on Tentacle 20.2.4, so without an expectation it fails there. No automatic run includes it (the default checks of a pull
 request, pushes to `main`, periodic samples), and it never gates anything. A
 maintainer can run it on demand, also on a pull request's head with the
 comment below.
@@ -141,24 +141,49 @@ The results below ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, cl
 (essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the 20.2.5 aggregate `sha256:4337ac8ac81d…`, each with
 the client module of its own release.
 
-- **Pass:** every directory below a byte quota reported that quota. Squid
-  19.2.5 (40 s), Tentacle 20.2.5 (34 s) and Umbrella 21.2.0 (34 s) pass.
-- **Observed bug:** the failure starts with `observed defect:` and names
-  `parent/child` with the blocks it reported. Tentacle 20.2.4 (33 s) reports
-  236 blocks with 236 free there, which is what `unlimited` reports, while
-  every control reports its quota.
-- **Not reproduced:** a pass on a build claimed to be affected. Check in the
-  receipt (`CEPHFS_STATFS_MIXED_QUOTA_RECEIPT`) that `parent/child` has
+Tentacle 20.2.4 (33 s) reproduces the defect (`REPRODUCED`): it reports 236
+blocks with 236 free at `parent/child`, which is what `unlimited` reports,
+while every control reports its quota. Squid 19.2.5 (40 s), Tentacle 20.2.5
+(34 s) and Umbrella 21.2.0 (34 s) do not (`NOT_REPRODUCED`): every directory
+below a byte quota reported that quota.
+
+## Verdict
+
+The test is the reproduction unit `cephfs_statfs_mixed_quota` with one
+planned observation, `statfs-below-byte-quota`, which judges every
+directory below a byte quota. It prints one line that starts with
+`REPRODUCTION_VERDICT case=cephfs_statfs_mixed_quota`.
+
+- `REPRODUCED`: every condition held, every control directory reported its
+  byte quota, and `parent/child` did not. The observation names
+  `parent/child` with the blocks it reported. Without an expectation the
+  test fails with `observed defect: statfs-below-byte-quota:`.
+- `NOT_REPRODUCED`: every condition held and every directory below a byte
+  quota reported that quota, `parent/child` included. Without an
+  expectation the test passes. On a build claimed to be affected, check in
+  the receipt (`CEPHFS_STATFS_MIXED_QUOTA_RECEIPT`) that `parent/child` has
   `max_files` 100 and `max_bytes` 0 and that the client reports the release.
-- **Unavailable prerequisite:** the failure starts with
-  `unavailable prerequisite`: the cluster, the filesystem or the client does
-  not start, or the client's `python3` cannot mount or prepare the layout.
-- **Condition not established:** the failure starts with
-  `condition not established` and names the condition of the list above
-  that did not hold. It is not a reproduction and not a pass.
-- **Control failed:** the failure starts with `control failed`: a directory
-  other than `parent/child` did not report its byte quota. The trigger's
-  result then says nothing about the nested quotas.
+- `INCONCLUSIVE`: no verdict on the symptom; the test fails and the reason
+  starts with its category. `unavailable prerequisite:` the cluster, the
+  filesystem or the client does not start, or the client's `python3` cannot
+  mount or prepare the layout. `condition not established:` a condition of
+  the list above did not hold. `control failed:` a directory other than
+  `parent/child` did not report its byte quota, so the trigger's result says
+  nothing about the nested quotas.
+
+An expectation turns the verdict into the result: only the expected verdict
+passes, and a skip or `INCONCLUSIVE` never does. With the role images of a
+release exported as above, 20.2.4 expects `REPRODUCED`:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=cephfs_statfs_mixed_quota=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_statfs_mixed_quota \
+  --package ./internal/integration/experiments/cephfs_statfs_mixed_quota \
+  --directory "artifacts/cephfs-statfs-mixed-quota-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+and 21.2.0 or 19.2.5, the fixed builds, expect
+`CEPH_TEST_EXPECTED_VERDICT=cephfs_statfs_mixed_quota=NOT_REPRODUCED`.
 
 ## Cleanup and limits
 

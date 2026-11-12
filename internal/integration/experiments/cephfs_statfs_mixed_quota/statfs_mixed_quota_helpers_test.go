@@ -80,19 +80,21 @@ type statfsReport struct {
 	Dirs      []statfsDir  `json:"dirs"`
 }
 
-// judgeStatfs compares a report with the layout. Its error starts with
-// "condition not established" when the report cannot answer the question,
-// with "control failed" when a control directory does not report its byte
-// quota, and with "observed defect" when only the trigger directory does not.
-func judgeStatfs(layout []statfsSpec, report statfsReport) error {
+// judgeStatfs compares a report with the layout. The trigger directory not
+// reporting its byte quota, while every control does, is the symptom; every
+// directory reporting it is its absence. Its error starts with "condition
+// not established" when the report cannot answer the question, and with
+// "control failed" when a control directory does not report its byte quota:
+// no verdict.
+func judgeStatfs(layout []statfsSpec, report statfsReport) (symptom bool, detail string, err error) {
 	if report.Client == 0 || report.Quota != "true" || report.QuotaDF != "true" {
-		return fmt.Errorf("condition not established: client %d runs with client_quota=%q and client_quota_df=%q", report.Client, report.Quota, report.QuotaDF)
+		return false, "", fmt.Errorf("condition not established: client %d runs with client_quota=%q and client_quota_df=%q", report.Client, report.Quota, report.QuotaDF)
 	}
 	if !report.Converged || len(report.Polls) == 0 {
-		return fmt.Errorf("condition not established: the recursive bytes did not reach the layout's in %d readings: %+v", len(report.Polls), report.Polls)
+		return false, "", fmt.Errorf("condition not established: the recursive bytes did not reach the layout's in %d readings: %+v", len(report.Polls), report.Polls)
 	}
 	if len(report.Dirs) != len(layout) {
-		return fmt.Errorf("condition not established: %d directories reported, want %d", len(report.Dirs), len(layout))
+		return false, "", fmt.Errorf("condition not established: %d directories reported, want %d", len(report.Dirs), len(layout))
 	}
 	seen := map[string]statfsDir{}
 	inodes := map[uint64]string{}
@@ -100,17 +102,17 @@ func judgeStatfs(layout []statfsSpec, report statfsReport) error {
 	for i, spec := range layout {
 		dir := report.Dirs[i]
 		if other, twice := inodes[dir.Inode]; dir.Path != spec.Path || dir.Inode == 0 || twice {
-			return fmt.Errorf("condition not established: directory %d is %q with inode %d (also %q), want %q with an inode of its own", i, dir.Path, dir.Inode, other, spec.Path)
+			return false, "", fmt.Errorf("condition not established: directory %d is %q with inode %d (also %q), want %q with an inode of its own", i, dir.Path, dir.Inode, other, spec.Path)
 		}
 		inodes[dir.Inode], seen[dir.Path] = dir.Path, dir
 		// The client reports both quota attributes of a directory as present
 		// as soon as one of them is set, the other with the value 0.
 		any := spec.MaxBytes != 0 || spec.MaxFiles != 0
 		if dir.MaxBytes != spec.MaxBytes || dir.BytesSet != any || dir.MaxFiles != spec.MaxFiles || dir.FilesSet != any {
-			return fmt.Errorf("condition not established: %s has max_bytes %d (present %t) and max_files %d (present %t), want %d and %d, present %t", dir.Path, dir.MaxBytes, dir.BytesSet, dir.MaxFiles, dir.FilesSet, spec.MaxBytes, spec.MaxFiles, any)
+			return false, "", fmt.Errorf("condition not established: %s has max_bytes %d (present %t) and max_files %d (present %t), want %d and %d, present %t", dir.Path, dir.MaxBytes, dir.BytesSet, dir.MaxFiles, dir.FilesSet, spec.MaxBytes, spec.MaxFiles, any)
 		}
 		if dir.RBytes != spec.RBytes || dir.BSize != statfsBlock {
-			return fmt.Errorf("condition not established: %s holds %d recursive bytes and reports a block size of %d, want %d and %d", dir.Path, dir.RBytes, dir.BSize, spec.RBytes, statfsBlock)
+			return false, "", fmt.Errorf("condition not established: %s holds %d recursive bytes and reports a block size of %d, want %d and %d", dir.Path, dir.RBytes, dir.BSize, spec.RBytes, statfsBlock)
 		}
 		if spec.ByteRoot == "" {
 			unlimited = &report.Dirs[i]
@@ -119,7 +121,7 @@ func judgeStatfs(layout []statfsSpec, report statfsReport) error {
 	// Without a byte quota above it a directory reports the data pool, which
 	// must be told apart from a quota.
 	if unlimited == nil || unlimited.Blocks <= statfsByteQuota/statfsBlock {
-		return fmt.Errorf("condition not established: the directory without a byte quota reports %+v, not a capacity above the quota's %d blocks", unlimited, statfsByteQuota/statfsBlock)
+		return false, "", fmt.Errorf("condition not established: the directory without a byte quota reports %+v, not a capacity above the quota's %d blocks", unlimited, statfsByteQuota/statfsBlock)
 	}
 	var controls, triggers []string
 	for _, spec := range layout {
@@ -143,10 +145,10 @@ func judgeStatfs(layout []statfsSpec, report statfsReport) error {
 		}
 	}
 	if len(controls) > 0 {
-		return fmt.Errorf("control failed: %v", slices.Concat(controls, triggers))
+		return false, "", fmt.Errorf("control failed: %v", slices.Concat(controls, triggers))
 	}
 	if len(triggers) > 0 {
-		return fmt.Errorf("observed defect: %v", triggers)
+		return true, fmt.Sprintf("%v", triggers), nil
 	}
-	return nil
+	return false, "every directory below a byte quota reports the capacity and the free blocks of that quota", nil
 }
