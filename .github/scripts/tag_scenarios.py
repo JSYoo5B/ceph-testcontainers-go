@@ -1172,6 +1172,12 @@ def selected_tests(catalog, package, tags):
     return sorted(tests)
 
 
+def compiled_paths(catalog, package, tags, root=ROOT):
+    """The test files of package that the tags compile."""
+    return [Path(root) / file["path"] for file in catalog
+            if package_path(file) == package and evaluate(file["constraint"], set(tags.split(",")))]
+
+
 def selected_suite_cases(catalog, package, tags, expected):
     """The testify suite methods that this execution runs, each with the
     tests that run its suite type. suite.Run discovers the methods by
@@ -1597,12 +1603,17 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
                             "build_key": receipt["build_key"]}
     # When the images match a verified combination, every unit it expects a
     # verdict of in this run must report that verdict in its own line; a
-    # skip, a missing line or INCONCLUSIVE fails even if Go passed.
+    # skip, a missing line or INCONCLUSIVE fails even if Go passed. A unit
+    # counts as in this run only when a test that runs starts it, so a
+    # profile of the package's pure tests expects no verdict.
     combination, verdicts = None, {}
     if reproduction_catalog is not None:
         combination, verdicts = reproductions.expectations(reproduction_catalog, os.environ,
                                                            native_platform(root)["target"],
                                                            network if tests else None, root)
+        started = reproductions.started_units(compiled_paths(catalog, profile["package"], profile["tags"], root),
+                                              expected)
+        verdicts = {unit: verdict for unit, verdict in verdicts.items() if unit in started}
     result["reproduction"] = reproductions.check(text, combination, verdicts)
     result["passed"] = result["classification"] == "passed" and result["reproduction"]["met"]
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

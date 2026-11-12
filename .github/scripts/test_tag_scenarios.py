@@ -989,6 +989,54 @@ class CompletionTests(unittest.TestCase):
             engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
                                Path(temporary) / "output", Path(temporary))
 
+    def test_verdicts_are_expected_only_of_the_reproducers_a_profile_runs(self):
+        case = "internal/integration/experiments/rgw_case/"
+        pure = fixture(path=case + "case_fixture_test.go", tests=("TestParsesTheResponse",), batch="pure")
+        native = fixture(path=case + "case_native_regression_test.go", tests=("TestCase",), batch="rgw_case")
+        plan = engine.discover([pure, native])
+        images = {"essential": "sha256:" + "e" * 64, "client": "sha256:" + "c" * 64, "rgw": "sha256:" + "b" * 64}
+        environment = {"CEPH_TEST_ESSENTIAL_IMAGE": images["essential"], "CEPH_TEST_CLIENT_IMAGE": images["client"],
+                       "CEPH_TEST_RGW_IMAGE": images["rgw"]}
+        verdict = ("    case_native_regression_test.go:9: REPRODUCTION_VERDICT case=rgw_case verdict=REPRODUCED "
+                   "expected=REPRODUCED combination=affected attempts=1 platform=linux/amd64 network=bridge images=x "
+                   "observation=trigger: x")
+
+        def run(batch, test, log):
+            process = unittest.mock.Mock()
+            process.stdout = io.StringIO(log)
+            process.wait.return_value = 0
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "go.mod").write_text("module example\n")
+                (root / case).mkdir(parents=True)
+                (root / pure["path"]).write_text("package rgw_case_test\n\nfunc TestParsesTheResponse(t *testing.T) {\n"
+                                                 "\t_ = parseResponse(\"x\")\n}\n")
+                (root / case / "case_helpers_test.go").write_text(
+                    "package rgw_case_test\n\nfunc parseResponse(text string) string {\n\treturn text\n}\n")
+                (root / native["path"]).write_text("package rgw_case_test\n\nfunc TestCase(t *testing.T) {\n"
+                                                   "\trepro := harness.StartReproduction(t, \"rgw_case\", \"trigger\")\n"
+                                                   "\t_ = parseResponse(\"y\")\n\trepro.Finish()\n}\n")
+                (root / case / "reproductions.json").write_text(json.dumps({
+                    "schema": "ceph-reproductions/v1", "roles": ["essential", "client", "rgw"],
+                    "units": {"rgw_case": {"network": "bridge"}},
+                    "combinations": [{"id": "affected", "platform": "linux/amd64", "images": images,
+                                      "verdicts": {"rgw_case": "REPRODUCED"}, "evidence": "native run"}]}))
+                with patch.object(engine, "compile_inventory", return_value=[test]), \
+                        patch.object(engine.subprocess, "Popen", return_value=process), \
+                        patch.object(engine, "native_platform", return_value={"host": "linux/amd64", "target": "linux/amd64"}), \
+                        patch("sys.stdout", new=io.StringIO()), patch.dict(os.environ, environment):
+                    return engine.run_profile([pure, native], plan, "short", batch, None, root / "output", root)
+
+        package = "example/internal/integration/experiments/rgw_case"
+        report = run("pure", "TestParsesTheResponse", native_log(("TestParsesTheResponse",), package))
+        self.assertTrue(report["passed"], report["reproduction"])
+        self.assertEqual((report["reproduction"]["combination"], report["reproduction"]["expected"]), ("affected", {}))
+        missing = run("rgw_case", "TestCase", native_log(("TestCase",), package))
+        self.assertFalse(missing["passed"])
+        self.assertEqual(missing["reproduction"]["reasons"], ["0 REPRODUCTION_VERDICT lines of rgw_case"])
+        reported = run("rgw_case", "TestCase", verdict + "\n" + native_log(("TestCase",), package))
+        self.assertTrue(reported["passed"], reported["reproduction"])
+
     def test_native_command_has_tags_and_never_test_name_selector(self):
         file = fixture()
         plan = engine.discover([file])

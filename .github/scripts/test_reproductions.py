@@ -193,5 +193,81 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(met["verdicts"], unmet["verdicts"])
 
 
+PURE_SOURCE = """package rgw_case_test
+
+func TestParsesTheResponse(t *testing.T) {
+	if parseResponse("x") == "" {
+		t.Fatal("empty")
+	}
+}
+"""
+HELPER_SOURCE = """package rgw_case_test
+
+func parseResponse(text string) string {
+	return text
+}
+
+func runCase(t *testing.T) {
+	repro := harness.StartReproduction(t, "rgw_case", "trigger")
+	_ = parseResponse("y")
+	repro.Finish()
+}
+
+func runHost(t *testing.T) {
+	startHost(t)
+}
+
+func startHost(t *testing.T) {
+	_ = harness.StartReproduction(t, "rgw_case/host", "trigger")
+}
+"""
+NATIVE_SOURCE = """package rgw_case_test
+
+func TestCase(t *testing.T) {
+	runCase(t)
+}
+
+func TestHostCase(t *testing.T) {
+	t.Run("host", func(t *testing.T) { runHost(t) })
+}
+"""
+
+
+class StartedUnitTests(unittest.TestCase):
+    def test_only_the_tests_that_run_start_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for name, text in (("pure_fixture_test.go", PURE_SOURCE), ("case_helpers_test.go", HELPER_SOURCE),
+                               ("case_native_regression_test.go", NATIVE_SOURCE)):
+                path = Path(directory) / name
+                path.write_text(text)
+                paths.append(path)
+            # A pure profile shares the helper file but runs no reproducer.
+            self.assertEqual(reproductions.started_units(paths[:2], ["TestParsesTheResponse"]), set())
+            self.assertEqual(reproductions.started_units(paths, ["TestCase"]), {"rgw_case"})
+            self.assertEqual(reproductions.started_units(paths, ["TestHostCase"]), {"rgw_case/host"})
+            self.assertEqual(reproductions.started_units(paths, ["TestCase", "TestHostCase", "TestParsesTheResponse"]),
+                             {"rgw_case", "rgw_case/host"})
+
+    def test_repository_profiles_expect_verdicts_only_of_their_reproducers(self):
+        import tag_scenarios
+        source = tag_scenarios.load_catalog(ROOT)
+        profiles = tag_scenarios.discover(source)["include"] + tag_scenarios.discover_optional(source)["include"]
+        started = {}
+        for profile in profiles:
+            catalogue = reproductions.load(profile["package"], ROOT)
+            if catalogue is None:
+                continue
+            units = reproductions.started_units(
+                tag_scenarios.compiled_paths(source, profile["package"], profile["tags"], ROOT),
+                tag_scenarios.selected_tests(source, profile["package"], profile["tags"]))
+            if not profile["requires_ceph"]:
+                self.assertEqual(units, set(), profile["id"])
+            started.setdefault(profile["package"], set()).update(units)
+        self.assertTrue(started)
+        for package, units in started.items():
+            self.assertEqual(units, set(reproductions.load(package, ROOT)["units"]), package)
+
+
 if __name__ == "__main__":
     unittest.main()

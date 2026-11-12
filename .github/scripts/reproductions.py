@@ -60,6 +60,30 @@ ROLE_VARIABLES = {"essential": "CEPH_TEST_ESSENTIAL_IMAGE", "client": "CEPH_TEST
                   "cephfs": "CEPH_TEST_CEPHFS_IMAGE", "rbd-aux": "CEPH_TEST_RBD_AUX_IMAGE", "rgw": "CEPH_TEST_RGW_IMAGE"}
 
 
+# A top-level declaration of a gofmt'd file: the function's name and its body,
+# which ends at the first line that is only a closing brace.
+FUNCTION = re.compile(r"^func (?:\([^)]*\) )?(\w+)\b.*?^}$", re.MULTILINE | re.DOTALL)
+IDENTIFIER = re.compile(r"\b\w+\b")
+
+
+def started_units(paths, tests):
+    """The units that the named top-level tests start: in their own bodies or
+    in a package function that they reach by naming it, directly or through
+    other such functions. paths are the test files compiled into the run."""
+    bodies = {}
+    for path in paths:
+        for match in FUNCTION.finditer(Path(path).read_text(encoding="utf-8")):
+            bodies[match[1]] = bodies.get(match[1], "") + match[0]
+    reached, pending = set(), [test for test in tests if test in bodies]
+    while pending:
+        name = pending.pop()
+        if name in reached:
+            continue
+        reached.add(name)
+        pending.extend(word for word in set(IDENTIFIER.findall(bodies[name])) if word in bodies and word not in reached)
+    return {unit for name in reached for unit in START.findall(bodies[name])}
+
+
 def source_units(directory):
     """The unit names that the package's test files start."""
     units = set()
