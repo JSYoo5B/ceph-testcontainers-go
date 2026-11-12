@@ -704,9 +704,9 @@ observation logic on every build:
 
 | Actual verdict | Evidence |
 | --- | --- |
-| `REPRODUCED` | the trigger and the controls held and an observation saw the symptom |
+| `REPRODUCED` | the trigger and the controls held and an observation saw the symptom, even if a later one was not recorded |
 | `NOT_REPRODUCED` | the trigger and the controls held, every planned observation completed and none saw it |
-| `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation, or a test that ended before `Conclude`; the reason is reported |
+| `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation without a symptom, or a test that ended before `Conclude`; the reason is reported |
 
 With `go test -v` each unit prints one line, also when setup stops the test:
 
@@ -714,7 +714,11 @@ With `go test -v` each unit prints one line, also when setup stops the test:
 REPRODUCTION_VERDICT case=<unit> verdict=<actual> expected=<expected|none> attempts=<n> platform=<os>/<arch> network=<mode> images=<role>=<image>,... observation=<decisive observations or reason>
 ```
 
-`attempts` counts the trials of the planned observations. Every current case
+The network mode comes from `CEPH_TEST_NETWORK`; a test that selects host
+networking itself names it with `Network("host")`, and needs its own unit
+when the same batch also runs the bridge variant, because a row expects
+exactly one line of its unit. `attempts` counts the trials of the planned
+observations. Every current case
 runs one trial. A case that needs several trials to observe an intermittent
 symptom records each one, and its manual states how the trials support the
 verdict and how many native runs established that it repeats, before a row

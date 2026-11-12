@@ -107,6 +107,10 @@ var (
 		r.Absent(f, "control", "accepted")
 		r.Conclude()
 	}
+	symptomBeforeAMissingObservation outcome = func(f *verdictT, r *harness.Reproduction) {
+		r.Symptom(f, "control", "refused with 400")
+		r.Conclude()
+	}
 )
 
 func runVerdict(expected string, body outcome) *verdictT {
@@ -131,6 +135,7 @@ func TestReproductionVerdictComparison(t *testing.T) {
 		{"expected absence but reproduced", "rgw_case=NOT_REPRODUCED", observedSymptom, harness.Reproduced, 1},
 		{"expected reproduction but control failed", "rgw_case=REPRODUCED", failedControl, harness.Inconclusive, 1},
 		{"expected absence but an observation is missing", "rgw_case=NOT_REPRODUCED", incompleteObservation, harness.Inconclusive, 1},
+		{"a symptom before a missing observation reproduces", "rgw_case=REPRODUCED", symptomBeforeAMissingObservation, harness.Reproduced, 0},
 		{"expected reproduction but setup stopped", "rgw_case=REPRODUCED", stoppedEarly, harness.Inconclusive, 2},
 		{"omitted expectation, reproduced fails as before", "", observedSymptom, harness.Reproduced, 1},
 		{"omitted expectation, absent passes as before", "", absentSymptom, harness.NotReproduced, 0},
@@ -214,6 +219,15 @@ func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("verdict line %q lacks %q", line, want)
 		}
+	}
+	host := &verdictT{}
+	host.run(func() {
+		r := harness.NewReproduction(host, verdictEnv(""), "rgw_case", "trigger").Network("host")
+		r.Absent(host, "trigger", "accepted")
+		r.Conclude()
+	})
+	if line := host.verdictLine(t); !strings.Contains(line, " network=host images=") {
+		t.Errorf("verdict line %q, want the test's own network mode", line)
 	}
 	omitted := runVerdict("", absentSymptom).verdictLine(t)
 	if !strings.Contains(omitted, "expected=none") || !strings.Contains(omitted, "observation=control: accepted; trigger: accepted") {

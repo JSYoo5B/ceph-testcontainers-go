@@ -44,7 +44,7 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 	t.Run("priority_tags_owner_class", func(t *testing.T) {
 		var repro *harness.Reproduction
 		if network == "host" {
-			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_priority_tags_owner_class", "priority")
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_priority_tags_owner_class", "priority").Network("host")
 		} else {
 			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/priority_tags_owner_class", "priority")
 		}
@@ -158,7 +158,7 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 	t.Run("ordinary_user_denial_grant", func(t *testing.T) {
 		var repro *harness.Reproduction
 		if network == "host" {
-			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_ordinary_user_denial_grant", "denial")
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_ordinary_user_denial_grant", "denial").Network("host")
 		} else {
 			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/ordinary_user_denial_grant", "denial")
 		}

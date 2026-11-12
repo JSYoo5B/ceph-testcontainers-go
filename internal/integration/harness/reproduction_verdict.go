@@ -93,6 +93,7 @@ type Reproduction struct {
 	t           ReproductionT
 	unit        string
 	expectation ReproductionExpectation
+	network     string
 	images      string
 
 	mu       sync.Mutex
@@ -115,7 +116,11 @@ func StartReproduction(t ReproductionT, unit string, observations ...string) *Re
 // NewReproduction is StartReproduction with an explicit environment.
 func NewReproduction(t ReproductionT, getenv func(string) string, unit string, observations ...string) *Reproduction {
 	t.Helper()
-	r := &Reproduction{t: t, unit: unit, planned: observations, records: map[string][]bool{}, details: map[string]string{}, images: verdictImages(getenv)}
+	r := &Reproduction{t: t, unit: unit, planned: observations, records: map[string][]bool{}, details: map[string]string{},
+		network: getenv("CEPH_TEST_NETWORK"), images: verdictImages(getenv)}
+	if r.network == "" {
+		r.network = "bridge"
+	}
 	if !reproductionUnit.MatchString(unit) || len(observations) == 0 || hasDuplicate(observations) {
 		t.Errorf("reproduction unit %q needs a case[/subtest] name and distinct planned observations, got %q", unit, observations)
 		t.FailNow()
@@ -134,6 +139,16 @@ func hasDuplicate(names []string) bool {
 	sorted := slices.Clone(names)
 	slices.Sort(sorted)
 	return len(slices.Compact(sorted)) != len(names)
+}
+
+// Network names the network mode the unit's clusters run in when the test
+// selects it itself, such as with ceph.WithHostNetwork, instead of through
+// CEPH_TEST_NETWORK. It returns r.
+func (r *Reproduction) Network(mode string) *Reproduction {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.network = mode
+	return r
 }
 
 // Expected reports whether the environment expects a verdict of this unit.
@@ -236,9 +251,11 @@ func (r *Reproduction) finish() {
 	}
 }
 
-// DeriveReproduction derives a verdict from the recorded observations: an
-// unrecorded planned observation is Inconclusive, any symptom is
-// Reproduced, otherwise NotReproduced. Attempts is the most records of one
+// DeriveReproduction derives a verdict from the recorded observations: any
+// symptom is Reproduced, since the trigger and the controls held up to it,
+// even when a later planned observation was not recorded; otherwise an
+// unrecorded planned observation is Inconclusive, and NotReproduced needs
+// every one. Attempts is the most records of one
 // observation. The observation text names the decisive observations.
 func DeriveReproduction(planned []string, records map[string][]bool, details map[string]string) (ReproductionVerdict, int, string) {
 	attempts := 0
@@ -256,10 +273,13 @@ func DeriveReproduction(planned []string, records map[string][]bool, details map
 		}
 	}
 	switch {
+	case len(symptoms) > 0:
+		if len(missing) > 0 {
+			symptoms = append(symptoms, strings.Join(missing, ", ")+" not recorded")
+		}
+		return Reproduced, attempts, strings.Join(symptoms, "; ")
 	case len(missing) > 0:
 		return Inconclusive, attempts, "incomplete observation: " + strings.Join(missing, ", ") + " not recorded"
-	case len(symptoms) > 0:
-		return Reproduced, attempts, strings.Join(symptoms, "; ")
 	default:
 		return NotReproduced, attempts, strings.Join(absent, "; ")
 	}
@@ -288,21 +308,20 @@ func (r *Reproduction) line(verdict ReproductionVerdict, attempts int, observati
 	if r.Expected() {
 		expected = string(r.expectation.Verdict)
 	}
-	return fmt.Sprintf("%s case=%s verdict=%s expected=%s attempts=%d platform=%s/%s %s observation=%s",
-		VerdictLinePrefix, r.unit, verdict, expected, attempts, runtime.GOOS, runtime.GOARCH, r.images, oneLine(observation))
+	r.mu.Lock()
+	network := r.network
+	r.mu.Unlock()
+	return fmt.Sprintf("%s case=%s verdict=%s expected=%s attempts=%d platform=%s/%s network=%s images=%s observation=%s",
+		VerdictLinePrefix, r.unit, verdict, expected, attempts, runtime.GOOS, runtime.GOARCH, network, r.images, oneLine(observation))
 }
 
 func oneLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-// verdictImages names the images and the network mode the run resolved, in
-// the order IntegrationImage resolves them.
+// verdictImages names the images the run resolved, in the order
+// IntegrationImage resolves them.
 func verdictImages(getenv func(string) string) string {
-	network := getenv("CEPH_TEST_NETWORK")
-	if network == "" {
-		network = "bridge"
-	}
 	var images []string
 	for _, role := range []string{"ESSENTIAL", "CLIENT", "CEPHFS", "RBD_AUX", "RGW"} {
 		if image := getenv("CEPH_TEST_" + role + "_IMAGE"); image != "" {
@@ -316,5 +335,5 @@ func verdictImages(getenv func(string) string) string {
 		}
 		images = append(images, "all="+image)
 	}
-	return "network=" + network + " images=" + strings.Join(images, ",")
+	return strings.Join(images, ",")
 }
