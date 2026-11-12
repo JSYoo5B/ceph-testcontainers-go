@@ -23,12 +23,16 @@ type verdictT struct {
 
 type verdictStop struct{}
 
-func (f *verdictT) Helper()                           {}
-func (f *verdictT) Logf(format string, args ...any)   { f.logs = append(f.logs, fmt.Sprintf(format, args...)) }
-func (f *verdictT) Errorf(format string, args ...any) { f.errors = append(f.errors, fmt.Sprintf(format, args...)) }
-func (f *verdictT) FailNow()                          { panic(verdictStop{}) }
-func (f *verdictT) Cleanup(fn func())                 { f.cleanups = append(f.cleanups, fn) }
-func (f *verdictT) Skipped() bool                     { return f.skipped }
+func (f *verdictT) Helper() {}
+func (f *verdictT) Logf(format string, args ...any) {
+	f.logs = append(f.logs, fmt.Sprintf(format, args...))
+}
+func (f *verdictT) Errorf(format string, args ...any) {
+	f.errors = append(f.errors, fmt.Sprintf(format, args...))
+}
+func (f *verdictT) FailNow()          { panic(verdictStop{}) }
+func (f *verdictT) Cleanup(fn func()) { f.cleanups = append(f.cleanups, fn) }
+func (f *verdictT) Skipped() bool     { return f.skipped }
 
 // run calls body like a test function, stopping at FailNow, then runs the
 // cleanups in reverse order.

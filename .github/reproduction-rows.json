@@ -1,0 +1,23 @@
+{
+  "schema": "ceph-reproduction-rows/v1",
+  "rows": [
+    {
+      "id": "rgw-empty-sse-header-20.2.4",
+      "unit": "rgw_empty_sse_header",
+      "batch": "rgw_empty_sse_header",
+      "release": "20.2.4",
+      "platform": "linux/amd64",
+      "expected": "REPRODUCED",
+      "evidence": "pending"
+    },
+    {
+      "id": "rgw-empty-sse-header-21.2.0",
+      "unit": "rgw_empty_sse_header",
+      "batch": "rgw_empty_sse_header",
+      "release": "21.2.0",
+      "platform": "linux/amd64",
+      "expected": "NOT_REPRODUCED",
+      "evidence": "pending"
+    }
+  ]
+}

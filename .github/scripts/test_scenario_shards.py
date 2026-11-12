@@ -299,7 +299,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scoped["rados_fixtures"], "essential,client,cephfs")
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
-        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
+        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", "reproduction-rows.yml", self.PERIODIC,
                     self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, self.ARM64, "structural-review.yml",
                     "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)

@@ -1,0 +1,54 @@
+name: Reproduction rows
+
+# One row of .github/reproduction-rows.json: a known-defect reproduction unit,
+# the optional batch that runs it, the release whose pinned role images it
+# runs on, and the verdict it must report. Only that verdict passes the row;
+# docs/contributing/ci.md, "Reproduction rows", explains the comparison.
+on:
+  workflow_dispatch:
+    inputs:
+      row:
+        description: Row ID of .github/reproduction-rows.json
+        type: choice
+        options:
+          - rgw-empty-sse-header-20.2.4
+          - rgw-empty-sse-header-21.2.0
+
+permissions:
+  contents: read
+
+jobs:
+  row:
+    name: Resolve the row
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      batch: ${{ steps.row.outputs.batch }}
+      release: ${{ steps.row.outputs.release }}
+      expected_verdict: ${{ steps.row.outputs.expected_verdict }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      # Refuses an invalid rows file, row or expectation before any runtime
+      # job starts.
+      - name: Validate the rows and resolve the selected one
+        id: row
+        env:
+          ROW: ${{ inputs.row }}
+        run: python3 .github/scripts/reproduction_rows.py resolve --row "$ROW" --github-output "$GITHUB_OUTPUT"
+  regressions:
+    name: Scenarios
+    needs: row
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: optional
+      check_name: Reproduction rows
+      optional_batch: ${{ needs.row.outputs.batch }}
+      release: ${{ needs.row.outputs.release }}
+      expected_verdict: ${{ needs.row.outputs.expected_verdict }}
