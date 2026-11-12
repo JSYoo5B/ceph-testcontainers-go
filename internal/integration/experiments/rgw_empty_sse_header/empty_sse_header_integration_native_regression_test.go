@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -40,19 +41,6 @@ func (c *sseCase) signed(t *testing.T, ctx context.Context, method, path string,
 // value, which may be empty.
 func sseHeaders(value string) http.Header {
 	return http.Header{sseHeader: {value}}
-}
-
-type sseFailure struct {
-	Code    string `xml:"Code"`
-	Message string `xml:"Message"`
-}
-
-// sseResult is the native answer to one PUT.
-type sseResult struct {
-	Code       int
-	Failure    sseFailure
-	Encryption string
-	VersionID  string
 }
 
 func (c *sseCase) put(t *testing.T, path string, data []byte, headers http.Header) sseResult {
@@ -117,23 +105,13 @@ func (c *sseCase) versions(t *testing.T, bucket, prefix string) (versions, marke
 
 // requireNoDefaultEncryption requires that bucket has no default
 // encryption, so no implicit default can explain a result.
-func (c *sseCase) requireNoDefaultEncryption(t *testing.T, bucket string) {
+func (c *sseCase) requireNoDefaultEncryption(t *testing.T, repro *harness.Reproduction, bucket string) {
 	t.Helper()
 	r := c.signed(t, c.ctx, http.MethodGet, bucket+"?encryption", nil, nil)
 	code := harness.RGWBackendErrorCode(r.Body)
 	t.Logf("RGW_SSE bucket=%s get-encryption status=%d code=%s", bucket, r.Code, code)
 	if r.Code != http.StatusNotFound || code != "ServerSideEncryptionConfigurationNotFoundError" {
-		t.Fatalf("condition not established: bucket %s has a default encryption configuration (status %d %s)", bucket, r.Code, code)
-	}
-}
-
-// requireRefused requires the validation refusal that the invalid algorithm
-// control also gets: 400 InvalidArgument with the same message, never a
-// SigV4 refusal.
-func requireRefused(t *testing.T, name string, r sseResult, control sseFailure) {
-	t.Helper()
-	if r.Code != http.StatusBadRequest || r.Failure.Code != "InvalidArgument" || r.Failure.Message != control.Message {
-		t.Errorf("%s: status %d %s %q, want 400 InvalidArgument %q", name, r.Code, r.Failure.Code, r.Failure.Message, control.Message)
+		repro.Inconclusive(t, "condition not established: bucket %s has a default encryption configuration (status %d %s)", bucket, r.Code, code)
 	}
 }
 
@@ -177,7 +155,7 @@ func (c *sseCase) cleanup(t *testing.T, buckets []string) {
 // transport to a local listener and requires that the request carries the
 // header with an empty value and signs it. A client that drops empty headers
 // would make the native result say nothing about the empty value.
-func requireWireHeader(t *testing.T, client harness.S3HTTPClient) {
+func requireWireHeader(t *testing.T, repro *harness.Reproduction, client harness.S3HTTPClient) {
 	t.Helper()
 	type seen struct {
 		present bool
@@ -200,7 +178,7 @@ func requireWireHeader(t *testing.T, client harness.S3HTTPClient) {
 	signed := slices.Contains(strings.Split(signedHeaders, ";"), "x-amz-server-side-encryption")
 	t.Logf("RGW_SSE wire header-present=%t value=%q signed=%t", s.present, s.value, signed)
 	if !s.present || s.value != "" || !signed {
-		t.Fatalf("condition not established: the client did not send and sign an empty %s header", sseHeader)
+		repro.Inconclusive(t, "condition not established: the client did not send and sign an empty %s header", sseHeader)
 	}
 }
 
@@ -217,6 +195,7 @@ func requireWireHeader(t *testing.T, client harness.S3HTTPClient) {
 func TestRGWEmptySSEHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_empty_sse_header", "empty-new-key", "empty-overwrite")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SSE ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -235,44 +214,59 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 	}
 	c := &sseCase{ctx: ctx, objects: map[string]bool{},
 		client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
-	requireWireHeader(t, c.client)
+	requireWireHeader(t, repro, c.client)
 
 	const bucket, versioned = "/tc-sse-empty", "/tc-sse-empty-versioned"
 	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, bucket, versioned); err != nil {
 		t.Fatal(err)
 	}
-	c.requireNoDefaultEncryption(t, bucket)
-	c.requireNoDefaultEncryption(t, versioned)
+	c.requireNoDefaultEncryption(t, repro, bucket)
+	c.requireNoDefaultEncryption(t, repro, versioned)
 
 	// The invalid nonempty algorithm is refused by every tested release; its
 	// message is the validation refusal the empty header must also get.
 	invalid := c.put(t, bucket+"/invalid", []byte("invalid algorithm"), sseHeaders("AES-INVALID"))
 	if invalid.Code != http.StatusBadRequest || invalid.Failure.Code != "InvalidArgument" || invalid.Failure.Message == "" {
-		t.Fatalf("control not established: invalid algorithm answered %d %s %q", invalid.Code, invalid.Failure.Code, invalid.Failure.Message)
+		repro.Inconclusive(t, "control failed: invalid algorithm answered %d %s %q", invalid.Code, invalid.Failure.Code, invalid.Failure.Message)
 	}
 	if c.get(t, bucket+"/invalid").Data != nil {
-		t.Fatal("control not established: the refused invalid-algorithm PUT created an object")
+		repro.Inconclusive(t, "control failed: the refused invalid-algorithm PUT created an object")
 	}
 
 	t.Run("omitted", func(t *testing.T) {
 		data := []byte("header omitted")
 		if r := c.put(t, bucket+"/omitted", data, nil); r.Code != http.StatusOK || r.Encryption != "" {
-			t.Fatalf("PUT without the header: status %d, response encryption %q", r.Code, r.Encryption)
+			repro.Inconclusive(t, "control failed: PUT without the header: status %d, response encryption %q", r.Code, r.Encryption)
 		}
 		if got := c.get(t, bucket+"/omitted"); !bytes.Equal(got.Data, data) || got.Encryption != "" {
-			t.Fatalf("GET of the object written without the header: %d bytes, encryption %q", len(got.Data), got.Encryption)
+			repro.Inconclusive(t, "control failed: GET of the object written without the header: %d bytes, encryption %q", len(got.Data), got.Encryption)
 		}
 	})
+	if t.Failed() {
+		return
+	}
+	judge := func(t *testing.T, name string, r sseResult, changed string) {
+		symptom, detail, err := judgeEmptyHeaderPut(r, invalid.Failure, changed)
+		switch {
+		case err != nil:
+			repro.Inconclusive(t, "%s: %v", name, err)
+		case symptom:
+			repro.Symptom(t, name, "%s", detail)
+		default:
+			repro.Absent(t, name, "%s", detail)
+		}
+	}
 
 	t.Run("empty-new-key", func(t *testing.T) {
 		data := []byte("header present and empty")
 		r := c.put(t, bucket+"/empty", data, sseHeaders(""))
 		got := c.get(t, bucket+"/empty")
 		t.Logf("RGW_SSE empty-new-key stored=%t bytes-match=%t etag=%s encryption=%q", got.Data != nil, bytes.Equal(got.Data, data), got.ETag, got.Encryption)
-		requireRefused(t, "PUT with an empty header", r, invalid.Failure)
+		changed := ""
 		if got.Data != nil {
-			t.Errorf("the empty-header PUT left an object (exact bytes %t, encryption %q)", bytes.Equal(got.Data, data), got.Encryption)
+			changed = fmt.Sprintf("the PUT left an object, exact bytes %t, encryption %q", bytes.Equal(got.Data, data), got.Encryption)
 		}
+		judge(t, "empty-new-key", r, changed)
 	})
 
 	t.Run("empty-overwrite", func(t *testing.T) {
@@ -281,17 +275,19 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 		seed := []byte("seed bytes")
 		seeded := c.put(t, versioned+"/key", seed, nil)
 		if seeded.Code != http.StatusOK || seeded.VersionID == "" || seeded.VersionID == "null" {
-			t.Fatalf("condition not established: seed PUT answered %d with version %q", seeded.Code, seeded.VersionID)
+			repro.Inconclusive(t, "condition not established: seed PUT answered %d with version %q", seeded.Code, seeded.VersionID)
 		}
 		before := c.get(t, versioned+"/key")
 		r := c.put(t, versioned+"/key", []byte("replacement from an empty header"), sseHeaders(""))
 		after := c.get(t, versioned+"/key")
-		requireRefused(t, "overwrite with an empty header", r, invalid.Failure)
+		var changed []string
 		if !bytes.Equal(after.Data, seed) || after.ETag != before.ETag || after.VersionID != seeded.VersionID {
-			t.Errorf("the empty-header overwrite changed the key: version %q -> %q, seed bytes kept %t", seeded.VersionID, after.VersionID, bytes.Equal(after.Data, seed))
+			changed = append(changed, fmt.Sprintf("the key changed: version %q -> %q, seed bytes kept %t", seeded.VersionID, after.VersionID, bytes.Equal(after.Data, seed)))
 		}
 		if list, markers := c.versions(t, versioned, "key"); len(list) != 1 || len(markers) != 0 || list[0].VersionID != seeded.VersionID {
-			t.Errorf("versions of the key after the empty-header overwrite: %+v %+v, want only %q", list, markers, seeded.VersionID)
+			changed = append(changed, fmt.Sprintf("versions %+v markers %+v, want only %q", list, markers, seeded.VersionID))
 		}
+		judge(t, "empty-overwrite", r, strings.Join(changed, "; "))
 	})
+	repro.Conclude()
 }
