@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 )
 
 // rgwSyncStatsBound bounds one explicit stats synchronization of a few small
@@ -101,8 +102,12 @@ func rgwFixtureUserUsage(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 	t.Helper()
 	rgwSyncStats(t, ctx, nil, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
 	usage, err := user.Usage(ctx)
-	if err != nil || usage.UserID != user.ID() || usage.Scope != "user" || usage.OwnerID != user.ID() || usage.NumObjects != objects || usage.SizeBytes != sizeBytes {
-		t.Fatalf("native user storage assertion %s: usage=%+v error=%v expected_objects=%d expected_bytes=%d", stage, usage, err, objects, sizeBytes)
+	if err != nil {
+		t.Fatalf("native user storage read %s: %v", stage, err)
+	}
+	result, err := expect.UserUsage{UserID: user.ID(), Scope: expect.UsageScopeUser, Objects: objects, SizeBytes: sizeBytes}.Evaluate(usage)
+	if err != nil || !result.Matched {
+		t.Fatalf("native user storage assertion %s: %v; usage=%+v error=%v", stage, result, usage, err)
 	}
 	t.Logf("RGW_USER_USAGE stage=%s scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", stage, usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 }
