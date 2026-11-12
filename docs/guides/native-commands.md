@@ -413,6 +413,11 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 - `override.SetConfig` accepts any option, with a `Section` and optional
   `Mask` (such as `class:ssd`), including MGR module options such as
   `mgr/volumes/max_concurrent_clones`.
+- A running MGR keeps a module option whose entry is removed with
+  `config rm` until it restarts; only a set, including an empty value, reaches
+  its modules. `Restore` of a `mgr/` option that was absent therefore stores
+  an empty value before it removes the entry, so the running modules see the
+  option unset again.
 - Local files, command-line arguments and runtime overrides take precedence
   over the central database, and some options apply only after a restart.
   Check the effective value with `config show`.
