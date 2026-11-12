@@ -327,26 +327,28 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	second := lockConfig{Enabled: true, Mode: "COMPLIANCE", Years: 1}
 	// An initial configuration that arrives does not show that a change of
 	// it does: the second one differs in mode and in the unit of its period.
-	// The update is also applied when the first configuration did not reach
-	// zone b, so that both planned observations complete; it then shows
-	// whether a later configuration arrives where the first did not.
-	reproduced := false
+	// The update runs only after both zones answered the initial rule: when
+	// zone b never received it, a later write cannot show a replacement
+	// there, so the initial symptom concludes the reproduction with the
+	// update unattempted.
 	for _, step := range []struct {
 		name, marker string
 		want         lockConfig
 	}{{"initial", lockFirstMarker, first}, {"update", lockSecondMarker, second}} {
 		symptom, detail, err := c.propagate(step.name, step.marker, step.want)
-		if reproduced {
-			detail += " (after an initial configuration zone b did not answer)"
-		}
 		switch {
 		case err != nil:
 			repro.Inconclusive(t, "%v (step %s)", err, step.name)
 		case symptom:
-			reproduced = true
 			repro.Symptom(t, step.name, "%s", detail)
 		default:
 			repro.Absent(t, step.name, "%s", detail)
+		}
+		if symptom {
+			if step.name == "initial" {
+				t.Logf("RGW_LOCK step=update not run: the first configuration did not reach zone b, so an update has nothing to replace there")
+			}
+			break
 		}
 	}
 	repro.Conclude()
