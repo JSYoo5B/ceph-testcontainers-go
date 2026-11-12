@@ -62,10 +62,12 @@ func TestJudgeLockReads(t *testing.T) {
 		"transport":              {Zone: "b", Bucket: "tc-lock", Err: "context deadline exceeded"},
 		"transport, stale 200":   {Zone: "b", Bucket: "tc-lock", Err: "reset", Status: http.StatusOK, Config: want},
 	}
-	// Per read: the prefix of the destination, source and control verdicts.
-	// The destination names a defect only for an answer about the
-	// configuration; the source and the control accept one answer each.
-	const defect, fault, condition, control = "observed defect: ", "another fault: ", "condition not established: ", "control failed: "
+	// Per read: the destination judgement (absent, symptom: the start of
+	// its detail, or the prefix of another fault), and the prefix of the
+	// source and control verdicts. The destination names the symptom only
+	// for an answer about the configuration; the source and the control
+	// accept one answer each.
+	const defect, fault, condition, control = "symptom: ", "another fault: ", "condition not established: ", "control failed: "
 	expect := map[string][3]string{
 		"the configuration":      {"", "", control},
 		"absent":                 {defect + "the destination zone has no object lock configuration", condition, ""},
@@ -88,7 +90,17 @@ func TestJudgeLockReads(t *testing.T) {
 		t.Fatalf("%d expectations for %d reads", len(expect), len(reads))
 	}
 	for name, read := range reads {
-		got := [3]string{judgeDestination(read, want), judgeSource(read, want), judgeUnlocked(read)}
+		symptom, detail, err := judgeDestination(read, want)
+		destination := ""
+		switch {
+		case err != nil:
+			destination = err.Error()
+		case symptom:
+			destination = defect + detail
+		case detail == "":
+			destination = "absent without a detail"
+		}
+		got := [3]string{destination, judgeSource(read, want), judgeUnlocked(read)}
 		for i, verdict := range got {
 			if prefix := expect[name][i]; prefix == "" && verdict != "" || prefix != "" && !strings.HasPrefix(verdict, prefix) {
 				t.Errorf("%s, judge %d: %q, want prefix %q", name, i, verdict, prefix)

@@ -155,18 +155,20 @@ func judgeSource(read lockRead, want lockConfig) string {
 
 // judgeDestination judges the last read of the configuration in the other
 // zone after the metadata checkpoint. Only an answer about the configuration
-// is the defect: none at all, or another one. A transport failure, a refusal
-// or an unsupported operation says nothing about propagation.
-func judgeDestination(read lockRead, want lockConfig) string {
+// is the documented symptom: none at all, or another one. The same
+// configuration means the symptom is absent. A transport failure, a refusal
+// or an unsupported operation says nothing about propagation: another
+// fault, no verdict.
+func judgeDestination(read lockRead, want lockConfig) (symptom bool, detail string, err error) {
 	switch {
 	case read.has(want):
-		return ""
+		return false, fmt.Sprintf("the destination zone answers the source's %s: %s", want, read), nil
 	case read.absent():
-		return fmt.Sprintf("observed defect: the destination zone has no object lock configuration for a bucket whose source has %s: %s", want, read)
+		return true, fmt.Sprintf("the destination zone has no object lock configuration for a bucket whose source has %s: %s", want, read), nil
 	case read.Err == "" && read.Status == http.StatusOK && read.Unparsed == "":
-		return fmt.Sprintf("observed defect: the destination zone answers another object lock configuration than the source's %s: %s", want, read)
+		return true, fmt.Sprintf("the destination zone answers another object lock configuration than the source's %s: %s", want, read), nil
 	}
-	return fmt.Sprintf("another fault: the destination zone did not answer the bucket's object lock configuration: %s", read)
+	return false, "", fmt.Errorf("another fault: the destination zone did not answer the bucket's object lock configuration: %s", read)
 }
 
 // judgeUnlocked judges a read of the control bucket, which was created

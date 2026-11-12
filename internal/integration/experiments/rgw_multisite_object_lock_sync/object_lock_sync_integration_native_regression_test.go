@@ -38,6 +38,7 @@ const (
 type lockCase struct {
 	t       *testing.T
 	ctx     context.Context
+	repro   *harness.Reproduction
 	fixture *multisite.Fixture
 	clients map[string]harness.S3HTTPClient
 	// made lists the buckets whose creation zone a answered with 200, in
@@ -135,7 +136,7 @@ func (c *lockCase) checkpoint(step, marker string) {
 	c.createBucket(marker, nil)
 	status, err := c.fixture.WaitSyncReady(c.ctx, "b", "a")
 	if err != nil {
-		c.t.Fatalf("another fault: %s: zone b's sync did not become ready: %v", step, err)
+		c.repro.Inconclusive(c.t, "another fault: %s: zone b's sync did not become ready: %v", step, err)
 	}
 	seen, err := harness.Observe(c.ctx, 3*time.Minute, 20*time.Second, time.Second, func(probe context.Context) (int, bool, error) {
 		code, _, err := c.do(probe, "b", http.MethodHead, "/"+marker, nil, nil)
@@ -146,15 +147,15 @@ func (c *lockCase) checkpoint(step, marker string) {
 	})
 	c.t.Logf("RGW_LOCK checkpoint step=%s metadata-caught-up=%t marker=%s marker-in-b=%d after=%s", step, status.Metadata.CaughtUp, marker, seen.Value, seen.Elapsed.Round(time.Millisecond))
 	if err != nil {
-		c.t.Fatalf("another fault: %s: the marker bucket %s, created in zone a after the configuration, did not reach zone b (last status %d): %v", step, marker, seen.Value, err)
+		c.repro.Inconclusive(c.t, "another fault: %s: the marker bucket %s, created in zone a after the configuration, did not reach zone b (last status %d): %v", step, marker, seen.Value, err)
 	}
 }
 
 // propagate applies the configuration to the locked bucket in zone a,
 // requires zone a to read it back, passes the metadata checkpoint and then
 // reads zone b until it answers the same configuration or the bound ends.
-// It returns the verdict for zone b.
-func (c *lockCase) propagate(step, marker string, want lockConfig) string {
+// It returns the judgement of zone b's answer.
+func (c *lockCase) propagate(step, marker string, want lockConfig) (bool, string, error) {
 	c.t.Helper()
 	body := want.document()
 	sum := md5.Sum(body)
@@ -163,7 +164,7 @@ func (c *lockCase) propagate(step, marker string, want lockConfig) string {
 	c.t.Logf("RGW_LOCK read step=%s %s", step, source)
 	c.t.Logf("RGW_LOCK raw step=%s zone=a bucket=%s body=%s", step, lockBucket, source.Raw)
 	if verdict := judgeSource(source, want); verdict != "" {
-		c.t.Fatal(verdict)
+		c.repro.Inconclusive(c.t, "%s", verdict)
 	}
 	c.checkpoint(step, marker)
 	seen, _ := harness.Observe(c.ctx, lockArrivalBound, 20*time.Second, 2*time.Second, func(probe context.Context) (lockRead, bool, error) {
@@ -183,11 +184,11 @@ func (c *lockCase) propagate(step, marker string, want lockConfig) string {
 		plain := c.read(c.ctx, zone, plainBucket)
 		c.t.Logf("RGW_LOCK read step=%s %s", step, plain)
 		if verdict := judgeUnlocked(plain); verdict != "" {
-			c.t.Fatal(verdict)
+			c.repro.Inconclusive(c.t, "%s", verdict)
 		}
 	}
 	if verdict := judgeSource(c.read(c.ctx, "a", lockBucket), want); verdict != "" {
-		c.t.Fatal(verdict)
+		c.repro.Inconclusive(c.t, "%s", verdict)
 	}
 	return judgeDestination(seen.Value, want)
 }
@@ -223,14 +224,16 @@ func (c *lockCase) cleanup() {
 // TestMultiClusterRGWBucketObjectLockSync requires that a bucket's object
 // lock configuration, applied in the metadata master zone, is answered by
 // the other zone of the realm after metadata sync: enabled, with the same
-// default retention mode and period. The first configuration is applied to
-// a bucket created with object lock; once both zones answer it, a second
-// one replaces it and must arrive as well. A bucket created without object
+// default retention mode and period. It reports the
+// rgw_multisite_object_lock_sync verdict with the observations initial and
+// update. The first configuration is applied to a bucket created with
+// object lock; a second one then replaces it and must arrive as well. A bucket created without object
 // lock is the control in both zones, and an object written to it shows that
 // the data path between the zones works, apart from the configuration.
 func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_multisite_object_lock_sync", "initial", "update")
 	source, destination, _, _ := harness.NewMultiClusterPairWithContext(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_LOCK ceph=%s,%s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
 	image, _ := harness.IntegrationImages(t)
@@ -252,9 +255,9 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 		})
 	}
 	if err != nil {
-		t.Fatalf("unavailable prerequisite: the realm did not start: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: the realm did not start: %v", err)
 	}
-	c := &lockCase{t: t, ctx: ctx, fixture: fixture, clients: map[string]harness.S3HTTPClient{}}
+	c := &lockCase{t: t, repro: repro, ctx: ctx, fixture: fixture, clients: map[string]harness.S3HTTPClient{}}
 	zones := fixture.Zones()
 	if len(zones) != 2 || zones[0].Name != "a" || zones[1].Name != "b" {
 		t.Fatalf("zones %+v", zones)
@@ -278,7 +281,7 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	// Condition: both buckets exist in zone b, and an object of the control
 	// bucket reaches it with its bytes.
 	if _, err := fixture.WaitSyncReady(ctx, "b", "a"); err != nil {
-		t.Fatalf("condition not established: zone b's sync did not become ready: %v", err)
+		repro.Inconclusive(t, "condition not established: zone b's sync did not become ready: %v", err)
 	}
 	canary := []byte("written to zone a before any object lock configuration\n")
 	for _, bucket := range []string{lockBucket, plainBucket} {
@@ -287,7 +290,7 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 			return code, err == nil && code == http.StatusOK, nil
 		})
 		if err != nil {
-			t.Fatalf("condition not established: bucket %s did not reach zone b (last status %d): %v", bucket, seen.Value, err)
+			repro.Inconclusive(t, "condition not established: bucket %s did not reach zone b (last status %d): %v", bucket, seen.Value, err)
 		}
 	}
 	c.must("a", http.MethodPut, "/"+plainBucket+"/"+lockCanaryKey, canary, nil, http.StatusOK)
@@ -297,14 +300,14 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	})
 	t.Logf("RGW_LOCK canary bucket=%s status-in-b=%d after=%s", plainBucket, arrived.Value, arrived.Elapsed.Round(time.Millisecond))
 	if err != nil {
-		t.Fatalf("condition not established: the canary object did not reach zone b with its bytes (last status %d): %v", arrived.Value, err)
+		repro.Inconclusive(t, "condition not established: the canary object did not reach zone b with its bytes (last status %d): %v", arrived.Value, err)
 	}
 	// Before any configuration is applied, the bucket created with object
 	// lock answers "enabled, no rule" in the zone it was created in.
 	before := c.read(ctx, "a", lockBucket)
 	t.Logf("RGW_LOCK read step=created %s", before)
 	if !before.has(lockConfig{Enabled: true}) {
-		t.Fatalf("condition not established: the bucket created with object lock does not answer an enabled configuration without a rule in zone a: %s", before)
+		repro.Inconclusive(t, "condition not established: the bucket created with object lock does not answer an enabled configuration without a rule in zone a: %s", before)
 	}
 	t.Logf("RGW_LOCK raw step=created zone=a bucket=%s body=%s", lockBucket, before.Raw)
 	created := c.read(ctx, "b", lockBucket)
@@ -316,19 +319,35 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 		status, body, err := c.do(ctx, zone, http.MethodGet, "/"+lockBucket+"?versioning", nil, nil)
 		t.Logf("RGW_LOCK versioning zone=%s bucket=%s status=%d error=%v body=%s", zone, lockBucket, status, err, rawBody(body))
 		if verdict := judgeVersioning(status, body, err); zone == "a" && verdict != "" {
-			t.Fatal(verdict)
+			repro.Inconclusive(t, "%s", verdict)
 		}
 	}
 
 	first := lockConfig{Enabled: true, Mode: "GOVERNANCE", Days: 1}
 	second := lockConfig{Enabled: true, Mode: "COMPLIANCE", Years: 1}
-	if verdict := c.propagate("initial", lockFirstMarker, first); verdict != "" {
-		t.Logf("RGW_LOCK step=update not run: the first configuration did not reach zone b, so an update has nothing to replace there")
-		t.Fatal(verdict)
-	}
 	// An initial configuration that arrives does not show that a change of
 	// it does: the second one differs in mode and in the unit of its period.
-	if verdict := c.propagate("update", lockSecondMarker, second); verdict != "" {
-		t.Fatal(verdict)
+	// The update is also applied when the first configuration did not reach
+	// zone b, so that both planned observations complete; it then shows
+	// whether a later configuration arrives where the first did not.
+	reproduced := false
+	for _, step := range []struct {
+		name, marker string
+		want         lockConfig
+	}{{"initial", lockFirstMarker, first}, {"update", lockSecondMarker, second}} {
+		symptom, detail, err := c.propagate(step.name, step.marker, step.want)
+		if reproduced {
+			detail += " (after an initial configuration zone b did not answer)"
+		}
+		switch {
+		case err != nil:
+			repro.Inconclusive(t, "%v (step %s)", err, step.name)
+		case symptom:
+			reproduced = true
+			repro.Symptom(t, step.name, "%s", detail)
+		default:
+			repro.Absent(t, step.name, "%s", detail)
+		}
 	}
+	repro.Conclude()
 }
