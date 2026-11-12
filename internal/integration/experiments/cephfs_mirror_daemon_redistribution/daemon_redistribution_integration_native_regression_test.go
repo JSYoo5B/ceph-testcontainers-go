@@ -14,5 +14,8 @@ import (
 // untested. This PoC checks native MGR assignment and userspace CephFS snapshot
 // bytes instead of treating two running containers as proof of native HA.
 func TestMultiClusterCephFSMirrorDaemonTopology(t *testing.T) {
-	harness.RunCephFSMirrorDaemonTopology(t, false)
+	harness.RunCephFSMirrorDaemonRedistribution(t, false, harness.CephFSMirrorRedistribution{
+		Reproduction: harness.StartReproduction(t, "cephfs_mirror_daemon_redistribution", redistributionObservation),
+		Observation:  redistributionObservation, Judge: judgeRedistribution,
+	})
 }
