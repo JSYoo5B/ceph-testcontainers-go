@@ -11,8 +11,32 @@ on:
         description: Row ID of .github/reproduction-rows.json
         type: choice
         options:
+          - cephfs-dangling-symlink-create-20.2.4
+          - cephfs-mirror-daemon-redistribution-20.2.4
+          - cephfs-readdir-after-snapdiff-20.2.4
+          - cephfs-snapshot-readdir-eviction-20.2.4
+          - cephfs-statfs-mixed-quota-20.2.4
+          - cephfs-statfs-mixed-quota-21.2.0
+          - mon-log-ack-peon-20.2.4
+          - rbd-mirror-demote-restart-demotion-resume-20.2.4
+          - rbd-mirror-demote-restart-resumed-bytes-20.2.4
+          - rbd-trash-purge-timezone-20.2.4
+          - rgw-compressed-copy-accounting-20.2.4
+          - rgw-compressed-copy-accounting-21.2.0
           - rgw-empty-sse-header-20.2.4
           - rgw-empty-sse-header-21.2.0
+          - rgw-lifecycle-expiration-header-20.2.4
+          - rgw-lifecycle-expiration-header-21.2.0
+          - rgw-multipart-part-storage-class-20.2.4
+          - rgw-multisite-object-lock-sync-20.2.4
+          - rgw-multisite-object-lock-sync-21.2.0
+          - rgw-ssec-multipart-completion-20.2.4
+          - rgw-ssec-multipart-completion-21.2.0
+          - rgw-suspended-conditional-writes-20.2.4
+          - rgw-suspended-conditional-writes-21.2.0
+          - rgw-sync-lease-lapse-20.2.4
+          - rgw-sync-policy-translation-denial-20.2.4
+          - rgw-sync-policy-translation-priority-20.2.4
 
 permissions:
   contents: read
