@@ -238,7 +238,7 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		resume.Conclude()
 		// The bytes of a copy that never completed say nothing about the
 		// resumed copy.
-		if loss.Expected() {
+		if loss.Expected() != "" {
 			loss.Inconclusive(t, "condition not established: the demotion copy did not complete after the restart")
 		}
 		t.Logf("resumed-bytes not evaluated: the demotion copy did not complete after the restart")

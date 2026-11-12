@@ -10,11 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // verdictT records what a reproduction does to its test. FailNow stops the
-// running function the way testing.T does, and end runs the cleanups.
+// running function the way testing.T does, and run then runs the cleanups.
 type verdictT struct {
 	logs, errors []string
 	skipped      bool
@@ -66,19 +67,40 @@ func (f *verdictT) verdictLine(t *testing.T) string {
 	return lines[0]
 }
 
-func verdictEnv(expected string) func(string) string {
-	return func(name string) string {
-		switch name {
-		case harness.ExpectedVerdictEnv:
-			return expected
-		case "CEPH_TEST_ESSENTIAL_IMAGE":
-			return "sha256:e"
-		case "CEPH_TEST_RGW_IMAGE":
-			return "sha256:r"
-		}
-		return ""
+// verdictCatalog is a case catalogue with an affected and a fixed role
+// combination, an aggregate combination and a host-network unit. The
+// expected verdict of the affected combination is a parameter, so a test
+// can change only that value.
+func verdictCatalog(t *testing.T, affected string) harness.ReproductionCatalog {
+	t.Helper()
+	catalog, err := harness.ParseReproductionCatalog([]byte(`{
+  "schema": "ceph-reproductions/v1",
+  "roles": ["essential", "client", "rgw"],
+  "units": {"rgw_case": {"network": "bridge"}, "rgw_case/host": {"network": "host"}},
+  "combinations": [
+    {"id": "affected", "platform": "linux/amd64", "images": {"essential": "sha256:e1", "client": "sha256:c1", "rgw": "sha256:r1"},
+     "verdicts": {"rgw_case": "` + affected + `", "rgw_case/host": "REPRODUCED"}, "evidence": "native run"},
+    {"id": "fixed", "platform": "linux/amd64", "images": {"essential": "sha256:e2", "client": "sha256:c2", "rgw": "sha256:r2"},
+     "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "native run"},
+    {"id": "aggregate", "platform": "linux/amd64", "images": {"essential": "quay.io/a@sha256:1", "client": "quay.io/a@sha256:1", "rgw": "quay.io/a@sha256:1"},
+     "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "native run"}
+  ]
+}`))
+	if err != nil {
+		t.Fatal(err)
 	}
+	return catalog
 }
+
+func roleEnv(values map[string]string) func(string) string {
+	return func(name string) string { return values[name] }
+}
+
+var (
+	affectedRoles = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1", "CEPH_TEST_RGW_IMAGE": "sha256:r1"})
+	fixedRoles    = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e2", "CEPH_TEST_CLIENT_IMAGE": "sha256:c2", "CEPH_TEST_RGW_IMAGE": "sha256:r2"})
+	unknownRoles  = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e3", "CEPH_TEST_CLIENT_IMAGE": "sha256:c3", "CEPH_TEST_RGW_IMAGE": "sha256:r3"})
+)
 
 // outcome is what one evidence pattern leaves the unit with.
 type outcome func(f *verdictT, r *harness.Reproduction)
@@ -113,42 +135,44 @@ var (
 	}
 )
 
-func runVerdict(expected string, body outcome) *verdictT {
+func runVerdict(t *testing.T, catalog harness.ReproductionCatalog, env func(string) string, body outcome) *verdictT {
+	t.Helper()
 	f := &verdictT{}
 	f.run(func() {
-		r := harness.NewReproduction(f, verdictEnv(expected), "rgw_case", "control", "trigger")
+		r := harness.NewReproduction(f, catalog, env, "linux/amd64", "rgw_case", "control", "trigger")
 		body(f, r)
 	})
 	return f
 }
 
 func TestReproductionVerdictComparison(t *testing.T) {
+	catalog := verdictCatalog(t, "REPRODUCED")
 	for _, c := range []struct {
-		name, expected string
-		body           outcome
-		verdict        harness.ReproductionVerdict
-		failures       int
+		name     string
+		env      func(string) string
+		body     outcome
+		verdict  harness.ReproductionVerdict
+		expected string
+		failures int
 	}{
-		{"expected reproduction matches", "rgw_case=REPRODUCED", observedSymptom, harness.Reproduced, 0},
-		{"expected absence matches", "rgw_case=NOT_REPRODUCED", absentSymptom, harness.NotReproduced, 0},
-		{"expected reproduction but absent", "rgw_case=REPRODUCED", absentSymptom, harness.NotReproduced, 1},
-		{"expected absence but reproduced", "rgw_case=NOT_REPRODUCED", observedSymptom, harness.Reproduced, 1},
-		{"expected reproduction but control failed", "rgw_case=REPRODUCED", failedControl, harness.Inconclusive, 1},
-		{"expected absence but an observation is missing", "rgw_case=NOT_REPRODUCED", incompleteObservation, harness.Inconclusive, 1},
-		{"a symptom before a missing observation reproduces", "rgw_case=REPRODUCED", symptomBeforeAMissingObservation, harness.Reproduced, 0},
-		{"expected reproduction but setup stopped", "rgw_case=REPRODUCED", stoppedEarly, harness.Inconclusive, 2},
-		{"omitted expectation, reproduced fails as before", "", observedSymptom, harness.Reproduced, 1},
-		{"omitted expectation, absent passes as before", "", absentSymptom, harness.NotReproduced, 0},
-		{"omitted expectation, inconclusive fails as before", "", failedControl, harness.Inconclusive, 1},
-		{"omitted expectation, setup failure stays the only failure", "", stoppedEarly, harness.Inconclusive, 1},
-		{"another unit expected, a symptom here does not fail", "rgw_other=NOT_REPRODUCED", observedSymptom, harness.Reproduced, 0},
-		{"another unit expected, inconclusive here still fails", "rgw_other=REPRODUCED", failedControl, harness.Inconclusive, 1},
+		{"affected images expect a reproduction, observed", affectedRoles, observedSymptom, harness.Reproduced, "REPRODUCED", 0},
+		{"fixed images expect absence, observed", fixedRoles, absentSymptom, harness.NotReproduced, "NOT_REPRODUCED", 0},
+		{"affected images, but absent", affectedRoles, absentSymptom, harness.NotReproduced, "REPRODUCED", 1},
+		{"fixed images, but reproduced", fixedRoles, observedSymptom, harness.Reproduced, "NOT_REPRODUCED", 1},
+		{"affected images, but a control failed", affectedRoles, failedControl, harness.Inconclusive, "REPRODUCED", 1},
+		{"fixed images, but an observation is missing", fixedRoles, incompleteObservation, harness.Inconclusive, "NOT_REPRODUCED", 1},
+		{"affected images, a symptom before a missing observation", affectedRoles, symptomBeforeAMissingObservation, harness.Reproduced, "REPRODUCED", 0},
+		{"affected images, but setup stopped", affectedRoles, stoppedEarly, harness.Inconclusive, "REPRODUCED", 2},
+		{"unknown images, reproduced fails as before", unknownRoles, observedSymptom, harness.Reproduced, "none", 1},
+		{"unknown images, absent passes as before", unknownRoles, absentSymptom, harness.NotReproduced, "none", 0},
+		{"unknown images, inconclusive fails as before", unknownRoles, failedControl, harness.Inconclusive, "none", 1},
+		{"unknown images, a setup failure stays the only failure", unknownRoles, stoppedEarly, harness.Inconclusive, "none", 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			f := runVerdict(c.expected, c.body)
+			f := runVerdict(t, catalog, c.env, c.body)
 			line := f.verdictLine(t)
-			if !strings.Contains(line, " case=rgw_case verdict="+string(c.verdict)+" ") {
-				t.Errorf("verdict line %q, want verdict %s", line, c.verdict)
+			if !strings.Contains(line, " case=rgw_case verdict="+string(c.verdict)+" expected="+c.expected+" ") {
+				t.Errorf("verdict line %q, want verdict %s expected %s", line, c.verdict, c.expected)
 			}
 			if len(f.errors) != c.failures {
 				t.Errorf("failures %q, want %d", f.errors, c.failures)
@@ -158,10 +182,10 @@ func TestReproductionVerdictComparison(t *testing.T) {
 }
 
 // Identical evidence keeps its actual verdict; only the expected field and
-// the comparison follow the expected value.
+// the comparison follow the catalogue's expected value.
 func TestReproductionExpectationChangesOnlyTheComparison(t *testing.T) {
-	reproduced := runVerdict("rgw_case=REPRODUCED", observedSymptom)
-	absent := runVerdict("rgw_case=NOT_REPRODUCED", observedSymptom)
+	reproduced := runVerdict(t, verdictCatalog(t, "REPRODUCED"), affectedRoles, observedSymptom)
+	absent := runVerdict(t, verdictCatalog(t, "NOT_REPRODUCED"), affectedRoles, observedSymptom)
 	a, b := reproduced.verdictLine(t), absent.verdictLine(t)
 	if strings.Replace(a, "expected=REPRODUCED", "expected=NOT_REPRODUCED", 1) != b {
 		t.Errorf("lines differ beyond the expected field:\n%s\n%s", a, b)
@@ -174,11 +198,76 @@ func TestReproductionExpectationChangesOnlyTheComparison(t *testing.T) {
 	}
 }
 
+// Changing only the image strings selects the other expectation.
+func TestReproductionImagesSelectTheExpectation(t *testing.T) {
+	catalog := verdictCatalog(t, "REPRODUCED")
+	for _, c := range []struct {
+		name, want string
+		env        func(string) string
+	}{
+		{"affected roles", "expected=REPRODUCED combination=affected", affectedRoles},
+		{"fixed roles", "expected=NOT_REPRODUCED combination=fixed", fixedRoles},
+		{"aggregate", "expected=NOT_REPRODUCED combination=aggregate", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1"})},
+		{"another aggregate", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/b@sha256:2"})},
+		{"one role differs", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1", "CEPH_TEST_RGW_IMAGE": "sha256:r2"})},
+		{"a role unresolved", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1"})},
+		// The aggregate with a client override runs the client on another
+		// image, so it is not the aggregate combination.
+		{"aggregate with a client override", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1", "CEPH_TEST_CLIENT_IMAGE": "quay.io/b@sha256:2"})},
+	} {
+		line := runVerdict(t, catalog, c.env, absentSymptom).verdictLine(t)
+		if !strings.Contains(line, " "+c.want+" ") {
+			t.Errorf("%s: verdict line %q lacks %q", c.name, line, c.want)
+		}
+	}
+	other := &verdictT{}
+	other.run(func() {
+		r := harness.NewReproduction(other, catalog, affectedRoles, "linux/arm64", "rgw_case", "trigger")
+		r.Absent(other, "trigger", "accepted")
+		r.Conclude()
+	})
+	if line := other.verdictLine(t); !strings.Contains(line, " expected=none combination=none ") {
+		t.Errorf("another platform matched: %q", line)
+	}
+}
+
+// The identity a reproduction records is the fixture's own resolution,
+// also when only some roles override the aggregate.
+func TestResolveImageSetIsTheRecordedIdentity(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		env  map[string]string
+		set  ceph.ImageSet
+		line string
+	}{
+		{"aggregate", map[string]string{"CEPH_TEST_IMAGE": "A"}, ceph.ImageSet{All: "A"}, "images=essential=A,client=A,rgw=A "},
+		{"default", map[string]string{}, ceph.ImageSet{All: ceph.DefaultImage}, "images=essential=" + ceph.DefaultImage + ",client=" + ceph.DefaultImage + ",rgw=" + ceph.DefaultImage + " "},
+		{"aggregate with a client override", map[string]string{"CEPH_TEST_IMAGE": "A", "CEPH_TEST_CLIENT_IMAGE": "B"},
+			ceph.ImageSet{Essential: "A", Client: "B", CephFS: "A", RBDAux: "A", RGW: "A"}, "images=essential=A,client=B,rgw=A "},
+		{"roles", map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "E", "CEPH_TEST_CLIENT_IMAGE": "C", "CEPH_TEST_RGW_IMAGE": "R", "CEPH_TEST_IMAGE": "A"},
+			ceph.ImageSet{Essential: "E", Client: "C", RGW: "R"}, "images=essential=E,client=C,rgw=R "},
+		{"roles without an rgw image", map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "E", "CEPH_TEST_CLIENT_IMAGE": "C"},
+			ceph.ImageSet{Essential: "E", Client: "C"}, "images=essential=E,client=C,rgw=unresolved "},
+	} {
+		set, err := harness.ResolveImageSet(roleEnv(c.env))
+		if err != nil || set != c.set {
+			t.Errorf("%s: ResolveImageSet %+v, %v; want %+v", c.name, set, err, c.set)
+		}
+		line := runVerdict(t, verdictCatalog(t, "REPRODUCED"), roleEnv(c.env), absentSymptom).verdictLine(t)
+		if !strings.Contains(line, " "+c.line) {
+			t.Errorf("%s: verdict line %q lacks %q", c.name, line, c.line)
+		}
+	}
+	if _, err := harness.ResolveImageSet(roleEnv(map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_CLIENT_IMAGE": "C"})); err == nil {
+		t.Error("the role layout without an essential image resolved")
+	}
+}
+
 // A matching verdict does not hide a later cleanup failure.
 func TestReproductionMatchKeepsACleanupFailure(t *testing.T) {
 	f := &verdictT{}
 	f.run(func() {
-		r := harness.NewReproduction(f, verdictEnv("rgw_case=REPRODUCED"), "rgw_case", "control", "trigger")
+		r := harness.NewReproduction(f, verdictCatalog(t, "REPRODUCED"), affectedRoles, "linux/amd64", "rgw_case", "control", "trigger")
 		f.Cleanup(func() { f.Errorf("remove the buckets: 1 left") })
 		observedSymptom(f, r)
 	})
@@ -192,28 +281,30 @@ func TestReproductionMatchKeepsACleanupFailure(t *testing.T) {
 
 // A skip cannot satisfy an expectation; without one it stays a skip.
 func TestReproductionSkipIsNoVerdict(t *testing.T) {
-	for expected, failures := range map[string]int{"rgw_case=NOT_REPRODUCED": 1, "": 0} {
+	for _, c := range []struct {
+		env      func(string) string
+		failures int
+	}{{fixedRoles, 1}, {unknownRoles, 0}} {
 		f := &verdictT{}
 		f.run(func() {
-			harness.NewReproduction(f, verdictEnv(expected), "rgw_case", "trigger")
+			harness.NewReproduction(f, verdictCatalog(t, "REPRODUCED"), c.env, "linux/amd64", "rgw_case", "trigger")
 			f.skipped = true
 			f.FailNow()
 		})
 		if line := f.verdictLine(t); !strings.Contains(line, "verdict=INCONCLUSIVE") || !strings.Contains(line, "skipped") {
-			t.Errorf("expected %q: verdict line %q", expected, line)
+			t.Errorf("verdict line %q", line)
 		}
-		if len(f.errors) != failures {
-			t.Errorf("expected %q: failures %q, want %d", expected, f.errors, failures)
+		if len(f.errors) != c.failures {
+			t.Errorf("failures %q, want %d", f.errors, c.failures)
 		}
 	}
 }
 
 func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
-	f := runVerdict("rgw_case=REPRODUCED", observedSymptom)
-	line := f.verdictLine(t)
+	line := runVerdict(t, verdictCatalog(t, "REPRODUCED"), affectedRoles, observedSymptom).verdictLine(t)
 	for _, want := range []string{
-		"REPRODUCTION_VERDICT case=rgw_case verdict=REPRODUCED expected=REPRODUCED attempts=1 platform=",
-		" network=bridge images=essential=sha256:e,rgw=sha256:r ",
+		"REPRODUCTION_VERDICT case=rgw_case verdict=REPRODUCED expected=REPRODUCED combination=affected attempts=1 platform=linux/amd64 network=bridge ",
+		" images=essential=sha256:e1,client=sha256:c1,rgw=sha256:r1 ",
 		" observation=trigger: refused with 400",
 	} {
 		if !strings.Contains(line, want) {
@@ -222,40 +313,50 @@ func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
 	}
 	host := &verdictT{}
 	host.run(func() {
-		r := harness.NewReproduction(host, verdictEnv(""), "rgw_case", "trigger").Network("host")
-		r.Absent(host, "trigger", "accepted")
+		r := harness.NewReproduction(host, verdictCatalog(t, "REPRODUCED"), affectedRoles, "linux/amd64", "rgw_case/host", "trigger")
+		r.Symptom(host, "trigger", "refused")
 		r.Conclude()
 	})
-	if line := host.verdictLine(t); !strings.Contains(line, " network=host images=") {
-		t.Errorf("verdict line %q, want the test's own network mode", line)
+	if line := host.verdictLine(t); !strings.Contains(line, " network=host ") || !strings.Contains(line, " expected=REPRODUCED combination=affected ") {
+		t.Errorf("host unit line %q", line)
 	}
-	omitted := runVerdict("", absentSymptom).verdictLine(t)
-	if !strings.Contains(omitted, "expected=none") || !strings.Contains(omitted, "observation=control: accepted; trigger: accepted") {
+	omitted := runVerdict(t, verdictCatalog(t, "REPRODUCED"), unknownRoles, absentSymptom).verdictLine(t)
+	if !strings.Contains(omitted, "expected=none combination=none") || !strings.Contains(omitted, "observation=control: accepted; trigger: accepted") {
 		t.Errorf("verdict line %q", omitted)
 	}
 }
 
-func TestParseReproductionExpectationRefusesInvalidRows(t *testing.T) {
-	for _, value := range []string{
-		"rgw_case=INCONCLUSIVE", "rgw_case=reproduced", "rgw_case", "=REPRODUCED",
-		"Rgw_case=REPRODUCED", "rgw_case/a/b=REPRODUCED", "rgw_case=REPRODUCED,other=REPRODUCED",
-	} {
-		if _, err := harness.ParseReproductionExpectation(value); err == nil {
-			t.Errorf("%q accepted", value)
-		}
+func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
+	combination := func(verdicts, images string) string {
+		return `{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
+  "combinations": [{"id": "a", "platform": "linux/amd64", "images": ` + images + `, "verdicts": ` + verdicts + `, "evidence": "run"}]}`
 	}
-	for value, want := range map[string]harness.ReproductionExpectation{
-		"":                                      {},
-		"rgw_case=REPRODUCED":                   {Unit: "rgw_case", Verdict: harness.Reproduced},
-		"cephfs_case/same-named=NOT_REPRODUCED": {Unit: "cephfs_case/same-named", Verdict: harness.NotReproduced},
+	images := `{"essential": "E", "rgw": "R"}`
+	if _, err := harness.ParseReproductionCatalog([]byte(combination(`{"rgw_case": "REPRODUCED"}`, images))); err != nil {
+		t.Fatalf("valid catalogue: %v", err)
+	}
+	for name, data := range map[string]string{
+		"inconclusive expectation": combination(`{"rgw_case": "INCONCLUSIVE"}`, images),
+		"unknown verdict":          combination(`{"rgw_case": "FIXED"}`, images),
+		"unknown unit":             combination(`{"rgw_other": "REPRODUCED"}`, images),
+		"no verdicts":              combination(`{}`, images),
+		"missing role image":       combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "E"}`),
+		"extra role image":         combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "E", "rgw": "R", "client": "C"}`),
+		"unknown field":            strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence"`, `"release": "20.2.4", "evidence"`, 1),
+		"unknown role":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["essential", "rgw"]`, `["essential", "gateway"]`, 1),
+		"bad network":              strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"bridge"`, `"none"`, 1),
+		"same images twice": strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence": "run"}]`,
+			`"evidence": "run"}, {"id": "b", "platform": "linux/amd64", "images": `+images+`, "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "run"}]`, 1),
 	} {
-		if got, err := harness.ParseReproductionExpectation(value); err != nil || got != want {
-			t.Errorf("%q: %+v, %v", value, got, err)
+		if _, err := harness.ParseReproductionCatalog([]byte(data)); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 	f := &verdictT{}
-	f.run(func() { harness.NewReproduction(f, verdictEnv("rgw_case=INCONCLUSIVE"), "rgw_case", "trigger") })
-	if len(f.errors) != 1 || !strings.Contains(f.errors[0], "invalid expectation") {
-		t.Errorf("invalid expectation at start: %q", f.errors)
+	f.run(func() {
+		harness.NewReproduction(f, verdictCatalog(t, "REPRODUCED"), affectedRoles, "linux/amd64", "rgw_unlisted", "trigger")
+	})
+	if len(f.errors) != 1 || !strings.Contains(f.errors[0], "needs an entry in reproductions.json") {
+		t.Errorf("unlisted unit: %q", f.errors)
 	}
 }

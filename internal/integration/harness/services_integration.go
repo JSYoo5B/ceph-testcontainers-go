@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -90,19 +91,49 @@ func NativeIntegrationImages(t *testing.T) (string, []testcontainers.ContainerCu
 	return image, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))}
 }
 
-// IntegrationImageSet is the image set of NativeIntegrationImages: the role
-// images CI supplies, or an All set of the local aggregate image. A test that
-// changes one role, such as MGR, starts from it.
+// IntegrationImageSet is the image set of NativeIntegrationImages, by
+// ResolveImageSet. A test that changes one role, such as MGR, starts from it.
 func IntegrationImageSet(t *testing.T) ceph.ImageSet {
 	t.Helper()
-	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
-		return ceph.ImageSet{All: EssentialImage(t)}
-	}
-	images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}
-	if images.Essential == "" {
-		t.Fatal("missing essential image")
+	images, err := ResolveImageSet(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return images
+}
+
+// imageRoleVariables are the role variables ResolveImageSet reads, besides
+// CEPH_TEST_ESSENTIAL_IMAGE.
+var imageRoleVariables = []string{"CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_CEPHFS_IMAGE", "CEPH_TEST_RBD_AUX_IMAGE", "CEPH_TEST_RGW_IMAGE"}
+
+// ResolveImageSet is the image set the fixtures run, and the identity a
+// reproduction compares with its verified combinations. With the role
+// layout (CEPH_TEST_ESSENTIAL_IMAGE set, or SCENARIO_IMAGE_LAYOUT=roles) each
+// role is its variable and essential is required. Otherwise every role is
+// the aggregate image (CEPH_TEST_IMAGE, else ceph.DefaultImage), except a
+// role whose variable is set, which overrides it.
+func ResolveImageSet(getenv func(string) string) (ceph.ImageSet, error) {
+	if getenv("CEPH_TEST_ESSENTIAL_IMAGE") != "" || getenv("SCENARIO_IMAGE_LAYOUT") == "roles" {
+		images := ceph.ImageSet{Essential: getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: getenv("CEPH_TEST_RGW_IMAGE")}
+		if images.Essential == "" {
+			return images, fmt.Errorf("missing essential image")
+		}
+		return images, nil
+	}
+	aggregate := getenv("CEPH_TEST_IMAGE")
+	if aggregate == "" {
+		aggregate = ceph.DefaultImage
+	}
+	if !slices.ContainsFunc(imageRoleVariables, func(name string) bool { return getenv(name) != "" }) {
+		return ceph.ImageSet{All: aggregate}, nil
+	}
+	role := func(name string) string {
+		if image := getenv(name); image != "" {
+			return image
+		}
+		return aggregate
+	}
+	return ceph.ImageSet{Essential: aggregate, Client: role("CEPH_TEST_CLIENT_IMAGE"), CephFS: role("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: role("CEPH_TEST_RBD_AUX_IMAGE"), RGW: role("CEPH_TEST_RGW_IMAGE")}, nil
 }
 
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
@@ -252,6 +283,10 @@ func ToolkitContainer(t *testing.T, cluster *ceph.Container) testcontainers.Cont
 func NativeClientImage(t *testing.T, aggregate string) string {
 	t.Helper()
 	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
+		// A client override of the aggregate layout, as ResolveImageSet.
+		if image := os.Getenv("CEPH_TEST_CLIENT_IMAGE"); image != "" {
+			return image
+		}
 		return aggregate
 	}
 	image := os.Getenv("CEPH_TEST_CLIENT_IMAGE")
@@ -263,12 +298,16 @@ func NativeClientImage(t *testing.T, aggregate string) string {
 
 func NativeMirrorImage(t *testing.T, role, aggregate string) string {
 	t.Helper()
-	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
-		return aggregate
-	}
 	variable := "CEPH_TEST_RBD_AUX_IMAGE"
 	if role == "cephfs" {
 		variable = "CEPH_TEST_CEPHFS_IMAGE"
+	}
+	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
+		// A role override of the aggregate layout, as ResolveImageSet.
+		if image := os.Getenv(variable); image != "" {
+			return image
+		}
+		return aggregate
 	}
 	image := os.Getenv(variable)
 	if image == "" {

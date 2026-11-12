@@ -3,6 +3,8 @@
 package harness
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -10,8 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // ReproductionVerdict is the actual or expected outcome of a known-defect
@@ -33,40 +33,179 @@ const (
 	Inconclusive ReproductionVerdict = "INCONCLUSIVE"
 )
 
-// ExpectedVerdictEnv names the variable that declares one expected verdict as
-// <unit>=<REPRODUCED|NOT_REPRODUCED>, for example
-// rgw_empty_sse_header=REPRODUCED.
-const ExpectedVerdictEnv = "CEPH_TEST_EXPECTED_VERDICT"
+// ReproductionsFile is the catalogue, in an experiment case's directory, of
+// its reproduction units and of the image combinations whose verdicts a
+// native run verified.
+const ReproductionsFile = "reproductions.json"
+
+// ReproductionsSchema is the schema of a ReproductionsFile.
+const ReproductionsSchema = "ceph-reproductions/v1"
 
 // VerdictLinePrefix starts the one summary line each reproduction unit
 // prints.
 const VerdictLinePrefix = "REPRODUCTION_VERDICT"
 
-var reproductionUnit = regexp.MustCompile(`^[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$`)
+var (
+	reproductionUnit        = regexp.MustCompile(`^[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$`)
+	reproductionCombination = regexp.MustCompile(`^[a-z0-9]+([.-][a-z0-9]+)*$`)
+	reproductionPlatform    = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+$`)
+)
 
-// ReproductionExpectation is a parsed ExpectedVerdictEnv value.
-type ReproductionExpectation struct {
-	Unit    string
-	Verdict ReproductionVerdict
+// reproductionRoles are the image roles a combination can name, in the
+// order the verdict line prints them.
+var reproductionRoles = []string{"essential", "client", "cephfs", "rbd-aux", "rgw"}
+
+// ReproductionCatalog is a parsed ReproductionsFile.
+type ReproductionCatalog struct {
+	Schema string `json:"schema"`
+	// Roles are the image roles the case consumes; a combination names an
+	// image for each of them.
+	Roles []string `json:"roles"`
+	// Units are the reproduction units the case starts, with the network
+	// mode each one runs in.
+	Units map[string]ReproductionUnit `json:"units"`
+	// Combinations are the verified image combinations.
+	Combinations []ReproductionCombination `json:"combinations"`
 }
 
-// ParseReproductionExpectation reads an ExpectedVerdictEnv value. Empty
-// means no expectation. Anything else must name one unit and Reproduced or
-// NotReproduced; Inconclusive can never satisfy a row, so it is refused.
-func ParseReproductionExpectation(value string) (ReproductionExpectation, error) {
-	if value == "" {
-		return ReproductionExpectation{}, nil
+// ReproductionUnit describes one unit of a catalogue.
+type ReproductionUnit struct {
+	// Network is "bridge" or "host": the network mode the unit's test runs
+	// its clusters in.
+	Network string `json:"network"`
+}
+
+// ReproductionCombination is one verified image combination: the image of
+// each role on a platform, and the verdict a native run observed for each
+// listed unit, with that run as evidence.
+type ReproductionCombination struct {
+	ID       string                         `json:"id"`
+	Platform string                         `json:"platform"`
+	Images   map[string]string              `json:"images"`
+	Verdicts map[string]ReproductionVerdict `json:"verdicts"`
+	Evidence string                         `json:"evidence"`
+}
+
+// ParseReproductionCatalog reads a ReproductionsFile and refuses anything a
+// run could not use to select one expectation: an unknown field, role or
+// verdict, an INCONCLUSIVE expectation, a combination that misses a role or
+// names an unknown unit, or two combinations of the same images.
+func ParseReproductionCatalog(data []byte) (ReproductionCatalog, error) {
+	var c ReproductionCatalog
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&c); err != nil {
+		return c, fmt.Errorf("%s: %w", ReproductionsFile, err)
 	}
-	unit, verdict, ok := strings.Cut(value, "=")
-	if !ok || !reproductionUnit.MatchString(unit) {
-		return ReproductionExpectation{}, fmt.Errorf("%s=%q: want <case>[/<subtest>]=<REPRODUCED|NOT_REPRODUCED>", ExpectedVerdictEnv, value)
+	if c.Schema != ReproductionsSchema {
+		return c, fmt.Errorf("%s: schema %q, want %q", ReproductionsFile, c.Schema, ReproductionsSchema)
 	}
-	switch v := ReproductionVerdict(verdict); v {
-	case Reproduced, NotReproduced:
-		return ReproductionExpectation{Unit: unit, Verdict: v}, nil
-	default:
-		return ReproductionExpectation{}, fmt.Errorf("%s=%q: expected verdict %q is not REPRODUCED or NOT_REPRODUCED", ExpectedVerdictEnv, value, verdict)
+	if len(c.Roles) == 0 || hasDuplicate(c.Roles) {
+		return c, fmt.Errorf("%s: roles %q must be distinct and not empty", ReproductionsFile, c.Roles)
 	}
+	for _, role := range c.Roles {
+		if !slices.Contains(reproductionRoles, role) {
+			return c, fmt.Errorf("%s: unknown role %q, want one of %q", ReproductionsFile, role, reproductionRoles)
+		}
+	}
+	if len(c.Units) == 0 {
+		return c, fmt.Errorf("%s: no units", ReproductionsFile)
+	}
+	for name, unit := range c.Units {
+		if !reproductionUnit.MatchString(name) {
+			return c, fmt.Errorf("%s: unit %q is not <case>[/<subtest>]", ReproductionsFile, name)
+		}
+		if unit.Network != "bridge" && unit.Network != "host" {
+			return c, fmt.Errorf("%s: unit %s network %q is not bridge or host", ReproductionsFile, name, unit.Network)
+		}
+	}
+	seen := map[string]string{}
+	for _, combination := range c.Combinations {
+		if !reproductionCombination.MatchString(combination.ID) || seen[combination.ID] != "" {
+			return c, fmt.Errorf("%s: combination id %q must be unique and lowercase", ReproductionsFile, combination.ID)
+		}
+		seen[combination.ID] = combination.ID
+		if !reproductionPlatform.MatchString(combination.Platform) {
+			return c, fmt.Errorf("%s: combination %s platform %q is not <os>/<arch>", ReproductionsFile, combination.ID, combination.Platform)
+		}
+		if len(combination.Images) != len(c.Roles) {
+			return c, fmt.Errorf("%s: combination %s must name an image for exactly the roles %q", ReproductionsFile, combination.ID, c.Roles)
+		}
+		for _, role := range c.Roles {
+			if image := combination.Images[role]; image == "" || strings.TrimSpace(image) != image {
+				return c, fmt.Errorf("%s: combination %s has no image for role %s", ReproductionsFile, combination.ID, role)
+			}
+		}
+		if len(combination.Verdicts) == 0 || strings.TrimSpace(combination.Evidence) == "" {
+			return c, fmt.Errorf("%s: combination %s needs verdicts and the native evidence that observed them", ReproductionsFile, combination.ID)
+		}
+		for unit, verdict := range combination.Verdicts {
+			if _, ok := c.Units[unit]; !ok {
+				return c, fmt.Errorf("%s: combination %s names unknown unit %s", ReproductionsFile, combination.ID, unit)
+			}
+			if verdict != Reproduced && verdict != NotReproduced {
+				return c, fmt.Errorf("%s: combination %s expects %q of %s; want REPRODUCED or NOT_REPRODUCED", ReproductionsFile, combination.ID, verdict, unit)
+			}
+		}
+		key := combination.Platform + " " + c.identity(combination.Images)
+		if other := seen[key]; other != "" {
+			return c, fmt.Errorf("%s: combinations %s and %s name the same images", ReproductionsFile, other, combination.ID)
+		}
+		seen[key] = combination.ID
+	}
+	return c, nil
+}
+
+// identity is the role=image list of the catalogue's roles, with
+// "unresolved" for a role without an image.
+func (c ReproductionCatalog) identity(images map[string]string) string {
+	parts := make([]string, 0, len(c.Roles))
+	for _, role := range reproductionRoles {
+		if slices.Contains(c.Roles, role) {
+			image := images[role]
+			if image == "" {
+				image = "unresolved"
+			}
+			parts = append(parts, role+"="+image)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// Match returns the combination whose platform and images equal the
+// resolved ones, if any. An unresolved role never matches.
+func (c ReproductionCatalog) Match(platform string, images map[string]string) (ReproductionCombination, bool) {
+	for _, role := range c.Roles {
+		if images[role] == "" {
+			return ReproductionCombination{}, false
+		}
+	}
+	for _, combination := range c.Combinations {
+		if combination.Platform == platform && c.identity(combination.Images) == c.identity(images) {
+			return combination, true
+		}
+	}
+	return ReproductionCombination{}, false
+}
+
+// ResolvedRoleImages is the image each role resolves to for the fixtures,
+// by ResolveImageSet. A role that the role layout leaves unset, or every
+// role when the essential image is missing, is absent from the map.
+func ResolvedRoleImages(getenv func(string) string) map[string]string {
+	images := map[string]string{}
+	set, err := ResolveImageSet(getenv)
+	if err != nil {
+		return images
+	}
+	if set.All != "" {
+		set.Essential, set.Client, set.CephFS, set.RBDAux, set.RGW = set.All, set.All, set.All, set.All, set.All
+	}
+	for role, image := range map[string]string{"essential": set.Essential, "client": set.Client, "cephfs": set.CephFS, "rbd-aux": set.RBDAux, "rgw": set.RGW} {
+		if image != "" {
+			images[role] = image
+		}
+	}
+	return images
 }
 
 // ReproductionT is the part of *testing.T a reproduction uses.
@@ -82,55 +221,64 @@ type ReproductionT interface {
 // Reproduction collects the observations of one independently evaluated
 // known-defect unit and reports its verdict once.
 //
-// Without an expectation a unit keeps the case's existing semantics: a
-// symptom fails the test (Symptom reports it with Errorf on the test that
-// observed it), an absent symptom passes, and an inconclusive run fails as
-// before. With an expectation for this unit, Conclude compares the actual
-// verdict with it and only a match passes. With an expectation for another
-// unit, this unit prints its verdict and its symptom does not fail the run;
-// an inconclusive result still does.
+// The expectation comes from the case's ReproductionsFile: the combination
+// whose platform and images equal the ones the run resolved selects the
+// expected verdict of the unit, and Conclude passes only that verdict. With
+// no matching combination, or one that lists no verdict for the unit, the
+// run is an investigation and keeps the case's existing semantics: a symptom
+// fails the test that observed it (Symptom reports it with Errorf), an
+// absent symptom passes, and an inconclusive run fails.
 type Reproduction struct {
 	t           ReproductionT
 	unit        string
-	expectation ReproductionExpectation
 	network     string
+	platform    string
 	images      string
+	combination string
+	expected    ReproductionVerdict
 
 	mu       sync.Mutex
 	planned  []string
 	records  map[string][]bool
 	details  map[string]string
-	reason   string
 	reported bool
 }
 
-// StartReproduction starts the unit for a test, reading ExpectedVerdictEnv
-// and the image variables from the environment. Observations names each
-// planned observation; every one must be recorded for a verdict on the
-// symptom.
+// StartReproduction starts the unit for a test: it reads ReproductionsFile
+// from the test's package directory and resolves the images from the
+// environment. Observations names each planned observation; every one must
+// be recorded for NOT_REPRODUCED.
 func StartReproduction(t ReproductionT, unit string, observations ...string) *Reproduction {
 	t.Helper()
-	return NewReproduction(t, os.Getenv, unit, observations...)
+	data, err := os.ReadFile(ReproductionsFile)
+	if err != nil {
+		t.Errorf("reproduction %s: %v", unit, err)
+		t.FailNow()
+	}
+	catalog, err := ParseReproductionCatalog(data)
+	if err != nil {
+		t.Errorf("reproduction %s: %v", unit, err)
+		t.FailNow()
+	}
+	return NewReproduction(t, catalog, os.Getenv, runtime.GOOS+"/"+runtime.GOARCH, unit, observations...)
 }
 
-// NewReproduction is StartReproduction with an explicit environment.
-func NewReproduction(t ReproductionT, getenv func(string) string, unit string, observations ...string) *Reproduction {
+// NewReproduction is StartReproduction with an explicit catalogue,
+// environment and platform.
+func NewReproduction(t ReproductionT, catalog ReproductionCatalog, getenv func(string) string, platform, unit string, observations ...string) *Reproduction {
 	t.Helper()
-	r := &Reproduction{t: t, unit: unit, planned: observations, records: map[string][]bool{}, details: map[string]string{},
-		network: getenv("CEPH_TEST_NETWORK"), images: verdictImages(getenv)}
-	if r.network == "" {
-		r.network = "bridge"
-	}
-	if !reproductionUnit.MatchString(unit) || len(observations) == 0 || hasDuplicate(observations) {
-		t.Errorf("reproduction unit %q needs a case[/subtest] name and distinct planned observations, got %q", unit, observations)
+	declared, ok := catalog.Units[unit]
+	if !reproductionUnit.MatchString(unit) || !ok || len(observations) == 0 || hasDuplicate(observations) {
+		t.Errorf("reproduction unit %q needs an entry in %s and distinct planned observations, got %q", unit, ReproductionsFile, observations)
 		t.FailNow()
 	}
-	expectation, err := ParseReproductionExpectation(getenv(ExpectedVerdictEnv))
-	if err != nil {
-		t.Errorf("invalid expectation: %v", err)
-		t.FailNow()
+	resolved := ResolvedRoleImages(getenv)
+	r := &Reproduction{t: t, unit: unit, network: declared.Network, platform: platform, images: catalog.identity(resolved),
+		combination: "none", planned: observations, records: map[string][]bool{}, details: map[string]string{}}
+	if combination, ok := catalog.Match(platform, resolved); ok {
+		r.combination = combination.ID
+		r.expected = combination.Verdicts[unit]
 	}
-	r.expectation = expectation
 	t.Cleanup(r.finish)
 	return r
 }
@@ -141,29 +289,20 @@ func hasDuplicate(names []string) bool {
 	return len(slices.Compact(sorted)) != len(names)
 }
 
-// Network names the network mode the unit's clusters run in when the test
-// selects it itself, such as with ceph.WithHostNetwork, instead of through
-// CEPH_TEST_NETWORK. It returns r.
-func (r *Reproduction) Network(mode string) *Reproduction {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.network = mode
-	return r
-}
-
-// Expected reports whether the environment expects a verdict of this unit.
-func (r *Reproduction) Expected() bool {
-	return r.expectation.Unit == r.unit
+// Expected is the verdict the matching combination expects of the unit, or
+// "" for an investigation.
+func (r *Reproduction) Expected() ReproductionVerdict {
+	return r.expected
 }
 
 // Symptom records that the planned observation saw the documented symptom.
-// Without an expectation it fails t, the test that made the observation,
-// with an "observed defect" message.
+// Without an expected verdict it fails t, the test that made the
+// observation, with an "observed defect" message.
 func (r *Reproduction) Symptom(t ReproductionT, observation, format string, args ...any) {
 	t.Helper()
 	detail := fmt.Sprintf(format, args...)
 	r.record(observation, true, detail)
-	if r.expectation.Unit == "" {
+	if r.expected == "" {
 		t.Errorf("observed defect: %s: %s", observation, detail)
 		return
 	}
@@ -199,10 +338,7 @@ func (r *Reproduction) Inconclusive(t ReproductionT, format string, args ...any)
 	reason := fmt.Sprintf(format, args...)
 	r.mu.Lock()
 	first := !r.reported
-	if first {
-		r.reported = true
-		r.reason = reason
-	}
+	r.reported = true
 	r.mu.Unlock()
 	if first {
 		r.t.Logf("%s", r.line(Inconclusive, 0, reason))
@@ -212,8 +348,8 @@ func (r *Reproduction) Inconclusive(t ReproductionT, format string, args ...any)
 }
 
 // Conclude derives the verdict from the recorded observations, prints the
-// summary line and applies the expectation. Call it once every planned
-// observation ran, on the test that started the unit.
+// summary line and compares it with the expected verdict. Call it once every
+// planned observation ran, on the test that started the unit.
 func (r *Reproduction) Conclude() {
 	r.t.Helper()
 	r.mu.Lock()
@@ -225,7 +361,7 @@ func (r *Reproduction) Conclude() {
 	verdict, attempts, observation := DeriveReproduction(r.planned, r.records, r.details)
 	r.mu.Unlock()
 	r.t.Logf("%s", r.line(verdict, attempts, observation))
-	if err := CompareReproduction(r.expectation, r.unit, verdict); err != nil {
+	if err := CompareReproduction(r.expected, r.unit, verdict); err != nil {
 		r.t.Errorf("%v", err)
 	}
 }
@@ -246,8 +382,8 @@ func (r *Reproduction) finish() {
 		reason = "the test was skipped before the planned observations completed"
 	}
 	r.t.Logf("%s", r.line(Inconclusive, 0, reason))
-	if r.Expected() {
-		r.t.Errorf("expected %s of %s, but no verdict was reached: %s", r.expectation.Verdict, r.unit, reason)
+	if r.expected != "" {
+		r.t.Errorf("expected %s of %s, but no verdict was reached: %s", r.expected, r.unit, reason)
 	}
 }
 
@@ -255,8 +391,8 @@ func (r *Reproduction) finish() {
 // symptom is Reproduced, since the trigger and the controls held up to it,
 // even when a later planned observation was not recorded; otherwise an
 // unrecorded planned observation is Inconclusive, and NotReproduced needs
-// every one. Attempts is the most records of one
-// observation. The observation text names the decisive observations.
+// every one. Attempts is the most records of one observation. The
+// observation text names the decisive observations.
 func DeriveReproduction(planned []string, records map[string][]bool, details map[string]string) (ReproductionVerdict, int, string) {
 	attempts := 0
 	var missing, symptoms, absent []string
@@ -285,55 +421,29 @@ func DeriveReproduction(planned []string, records map[string][]bool, details map
 	}
 }
 
-// CompareReproduction applies an expectation to the actual verdict of unit.
-// No expectation, or one for another unit, keeps the existing semantics: only
-// Inconclusive is an error, since a symptom has already failed the observing
-// test or does not concern the expected unit. An expectation for unit is met
-// only by the same verdict.
-func CompareReproduction(expectation ReproductionExpectation, unit string, actual ReproductionVerdict) error {
-	if expectation.Unit != unit {
-		if actual == Inconclusive {
-			return fmt.Errorf("%s of %s: no verdict on the symptom", Inconclusive, unit)
-		}
-		return nil
-	}
-	if actual != expectation.Verdict {
-		return fmt.Errorf("expected %s of %s, actual %s", expectation.Verdict, unit, actual)
+// CompareReproduction compares the actual verdict of unit with the expected
+// one. Without an expectation only Inconclusive is an error, since a symptom
+// has already failed the observing test; with one only the same verdict
+// passes.
+func CompareReproduction(expected ReproductionVerdict, unit string, actual ReproductionVerdict) error {
+	switch {
+	case expected == "" && actual == Inconclusive:
+		return fmt.Errorf("%s of %s: no verdict on the symptom", Inconclusive, unit)
+	case expected != "" && actual != expected:
+		return fmt.Errorf("expected %s of %s, actual %s", expected, unit, actual)
 	}
 	return nil
 }
 
 func (r *Reproduction) line(verdict ReproductionVerdict, attempts int, observation string) string {
 	expected := "none"
-	if r.Expected() {
-		expected = string(r.expectation.Verdict)
+	if r.expected != "" {
+		expected = string(r.expected)
 	}
-	r.mu.Lock()
-	network := r.network
-	r.mu.Unlock()
-	return fmt.Sprintf("%s case=%s verdict=%s expected=%s attempts=%d platform=%s/%s network=%s images=%s observation=%s",
-		VerdictLinePrefix, r.unit, verdict, expected, attempts, runtime.GOOS, runtime.GOARCH, network, r.images, oneLine(observation))
+	return fmt.Sprintf("%s case=%s verdict=%s expected=%s combination=%s attempts=%d platform=%s network=%s images=%s observation=%s",
+		VerdictLinePrefix, r.unit, verdict, expected, r.combination, attempts, r.platform, r.network, r.images, oneLine(observation))
 }
 
 func oneLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
-}
-
-// verdictImages names the images the run resolved, in the order
-// IntegrationImage resolves them.
-func verdictImages(getenv func(string) string) string {
-	var images []string
-	for _, role := range []string{"ESSENTIAL", "CLIENT", "CEPHFS", "RBD_AUX", "RGW"} {
-		if image := getenv("CEPH_TEST_" + role + "_IMAGE"); image != "" {
-			images = append(images, strings.ToLower(strings.ReplaceAll(role, "_", "-"))+"="+image)
-		}
-	}
-	if len(images) == 0 {
-		image := getenv("CEPH_TEST_IMAGE")
-		if image == "" {
-			image = ceph.DefaultImage
-		}
-		images = append(images, "all="+image)
-	}
-	return strings.Join(images, ",")
 }
