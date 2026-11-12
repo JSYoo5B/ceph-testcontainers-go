@@ -45,64 +45,6 @@ func (c *ccCase) admin(t *testing.T, args ...string) []byte {
 	return harness.RGWBackendAdmin(t, c.ctx, c.gateway, args...)
 }
 
-// ccCompression is the decoded user.rgw.compression attribute of an
-// object, as radosgw-admin object stat prints it.
-type ccCompression struct {
-	Type     string `json:"compression_type"`
-	OrigSize uint64 `json:"orig_size"`
-	Blocks   []struct {
-		Len uint64 `json:"len"`
-	} `json:"blocks"`
-}
-
-// stored is the sum of the compressed block lengths, the raw bytes the
-// object occupies.
-func (c ccCompression) stored() uint64 {
-	var n uint64
-	for _, b := range c.Blocks {
-		n += b.Len
-	}
-	return n
-}
-
-// ccIndexEntry is the bucket index entry of the case's one object: Size is
-// the raw (possibly compressed) byte count, AccountedSize the logical one.
-type ccIndexEntry struct {
-	Size          uint64 `json:"size"`
-	AccountedSize uint64 `json:"accounted_size"`
-	StorageClass  string `json:"storage_class"`
-}
-
-// ccStats is the rgw.main usage of a bucket: Size is the accounted
-// (logical) total, SizeUtilized the raw one, SizeActual the rounded one.
-type ccStats struct {
-	Size         uint64 `json:"size"`
-	SizeActual   uint64 `json:"size_actual"`
-	SizeUtilized uint64 `json:"size_utilized"`
-	NumObjects   uint64 `json:"num_objects"`
-}
-
-// ccObservation is everything the case reads about the object of one
-// bucket, through radosgw-admin and S3.
-type ccObservation struct {
-	Bucket      string
-	Compression *ccCompression
-	Index       ccIndexEntry
-	Stats       ccStats
-	ListedSize  int64
-	Data        []byte
-}
-
-func (o ccObservation) String() string {
-	compression := "none"
-	if o.Compression != nil {
-		compression = fmt.Sprintf("%s orig_size=%d stored=%d", o.Compression.Type, o.Compression.OrigSize, o.Compression.stored())
-	}
-	return fmt.Sprintf("bucket=%s compression=(%s) index=(size=%d accounted_size=%d storage_class=%q) stats=(size=%d size_actual=%d size_utilized=%d num_objects=%d) listed_size=%d get_bytes=%d",
-		o.Bucket, compression, o.Index.Size, o.Index.AccountedSize, o.Index.StorageClass,
-		o.Stats.Size, o.Stats.SizeActual, o.Stats.SizeUtilized, o.Stats.NumObjects, o.ListedSize, len(o.Data))
-}
-
 // observe reads the object of bucket: its compression attribute, its bucket
 // index entry, the bucket statistics once they count it, its S3 listing
 // size and its bytes through a fresh GET.
@@ -203,7 +145,7 @@ func (c *ccCase) copyObject(t *testing.T, source, bucket string, headers http.He
 // configurePlacement adds the uncompressed COLD storage class to the
 // default placement, enables zlib compression for STANDARD, restarts the
 // gateway so that it loads the zone, and reads the zone back.
-func (c *ccCase) configurePlacement(t *testing.T, cluster *ceph.Container) {
+func (c *ccCase) configurePlacement(t *testing.T, repro *harness.Reproduction, cluster *ceph.Container) {
 	t.Helper()
 	if _, err := cluster.CreatePool(c.ctx, ceph.PoolConfig{Name: ccColdPool, Application: "rgw"}); err != nil {
 		t.Fatal(err)
@@ -251,7 +193,7 @@ func (c *ccCase) configurePlacement(t *testing.T, cluster *ceph.Container) {
 			return
 		}
 	}
-	t.Fatalf("condition not established: zone %s does not read back zlib STANDARD and uncompressed %s", readBack.Name, ccColdClass)
+	repro.Inconclusive(t, "condition not established: zone %s does not read back zlib STANDARD and uncompressed %s", readBack.Name, ccColdClass)
 }
 
 // traceCopies returns the copy_obj placement lines that the gateway logged
@@ -310,9 +252,14 @@ func (c *ccCase) cleanup(t *testing.T, buckets []string) {
 // returns every byte. Tentacle 20.2.5 and Umbrella 21.2.0 pass. The
 // controls (an uncompressed source, and a compressed destination with its
 // own compression metadata) pass on every tested release.
+//
+// The trigger subtest is the one observation of the reproduction unit
+// rgw_compressed_copy_accounting; a failed control or condition leaves it
+// INCONCLUSIVE.
 func TestRGWCompressedCopyAccounting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_compressed_copy_accounting", "compressed-source-uncompressed-destination")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_CC ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -326,7 +273,7 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 	t.Logf("RGW_CC daemons=%s", strings.Join(strings.Fields(string(versions)), " "))
 	t.Logf("RGW_CC gateway=%s", strings.TrimSpace(harness.ExecOutput(t, ctx, gateway, "radosgw", "--version")))
 	c := &ccCase{ctx: ctx, gateway: gateway, client: harness.S3HTTPClient{AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
-	c.configurePlacement(t, cluster)
+	c.configurePlacement(t, repro, cluster)
 
 	// One object per bucket, so no other object can mask a counter.
 	const (
@@ -354,10 +301,10 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 	src := c.observe(t, source)
 	if src.Compression == nil || src.Compression.Type != "zlib" || src.Compression.OrigSize != logical ||
 		src.Compression.stored() >= logical || src.Index.Size >= logical || src.Index.AccountedSize != logical {
-		t.Fatalf("condition not established: the source is not stored zlib-compressed with logical size %d: %s", logical, src)
+		repro.Inconclusive(t, "condition not established: the source is not stored zlib-compressed with logical size %d: %s", logical, src)
 	}
 	if plain := c.observe(t, plainSource); plain.Compression != nil || plain.Index.StorageClass != ccColdClass || plain.Index.AccountedSize != logical {
-		t.Fatalf("condition not established: the plain source is not an uncompressed %s object of %d bytes: %s", ccColdClass, logical, plain)
+		repro.Inconclusive(t, "condition not established: the plain source is not an uncompressed %s object of %d bytes: %s", ccColdClass, logical, plain)
 	}
 
 	// debug_rgw 20 for the copies only, to record the placement each copy
@@ -371,15 +318,34 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		t.Logf("RGW_CC trace %s", line)
 	}
 
-	requireLogical := func(t *testing.T, o ccObservation) {
+	// A copy that decompresses the source reads its compressed bytes.
+	compressedLengths := []uint64{src.Index.Size, src.Compression.stored()}
+
+	// The controls run first: each must account the logical length.
+	controlLogical := func(t *testing.T, o ccObservation) {
 		t.Helper()
-		if !bytes.Equal(o.Data, data) {
-			t.Fatalf("%s: GET returned %d bytes that differ from the %d written", o.Bucket, len(o.Data), len(data))
+		if symptom, detail, err := judgeCopyAccounting(o, data, compressedLengths); err != nil || symptom {
+			repro.Inconclusive(t, "control failed: %s %v", detail, err)
 		}
-		if o.Index.AccountedSize != logical || uint64(o.ListedSize) != logical || o.Stats.Size != logical {
-			t.Errorf("%s: logical size %d, but index accounted_size=%d, listed Size=%d, bucket stats size=%d",
-				o.Bucket, logical, o.Index.AccountedSize, o.ListedSize, o.Stats.Size)
+	}
+
+	t.Run("compressed-destination-control", func(t *testing.T) {
+		o := c.observe(t, compressed)
+		if o.Compression == nil || o.Compression.OrigSize != logical || o.Index.Size >= logical {
+			repro.Inconclusive(t, "control failed: the STANDARD copy is not stored compressed: %s", o)
 		}
+		controlLogical(t, o)
+	})
+
+	t.Run("uncompressed-source-control", func(t *testing.T) {
+		o := c.observe(t, plainControl)
+		if o.Compression != nil || o.Index.Size != logical {
+			repro.Inconclusive(t, "control failed: the copy of the plain source is not uncompressed: %s", o)
+		}
+		controlLogical(t, o)
+	})
+	if t.Failed() {
+		return
 	}
 
 	t.Run("compressed-source-uncompressed-destination", func(t *testing.T) {
@@ -387,24 +353,17 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		// The copy rewrote the data without compression: no compression
 		// metadata, the raw bytes are the logical ones.
 		if o.Compression != nil || o.Index.StorageClass != ccColdClass || o.Index.Size != logical || o.Stats.SizeUtilized != logical {
-			t.Fatalf("condition not established: the destination is not an uncompressed %s copy: %s", ccColdClass, o)
+			repro.Inconclusive(t, "condition not established: the destination is not an uncompressed %s copy: %s", ccColdClass, o)
 		}
-		requireLogical(t, o)
-	})
-
-	t.Run("compressed-destination-control", func(t *testing.T) {
-		o := c.observe(t, compressed)
-		if o.Compression == nil || o.Compression.OrigSize != logical || o.Index.Size >= logical {
-			t.Fatalf("control not established: the STANDARD copy is not stored compressed: %s", o)
+		symptom, detail, err := judgeCopyAccounting(o, data, compressedLengths)
+		switch {
+		case err != nil:
+			repro.Inconclusive(t, "%v", err)
+		case symptom:
+			repro.Symptom(t, "compressed-source-uncompressed-destination", "%s", detail)
+		default:
+			repro.Absent(t, "compressed-source-uncompressed-destination", "%s", detail)
 		}
-		requireLogical(t, o)
 	})
-
-	t.Run("uncompressed-source-control", func(t *testing.T) {
-		o := c.observe(t, plainControl)
-		if o.Compression != nil || o.Index.Size != logical {
-			t.Fatalf("control not established: the copy of the plain source is not uncompressed: %s", o)
-		}
-		requireLogical(t, o)
-	})
+	repro.Conclude()
 }
