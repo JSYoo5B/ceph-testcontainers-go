@@ -19,12 +19,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
-// condResult is the native answer to one conditional write.
-type condResult struct {
-	Code    int
-	ErrCode string
-}
-
 // condWriter writes data to path with one optional precondition header.
 type condWriter func(t *testing.T, path string, data []byte, header, value string) condResult
 
@@ -39,6 +33,7 @@ type condObject struct {
 type condCase struct {
 	ctx    context.Context
 	client harness.S3HTTPClient
+	repro  *harness.Reproduction
 }
 
 func (c condCase) signed(t *testing.T, method, path string, payload []byte, headers http.Header) harness.RGWBackendResponse {
@@ -55,7 +50,7 @@ func (c condCase) get(t *testing.T, path string) condObject {
 		if !condValidator(etag) {
 			// Every If-Match step uses the ETag of the last GET, so a
 			// missing one would credit an unconditional write.
-			t.Fatalf("condition not established: fresh GET %s returned ETag %q, not a quoted strong validator", path, etag)
+			c.repro.Inconclusive(t, "condition not established: fresh GET %s returned ETag %q, not a quoted strong validator", path, etag)
 		}
 		return condObject{Data: r.Body, ETag: etag, VersionID: r.Headers.Get("X-Amz-Version-Id")}
 	case r.Code == http.StatusNotFound && harness.RGWBackendErrorCode(r.Body) == "NoSuchKey":
@@ -76,7 +71,7 @@ func (c condCase) versioning(t *testing.T, bucket, status string) {
 		Status string `xml:"Status"`
 	}
 	if err := xml.Unmarshal(r.Body, &state); err != nil || state.Status != status {
-		t.Fatalf("condition not established: bucket %s versioning %q, want %q (%v)", bucket, state.Status, status, err)
+		c.repro.Inconclusive(t, "condition not established: bucket %s versioning %q, want %q (%v)", bucket, state.Status, status, err)
 	}
 }
 
@@ -164,62 +159,68 @@ func (c condCase) requireNoPendingUploads(t *testing.T, bucket string) {
 }
 
 // condSequence runs the AWS conditional-write sequence on path, whose
-// current object is initial with ETag initialTag. Every write is followed by
-// a fresh signed GET: an accepted write must read back its exact bytes and a
-// refused one must leave the key unchanged; either violation is a different
-// defect and stops the sequence. A status other than the AWS one fails the
-// step and the sequence continues from the state the GET shows.
-func condSequence(t *testing.T, c condCase, write condWriter, path string, initial []byte, suspended bool) condObject {
+// current object is initial, and returns the final object and every step
+// for judgeCondSteps. Every write is followed by a fresh signed GET: an
+// accepted write must read back its exact bytes and a refused one must
+// leave the key unchanged; either violation is another fault and stops the
+// sequence. A status other than the AWS one is recorded, and the sequence
+// continues from the state the GET shows. On the control bucket every stop
+// is a failed control.
+func condSequence(t *testing.T, c condCase, write condWriter, path string, initial []byte, control bool) (condObject, []condStep) {
 	t.Helper()
+	stop := func(category, format string, args ...any) {
+		t.Helper()
+		if control {
+			category = "control failed"
+		}
+		c.repro.Inconclusive(t, category+": "+format, args...)
+	}
 	current := c.get(t, path)
 	if !bytes.Equal(current.Data, initial) {
-		t.Fatalf("condition not established: %s does not hold its initial bytes", path)
+		stop("condition not established", "%s does not hold its initial bytes", path)
 	}
-	step := func(name string, data []byte, header, value string, wantCode int, wantErr string) bool {
+	var steps []condStep
+	step := func(name string, data []byte, header, value string, want condResult) {
 		t.Helper()
 		r := write(t, path, data, header, value)
 		after := c.get(t, path)
 		t.Logf("RGW_COND step=%s %s=%q status=%d code=%s etag=%s version=%q present=%t", name, header, value, r.Code, r.ErrCode, after.ETag, after.VersionID, after.Data != nil)
 		if r.Code == http.StatusOK {
 			if !bytes.Equal(after.Data, data) {
-				t.Fatalf("%s: the accepted write does not read back its exact bytes", name)
+				stop("another fault", "%s: the accepted write does not read back its exact bytes", name)
 			}
 		} else if !bytes.Equal(after.Data, current.Data) || after.ETag != current.ETag {
-			t.Fatalf("%s: the refused write (status %d %s) changed the key", name, r.Code, r.ErrCode)
+			stop("another fault", "%s: the refused write (status %d %s) changed the key", name, r.Code, r.ErrCode)
 		}
 		current = after
-		if r.Code != wantCode || r.ErrCode != wantErr {
-			t.Errorf("%s: status %d %q, AWS semantics want %d %q", name, r.Code, r.ErrCode, wantCode, wantErr)
-			return false
-		}
-		return true
+		steps = append(steps, condStep{Name: name, Got: r, Want: want})
 	}
-	const precondition = "PreconditionFailed"
-	step("existing-if-none-match", []byte("refused duplicate"), "If-None-Match", "*", http.StatusPreconditionFailed, precondition)
-	step("existing-if-match", []byte(path+" v2"), "If-Match", current.ETag, http.StatusOK, "")
-	step("wrong-if-match", []byte("refused wrong etag"), "If-Match", condWrongETag, http.StatusPreconditionFailed, precondition)
+	ok, missing := condResult{Code: http.StatusOK}, condResult{Code: http.StatusNotFound, ErrCode: "NoSuchKey"}
+	step("existing-if-none-match", []byte("refused duplicate"), "If-None-Match", "*", condPreconditionFailed)
+	step("existing-if-match", []byte(path+" v2"), "If-Match", current.ETag, ok)
+	step("wrong-if-match", []byte("refused wrong etag"), "If-Match", condWrongETag, condPreconditionFailed)
 
 	lastTag := current.ETag
 	deleted := c.signed(t, http.MethodDelete, path, nil, nil)
 	harness.RGWBackendRequire(t, deleted, http.StatusNoContent)
 	marker := deleted.Headers.Get("X-Amz-Delete-Marker")
 	t.Logf("RGW_COND step=delete status=%d delete_marker=%q version=%q", deleted.Code, marker, deleted.Headers.Get("X-Amz-Version-Id"))
-	if suspended && (marker != "true" || deleted.Headers.Get("X-Amz-Version-Id") != "null") {
-		t.Fatalf("condition not established: DELETE on the suspended bucket did not write a null delete marker")
+	if !control && (marker != "true" || deleted.Headers.Get("X-Amz-Version-Id") != "null") {
+		stop("condition not established", "DELETE on the suspended bucket did not write a null delete marker")
 	}
 	if current = c.get(t, path); current.Data != nil {
-		t.Fatal("the deleted key still has a current version")
+		stop("another fault", "the deleted key still has a current version")
 	}
 
-	step("deleted-if-match", []byte("refused missing key"), "If-Match", lastTag, http.StatusNotFound, "NoSuchKey")
-	step("deleted-if-none-match", []byte(path+" v3"), "If-None-Match", "*", http.StatusOK, "")
+	step("deleted-if-match", []byte("refused missing key"), "If-Match", lastTag, missing)
+	step("deleted-if-none-match", []byte(path+" v3"), "If-None-Match", "*", ok)
 	if current.Data == nil {
 		t.Logf("RGW_COND steps duplicate-if-none-match and subsequent-if-match not reached: the key has no current version")
-		return current
+		return current, steps
 	}
-	step("duplicate-if-none-match", []byte("refused second create"), "If-None-Match", "*", http.StatusPreconditionFailed, precondition)
-	step("subsequent-if-match", []byte(path+" v4"), "If-Match", current.ETag, http.StatusOK, "")
-	return current
+	step("duplicate-if-none-match", []byte("refused second create"), "If-None-Match", "*", condPreconditionFailed)
+	step("subsequent-if-match", []byte(path+" v4"), "If-Match", current.ETag, ok)
+	return current, steps
 }
 
 // condFreshKey is the positive control: a key first written by a
@@ -232,7 +233,7 @@ func condFreshKey(t *testing.T, c condCase, write condWriter, path string) {
 	duplicate := write(t, path, []byte("fresh duplicate"), "If-None-Match", "*")
 	t.Logf("RGW_COND control=%s create=%d duplicate=%d %s", path, created.Code, duplicate.Code, duplicate.ErrCode)
 	if created.Code != http.StatusOK || duplicate.Code != http.StatusPreconditionFailed || !bytes.Equal(c.get(t, path).Data, []byte("fresh")) {
-		t.Fatalf("control not established: create-once on %s answered %d then %d", path, created.Code, duplicate.Code)
+		c.repro.Inconclusive(t, "control failed: create-once on %s answered %d then %d", path, created.Code, duplicate.Code)
 	}
 }
 
@@ -250,9 +251,14 @@ func condFreshKey(t *testing.T, c condCase, write condWriter, path string) {
 // control passes; Umbrella 21.2.0 passes. Squid 19.2.5 already fails the
 // control: it compares a quoted If-Match with the unquoted stored ETag, and
 // it ignores the precondition of CompleteMultipartUpload.
+//
+// suspended/put and suspended/multipart are the observations of the
+// reproduction unit rgw_suspended_conditional_writes; never-versioned and
+// each create-once check are controls.
 func TestRGWSuspendedConditionalWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_suspended_conditional_writes", "suspended/put", "suspended/multipart")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_COND ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -263,7 +269,7 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := condCase{ctx: ctx, client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
+	c := condCase{ctx: ctx, repro: repro, client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
 	writers := []struct {
 		name  string
 		write condWriter
@@ -278,11 +284,17 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 				initial := []byte(path + " v1")
 				harness.RGWBackendRequire(t, c.signed(t, http.MethodPut, path, initial, nil), http.StatusOK)
 				condFreshKey(t, c, w.write, bucket+"/fresh-"+w.name)
-				condSequence(t, c, w.write, path, initial, false)
+				_, steps := condSequence(t, c, w.write, path, initial, true)
+				if symptom, detail, err := judgeCondSteps(steps); err != nil || symptom {
+					repro.Inconclusive(t, "control failed: %s %v", detail, err)
+				}
 				c.requireNoPendingUploads(t, bucket)
 			})
 		}
 	})
+	if t.Failed() {
+		return
+	}
 
 	t.Run("suspended", func(t *testing.T) {
 		const bucket = "/tc-cond-suspended"
@@ -294,7 +306,7 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 			r := c.signed(t, http.MethodPut, path, []byte(path+" v1"), nil)
 			harness.RGWBackendRequire(t, r, http.StatusOK)
 			if firstIDs[w.name] = r.Headers.Get("X-Amz-Version-Id"); firstIDs[w.name] == "" || firstIDs[w.name] == "null" {
-				t.Fatalf("condition not established: %s written while versioning was enabled has version %q", path, firstIDs[w.name])
+				repro.Inconclusive(t, "condition not established: %s written while versioning was enabled has version %q", path, firstIDs[w.name])
 			}
 		}
 		c.versioning(t, bucket, "Suspended")
@@ -303,10 +315,10 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 				path := bucket + "/" + w.name
 				versions, markers := c.versions(t, bucket, w.name)
 				if len(versions) != 1 || len(markers) != 0 || versions[0].VersionID != firstIDs[w.name] || !versions[0].IsLatest {
-					t.Fatalf("condition not established: %s is not a single latest version %q", path, firstIDs[w.name])
+					repro.Inconclusive(t, "condition not established: %s is not a single latest version %q", path, firstIDs[w.name])
 				}
 				condFreshKey(t, c, w.write, bucket+"/fresh-"+w.name)
-				final := condSequence(t, c, w.write, path, []byte(path+" v1"), true)
+				final, steps := condSequence(t, c, w.write, path, []byte(path+" v1"), false)
 
 				// The version written while versioning was enabled survives
 				// every step, and the null entry is the one the GET reads.
@@ -320,16 +332,26 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 					}
 				}
 				if len(kept) != 1 || kept[0].IsLatest {
-					t.Errorf("version %q of %s: %+v, want it kept and not latest", firstIDs[w.name], path, kept)
+					repro.Inconclusive(t, "another fault: version %q of %s: %+v, want it kept and not latest", firstIDs[w.name], path, kept)
 				}
 				switch {
 				case final.Data != nil && (len(null) != 1 || len(markers) != 0 || null[0].VersionID != "null" || !null[0].IsLatest || null[0].ETag != final.ETag):
-					t.Errorf("%s: listing %+v %+v, want one latest null version with ETag %s", path, null, markers, final.ETag)
+					repro.Inconclusive(t, "another fault: %s: listing %+v %+v, want one latest null version with ETag %s", path, null, markers, final.ETag)
 				case final.Data == nil && (len(null) != 0 || len(markers) != 1 || markers[0].VersionID != "null" || !markers[0].IsLatest):
-					t.Errorf("%s: listing %+v %+v, want one latest null delete marker", path, null, markers)
+					repro.Inconclusive(t, "another fault: %s: listing %+v %+v, want one latest null delete marker", path, null, markers)
 				}
 				c.requireNoPendingUploads(t, bucket)
+				observation := "suspended/" + w.name
+				switch symptom, detail, err := judgeCondSteps(steps); {
+				case err != nil:
+					repro.Inconclusive(t, "%v", err)
+				case symptom:
+					repro.Symptom(t, observation, "%s", detail)
+				default:
+					repro.Absent(t, observation, "%s", detail)
+				}
 			})
 		}
 	})
+	repro.Conclude()
 }

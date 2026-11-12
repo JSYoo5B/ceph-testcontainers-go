@@ -2,7 +2,8 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWSuspendedConditionalWrites`, optional batch
-`rgw_conditional_writes`.
+`rgw_conditional_writes`. Pure tests of its validator and verdict
+judgement (`TestCondValidator` and `TestJudgeCondSteps`, batch `pure`).
 
 ## Use case and native contract
 
@@ -57,8 +58,9 @@ instead of 404 for a missing key; and it reads no precondition for
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
-the published Tentacle 20.2.4 images, the pull request default. No automatic
+Deliberately failing reproducer: one run takes about 35 seconds and reports
+`REPRODUCED` and fails on the published Tentacle 20.2.4 images, the pull
+request default. No automatic
 run includes it (the default checks of a pull request, pushes to `main`,
 periodic samples), and it never gates anything. A maintainer can run it on
 demand, also on a pull request's head with the comment below.
@@ -111,33 +113,51 @@ version listings.
    as its validator (`TestCondValidator` in the pure batch covers the
    accepted forms). An accepted write must read back its exact bytes, and a
    refused one must leave the key unchanged (or absent); either violation
-   fails the step at once as a different defect. A wrong status fails the step, and the sequence goes on
-   from the state the GET shows.
+   stops the sequence at once as another fault. A wrong status is recorded
+   for the judgement, and the sequence goes on from the state the GET shows.
 5. The final version listing must keep the version written while versioning
    was enabled, not latest, and show one latest null entry consistent with
    the GET: a null version with the current ETag, or a null delete marker.
    No multipart upload of the test may stay pending.
 
-## Reading the result
+## Verdict
 
-- **Pass:** every step on both buckets followed AWS semantics. Umbrella
-  21.2.0 passes (about 36 seconds).
-- **Observed bug:** `never-versioned` passes and `suspended/put` and
-  `suspended/multipart` fail at `existing-if-match` (412), `deleted-if-match`
-  (412 instead of 404) and `deleted-if-none-match` (412); the later steps are
-  not reached. Tentacle 20.2.4 does this (about 35 seconds). The refused writes
-  change nothing: the listing keeps the original version and the null delete
-  marker.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the condition in step 3 was logged.
-- **Unavailable prerequisite:** a gateway or user does not start, or the
-  `never-versioned` control fails. Squid 19.2.5 fails the control at
-  `existing-if-match` (put) and at the multipart create-once control (the
-  duplicate completion answers 200).
-- **Condition not established:** versioning does not read back as set, a key
-  has no non-null version ID, a GET answers 200 without a quoted strong ETag,
-  or the DELETE writes no null delete marker. The
-  test fails with `condition not established`.
+The test reports one reproduction unit, `rgw_suspended_conditional_writes`,
+with two planned observations, `suspended/put` and `suspended/multipart`,
+each over the steps of its sequence. `never-versioned` and every create-once
+check are controls, and `never-versioned` runs first. `go test -v` prints
+one `REPRODUCTION_VERDICT case=rgw_suspended_conditional_writes ...` line
+with the verdict, the decisive steps and the resolved images.
+
+- `REPRODUCED`: the conditions and controls hold, and on the suspended
+  bucket a step whose precondition holds, or whose key has no current
+  version, is refused with 412 `PreconditionFailed` (`judgeCondSteps`),
+  while every other step follows AWS semantics.
+- `NOT_REPRODUCED`: the conditions and controls hold, and every step of both
+  suspended sequences follows AWS semantics.
+- `INCONCLUSIVE`: a condition is not established (step 3, or a GET answers
+  200 without a quoted strong ETag), a control failed (`never-versioned`
+  does not follow AWS semantics, or create-once does not work), or another
+  fault (any other wrong answer, an accepted write that does not read back
+  its bytes, a refused write that changed the key, or a final listing that
+  does not keep the original version). The line names the reason.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+reproduction fails the observing subtest, an absent symptom passes, and an
+inconclusive run fails. With an expectation only the matching verdict passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_suspended_conditional_writes=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
+  --package ./internal/integration/experiments/rgw_suspended_conditional_writes \
+  --directory "artifacts/rgw-conditional-writes-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+| Release | Verdict | Observation |
+| --- | --- | --- |
+| Tentacle 20.2.4 | `REPRODUCED` | `never-versioned` passes, and `suspended/put` and `suspended/multipart` answer 412 at `existing-if-match`, `deleted-if-match` (instead of 404) and `deleted-if-none-match`; the later steps are not reached. The refused writes change nothing: the listing keeps the original version and the null delete marker (about 35 seconds) |
+| Umbrella 21.2.0 | `NOT_REPRODUCED` | every step on both buckets follows AWS semantics (about 36 seconds) |
+| Squid 19.2.5 | `INCONCLUSIVE` | control failed: `never-versioned` fails at `existing-if-match` (put) and at the multipart create-once control (the duplicate completion answers 200) |
 
 ## Cleanup and limits
 
