@@ -29,13 +29,14 @@ func TestJudgeTrashPurgeAttributesOnlyTheShiftedSetToTheTimezone(t *testing.T) {
 		name          string
 		offset, shift int64
 		after         []trashPurgeEntry
+		symptom       bool
 		want          string
 	}{
 		{name: "utc keeps the set of the instant", after: byInstant},
 		{name: "ahead keeps the set of the instant", offset: 9 * hour, shift: -9 * hour, after: byInstant},
 		{name: "behind keeps the set of the instant", offset: -9 * hour, shift: 9 * hour, after: byInstant},
-		{name: "ahead keeps the set of the early reading", offset: 9 * hour, shift: -9 * hour, after: early, want: "observed defect: a client process +9 h from UTC purged with a cutoff -9 h from the instant"},
-		{name: "behind keeps the set of the late reading", offset: -9 * hour, shift: 9 * hour, after: late, want: "observed defect: a client process -9 h from UTC purged with a cutoff +9 h from the instant"},
+		{name: "ahead keeps the set of the early reading", offset: 9 * hour, shift: -9 * hour, after: early, symptom: true},
+		{name: "behind keeps the set of the late reading", offset: -9 * hour, shift: 9 * hour, after: late, symptom: true},
 		{name: "utc removes nothing", after: before, want: "control failed: a client process in UTC"},
 		{name: "utc removes everything", want: "control failed: a client process in UTC"},
 		{name: "utc keeps the set of a shifted reading", after: early, want: "control failed: a client process in UTC"},
@@ -47,9 +48,15 @@ func TestJudgeTrashPurgeAttributesOnlyTheShiftedSetToTheTimezone(t *testing.T) {
 		{name: "ahead misses the set without a shifted reading", offset: 9 * hour, after: early, want: "another fault: a client process +9 h from UTC"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := judgeTrashPurge(tc.offset, cutoff, cutoff+tc.shift, before, tc.after)
-			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tc.want)) {
-				t.Fatalf("error %v, want %q", err, tc.want)
+			symptom, detail, err := judgeTrashPurge(tc.offset, cutoff, cutoff+tc.shift, before, tc.after)
+			if tc.want != "" {
+				if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+					t.Fatalf("error %v, want %q", err, tc.want)
+				}
+				return
+			}
+			if err != nil || symptom != tc.symptom || detail == "" {
+				t.Fatalf("symptom=%t %q %v, want symptom=%t", symptom, detail, err, tc.symptom)
 			}
 		})
 	}

@@ -52,8 +52,8 @@ zones (`metadata-has-obj_lock`).
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published role images of
-Tentacle 20.2.4 and Squid 19.2.5. No automatic run includes it (the default
+Deliberately failing reproducer: without an expectation it fails on the
+published role images of Tentacle 20.2.4 and Squid 19.2.5. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -77,6 +77,17 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
 Or run the batch exactly as CI does:
 
 ```sh
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
+  --package ./internal/integration/experiments/rgw_multisite_object_lock_sync \
+  --directory "artifacts/rgw-object-lock-sync-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+To check the reproducer against an affected build, or a fixed build for a
+regression, declare the expected verdict; the run then passes only on that
+verdict:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_multisite_object_lock_sync=NOT_REPRODUCED \
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
   --package ./internal/integration/experiments/rgw_multisite_object_lock_sync \
   --directory "artifacts/rgw-object-lock-sync-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -108,12 +119,12 @@ zone (`RGW_LOCK stored`).
    after the configuration; zone `b` must report its metadata caught up
    (`Fixture.WaitSyncReady`) and must answer the marker bucket within 3
    minutes. Metadata written after the configuration has then arrived. A
-   checkpoint that is not reached is `another fault`, not a result.
+   checkpoint that is not reached is `another fault`, not a verdict.
 4. Oracle, per step: zone `b` is read until it answers the same
    configuration, for at most 2 minutes after the checkpoint. The last read
    is judged by meaning (enabled, mode, days, years), not by its XML
    (`judgeDestination`). Only an answer about the configuration is the
-   defect: `404 ObjectLockConfigurationNotFoundError`, or another
+   symptom: `404 ObjectLockConfigurationNotFoundError`, or another
    configuration. A transport failure, a refusal such as `403 AccessDenied`,
    `NoSuchBucket` or an unsupported operation is `another fault`. The
    response body of zone `a`'s read-back and of zone `b`'s last read is
@@ -125,11 +136,35 @@ zone (`RGW_LOCK stored`).
    `404 ObjectLockConfigurationNotFoundError` in both zones, and zone `a` is
    read once more after the wait. Otherwise `control failed` or
    `condition not established`.
-6. The `update` step runs only after the first configuration was answered by
-   both zones, so that it tests a change and not a second initial sync. When
-   it does not run, the log says so (`RGW_LOCK step=update not run`).
+6. The `update` step tests a change of a configuration both zones answered.
+   It also runs when the first configuration did not reach zone `b`, so that
+   both observations complete; its detail then says that zone `b` did not
+   answer the initial configuration.
 
-## Reading the result
+## Verdict
+
+The test reports the unit `rgw_multisite_object_lock_sync` in one
+`REPRODUCTION_VERDICT` line, with the observations `initial` and `update`
+(steps 2 to 5 for each configuration).
+
+- **REPRODUCED:** zone `b`'s last read of a step answers no configuration
+  (`404 ObjectLockConfigurationNotFoundError`) or another one than zone
+  `a`'s.
+- **NOT_REPRODUCED:** zone `b` answers each configuration of both steps.
+- **INCONCLUSIVE:** the reason names the category. Unavailable
+  prerequisite: the realm does not start (the clusters not starting ends the
+  test before a verdict). Condition not established: step 1 or a source
+  read-back does not hold. Control failed: `tc-plain` does not answer
+  `404 ObjectLockConfigurationNotFoundError` in a zone. Another fault: a
+  checkpoint is not reached, or zone `b` does not answer about the
+  configuration at all.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the test, absence
+passes it and an inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=rgw_multisite_object_lock_sync=<REPRODUCED|NOT_REPRODUCED>`
+only that verdict passes.
+
+## Recorded results
 
 The results below ran on the pinned role images of the shared recipe: 20.2.4
 (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw `aac25fc48b53…`),
@@ -139,24 +174,22 @@ The results below ran on the pinned role images of the shared recipe: 20.2.4
 `sha256:4337ac8ac81d…` as the aggregate. Linux amd64, bridge, one run per
 release.
 
-- **Observed bug:** the `initial` step fails with `observed defect`. Zone
-  `a` reads back `GOVERNANCE`, 1 day; the checkpoint is reached at once
-  (metadata caught up, the marker bucket answered by zone `b`); zone `b`
-  answers `200` with object lock enabled and no rule in every one of 60
-  reads over 2 minutes, which is also what it answered before the rule was
-  applied. The bucket record holds no object lock configuration in either
-  zone (`metadata-has-obj_lock=false`), the control bucket answers
-  `404 ObjectLockConfigurationNotFoundError` in both, and the `update` step
-  is not run. Tentacle 20.2.4 (217 s) and Squid 19.2.5 (224 s) do this.
-- **Pass:** zone `b` answers `GOVERNANCE`, 1 day, in the first read after
-  the checkpoint, and `COMPLIANCE`, 1 year, in the first read after the
-  second; the bucket record holds the configuration in both zones. Tentacle
-  20.2.5 (100 s) and Umbrella 21.2.0 (80 s) pass.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  both gateways are of that build (`RGW_LOCK zone=`).
-- **Another fault:** a checkpoint is not reached, or zone `b` does not
-  answer about the configuration at all.
-- **Unavailable prerequisite:** the clusters or the realm do not start.
+- **REPRODUCED** on Tentacle 20.2.4 and Squid 19.2.5. Zone `a` reads back
+  `GOVERNANCE`, 1 day; the checkpoint is reached at once (metadata caught
+  up, the marker bucket answered by zone `b`); zone `b` answers `200` with
+  object lock enabled and no rule in every read over 2 minutes, which is
+  also what it answered before the rule was applied. The bucket record holds
+  no object lock configuration in either zone (`metadata-has-obj_lock=false`),
+  and the control bucket answers `404 ObjectLockConfigurationNotFoundError`
+  in both. The `update` step shows the same for `COMPLIANCE`, 1 year. A run
+  of both steps takes about 340 s on 20.2.4.
+- **NOT_REPRODUCED** on Tentacle 20.2.5 and Umbrella 21.2.0: zone `b` answers
+  `GOVERNANCE`, 1 day, in the first read after the checkpoint, and
+  `COMPLIANCE`, 1 year, in the first read after the second; the bucket record
+  holds the configuration in both zones (about 80 s on 21.2.0).
+
+A NOT_REPRODUCED on a build claimed to be affected needs both gateways to be
+of that build (`RGW_LOCK zone=`).
 
 ## Cleanup and limits
 

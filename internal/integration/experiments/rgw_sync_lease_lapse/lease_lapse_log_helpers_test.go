@@ -3,11 +3,14 @@
 package rgw_sync_lease_lapse_test
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // shardTrace is what one data sync shard of a gateway logged from a time on,
@@ -143,4 +146,29 @@ func shardLines(log string, shard, n int) []string {
 		}
 	}
 	return lines[max(len(lines)-n, 0):]
+}
+
+// judgeLeaseLapse judges zone b after the lapse round. caughtUp says whether
+// b served the round's objects and stored a's markers of the round's shards
+// within the bound; behind are the round's shards whose stored marker is not
+// a's at the last look. A catch-up means the symptom is absent. The
+// documented symptom is a round shard left behind that shows a batch passed
+// on a lost lease (skippedBatch). A shard behind without that trace, or no
+// round shard behind at all, is another fault: no verdict.
+func judgeLeaseLapse(caughtUp bool, behind []harness.RGWShardLag, traces map[int]*shardTrace) (symptom bool, detail string, err error) {
+	if caughtUp {
+		return false, "zone b served every object and stored zone a's markers of the round's shards", nil
+	}
+	if len(behind) == 0 {
+		return false, "", fmt.Errorf("another fault: zone b did not catch up with no shard of the round behind")
+	}
+	var skipped []int
+	for _, shard := range behind {
+		if !skippedBatch(traces[shard.Shard], shard.Source, shard.Destination) {
+			return false, "", fmt.Errorf("another fault: shard %d is behind but does not show a batch passed on a lost lease (a's marker %s, b's stored marker %q, trace %+v)",
+				shard.Shard, shard.Source, shard.Destination, traces[shard.Shard])
+		}
+		skipped = append(skipped, shard.Shard)
+	}
+	return true, fmt.Sprintf("zone b's shards %v found their sync lease lost inside the batch they read, read on from a's newest markers without starting the entries, and left their stored markers behind", skipped), nil
 }

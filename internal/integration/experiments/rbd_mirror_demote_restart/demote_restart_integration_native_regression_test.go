@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -81,11 +82,15 @@ func rbdIncompleteDemotion(snaps []rbdMirrorSnapshot) bool {
 // image non-primary. The destination must then hold the source's exact
 // bytes, be promoted without force, and replicate its next write back.
 //
-// It fails on every qualified image (19.2.4, 19.2.5, 20.2.4, 21.2.0) at the
-// exact-bytes check: the resumed copy reports complete but skips the object
-// numbered last_copied_object_number at the time of the kill, which keeps the
+// It reports two units. rbd_mirror_demote_restart/demotion-resume is the
+// orphan classification of the incomplete copy (Squid 19.2.3): REPRODUCED
+// when the copy never completes. rbd_mirror_demote_restart/resumed-bytes is
+// REPRODUCED on every qualified image that resumes (19.2.4, 19.2.5, 20.2.4,
+// 21.2.0): the resumed copy reports complete but skips the object numbered
+// last_copied_object_number at the time of the kill, which keeps the
 // previous snapshot's bytes. An ordinary mirror snapshot copy shows the same
-// loss, so it is not specific to demotion.
+// loss, so it is not specific to demotion. The promotion and the reverse
+// replication run only after both symptoms are absent.
 func TestRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge") {
 		t.Run(mode.Name, testRBDMirrorDemotionResumesAfterReceiverRestart)
@@ -95,6 +100,8 @@ func TestRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
+	resume := harness.StartReproduction(t, "rbd_mirror_demote_restart/demotion-resume", "resume")
+	loss := harness.StartReproduction(t, "rbd_mirror_demote_restart/resumed-bytes", "exact-bytes")
 	netem := harness.NetemImage(t)
 	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool = "tc-rbd-demote"
@@ -172,7 +179,7 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 			return raw, rbdIncompleteDemotion(snaps), nil
 		})
 		if err != nil {
-			t.Fatalf("incomplete demotion copy of %s: %v; last %s", image, err, observed.Value)
+			resume.Inconclusive(t, "condition not established: no incomplete demotion copy of %s: %v; last %s", image, err, observed.Value)
 		}
 		t.Logf("destination %s copies the demotion snapshot: %s", image, observed.Value)
 	}
@@ -184,7 +191,7 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	for _, image := range []string{resumed, removed} {
 		snaps, raw, err := rbdMirrorSnapshots(ctx, destinationClient, image)
 		if err != nil || !rbdIncompleteDemotion(snaps) {
-			t.Fatalf("after the stop %s holds no incomplete demotion copy: %s %v", image, raw, err)
+			resume.Inconclusive(t, "condition not established: after the stop %s holds no incomplete demotion copy: %s %v", image, raw, err)
 		}
 		demotion[image] = snaps[len(snaps)-1]
 		t.Logf("after the stop %s holds demotion copy %d at %s", image, demotion[image].ID, raw)
@@ -216,11 +223,47 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		}
 		return raw, false, fmt.Errorf("demotion copy %d is gone", demotion[resumed].ID)
 	})
+	last := "snapshots " + completed.Value
 	if err != nil {
 		status, statusErr := forward.ImageStatus(ctx, "resumed")
-		t.Fatalf("the restarted receiver did not complete demotion copy %d of %s: %v; snapshots %s; status %+v %v", demotion[resumed].ID, resumed, err, completed.Value, status, statusErr)
+		last += fmt.Sprintf("; status %+v %v", status, statusErr)
+	}
+	timedOut := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
+	symptom, detail, judged := judgeDemotionResume(err == nil, timedOut, err, demotion[resumed].ID, last)
+	switch {
+	case judged != nil:
+		resume.Inconclusive(t, "%v", judged)
+	case symptom:
+		resume.Symptom(t, "resume", "%s", detail)
+		resume.Conclude()
+		// The bytes of a copy that never completed say nothing about the
+		// resumed copy.
+		if loss.Expected() {
+			loss.Inconclusive(t, "condition not established: the demotion copy did not complete after the restart")
+		}
+		t.Logf("resumed-bytes not evaluated: the demotion copy did not complete after the restart")
+		return
+	default:
+		resume.Absent(t, "resume", "%s", detail)
+		resume.Conclude()
 	}
 	t.Logf("demotion copy %d of %s completed after the restart: %s", demotion[resumed].ID, resumed, completed.Value)
+
+	data := rbdDemoteRestartWaitBytes(t, ctx, destinationClient, resumed, after[resumed])
+	symptom, detail, judged = judgeResumedBytes(data, before[resumed], after[resumed], demotion[resumed].Namespace.LastCopiedObject)
+	switch {
+	case judged != nil:
+		loss.Inconclusive(t, "%v", judged)
+	case symptom:
+		// Promotion and the reverse replication would only carry the
+		// wrong bytes back.
+		loss.Symptom(t, "exact-bytes", "%s", detail)
+		loss.Conclude()
+		return
+	default:
+		loss.Absent(t, "exact-bytes", "%s", detail)
+		loss.Conclude()
+	}
 
 	gone, err := harness.Observe(ctx, 5*time.Minute, 20*time.Second, 2*time.Second, func(probeCtx context.Context) (string, bool, error) {
 		code, out, err := harness.RBDMultiClusterExec(probeCtx, destinationClient, "rbd", "ls", "--format", "json", pool)
@@ -241,8 +284,6 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the destination retains %s after its demoted primary was removed: %v; images %s", removed, err, gone.Value)
 	}
-
-	rbdDemoteRestartWaitBytes(t, ctx, destinationClient, resumed, before[resumed], after[resumed])
 
 	// Planned failover completes: non-forced promotion, then the new
 	// primary's next write and checkpoint replicate back to the old source.
@@ -289,12 +330,10 @@ func rbdKillContainer(t *testing.T, parent context.Context, ctr testcontainers.C
 	}
 }
 
-// rbdDemoteRestartWaitBytes waits for image to read back as after. On a
-// timeout it reports, per 256 KiB object, how many objects hold the new
-// bytes, the old bytes or neither.
-func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, before, after []byte) {
+// rbdDemoteRestartWaitBytes waits up to four minutes for image to read back
+// as after and returns the last export, nil when no export succeeded.
+func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, after []byte) []byte {
 	t.Helper()
-	const object = 256 << 10
 	read := func(probeCtx context.Context) ([]byte, error) {
 		_, _, _ = harness.RBDMultiClusterExec(probeCtx, client, "rm", "-f", "/tmp/rbd-demote-result")
 		code, out, err := harness.RBDMultiClusterExec(probeCtx, client, "rbd", "export", image, "/tmp/rbd-demote-result", "--no-progress")
@@ -308,34 +347,19 @@ func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcon
 		defer func() { _ = reader.Close() }()
 		return io.ReadAll(reader)
 	}
-	observed, err := harness.Observe(ctx, 4*time.Minute, time.Minute, 2*time.Second, func(probeCtx context.Context) ([]byte, bool, error) {
+	var last []byte
+	_, err := harness.Observe(ctx, 4*time.Minute, time.Minute, 2*time.Second, func(probeCtx context.Context) ([]byte, bool, error) {
 		data, err := read(probeCtx)
 		if err != nil {
 			return nil, false, nil
 		}
+		last = data
 		return data, bytes.Equal(data, after), nil
 	})
 	if err == nil {
 		t.Logf("RBD %s holds the demotion snapshot's bytes: sha256=%x", image, sha256.Sum256(after))
-		return
+	} else {
+		t.Logf("RBD %s does not hold the demotion snapshot's bytes: %v", image, err)
 	}
-	classify := func(data []byte) string {
-		if len(data) != len(after) {
-			return fmt.Sprintf("%d bytes, want %d", len(data), len(after))
-		}
-		var fresh, stale, other []int
-		for index := 0; index*object < len(after); index++ {
-			chunk := data[index*object : (index+1)*object]
-			switch {
-			case bytes.Equal(chunk, after[index*object:(index+1)*object]):
-				fresh = append(fresh, index)
-			case bytes.Equal(chunk, before[index*object:(index+1)*object]):
-				stale = append(stale, index)
-			default:
-				other = append(other, index)
-			}
-		}
-		return fmt.Sprintf("objects new=%d old=%v neither=%v", len(fresh), stale, other)
-	}
-	t.Fatalf("%s does not hold the demotion snapshot's bytes: %v; %s", image, err, classify(observed.Value))
+	return last
 }

@@ -2,9 +2,9 @@
 
 Owner: RGW multisite. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestMultiClusterRGWDataSyncAfterSyncLeaseLapse`, optional batch
-`rgw_sync_lease_lapse`. The log reader it relies on and its reading of a
-gateway container's state have Docker-free tests in the same package
-(`code/pure`).
+`rgw_sync_lease_lapse`. The log reader it relies on, its reading of a
+gateway container's state and its judgement of the lapse round have
+Docker-free tests in the same package (`code/pure`).
 
 ## Use case and native contract
 
@@ -51,7 +51,7 @@ Both parts are the same in Squid 19.2.5, Tentacle 20.2.4 and Umbrella
 recorded for it. With the default lease period of 120 seconds the source
 must stay unanswering that long; fixture gateways run with 30.
 
-The test fails on every published image in its last round. That is the
+Every published image reproduces it in the last round. That is the
 expected result for an unpatched defect; it is not a fixture failure.
 
 ## Requirements
@@ -70,10 +70,10 @@ expected result for an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 9 minutes (527 s on
-Tentacle 20.2.4, 526 s on Umbrella 21.2.0, 553 s on Squid 19.2.5) and fails
-in the last round on every published image, after both controls passed. No automatic
-run includes it (the default checks of a pull request, pushes to `main`,
+Deliberately failing reproducer (without an expectation): one run takes
+about 9 minutes (527 s on Tentacle 20.2.4, 526 s on Umbrella 21.2.0, 553 s on
+Squid 19.2.5) and fails in the last round on every published image, after
+both controls passed. No automatic run includes it (the default checks of a pull request, pushes to `main`,
 periodic samples), and it never gates anything. A maintainer can run it on
 demand, also on a pull request's head with the comment below.
 
@@ -93,6 +93,16 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
 or, exactly as CI runs the batch:
 
 ```sh
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_sync_lease_lapse \
+  --package ./internal/integration/experiments/rgw_sync_lease_lapse \
+  --directory "artifacts/rgw-sync-lease-lapse-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+To check the reproducer against an affected build, declare the expected
+verdict; the run then passes only on that verdict:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_sync_lease_lapse=REPRODUCED \
 python3 .github/scripts/tag_scenarios.py optional --batch rgw_sync_lease_lapse \
   --package ./internal/integration/experiments/rgw_sync_lease_lapse \
   --directory "artifacts/rgw-sync-lease-lapse-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -136,39 +146,49 @@ When round 3 does not catch up, every shard still behind must show the
 skipped batch in the gateway's log: the lease lost inside a batch, later
 reads from zone a's newest marker, no entry of that marker ever started,
 and a stored marker that is not zone a's. Only then is zone b's gateway
-restarted, and the catch-up after the restart is reported with the failure.
-A shard behind without that signature fails the test as another fault, and
-the gateway is not restarted.
+restarted, and the catch-up after the restart is reported with the symptom.
+A shard behind without that signature is another fault, and the gateway is
+not restarted.
 
 No network fault is used: the freezes are container pauses, and every
 connection stays up.
 
-## Reading the result
+## Verdict
 
-- **Pass:** a shard found its lease lost inside a batch, and zone b still
-  caught up without a restart. No published image passes today.
-- **Observed bug:** the failure starts with `observed defect:` and names the
-  shards that passed a batch, zone b's missing objects and stored markers
-  three minutes after zone a answered again, and whether zone b caught up
-  after the restart of its gateway.
-- **Not reproduced:** a pass on a build claimed to be affected. The receipt
+The test reports the unit `rgw_sync_lease_lapse` in one
+`REPRODUCTION_VERDICT` line, with the single observation `lapse` (round 3).
+The rounds `idle` and `short` are its controls.
+
+- **REPRODUCED:** zone b did not catch up within three minutes of zone a
+  answering again, and every shard still behind shows the skipped batch.
+  The observation names those shards, zone b's missing objects and stored
+  markers, and whether zone b caught up after the restart of its gateway
+  (which does not decide the verdict). Every published image gives this
+  verdict.
+- **NOT_REPRODUCED:** a shard found its lease lost inside a batch, and zone
+  b still caught up without a restart. The receipt
   (`RGW_SYNC_LEASE_LAPSE_RECEIPT`) names the shards that found the lease
-  lost inside a batch; check it before treating the build as fixed.
-- **Unavailable prerequisite:** a cluster, the realm or a gateway does not
-  start, or the engine cannot pause a container. The test fails before the
-  first round.
-- **Condition not established:** the failure starts with
-  `condition not established`: a shard of zone b read nothing before a
-  round, the writes added no data log entry, fewer than 100 shards came to
-  wait in a read, a control round's shards did not lose or keep their
-  leases as the round requires, no shard of the round found its lease
-  lost inside a batch in round 3, or a gateway container stopped while a
-  round paused or resumed it. Only 100 of the 128 shards get to read
-  while zone a does not answer, so a shard of the round can be among the
-  other 28; with six buckets at least one has waited in a read in every run
-  so far. It is not a reproduction and not a pass.
-- **Control failed:** the failure starts with `control failed`: zone b did
-  not catch up after a control round. The trigger was not reached.
+  lost inside a batch; check it before treating a build as fixed.
+- **INCONCLUSIVE:** the reason names the category. Unavailable
+  prerequisite: the realm does not start (a cluster or the engine's pause
+  failing ends the test before a verdict). Condition not established: a
+  shard of zone b read nothing before a round, the seeds did not reach zone
+  b, the writes added no data log entry, fewer than 100 shards came to wait
+  in a read, a control round's shards did not lose or keep their leases as
+  the round requires, no shard of the round found its lease lost inside a
+  batch in round 3, a gateway process changed, or a gateway container
+  stopped while a round paused or resumed it. Only 100 of the 128 shards get
+  to read while zone a does not answer, so a shard of the round can be among
+  the other 28; with six buckets at least one has waited in a read in every
+  run so far. Control failed: zone b did not catch up after a control
+  round. Another fault: a shard behind without the skipped batch, no round
+  shard behind although zone b did not catch up, or a gateway container in
+  another state than the round asked for.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the test, absence
+passes it and an inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_lease_lapse=<REPRODUCED|NOT_REPRODUCED>`
+only that verdict passes.
 
 ## Cleanup and limits
 

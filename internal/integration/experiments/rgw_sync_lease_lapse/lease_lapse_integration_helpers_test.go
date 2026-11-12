@@ -48,6 +48,7 @@ const (
 // zone b's gateway is the one whose data sync from a is observed.
 type leaseLapse struct {
 	t         *testing.T
+	repro     *harness.Reproduction
 	ctx       context.Context
 	fixture   *multisite.Fixture
 	zones     []multisite.Zone
@@ -89,7 +90,7 @@ func (s leaseLapseSeen) String() string {
 	return fmt.Sprintf("objects not served %v; shards behind %+v; error %q", s.Missing, s.Behind, s.Err)
 }
 
-func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
+func newLeaseLapse(t *testing.T, repro *harness.Reproduction, ctx context.Context) *leaseLapse {
 	t.Helper()
 	source, destination, _, _ := harness.NewMultiClusterPairWithContext(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	image, _ := harness.IntegrationImages(t)
@@ -101,7 +102,7 @@ func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}},
 	}))
-	l := &leaseLapse{t: t, ctx: ctx, fixture: fixture, paused: map[string]bool{}}
+	l := &leaseLapse{t: t, repro: repro, ctx: ctx, fixture: fixture, paused: map[string]bool{}}
 	if fixture != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -118,7 +119,7 @@ func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 		})
 	}
 	if err != nil {
-		t.Fatal(err)
+		repro.Inconclusive(t, "unavailable prerequisite: the realm did not start: %v", err)
 	}
 	l.zones = fixture.Zones()
 	if len(l.zones) != 2 || l.zones[0].Name != "a" || l.zones[1].Name != "b" {
@@ -149,7 +150,7 @@ func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 		return missing, len(missing) == 0, nil
 	})
 	if err != nil {
-		t.Fatalf("zone b does not serve the seeds of %v: %v", served.Value, err)
+		repro.Inconclusive(t, "condition not established: zone b does not serve the seeds of %v: %v", served.Value, err)
 	}
 	if _, err := fixture.WaitSyncReady(ctx, "b", "a"); err != nil {
 		t.Fatal(err)
@@ -201,9 +202,21 @@ func (l *leaseLapse) pause(name string) time.Time {
 	l.paused[name] = true
 	_, err := l.docker.ContainerPause(l.ctx, l.gateway(name).GetContainerID(), mobycl.ContainerPauseOptions{})
 	if err := l.settle(l.ctx, name, true, err); err != nil {
-		l.t.Fatal(err)
+		l.inconclusive(err)
 	}
 	return time.Now()
+}
+
+// inconclusive stops the test on a gateway that a round cannot go on with:
+// a stopped container is a condition not established, anything else another
+// fault.
+func (l *leaseLapse) inconclusive(err error) {
+	l.t.Helper()
+	reason := err.Error()
+	if !strings.HasPrefix(reason, "condition not established:") {
+		reason = "another fault: " + reason
+	}
+	l.repro.Inconclusive(l.t, "%s", reason)
 }
 
 // unpause resumes a zone's gateway container and returns the time right
@@ -213,7 +226,7 @@ func (l *leaseLapse) unpause(name string) time.Time {
 	l.t.Helper()
 	asked := time.Now()
 	if err := l.resume(l.ctx, name); err != nil {
-		l.t.Fatal(err)
+		l.inconclusive(err)
 	}
 	return asked
 }
@@ -356,7 +369,7 @@ func (l *leaseLapse) round(name string, freeze time.Duration, holdSource bool) *
 		}
 	}
 	if len(round.Shards) == 0 {
-		l.t.Fatalf("condition not established in round %s: the writes added no entry to zone a's data log", name)
+		l.repro.Inconclusive(l.t, "condition not established in round %s: the writes added no entry to zone a's data log", name)
 	}
 	if !holdSource {
 		l.wait(freeze)
@@ -376,7 +389,7 @@ func (l *leaseLapse) round(name string, freeze time.Duration, holdSource bool) *
 		return waiting, waiting >= leaseLapseWindow, nil
 	})
 	if err != nil {
-		l.t.Fatalf("condition not established in round %s: %d of zone b's shards wait in a read of zone a's data log, fewer than %d: %v", name, waiting.Value, leaseLapseWindow, err)
+		l.repro.Inconclusive(l.t, "condition not established in round %s: %d of zone b's shards wait in a read of zone a's data log, fewer than %d: %v", name, waiting.Value, leaseLapseWindow, err)
 	}
 	round.Frozen = time.Now()
 	l.wait(freeze)
@@ -408,7 +421,7 @@ func (l *leaseLapse) polling(round string) {
 		for _, shard := range silent.Value[:min(len(silent.Value), 3)] {
 			tails = append(tails, fmt.Sprintf("shard %d:\n%s", shard, strings.Join(shardLines(log, shard, 8), "\n")))
 		}
-		l.t.Fatalf("condition not established in round %s: shards %v of zone b read nothing from zone a's data log in 4m0s: %v\n%s", round, silent.Value, err, strings.Join(tails, "\n"))
+		l.repro.Inconclusive(l.t, "condition not established in round %s: shards %v of zone b read nothing from zone a's data log in 4m0s: %v\n%s", round, silent.Value, err, strings.Join(tails, "\n"))
 	}
 	l.t.Logf("round %s: every one of zone b's %d shards read zone a's data log within %s", round, shards, time.Since(since).Round(time.Millisecond))
 }
@@ -487,20 +500,22 @@ func leaseLapseShards(round *leaseLapseRound, traces map[int]*shardTrace) string
 }
 
 // testSyncLeaseLapse runs three rounds and requires zone b to catch up with
-// zone a's writes after each, with the gateway processes it started with.
-// The first two are controls: zone b's gateway frozen past the sync lease
-// period while its shards are idle, and zone a's gateway not answering b's
-// reads for less than the lease period. The third is the trigger: zone a's
-// gateway not answering for longer than the lease period.
+// zone a's writes after each, with the gateway processes it started with,
+// and reports the rgw_sync_lease_lapse verdict of the lapse round. The first
+// two are controls: zone b's gateway frozen past the sync lease period while
+// its shards are idle, and zone a's gateway not answering b's reads for less
+// than the lease period. The third is the trigger: zone a's gateway not
+// answering for longer than the lease period.
 func testSyncLeaseLapse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	l := newLeaseLapse(t, ctx)
+	repro := harness.StartReproduction(t, "rgw_sync_lease_lapse", "lapse")
+	l := newLeaseLapse(t, repro, ctx)
 	pids := l.pids()
 	sameProcesses := func(round string) {
 		t.Helper()
 		if now := l.pids(); !maps.Equal(now, pids) {
-			t.Fatalf("round %s: the gateway processes changed from %v to %v", round, pids, now)
+			repro.Inconclusive(t, "condition not established: round %s: the gateway processes changed from %v to %v", round, pids, now)
 		}
 	}
 
@@ -513,11 +528,11 @@ func testSyncLeaseLapse(t *testing.T) {
 	t.Logf("round idle, %s after a freeze of %s: %s\n%s", took, idle.Resumed.Sub(idle.Frozen).Round(time.Millisecond), seen, leaseLapseShards(idle, traces))
 	for shard := range idle.Shards {
 		if trace := traces[shard]; trace == nil || trace.LostAtStart == 0 || trace.LostInBatch != 0 {
-			t.Fatalf("condition not established in round idle: shard %d did not find its lease lost before a read only: %+v", shard, trace)
+			repro.Inconclusive(t, "condition not established in round idle: shard %d did not find its lease lost before a read only: %+v", shard, trace)
 		}
 	}
 	if !ok {
-		t.Fatalf("control failed: zone b did not catch up within 2m0s of an idle freeze past the lease period: %s", seen)
+		repro.Inconclusive(t, "control failed: zone b did not catch up within 2m0s of an idle freeze past the lease period: %s", seen)
 	}
 	sameProcesses("idle")
 
@@ -531,17 +546,17 @@ func testSyncLeaseLapse(t *testing.T) {
 	for shard := range short.Shards {
 		trace := traces[shard]
 		if trace != nil && trace.LostInBatch+trace.LostAtStart+trace.LostOther != 0 {
-			t.Fatalf("condition not established in round short: shard %d lost its lease: %+v", shard, trace)
+			repro.Inconclusive(t, "condition not established in round short: shard %d lost its lease: %+v", shard, trace)
 		}
 		if trace.held(short.Frozen, short.Resumed) {
 			held++
 		}
 	}
 	if held == 0 {
-		t.Fatalf("condition not established in round short: no shard of the round waited in a read while zone a did not answer:\n%s", leaseLapseShards(short, traces))
+		repro.Inconclusive(t, "condition not established in round short: no shard of the round waited in a read while zone a did not answer:\n%s", leaseLapseShards(short, traces))
 	}
 	if !ok {
-		t.Fatalf("control failed: zone b did not catch up within 2m0s of zone a answering again: %s", seen)
+		repro.Inconclusive(t, "control failed: zone b did not catch up within 2m0s of zone a answering again: %s", seen)
 	}
 	sameProcesses("short")
 
@@ -559,45 +574,42 @@ func testSyncLeaseLapse(t *testing.T) {
 	}
 	slices.Sort(inBatch)
 	if len(inBatch) == 0 {
-		t.Fatalf("condition not established in round lapse: no shard of the round found its lease lost inside a batch:\n%s", leaseLapseShards(lapse, traces))
+		repro.Inconclusive(t, "condition not established in round lapse: no shard of the round found its lease lost inside a batch:\n%s", leaseLapseShards(lapse, traces))
 	}
 	seen, took, ok = l.catchUp(lapse, lapse.Resumed, 3*time.Minute)
 	traces = l.traces(lapse)
 	t.Logf("round lapse, %s after a wait of %s: %s\n%s", took, lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), seen, leaseLapseShards(lapse, traces))
-	if ok {
-		sameProcesses("lapse")
+	sameProcesses("lapse")
+	symptom, detail, err := judgeLeaseLapse(ok, seen.Behind, traces)
+	switch {
+	case err != nil:
+		// The gateway is left as it is.
+		repro.Inconclusive(t, "%v; 3m0s after zone a answered again: %s", err, seen)
+	case !symptom:
 		t.Logf("RGW_SYNC_LEASE_LAPSE_RECEIPT zone b's shards %v of %d found their sync lease lost inside a batch read from zone a, which had not answered for %s, and zone b served every object and stored a's markers %s after a answered again, with its gateway process kept; controls: zone b frozen for %s over %d idle shards, zone a not answering for %s with %d of %d shards waiting in a read",
 			inBatch, len(lapse.Shards), lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), took,
 			idle.Resumed.Sub(idle.Frozen).Round(time.Millisecond), len(idle.Shards), short.Resumed.Sub(short.Frozen).Round(time.Millisecond), held, len(short.Shards))
+		repro.Absent(t, "lapse", "zone a did not answer for %s, zone b's shards %v found their lease lost inside a batch, and %s after %s", lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), inBatch, detail, took)
+		repro.Conclude()
 		return
-	}
-	sameProcesses("lapse")
-	// The shards still behind must all show the skipped batch; anything
-	// else is another failure, and the gateway is left as it is.
-	var skipped []int
-	for _, shard := range seen.Behind {
-		if !skippedBatch(traces[shard.Shard], shard.Source, shard.Destination) {
-			t.Fatalf("zone b did not catch up within 3m0s of zone a answering again, and shard %d does not show a batch passed on a lost lease (a's marker %s, b's stored marker %q, trace %+v): %s",
-				shard.Shard, shard.Source, shard.Destination, traces[shard.Shard], seen)
-		}
-		skipped = append(skipped, shard.Shard)
-	}
-	if len(skipped) == 0 {
-		t.Fatalf("zone b did not catch up within 3m0s of zone a answering again with no shard of the round behind: %s", seen)
 	}
 	errors, err := l.fixture.ZoneAdmin(ctx, "b", "sync", "error", "list")
 	t.Logf("sync error list of zone b: %d entries with an error, %v", bytes.Count(errors, []byte(`"error_code"`)), err)
-	// A restarted gateway reads its stored markers again.
+	// A restarted gateway reads its stored markers again. Its catch-up is
+	// recorded with the symptom; it does not decide the verdict.
+	var restart string
 	gateway := l.zones[1].Gateway
 	if err := gateway.Stop(ctx, nil); err != nil {
-		t.Fatalf("stop zone b's gateway: %v", err)
+		restart = fmt.Sprintf("stop failed: %v", err)
+	} else if err := gateway.Start(ctx); err != nil {
+		restart = fmt.Sprintf("start failed: %v", err)
+	} else {
+		restarted := time.Now()
+		l.b = l.client(1)
+		after, recovered, caught := l.catchUp(lapse, restarted, 5*time.Minute)
+		restart = fmt.Sprintf("caught up %v after %s: %s", caught, recovered, after)
 	}
-	if err := gateway.Start(ctx); err != nil {
-		t.Fatalf("start zone b's gateway: %v", err)
-	}
-	restarted := time.Now()
-	l.b = l.client(1)
-	after, recovered, ok := l.catchUp(lapse, restarted, 5*time.Minute)
-	t.Fatalf("observed defect: zone a did not answer zone b's reads of its data log for %s; zone b's shards %v then found their sync lease lost inside the batch they read, read on from a's newest markers without starting the entries, and left their stored markers behind; 3m0s after a answered again: %s. After a restart of zone b's gateway: caught up %v after %s: %s",
-		lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), skipped, seen, ok, recovered, after)
+	repro.Symptom(t, "lapse", "zone a did not answer zone b's reads of its data log for %s; %s; 3m0s after a answered again: %s. After a restart of zone b's gateway: %s",
+		lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), detail, seen, restart)
+	repro.Conclude()
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The lines are as a Tentacle 20.2.4 gateway logged them with debug_rgw_sync
@@ -114,5 +116,39 @@ func TestShardLinesKeepTheLastLinesOfOneShard(t *testing.T) {
 	// Shard 7's data sync line, not the metadata sync shard of that number.
 	if lines := shardLines(leaseLapseLog, 7, 10); len(lines) != 2 || strings.Contains(strings.Join(lines, ""), "meta") {
 		t.Fatalf("shard 7 lines %q", lines)
+	}
+}
+
+// These cases feed synthetic shard lags and traces to judgeLeaseLapse. They
+// are not native evidence of what a gateway syncs.
+func TestJudgeLeaseLapse(t *testing.T) {
+	const source, stored = "00000000000000000000:00000000000000000656", ""
+	skipped := &shardTrace{LostInBatch: 1, Marker: source}
+	started := &shardTrace{LostInBatch: 1, Marker: source, Entries: []string{source}}
+	behind := []harness.RGWShardLag{{Shard: 82, Source: source, Destination: stored}}
+	for _, c := range []struct {
+		name     string
+		caughtUp bool
+		behind   []harness.RGWShardLag
+		traces   map[int]*shardTrace
+		symptom  bool
+		fault    string
+	}{
+		{"caught up", true, nil, nil, false, ""},
+		{"behind after a batch passed on a lost lease", false, behind, map[int]*shardTrace{82: skipped}, true, ""},
+		{"behind with the entry started", false, behind, map[int]*shardTrace{82: started}, false, "another fault:"},
+		{"behind without a trace", false, behind, map[int]*shardTrace{}, false, "another fault:"},
+		{"not caught up with no shard behind", false, nil, nil, false, "another fault:"},
+	} {
+		symptom, detail, err := judgeLeaseLapse(c.caughtUp, c.behind, c.traces)
+		if c.fault != "" {
+			if err == nil || !strings.HasPrefix(err.Error(), c.fault) {
+				t.Errorf("%s: %v, want %s", c.name, err, c.fault)
+			}
+			continue
+		}
+		if err != nil || symptom != c.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", c.name, symptom, detail, err, c.symptom)
+		}
 	}
 }

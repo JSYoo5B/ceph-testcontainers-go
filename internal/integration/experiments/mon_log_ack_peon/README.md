@@ -34,7 +34,8 @@ Upstream references:
 
 ## Requirements
 
-- One cluster: 3 MONs, 3 OSDs, one MGR, image role `essential` only.
+- One cluster: 3 MONs, 3 OSDs, one MGR. Image roles `essential` and
+  `client` (the harness starts its client toolkit), of one release.
 - The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
 - If the OSDs' sessions do not include one with the leader and one with a
   peon, the MON holding most of them is restarted before any measurement until
@@ -42,8 +43,9 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published images (about 100
-seconds on 20.2.4) and passes on 19.2.2 (about 55 seconds). No automatic run
+Deliberately failing reproducer: without an expectation it fails on the
+published images (about 100 seconds on 20.2.4) and passes on 19.2.2 (about 55
+seconds). No automatic run
 includes it (the default checks of a pull request, pushes to `main`, periodic
 samples), and it never gates anything. A maintainer can run it on demand, also
 on a pull request's head with the comment below.
@@ -64,6 +66,16 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 or through the tag runner:
 
 ```sh
+python3 .github/scripts/tag_scenarios.py optional --batch mon_log_ack \
+  --package ./internal/integration/experiments/mon_log_ack_peon \
+  --directory "artifacts/mon-log-ack-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+To check the reproducer against an affected build, declare the expected
+verdict; the run then passes only on that verdict:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=mon_log_ack_peon=REPRODUCED \
 python3 .github/scripts/tag_scenarios.py optional --batch mon_log_ack \
   --package ./internal/integration/experiments/mon_log_ack_peon \
   --directory "artifacts/mon-log-ack-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -91,17 +103,28 @@ the image by digest when the result is evidence.
   the covering MLogAck back under that tid. The peon's "don't have routed
   request" lines are the evidence of the loss.
 
-## Reading the result
+## Verdict
 
-- **Pass:** every OSD was acknowledged in a stable window (19.2.2).
-- **Observed bug:** the leader-connected control is acknowledged, the
-  peon-connected OSDs are not, and the peon logs a discarded route (20.2.4).
-- **Not reproduced:** a pass on a build that carries the introducing change.
-- **Unavailable prerequisite:** three MONs or OSDs do not start, or no layout
-  with a leader and a peon session is reached.
-- **Condition not established:** the leader-connected control is not
-  acknowledged, or the window is rejected for a leader, epoch or session
-  change. A plain timeout is not a reproduction.
+The test reports the unit `mon_log_ack_peon` in one `REPRODUCTION_VERDICT`
+line, with the single observation `peon-ack`.
+
+- **REPRODUCED:** in a stable window the leader-connected control is
+  acknowledged and a peon-connected OSD's committed entries are not; the
+  peon logs a discarded route (20.2.4).
+- **NOT_REPRODUCED:** in a stable window every OSD was acknowledged, each
+  peon-connected one through the MLogAck its peon routed back (19.2.2).
+- **INCONCLUSIVE:** the reason names the category. Unavailable
+  prerequisite: no stable three-MON layout, or no layout with a leader and a
+  peon session. Condition not established: the layout changed before or
+  during the window, or the scrub completions did not reach the cluster log.
+  Control failed: the leader-connected OSD was not acknowledged. Another
+  fault: a peon-connected OSD was acknowledged, but not through its peon. A
+  plain timeout is not a reproduction.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the test, absence
+passes it and an inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=mon_log_ack_peon=<REPRODUCED|NOT_REPRODUCED>`
+only that verdict passes.
 
 ## Cleanup and limits
 
