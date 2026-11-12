@@ -597,7 +597,7 @@ func testSyncLeaseLapse(t *testing.T) {
 	t.Logf("sync error list of zone b: %d entries with an error, %v", bytes.Count(errors, []byte(`"error_code"`)), err)
 	// A restarted gateway reads its stored markers again. Its catch-up is
 	// recorded with the symptom; it does not decide the verdict.
-	restart := "not restarted"
+	var restart string
 	gateway := l.zones[1].Gateway
 	if err := gateway.Stop(ctx, nil); err != nil {
 		restart = fmt.Sprintf("stop failed: %v", err)
