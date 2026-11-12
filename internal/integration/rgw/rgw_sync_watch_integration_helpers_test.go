@@ -175,14 +175,12 @@ func testRGWSyncWatch(t *testing.T) {
 	}
 	var lagging expect.MultisiteDataSyncEvaluation
 	lag := waitSyncEvent(t, zone, "data lag", 4*time.Minute, func(e multisite.SyncWatchEvent) bool {
-		if e.Err != nil || e.Ready {
-			return false
-		}
-		var err error
-		if lagging, err = (expect.MultisiteDataSync{Zone: "destination", Source: "source", State: expect.MultisiteDataSyncBehind}).Evaluate(e.Status); err != nil {
+		matched, evaluation, err := syncWatchDataLag(e)
+		if err != nil {
 			t.Fatalf("zone watch event %d: %v", e.Sequence, err)
 		}
-		return lagging.Matched
+		lagging = evaluation
+		return matched
 	})
 	bucketLag := waitBucketEvent(t, checkpoint, "bucket lag", 4*time.Minute, func(e multisite.BucketSyncWatchEvent) bool {
 		return e.Err == nil && !e.Status.CaughtUp && e.Status.BehindShards > 0
@@ -238,6 +236,21 @@ func testRGWSyncWatch(t *testing.T) {
 		t.Fatalf("the bucket watch ended with %v", err)
 	}
 	t.Logf("SYNC_WATCH_RECREATED bucket watch ended: %v", checkpoint.Stop())
+}
+
+// syncWatchDataLag reports whether a zone watch event shows the destination
+// behind the source in this two-zone fixture. The fixture configures exactly
+// one remote source, so an event listing any other data sync stream is not
+// the lag this scenario waits for, even when the source stream is behind.
+func syncWatchDataLag(e multisite.SyncWatchEvent) (bool, expect.MultisiteDataSyncEvaluation, error) {
+	if e.Err != nil || e.Ready {
+		return false, expect.MultisiteDataSyncEvaluation{}, nil
+	}
+	evaluation, err := (expect.MultisiteDataSync{Zone: "destination", Source: "source", State: expect.MultisiteDataSyncBehind}).Evaluate(e.Status)
+	if err != nil {
+		return false, evaluation, err
+	}
+	return evaluation.Matched && len(e.Status.DataSources) == 1, evaluation, nil
 }
 
 // checkBucketRecreationEvent checks one bucket watch event drained after the
