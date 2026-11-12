@@ -105,7 +105,7 @@ particular API is kept belongs in that API's own doc comment, not here.
   of the Ceph service the observation belongs to: `ceph/expect` for
   `ceph.OSDState`, `cephfs/expect` for `cephfs.FilesystemStatus`,
   `rbd/expect` for `mirror.ImageStatus`, `rgw/expect` for
-  `rgw.UserUsage`. A service has one `expect` package,
+  `rgw.UserUsage` and `multisite.SyncStatus`. A service has one `expect` package,
   so its extensions (such as `rbd/mirror`) do not get their own; the
   evaluation names say which extension they read (`MirrorImage`), and an
   `expect` package exists only once the service has an evaluation. The

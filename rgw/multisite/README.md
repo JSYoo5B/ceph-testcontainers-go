@@ -32,7 +32,9 @@ quotas) stays in [`rgw`](../README.md), accounts in
    the objects through the other zone's endpoint. `WatchSync` and
    `SyncGroup.WatchBucketSync` report lag and catch-up while a fault runs;
    `SyncGroup.WatchBucketPolicy` reports the stages of one policy import.
-   `ZoneAdmin` runs `radosgw-admin` in any zone.
+   [`rgw/expect`](../expect/README.md) evaluates one zone's captured
+   `SyncStatus` against a stated direction: caught up with, or behind, one
+   source. `ZoneAdmin` runs `radosgw-admin` in any zone.
 6. **Clean up**: terminate the fixture before the clusters; a non-nil
    `*Fixture` returned with an error must still be terminated.
 
