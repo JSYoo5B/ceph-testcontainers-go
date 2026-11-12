@@ -1,12 +1,15 @@
 // Package expect evaluates captured observations of RBD fixtures against the
 // conditions a test states, and explains each mismatch. Its evaluations read
-// the rbd-mirror link observations of package rbd/mirror.
+// the image client observations of package rbd and the rbd-mirror link
+// observations of package rbd/mirror.
 //
-// It is optional: running, observing and watching a link needs only package
-// mirror, and package rbd does not import it. A test that wants a precise verdict on one observation, such as
-// "the survivor leads while the stopped member stays in the cohort" or "the
-// same image pair replays through a new receiving instance", states it as an
-// expectation and evaluates the observation it already has:
+// It is optional: observing an image or running, observing and watching a
+// link needs only package rbd or mirror, and neither imports it. A test that
+// wants a precise verdict on one observation, such as "the new owner holds
+// the exclusive lock and the former owner no longer watches", "the survivor
+// leads while the stopped member stays in the cohort" or "the same image pair
+// replays through a new receiving instance", states it as an expectation and
+// evaluates the observation it already has:
 //
 //	status, err := link.ImageStatus(ctx, "volume")
 //	if err != nil {

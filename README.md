@@ -34,9 +34,9 @@ Documentation for a published release is available at its Git tag.
     `Terminate`.
 - [`rbd`](rbd/README.md): RBD pools and namespaces, image watchers and locks,
   backup and restore.
-  - [`rbd/expect`](rbd/expect/README.md): pure evaluations of captured
-    `rbd-mirror` receiver and image replay observations, with mismatch
-    explanations.
+  - [`rbd/expect`](rbd/expect/README.md): pure evaluations of captured image
+    lock and watcher observations and `rbd-mirror` receiver and image replay
+    observations, with mismatch explanations.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
 - [`cephfs`](cephfs/README.md): filesystems, MDS topology and data pools.
