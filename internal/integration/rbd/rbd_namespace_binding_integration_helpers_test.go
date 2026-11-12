@@ -14,8 +14,8 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -291,7 +291,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	restarted := check("same-cid-restart")
-	restart := rbdmirrorexpect.Receivers{Select: []rbdmirrorexpect.ReceiverDaemon{{Name: "receiver", Baseline: initial[0].Daemons["receiver"], Running: true, NewInstance: true}}}
+	restart := rbdexpect.Receivers{Select: []rbdexpect.ReceiverDaemon{{Name: "receiver", Baseline: initial[0].Daemons["receiver"], Running: true, NewInstance: true}}}
 	if result, err := restart.Evaluate(restarted[0]); receiver.GetContainerID() != cid || err != nil || !result.Matched {
 		t.Fatalf("shared same-CID restart did not create fresh native instance: %v %v", result, err)
 	}

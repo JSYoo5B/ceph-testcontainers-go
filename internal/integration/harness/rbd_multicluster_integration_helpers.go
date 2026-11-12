@@ -14,8 +14,8 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
-	rbdmirrorexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror/expect"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -24,10 +24,10 @@ import (
 func RBDMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Container, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
-	var result rbdmirrorexpect.ImageEvaluation
+	var result rbdexpect.MirrorImageEvaluation
 	if err == nil {
 		want := rbdmirror.ImageStatus{Name: name, Mode: mode, SourceNamespace: sourceNamespace, DestinationNamespace: destinationNamespace}
-		result, err = rbdmirrorexpect.Image{Select: want, Replaying: true}.Evaluate(status)
+		result, err = rbdexpect.MirrorImage{Select: want, Replaying: true}.Evaluate(status)
 	}
 	if err != nil || !result.Matched {
 		logRBDMirrorImageState(t, ctx, link, status.Pool, sourceNamespace, destinationNamespace, name)
