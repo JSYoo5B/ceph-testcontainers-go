@@ -130,11 +130,12 @@ finally:
 func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "cephfs_dangling_symlink_create", "create-at-dangling-symlink")
 	image, opts := harness.IntegrationImages(t)
 	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
-		t.Fatal(err)
+		repro.Inconclusive(t, "unavailable prerequisite: the filesystem is not ready: %v", err)
 	}
 	t.Logf("client: %s", harness.ExecOutput(t, ctx, client, "ceph", "--version"))
 	t.Logf("python3-cephfs: %s", harness.ExecOutput(t, ctx, client, "python3", "-c", "import cephfs;print(cephfs.__file__, cephfs.LibCephFS().version())"))
@@ -173,7 +174,7 @@ func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 		Client uint64 `json:"client"`
 	}
 	if _, err := run(ctx, "prepare", &prepared); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var acted struct {
 		Client uint64      `json:"client"`
@@ -181,7 +182,7 @@ func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	}
 	actedRaw, err := run(ctx, "act", &acted)
 	if err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var observed struct {
 		Client uint64       `json:"client"`
@@ -189,14 +190,21 @@ func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	}
 	observedRaw, err := run(ctx, "observe", &observed)
 	if err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	if acted.Client == prepared.Client || observed.Client == acted.Client {
-		t.Fatalf("condition not established: the clients %d, %d and %d of the three steps are not three mounts", prepared.Client, acted.Client, observed.Client)
+		repro.Inconclusive(t, "condition not established: the clients %d, %d and %d of the three steps are not three mounts", prepared.Client, acted.Client, observed.Client)
 	}
 	t.Logf("CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT acted: %s", actedRaw)
 	t.Logf("CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT observed by a later mount: %s", observedRaw)
-	if err := judgeCreate(cases, acted.Cases, observed.Cases); err != nil {
-		t.Fatal(err)
+	symptom, detail, err := judgeCreate(cases, acted.Cases, observed.Cases)
+	switch {
+	case err != nil:
+		repro.Inconclusive(t, "%v", err)
+	case symptom:
+		repro.Symptom(t, "create-at-dangling-symlink", "%s", detail)
+	default:
+		repro.Absent(t, "create-at-dangling-symlink", "%s", detail)
 	}
+	repro.Conclude()
 }

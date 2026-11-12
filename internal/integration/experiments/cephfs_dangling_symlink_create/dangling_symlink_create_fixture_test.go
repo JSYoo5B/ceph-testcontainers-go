@@ -60,14 +60,14 @@ func TestJudgeCreate(t *testing.T) {
 		change func(acts []createAct, seen []createSeen)
 		want   string
 	}{
-		{name: "contract"},
-		{name: "mkdir through a relative symlink", change: through(2), want: "observed defect: at a dangling symlink, want EEXIST with nothing at its target: mkdir/relative succeeded and made a dir at the symlink's target there/absent"},
-		{name: "symlink through an absolute symlink", change: through(7), want: "observed defect: at a dangling symlink, want EEXIST with nothing at its target: symlink/absolute succeeded and made a symlink at the symlink's target /root/symlink-absolute/there/absent"},
+		{name: "contract", want: "absent: all 8 cases reported EEXIST"},
+		{name: "mkdir through a relative symlink", change: through(2), want: "symptom: 1 of 8 cases at a dangling symlink, want EEXIST with nothing at its target: mkdir/relative succeeded and made a dir at the symlink's target there/absent"},
+		{name: "symlink through an absolute symlink", change: through(7), want: "symptom: 1 of 8 cases at a dangling symlink, want EEXIST with nothing at its target: symlink/absolute succeeded and made a symlink at the symlink's target /root/symlink-absolute/there/absent"},
 		{name: "every case through", change: func(acts []createAct, seen []createSeen) {
 			for i := range cases {
 				through(i)(acts, seen)
 			}
-		}, want: "observed defect: at a dangling symlink, want EEXIST with nothing at its target: link/relative succeeded"},
+		}, want: "symptom: 8 of 8 cases at a dangling symlink, want EEXIST with nothing at its target: link/relative succeeded"},
 		{name: "success without an entry at the target", change: func(acts []createAct, _ []createSeen) { acts[0].Link = 0 }, want: "another fault: "},
 		{name: "EEXIST with an entry at the target", change: func(_ []createAct, seen []createSeen) {
 			seen[2].Target, seen[2].There = createEntry{Type: "file", Inode: 900}, []string{"absent"}
@@ -115,14 +115,21 @@ func TestJudgeCreate(t *testing.T) {
 			if tc.change != nil {
 				tc.change(acts, seen)
 			}
-			err := judgeCreate(cases, acts, seen)
-			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tc.want)) {
-				t.Fatalf("error %v, want %q", err, tc.want)
+			symptom, detail, err := judgeCreate(cases, acts, seen)
+			got := "absent: " + detail
+			switch {
+			case err != nil:
+				got = err.Error()
+			case symptom:
+				got = "symptom: " + detail
+			}
+			if !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
 	acts, seen := createReports(cases)
-	if err := judgeCreate(cases, acts[1:], seen); err == nil || !strings.HasPrefix(err.Error(), "condition not established: 8 cases, 7 acted on and 8 observed") {
+	if _, _, err := judgeCreate(cases, acts[1:], seen); err == nil || !strings.HasPrefix(err.Error(), "condition not established: 8 cases, 7 acted on and 8 observed") {
 		t.Fatalf("error %v", err)
 	}
 }
