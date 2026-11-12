@@ -102,21 +102,23 @@ func (s createSeen) made(entry createEntry) bool {
 	return true
 }
 
-// judgeCreate compares the reports with the cases. Its error starts with
-// "condition not established" when a dangling symlink was not in place
-// before its operation, with "control failed" when an operation did not
-// create at an unused name or did not report EEXIST at a regular file or at
-// a symlink to an existing file, with "another fault" when a result at a
-// dangling symlink is neither the contract nor the defect, and with
-// "observed defect" when the operation succeeded at the dangling symlink
-// and its entry is at the symlink's target. An entry counts as the
-// operation's only by createSeen.made: one of the same type that is not a
-// link of "source", or a symlink with another text, is not attributed to
-// it. The first of these that applies
-// to any case is reported, with every case it applies to.
-func judgeCreate(cases []createCase, acts []createAct, seen []createSeen) error {
+// judgeCreate compares the reports with the cases. It reports the symptom
+// when the operation succeeded at a dangling symlink and its entry is at the
+// symlink's target, and its absence when every operation at a dangling
+// symlink reported EEXIST with the symlink kept and nothing at its target.
+// Its error starts with "condition not established" when a dangling symlink
+// was not in place before its operation, with "control failed" when an
+// operation did not create at an unused name or did not report EEXIST at a
+// regular file or at a symlink to an existing file, and with "another fault"
+// when a result at a dangling symlink is neither the contract nor the
+// defect: no verdict. An entry counts as the operation's only by
+// createSeen.made: one of the same type that is not a link of "source", or a
+// symlink with another text, is not attributed to it. The first of these
+// that applies to any case is reported, with every case it applies to, and
+// an error outranks the symptom.
+func judgeCreate(cases []createCase, acts []createAct, seen []createSeen) (symptom bool, detail string, err error) {
 	if len(acts) != len(cases) || len(seen) != len(cases) {
-		return fmt.Errorf("condition not established: %d cases, %d acted on and %d observed", len(cases), len(acts), len(seen))
+		return false, "", fmt.Errorf("condition not established: %d cases, %d acted on and %d observed", len(cases), len(acts), len(seen))
 	}
 	exists := int(syscall.EEXIST)
 	var conditions, controls, faults, defects []string
@@ -153,11 +155,13 @@ func judgeCreate(cases []createCase, acts []createAct, seen []createSeen) error 
 	}{
 		{"condition not established", conditions}, {"control failed", controls},
 		{"another fault: at a dangling symlink, want EEXIST with the symlink kept and nothing at its target", faults},
-		{"observed defect: at a dangling symlink, want EEXIST with nothing at its target", defects},
 	} {
 		if len(found.cases) > 0 {
-			return fmt.Errorf("%s: %s", found.prefix, strings.Join(found.cases, "; "))
+			return false, "", fmt.Errorf("%s: %s", found.prefix, strings.Join(found.cases, "; "))
 		}
 	}
-	return nil
+	if len(defects) > 0 {
+		return true, fmt.Sprintf("%d of %d cases at a dangling symlink, want EEXIST with nothing at its target: %s", len(defects), len(cases), strings.Join(defects, "; ")), nil
+	}
+	return false, fmt.Sprintf("all %d cases reported EEXIST at the dangling symlink, kept it and made nothing at its target", len(cases)), nil
 }

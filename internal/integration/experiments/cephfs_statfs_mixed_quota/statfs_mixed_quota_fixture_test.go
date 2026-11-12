@@ -49,10 +49,10 @@ func TestJudgeStatfs(t *testing.T) {
 		change func(*statfsReport)
 		want   string
 	}{
-		"every directory reports its byte quota":    {},
-		"the child reports the pool":                {change: poolAt("parent/child"), want: "observed defect: [parent/child reports 2400 blocks"},
-		"the child reports another capacity":        {change: func(r *statfsReport) { dir(r, "parent/child").Blocks = 15 }, want: "observed defect"},
-		"the child reports stale free blocks":       {change: func(r *statfsReport) { d := dir(r, "parent/child"); d.BFree, d.BAvail = 16, 16 }, want: "observed defect"},
+		"every directory reports its byte quota":    {want: "absent: every directory below a byte quota"},
+		"the child reports the pool":                {change: poolAt("parent/child"), want: "symptom: [parent/child reports 2400 blocks"},
+		"the child reports another capacity":        {change: func(r *statfsReport) { dir(r, "parent/child").Blocks = 15 }, want: "symptom: "},
+		"the child reports stale free blocks":       {change: func(r *statfsReport) { d := dir(r, "parent/child"); d.BFree, d.BAvail = 16, 16 }, want: "symptom: "},
 		"the plain child reports the pool":          {change: poolAt("parent/plain"), want: "control failed"},
 		"the parent reports the pool":               {change: poolAt("parent"), want: "control failed"},
 		"the same-directory quotas report the pool": {change: poolAt("same"), want: "control failed"},
@@ -76,12 +76,16 @@ func TestJudgeStatfs(t *testing.T) {
 		"the pool is as small as the quota": {change: func(r *statfsReport) { poolAt("unlimited")(r); dir(r, "unlimited").Blocks = 16 }, want: "not a capacity above"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := judgeStatfs(statfsLayout, report(test.change))
+			symptom, detail, err := judgeStatfs(statfsLayout, report(test.change))
+			got := "absent: " + detail
 			switch {
-			case test.want == "" && err != nil:
-				t.Fatalf("refused: %v", err)
-			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
-				t.Fatalf("got %v, want an error containing %q", err, test.want)
+			case err != nil:
+				got = err.Error()
+			case symptom:
+				got = "symptom: " + detail
+			}
+			if !strings.Contains(got, test.want) {
+				t.Fatalf("got %q, want it to contain %q", got, test.want)
 			}
 		})
 	}

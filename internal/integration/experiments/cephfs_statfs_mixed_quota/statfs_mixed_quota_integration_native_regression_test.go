@@ -119,11 +119,12 @@ finally:
 func TestCephFSStatfsWithNestedByteAndFileQuotas(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "cephfs_statfs_mixed_quota", "statfs-below-byte-quota")
 	image, opts := harness.IntegrationImages(t)
 	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
-		t.Fatal(err)
+		repro.Inconclusive(t, "unavailable prerequisite: the filesystem is not ready: %v", err)
 	}
 	t.Logf("client: %s", harness.ExecOutput(t, ctx, client, "ceph", "--version"))
 	t.Logf("python3-cephfs: %s", harness.ExecOutput(t, ctx, client, "python3", "-c", "import cephfs;print(cephfs.__file__, cephfs.LibCephFS().version())"))
@@ -159,18 +160,25 @@ func TestCephFSStatfsWithNestedByteAndFileQuotas(t *testing.T) {
 	})
 	var prepared statfsReport
 	if _, err := run(ctx, "prepare", &prepared); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var report statfsReport
 	raw, err := run(ctx, "observe", &report)
 	if err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	if report.Client == prepared.Client {
-		t.Fatalf("condition not established: the observing client is the preparing client %d", prepared.Client)
+		repro.Inconclusive(t, "condition not established: the observing client is the preparing client %d", prepared.Client)
 	}
 	t.Logf("CEPHFS_STATFS_MIXED_QUOTA_RECEIPT prepared by client %d; observed by a fresh mount: %s", prepared.Client, raw)
-	if err := judgeStatfs(statfsLayout, report); err != nil {
-		t.Fatal(err)
+	symptom, detail, err := judgeStatfs(statfsLayout, report)
+	switch {
+	case err != nil:
+		repro.Inconclusive(t, "%v", err)
+	case symptom:
+		repro.Symptom(t, "statfs-below-byte-quota", "%s", detail)
+	default:
+		repro.Absent(t, "statfs-below-byte-quota", "%s", detail)
 	}
+	repro.Conclude()
 }

@@ -35,10 +35,10 @@ directory of the new name and look the last component up without following
 it, and report `EEXIST`. Upstream reference:
 [tracker 82376](https://tracker.ceph.com/issues/82376).
 
-The test fails on Squid 19.2.3 and on every later release it ran on, and
-passes on Squid 19.2.2.
-The failure is the expected result for an unpatched defect; it is not a
-fixture failure.
+The case reproduces on Squid 19.2.3 and on every later release it ran on,
+and does not on Squid 19.2.2. Without an expectation the reproduction fails
+the test; that is the expected result for an unpatched defect, not a fixture
+failure.
 
 ## Requirements
 
@@ -148,44 +148,61 @@ The results below ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, cl
 (`sha256:4337ac8ac81d…`), 19.2.3 (`sha256:af0c5903e901…`) and 19.2.2 (`sha256:8214ebff6133…`), each with the client module
 of its own release.
 
-Five releases failed with `observed defect:` in all eight cases, after
+Five releases reproduced the defect (`REPRODUCED`) in all eight cases, after
 every control held: Tentacle 20.2.4 in 34 s, Tentacle 20.2.5 in 34 s,
 Umbrella 21.2.0 in 35 s, Squid 19.2.5 in 40 s and Squid 19.2.3 in 41 s. In
 each case the operation at `link` returned
 success, `link` stayed the same symlink, and `there/absent` was a directory
 (`mkdir`), a symlink (`symlink`), a hard link of `source` (`link`) or a
-regular file (`mknod`). Squid 19.2.2 passed (41 s): all eight
-operations reported `EEXIST` and made nothing. The behaviour changes
+regular file (`mknod`). Squid 19.2.2 did not (`NOT_REPRODUCED`, 41 s): all
+eight operations reported `EEXIST` and made nothing. The behaviour changes
 between 19.2.2 and 19.2.3.
 
-- **Pass:** every operation reported `EEXIST` at the dangling symlink and
-  made nothing. Squid 19.2.2 passes; no later release that was run does.
-- **Observed bug:** the failure starts with `observed defect:` and names
-  each case in which the operation succeeded and what it makes is at the
-  symlink's target, with the symlink unchanged. As at `fresh`, a file there
-  counts for `link` only with the inode of `source`, and a symlink for
-  `symlink` only with the given text.
-- **Not reproduced:** a pass on a build claimed to be affected. Check in
-  the receipts (`CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT`) that every
-  `link_before` is a symlink with its target and every `target_before` is
-  empty.
-- **Unavailable prerequisite:** the failure starts with
-  `unavailable prerequisite`: the cluster, the filesystem or the client does
+## Verdict
+
+The test is the reproduction unit `cephfs_dangling_symlink_create` with one
+planned observation, `create-at-dangling-symlink`, which judges all eight
+cases together. It prints one line that starts with
+`REPRODUCTION_VERDICT case=cephfs_dangling_symlink_create`.
+
+- `REPRODUCED`: the conditions and every control held, and in at least one
+  case the operation succeeded at the dangling symlink, the symlink stayed
+  the same, and what the operation makes is at the symlink's target. As at
+  `fresh`, a file there counts for `link` only with the inode of `source`,
+  and a symlink for `symlink` only with the given text. The observation
+  names each such case. Without an expectation the test fails with
+  `observed defect: create-at-dangling-symlink:`.
+- `NOT_REPRODUCED`: the conditions and every control held, and every
+  operation reported `EEXIST` at the dangling symlink, kept it and made
+  nothing. Without an expectation the test passes. On a build claimed to be
+  affected, check in the receipts (`CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT`)
+  that every `link_before` is a symlink with its target and every
+  `target_before` is empty.
+- `INCONCLUSIVE`: no verdict on the symptom; the test fails and the reason
+  starts with its category.
+  `unavailable prerequisite:` the cluster, the filesystem or the client does
   not start, or the client's `python3` cannot mount, prepare, act or
-  observe.
-- **Condition not established:** the failure starts with
-  `condition not established`: a symlink was not dangling before its
-  operation, or the steps did not run as separate mounts. It is not a
-  reproduction and not a pass.
-- **Control failed:** the failure starts with `control failed` and names
-  the control of the list above that did not hold. The result at the
-  dangling symlink then says nothing.
-- **Another fault:** the failure starts with `another fault:`: at a
-  dangling symlink the result is neither `EEXIST` with nothing made nor
-  success with what the operation makes at the target, such as another
-  errno, a replaced symlink, an entry of another type, a file that is not a
-  link of `source` or a symlink with another text. It is not
-  the defect of this case.
+  observe. `condition not established:` a symlink was not dangling before its
+  operation, or the steps did not run as separate mounts.
+  `control failed:` a control of the list above did not hold, so the result
+  at the dangling symlink says nothing. `another fault:` at a dangling
+  symlink the result is neither `EEXIST` with nothing made nor success with
+  what the operation makes at the target, such as another errno, a replaced
+  symlink, an entry of another type, a file that is not a link of `source` or
+  a symlink with another text.
+
+An expectation turns the verdict into the result: only the expected verdict
+passes, and a skip or `INCONCLUSIVE` never does. With the 20.2.4 role images
+exported as above:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=cephfs_dangling_symlink_create=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_dangling_symlink_create \
+  --package ./internal/integration/experiments/cephfs_dangling_symlink_create \
+  --directory "artifacts/cephfs-dangling-symlink-create-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+On the Squid 19.2.2 aggregate the expectation is `NOT_REPRODUCED`.
 
 ## Cleanup and limits
 

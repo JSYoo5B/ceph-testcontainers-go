@@ -11,5 +11,8 @@ import (
 )
 
 func TestHostNetworkCephFSMirrorDaemonTopology(t *testing.T) {
-	harness.RunCephFSMirrorDaemonTopology(t, true)
+	harness.RunCephFSMirrorDaemonRedistribution(t, true, harness.CephFSMirrorRedistribution{
+		Reproduction: harness.StartReproduction(t, "cephfs_mirror_daemon_redistribution/host-network", redistributionObservation),
+		Observation:  redistributionObservation, Judge: judgeRedistribution,
+	})
 }

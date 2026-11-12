@@ -166,11 +166,12 @@ print(json.dumps(out))
 func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "cephfs_snapshot_readdir_eviction", "listing-after-eviction")
 	image, opts := harness.IntegrationImages(t)
 	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
-		t.Fatal(err)
+		repro.Inconclusive(t, "unavailable prerequisite: the filesystem is not ready: %v", err)
 	}
 	t.Logf("client: %s", harness.ExecOutput(t, ctx, client, "ceph", "--version"))
 	t.Logf("python3-cephfs: %s", harness.ExecOutput(t, ctx, client, "python3", "-c", "import cephfs;print(cephfs.__file__, cephfs.LibCephFS().version())"))
@@ -212,7 +213,7 @@ func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 		Client uint64 `json:"client"`
 	}
 	if err := run(ctx, "prepare", 0, &prepared); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var control, trigger snapshotListing
 	for _, listing := range []struct {
@@ -221,14 +222,21 @@ func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 		into  *snapshotListing
 	}{{"default cache", 0, &control}, {"small cache", snapshotCache, &trigger}} {
 		if err := run(ctx, "list", listing.cache, listing.into); err != nil {
-			t.Fatalf("unavailable prerequisite: %v", err)
+			repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 		}
 		got := *listing.into
 		t.Logf("CEPHFS_SNAPSHOT_READDIR_EVICTION_RECEIPT %s: client %d with client_cache_size %d read %d snapshot entries, looked up %d files elsewhere, waited %d s and read on; snapshot dentry dropped in between: %t; readdir requests for the handle: %d, of them without the snapshot in the path: %d; snapshot listing: %s; live listing: %s; client log: %q",
 			listing.name, got.Client, got.Cache, got.First, got.Stats, snapshotSettle, got.Trimmed, got.Requests, got.HeadRequests,
 			snapshotDiffer(want, live, got.Names), snapshotDiffer(live, want, got.Live), got.Evidence)
 	}
-	if err := judgeSnapshotListings(want, live, control, trigger); err != nil {
-		t.Fatal(err)
+	symptom, detail, err := judgeSnapshotListings(want, live, control, trigger)
+	switch {
+	case err != nil:
+		repro.Inconclusive(t, "%v", err)
+	case symptom:
+		repro.Symptom(t, "listing-after-eviction", "%s", detail)
+	default:
+		repro.Absent(t, "listing-after-eviction", "%s", detail)
 	}
+	repro.Conclude()
 }

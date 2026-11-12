@@ -19,9 +19,10 @@ probes with a fresh libcephfs or librados client.
 | `snapshot of a deleted directory` | A principal restricted to `/dir1` that deletes a child still reads the child's bytes through an earlier `/dir1` snapshot, and is refused `/` and `/dir2`. | Squid before 19.2.3: the snapshot read is refused once the live directory is unlinked. | [tracker 66828](https://tracker.ceph.com/issues/66828), [ceph/ceph#58419](https://github.com/ceph/ceph/pull/58419), Squid [ceph/ceph#59518](https://github.com/ceph/ceph/pull/59518) |
 | `same-named subvolumes` | Namespace-isolated subvolumes with one name in two groups get two RADOS namespaces; each reader's OSD caps name only its own, and it is refused the other's object. | Squid before 19.2.4: both share one namespace, so each reader reads the other's data through librados. | [tracker 70668](https://tracker.ceph.com/issues/70668), [ceph/ceph#62668](https://github.com/ceph/ceph/pull/62668), Squid [ceph/ceph#64205](https://github.com/ceph/ceph/pull/64205) |
 
-Every supported release (19.2.5, 20.2.4, 21.2.0) is fixed, so the test passes
-there. It fails on the affected builds; that failure is the documented defect,
-not a fixture fault.
+Every supported release (19.2.5, 20.2.4, 21.2.0) is fixed, so every unit
+reports `NOT_REPRODUCED` and the test passes there. On an affected build the
+unit of that defect reports `REPRODUCED` and, without an expectation, fails
+the test; that failure is the documented defect, not a fixture fault.
 
 ## Requirements
 
@@ -76,17 +77,49 @@ Pin the image by digest when the result is evidence; every probe line
 - Subvolumes: the two namespaces differ and share one data pool; each reader
   reads its own file through libcephfs and its own object through librados.
 
-## Reading the result
+## Verdict
 
-- **Pass:** all three contracts hold on the build.
-- **Observed bug:** a create or mkdir succeeds in the read-only filesystem
-  (caps), the snapshot read is refused after the deletion (snapshot), or the
-  namespaces are equal or the other object reads (subvolumes).
-- **Not reproduced:** a pass on a build listed as affected.
-- **Unavailable prerequisite:** a filesystem, MDS or client container does not
-  start; the failure names the setup step.
-- **Condition not established:** a seed, a cap update or a subvolume creation
-  fails, so the subtest never probed the contract.
+Each subtest is its own reproduction unit with one planned observation and
+prints one line that starts with `REPRODUCTION_VERDICT case=<unit>`:
+
+| Subtest | Unit | Observation | Symptom |
+| --- | --- | --- | --- |
+| `caps per filesystem` | `cephfs_authorization_isolation/caps-per-filesystem` | `write-on-read-only-filesystem` | a create or mkdir succeeds on the filesystem the caps grant only read |
+| `snapshot of a deleted directory` | `cephfs_authorization_isolation/deleted-directory-snapshot` | `snapshot-read-after-deletion` | the snapshot read of the deleted child is refused (`EPERM` or `EACCES`) |
+| `same-named subvolumes` | `cephfs_authorization_isolation/same-named-subvolumes` | `other-tenant-object` | both subvolumes have one RADOS namespace, or a reader reads the other's object |
+
+- `REPRODUCED`: the conditions and controls held and the symptom of the
+  table was observed. Without an expectation the subtest fails with
+  `observed defect: <observation>:`.
+- `NOT_REPRODUCED`: the conditions and controls held and the contract of the
+  table held: `EACCES` for every create and mkdir on a read-only filesystem,
+  the snapshot's bytes after the deletion, or two namespaces with each reader
+  refused (`EPERM`) the other's object. Without an expectation the subtest
+  passes. Every supported release reports `NOT_REPRODUCED` for all three.
+- `INCONCLUSIVE`: no verdict on the symptom; the subtest fails and the reason
+  starts with its category. `condition not established:` a principal, a cap
+  update, a group or a subvolume could not be created or read back, the
+  snapshot did not read before the deletion, the child was not deleted, or a
+  namespace is empty. `control failed:` a mount or seed read failed, a
+  writable filesystem refused a create, the principal without an `iso-b`
+  clause mounted it, `/` or `/dir2` was not refused, or a reader cannot read
+  its own data or has caps for another namespace. `another fault:` a
+  read-only filesystem, the snapshot read or the other's object answered
+  something else. A filesystem, MDS or client container that does not start
+  fails the test before any verdict, and the unit reports `INCONCLUSIVE`
+  because the observation did not complete.
+
+An expectation names one unit, and only the expected verdict passes; the
+other units still print theirs. On an affected aggregate, for example a Squid
+build before 19.2.5 for the caps:
+
+```sh
+CEPH_TEST_IMAGE=<aggregate image@sha256:...> \
+CEPH_TEST_EXPECTED_VERDICT=cephfs_authorization_isolation/caps-per-filesystem=REPRODUCED \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=30m \
+  -run '^TestCephFSAuthorizationIsolation$' \
+  ./internal/integration/experiments/cephfs_authorization_isolation
+```
 
 ## Cleanup and limits
 
