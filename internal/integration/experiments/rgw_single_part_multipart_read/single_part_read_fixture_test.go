@@ -84,7 +84,19 @@ func TestJudgeOnlyPart(t *testing.T) {
 		"not sent":           {spRead{Method: http.MethodHead, Part: 1, NotSent: "the GET did not end"}, nil, "another fault: HEAD partNumber=1 not sent: the GET did not end"},
 		"connection refused": {spRead{Method: http.MethodGet, Part: 1, Err: "connection refused"}, nil, "another fault: "},
 	} {
-		got := judgeOnlyPart(test.read, size, test.stall)
+		// The verdict text: the error of another fault, "observed defect: "
+		// and the detail of a symptom, and "" for the part's own answer,
+		// whose detail must not be empty.
+		symptom, detail, err := judgeOnlyPart(test.read, size, test.stall)
+		got := ""
+		switch {
+		case err != nil:
+			got = err.Error()
+		case symptom:
+			got = "observed defect: " + detail
+		case detail == "":
+			got = "absent symptom without a detail"
+		}
 		if test.want == "" && got != "" || test.want != "" && !strings.HasPrefix(got, test.want) {
 			t.Errorf("%s: %q, want prefix %q", name, got, test.want)
 		}

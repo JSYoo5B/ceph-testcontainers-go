@@ -162,39 +162,41 @@ func (s spStall) busy() float64 {
 }
 
 // judgeOnlyPart judges a read of part 1 of an object whose upload had one
-// part of want bytes. It returns "" for the part's own answer: 200 or 206,
-// its length, a part count of 1 and, for a GET, its bytes.
+// part of want bytes. The part's own answer (200 or 206, its length, a part
+// count of 1 and, for a GET, its bytes) is the symptom's absence. The
+// documented symptom is any other answer, or a read that does not end.
 //
-// A read that did not end within its deadline fails the contract only when
-// the client had written the request to a connection to the gateway, or had
-// its response header, and the gateway process is still the one that was
+// A read that did not end within its deadline is the symptom only when the
+// client had written the request to a connection to the gateway, or had its
+// response header, and the gateway process is still the one that was
 // running before. A request that was never written shows nothing about the
-// gateway. In no case does the verdict name a cause: the CPU time reported
-// with it is counted for the whole process, earlier unended requests
-// included, and is no call trace of this request.
-func judgeOnlyPart(read spRead, want int, stall *spStall) string {
+// gateway, and a restarted or uninspected gateway explains nothing; both are
+// another fault, as is a transport failure. In no case does the verdict name
+// a cause: the CPU time reported with it is counted for the whole process,
+// earlier unended requests included, and is no call trace of this request.
+func judgeOnlyPart(read spRead, want int, stall *spStall) (symptom bool, detail string, err error) {
 	switch {
 	case read.NotSent != "":
-		return fmt.Sprintf("another fault: %s", read)
+		return false, "", fmt.Errorf("another fault: %s", read)
 	case read.TimedOut && read.Phase != spSent && read.Phase != spBody:
-		return fmt.Sprintf("another fault: %s. Nothing shows that the request reached the gateway, so the read says nothing about it", read)
+		return false, "", fmt.Errorf("another fault: %s. Nothing shows that the request reached the gateway, so the read says nothing about it", read)
 	case read.TimedOut && stall == nil:
-		return fmt.Sprintf("another fault: %s, and the gateway was not inspected", read)
+		return false, "", fmt.Errorf("another fault: %s, and the gateway was not inspected", read)
 	case read.TimedOut && (stall.Before.Start != stall.First.Start || stall.First.Start != stall.Second.Start):
-		return fmt.Sprintf("another fault: %s, and the gateway process is not the one that ran before the request", read)
+		return false, "", fmt.Errorf("another fault: %s, and the gateway process is not the one that ran before the request", read)
 	case read.TimedOut:
-		return fmt.Sprintf("observed defect: %s, and the gateway process is the one that ran before the request. The cause is not established: "+
+		return true, fmt.Sprintf("%s, and the gateway process is the one that ran before the request. The cause is not established: "+
 			"the whole process used %.2f of a core in the %s after the deadline, with %d earlier unended read(s) of this run counted in, and no call trace of the request was taken",
-			read, stall.busy(), stall.Window.Round(time.Millisecond), stall.Earlier)
+			read, stall.busy(), stall.Window.Round(time.Millisecond), stall.Earlier), nil
 	case read.Err != "":
-		return fmt.Sprintf("another fault: %s", read)
+		return false, "", fmt.Errorf("another fault: %s", read)
 	case read.Status != http.StatusOK && read.Status != http.StatusPartialContent,
 		read.Length != int64(want), read.Method == http.MethodGet && !read.BodyMatches:
-		return fmt.Sprintf("observed defect: the only part of the upload is not answered with its %d bytes: %s", want, read)
+		return true, fmt.Sprintf("the only part of the upload is not answered with its %d bytes: %s", want, read), nil
 	case read.PartsCount != "1":
-		return fmt.Sprintf("observed defect: the only part of the upload is answered with a part count of %q, want 1: %s", read.PartsCount, read)
+		return true, fmt.Sprintf("the only part of the upload is answered with a part count of %q, want 1: %s", read.PartsCount, read), nil
 	}
-	return ""
+	return false, read.String(), nil
 }
 
 // judgeControlPart judges a read of a part of the two-part control object,

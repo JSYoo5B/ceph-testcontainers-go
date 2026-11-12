@@ -196,9 +196,15 @@ func (c *spCase) cleanup(t *testing.T, buckets, objects []string) {
 // numbered read has its own deadline. A read that the client wrote to the
 // gateway and that did not end fails the contract; the process-wide CPU
 // time recorded with it does not establish the cause.
+//
+// single-small and single-large are the observations of the reproduction
+// unit rgw_single_part_multipart_read; two-part-control and the refusal of
+// part 2 are controls. Every supported release has the fix, so the unit
+// reports NOT_REPRODUCED and the test passes there.
 func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_single_part_multipart_read", "single-small", "single-large")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -208,7 +214,7 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 	t.Logf("RGW_SP gateway=%s", strings.TrimSpace(harness.ExecOutput(t, ctx, gateway, "radosgw", "--version")))
 	ticks, err := strconv.ParseUint(harness.ExecOutput(t, ctx, gateway, "getconf", "CLK_TCK"), 10, 64)
 	if err != nil || ticks == 0 {
-		t.Fatalf("unavailable prerequisite: the gateway's clock tick rate cannot be read: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: the gateway's clock tick rate cannot be read: %v", err)
 	}
 	endpoint, err := gateway.S3Endpoint(ctx)
 	if err != nil {
@@ -250,7 +256,7 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 		t.Logf("RGW_SP object=%s parts=%d etag-suffix=%q manifest-rule-start-parts=%v get=%d bytes=%d matches=%t",
 			o.name, len(o.parts), etag[strings.LastIndexByte(etag, '-')+1:], rules, got.Code, len(got.Body), bytes.Equal(got.Body, whole))
 		if !strings.HasSuffix(etag, fmt.Sprintf("-%d", len(o.parts))) || len(rules) == 0 || rules[0] != 1 || got.Code != http.StatusOK || !bytes.Equal(got.Body, whole) {
-			t.Fatalf("condition not established: %s is not a readable multipart object of %d parts", o.name, len(o.parts))
+			repro.Inconclusive(t, "condition not established: %s is not a readable multipart object of %d parts", o.name, len(o.parts))
 		}
 	}
 
@@ -259,25 +265,26 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 		for i, part := range control.parts {
 			for _, method := range []string{http.MethodGet, http.MethodHead} {
 				if verdict := judgeControlPart(c.readPart(t, method, control.name, i+1, part), len(part)); verdict != "" {
-					t.Error(verdict)
+					repro.Inconclusive(t, "%s; the single-part objects were not read", verdict)
 				}
 			}
 		}
 		if verdict := judgeBeyond(c.readPart(t, http.MethodGet, control.name, len(control.parts)+1, nil)); verdict != "" {
-			t.Error(verdict)
+			repro.Inconclusive(t, "%s; the single-part objects were not read", verdict)
 		}
 	})
 	if t.Failed() {
-		t.Fatal("control failed: the single-part objects were not read")
+		return
 	}
 
 	for _, o := range []object{small, large} {
 		t.Run(o.name, func(t *testing.T) {
 			part := o.parts[0]
+			var symptoms, absent []string
 			for _, method := range []string{http.MethodGet, http.MethodHead} {
 				before, err := c.process(t)
 				if err != nil {
-					t.Fatalf("another fault: the gateway process cannot be read before the %s: %v", method, err)
+					repro.Inconclusive(t, "another fault: the gateway process cannot be read before the %s: %v", method, err)
 				}
 				read := c.readPart(t, method, o.name, 1, part)
 				var stall *spStall
@@ -285,34 +292,47 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 					stall = c.stall(t, before, ticks, c.unanswered)
 					c.unanswered++
 				}
-				if verdict := judgeOnlyPart(read, len(part), stall); verdict != "" {
-					if read.TimedOut || read.Err != "" {
-						// A request that did not end may still hold a
-						// gateway thread, so this object is not read
-						// again. Every method the subtest leaves out gets
-						// its own line.
-						if method == http.MethodGet {
-							t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodHead, Part: 1,
-								NotSent: "the GET of part 1 did not end; HEAD is untested for this object"})
-						}
-						t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodGet, Part: 2,
-							NotSent: "a read of part 1 did not end; the refusal of part 2 is untested for this object"})
-						t.Fatal(verdict)
+				symptom, detail, err := judgeOnlyPart(read, len(part), stall)
+				if read.TimedOut || read.Err != "" {
+					// A request that did not end may still hold a gateway
+					// thread, so this object is not read again. Every
+					// method the subtest leaves out gets its own line.
+					if method == http.MethodGet {
+						t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodHead, Part: 1,
+							NotSent: "the GET of part 1 did not end; HEAD is untested for this object"})
 					}
-					t.Error(verdict)
+					t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodGet, Part: 2,
+						NotSent: "a read of part 1 did not end; the refusal of part 2 is untested for this object"})
+				}
+				switch {
+				case err != nil:
+					repro.Inconclusive(t, "%v", err)
+				case symptom && read.TimedOut:
+					repro.Symptom(t, o.name, "%s", strings.Join(append(symptoms, detail), "; "))
+					return
+				case symptom:
+					symptoms = append(symptoms, detail)
+				default:
+					absent = append(absent, detail)
 				}
 				// Gateway health after the read: the same process still
 				// answers the whole object.
 				after, err := c.process(t)
 				whole := c.signed(t, ctx, http.MethodGet, "/"+spBucket+"/"+o.name, nil)
 				if err != nil || after.Start != before.Start || whole.Code != http.StatusOK || !bytes.Equal(whole.Body, part) {
-					t.Fatalf("another fault: after the %s of part 1 the gateway is not the same healthy process (process error %v, start %d then %d, whole GET %d)",
+					repro.Inconclusive(t, "another fault: after the %s of part 1 the gateway is not the same healthy process (process error %v, start %d then %d, whole GET %d)",
 						method, err, before.Start, after.Start, whole.Code)
 				}
 			}
 			if verdict := judgeBeyond(c.readPart(t, http.MethodGet, o.name, 2, nil)); verdict != "" {
-				t.Error(verdict)
+				repro.Inconclusive(t, "%s", verdict)
 			}
+			if len(symptoms) > 0 {
+				repro.Symptom(t, o.name, "%s", strings.Join(symptoms, "; "))
+				return
+			}
+			repro.Absent(t, o.name, "%s", strings.Join(absent, "; "))
 		})
 	}
+	repro.Conclude()
 }
