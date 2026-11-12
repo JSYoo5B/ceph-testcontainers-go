@@ -2,8 +2,9 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWLifecycleExpirationHeader`, optional batch
-`rgw_expiration_header`. Pure tests of its helpers: `TestExpHeaderParsing`
-and `TestExpExpectedRoundsToTheFollowingMidnight` (batch `pure`).
+`rgw_expiration_header`. Pure tests of its helpers: `TestExpHeaderParsing`,
+`TestExpExpectedRoundsToTheFollowingMidnight` and `TestJudgeExpRequest`
+(batch `pure`).
 
 ## Use case and native contract
 
@@ -58,8 +59,8 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Deliberately failing reproducer: it reports `REPRODUCED` and fails on the
+published Tentacle 20.2.4 images, the pull request default. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -111,28 +112,51 @@ request.
    must report it (the rule is eligible) and a key outside the prefix must
    get no header.
 
-## Reading the result
+## Verdict
 
-The results below ran on the pinned images of the shared recipe: the 20.2.4
+The test reports one reproduction unit, `rgw_lifecycle_expiration_header`,
+with two planned observations, `noncurrent-only` and
+`current-and-noncurrent`: each subtest is one observation over all its
+requests for a `docs/` key. `go test -v` prints one
+`REPRODUCTION_VERDICT case=rgw_lifecycle_expiration_header ...` line with
+the verdict, the decisive requests and the resolved images.
+
+- `REPRODUCED`: the conditions and controls hold, and a request carries a
+  header with the bucket's rule ID whose date is what its
+  `NoncurrentVersionExpiration` days give for the requested or the current
+  version's modification time (`judgeExpRequest`).
+- `NOT_REPRODUCED`: the conditions and controls hold, both observations
+  complete, and every request follows the table.
+- `INCONCLUSIVE`: a condition is not established (versioning, a version ID,
+  the read-back rules, or a version's bytes do not match), a control failed
+  (the plain request on the bucket with an `Expiration` action gets no
+  header, so the rule is not eligible, or the key outside the prefix gets
+  one), or another fault (a malformed header, another rule or date, an
+  `Expiration` header on an explicit version, or HEAD differing from GET).
+  The line names the reason.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+reproduction fails the observing subtest, an absent symptom passes, and an
+inconclusive run fails. With an expectation only the matching verdict passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_lifecycle_expiration_header=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch rgw_expiration_header \
+  --package ./internal/integration/experiments/rgw_lifecycle_expiration_header \
+  --directory "artifacts/rgw-expiration-header-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+The verdicts below ran on the pinned images of the shared recipe: the 20.2.4
 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
 `aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
 role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
 `9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
 client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 
-- **Pass:** every request followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** every request for a `docs/` key, plain or explicit,
-  carries a header with the rule ID whose date is the modification time plus
-  the `NoncurrentVersionExpiration` days (30 on the first bucket, 90 instead
-  of 7 on the second); the key outside the prefix has none. Tentacle 20.2.4
-  and Squid 19.2.5 do this.
-- **Not reproduced:** a pass on a build claimed to be affected.
-- **Unavailable prerequisite:** the cluster or the gateway does not start, or
-  the lifecycle configuration is refused.
-- **Condition not established:** versioning, a version ID, the read-back
-  rules, or a version's bytes do not match. The test fails with
-  `condition not established`.
+| Release | Verdict | Observation |
+| --- | --- | --- |
+| Tentacle 20.2.4, Squid 19.2.5 | `REPRODUCED` | every request for a `docs/` key, plain or explicit, carries a header with the rule ID whose date is the modification time plus the `NoncurrentVersionExpiration` days (30 on the first bucket, 90 instead of 7 on the second); the key outside the prefix has none |
+| Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every request follows the table |
 
 ## Cleanup and limits
 
