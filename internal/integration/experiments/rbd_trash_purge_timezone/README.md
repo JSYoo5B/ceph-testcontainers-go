@@ -41,10 +41,11 @@ conversion and is not covered.
 
 ## Tier and triggers
 
-Deliberately failing reproducer (without an expectation): one run takes
-about 40 seconds (38 s on Tentacle 20.2.4, 37 s on Umbrella 21.2.0, 45 s on
-Squid 19.2.5) and fails in the `ahead-9h` and `behind-9h` subtests on every
-published image. No
+Unpatched-defect reproducer: one run takes about 40 seconds (38 s on
+Tentacle 20.2.4, 37 s on Umbrella 21.2.0, 45 s on Squid 19.2.5) and
+reproduces in the `ahead-9h` and `behind-9h` subtests on every published
+image. It passes on the 20.2.4 role images, which its catalogue expects to
+reproduce, and fails on images the catalogue does not list. No
 automatic run includes it (the default checks of a pull request, pushes to
 `main`, periodic samples), and it never gates anything. A maintainer can
 run it on demand, also on a pull request's head with the comment below.
@@ -69,15 +70,10 @@ python3 .github/scripts/tag_scenarios.py optional --batch rbd_trash_purge_timezo
   --directory "artifacts/rbd-trash-purge-timezone-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-To check the reproducer against an affected build, declare the expected
-verdict; the run then passes only on that verdict:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rbd_trash_purge_timezone=REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch rbd_trash_purge_timezone \
-  --package ./internal/integration/experiments/rbd_trash_purge_timezone \
-  --directory "artifacts/rbd-trash-purge-timezone-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+With the 20.2.4 role images (`essential`, `client`) exported as in
+[Choosing images](../../../../docs/contributing/testing.md#choosing-images),
+these commands check the reproducer against the affected build that its
+catalogue lists (see [Verdict](#verdict)).
 
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
@@ -132,7 +128,7 @@ The test reports one unit, `rbd_trash_purge_timezone`, in one
 `behind-9h`. Both subtests evaluate the same conversion with the same
 trigger and the same UTC control; they differ only in the sign of the
 shift, and a build that fixes the conversion fixes both directions, so they
-are one unit and a row expects one verdict for the case. `utc` is the
+are one unit and a combination expects one verdict for the case. `utc` is the
 control, not an observation.
 
 - **REPRODUCED:** a purge away from UTC retained what the cutoff's fields
@@ -157,10 +153,13 @@ control, not an observation.
   purge away from UTC retained neither the entries the cutoff keeps nor the
   entries its local reading keeps.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the observing
-subtest, absence passes it and an inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rbd_trash_purge_timezone=<REPRODUCED|NOT_REPRODUCED>`
-only that verdict passes.
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images the run is an investigation
+(`expected=none combination=none`): a reproduction fails the observing
+subtest, absence passes it and an inconclusive run fails it.
 
 ## Cleanup and limits
 

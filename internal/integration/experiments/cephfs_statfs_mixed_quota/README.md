@@ -31,8 +31,8 @@ and [`v20.2.5`](https://github.com/ceph/ceph/blob/v20.2.5/src/client/Client.cc).
 This is a capacity observation only. Enforcement of either quota is not
 part of the case, and nothing here shows it broken.
 
-The test fails on Tentacle 20.2.4. That is the expected result for an
-unpatched defect; it is not a fixture failure.
+The test reproduces the defect on Tentacle 20.2.4. That is the expected
+result for an unpatched defect; it is not a fixture failure.
 
 ## Requirements
 
@@ -47,13 +47,16 @@ unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and
-reproduces on Tentacle 20.2.4, so without an expectation it fails there. No automatic run includes it (the default checks of a pull
+Unpatched-defect reproducer: one run takes about 35 seconds and
+reproduces on Tentacle 20.2.4. On images that its catalogue lists the run
+expects their verdict (see [Verdict](#verdict)); on any other image a
+reproduction fails it. No automatic run includes it (the default checks of a pull
 request, pushes to `main`, periodic samples), and it never gates anything. A
 maintainer can run it on demand, also on a pull request's head with the
 comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=cephfs_statfs_mixed_quota`.
+- Manual: `gh workflow run "Native regressions" -f batch=cephfs_statfs_mixed_quota -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run cephfs_statfs_mixed_quota` or
   `/ci run cephfs_statfs_mixed_quota on umbrella`.
 
@@ -171,19 +174,17 @@ directory below a byte quota. It prints one line that starts with
   `parent/child` did not report its byte quota, so the trigger's result says
   nothing about the nested quotas.
 
-An expectation turns the verdict into the result: only the expected verdict
-passes, and a skip or `INCONCLUSIVE` never does. With the role images of a
-release exported as above, 20.2.4 expects `REPRODUCED`:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=cephfs_statfs_mixed_quota=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_statfs_mixed_quota \
-  --package ./internal/integration/experiments/cephfs_statfs_mixed_quota \
-  --directory "artifacts/cephfs-statfs-mixed-quota-$(date -u +%Y%m%dT%H%M%SZ)"
-```
-
-and 21.2.0 or 19.2.5, the fixed builds, expect
-`CEPH_TEST_EXPECTED_VERDICT=cephfs_statfs_mixed_quota=NOT_REPRODUCED`.
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (`REPRODUCED`) and
+`21.2.0-roles` (`NOT_REPRODUCED`), both on linux/amd64. On any other images,
+such as the 19.2.5 role images or the 20.2.5 aggregate, the run is an
+investigation (`expected=none combination=none`) and keeps the meaning
+above. The commands under [Running it](#running-it) take no expectation:
+with the role images of 20.2.4 or 21.2.0 exported, they check the affected
+or the fixed build, and only the exported image variables differ between
+the two runs.
 
 ## Cleanup and limits
 

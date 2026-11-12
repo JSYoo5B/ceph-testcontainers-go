@@ -53,8 +53,9 @@ file is written to between the snapshots.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it reproduces on every release it was run
-on, so without an expectation it fails.
+Unpatched-defect reproducer: it reproduces on every release it was run
+on. It passes on the 20.2.4 role images, which its catalogue expects to
+reproduce, and fails on images the catalogue does not list.
 No automatic run includes it (the default checks of a pull request, pushes
 to `main`, periodic samples), and it never gates anything. A maintainer can
 run it on demand, also on a pull request's head with the comment below.
@@ -170,13 +171,17 @@ starts with `REPRODUCTION_VERDICT case=cephfs_readdir_after_snapdiff`.
   established:` a condition of the list above does not hold. `another
   fault:` the control's second listing is not its two names.
 
-An expectation turns the verdict into the result: only the expected verdict
-passes, and a skip or `INCONCLUSIVE` never does. With the 20.2.4 role images
-exported as above:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images the run is an investigation
+(`expected=none combination=none`) and keeps the meaning above. With the
+20.2.4 role images exported as above, the runner checks the listed
+combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=cephfs_readdir_after_snapdiff=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_readdir_after_snapdiff \
+python3 .github/scripts/tag_scenarios.py optional --batch cephfs_readdir_after_snapdiff \
   --package ./internal/integration/experiments/cephfs_readdir_after_snapdiff \
   --directory "artifacts/cephfs-readdir-after-snapdiff-$(date -u +%Y%m%dT%H%M%SZ)"
 ```

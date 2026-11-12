@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Native regressions | `native-regressions.yml` | manual only | One chosen deliberately failing optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `cephfs_readdir_after_snapdiff`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch on a chosen release: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `cephfs_readdir_after_snapdiff`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -857,11 +857,12 @@ batches on the recorded release, images and runner.
 
 Optional (`ci_optional`) batches are outside every required check. Run one
 with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
-for the deliberately failing ones, through `Native regressions`, which runs
-the one batch its `batch` input names.
+for the upstream reproducers, through `Native regressions`, which runs the
+one batch its `batch` input names on the pinned role images of its `release`
+input.
 
 These optional batches are [experiment cases](testing.md#experiment-cases)
-that reproduce an unpatched upstream defect and fail on the published images:
+that reproduce an unpatched upstream defect on the published images:
 `native_rgw_translation`
 ([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
 `native_shuffle`
@@ -972,49 +973,32 @@ Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
-### Reproduction rows
+### Reproduction catalogues
 
-`Reproduction rows` runs one row of
-[`.github/reproduction-rows.json`](../../.github/reproduction-rows.json): a
-known-defect unit (see [Reproduction verdicts](testing.md#reproduction-verdicts)),
-the optional batch that runs it, the release whose pinned role images of
-`.github/ceph-role-images.json` it runs on, the platform, an optional
-expected verdict and the native run that observed it:
-
-```json
-{
-  "id": "rgw-empty-sse-header-21.2.0",
-  "unit": "rgw_empty_sse_header",
-  "batch": "rgw_empty_sse_header",
-  "release": "21.2.0",
-  "platform": "linux/amd64",
-  "expected": "NOT_REPRODUCED",
-  "evidence": "Native run ... pinned 21.2.0 role images: NOT_REPRODUCED; ..."
-}
-```
+A known-defect case selects its expected verdict from the
+`reproductions.json` beside its tests by the images it runs on (see
+[Reproduction verdicts](testing.md#reproduction-verdicts)). CI needs no
+separate expectation: a batch run on a release's pinned role images of
+`.github/ceph-role-images.json` matches the case's combination of that
+release, if one is recorded, and passes only with the recorded verdicts.
+`Native regressions` takes the release:
 
 ```sh
-gh workflow run "Reproduction rows" --ref main -f row=rgw-empty-sse-header-21.2.0
+gh workflow run "Native regressions" --ref main -f batch=rgw_empty_sse_header -f release=21.2.0
 ```
 
-Its first job validates every row with `reproduction_rows.py resolve` and
-refuses the run before any runtime job when a row names an unknown batch, a
-unit the batch does not start, a release without pinned role images, another
-platform than `linux/amd64`, an unknown field, a duplicate, or an expected
-verdict other than `REPRODUCED` and `NOT_REPRODUCED`. The second calls the
-tagged runtime with the row's batch, release and `expected_verdict`, which
-reaches the test as `CEPH_TEST_EXPECTED_VERDICT`. The batch passes only when
-the unit reports the expected verdict; image, cleanup and every other phase
-keep their own results. The expectation belongs to that row: the same batch
-through `Native regressions` or `/ci run` has none and keeps failing on an
-affected build. A row without `expected` runs the case on its images and
-reports the verdict, for an investigation. The workflow's `row` choices are
-the row IDs; `test_reproduction_rows.py` keeps them equal.
-
-Add a row once a native run on the pinned images observed its verdict, and a
-`NOT_REPRODUCED` row for a verified fixed build that has pinned role images.
-A release with only an aggregate image, such as 20.2.5, has no row; run it
-as a custom image (`CEPH_TEST_IMAGE`) without an expectation.
+On 20.2.4 the same batch expects `REPRODUCED` and passes when the defect is
+reproduced; on 21.2.0 it expects `NOT_REPRODUCED`. A release without a
+combination of the case runs as an investigation and keeps the case's
+pass/fail meaning, so a reproduction there still fails. The tag runner
+refuses an invalid catalogue before Go starts and, after the run, requires
+each expected unit's own `REPRODUCTION_VERDICT` line with the expected
+verdict; the result is in `report.json` under `reproduction`, beside the
+image, cleanup and every other phase, which keep their own results. A
+required batch such as `topology/rgw_single_part_read` compares the same way
+on the pull request release. 20.2.5 has no pinned role images; its
+combinations use the aggregate image and are checked with `go test` and
+`CEPH_TEST_IMAGE` (testing.md).
 
 ### Experiment case tiers
 
@@ -1040,23 +1024,23 @@ unless noted; the batch budget is the `//ci:` timeout.
 | `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
 | `rgw_single_part_multipart_read` (`topology/rgw_single_part_read`) | cheap, deterministic characterization of a fixed defect | 31 s; 37 s on 19.2.5, 32 s on 21.2.0 | 20m | only when a file of the case changes, or `ci:full` | `/ci run rgw_single_part_read [on <release>]` | `rotate` may draw it | `targeted` |
 | `cephfs_fscrypt` (`optional/cephfs_fscrypt`) | privileged client containers and a host kernel module; passes on the published images | 46 s; 51 s on 19.2.5, 55 s on 21.2.0 | 30m | never | `/ci run cephfs_fscrypt [on <release>]` | never | no |
-| `mon_log_ack_peon` (`optional/mon_log_ack`) | deliberately failing reproducer | 101 s (fails); 56 s on 19.2.2 (passes) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
-| `cephfs_dangling_symlink_create` (`optional/cephfs_dangling_symlink_create`) | deliberately failing reproducer | 34 s (fails in all eight cases); also fails on 19.2.3, 19.2.5, 20.2.5 and 21.2.0; passes on 19.2.2 | 20m | never | `/ci run cephfs_dangling_symlink_create [on <release>]` | never | `batch=cephfs_dangling_symlink_create` |
-| `cephfs_statfs_mixed_quota` (`optional/cephfs_statfs_mixed_quota`) | deliberately failing reproducer | 33 s (fails at `parent/child`); 34 s on 21.2.0 and 40 s on 19.2.5 (pass) | 20m | never | `/ci run cephfs_statfs_mixed_quota [on umbrella]` | never | `batch=cephfs_statfs_mixed_quota` |
-| `cephfs_snapshot_readdir_eviction` (`optional/cephfs_snapshot_readdir_eviction`) | deliberately failing reproducer | 47 s (fails with live names in the snapshot listing); also fails on 19.2.2, 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run cephfs_snapshot_readdir_eviction [on <release>]` | never | `batch=cephfs_snapshot_readdir_eviction` |
-| `cephfs_readdir_after_snapdiff` (`optional/cephfs_readdir_after_snapdiff`) | deliberately failing reproducer | 38 s (fails with the changed name missing from the second listing); also fails on 19.2.2, 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run cephfs_readdir_after_snapdiff [on <release>]` | never | `batch=cephfs_readdir_after_snapdiff` |
-| `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | deliberately failing reproducer | 423 s (fails at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
-| `rbd_trash_purge_timezone` (`optional/rbd_trash_purge_timezone`) | deliberately failing reproducer | 38 s (fails in `ahead-9h` and `behind-9h`); also fails on 19.2.5 and 21.2.0 | 20m | never | `/ci run rbd_trash_purge_timezone [on <release>]` | never | `batch=rbd_trash_purge_timezone` |
-| `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | deliberately failing reproducer | 35 s (fails in the suspended subtests); 36 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `batch=rgw_conditional_writes` |
-| `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | deliberately failing reproducer, HTTPS | 31 s (fails at `no-checksum-omitted-key`); 33 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `batch=rgw_ssec_completion` |
-| `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | deliberately failing reproducer | 29 s (fails at `empty-new-key` and `empty-overwrite`); 30 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `batch=rgw_empty_sse_header` |
-| `rgw_lifecycle_expiration_header` (`optional/rgw_expiration_header`) | deliberately failing reproducer | 29 s (fails in both subtests); 30 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_expiration_header [on umbrella]` | never | `batch=rgw_expiration_header` |
-| `rgw_compressed_copy_accounting` (`optional/rgw_compressed_copy`) | deliberately failing reproducer, edits the zone and restarts the gateway | 40 s (fails at the uncompressed destination); 39 s on 21.2.0 (passes) | 20m | never | `/ci run rgw_compressed_copy [on umbrella]` | never | `batch=rgw_compressed_copy` |
-| `rgw_multipart_part_storage_class` (`optional/rgw_multipart_part_class`) | deliberately failing reproducer, edits the zone and restarts the gateway | 38 s (fails at `cold-storage-class`); also fails on 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run rgw_multipart_part_class [on <release>]` | never | `batch=rgw_multipart_part_class` |
-| `rgw_sync_lease_lapse` (`optional/rgw_sync_lease_lapse`) | deliberately failing reproducer, two clusters, pauses the gateways | 527 s (fails in the `lapse` round after both controls); 553 s on 19.2.5, 526 s on 21.2.0 | 40m | never | `/ci run rgw_sync_lease_lapse [on <release>]` | never | `batch=rgw_sync_lease_lapse` |
-| `rgw_multisite_object_lock_sync` (`optional/rgw_object_lock_sync`) | deliberately failing reproducer, two clusters | 217 s (fails at the `initial` step after a 2 minute read of zone b); also fails on 19.2.5; 100 s on 20.2.5 and 80 s on 21.2.0 (pass) | 30m | never | `/ci run rgw_object_lock_sync [on <release>]` | never | `batch=rgw_object_lock_sync` |
-| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | deliberately failing reproducer, two network modes | 505 s bridge variant (fails in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
-| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | deliberately failing reproducer, two network modes | 356 s bridge variant (fails at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
+| `mon_log_ack_peon` (`optional/mon_log_ack`) | unpatched-defect reproducer | 101 s (REPRODUCED); 56 s on 19.2.2 (NOT_REPRODUCED) | 20m | never | `/ci run mon_log_ack` | never | `Native regressions`, `batch=mon_log_ack` |
+| `cephfs_dangling_symlink_create` (`optional/cephfs_dangling_symlink_create`) | unpatched-defect reproducer | 34 s (REPRODUCED in all eight cases); also REPRODUCED on 19.2.3, 19.2.5, 20.2.5 and 21.2.0; NOT_REPRODUCED on 19.2.2 | 20m | never | `/ci run cephfs_dangling_symlink_create [on <release>]` | never | `batch=cephfs_dangling_symlink_create` |
+| `cephfs_statfs_mixed_quota` (`optional/cephfs_statfs_mixed_quota`) | unpatched-defect reproducer | 33 s (REPRODUCED at `parent/child`); 34 s on 21.2.0 and 40 s on 19.2.5 (NOT_REPRODUCED) | 20m | never | `/ci run cephfs_statfs_mixed_quota [on umbrella]` | never | `batch=cephfs_statfs_mixed_quota` |
+| `cephfs_snapshot_readdir_eviction` (`optional/cephfs_snapshot_readdir_eviction`) | unpatched-defect reproducer | 47 s (REPRODUCED with live names in the snapshot listing); also REPRODUCED on 19.2.2, 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run cephfs_snapshot_readdir_eviction [on <release>]` | never | `batch=cephfs_snapshot_readdir_eviction` |
+| `cephfs_readdir_after_snapdiff` (`optional/cephfs_readdir_after_snapdiff`) | unpatched-defect reproducer | 38 s (REPRODUCED with the changed name missing from the second listing); also REPRODUCED on 19.2.2, 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run cephfs_readdir_after_snapdiff [on <release>]` | never | `batch=cephfs_readdir_after_snapdiff` |
+| `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | unpatched-defect reproducer | 423 s (REPRODUCED at the exact-bytes check) | 30m | never | `/ci run rbd_demote_restart` | never | `batch=rbd_demote_restart` |
+| `rbd_trash_purge_timezone` (`optional/rbd_trash_purge_timezone`) | unpatched-defect reproducer | 38 s (REPRODUCED in `ahead-9h` and `behind-9h`); also REPRODUCED on 19.2.5 and 21.2.0 | 20m | never | `/ci run rbd_trash_purge_timezone [on <release>]` | never | `batch=rbd_trash_purge_timezone` |
+| `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | unpatched-defect reproducer | 35 s (REPRODUCED in the suspended subtests); 36 s on 21.2.0 (NOT_REPRODUCED) | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `batch=rgw_conditional_writes` |
+| `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | unpatched-defect reproducer, HTTPS | 31 s (REPRODUCED at `no-checksum-omitted-key`); 33 s on 21.2.0 (NOT_REPRODUCED) | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `batch=rgw_ssec_completion` |
+| `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | unpatched-defect reproducer | 29 s (REPRODUCED at `empty-new-key` and `empty-overwrite`); 30 s on 21.2.0 (NOT_REPRODUCED) | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `batch=rgw_empty_sse_header` |
+| `rgw_lifecycle_expiration_header` (`optional/rgw_expiration_header`) | unpatched-defect reproducer | 29 s (REPRODUCED in both subtests); 30 s on 21.2.0 (NOT_REPRODUCED) | 20m | never | `/ci run rgw_expiration_header [on umbrella]` | never | `batch=rgw_expiration_header` |
+| `rgw_compressed_copy_accounting` (`optional/rgw_compressed_copy`) | unpatched-defect reproducer, edits the zone and restarts the gateway | 40 s (REPRODUCED at the uncompressed destination); 39 s on 21.2.0 (NOT_REPRODUCED) | 20m | never | `/ci run rgw_compressed_copy [on umbrella]` | never | `batch=rgw_compressed_copy` |
+| `rgw_multipart_part_storage_class` (`optional/rgw_multipart_part_class`) | unpatched-defect reproducer, edits the zone and restarts the gateway | 38 s (REPRODUCED at `cold-storage-class`); also REPRODUCED on 19.2.5, 20.2.5 and 21.2.0 | 20m | never | `/ci run rgw_multipart_part_class [on <release>]` | never | `batch=rgw_multipart_part_class` |
+| `rgw_sync_lease_lapse` (`optional/rgw_sync_lease_lapse`) | unpatched-defect reproducer, two clusters, pauses the gateways | 527 s (REPRODUCED in the `lapse` round after both controls); 553 s on 19.2.5, 526 s on 21.2.0 | 40m | never | `/ci run rgw_sync_lease_lapse [on <release>]` | never | `batch=rgw_sync_lease_lapse` |
+| `rgw_multisite_object_lock_sync` (`optional/rgw_object_lock_sync`) | unpatched-defect reproducer, two clusters | 217 s (REPRODUCED at the `initial` step after a 2 minute read of zone b); also REPRODUCED on 19.2.5; 100 s on 20.2.5 and 80 s on 21.2.0 (NOT_REPRODUCED) | 30m | never | `/ci run rgw_object_lock_sync [on <release>]` | never | `batch=rgw_object_lock_sync` |
+| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | unpatched-defect reproducer, two network modes | 505 s bridge variant (REPRODUCED in both cases) | 60m | never | `/ci run native_rgw_translation` | never | `batch=native_rgw_translation` (default), with `rgw_image` |
+| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | unpatched-defect reproducer, two network modes | 356 s bridge variant (REPRODUCED at the reassignment after `AddDaemon`) | 60m | never | `/ci run native_shuffle` | never | `batch=native_shuffle` |
 
 - A cheap deterministic case is a required batch of a non-`short` category,
   so a pull request runs it only when it changes a file of the case's
@@ -1065,10 +1049,12 @@ unless noted; the batch budget is the `//ci:` timeout.
   selects none of these batches; the fixture behaviour they use is covered
   by the ordinary batches of its package (`rbd_schedule_remove` calls no
   fixture API beyond starting the cluster).
-- A case that fails on the published images (an unpatched upstream defect)
-  stays an optional `native_regression` batch. It runs only when someone asks
-  for it, never gates a pull request or `main`, and is never drawn by
-  periodic sampling, so a red result is never mistaken for a regression.
+- A case that reproduces an unpatched upstream defect on the published
+  images stays an optional `native_regression` batch. It runs only when
+  someone asks for it, never gates a pull request or `main`, and is never
+  drawn by periodic sampling. On a release whose combination its
+  [catalogue](#reproduction-catalogues) records it passes only with the
+  recorded verdict; on another release a reproduction fails it.
   `Native regressions` runs one chosen batch; `/ci run <batch> on <release>`
   runs it on a supported release on a pull request's head.
 - An expensive case that passes on the published images would be scheduled

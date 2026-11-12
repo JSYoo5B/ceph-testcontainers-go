@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       batch:
-        description: 'Optional batch: a deliberately failing upstream reproducer, or the failure-archive proof'
+        description: 'Optional batch: an unpatched-defect reproducer, or the failure-archive proof'
         type: choice
         default: native_rgw_translation
         options:

@@ -61,13 +61,16 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it reports `REPRODUCED` and fails on the
-published Tentacle 20.2.4 images, the pull request default. No automatic run includes it (the default
+Unpatched-defect reproducer: it reports `REPRODUCED` on the
+published Tentacle 20.2.4 images, the pull request default. On images its
+catalogue lists the run passes only with the listed verdict, and on other
+images a reproduction fails it. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_compressed_copy`.
+- Manual: `gh workflow run "Native regressions" -f batch=rgw_compressed_copy -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run rgw_compressed_copy` or
   `/ci run rgw_compressed_copy on umbrella`.
 
@@ -143,13 +146,20 @@ verdict, the decisive observation and the resolved images.
   another length). The line names the reason. A gateway or zone edit that
   fails before the observation also ends without a verdict.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
-reproduction fails the trigger subtest, an absent symptom passes, and an
-inconclusive run fails. With an expectation only the matching verdict passes:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (`REPRODUCED`) and
+`21.2.0-roles` (`NOT_REPRODUCED`), both on linux/amd64. On any other images
+the run is an investigation (`expected=none combination=none`) and keeps its
+pass/fail meaning: a reproduction fails the trigger subtest, an absent
+symptom passes, and an inconclusive run fails. The command takes no
+expectation; with the role images of 20.2.4 or 21.2.0 exported, it checks
+the affected or the fixed build, and only the exported image variables
+differ between the two runs:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_compressed_copy_accounting=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch rgw_compressed_copy \
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_compressed_copy \
   --package ./internal/integration/experiments/rgw_compressed_copy_accounting \
   --directory "artifacts/rgw-compressed-copy-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
@@ -167,7 +177,10 @@ client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 | Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every size of the trigger copy is the logical length |
 | Squid 19.2.5 | `INCONCLUSIVE` | condition not established: the `COLD` copy keeps the source's zlib metadata and compressed bytes, so the trigger is not reached (its accounted size is the logical length) |
 
-The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set; the other rows read the pass or failure those images gave as a verdict.
+The Tentacle 20.2.4 and Umbrella 21.2.0 verdicts are those of the
+`20.2.4-roles` and `21.2.0-roles` combinations, observed with their
+expectations; the other images are no listed combination, and their verdicts
+are the pass or failure they gave.
 
 ## Cleanup and limits
 

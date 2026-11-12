@@ -59,13 +59,16 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it reports `REPRODUCED` and fails on the
-published Tentacle 20.2.4 images, the pull request default. No automatic run includes it (the default
+Unpatched-defect reproducer: it reports `REPRODUCED` on the
+published Tentacle 20.2.4 images, the pull request default. On images its
+catalogue lists the run passes only with the listed verdict, and on other
+images a reproduction fails it. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_expiration_header`.
+- Manual: `gh workflow run "Native regressions" -f batch=rgw_expiration_header -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run rgw_expiration_header` or
   `/ci run rgw_expiration_header on umbrella`.
 
@@ -135,13 +138,20 @@ the verdict, the decisive requests and the resolved images.
   `Expiration` header on an explicit version, or HEAD differing from GET).
   The line names the reason.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
-reproduction fails the observing subtest, an absent symptom passes, and an
-inconclusive run fails. With an expectation only the matching verdict passes:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (`REPRODUCED`) and
+`21.2.0-roles` (`NOT_REPRODUCED`), both on linux/amd64. On any other images
+the run is an investigation (`expected=none combination=none`) and keeps its
+pass/fail meaning: a reproduction fails the observing subtest, an absent
+symptom passes, and an inconclusive run fails. The command takes no
+expectation; with the role images of 20.2.4 or 21.2.0 exported, it checks
+the affected or the fixed build, and only the exported image variables
+differ between the two runs:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_lifecycle_expiration_header=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch rgw_expiration_header \
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_expiration_header \
   --package ./internal/integration/experiments/rgw_lifecycle_expiration_header \
   --directory "artifacts/rgw-expiration-header-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
@@ -158,7 +168,10 @@ client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 | Tentacle 20.2.4, Squid 19.2.5 | `REPRODUCED` | every request for a `docs/` key, plain or explicit, carries a header with the rule ID whose date is the modification time plus the `NoncurrentVersionExpiration` days (30 on the first bucket, 90 instead of 7 on the second); the key outside the prefix has none |
 | Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every request follows the table |
 
-The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set; the other rows read the pass or failure those images gave as a verdict.
+The Tentacle 20.2.4 and Umbrella 21.2.0 verdicts are those of the
+`20.2.4-roles` and `21.2.0-roles` combinations, observed with their
+expectations; the other images are no listed combination, and their verdicts
+are the pass or failure they gave.
 
 ## Cleanup and limits
 

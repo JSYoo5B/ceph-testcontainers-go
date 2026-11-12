@@ -58,14 +58,16 @@ instead of 404 for a missing key; and it reads no precondition for
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and reports
-`REPRODUCED` and fails on the published Tentacle 20.2.4 images, the pull
-request default. No automatic
+Unpatched-defect reproducer: one run takes about 35 seconds and reports
+`REPRODUCED` on the published Tentacle 20.2.4 images, the pull request
+default. On images its catalogue lists the run passes only with the listed
+verdict, and on other images a reproduction fails it. No automatic
 run includes it (the default checks of a pull request, pushes to `main`,
 periodic samples), and it never gates anything. A maintainer can run it on
 demand, also on a pull request's head with the comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_conditional_writes`.
+- Manual: `gh workflow run "Native regressions" -f batch=rgw_conditional_writes -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run rgw_conditional_writes` or
   `/ci run rgw_conditional_writes on umbrella`.
 
@@ -142,13 +144,20 @@ with the verdict, the decisive steps and the resolved images.
   its bytes, a refused write that changed the key, or a final listing that
   does not keep the original version). The line names the reason.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
-reproduction fails the observing subtest, an absent symptom passes, and an
-inconclusive run fails. With an expectation only the matching verdict passes:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (`REPRODUCED`) and
+`21.2.0-roles` (`NOT_REPRODUCED`), both on linux/amd64. On any other images
+the run is an investigation (`expected=none combination=none`) and keeps its
+pass/fail meaning: a reproduction fails the observing subtest, an absent
+symptom passes, and an inconclusive run fails. The command takes no
+expectation; with the role images of 20.2.4 or 21.2.0 exported, it checks
+the affected or the fixed build, and only the exported image variables
+differ between the two runs:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_suspended_conditional_writes=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
   --package ./internal/integration/experiments/rgw_suspended_conditional_writes \
   --directory "artifacts/rgw-conditional-writes-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
@@ -159,7 +168,11 @@ CEPH_TEST_EXPECTED_VERDICT=rgw_suspended_conditional_writes=REPRODUCED \
 | Umbrella 21.2.0 | `NOT_REPRODUCED` | every step on both buckets follows AWS semantics (about 36 seconds) |
 | Squid 19.2.5 | `INCONCLUSIVE` | control failed: `never-versioned` fails at `existing-if-match` (put) and at the multipart create-once control (the duplicate completion answers 200) |
 
-The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set, on the pinned role images of the shared recipe; the Squid 19.2.5 row reads the failure those images gave as a verdict.
+The Tentacle 20.2.4 and Umbrella 21.2.0 verdicts are those of the
+`20.2.4-roles` and `21.2.0-roles` combinations, observed with their
+expectations on the pinned role images of the shared recipe; the Squid
+19.2.5 role images are no listed combination, and their verdict is the
+failure they gave.
 
 ## Cleanup and limits
 

@@ -148,15 +148,19 @@ verdict, the decisive reads and the resolved images.
   condition not established (step 1), a failed control (step 2 or 6), or
   another fault (step 4 or 5). The line names the reason.
 
-The batch stays a required characterization: without
-`CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the observing subtest, an
-absent symptom passes, and an inconclusive run fails, so every supported
-release passes with `NOT_REPRODUCED`. An expectation turns the same run into
-a check of one verdict:
+The batch stays a required characterization. The expected verdict comes
+from [`reproductions.json`](reproductions.json) beside the test: the
+combination whose platform and images equal the ones the run resolves
+selects it, and only that verdict passes; a skip or `INCONCLUSIVE` never
+does. It lists `20.2.4-roles` (linux/amd64, `NOT_REPRODUCED`). On any other
+images the run is an investigation (`expected=none combination=none`): a
+reproduction fails the observing subtest, an absent symptom passes, and an
+inconclusive run fails, so every supported release passes with
+`NOT_REPRODUCED`. The command takes no expectation; with the 20.2.4 role
+images exported, it checks the listed combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_single_part_multipart_read=NOT_REPRODUCED \
-  CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
   -run '^TestRGWSinglePartMultipartNumberedRead$' \
   ./internal/integration/experiments/rgw_single_part_multipart_read
 ```

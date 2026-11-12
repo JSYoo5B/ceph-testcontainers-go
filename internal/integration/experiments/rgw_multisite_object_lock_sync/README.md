@@ -52,13 +52,16 @@ zones (`metadata-has-obj_lock`).
 
 ## Tier and triggers
 
-Deliberately failing reproducer: without an expectation it fails on the
-published role images of Tentacle 20.2.4 and Squid 19.2.5. No automatic run includes it (the default
+Unpatched-defect reproducer: it reproduces on the published role images
+of Tentacle 20.2.4 and Squid 19.2.5. It passes on the 20.2.4 and 21.2.0 role
+images by the verdicts its catalogue lists, and a reproduction fails it on
+images the catalogue does not list, 19.2.5 included. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_object_lock_sync`.
+- Manual: `gh workflow run "Native regressions" -f batch=rgw_object_lock_sync -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run rgw_object_lock_sync` or
   `/ci run rgw_object_lock_sync on umbrella`.
 
@@ -82,16 +85,10 @@ python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
   --directory "artifacts/rgw-object-lock-sync-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-To check the reproducer against an affected build, or a fixed build for a
-regression, declare the expected verdict; the run then passes only on that
-verdict:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_multisite_object_lock_sync=NOT_REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
-  --package ./internal/integration/experiments/rgw_multisite_object_lock_sync \
-  --directory "artifacts/rgw-object-lock-sync-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+With the 20.2.4 or the 21.2.0 role images exported, the same commands check
+the reproducer against the affected or the fixed build that its catalogue
+lists (see [Verdict](#verdict)); only the exported image variables differ
+between the two runs.
 
 Record the image digests with the result; the log names the Ceph version of
 both clusters (`RGW_LOCK ceph=`), each zone's ID and gateway binary
@@ -136,10 +133,10 @@ zone (`RGW_LOCK stored`).
    `404 ObjectLockConfigurationNotFoundError` in both zones, and zone `a` is
    read once more after the wait. Otherwise `control failed` or
    `condition not established`.
-6. The `update` step tests a change of a configuration both zones answered.
-   It also runs when the first configuration did not reach zone `b`, so that
-   both observations complete; its detail then says that zone `b` did not
-   answer the initial configuration.
+6. The `update` step tests a change of a configuration both zones answered,
+   so it runs only after zone `b` answered the `initial` one. When the
+   `initial` step finds the symptom, the update is not attempted
+   (`RGW_LOCK step=update not run`): zone `b` has no rule for it to replace.
 
 ## Verdict
 
@@ -149,7 +146,8 @@ The test reports the unit `rgw_multisite_object_lock_sync` in one
 
 - **REPRODUCED:** zone `b`'s last read of a step answers no configuration
   (`404 ObjectLockConfigurationNotFoundError`) or another one than zone
-  `a`'s.
+  `a`'s. A symptom of `initial` concludes the verdict with `update` not
+  recorded.
 - **NOT_REPRODUCED:** zone `b` answers each configuration of both steps.
 - **INCONCLUSIVE:** the reason names the category. Unavailable
   prerequisite: the realm does not start (the clusters not starting ends the
@@ -159,10 +157,14 @@ The test reports the unit `rgw_multisite_object_lock_sync` in one
   checkpoint is not reached, or zone `b` does not answer about the
   configuration at all.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the test, absence
-passes it and an inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rgw_multisite_object_lock_sync=<REPRODUCED|NOT_REPRODUCED>`
-only that verdict passes.
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (`REPRODUCED`) and
+`21.2.0-roles` (`NOT_REPRODUCED`), both on linux/amd64. On any other images
+the run is an investigation (`expected=none combination=none`): a
+reproduction fails the test, absence passes it and an inconclusive run fails
+it.
 
 ## Recorded results
 
@@ -181,8 +183,7 @@ release.
   also what it answered before the rule was applied. The bucket record holds
   no object lock configuration in either zone (`metadata-has-obj_lock=false`),
   and the control bucket answers `404 ObjectLockConfigurationNotFoundError`
-  in both. The `update` step shows the same for `COMPLIANCE`, 1 year. A run
-  of both steps takes about 340 s on 20.2.4.
+  in both. The `update` step is then not attempted.
 - **NOT_REPRODUCED** on Tentacle 20.2.5 and Umbrella 21.2.0: zone `b` answers
   `GOVERNANCE`, 1 day, in the first read after the checkpoint, and
   `COMPLIANCE`, 1 year, in the first read after the second; the bucket record

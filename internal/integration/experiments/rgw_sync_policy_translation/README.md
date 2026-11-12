@@ -47,10 +47,11 @@ exists to verify a patched RGW image.
 
 ## Tier and triggers
 
-Deliberately failing reproducer on the published images (without an
-expectation), with a bridge and a
-host-network variant (about 8.5 minutes for the bridge variant on 20.2.4). No
-automatic run includes it (the default checks of a pull request, pushes to
+Unpatched-defect reproducer on the published images, with a bridge and a
+host-network variant. On the 20.2.4 role images its catalogue expects every
+unit to reproduce, so the run passes there; on other images, a patched
+gateway image included, a reproduction fails it. The bridge variant takes
+about 8.5 minutes on 20.2.4. No automatic run includes it (the default checks of a pull request, pushes to
 `main`, periodic samples), and it never gates anything. A maintainer can run
 it on demand, also on a pull request's head with the comment below.
 
@@ -76,16 +77,11 @@ python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation
   --directory "artifacts/native-rgw-translation-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-To check one case against an affected or a patched gateway, declare its
-expected verdict; the run then passes only on that verdict, and the other
-units only print their own:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/priority_tags_owner_class=REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation \
-  --package ./internal/integration/experiments/rgw_sync_policy_translation \
-  --directory "artifacts/native-rgw-translation-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+With the published 20.2.4 role images exported and no `CEPH_TEST_RGW_IMAGE`
+override, the same commands check every unit against the affected build
+that the catalogue lists (see [Verdict](#verdict)). With a patched gateway
+only `CEPH_TEST_RGW_IMAGE` differs, and the run is an investigation that
+passes when no unit reproduces.
 
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
@@ -108,8 +104,8 @@ result.
 ## Verdict
 
 Each case is its own unit in each network variant, so one batch run prints
-one `REPRODUCTION_VERDICT` line per unit and a row expects exactly one of
-them. The bridge units are named after the subtests; the host-network units
+one `REPRODUCTION_VERDICT` line per unit, and a combination expects a
+verdict of each. The bridge units are named after the subtests; the host-network units
 (`TestHostNetworkMultiClusterRGWSyncTranslationFiltering`) add a `host_`
 prefix: `rgw_sync_policy_translation/host_priority_tags_owner_class` and
 `rgw_sync_policy_translation/host_ordinary_user_denial_grant`. The
@@ -139,11 +135,14 @@ checkpoint that does not complete ends the test before a verdict, with the
 failing setup step in the log; that is a setup or timing outcome, not a
 reproduction.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails its subtest,
-absence passes it and an inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/[host_]<case>=<REPRODUCED|NOT_REPRODUCED>`
-only that unit's matching verdict passes; the other units' symptoms do not
-fail the run.
+The expected verdicts come from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects each unit's verdict, and only that verdict passes;
+a skip or `INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64)
+with `REPRODUCED` for all four units, bridge and host. On any other images
+the run is an investigation (`expected=none combination=none`): a
+reproduction fails its subtest, absence passes it and an inconclusive run
+fails it.
 
 ## Cleanup and limits
 

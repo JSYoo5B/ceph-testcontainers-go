@@ -51,8 +51,10 @@ answers every part.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it reports `REPRODUCED` and fails on every
-published release image and on the Tentacle 20.2.5 official image. No automatic run includes it (the
+Unpatched-defect reproducer: it reports `REPRODUCED` on every
+published release image and on the Tentacle 20.2.5 official image. It passes
+on the 20.2.4 role images, which its catalogue expects to reproduce, and
+fails on the others. No automatic run includes it (the
 default checks of a pull request, pushes to `main`, periodic samples), and it
 never gates anything. A maintainer can run it on demand, also on a pull
 request's head with the comment below.
@@ -126,13 +128,18 @@ the verdict, the decisive reads and the resolved images.
   (a part read answers neither the part nor `400 InvalidPart`, for example
   `403`, `503` or the whole object). The line names the reason.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images the run is an investigation
+(`expected=none combination=none`) and keeps its pass/fail meaning: a
 reproduction fails `cold-storage-class`, an absent symptom passes, and an
-inconclusive run fails. With an expectation only the matching verdict passes:
+inconclusive run fails. The command takes no expectation; with the 20.2.4
+role images exported, it checks the listed combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_multipart_part_storage_class=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch rgw_multipart_part_class \
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_multipart_part_class \
   --package ./internal/integration/experiments/rgw_multipart_part_storage_class \
   --directory "artifacts/rgw-multipart-part-class-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
@@ -149,7 +156,9 @@ bridge.
 | --- | --- | --- |
 | Squid 19.2.5, Tentacle 20.2.4 and 20.2.5, Umbrella 21.2.0 | `REPRODUCED` | `cold-storage-class` answers `400 InvalidPart` for GET of parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as the length and no parts count, while the whole-object GET returns all 5,308,416 bytes; `standard-control` answers 200, the exact lengths (5,242,880 and 65,536), parts count 2 and the exact bytes (about 38 s each) |
 
-Tentacle 20.2.4 is the verdict line of a run with the expectation set; the other releases read the failure those images gave as a verdict.
+The Tentacle 20.2.4 verdict is the `20.2.4-roles` combination's, observed
+with its expectation; the other images are no listed combination, and their
+verdict is the failure they gave.
 
 No tested build is fixed, so the case has no `NOT_REPRODUCED` reference.
 

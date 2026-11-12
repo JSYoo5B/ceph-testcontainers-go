@@ -36,8 +36,10 @@ workaround.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it reproduces on 20.2.4, so without an
-expectation it fails there. It has a bridge and a host-network variant
+Unpatched-defect reproducer: it reproduces on 20.2.4, where its
+catalogue expects that verdict of the bridge variant only (see
+[Verdict](#verdict)), so a reproduction of the host variant fails the run.
+It has a bridge and a host-network variant
 (about 6 minutes for the bridge variant on 20.2.4). No automatic run
 includes it (the default checks of a pull request, pushes to `main`, periodic
 samples), and it never gates anything. A maintainer can run it on demand, also
@@ -119,15 +121,20 @@ and each test prints one line that starts with
   assignments and snapshots) reports that the test ended before the planned
   observation.
 
-An expectation turns the verdict into the result: only the expected verdict
-passes, and a skip or `INCONCLUSIVE` never does. The batch runs both
-variants, so an expectation for one unit leaves the other's verdict printed
-but does not let its symptom fail the run. With the 20.2.4 role images
-(`essential`, `client`, `cephfs`) exported as in
-[Choosing images](../../../../docs/contributing/testing.md#choosing-images):
+The expected verdicts come from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects each unit's verdict, and only that verdict passes;
+a skip or `INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64)
+with `REPRODUCED` for `cephfs_mirror_daemon_redistribution`; the host unit
+`cephfs_mirror_daemon_redistribution/host-network` has no verdict there. A
+unit without a verdict in the matched combination, and every unit on images
+no combination lists, is an investigation (`expected=none`) and keeps the
+meaning above. With the 20.2.4 role images (`essential`, `client`, `cephfs`)
+exported as in
+[Choosing images](../../../../docs/contributing/testing.md#choosing-images),
+the bridge variant checks the listed combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=cephfs_mirror_daemon_redistribution=REPRODUCED \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   -run '^TestMultiClusterCephFSMirrorDaemonTopology$' \
   ./internal/integration/experiments/cephfs_mirror_daemon_redistribution

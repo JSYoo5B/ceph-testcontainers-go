@@ -51,8 +51,10 @@ is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer (without an expectation): one run takes about
-7 minutes and fails at the exact-bytes check on every published image. No automatic run includes it
+Unpatched-defect reproducer: one run takes about 7 minutes and
+reproduces at the exact-bytes check on every published image. It passes on
+the 20.2.4 role images, whose verdicts its catalogue lists, and fails on
+images the catalogue does not list. No automatic run includes it
 (the default checks of a pull request, pushes to `main`, periodic samples),
 and it never gates anything. A maintainer can run it on demand, also on a pull
 request's head with the comment below.
@@ -77,15 +79,10 @@ python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
   --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-To check one defect's reproducer, declare its expected verdict; the run then
-passes only on that verdict, and the other unit only prints its own:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rbd_mirror_demote_restart/resumed-bytes=REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
-  --package ./internal/integration/experiments/rbd_mirror_demote_restart \
-  --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+With the 20.2.4 role images (`essential`, `client`, `rbd-aux`) exported as
+in [Choosing images](../../../../docs/contributing/testing.md#choosing-images)
+instead of `CEPH_TEST_IMAGE`, the same commands check both reproducers
+against the combination their catalogue lists (see [Verdict](#verdict)).
 
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
@@ -117,7 +114,7 @@ old or neither, so the skipped object number is in the verdict line.
 ## Verdict
 
 The test reports two units, one per defect, each in its own
-`REPRODUCTION_VERDICT` line, so a row can expect one of them:
+`REPRODUCTION_VERDICT` line, so a combination expects a verdict of each:
 
 - `rbd_mirror_demote_restart/demotion-resume` (defect 1, observation
   `resume`). **REPRODUCED:** the restarted receiver did not complete the same
@@ -140,12 +137,15 @@ is not a reproduction. Another fault: the demotion copy disappeared or
 changed its primary snapshot, or the export has another size or an object
 that holds neither the old nor the new bytes.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction of either defect fails
+The expected verdicts come from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects each unit's verdict, and only that verdict passes;
+a skip or `INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64)
+with `NOT_REPRODUCED` for `demotion-resume` and `REPRODUCED` for
+`resumed-bytes`. On any other images the run is an investigation
+(`expected=none combination=none`): a reproduction of either defect fails
 the test, absence of both lets the remaining effects decide, and an
-inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rbd_mirror_demote_restart/<demotion-resume|resumed-bytes>=<REPRODUCED|NOT_REPRODUCED>`
-only that unit's matching verdict passes; the other unit's symptom does not
-fail the run.
+inconclusive run fails it.
 
 ## Cleanup and limits
 

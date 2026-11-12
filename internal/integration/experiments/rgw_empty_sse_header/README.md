@@ -48,13 +48,15 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Unpatched-defect reproducer: the defect reproduces on the published Tentacle
+20.2.4 images, the pull request default, and the test passes on the images its
+catalogue lists by the verdict recorded for them. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_empty_sse_header`.
+- Manual: `gh workflow run "Native regressions" -f batch=rgw_empty_sse_header -f release=20.2.4`
+  for the affected build, `-f release=21.2.0` for the fixed one.
 - Comment: `/ci run rgw_empty_sse_header` or
   `/ci run rgw_empty_sse_header on umbrella`.
 
@@ -136,22 +138,26 @@ observations are `empty-new-key` and `empty-overwrite`:
   - A setup failure, such as a cluster or gateway that does not start, ends
     the test before the observations, and the line says so.
 
-Without an expected verdict the test keeps its tier's meaning: `REPRODUCED`
-and `INCONCLUSIVE` fail it, `NOT_REPRODUCED` passes. With
-`CEPH_TEST_EXPECTED_VERDICT` only the expected verdict passes:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists, all on linux/amd64, `20.2.4-roles` and
+`20.2.4-aggregate` (the default image) as `REPRODUCED`, and `21.2.0-roles` and
+`20.2.5-aggregate` (`quay.io/ceph/ceph:v20.2.5`) as `NOT_REPRODUCED`. On any
+other images, such as the 19.2.5 role images, the run is an investigation
+(`expected=none combination=none`) and keeps its tier's meaning:
+`REPRODUCED` and `INCONCLUSIVE` fail it, `NOT_REPRODUCED` passes. The command
+takes no expectation; without image variables it checks the affected default
+image, and with `CEPH_TEST_IMAGE` set to the 20.2.5 image, or the role images
+of 21.2.0 exported, the fixed build:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_empty_sse_header=REPRODUCED \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWEmptySSEHeader$' \
   ./internal/integration/experiments/rgw_empty_sse_header
 ```
 
-The rows `rgw-empty-sse-header-20.2.4` (`REPRODUCED`) and
-`rgw-empty-sse-header-21.2.0` (`NOT_REPRODUCED`) of
-[`.github/reproduction-rows.json`](../../../../.github/reproduction-rows.json)
-run this comparison in the `Reproduction rows` workflow; see
-[Reproduction verdicts](../../../../docs/contributing/testing.md#reproduction-verdicts).
+See [Reproduction verdicts](../../../../docs/contributing/testing.md#reproduction-verdicts).
 
 ## Cleanup and limits
 

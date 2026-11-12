@@ -109,13 +109,17 @@ prints one line that starts with `REPRODUCTION_VERDICT case=<unit>`:
   fails the test before any verdict, and the unit reports `INCONCLUSIVE`
   because the observation did not complete.
 
-An expectation names one unit, and only the expected verdict passes; the
-other units still print theirs. On an affected aggregate, for example a Squid
-build before 19.2.5 for the caps:
+The expected verdicts come from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects each unit's verdict, and only that verdict passes;
+a skip or `INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64)
+with `NOT_REPRODUCED` for all three units. On any other images the run is an
+investigation (`expected=none combination=none`) and keeps the meaning
+above, so on an affected aggregate, for example a Squid build before 19.2.5
+for the caps, the unit of that defect fails its subtest:
 
 ```sh
 CEPH_TEST_IMAGE=<aggregate image@sha256:...> \
-CEPH_TEST_EXPECTED_VERDICT=cephfs_authorization_isolation/caps-per-filesystem=REPRODUCED \
 CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=30m \
   -run '^TestCephFSAuthorizationIsolation$' \
   ./internal/integration/experiments/cephfs_authorization_isolation

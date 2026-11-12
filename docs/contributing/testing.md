@@ -670,8 +670,8 @@ fixture parts, and `cephfs_authorization_isolation` and
 - Its `_test.go` files keep the usual build constraints, `//ci:` lines and
   batches, and its tier decides which: a cheap deterministic case is a
   required batch of a non-`short` category, so a pull request runs it only
-  when the case's files change; a case that fails on the unpatched published
-  images is an optional `native_regression` batch that runs only on request
+  when the case's files change; a case that reproduces an unpatched defect on
+  the published images is an optional `native_regression` batch that runs only on request
   (see [Experiment case tiers](ci.md#experiment-case-tiers)). Give the
   manual the tier and the exact command. A case directory does not make a
   test manual-only, and moving a case changes its package path, so run
@@ -690,17 +690,17 @@ defect (`cephfs_fscrypt`, `rbd_encrypted_clone_flatten`,
 `rbd_schedule_remove`, `rgw_kms_failure_modes`) keeps reporting what it
 observes. The test starts one unit per independently evaluated defect with
 `harness.StartReproduction(t, "<case>", "<observation>", ...)`, or
-`"<case>/<subtest>"` when subtests evaluate different defects. The unit is a
-string literal, because the tag runner reads it from the source. The test
-then decides each planned observation with the same trigger, controls and
-observation logic on every build:
+`"<case>/<subtest>"` when subtests evaluate different defects; a test
+variant that runs in another network mode in the same batch has its own
+unit. The test then decides each planned observation with the same trigger,
+controls and observation logic on every build:
 
 | Call | Meaning |
 | --- | --- |
 | `Symptom(t, observation, ...)` | the observation saw the documented symptom |
 | `Absent(t, observation, ...)` | the observation completed without it |
 | `Inconclusive(t, "<category>: ...")` | no verdict: `unavailable prerequisite`, `condition not established`, `control failed` or `another fault`; it stops `t` |
-| `Conclude()` | after every planned observation: derive and report the verdict |
+| `Conclude()` | after the planned observations: derive and report the verdict |
 
 | Actual verdict | Evidence |
 | --- | --- |
@@ -708,81 +708,106 @@ observation logic on every build:
 | `NOT_REPRODUCED` | the trigger and the controls held, every planned observation completed and none saw it |
 | `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation without a symptom, or a test that ended before `Conclude`; the reason is reported |
 
+The expected verdict belongs to the case. Its `reproductions.json` lists the
+image roles the case consumes, its units with their network mode, and each
+verified image combination with the verdict a native run observed for each
+unit and that run as evidence:
+
+```json
+{
+  "schema": "ceph-reproductions/v1",
+  "roles": ["essential", "client", "rgw"],
+  "units": {"rgw_empty_sse_header": {"network": "bridge"}},
+  "combinations": [
+    {
+      "id": "20.2.4-roles",
+      "platform": "linux/amd64",
+      "images": {"essential": "sha256:3c7a6d0ae445…", "client": "sha256:56b5c03d450c…", "rgw": "sha256:aac25fc48b53…"},
+      "verdicts": {"rgw_empty_sse_header": "REPRODUCED"},
+      "evidence": "Native run …"
+    }
+  ]
+}
+```
+
+`StartReproduction` resolves the run's images with `harness.ResolveImageSet`,
+the resolution the fixtures use: with the role layout each role is its
+`CEPH_TEST_<ROLE>_IMAGE`; otherwise every role is `CEPH_TEST_IMAGE` (or
+`ceph.DefaultImage`) except a role whose variable overrides it. The
+combination whose platform and images equal the resolved ones selects the
+unit's expected verdict. An image set the catalogue does not list, or a
+combination without a verdict for the unit, is an investigation: nothing is
+guessed, and the test keeps its tier's meaning, so `REPRODUCED` and
+`INCONCLUSIVE` fail it and `NOT_REPRODUCED` passes. With an expected verdict
+only that verdict passes, so a reproducer that stops exercising the defect
+fails on its affected build, and a reproduction fails a fixed build's
+regression check. A skip, a missing verdict and `INCONCLUSIVE` never satisfy
+an expectation; setup, unrelated and cleanup failures stay failures whatever
+the verdict.
+
 With `go test -v` each unit prints one line, also when setup stops the test:
 
 ```text
-REPRODUCTION_VERDICT case=<unit> verdict=<actual> expected=<expected|none> attempts=<n> platform=<os>/<arch> network=<mode> images=<role>=<image>,... observation=<decisive observations or reason>
+REPRODUCTION_VERDICT case=<unit> verdict=<actual> expected=<verdict|none> combination=<id|none> attempts=<n> platform=<os>/<arch> network=<mode> images=<role>=<image>,... observation=<decisive observations or reason>
 ```
 
-The network mode comes from `CEPH_TEST_NETWORK`; a test that selects host
-networking itself names it with `Network("host")`, and needs its own unit
-when the same batch also runs the bridge variant, because a row expects
-exactly one line of its unit. `attempts` counts the trials of the planned
-observations. Every current case
+`attempts` counts the trials of the planned observations. Every current case
 runs one trial. A case that needs several trials to observe an intermittent
 symptom records each one, and its manual states how the trials support the
-verdict and how many native runs established that it repeats, before a row
-treats it as deterministic.
+verdict and how many native runs established that it repeats, before a
+combination records it as an expected verdict.
 
-`CEPH_TEST_EXPECTED_VERDICT=<unit>=<REPRODUCED|NOT_REPRODUCED>` declares one
-expected verdict. The value is checked when the unit starts and by the tag
-runner before Go starts; `INCONCLUSIVE` cannot be expected.
+The same command selects the expectation from the images alone. With the
+20.2.4 aggregate, the default image:
 
-| Execution | Result |
-| --- | --- |
-| No expectation | the line has `expected=none`, and the test keeps its tier's meaning: `REPRODUCED` and `INCONCLUSIVE` fail it, `NOT_REPRODUCED` passes |
-| Expect `REPRODUCED` | only an observed reproduction passes, so a reproducer that stops exercising the defect fails |
-| Expect `NOT_REPRODUCED` | only a completed observation without the symptom passes; a reproduction fails the regression check |
-| Another unit is expected | this unit prints its verdict and its symptom does not fail the run; `INCONCLUSIVE` still does |
-
-A skip, a missing line and `INCONCLUSIVE` never satisfy an expectation. The
-runner (`tag_scenarios.py run` or `optional`) also requires the expected
-unit's own line with the expected verdict and records it in `report.json`
-under `reproduction`. Setup, unrelated and cleanup failures stay failures
-whatever the verdict. A custom image set needs no expectation:
-
-```sh
-CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c \
-CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -run '^TestRGWEmptySSEHeader$' ./internal/integration/experiments/rgw_empty_sse_header
+```console
+$ CEPH_TEST_IMAGE=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7… \
+  go test -tags=all,native_regression -count=1 -v \
+  -run '^TestRGWEmptySSEHeader$' ./internal/integration/experiments/rgw_empty_sse_header/
+    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=REPRODUCED expected=REPRODUCED combination=20.2.4-aggregate attempts=1 platform=linux/amd64 network=bridge images=essential=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…,client=…,rgw=… observation=empty-new-key: accepted with 200 (the PUT left an object, …); empty-overwrite: accepted with 200 (the key changed: …)
+--- PASS: TestRGWEmptySSEHeader (29.98s)
 ```
 
-```text
-    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=NOT_REPRODUCED expected=none attempts=1 platform=linux/amd64 network=bridge images=all=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d… observation=empty-new-key: refused with 400 InvalidArgument "…", stored state unchanged; empty-overwrite: refused with 400 InvalidArgument "…", stored state unchanged
---- PASS: TestRGWEmptySSEHeader (29.34s)
-ok  	github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header	29.361s
+`go test` exits 0. Changing only `CEPH_TEST_IMAGE` to the 20.2.5 aggregate
+`quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…`, a verified fixed build,
+selects `NOT_REPRODUCED`:
+
+```console
+$ CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d… \
+  go test -tags=all,native_regression -count=1 -v \
+  -run '^TestRGWEmptySSEHeader$' ./internal/integration/experiments/rgw_empty_sse_header/
+    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=NOT_REPRODUCED expected=NOT_REPRODUCED combination=20.2.5-aggregate attempts=1 platform=linux/amd64 network=bridge images=essential=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…,client=…,rgw=… observation=empty-new-key: refused with 400 InvalidArgument "…", stored state unchanged; empty-overwrite: refused with 400 InvalidArgument "…", stored state unchanged
+--- PASS: TestRGWEmptySSEHeader (28.20s)
 ```
 
-The exit status is 0. The same run on the 20.2.4 role images prints
-`verdict=REPRODUCED expected=none` and exits 1, as the reproducer always has.
-An expected verdict for a pinned image set goes through the tag runner, as a
-CI row does:
+A catalogue whose `20.2.4-aggregate` combination wrongly expected
+`NOT_REPRODUCED` makes the first run print `verdict=REPRODUCED
+expected=NOT_REPRODUCED` and fail with exit 1; the actual verdict does not
+change, only the comparison. An image set without a combination, such as the 19.2.5
+role images, prints `expected=none combination=none` and keeps the old
+meaning; there the invalid-algorithm control fails, so the line is
+`verdict=INCONCLUSIVE ... observation=control failed: ...` and the test
+fails.
 
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_empty_sse_header=REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_empty_sse_header \
-  --directory "artifacts/rgw-empty-sse-header-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+The tag runner (`tag_scenarios.py run` or `optional`) refuses a catalogue
+that is invalid or does not list exactly the units the package starts,
+before Go runs. When the run's images match a combination, it also requires
+each unit that combination expects in the run (all of them, or the units of
+the selected network mode) to report its own line with the expected verdict
+and combination, and records the comparison in `report.json` under
+`reproduction`. `reproductions.py` keeps every combination either a
+supported release's pinned role images or one aggregate image, so CI can
+select it with the release alone (see [Reproduction catalogues in
+CI](ci.md#reproduction-catalogues)).
 
-```text
-    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=REPRODUCED expected=REPRODUCED attempts=1 platform=linux/amd64 network=bridge images=essential=sha256:3c7a6d0ae445…,client=sha256:56b5c03d450c…,rgw=sha256:aac25fc48b53… observation=empty-new-key: accepted with 200 (the PUT left an object, exact bytes true, encryption ""); empty-overwrite: accepted with 200 (the key changed: …)
---- PASS: TestRGWEmptySSEHeader (29.09s)
-```
-
-On the 20.2.4 role images it exits 0. Changing only the value to
-`NOT_REPRODUCED` keeps `verdict=REPRODUCED`, fails the test with `expected
-NOT_REPRODUCED of rgw_empty_sse_header, actual REPRODUCED` and exits 1. On
-the 19.2.5 role images the invalid-algorithm control is refused differently,
-so the line is `verdict=INCONCLUSIVE ... observation=control failed: ...` and
-either expectation fails. [Reproduction rows](ci.md#reproduction-rows) run
-these comparisons in CI.
-
-The judgement that maps a native answer to symptom, absence or another fault
-is a pure function with a Docker-free test, as for `rgw_empty_sse_header`
-(`judgeEmptyHeaderPut`). The comparison itself is covered by
-`TestReproductionVerdict*` in `internal/integration` and by
-`test_reproduction_rows.py`. Those tests are not native evidence: a row's
-`evidence` names the native run that observed its verdict.
+A combination is added only from a native run that observed its verdicts on
+those images: run the case as an investigation, then record the
+combination, its verdicts and the run as evidence. The judgement that maps a
+native answer to symptom, absence or another fault is a pure function with a
+Docker-free test, as for `rgw_empty_sse_header` (`judgeEmptyHeaderPut`). The
+selection and comparison are covered by `TestReproduction*` and
+`TestResolveImageSetIsTheRecordedIdentity` in `internal/integration` and by
+`test_reproductions.py`; those tests are not native evidence.
 
 #### Images for the RGW S3 cases
 

@@ -36,9 +36,9 @@ it, and report `EEXIST`. Upstream reference:
 [tracker 82376](https://tracker.ceph.com/issues/82376).
 
 The case reproduces on Squid 19.2.3 and on every later release it ran on,
-and does not on Squid 19.2.2. Without an expectation the reproduction fails
-the test; that is the expected result for an unpatched defect, not a fixture
-failure.
+and does not on Squid 19.2.2. On images its catalogue does not list (see
+[Verdict](#verdict)) the reproduction fails the test; that is the expected
+result for an unpatched defect, not a fixture failure.
 
 ## Requirements
 
@@ -52,8 +52,10 @@ failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
-the role images of all three release lines. No automatic run includes it (the default checks of
+Unpatched-defect reproducer: one run takes about 35 seconds and
+reproduces on the role images of all three release lines. It passes on the
+20.2.4 role images, which its catalogue expects to reproduce, and fails on
+the others. No automatic run includes it (the default checks of
 a pull request, pushes to `main`, periodic samples), and it never gates
 anything. A maintainer can run it on demand, also on a pull request's head
 with the comment below.
@@ -191,18 +193,20 @@ cases together. It prints one line that starts with
   symlink, an entry of another type, a file that is not a link of `source` or
   a symlink with another text.
 
-An expectation turns the verdict into the result: only the expected verdict
-passes, and a skip or `INCONCLUSIVE` never does. With the 20.2.4 role images
-exported as above:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images, the Squid 19.2.2 aggregate included, the
+run is an investigation (`expected=none combination=none`) and keeps the
+meaning above. With the 20.2.4 role images exported as above, the runner
+checks the listed combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=cephfs_dangling_symlink_create=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_dangling_symlink_create \
+python3 .github/scripts/tag_scenarios.py optional --batch cephfs_dangling_symlink_create \
   --package ./internal/integration/experiments/cephfs_dangling_symlink_create \
   --directory "artifacts/cephfs-dangling-symlink-create-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
-
-On the Squid 19.2.2 aggregate the expectation is `NOT_REPRODUCED`.
 
 ## Cleanup and limits
 

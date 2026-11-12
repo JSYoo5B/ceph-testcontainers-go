@@ -36,8 +36,8 @@ all do this; no release that was run lists the snapshot. Upstream
 reference:
 [tracker 82652](https://tracker.ceph.com/issues/82652).
 
-The test fails on every release it ran on. That is the expected result for
-an unpatched defect; it is not a fixture failure.
+The test reproduces the defect on every release it ran on. That is the
+expected result for an unpatched defect; it is not a fixture failure.
 
 ## Requirements
 
@@ -53,9 +53,10 @@ an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 50 seconds and
-reproduces on the role images of all three release lines, so without an
-expectation it fails. No automatic run includes it
+Unpatched-defect reproducer: one run takes about 50 seconds and
+reproduces on the role images of all three release lines. It passes on the
+20.2.4 role images, which its catalogue expects to reproduce, and fails on
+images the catalogue does not list. No automatic run includes it
 (the default checks of a pull request, pushes to `main`, periodic samples),
 and it never gates anything. A maintainer can run it on demand, also on a
 pull request's head with the comment below.
@@ -192,13 +193,17 @@ snapshot listing. It prints one line that starts with
   without any live name in it; a live name among the first 50 entries came
   before the window opened.
 
-An expectation turns the verdict into the result: only the expected verdict
-passes, and a skip or `INCONCLUSIVE` never does. With the 20.2.4 role images
-exported as above:
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images the run is an investigation
+(`expected=none combination=none`) and keeps the meaning above. With the
+20.2.4 role images exported as above, the runner checks the listed
+combination:
 
 ```sh
-CEPH_TEST_EXPECTED_VERDICT=cephfs_snapshot_readdir_eviction=REPRODUCED \
-  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_snapshot_readdir_eviction \
+python3 .github/scripts/tag_scenarios.py optional --batch cephfs_snapshot_readdir_eviction \
   --package ./internal/integration/experiments/cephfs_snapshot_readdir_eviction \
   --directory "artifacts/cephfs-snapshot-readdir-eviction-$(date -u +%Y%m%dT%H%M%SZ)"
 ```

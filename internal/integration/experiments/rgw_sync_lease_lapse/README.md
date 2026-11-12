@@ -70,10 +70,11 @@ expected result for an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer (without an expectation): one run takes
-about 9 minutes (527 s on Tentacle 20.2.4, 526 s on Umbrella 21.2.0, 553 s on
-Squid 19.2.5) and fails in the last round on every published image, after
-both controls passed. No automatic run includes it (the default checks of a pull request, pushes to `main`,
+Unpatched-defect reproducer: one run takes about 9 minutes (527 s on
+Tentacle 20.2.4, 526 s on Umbrella 21.2.0, 553 s on Squid 19.2.5) and
+reproduces in the last round on every published image, after both controls
+passed. It passes on the 20.2.4 role images, which its catalogue expects to
+reproduce, and fails on the others. No automatic run includes it (the default checks of a pull request, pushes to `main`,
 periodic samples), and it never gates anything. A maintainer can run it on
 demand, also on a pull request's head with the comment below.
 
@@ -98,15 +99,10 @@ python3 .github/scripts/tag_scenarios.py optional --batch rgw_sync_lease_lapse \
   --directory "artifacts/rgw-sync-lease-lapse-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-To check the reproducer against an affected build, declare the expected
-verdict; the run then passes only on that verdict:
-
-```sh
-CEPH_TEST_EXPECTED_VERDICT=rgw_sync_lease_lapse=REPRODUCED \
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_sync_lease_lapse \
-  --package ./internal/integration/experiments/rgw_sync_lease_lapse \
-  --directory "artifacts/rgw-sync-lease-lapse-$(date -u +%Y%m%dT%H%M%SZ)"
-```
+With the 20.2.4 role images (`essential`, `client`, `rgw`) exported as in
+[Choosing images](../../../../docs/contributing/testing.md#choosing-images),
+these commands check the reproducer against the affected build that its
+catalogue lists (see [Verdict](#verdict)).
 
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
@@ -147,6 +143,9 @@ skipped batch in the gateway's log: the lease lost inside a batch, later
 reads from zone a's newest marker, no entry of that marker ever started,
 and a stored marker that is not zone a's. Only then is zone b's gateway
 restarted, and the catch-up after the restart is reported with the symptom.
+A restart whose stop or start fails is reported with the symptom too, and
+fails the test on its own whatever the verdict, so that a gateway left
+stopped is never hidden by a matching verdict.
 A shard behind without that signature is another fault, and the gateway is
 not restarted.
 
@@ -185,10 +184,14 @@ The rounds `idle` and `short` are its controls.
   shard behind although zone b did not catch up, or a gateway container in
   another state than the round asked for.
 
-Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the test, absence
-passes it and an inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_lease_lapse=<REPRODUCED|NOT_REPRODUCED>`
-only that verdict passes.
+The expected verdict comes from [`reproductions.json`](reproductions.json)
+beside the test. The combination whose platform and images equal the ones
+the run resolves selects it, and only that verdict passes; a skip or
+`INCONCLUSIVE` never does. It lists `20.2.4-roles` (linux/amd64,
+`REPRODUCED`). On any other images the run is an investigation
+(`expected=none combination=none`): a reproduction fails the test, absence
+passes it and an inconclusive run fails it. A failed gateway restart after
+the symptom fails the test in either case.
 
 ## Cleanup and limits
 
