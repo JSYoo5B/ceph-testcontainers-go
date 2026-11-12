@@ -1,6 +1,6 @@
 //go:build (all || (integration && topology)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_mon_log_ack)))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential
+//ci: timeout=20m job-timeout=30 image-roles=essential,client
 
 package mon_log_ack_peon_test
 

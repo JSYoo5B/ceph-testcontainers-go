@@ -34,7 +34,8 @@ Upstream references:
 
 ## Requirements
 
-- One cluster: 3 MONs, 3 OSDs, one MGR, image role `essential` only.
+- One cluster: 3 MONs, 3 OSDs, one MGR. Image roles `essential` and
+  `client` (the harness starts its client toolkit), of one release.
 - The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
 - If the OSDs' sessions do not include one with the leader and one with a
   peon, the MON holding most of them is restarted before any measurement until
