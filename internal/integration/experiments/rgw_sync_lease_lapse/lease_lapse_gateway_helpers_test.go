@@ -2,7 +2,11 @@
 
 package rgw_sync_lease_lapse_test
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 // gatewayRun is what the engine reports of a gateway container.
 type gatewayRun struct {
@@ -26,4 +30,22 @@ func judgeGateway(zone string, wantPaused bool, got gatewayRun) (owed bool, err 
 		return got.Paused, fmt.Errorf("the gateway container of zone %s is paused=%t (%s), want paused=%t", zone, got.Paused, got.Status, wantPaused)
 	}
 	return got.Paused, nil
+}
+
+// reportLeaseLapse records the observed symptom with the diagnostic of a
+// gateway restart and concludes the unit. The restart is a requested
+// operation, not an observation: when it fails, the symptom and its verdict
+// stand and t fails on its own, so a matching verdict cannot hide a gateway
+// left stopped.
+func reportLeaseLapse(t harness.ReproductionT, repro *harness.Reproduction, symptom string, restart func() (string, error)) {
+	t.Helper()
+	diagnostic, err := restart()
+	if err != nil {
+		diagnostic = "the restart failed: " + err.Error()
+	}
+	repro.Symptom(t, "lapse", "%s. After a restart of zone b's gateway: %s", symptom, diagnostic)
+	repro.Conclude()
+	if err != nil {
+		t.Errorf("restart after the observed defect: %v", err)
+	}
 }

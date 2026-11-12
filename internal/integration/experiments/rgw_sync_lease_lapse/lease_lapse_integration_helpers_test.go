@@ -596,20 +596,20 @@ func testSyncLeaseLapse(t *testing.T) {
 	errors, err := l.fixture.ZoneAdmin(ctx, "b", "sync", "error", "list")
 	t.Logf("sync error list of zone b: %d entries with an error, %v", bytes.Count(errors, []byte(`"error_code"`)), err)
 	// A restarted gateway reads its stored markers again. Its catch-up is
-	// recorded with the symptom; it does not decide the verdict.
-	var restart string
+	// recorded with the symptom; it does not decide the verdict, but a
+	// failed stop or start fails the test on its own.
 	gateway := l.zones[1].Gateway
-	if err := gateway.Stop(ctx, nil); err != nil {
-		restart = fmt.Sprintf("stop failed: %v", err)
-	} else if err := gateway.Start(ctx); err != nil {
-		restart = fmt.Sprintf("start failed: %v", err)
-	} else {
+	reportLeaseLapse(t, repro, fmt.Sprintf("zone a did not answer zone b's reads of its data log for %s; %s; 3m0s after a answered again: %s",
+		lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), detail, seen), func() (string, error) {
+		if err := gateway.Stop(ctx, nil); err != nil {
+			return "", fmt.Errorf("stop zone b's gateway: %w", err)
+		}
+		if err := gateway.Start(ctx); err != nil {
+			return "", fmt.Errorf("start zone b's gateway: %w", err)
+		}
 		restarted := time.Now()
 		l.b = l.client(1)
 		after, recovered, caught := l.catchUp(lapse, restarted, 5*time.Minute)
-		restart = fmt.Sprintf("caught up %v after %s: %s", caught, recovered, after)
-	}
-	repro.Symptom(t, "lapse", "zone a did not answer zone b's reads of its data log for %s; %s; 3m0s after a answered again: %s. After a restart of zone b's gateway: %s",
-		lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), detail, seen, restart)
-	repro.Conclude()
+		return fmt.Sprintf("caught up %v after %s: %s", caught, recovered, after), nil
+	})
 }
