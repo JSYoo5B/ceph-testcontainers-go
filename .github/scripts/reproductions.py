@@ -29,12 +29,14 @@ PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+\Z")
 # An expectation is stored only for bytes that cannot change: a local image
 # ID, or a reference with a sha256 digest (a tag beside it is kept). The name
 # grammar is the distribution reference grammar (v0.6.0) that the harness
-# parses with; testdata/reproduction_images.json holds the cases both check.
+# parses with, in ASCII classes as Go's regexp reads \w (Python's \w also
+# matches non-ASCII letters and digits); testdata/reproduction_images.json
+# holds the cases both check.
 _PATH_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
 _DOMAIN_COMPONENT = r"(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])"
 _HOST = r"(?:%s(?:\.%s)*|\[[a-fA-F0-9:]+\])" % (_DOMAIN_COMPONENT, _DOMAIN_COMPONENT)
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
-DIGEST_REFERENCE = re.compile(r"(?:%s(?::[0-9]+)?/)?(?P<path>%s(?:/%s)*)(?::[\w][\w.-]{0,127})?@sha256:[0-9a-f]{64}\Z"
+DIGEST_REFERENCE = re.compile(r"(?:%s(?::[0-9]+)?/)?(?P<path>%s(?:/%s)*)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}\Z"
                               % (_HOST, _PATH_COMPONENT, _PATH_COMPONENT))
 # The grammar limits the repository path, without the registry host.
 PATH_MAX = 255
