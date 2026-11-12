@@ -99,7 +99,7 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 		symptom, detail, err := judgePriority(blue, red)
 		switch {
 		case err != nil:
-			repro.Inconclusive(t, "%s network: %v", network, err)
+			repro.Inconclusive(t, "%v (%s network)", err, network)
 		case symptom:
 			// The exclusion and fallback checks assume the priority holds.
 			repro.Symptom(t, "priority", "%s network: %s", network, detail)
@@ -190,7 +190,7 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 			symptom, detail, err := judgeDenial(held, window, answer.Status, answer.Code, answer.Err)
 			switch {
 			case err != nil:
-				repro.Inconclusive(t, "%s network: %v", network, err)
+				repro.Inconclusive(t, "%v (%s network)", err, network)
 			case symptom:
 				repro.Symptom(t, "denial", "%s network: %s", network, detail)
 				repro.Conclude()
