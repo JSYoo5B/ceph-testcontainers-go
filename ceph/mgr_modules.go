@@ -29,29 +29,47 @@ type MGRModuleState struct {
 // the modules through it, so there is one command order and one combination
 // rule.
 func readMGRModules(ctx context.Context, run cliQuery) ([]MGRModuleState, error) {
+	snapshot, err := readMGRModuleSnapshot(ctx, run)
+	return snapshot.modules, err
+}
+
+// mgrModuleSnapshot is one MGR module observation together with the identity
+// of the active MGR whose dump it combined.
+type mgrModuleSnapshot struct {
+	modules []MGRModuleState
+	// activeGID is the active MGR's gid in the same dump. It is zero when the
+	// dump does not name one.
+	activeGID uint64
+}
+
+// readMGRModuleSnapshot is readMGRModules with the active MGR's gid from the
+// same dump, so that a caller can tell a respawned active MGR from the one it
+// observed before.
+func readMGRModuleSnapshot(ctx context.Context, run cliQuery) (mgrModuleSnapshot, error) {
 	data, err := run(ctx, "mgr", "module", "ls", "--format", "json")
 	if err != nil {
-		return nil, err
+		return mgrModuleSnapshot{}, err
 	}
 	modules, err := decodeMGRModuleMembership(data)
 	if err != nil {
-		return nil, err
+		return mgrModuleSnapshot{}, err
 	}
 	// module ls omits can_run for enabled modules. The active MGR's beacon
 	// metadata in mgr dump advertises dependency status for every loaded module.
 	data, err = run(ctx, "mgr", "dump", "--format", "json")
 	if err != nil {
-		return nil, err
+		return mgrModuleSnapshot{}, err
 	}
-	if err := modules.applyDump(data); err != nil {
-		return nil, err
+	activeGID, err := modules.applyDump(data)
+	if err != nil {
+		return mgrModuleSnapshot{}, err
 	}
 	result := make([]MGRModuleState, 0, len(modules))
 	for _, module := range modules {
 		result = append(result, module)
 	}
 	slices.SortFunc(result, func(a, b MGRModuleState) int { return strings.Compare(a.Name, b.Name) })
-	return result, nil
+	return mgrModuleSnapshot{modules: result, activeGID: activeGID}, nil
 }
 
 // mgrModuleSet is the configured MGR module membership, by name.
@@ -112,10 +130,11 @@ func (modules mgrModuleSet) add(name string, enabled, always, force bool) error 
 
 // applyDump records the active MGR's advertised status of each module from
 // `mgr dump`, and refuses a dump whose loaded modules differ from the
-// membership read before it.
-func (modules mgrModuleSet) applyDump(data []byte) error {
+// membership read before it. It returns the dump's active MGR gid.
+func (modules mgrModuleSet) applyDump(data []byte) (uint64, error) {
 	var dump struct {
 		Available        *bool     `json:"available"`
+		ActiveGID        uint64    `json:"active_gid"`
 		Modules          *[]string `json:"modules"`
 		AvailableModules *[]struct {
 			Name        string `json:"name"`
@@ -124,20 +143,20 @@ func (modules mgrModuleSet) applyDump(data []byte) error {
 		} `json:"available_modules"`
 	}
 	if json.Unmarshal(data, &dump) != nil || dump.Available == nil || dump.Modules == nil || dump.AvailableModules == nil {
-		return errors.New("decode active MGR module metadata: missing or invalid native dump")
+		return 0, errors.New("decode active MGR module metadata: missing or invalid native dump")
 	}
 	if !*dump.Available {
-		return errors.New("active MGR is not available")
+		return 0, errors.New("active MGR is not available")
 	}
 	seen := make(map[string]bool)
 	for _, native := range *dump.AvailableModules {
 		if !mgrModuleNamePattern.MatchString(native.Name) || native.CanRun == nil || seen[native.Name] {
-			return errors.New("invalid or duplicate advertised MGR module metadata")
+			return 0, errors.New("invalid or duplicate advertised MGR module metadata")
 		}
 		seen[native.Name] = true
 		module, exists := modules[native.Name]
 		if !exists {
-			return errors.New("MGR module metadata differs from configured membership; retry after convergence")
+			return 0, errors.New("MGR module metadata differs from configured membership; retry after convergence")
 		}
 		module.Available, module.CanRun, module.ErrorString = true, *native.CanRun, native.ErrorString
 		modules[native.Name] = module
@@ -146,16 +165,16 @@ func (modules mgrModuleSet) applyDump(data []byte) error {
 	for _, name := range *dump.Modules {
 		module, exists := modules[name]
 		if !exists || !module.Enabled || seen[name] {
-			return errors.New("MGR module membership changed while reading; retry after convergence")
+			return 0, errors.New("MGR module membership changed while reading; retry after convergence")
 		}
 		seen[name] = true
 	}
 	for _, module := range modules {
 		if module.Enabled && !module.AlwaysOn && !seen[module.Name] {
-			return errors.New("MGR module membership changed while reading; retry after convergence")
+			return 0, errors.New("MGR module membership changed while reading; retry after convergence")
 		}
 	}
-	return nil
+	return dump.ActiveGID, nil
 }
 
 // waitMGRModuleReady implements the observer wait and is available to cluster startup.
