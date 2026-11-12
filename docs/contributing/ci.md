@@ -972,6 +972,50 @@ Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
+### Reproduction rows
+
+`Reproduction rows` runs one row of
+[`.github/reproduction-rows.json`](../../.github/reproduction-rows.json): a
+known-defect unit (see [Reproduction verdicts](testing.md#reproduction-verdicts)),
+the optional batch that runs it, the release whose pinned role images of
+`.github/ceph-role-images.json` it runs on, the platform, an optional
+expected verdict and the native run that observed it:
+
+```json
+{
+  "id": "rgw-empty-sse-header-21.2.0",
+  "unit": "rgw_empty_sse_header",
+  "batch": "rgw_empty_sse_header",
+  "release": "21.2.0",
+  "platform": "linux/amd64",
+  "expected": "NOT_REPRODUCED",
+  "evidence": "Native run ... pinned 21.2.0 role images: NOT_REPRODUCED; ..."
+}
+```
+
+```sh
+gh workflow run "Reproduction rows" --ref main -f row=rgw-empty-sse-header-21.2.0
+```
+
+Its first job validates every row with `reproduction_rows.py resolve` and
+refuses the run before any runtime job when a row names an unknown batch, a
+unit the batch does not start, a release without pinned role images, another
+platform than `linux/amd64`, an unknown field, a duplicate, or an expected
+verdict other than `REPRODUCED` and `NOT_REPRODUCED`. The second calls the
+tagged runtime with the row's batch, release and `expected_verdict`, which
+reaches the test as `CEPH_TEST_EXPECTED_VERDICT`. The batch passes only when
+the unit reports the expected verdict; image, cleanup and every other phase
+keep their own results. The expectation belongs to that row: the same batch
+through `Native regressions` or `/ci run` has none and keeps failing on an
+affected build. A row without `expected` runs the case on its images and
+reports the verdict, for an investigation. The workflow's `row` choices are
+the row IDs; `test_reproduction_rows.py` keeps them equal.
+
+Add a row once a native run on the pinned images observed its verdict, and a
+`NOT_REPRODUCED` row for a verified fixed build that has pinned role images.
+A release with only an aggregate image, such as 20.2.5, has no row; run it
+as a custom image (`CEPH_TEST_IMAGE`) without an expectation.
+
 ### Experiment case tiers
 
 An experiment case runs where its cost and determinism allow, through the

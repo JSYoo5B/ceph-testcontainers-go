@@ -113,20 +113,45 @@ role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
 `9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
 client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 
-- **Pass:** every step followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `empty-new-key` answers 200 and stores the exact bytes
-  unencrypted, and `empty-overwrite` answers 200 and adds a second version.
-  The control and `omitted` pass. Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the wire condition was logged.
-- **Unavailable prerequisite:** the cluster or the gateway does not start, or
-  the invalid-algorithm control is not refused with 400 `InvalidArgument`.
-  Squid 19.2.5 refuses the invalid algorithm with 400 `InvalidRequest` and no
-  message, so the case stops before the subtests there.
-- **Condition not established:** the client did not send and sign the empty
-  header, a bucket has a default encryption configuration, or the seed write
-  has no version ID. The test fails with `condition not established`.
+The test prints one verdict line for the unit `rgw_empty_sse_header`, whose
+observations are `empty-new-key` and `empty-overwrite`:
+
+- **`REPRODUCED`:** an empty-header PUT answers 200. On `empty-new-key` it
+  stores the exact bytes unencrypted; on `empty-overwrite` it adds a second
+  version. The wire condition, the bucket conditions and both controls held.
+  Tentacle 20.2.4 does this.
+- **`NOT_REPRODUCED`:** both PUTs are refused with the control's 400
+  `InvalidArgument` message and the stored state is unchanged. Tentacle 20.2.5
+  and Umbrella 21.2.0 do this.
+- **`INCONCLUSIVE`:** no verdict on the symptom. The reason names the
+  category:
+  - `control failed`: the invalid-algorithm control or the `omitted` control
+    did not answer as the table says. Squid 19.2.5 refuses the invalid
+    algorithm with 400 `InvalidRequest` and no message, so it stops here.
+  - `condition not established`: the client did not send and sign the empty
+    header, a bucket has a default encryption configuration, or the seed
+    write has no version ID.
+  - `another fault`: a PUT answered something other than 200 or the control's
+    refusal, or a refused PUT still changed the stored state.
+  - A setup failure, such as a cluster or gateway that does not start, ends
+    the test before the observations, and the line says so.
+
+Without an expected verdict the test keeps its tier's meaning: `REPRODUCED`
+and `INCONCLUSIVE` fail it, `NOT_REPRODUCED` passes. With
+`CEPH_TEST_EXPECTED_VERDICT` only the expected verdict passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_empty_sse_header=REPRODUCED \
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -run '^TestRGWEmptySSEHeader$' \
+  ./internal/integration/experiments/rgw_empty_sse_header
+```
+
+The rows `rgw-empty-sse-header-20.2.4` (`REPRODUCED`) and
+`rgw-empty-sse-header-21.2.0` (`NOT_REPRODUCED`) of
+[`.github/reproduction-rows.json`](../../../../.github/reproduction-rows.json)
+run this comparison in the `Reproduction rows` workflow; see
+[Reproduction verdicts](../../../../docs/contributing/testing.md#reproduction-verdicts).
 
 ## Cleanup and limits
 

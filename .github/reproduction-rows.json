@@ -8,7 +8,7 @@
       "release": "20.2.4",
       "platform": "linux/amd64",
       "expected": "REPRODUCED",
-      "evidence": "pending"
+      "evidence": "Native run 2026-11-12 at 9a4e6a18, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images: REPRODUCED; both empty-header PUTs answered 200, a new object and a second version."
     },
     {
       "id": "rgw-empty-sse-header-21.2.0",
@@ -17,7 +17,7 @@
       "release": "21.2.0",
       "platform": "linux/amd64",
       "expected": "NOT_REPRODUCED",
-      "evidence": "pending"
+      "evidence": "Native run 2026-11-12 at 9a4e6a18, Linux amd64, Docker 29.9.1, pinned 21.2.0 role images: NOT_REPRODUCED; both empty-header PUTs refused with the control's 400 InvalidArgument, stored state unchanged."
     }
   ]
 }

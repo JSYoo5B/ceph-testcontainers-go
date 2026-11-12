@@ -661,8 +661,8 @@ fixture parts, and `cephfs_authorization_isolation` and
 - The case directory holds a `README.md` manual: use case, native contract
   and trigger, upstream issue and fix links, topology and image roles,
   resource and time bounds, the runnable command and image inputs, the
-  observations and controls, the meaning of pass, observed bug, not
-  reproduced, unavailable prerequisite and condition not established, and
+  observations and controls, the reproduction units and what each verdict
+  means for them (see [Reproduction verdicts](#reproduction-verdicts)), and
   cleanup and limits. It describes the current reproduction, not a diary;
   logs and full reports stay in issues and artifacts. Upstream Ceph issue and
   fix links go in this manual; code comments, test messages, commits and pull
@@ -681,6 +681,104 @@ fixture parts, and `cephfs_authorization_isolation` and
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a
   release-prefix branch because it exists.
+
+#### Reproduction verdicts
+
+A case that reproduces a known defect, unpatched or fixed, reports a verdict
+instead of leaving it to the exit status. A characterization without a
+defect (`cephfs_fscrypt`, `rbd_encrypted_clone_flatten`,
+`rbd_schedule_remove`, `rgw_kms_failure_modes`) keeps reporting what it
+observes. The test starts one unit per independently evaluated defect with
+`harness.StartReproduction(t, "<case>", "<observation>", ...)`, or
+`"<case>/<subtest>"` when subtests evaluate different defects. The unit is a
+string literal, because the tag runner reads it from the source. The test
+then decides each planned observation with the same trigger, controls and
+observation logic on every build:
+
+| Call | Meaning |
+| --- | --- |
+| `Symptom(t, observation, ...)` | the observation saw the documented symptom |
+| `Absent(t, observation, ...)` | the observation completed without it |
+| `Inconclusive(t, "<category>: ...")` | no verdict: `unavailable prerequisite`, `condition not established`, `control failed` or `another fault`; it stops `t` |
+| `Conclude()` | after every planned observation: derive and report the verdict |
+
+| Actual verdict | Evidence |
+| --- | --- |
+| `REPRODUCED` | the trigger and the controls held and an observation saw the symptom |
+| `NOT_REPRODUCED` | the trigger and the controls held, every planned observation completed and none saw it |
+| `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation, or a test that ended before `Conclude`; the reason is reported |
+
+With `go test -v` each unit prints one line, also when setup stops the test:
+
+```text
+REPRODUCTION_VERDICT case=<unit> verdict=<actual> expected=<expected|none> attempts=<n> platform=<os>/<arch> network=<mode> images=<role>=<image>,... observation=<decisive observations or reason>
+```
+
+`attempts` counts the trials of the planned observations. Every current case
+runs one trial. A case that needs several trials to observe an intermittent
+symptom records each one, and its manual states how the trials support the
+verdict and how many native runs established that it repeats, before a row
+treats it as deterministic.
+
+`CEPH_TEST_EXPECTED_VERDICT=<unit>=<REPRODUCED|NOT_REPRODUCED>` declares one
+expected verdict. The value is checked when the unit starts and by the tag
+runner before Go starts; `INCONCLUSIVE` cannot be expected.
+
+| Execution | Result |
+| --- | --- |
+| No expectation | the line has `expected=none`, and the test keeps its tier's meaning: `REPRODUCED` and `INCONCLUSIVE` fail it, `NOT_REPRODUCED` passes |
+| Expect `REPRODUCED` | only an observed reproduction passes, so a reproducer that stops exercising the defect fails |
+| Expect `NOT_REPRODUCED` | only a completed observation without the symptom passes; a reproduction fails the regression check |
+| Another unit is expected | this unit prints its verdict and its symptom does not fail the run; `INCONCLUSIVE` still does |
+
+A skip, a missing line and `INCONCLUSIVE` never satisfy an expectation. The
+runner (`tag_scenarios.py run` or `optional`) also requires the expected
+unit's own line with the expected verdict and records it in `report.json`
+under `reproduction`. Setup, unrelated and cleanup failures stay failures
+whatever the verdict. A custom image set needs no expectation:
+
+```sh
+CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c \
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -run '^TestRGWEmptySSEHeader$' ./internal/integration/experiments/rgw_empty_sse_header
+```
+
+```text
+    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=NOT_REPRODUCED expected=none attempts=1 platform=linux/amd64 network=bridge images=all=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d… observation=empty-new-key: refused with 400 InvalidArgument "…", stored state unchanged; empty-overwrite: refused with 400 InvalidArgument "…", stored state unchanged
+--- PASS: TestRGWEmptySSEHeader (29.34s)
+ok  	github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header	29.361s
+```
+
+The exit status is 0. The same run on the 20.2.4 role images prints
+`verdict=REPRODUCED expected=none` and exits 1, as the reproducer always has.
+An expected verdict for a pinned image set goes through the tag runner, as a
+CI row does:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_empty_sse_header=REPRODUCED \
+python3 .github/scripts/tag_scenarios.py optional --batch rgw_empty_sse_header \
+  --directory "artifacts/rgw-empty-sse-header-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+```text
+    empty_sse_header_integration_native_regression_test.go:292: REPRODUCTION_VERDICT case=rgw_empty_sse_header verdict=REPRODUCED expected=REPRODUCED attempts=1 platform=linux/amd64 network=bridge images=essential=sha256:3c7a6d0ae445…,client=sha256:56b5c03d450c…,rgw=sha256:aac25fc48b53… observation=empty-new-key: accepted with 200 (the PUT left an object, exact bytes true, encryption ""); empty-overwrite: accepted with 200 (the key changed: …)
+--- PASS: TestRGWEmptySSEHeader (29.09s)
+```
+
+On the 20.2.4 role images it exits 0. Changing only the value to
+`NOT_REPRODUCED` keeps `verdict=REPRODUCED`, fails the test with `expected
+NOT_REPRODUCED of rgw_empty_sse_header, actual REPRODUCED` and exits 1. On
+the 19.2.5 role images the invalid-algorithm control is refused differently,
+so the line is `verdict=INCONCLUSIVE ... observation=control failed: ...` and
+either expectation fails. [Reproduction rows](ci.md#reproduction-rows) run
+these comparisons in CI.
+
+The judgement that maps a native answer to symptom, absence or another fault
+is a pure function with a Docker-free test, as for `rgw_empty_sse_header`
+(`judgeEmptyHeaderPut`). The comparison itself is covered by
+`TestReproductionVerdict*` in `internal/integration` and by
+`test_reproduction_rows.py`. Those tests are not native evidence: a row's
+`evidence` names the native run that observed its verdict.
 
 #### Images for the RGW S3 cases
 
