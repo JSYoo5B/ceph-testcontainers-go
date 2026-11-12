@@ -1025,7 +1025,9 @@ if err != nil {
   an unfenced old owner asks for the lock back, gets it, and its write
   succeeds.
 - Watchers and locks are two separate reads, so poll for a stable answer
-  during a handover.
+  during a handover. `expect.ImageClients` in
+  [`rbd/expect`](../../rbd/expect/README.md) evaluates one read against the
+  expected owner, its watch and departed watchers, and names each difference.
 
 ## Observing the effect
 

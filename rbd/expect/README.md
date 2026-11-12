@@ -1,12 +1,12 @@
 # RBD expect
 
 Import `github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect` alongside
-`rbd/mirror` when a test wants a precise verdict on a receiver or image replay
-observation it already captured, with an explanation of each mismatch. A link
-needs nothing from this package to run, and a test that only runs, observes
-or watches a link can ignore it. Package `rbd` does not import it, so a test
-that uses only `rbd` does not depend on it. It imports `rbd/mirror` for the
-observation types. See
+`rbd` or `rbd/mirror` when a test wants a precise verdict on an image client,
+receiver or image replay observation it already captured, with an explanation
+of each mismatch. An image or a link needs nothing from this package, and a
+test that only observes an image or runs, observes or watches a link can
+ignore it. Neither `rbd` nor `rbd/mirror` imports it, so a test that uses only
+them does not depend on it. It imports both for the observation types. See
 [API purpose and purpose tags](../../docs/guides/api-purpose.md) for where
 this fits.
 
@@ -19,6 +19,38 @@ never a mismatch. The result copies what it evaluated, so its diagnostics
 describe that observation even after the caller reuses the input. Polling,
 retries and assertion failures stay with the test. A match never proves that a
 write or a checkpoint arrived: compare the destination data separately.
+
+## Image clients
+
+`expect.ImageClients` states what one `rbd.ImageClients` observation must
+report for an image's managed exclusive lock and watchers. `Lock` requires
+the lock held or free (advisory locks are not read), `Owner` names the entity
+that must hold it, and `OwnerWatches` requires the holder's address among
+the watchers. `Departed` lists addresses, such as a former owner's, that must
+no longer watch, and `Unwatched` requires no watcher at all. Clients the
+expectation does not name are not compared, and a wrong owner suppresses its
+watch comparison.
+
+The watcher and lock lists come from separate native reads, so during a
+handoff an observation can name the new owner before its watch appears. An
+`owner-watch` mismatch is then a possible observed state; the test decides
+whether to read again.
+
+```golang
+status, err := rbd.ImageClients(ctx, cluster, pool, "", image)
+if err != nil {
+	t.Fatal(err) // a failed query is never a mismatch
+}
+result, err := expect.ImageClients{
+	Lock: expect.ExclusiveLockHeld, Owner: "client.4102", OwnerWatches: true, Departed: []string{former.Address},
+}.Evaluate(*status)
+if err != nil {
+	t.Fatal(err)
+}
+if !result.Matched {
+	t.Fatal(result) // image clients want lock=held owner=client.4102 owner-watches departed=[10.0.0.1:0/1001]: departed: 10.0.0.1:0/1001 still watches
+}
+```
 
 ## Receiver cohort
 
