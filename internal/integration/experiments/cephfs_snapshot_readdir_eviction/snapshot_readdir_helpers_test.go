@@ -146,50 +146,50 @@ func snapshotFirstFault(want, names []string, first int) string {
 // "control failed" when the control client's snapshot listing or either
 // live listing is not exact, with "another fault" when the entries the
 // trigger client read before it dropped the dentry are not distinct names of
-// the snapshot or its snapshot listing is wrong without holding a live name,
-// and with "observed defect" when the entries read after that hold live
-// names.
-func judgeSnapshotListings(want, live []string, control, trigger snapshotListing) error {
+// the snapshot or its snapshot listing is wrong without holding a live name:
+// no verdict. Entries read after the dentry was dropped that hold live names
+// are the symptom; an exact trigger listing is its absence.
+func judgeSnapshotListings(want, live []string, control, trigger snapshotListing) (symptom bool, detail string, err error) {
 	for _, listing := range []struct {
 		name string
 		got  snapshotListing
 	}{{"control", control}, {"trigger", trigger}} {
 		if listing.got.First != snapshotFirst || listing.got.Stats != snapshotOthers || listing.got.Requests < 2 {
-			return fmt.Errorf("condition not established: the %s client read %d entries, looked up %d files elsewhere and sent %d readdir requests for the snapshot, want %d, %d and at least 2",
+			return false, "", fmt.Errorf("condition not established: the %s client read %d entries, looked up %d files elsewhere and sent %d readdir requests for the snapshot, want %d, %d and at least 2",
 				listing.name, listing.got.First, listing.got.Stats, listing.got.Requests, snapshotFirst, snapshotOthers)
 		}
 	}
 	if control.Client == trigger.Client {
-		return fmt.Errorf("condition not established: both listings are of client %d", control.Client)
+		return false, "", fmt.Errorf("condition not established: both listings are of client %d", control.Client)
 	}
 	if control.Cache < len(want)+snapshotOthers || control.Trimmed {
-		return fmt.Errorf("condition not established: the control client has a cache of %d entries and dropped its dentry of the snapshot: %t; want room for %d entries and the dentry kept",
+		return false, "", fmt.Errorf("condition not established: the control client has a cache of %d entries and dropped its dentry of the snapshot: %t; want room for %d entries and the dentry kept",
 			control.Cache, control.Trimmed, len(want)+snapshotOthers)
 	}
 	if trigger.Cache != snapshotCache || !trigger.Trimmed {
-		return fmt.Errorf("condition not established: the trigger client has a cache of %d entries and dropped its dentry of the snapshot between the first entries and the rest: %t; want %d and the dentry dropped",
+		return false, "", fmt.Errorf("condition not established: the trigger client has a cache of %d entries and dropped its dentry of the snapshot between the first entries and the rest: %t; want %d and the dentry dropped",
 			trigger.Cache, trigger.Trimmed, snapshotCache)
 	}
 	if d := snapshotDiffer(want, live, control.Names); !d.exact() {
-		return fmt.Errorf("control failed: the snapshot listing of the client with the default cache: %s", d)
+		return false, "", fmt.Errorf("control failed: the snapshot listing of the client with the default cache: %s", d)
 	}
 	for _, listing := range []struct {
 		name string
 		got  snapshotListing
 	}{{"control", control}, {"trigger", trigger}} {
 		if d := snapshotDiffer(live, want, listing.got.Live); !d.exact() {
-			return fmt.Errorf("control failed: the live listing of the %s client: %s", listing.name, d)
+			return false, "", fmt.Errorf("control failed: the live listing of the %s client: %s", listing.name, d)
 		}
 	}
 	if fault := snapshotFirstFault(want, trigger.Names, trigger.First); fault != "" {
-		return fmt.Errorf("another fault: the trigger client's first %d entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: %s", trigger.First, fault)
+		return false, "", fmt.Errorf("another fault: the trigger client's first %d entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: %s", trigger.First, fault)
 	}
 	d := snapshotDiffer(want, live, trigger.Names)
 	switch {
 	case d.exact():
-		return nil
+		return false, fmt.Sprintf("the trigger client dropped its dentry of the snapshot and still listed exactly the snapshot: %s; %d of its %d readdir requests did not name the snapshot", d, trigger.HeadRequests, trigger.Requests), nil
 	case len(d.Live) == 0:
-		return fmt.Errorf("another fault: the snapshot listing after the client dropped its dentry of the snapshot holds no live name and is not the snapshot: %s; %d of its %d readdir requests did not name the snapshot", d, trigger.HeadRequests, trigger.Requests)
+		return false, "", fmt.Errorf("another fault: the snapshot listing after the client dropped its dentry of the snapshot holds no live name and is not the snapshot: %s; %d of its %d readdir requests did not name the snapshot", d, trigger.HeadRequests, trigger.Requests)
 	}
-	return fmt.Errorf("observed defect: the first %d entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: %s; %d of its %d readdir requests did not name the snapshot", trigger.First, d, trigger.HeadRequests, trigger.Requests)
+	return true, fmt.Sprintf("the first %d entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: %s; %d of its %d readdir requests did not name the snapshot", trigger.First, d, trigger.HeadRequests, trigger.Requests), nil
 }

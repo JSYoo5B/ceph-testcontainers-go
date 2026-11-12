@@ -25,13 +25,13 @@ func TestJudgeSnapshotListings(t *testing.T) {
 		change func(control, trigger *snapshotListing)
 		want   string
 	}{
-		{name: "exact"},
-		{name: "exact in another order", change: func(_, trigger *snapshotListing) { slices.Reverse(trigger.Names) }},
+		{name: "exact", want: "absent: the trigger client dropped its dentry of the snapshot and still listed exactly the snapshot"},
+		{name: "exact in another order", change: func(_, trigger *snapshotListing) { slices.Reverse(trigger.Names) }, want: "absent: "},
 		{name: "live names in the trigger's snapshot listing", change: func(_, trigger *snapshotListing) {
 			trigger.Names, trigger.HeadRequests = mixed, 2
-		}, want: "observed defect: the first 50 entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: 3024 entries returned, 1539 of the wanted names found, missing 1461 (snap-1539, snap-1540, snap-1541, ...), returned twice 0 [], names of the other directory state 1485 (live-1515, live-1516, live-1517, ...), unknown 0 []; 2 of its 3 readdir requests did not name the snapshot"},
-		{name: "one live name beside the whole snapshot", change: func(_, trigger *snapshotListing) { trigger.Names = append(trigger.Names, "live-0007") }, want: "observed defect: "},
-		{name: "a live name in the continuation only", change: func(_, trigger *snapshotListing) { trigger.Names[snapshotFirst] = "live-0007" }, want: "observed defect: "},
+		}, want: "symptom: the first 50 entries are names of the snapshot, and the entries read after the client dropped its dentry of the snapshot hold names of the live directory: 3024 entries returned, 1539 of the wanted names found, missing 1461 (snap-1539, snap-1540, snap-1541, ...), returned twice 0 [], names of the other directory state 1485 (live-1515, live-1516, live-1517, ...), unknown 0 []; 2 of its 3 readdir requests did not name the snapshot"},
+		{name: "one live name beside the whole snapshot", change: func(_, trigger *snapshotListing) { trigger.Names = append(trigger.Names, "live-0007") }, want: "symptom: "},
+		{name: "a live name in the continuation only", change: func(_, trigger *snapshotListing) { trigger.Names[snapshotFirst] = "live-0007" }, want: "symptom: "},
 		// Contamination before the lookups is not what the dropped dentry
 		// did, whatever follows it.
 		{name: "a live name before the lookups only", change: func(_, trigger *snapshotListing) { trigger.Names[0] = "live-0007" }, want: `another fault: the trigger client's first 50 entries, read before it dropped its dentry of the snapshot, are not distinct names of the snapshot: entry 0 is "live-0007"`},
@@ -69,9 +69,16 @@ func TestJudgeSnapshotListings(t *testing.T) {
 			if tc.change != nil {
 				tc.change(&control, &trigger)
 			}
-			err := judgeSnapshotListings(want, live, control, trigger)
-			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tc.want)) {
-				t.Fatalf("error %v, want %q", err, tc.want)
+			symptom, detail, err := judgeSnapshotListings(want, live, control, trigger)
+			got := "absent: " + detail
+			switch {
+			case err != nil:
+				got = err.Error()
+			case symptom:
+				got = "symptom: " + detail
+			}
+			if !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
