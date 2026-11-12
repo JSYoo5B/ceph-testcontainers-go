@@ -1,0 +1,301 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 1981.356,
+  "execution": "43224845868-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "ad89b1edf0d8a7d7d78c34177ef859efc87d4c6f1c7a5fd8ec2be0d8c34372d9",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "d93bc922643886d66045bf1960e7a7448772b98934510a0a80ba8498c4cd746f",
+        "cell": "21.2.0/6a6a0e1b8f3a",
+        "entries": [
+          {
+            "core": false,
+            "id": "multicluster-rgw_sync_fixtures_policy_owned_host-4e8af13c-9ccdbb1518",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_sync_fixtures_policy_owned_host",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-rgw_sync_fixtures_policy_owned_host-4e8af13c",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/rgw_sync_fixtures_policy_owned_host/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_sync_policy_integration_ci_multicluster_rgw_sync_fixtures_policy_owned_host_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_rgw_sync_fixtures_policy_owned_host",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestHostNetworkMultiClusterRGWOwnedSyncPolicy"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_serialization-c311fb5f-2a85460a0d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_serialization",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_serialization-c311fb5f",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_serialization/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_serialization_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_serialization",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalSerialization"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_release-817fea49-0995101ff1",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_release",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_release-817fea49",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 70,
+              "network_tests": [
+                "TestMultiClusterCephFSDirectoryRemovalRelease"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_release/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_release",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalRelease"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+            "mgr-modules": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:253468209466033e1826cc56d94ac33d98413a6835b6abc33646a1ed1cd7088f",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2a0b72d90e81a4102ff7c608af4a4014c76c4d776bff015ad1459215543def01",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "c9ee16887802cadbd9452f716734a9c0a99fc9096921544a932333a640808d67",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-12T13:11:27.058141+00:00",
+        "source_sha": "3746ce3d8522f08d4a9a124b6696d28a78b15d1a",
+        "test_images": {
+          "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1": "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1@sha256:bb7ea0d86f0d2c4cb5720998eac27ce9c6f8d89bc431540c1d2cc71ac51c1c9a",
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "d93bc922643886d66045bf1960e7a7448772b98934510a0a80ba8498c4cd746f",
+        "cell": "20.2.4/6a6a0e1b8f3a",
+        "entries": [
+          {
+            "core": false,
+            "id": "multicluster-rgw_sync_fixtures_policy_owned_host-4e8af13c-9ccdbb1518",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_sync_fixtures_policy_owned_host",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-rgw_sync_fixtures_policy_owned_host-4e8af13c",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/rgw_sync_fixtures_policy_owned_host/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_sync_policy_integration_ci_multicluster_rgw_sync_fixtures_policy_owned_host_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_rgw_sync_fixtures_policy_owned_host",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestHostNetworkMultiClusterRGWOwnedSyncPolicy"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_serialization-c311fb5f-2a85460a0d",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_serialization",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_serialization-c311fb5f",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_serialization/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_serialization_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_serialization",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalSerialization"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_removal_directory_release-817fea49-0995101ff1",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_removal_directory_release",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_removal_directory_release-817fea49",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 70,
+              "network_tests": [
+                "TestMultiClusterCephFSDirectoryRemovalRelease"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/cephfs",
+              "profile": "recovery/cephfs_removal_directory_release/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_directory_removal_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_removal_directory_release",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterCephFSDirectoryRemovalRelease"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+            "mgr-modules": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:5d21a0332c762a3654b4bb312dd9c4ff7bce2801ca3d72408f452ce6594eb01a",
+            "rbd-aux": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2f0266c7dba5c18b1f8addd9d4ee25b56f4b3616a2afed6244520685391061fa",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:aac25fc48b5306425ceefaf6a46755d5820fb3f60805141334de4f99a4ea6d6c"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "59da4e7fe3cbeaac191bc17a05a4d045b3f3dc9b2b22908a7348c86e29692a94",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-12T13:11:27.058141+00:00",
+        "source_sha": "3746ce3d8522f08d4a9a124b6696d28a78b15d1a",
+        "test_images": {
+          "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1": "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1@sha256:bb7ea0d86f0d2c4cb5720998eac27ce9c6f8d89bc431540c1d2cc71ac51c1c9a",
+          "testcontainers/ryuk:0.14.0": "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
+        }
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "3746ce3d8522f08d4a9a124b6696d28a78b15d1a:43224845868:1",
+    "selected_at": "2026-11-12T13:11:27.058141+00:00",
+    "source_sha": "3746ce3d8522f08d4a9a124b6696d28a78b15d1a"
+  },
+  "receipt_sha256": "f30f3cd09b760b8af51ee41b7f92769123e1133b601a7bd941903329e8573745",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "3746ce3d8522f08d4a9a124b6696d28a78b15d1a",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    }
+  ]
+}
