@@ -795,10 +795,15 @@ before Go runs. When the run's images match a combination, it also requires
 each unit that combination expects in the run (all of them, or the units of
 the selected network mode) to report its own line with the expected verdict
 and combination, and records the comparison in `report.json` under
-`reproduction`. `reproductions.py` keeps every combination either a
-supported release's pinned role images or one aggregate image, so CI can
-select it with the release alone (see [Reproduction catalogues in
-CI](ci.md#reproduction-catalogues)).
+`reproduction`. Both loaders accept only immutable images in a combination: a local image
+ID (`sha256:<64 hex>`) or a reference pinned by digest
+(`<name>[:<tag>]@sha256:<64 hex>`). A tag alone, such as
+`quay.io/ceph/ceph:latest`, is refused, since the stored verdict would apply
+to whatever the tag points at later. A combination stays valid when the CI
+release pins of `.github/ceph-role-images.json` move; a run selects it only
+while it uses those images (see [Reproduction catalogues in
+CI](ci.md#reproduction-catalogues)). Images given as a tag still run, as an
+investigation.
 
 A combination is added only from a native run that observed its verdicts on
 those images: run the case as an investigation, then record the

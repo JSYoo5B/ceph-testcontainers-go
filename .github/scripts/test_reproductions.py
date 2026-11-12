@@ -9,8 +9,8 @@ import unittest
 import reproductions
 
 ROOT = Path(__file__).resolve().parents[2]
-E1, C1, R1 = "sha256:e1", "sha256:c1", "sha256:r1"
-E2, C2, R2 = "sha256:e2", "sha256:c2", "sha256:r2"
+E1, C1, R1 = "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+E2, C2, R2 = "sha256:e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
 
 
 def catalog(affected="REPRODUCED"):
@@ -79,28 +79,46 @@ class CatalogTests(unittest.TestCase):
         sse = catalogs["internal/integration/experiments/rgw_empty_sse_header"]
         self.assertEqual({c["verdicts"]["rgw_empty_sse_header"] for c in sse["combinations"]}, {"REPRODUCED", "NOT_REPRODUCED"})
 
-    def test_a_combination_is_pinned_role_images_or_one_aggregate(self):
+    def test_combinations_name_immutable_images_whatever_the_release_pins(self):
         with tempfile.TemporaryDirectory() as temporary:
             package = Path(temporary) / "internal/integration/experiments/rgw_case"
             package.mkdir(parents=True)
             (package / "case_test.go").write_text('//ci: timeout=20m image-roles=essential,client,rgw\n'
                                                   'a := harness.StartReproduction(t, "rgw_case", "trigger")\n'
                                                   'b := harness.StartReproduction(t, "rgw_case/host", "trigger")\n')
-            (package / reproductions.CATALOG).write_text(json.dumps(catalog()))
-            pins = {"20.2.4": {"essential": E1, "client": C1, "rgw": R1}, "21.2.0": {"essential": E2, "client": C2, "rgw": R2}}
-            self.assertEqual(len(reproductions.verify(temporary, pins)), 1)
-            with self.assertRaises(ValueError):
-                reproductions.verify(temporary, {"20.2.4": pins["20.2.4"]})
             document = catalog()
-            document["combinations"][1]["images"] = {"essential": "quay.io/a@sha256:1", "client": "quay.io/a@sha256:1",
-                                                     "rgw": "quay.io/a@sha256:1"}
+            # Role IDs no release pin names any more, one with a separately
+            # built client, and digest references with and without a tag.
+            document["combinations"][1]["images"]["client"] = "sha256:" + "d4" * 32
+            document["combinations"].append({
+                "id": "aggregate", "platform": "linux/amd64", "verdicts": {"rgw_case": "NOT_REPRODUCED"},
+                "evidence": "native run", "images": {
+                    "essential": "quay.io/ceph/ceph:v20.2.5@sha256:" + "4" * 64,
+                    "client": "quay.io/ceph/ceph:v20.2.5@sha256:" + "4" * 64,
+                    "rgw": "localhost:5000/ceph/rgw@sha256:" + "5" * 64}})
             (package / reproductions.CATALOG).write_text(json.dumps(document))
-            self.assertEqual(len(reproductions.verify(temporary, {"20.2.4": pins["20.2.4"]})), 1)
+            self.assertEqual(len(reproductions.verify(temporary)), 1)
+            for name, image in (
+                ("a moving tag", "quay.io/ceph/ceph:latest"),
+                ("a tag without a digest", "quay.io/ceph/ceph:v20.2.5"),
+                ("a short image ID", "sha256:e1"),
+                ("an uppercase digest", "sha256:" + "E1" * 32),
+                ("a name only", "ceph"),
+            ):
+                with self.subTest(name):
+                    mutable = catalog()
+                    mutable["combinations"][1]["images"] = {role: image for role in ("essential", "client", "rgw")}
+                    with self.assertRaises(ValueError):
+                        reproductions.validate(mutable)
+                    (package / reproductions.CATALOG).write_text(json.dumps(mutable))
+                    with self.assertRaises(ValueError):
+                        reproductions.verify(temporary)
+            (package / reproductions.CATALOG).write_text(json.dumps(catalog()))
             (package / "case_test.go").write_text('//ci: timeout=20m image-roles=essential,client\n'
                                                   'a := harness.StartReproduction(t, "rgw_case", "trigger")\n'
                                                   'b := harness.StartReproduction(t, "rgw_case/host", "trigger")\n')
             with self.assertRaises(ValueError):
-                reproductions.verify(temporary, pins)
+                reproductions.verify(temporary)
 
 
 class ResolutionTests(unittest.TestCase):
@@ -128,7 +146,7 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(reproductions.expectations(catalog(), AFFECTED, "linux/amd64", "host"),
                          ("affected", {"rgw_case/host": "REPRODUCED"}))
         for name, environment, platform in (
-            ("unknown images", {"CEPH_TEST_IMAGE": "quay.io/a@sha256:1"}, "linux/amd64"),
+            ("unknown images", {"CEPH_TEST_IMAGE": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111"}, "linux/amd64"),
             ("one role differs", {**AFFECTED, "CEPH_TEST_RGW_IMAGE": R2}, "linux/amd64"),
             ("a role unresolved", {"CEPH_TEST_ESSENTIAL_IMAGE": E1, "CEPH_TEST_CLIENT_IMAGE": C1}, "linux/amd64"),
             ("another platform", AFFECTED, "linux/arm64"),

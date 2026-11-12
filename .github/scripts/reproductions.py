@@ -17,7 +17,6 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENTS = ROOT / "internal/integration/experiments"
-ROLE_IMAGES = ROOT / ".github/ceph-role-images.json"
 CATALOG = "reproductions.json"
 SCHEMA = "ceph-reproductions/v1"
 ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
@@ -27,6 +26,12 @@ NETWORKS = ("bridge", "host")
 UNIT = re.compile(r"[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?\Z")
 COMBINATION = re.compile(r"[a-z0-9]+([.-][a-z0-9]+)*\Z")
 PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+\Z")
+# An expectation is stored only for bytes that cannot change: a local image ID
+# or a reference pinned by digest (an optional tag beside the digest is kept).
+# The same syntax as harness.ParseReproductionCatalog.
+IMMUTABLE = re.compile(r"(sha256:[0-9a-f]{64}"
+                       r"|[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*"
+                       r"(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64})\Z")
 START = re.compile(r'StartReproduction\(\s*t\s*,\s*"([^"]+)"')
 IMAGE_ROLES = re.compile(r"^//ci: .*\bimage-roles=(\S+)", re.MULTILINE)
 DEFAULT_IMAGE = re.compile(r'^const DefaultImage = "([^"]+)"$', re.MULTILINE)
@@ -72,8 +77,12 @@ def validate(document, label=CATALOG):
         if not PLATFORM.match(combination["platform"]):
             raise ValueError("%s: combination %s platform %r" % (label, name, combination["platform"]))
         images = combination["images"]
-        if set(images) != set(roles) or any(not image or image.strip() != image for image in images.values()):
+        if set(images) != set(roles):
             raise ValueError("%s: combination %s must name an image for exactly the roles %r" % (label, name, roles))
+        for role in roles:
+            if not isinstance(images[role], str) or not IMMUTABLE.match(images[role]):
+                raise ValueError("%s: combination %s role %s image %r is not an image ID or a digest reference"
+                                 % (label, name, role, images[role]))
         if not combination["verdicts"] or not combination["evidence"].strip():
             raise ValueError("%s: combination %s needs verdicts and native evidence" % (label, name))
         for unit, verdict in combination["verdicts"].items():
@@ -177,17 +186,11 @@ def batch_roles(directory):
     return declared
 
 
-def pinned_releases(path=ROLE_IMAGES):
-    """The official role image IDs of each supported release."""
-    return {release: variants["official"] for release, variants in json.loads(Path(path).read_text())["images"].items()}
-
-
-def verify(root=ROOT, pins=None):
+def verify(root=ROOT):
     """Every catalogue of the experiment cases: its units are the ones the
-    tests start, its roles are the ones its batch declares, and each
-    combination is either a supported release's pinned role images or one
-    aggregate image for every role."""
-    pins = pinned_releases() if pins is None else pins
+    tests start and its roles are the ones its batch declares. Its
+    combinations stay valid when the CI release pins change, since each names
+    immutable images (validate)."""
     catalogs = {}
     for directory in sorted(Path(root, "internal/integration/experiments").iterdir()):
         if not directory.is_dir():
@@ -200,12 +203,5 @@ def verify(root=ROOT, pins=None):
         if declared != {",".join(catalog["roles"])}:
             raise ValueError("%s: roles %s, but the batch declares image-roles %s"
                              % (package, ",".join(catalog["roles"]), sorted(declared)))
-        for combination in catalog["combinations"]:
-            images = combination["images"]
-            pinned = any(all(release_images.get(role) == images[role] for role in catalog["roles"])
-                         for release_images in pins.values())
-            if not pinned and len(set(images.values())) != 1:
-                raise ValueError("%s: combination %s is neither pinned role images nor one aggregate image"
-                                 % (package, combination["id"]))
         catalogs[package] = catalog
     return catalogs

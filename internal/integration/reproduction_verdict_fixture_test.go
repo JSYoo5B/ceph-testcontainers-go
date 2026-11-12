@@ -78,11 +78,11 @@ func verdictCatalog(t *testing.T, affected string) harness.ReproductionCatalog {
   "roles": ["essential", "client", "rgw"],
   "units": {"rgw_case": {"network": "bridge"}, "rgw_case/host": {"network": "host"}},
   "combinations": [
-    {"id": "affected", "platform": "linux/amd64", "images": {"essential": "sha256:e1", "client": "sha256:c1", "rgw": "sha256:r1"},
+    {"id": "affected", "platform": "linux/amd64", "images": {"essential": "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "client": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "rgw": "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"},
      "verdicts": {"rgw_case": "` + affected + `", "rgw_case/host": "REPRODUCED"}, "evidence": "native run"},
-    {"id": "fixed", "platform": "linux/amd64", "images": {"essential": "sha256:e2", "client": "sha256:c2", "rgw": "sha256:r2"},
+    {"id": "fixed", "platform": "linux/amd64", "images": {"essential": "sha256:e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "client": "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "rgw": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"},
      "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "native run"},
-    {"id": "aggregate", "platform": "linux/amd64", "images": {"essential": "quay.io/a@sha256:1", "client": "quay.io/a@sha256:1", "rgw": "quay.io/a@sha256:1"},
+    {"id": "aggregate", "platform": "linux/amd64", "images": {"essential": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111", "client": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111", "rgw": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111"},
      "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "native run"}
   ]
 }`))
@@ -97,9 +97,9 @@ func roleEnv(values map[string]string) func(string) string {
 }
 
 var (
-	affectedRoles = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1", "CEPH_TEST_RGW_IMAGE": "sha256:r1"})
-	fixedRoles    = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e2", "CEPH_TEST_CLIENT_IMAGE": "sha256:c2", "CEPH_TEST_RGW_IMAGE": "sha256:r2"})
-	unknownRoles  = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e3", "CEPH_TEST_CLIENT_IMAGE": "sha256:c3", "CEPH_TEST_RGW_IMAGE": "sha256:r3"})
+	affectedRoles = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "CEPH_TEST_RGW_IMAGE": "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"})
+	fixedRoles    = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "CEPH_TEST_CLIENT_IMAGE": "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "CEPH_TEST_RGW_IMAGE": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"})
+	unknownRoles  = roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3", "CEPH_TEST_CLIENT_IMAGE": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3", "CEPH_TEST_RGW_IMAGE": "sha256:b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3"})
 )
 
 // outcome is what one evidence pattern leaves the unit with.
@@ -207,13 +207,13 @@ func TestReproductionImagesSelectTheExpectation(t *testing.T) {
 	}{
 		{"affected roles", "expected=REPRODUCED combination=affected", affectedRoles},
 		{"fixed roles", "expected=NOT_REPRODUCED combination=fixed", fixedRoles},
-		{"aggregate", "expected=NOT_REPRODUCED combination=aggregate", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1"})},
-		{"another aggregate", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/b@sha256:2"})},
-		{"one role differs", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1", "CEPH_TEST_RGW_IMAGE": "sha256:r2"})},
-		{"a role unresolved", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1"})},
+		{"aggregate", "expected=NOT_REPRODUCED combination=aggregate", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111"})},
+		{"another aggregate", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/b@sha256:2222222222222222222222222222222222222222222222222222222222222222"})},
+		{"one role differs", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "CEPH_TEST_RGW_IMAGE": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"})},
+		{"a role unresolved", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "CEPH_TEST_CLIENT_IMAGE": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"})},
 		// The aggregate with a client override runs the client on another
 		// image, so it is not the aggregate combination.
-		{"aggregate with a client override", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1", "CEPH_TEST_CLIENT_IMAGE": "quay.io/b@sha256:2"})},
+		{"aggregate with a client override", "expected=none combination=none", roleEnv(map[string]string{"CEPH_TEST_IMAGE": "quay.io/a@sha256:1111111111111111111111111111111111111111111111111111111111111111", "CEPH_TEST_CLIENT_IMAGE": "quay.io/b@sha256:2222222222222222222222222222222222222222222222222222222222222222"})},
 	} {
 		line := runVerdict(t, catalog, c.env, absentSymptom).verdictLine(t)
 		if !strings.Contains(line, " "+c.want+" ") {
@@ -304,7 +304,7 @@ func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
 	line := runVerdict(t, verdictCatalog(t, "REPRODUCED"), affectedRoles, observedSymptom).verdictLine(t)
 	for _, want := range []string{
 		"REPRODUCTION_VERDICT case=rgw_case verdict=REPRODUCED expected=REPRODUCED combination=affected attempts=1 platform=linux/amd64 network=bridge ",
-		" images=essential=sha256:e1,client=sha256:c1,rgw=sha256:r1 ",
+		" images=essential=sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1,client=sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1,rgw=sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1 ",
 		" observation=trigger: refused with 400",
 	} {
 		if !strings.Contains(line, want) {
@@ -331,17 +331,33 @@ func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 		return `{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
   "combinations": [{"id": "a", "platform": "linux/amd64", "images": ` + images + `, "verdicts": ` + verdicts + `, "evidence": "run"}]}`
 	}
-	images := `{"essential": "E", "rgw": "R"}`
-	if _, err := harness.ParseReproductionCatalog([]byte(combination(`{"rgw_case": "REPRODUCED"}`, images))); err != nil {
-		t.Fatalf("valid catalogue: %v", err)
+	id, digest := "sha256:"+strings.Repeat("e1", 32), "@sha256:"+strings.Repeat("4", 64)
+	images := `{"essential": "` + id + `", "rgw": "quay.io/ceph/ceph` + digest + `"}`
+	// Any image ID or digest reference is a stored identity, whether or not a
+	// CI release pin still names it.
+	for _, valid := range []string{
+		images,
+		`{"essential": "quay.io/ceph/ceph:v20.2.5` + digest + `", "rgw": "localhost:5000/ceph/rgw` + digest + `"}`,
+	} {
+		if _, err := harness.ParseReproductionCatalog([]byte(combination(`{"rgw_case": "REPRODUCED"}`, valid))); err != nil {
+			t.Fatalf("valid catalogue %s: %v", valid, err)
+		}
+	}
+	mutable := func(image string) string {
+		return combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`", "rgw": "`+image+`"}`)
 	}
 	for name, data := range map[string]string{
 		"inconclusive expectation": combination(`{"rgw_case": "INCONCLUSIVE"}`, images),
 		"unknown verdict":          combination(`{"rgw_case": "FIXED"}`, images),
 		"unknown unit":             combination(`{"rgw_other": "REPRODUCED"}`, images),
 		"no verdicts":              combination(`{}`, images),
-		"missing role image":       combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "E"}`),
-		"extra role image":         combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "E", "rgw": "R", "client": "C"}`),
+		"missing role image":       combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`"}`),
+		"extra role image":         combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`", "rgw": "`+id+`", "client": "`+id+`"}`),
+		"a moving tag":             mutable("quay.io/ceph/ceph:latest"),
+		"a tag without a digest":   mutable("quay.io/ceph/ceph:v20.2.5"),
+		"a short image ID":         mutable("sha256:e1"),
+		"an uppercase digest":      mutable("sha256:" + strings.Repeat("E1", 32)),
+		"an empty image":           mutable(""),
 		"unknown field":            strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence"`, `"release": "20.2.4", "evidence"`, 1),
 		"unknown role":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["essential", "rgw"]`, `["essential", "gateway"]`, 1),
 		"bad network":              strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"bridge"`, `"none"`, 1),

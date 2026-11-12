@@ -49,6 +49,11 @@ var (
 	reproductionUnit        = regexp.MustCompile(`^[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$`)
 	reproductionCombination = regexp.MustCompile(`^[a-z0-9]+([.-][a-z0-9]+)*$`)
 	reproductionPlatform    = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+$`)
+	// reproductionImage is an image whose bytes cannot change: a local image
+	// ID, or a reference pinned by digest (a tag beside the digest is kept).
+	// A combination stores an expectation only for such images, so it stays
+	// valid when the CI release pins move and never applies to a moved tag.
+	reproductionImage = regexp.MustCompile(`^(sha256:[0-9a-f]{64}|[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64})$`)
 )
 
 // reproductionRoles are the image roles a combination can name, in the
@@ -88,8 +93,9 @@ type ReproductionCombination struct {
 
 // ParseReproductionCatalog reads a ReproductionsFile and refuses anything a
 // run could not use to select one expectation: an unknown field, role or
-// verdict, an INCONCLUSIVE expectation, a combination that misses a role or
-// names an unknown unit, or two combinations of the same images.
+// verdict, an INCONCLUSIVE expectation, a combination that misses a role,
+// names a mutable image (a tag without a digest) or an unknown unit, or two
+// combinations of the same images.
 func ParseReproductionCatalog(data []byte) (ReproductionCatalog, error) {
 	var c ReproductionCatalog
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -132,8 +138,8 @@ func ParseReproductionCatalog(data []byte) (ReproductionCatalog, error) {
 			return c, fmt.Errorf("%s: combination %s must name an image for exactly the roles %q", ReproductionsFile, combination.ID, c.Roles)
 		}
 		for _, role := range c.Roles {
-			if image := combination.Images[role]; image == "" || strings.TrimSpace(image) != image {
-				return c, fmt.Errorf("%s: combination %s has no image for role %s", ReproductionsFile, combination.ID, role)
+			if image := combination.Images[role]; !reproductionImage.MatchString(image) {
+				return c, fmt.Errorf("%s: combination %s role %s image %q is not an image ID or a digest reference", ReproductionsFile, combination.ID, role, image)
 			}
 		}
 		if len(combination.Verdicts) == 0 || strings.TrimSpace(combination.Evidence) == "" {
