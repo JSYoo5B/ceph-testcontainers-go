@@ -2,9 +2,9 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWMultipartPartStorageClass`, optional batch
-`rgw_multipart_part_class`. Pure tests of the part read classification
-and of the out-of-range control (`TestPartOK` and `TestBeyondRefused`, batch
-`pure`).
+`rgw_multipart_part_class`. Pure tests of the part read classification,
+of the out-of-range control and of the verdict judgement (`TestPartOK`,
+`TestBeyondRefused` and `TestJudgePartRead`, batch `pure`).
 
 ## Use case and native contract
 
@@ -51,8 +51,8 @@ answers every part.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on every published release image
-and on the Tentacle 20.2.5 official image. No automatic run includes it (the
+Deliberately failing reproducer: it reports `REPRODUCED` and fails on every
+published release image and on the Tentacle 20.2.5 official image. No automatic run includes it (the
 default checks of a pull request, pushes to `main`, periodic samples), and it
 never gates anything. A maintainer can run it on demand, also on a pull
 request's head with the comment below.
@@ -96,34 +96,60 @@ object's head and tail placement rules (`RGW_MP placement`), its whole read
    with `condition not established` and reads no part.
 2. Oracle, per object: GET and HEAD of parts 1 and 2 must answer 200 or 206
    with the part's length and `x-amz-mp-parts-count: 2`; a GET must return
-   the part's bytes (`partOK`).
+   the part's bytes (`partOK`). `standard-control` runs first, and the `COLD`
+   object is read only after it passed.
 3. Refusal control: GET of part 3 must answer `400` with the S3 code
    `InvalidPart`, which both objects answer on every measured build
    (`beyondRefused`). Another error, such as `403 AccessDenied` or
    `503 ServiceUnavailable`, does not show that the part number was out of
    range and fails the control.
 
-## Reading the result
+## Verdict
 
-The results below ran on the pinned role images of the shared recipe: 20.2.4
-(essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw `aac25fc48b53…`),
-21.2.0 (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and 19.2.5 (essential `43ee23624e7a…`, client
-`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`), and on the 20.2.5 official image
-`sha256:4337ac8ac81d…` as the aggregate. Linux amd64, bridge.
+The test reports one reproduction unit, `rgw_multipart_part_storage_class`,
+with one planned observation, `cold-storage-class`, over its four reads of
+parts 1 and 2. `standard-control` and the refusal of part 3 are controls.
+`go test -v` prints one
+`REPRODUCTION_VERDICT case=rgw_multipart_part_storage_class ...` line with
+the verdict, the decisive reads and the resolved images.
 
-- **Observed bug:** `cold-storage-class` answers `400 InvalidPart` for GET of
-  parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as
-  the length and no parts count, while the whole-object GET returns all
-  5,308,416 bytes; `standard-control` passes with 200, the exact lengths
-  (5,242,880 and 65,536), parts count 2 and the exact bytes. Squid 19.2.5,
-  Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0 all do this (about 38 s
-  each).
-- **Pass:** both subtests meet the contract. No tested build passes.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  placement evidence in step 1.
-- **Unavailable prerequisite:** the cluster or the gateway does not start,
-  the zone edits are refused, or the gateway does not restart.
+- `REPRODUCED`: the conditions and controls hold, the whole-object GET of
+  the `COLD` object returns every byte, and a read of an existing part is
+  refused with 400 (`InvalidPart` for a GET; a HEAD carries no error body)
+  (`judgePartRead`).
+- `NOT_REPRODUCED`: the conditions and controls hold, and every read of
+  parts 1 and 2 of the `COLD` object answers the part (`partOK`).
+- `INCONCLUSIVE`: a condition is not established (the zone, the manifest's
+  tail rule, or the whole object does not match, step 1), a control failed
+  (`standard-control` does not answer a part, the `STANDARD` parts are in
+  `COLD`, or part 3 is not refused as `400 InvalidPart`), or another fault
+  (a part read answers neither the part nor `400 InvalidPart`, for example
+  `403`, `503` or the whole object). The line names the reason.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+reproduction fails `cold-storage-class`, an absent symptom passes, and an
+inconclusive run fails. With an expectation only the matching verdict passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_multipart_part_storage_class=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch rgw_multipart_part_class \
+  --package ./internal/integration/experiments/rgw_multipart_part_storage_class \
+  --directory "artifacts/rgw-multipart-part-class-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+The verdicts below ran on the pinned role images of the shared recipe:
+20.2.4 (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
+`aac25fc48b53…`), 21.2.0 (essential `119180026952…`, client
+`e5f7edab88b6…`, rgw `9ef3fb34f7c4…`) and 19.2.5 (essential
+`43ee23624e7a…`, client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`), and on the
+20.2.5 official image `sha256:4337ac8ac81d…` as the aggregate. Linux amd64,
+bridge.
+
+| Release | Verdict | Observation |
+| --- | --- | --- |
+| Squid 19.2.5, Tentacle 20.2.4 and 20.2.5, Umbrella 21.2.0 | `REPRODUCED` | `cold-storage-class` answers `400 InvalidPart` for GET of parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as the length and no parts count, while the whole-object GET returns all 5,308,416 bytes; `standard-control` answers 200, the exact lengths (5,242,880 and 65,536), parts count 2 and the exact bytes (about 38 s each) |
+
+No tested build is fixed, so the case has no `NOT_REPRODUCED` reference.
 
 ## Cleanup and limits
 
