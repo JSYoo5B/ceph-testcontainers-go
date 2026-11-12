@@ -88,6 +88,7 @@ type hooks interface {
 	ConfigWho(setting ceph.ConfigSetting) string
 	ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, error)
 	ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error
+	ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
 	ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
 	MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error)
 }
@@ -368,6 +369,13 @@ func ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, 
 // mutex.
 func ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error {
 	return get().ConfigSet(ctx, c, setting, value)
+}
+
+// ConfigSetEmpty stores an empty value for a normalized setting without
+// option validation. The MGR applies an empty module option value as a
+// removal. The caller holds the mutex.
+func ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error {
+	return get().ConfigSetEmpty(ctx, c, setting)
 }
 
 // ConfigRemove removes the entry of a normalized setting. The caller holds the

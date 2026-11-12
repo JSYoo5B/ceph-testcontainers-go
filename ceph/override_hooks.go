@@ -347,6 +347,14 @@ func (overrideHooks) ConfigSet(ctx context.Context, c *Container, setting Config
 	return err
 }
 
+// ConfigSetEmpty stores an empty value for a normalized setting without the
+// MON's option validation (config set --force), which an empty value of a
+// typed or enumerated option would fail. The caller holds the mutex.
+func (overrideHooks) ConfigSetEmpty(ctx context.Context, c *Container, setting ConfigSetting) error {
+	_, err := runConfigCommand(ctx, c.conn().ceph, "set", configWho(setting), setting.Name, "", "--force")
+	return err
+}
+
 // ConfigRemove removes the entry of a normalized setting. The caller holds the
 // mutex.
 func (overrideHooks) ConfigRemove(ctx context.Context, c *Container, setting ConfigSetting) error {

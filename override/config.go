@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -31,6 +32,10 @@ type configState struct {
 	applied  string
 	known    bool
 	restored bool
+	// cleared records that a restoration of an originally absent MGR module
+	// option stored the empty value that precedes its removal, so a retry
+	// recognizes that value as this override's own.
+	cleared bool
 	// token is the override's entry in the owner's registry of held overrides.
 	token overridehook.Token
 	// refused is why the call was not applied. A handle with it owns nothing
@@ -76,7 +81,9 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 // database, and some options, such as osd_op_queue, apply only when a daemon
 // starts. Check a running daemon's effective value with
 // ceph.Container.Ceph(ctx, "config", "show", "osd.0", name). Configuration
-// output can contain secrets; log only selected fields.
+// output can contain secrets; log only selected fields. Restore of an
+// originally absent MGR module key also reaches the running module (see
+// ConfigHandle.Restore).
 //
 // Outcomes, as the handle it returns and the error:
 //   - Entry written and read back: real handle; nil.
@@ -189,6 +196,17 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // context that ends before the topology lock is free returns the context
 // error, and the entry stays registered.
 //
+// A removal does not reach a running MGR module: the MGR passes only the
+// mgr/ keys present in a configuration update to its modules and keeps a key
+// that disappears, while an empty value erases the key, so the module falls
+// back to its default (the config callback in src/mgr/MgrStandby.cc and
+// PyModuleRegistry::handle_config in src/mgr/PyModuleRegistry.cc, Squid
+// through Umbrella). Restoring an originally absent option whose name starts
+// with mgr/ therefore stores the empty value first, without option validation,
+// and then removes the entry. The stored state ends absent, and the running
+// MGR, active and standby, observes the option as unset. A retry after a lost
+// reply accepts that empty value as this override's own.
+//
 //purpose:condition,lifetime
 func (change *ConfigHandle) Restore(ctx context.Context) error {
 	if change == nil || change.state == nil {
@@ -225,18 +243,29 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 		change.finish(c)
 		return nil
 	}
-	expected := change.state.applied
-	if !change.state.known {
-		expected = change.setting.Value
-		if current != nil && current.Value != expected {
-			return errors.New("configuration apply readback was unavailable and the current value differs from the requested text; inspect native state or terminate the cluster")
+	// An earlier restoration that stored the empty module value and lost its
+	// removal left that value behind.
+	ownEmpty := change.state.cleared && current != nil && current.Value == ""
+	if !ownEmpty {
+		expected := change.state.applied
+		if !change.state.known {
+			expected = change.setting.Value
+			if current != nil && current.Value != expected {
+				return errors.New("configuration apply readback was unavailable and the current value differs from the requested text; inspect native state or terminate the cluster")
+			}
 		}
-	}
-	if current == nil || current.Value != expected {
-		return overridehook.Invalid(errors.New("configuration entry changed outside this override; refusing restoration"))
+		if current == nil || current.Value != expected {
+			return overridehook.Invalid(errors.New("configuration entry changed outside this override; refusing restoration"))
+		}
 	}
 	var restoreErr error
 	if change.state.previous == nil {
+		if mgrModuleOption(change.setting.Name) && current.Value != "" {
+			change.state.cleared = true
+			if err := overridehook.ConfigSetEmpty(ctx, c, change.setting); err != nil {
+				return err
+			}
+		}
 		restoreErr = overridehook.ConfigRemove(ctx, c, change.setting)
 	} else {
 		restoreErr = overridehook.ConfigSet(ctx, c, change.setting, change.state.previous.Value)
@@ -268,6 +297,11 @@ func configDeadline(ctx context.Context, c *ceph.Container) (context.Context, co
 	}
 	return context.WithCancel(ctx)
 }
+
+// mgrModuleOption reports whether name is an MGR module option, which the MGR
+// consumes itself (mgr/<module>/<option>, or a localized
+// mgr/<module>/<mgr id>/<option>) instead of its daemon configuration.
+func mgrModuleOption(name string) bool { return strings.HasPrefix(name, "mgr/") }
 
 func sameConfigValue(a, b *ceph.ConfigEntry) bool {
 	if a == nil || b == nil {
