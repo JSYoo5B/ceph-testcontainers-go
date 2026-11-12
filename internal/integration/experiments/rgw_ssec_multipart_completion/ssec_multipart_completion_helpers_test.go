@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
@@ -67,4 +68,26 @@ func ssecClassifyCompletion(status int, body []byte) (ssecCompletion, error) {
 	}
 	result.ETag, result.ChecksumSHA256 = parsed.ETag, parsed.ChecksumSHA256
 	return result, nil
+}
+
+// ssecAlgorithmRefusal is the message of the refusal the case reproduces:
+// the completion is checked for the customer-key headers.
+const ssecAlgorithmRefusal = "must provide a valid encryption algorithm"
+
+// judgeOmittedKeyCompletion judges the completion of an SSE-C upload without
+// a checksum algorithm, sent without the customer-key headers. The documented
+// symptom is the customer-key refusal: 400 InvalidArgument whose message asks
+// for a valid encryption algorithm. A completed upload is its absence (the
+// caller then requires the object to read back only with the key). Any other
+// answer, an embedded error included, is another fault: no verdict.
+func judgeOmittedKeyCompletion(done ssecCompletion) (symptom bool, detail string, err error) {
+	switch {
+	case done.completed():
+		return false, fmt.Sprintf("completed with %d without the customer key", done.Status), nil
+	case done.Status == http.StatusBadRequest && !done.Embedded && done.Failure.Code == "InvalidArgument" && strings.Contains(done.Failure.Message, ssecAlgorithmRefusal):
+		return true, fmt.Sprintf("refused with %d %s %q", done.Status, done.Failure.Code, done.Failure.Message), nil
+	default:
+		return false, "", fmt.Errorf("another fault: completion without the customer key answered %d (embedded error %t) %s %q, want 200 or 400 InvalidArgument %q",
+			done.Status, done.Embedded, done.Failure.Code, done.Failure.Message, ssecAlgorithmRefusal)
+	}
 }

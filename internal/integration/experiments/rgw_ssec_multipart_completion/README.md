@@ -2,8 +2,10 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWSSECMultipartCompletion`, optional batch `rgw_ssec_completion`.
-Pure tests of its completion classifier: `TestSSECClassifyCompletion` and
-`TestSSECClassifyCompletionRejectsUnclassified200` (batch `pure`).
+Pure tests of its completion classifier and verdict judgement:
+`TestSSECClassifyCompletion`,
+`TestSSECClassifyCompletionRejectsUnclassified200` and
+`TestJudgeOmittedKeyCompletion` (batch `pure`).
 
 ## Use case and native contract
 
@@ -56,8 +58,8 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Deliberately failing reproducer: it reports `REPRODUCED` and fails on the
+published Tentacle 20.2.4 images, the pull request default. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -108,8 +110,8 @@ Customer keys are never logged.
    SSE-C algorithm header. The completion is classified by its XML root: a
    200 whose root is `Error`, in any namespace, is a failed completion that
    keeps its HTTP status, error code and message, and a 200 that is neither
-   `CompleteMultipartUploadResult` nor `Error` fails the test after its
-   upload is aborted. After a refused completion, HEAD with the key answers
+   `CompleteMultipartUploadResult` nor `Error` is another fault, reported
+   after its upload is aborted. After a refused completion, HEAD with the key answers
    404, and the upload is aborted at once, so no failed completion is reused.
 4. Key validation: the wrong key is a valid 256-bit key with a correct MD5,
    and its refusal must name the MD5 mismatch, so it cannot come from
@@ -117,32 +119,56 @@ Customer keys are never logged.
 5. Checksums: the `SHA256` completion with the key answers the composite
    SHA-256 of the part (`<digest>-1`).
 
-## Reading the result
+## Verdict
 
-The results below ran on the pinned images of the shared recipe: the 20.2.4
+The test reports one reproduction unit, `rgw_ssec_multipart_completion`,
+with one planned observation, `no-checksum-omitted-key`. The other five
+subtests are controls and run first: `unencrypted-control` and
+`no-checksum-correct-key` show that completion works, and
+`no-checksum-wrong-key`, `sha256-omitted-key` and `sha256-correct-key` show
+that the gateway still validates the key where S3 needs it, so a completion
+that succeeds without the key is not explained by a gateway that ignores
+customer keys. `go test -v` prints one
+`REPRODUCTION_VERDICT case=rgw_ssec_multipart_completion ...` line with the
+verdict, the decisive observation and the resolved images.
+
+- `REPRODUCED`: the conditions and every control hold, and the completion
+  without the key is refused with 400 `InvalidArgument` whose message asks
+  for a valid encryption algorithm, leaving no object
+  (`judgeOmittedKeyCompletion`).
+- `NOT_REPRODUCED`: the conditions and every control hold, and the
+  completion without the key answers 200 and the object reads back only with
+  the key.
+- `INCONCLUSIVE`: a condition is not established (step 2), a control failed
+  (any of the five control subtests), or another fault (the completion
+  answers neither 200 nor that refusal, an embedded error, an object after
+  the refusal, or a completed object that is not encrypted at rest). The line
+  names the reason.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+reproduction fails `no-checksum-omitted-key`, an absent symptom passes, and
+an inconclusive run fails. With an expectation only the matching verdict
+passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_ssec_multipart_completion=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch rgw_ssec_completion \
+  --package ./internal/integration/experiments/rgw_ssec_multipart_completion \
+  --directory "artifacts/rgw-ssec-completion-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+The verdicts below ran on the pinned images of the shared recipe: the 20.2.4
 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
 `aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
 role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
 `9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
 client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 
-- **Pass:** every subtest followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `no-checksum-omitted-key` fails with 400
-  `InvalidArgument` "Requests specifying Server Side Encryption with Customer
-  provided keys must provide a valid encryption algorithm." and every other
-  subtest passes. Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the condition in step 2 was logged.
-- **Unavailable prerequisite:** the cluster, the gateway or its HTTPS listener
-  does not start, or `unencrypted-control` fails.
-- **Condition not established:** an SSE-C initiation does not report SSE-C,
-  `ListParts` reports another checksum algorithm, or a part checksum is not
-  echoed. The test fails with `condition not established`.
-- Squid 19.2.5 cannot run the contract: `no-checksum-omitted-key` passes, but
-  `no-checksum-wrong-key` completes with 200 (the completion validates no
-  key), and a `SHA256` part answers without its checksum, so both `sha256`
-  subtests stop with `condition not established`.
+| Release | Verdict | Observation |
+| --- | --- | --- |
+| Tentacle 20.2.4 | `REPRODUCED` | `no-checksum-omitted-key` is refused with 400 `InvalidArgument` "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm." and every control passes |
+| Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every subtest follows the table |
+| Squid 19.2.5 | `INCONCLUSIVE` | control failed: `no-checksum-wrong-key` completes with 200 (the completion validates no key), and a `SHA256` part answers without its checksum, so the `sha256` controls stop with `condition not established` |
 
 ## Cleanup and limits
 

@@ -6,6 +6,7 @@ package rgw_ssec_multipart_completion_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,35 @@ func TestSSECClassifyCompletionRejectsUnclassified200(t *testing.T) {
 		}
 		if got.Status != http.StatusOK || got.ETag != "" {
 			t.Errorf("ssecClassifyCompletion(200, %q) lost the status or reported a result: %+v", body, got)
+		}
+	}
+}
+
+func TestJudgeOmittedKeyCompletion(t *testing.T) {
+	const refusal = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+	for _, tc := range []struct {
+		name    string
+		done    ssecCompletion
+		symptom bool
+		fault   bool
+	}{
+		{"completed", ssecCompletion{Status: http.StatusOK, ETag: `"e-1"`}, false, false},
+		{"customer-key refusal", ssecCompletion{Status: http.StatusBadRequest, Failure: ssecFailure{Code: "InvalidArgument", Message: refusal}}, true, false},
+		{"key MD5 refusal", ssecCompletion{Status: http.StatusBadRequest, Failure: ssecFailure{Code: "InvalidArgument", Message: "The calculated MD5 hash of the key did not match the hash that was provided."}}, false, true},
+		{"embedded refusal", ssecCompletion{Status: http.StatusOK, Embedded: true, Failure: ssecFailure{Code: "InvalidArgument", Message: refusal}}, false, true},
+		{"other code", ssecCompletion{Status: http.StatusBadRequest, Failure: ssecFailure{Code: "InvalidRequest", Message: refusal}}, false, true},
+		{"signature refusal", ssecCompletion{Status: http.StatusForbidden, Failure: ssecFailure{Code: "SignatureDoesNotMatch"}}, false, true},
+		{"server error", ssecCompletion{Status: http.StatusInternalServerError}, false, true},
+	} {
+		symptom, detail, err := judgeOmittedKeyCompletion(tc.done)
+		if tc.fault {
+			if err == nil || !strings.HasPrefix(err.Error(), "another fault: ") {
+				t.Errorf("%s: %t %q %v, want another fault", tc.name, symptom, detail, err)
+			}
+			continue
+		}
+		if err != nil || symptom != tc.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", tc.name, symptom, detail, err, tc.symptom)
 		}
 	}
 }
