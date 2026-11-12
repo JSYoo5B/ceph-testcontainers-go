@@ -2,8 +2,116 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/expect",
-  "count": 15,
+  "count": 32,
   "entries": [
+    {
+      "current": "rgw/expect.MultisiteDataSync",
+      "kind": "type",
+      "proposed": "rgw/expect.MultisiteDataSync",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSync.Evaluate",
+      "kind": "method",
+      "signature": "func(observed multisite.SyncStatus) (MultisiteDataSyncEvaluation, error)",
+      "receiver": "MultisiteDataSync",
+      "proposed": "rgw/expect.MultisiteDataSync.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncBehind",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncBehind",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncCaughtUp",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncCaughtUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncEvaluation",
+      "kind": "type",
+      "proposed": "rgw/expect.MultisiteDataSyncEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MultisiteDataSyncEvaluation",
+      "proposed": "rgw/expect.MultisiteDataSyncEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatch",
+      "kind": "type",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "MultisiteDataSyncMismatch",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchBehind",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchBehind",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchCaughtUp",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchCaughtUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchFull",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchFull",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchReason",
+      "kind": "type",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchRecovering",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchRecovering",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchSource",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchSource",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchSyncing",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchSyncing",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncMismatchZone",
+      "kind": "const",
+      "proposed": "rgw/expect.MultisiteDataSyncMismatchZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.MultisiteDataSyncState",
+      "kind": "type",
+      "proposed": "rgw/expect.MultisiteDataSyncState",
+      "decision": "baseline"
+    },
     {
       "current": "rgw/expect.UsageScopeAccount",
       "kind": "const",

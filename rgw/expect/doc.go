@@ -1,12 +1,13 @@
 // Package expect evaluates captured observations of RGW fixtures against the
 // conditions a test states, and explains each mismatch. Its evaluations read
-// the observation types of package rgw.
+// the observation types of package rgw and of its multisite extension,
+// package rgw/multisite.
 //
-// It is optional: running and observing a gateway needs only package rgw,
-// and package rgw does not import it. A test that wants a precise verdict on
-// one observation, such as "two root users of one account report the same
-// account aggregate", states it as an expectation and evaluates the
-// observation it already has:
+// It is optional: running and observing gateways needs only package rgw or
+// rgw/multisite, and neither imports it. A test that wants a precise verdict
+// on one observation, such as "two root users of one account report the same
+// account aggregate" or "zone b's data sync from zone a is behind", states it
+// as an expectation and evaluates the observation it already has:
 //
 //	usage, err := root.Usage(ctx)
 //	if err != nil {
