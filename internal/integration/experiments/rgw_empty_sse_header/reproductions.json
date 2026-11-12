@@ -36,6 +36,32 @@
         "rgw_empty_sse_header": "NOT_REPRODUCED"
       },
       "evidence": "Native run 2026-11-12 at 9a4e6a18, Linux amd64, Docker 29.9.1, pinned 21.2.0 role images: NOT_REPRODUCED; both empty-header PUTs refused with the control's 400 InvalidArgument, stored state unchanged."
+    },
+    {
+      "id": "20.2.4-aggregate",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b",
+        "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b",
+        "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+      },
+      "verdicts": {
+        "rgw_empty_sse_header": "REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, the default 20.2.4 aggregate image (ceph.DefaultImage) for every role: REPRODUCED; both empty-header PUTs answered 200, a new object and a second version."
+    },
+    {
+      "id": "20.2.5-aggregate",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+        "client": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
+        "rgw": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c"
+      },
+      "verdicts": {
+        "rgw_empty_sse_header": "NOT_REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, the official 20.2.5 image for every role: NOT_REPRODUCED; both empty-header PUTs refused with the control's 400 InvalidArgument, stored state unchanged."
     }
   ]
 }

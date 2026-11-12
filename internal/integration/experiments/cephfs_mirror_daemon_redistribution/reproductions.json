@@ -23,9 +23,10 @@
         "cephfs": "sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80"
       },
       "verdicts": {
-        "cephfs_mirror_daemon_redistribution": "REPRODUCED"
+        "cephfs_mirror_daemon_redistribution": "REPRODUCED",
+        "cephfs_mirror_daemon_redistribution/host-network": "REPRODUCED"
       },
-      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, go test of the bridge test comparing this verdict: REPRODUCED; all 4 directories stay with the surviving instance while 2 services are registered, 360 s."
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, go test of the bridge test comparing this verdict: REPRODUCED; all 4 directories stay with the surviving instance while 2 services are registered, 360 s. Native run 2026-11-12, same host and images, go test of the host-network test: REPRODUCED; all 4 directories stay with the surviving instance while 2 services are registered with the shared peer, 355 s."
     }
   ]
 }
