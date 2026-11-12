@@ -2,8 +2,26 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rbd/expect",
-  "count": 27,
+  "count": 39,
   "types": {
+    "rbd/expect.ImageClients": [
+      "ImageClients.Departed field []string",
+      "ImageClients.Lock field ExclusiveLock",
+      "ImageClients.Owner field string",
+      "ImageClients.OwnerWatches field bool",
+      "ImageClients.Unwatched field bool"
+    ],
+    "rbd/expect.ImageClientsEvaluation": [
+      "ImageClientsEvaluation.Expectation field ImageClients",
+      "ImageClientsEvaluation.Matched field bool",
+      "ImageClientsEvaluation.Mismatches field []ImageClientsMismatch",
+      "ImageClientsEvaluation.Observed field rbd.ImageClientStatus"
+    ],
+    "rbd/expect.ImageClientsMismatch": [
+      "ImageClientsMismatch.Observed field string",
+      "ImageClientsMismatch.Reason field ImageClientsMismatchReason",
+      "ImageClientsMismatch.Want field string"
+    ],
     "rbd/expect.MirrorImage": [
       "MirrorImage.Daemon field string",
       "MirrorImage.NewInstance field bool",
