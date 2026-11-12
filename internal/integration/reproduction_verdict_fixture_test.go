@@ -5,7 +5,9 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -326,6 +328,41 @@ func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
 	}
 }
 
+// TestReproductionCatalogImagesAreImmutable checks the images of
+// testdata/reproduction_images.json, which test_reproductions.py checks
+// against the runner's loader too: an image ID or a sha256 digest reference
+// in the distribution reference grammar is a stored identity whether or not
+// a CI release pin still names it, and a tag or anything else is refused.
+func TestReproductionCatalogImagesAreImmutable(t *testing.T) {
+	data, err := os.ReadFile("testdata/reproduction_images.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct{ Immutable, Mutable []string }
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Immutable) == 0 || len(fixture.Mutable) == 0 {
+		t.Fatalf("fixture %+v", fixture)
+	}
+	catalog := func(image string) []byte {
+		encoded, _ := json.Marshal(image)
+		return []byte(`{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
+  "combinations": [{"id": "a", "platform": "linux/amd64", "images": {"essential": "sha256:` + strings.Repeat("e1", 32) + `", "rgw": ` +
+			string(encoded) + `}, "verdicts": {"rgw_case": "REPRODUCED"}, "evidence": "run"}]}`)
+	}
+	for _, image := range fixture.Immutable {
+		if _, err := harness.ParseReproductionCatalog(catalog(image)); err != nil {
+			t.Errorf("immutable %q refused: %v", image, err)
+		}
+	}
+	for _, image := range fixture.Mutable {
+		if _, err := harness.ParseReproductionCatalog(catalog(image)); err == nil {
+			t.Errorf("mutable %q accepted", image)
+		}
+	}
+}
+
 func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 	combination := func(verdicts, images string) string {
 		return `{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
@@ -333,18 +370,8 @@ func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 	}
 	id, digest := "sha256:"+strings.Repeat("e1", 32), "@sha256:"+strings.Repeat("4", 64)
 	images := `{"essential": "` + id + `", "rgw": "quay.io/ceph/ceph` + digest + `"}`
-	// Any image ID or digest reference is a stored identity, whether or not a
-	// CI release pin still names it.
-	for _, valid := range []string{
-		images,
-		`{"essential": "quay.io/ceph/ceph:v20.2.5` + digest + `", "rgw": "localhost:5000/ceph/rgw` + digest + `"}`,
-	} {
-		if _, err := harness.ParseReproductionCatalog([]byte(combination(`{"rgw_case": "REPRODUCED"}`, valid))); err != nil {
-			t.Fatalf("valid catalogue %s: %v", valid, err)
-		}
-	}
-	mutable := func(image string) string {
-		return combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`", "rgw": "`+image+`"}`)
+	if _, err := harness.ParseReproductionCatalog([]byte(combination(`{"rgw_case": "REPRODUCED"}`, images))); err != nil {
+		t.Fatalf("valid catalogue: %v", err)
 	}
 	for name, data := range map[string]string{
 		"inconclusive expectation": combination(`{"rgw_case": "INCONCLUSIVE"}`, images),
@@ -353,11 +380,6 @@ func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 		"no verdicts":              combination(`{}`, images),
 		"missing role image":       combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`"}`),
 		"extra role image":         combination(`{"rgw_case": "REPRODUCED"}`, `{"essential": "`+id+`", "rgw": "`+id+`", "client": "`+id+`"}`),
-		"a moving tag":             mutable("quay.io/ceph/ceph:latest"),
-		"a tag without a digest":   mutable("quay.io/ceph/ceph:v20.2.5"),
-		"a short image ID":         mutable("sha256:e1"),
-		"an uppercase digest":      mutable("sha256:" + strings.Repeat("E1", 32)),
-		"an empty image":           mutable(""),
 		"unknown field":            strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence"`, `"release": "20.2.4", "evidence"`, 1),
 		"unknown role":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["essential", "rgw"]`, `["essential", "gateway"]`, 1),
 		"bad network":              strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"bridge"`, `"none"`, 1),

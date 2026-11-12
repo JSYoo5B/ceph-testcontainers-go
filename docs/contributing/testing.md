@@ -797,7 +797,10 @@ the selected network mode) to report its own line with the expected verdict
 and combination, and records the comparison in `report.json` under
 `reproduction`. Both loaders accept only immutable images in a combination: a local image
 ID (`sha256:<64 hex>`) or a reference pinned by digest
-(`<name>[:<tag>]@sha256:<64 hex>`). A tag alone, such as
+(`<name>[:<tag>]@sha256:<64 hex>`, the name in the Docker distribution
+reference grammar, so custom registries such as `[::1]:5000/team/ceph--debug`
+qualify). `internal/integration/testdata/reproduction_images.json` holds the
+accepted and refused cases that both loaders' tests check. A tag alone, such as
 `quay.io/ceph/ceph:latest`, is refused, since the stored verdict would apply
 to whatever the tag points at later. A combination stays valid when the CI
 release pins of `.github/ceph-role-images.json` move; a run selects it only

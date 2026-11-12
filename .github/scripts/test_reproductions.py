@@ -26,6 +26,7 @@ def catalog(affected="REPRODUCED"):
         ]})
 
 
+IMAGES = json.loads((ROOT / "internal/integration/testdata/reproduction_images.json").read_text())
 AFFECTED = {"CEPH_TEST_ESSENTIAL_IMAGE": E1, "CEPH_TEST_CLIENT_IMAGE": C1, "CEPH_TEST_RGW_IMAGE": R1}
 FIXED = {"CEPH_TEST_ESSENTIAL_IMAGE": E2, "CEPH_TEST_CLIENT_IMAGE": C2, "CEPH_TEST_RGW_IMAGE": R2}
 
@@ -56,6 +57,20 @@ class CatalogTests(unittest.TestCase):
                 change(document)
                 with self.assertRaises(ValueError):
                     reproductions.validate(document)
+
+    def test_images_follow_the_shared_reference_cases(self):
+        # The cases TestReproductionCatalogImagesAreImmutable checks against
+        # the harness's loader.
+        self.assertTrue(IMAGES["immutable"] and IMAGES["mutable"])
+        for image in IMAGES["immutable"]:
+            with self.subTest(image):
+                document = catalog()
+                document["combinations"][1]["images"]["rgw"] = image
+                self.assertTrue(reproductions.immutable_image(image))
+                reproductions.validate(document)
+        for image in IMAGES["mutable"]:
+            with self.subTest(image):
+                self.assertFalse(reproductions.immutable_image(image))
 
     def test_a_package_lists_exactly_the_units_it_starts(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -98,14 +113,8 @@ class CatalogTests(unittest.TestCase):
                     "rgw": "localhost:5000/ceph/rgw@sha256:" + "5" * 64}})
             (package / reproductions.CATALOG).write_text(json.dumps(document))
             self.assertEqual(len(reproductions.verify(temporary)), 1)
-            for name, image in (
-                ("a moving tag", "quay.io/ceph/ceph:latest"),
-                ("a tag without a digest", "quay.io/ceph/ceph:v20.2.5"),
-                ("a short image ID", "sha256:e1"),
-                ("an uppercase digest", "sha256:" + "E1" * 32),
-                ("a name only", "ceph"),
-            ):
-                with self.subTest(name):
+            for image in IMAGES["mutable"]:
+                with self.subTest(image):
                     mutable = catalog()
                     mutable["combinations"][1]["images"] = {role: image for role in ("essential", "client", "rgw")}
                     with self.assertRaises(ValueError):
