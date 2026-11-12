@@ -172,43 +172,54 @@ func (overrideHooks) ValidMGRModuleName(name string) bool {
 }
 
 // MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
-// and returns it. ctx carries the operation deadline. The caller holds the
-// mutex. Native module changes can respawn the MGR after the MON has confirmed
-// membership, so only reads are retried, and a snapshot received after
-// cancellation is not admitted.
-func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MGRModuleState, error) {
-	var modules []MGRModuleState
+// and returns it with the gid of the active MGR it came from. ctx carries the
+// operation deadline. The caller holds the mutex. Native module changes can
+// respawn the MGR after the MON has confirmed membership, so only reads are
+// retried, and a snapshot received after cancellation is not admitted.
+func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MGRModuleState, uint64, error) {
+	var snapshot mgrModuleSnapshot
 	err := clusterutil.Poll(ctx, func() (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		current, err := readMGRModules(ctx, c.conn().ceph)
+		current, err := readMGRModuleSnapshot(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		modules = current
+		snapshot = current
 		return true, nil
 	})
-	return modules, err
+	return snapshot.modules, snapshot.activeGID, err
 }
 
 // WaitMGRModuleMembership waits until the native listing shows name in the
-// requested state with the given always-on property. The caller holds the
-// mutex. MGR module changes can briefly restart the active manager, so a
-// transient unavailable or old map is not proof that the MON membership
-// mutation failed; only native reads are retried, never the mutation.
-func (overrideHooks) WaitMGRModuleMembership(ctx context.Context, c *Container, name string, enabled, alwaysOn bool) error {
+// requested state with the given always-on property, read through an
+// available active MGR whose gid is not replaced. The caller holds the mutex.
+//
+// Every MGR respawns when the MgrMap's module set changes
+// (PyModuleRegistry::handle_mgr_map in src/mgr/PyModuleRegistry.cc), and the
+// MON keeps the old active gid in the map, still available, until the
+// respawned process sends its first beacon (MgrMonitor::prepare_beacon in
+// src/mon/MgrMonitor.cc). Membership read back from that map is therefore no
+// proof that the MGR serves commands, so the wait also requires a different
+// active gid. A transient unavailable or old map is no proof that the MON
+// membership mutation failed either; only native reads are retried, never the
+// mutation.
+func (overrideHooks) WaitMGRModuleMembership(ctx context.Context, c *Container, name string, enabled, alwaysOn bool, replaced uint64) error {
 	return clusterutil.Poll(ctx, func() (bool, error) {
-		modules, err := readMGRModules(ctx, c.conn().ceph)
+		snapshot, err := readMGRModuleSnapshot(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}
-		module, found := findMGRModule(modules, name)
+		module, found := findMGRModule(snapshot.modules, name)
 		if !found || module.AlwaysOn != alwaysOn || module.ForceDisabled || module.Enabled != enabled {
 			return false, errors.New("MGR module membership readback differs from requested state")
+		}
+		if snapshot.activeGID == 0 || snapshot.activeGID == replaced {
+			return false, errors.New("the active MGR has not respawned after the module membership change")
 		}
 		return true, nil
 	})
