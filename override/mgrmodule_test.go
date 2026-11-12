@@ -530,7 +530,7 @@ func TestSetMGRModuleWaitsForTheRespawnedActiveMGR(t *testing.T) {
 			ctr.staleDumps = 3
 			var err error
 			if operation == "apply" {
-				change, err = SetMGRModule(t.Context(), c, "mirroring", true)
+				_, err = SetMGRModule(t.Context(), c, "mirroring", true)
 			} else {
 				err = change.Restore(t.Context())
 			}
