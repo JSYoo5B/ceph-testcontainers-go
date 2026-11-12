@@ -3,6 +3,7 @@
 package cephfs_readdir_after_snapdiff_test
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -128,43 +129,48 @@ func established(label string, want []string, changed string, run dirRun, fresh 
 // judgeAfterSnapdiff judges the listings of the second snapshot that the
 // warm mount read after its snapdiff. trigger is the directory whose two
 // names share a dentry hash; control is the one whose names do not. Each
-// listing must hold exactly the snapshot's names, each once.
-func judgeAfterSnapdiff(triggerNames, controlNames []string, changedTrigger, changedControl string, trigger, control dirRun, freshTrigger, freshControl []dirEntry) string {
+// listing must hold exactly the snapshot's names, each once. A trigger
+// listing that does not, with the control listed in full, is the symptom;
+// both listings in full are its absence. Its error starts with "condition
+// not established" when the mounts, the snapdiff or the layout are not what
+// the case is about, and with "another fault" when the control listing is
+// wrong too: no verdict.
+func judgeAfterSnapdiff(triggerNames, controlNames []string, changedTrigger, changedControl string, trigger, control dirRun, freshTrigger, freshControl []dirEntry) (symptom bool, detail string, err error) {
 	for _, verdict := range []string{
 		established("trigger", triggerNames, changedTrigger, trigger, freshTrigger),
 		established("control", controlNames, changedControl, control, freshControl),
 	} {
 		if verdict != "" {
-			return verdict
+			return false, "", errors.New(verdict)
 		}
 	}
 	// The layout that the case is about, read from the positions the
 	// client itself gave for the first listings. A position says something
 	// about a dentry hash only when it is hash-ordered.
 	if !allHashOrdered(trigger.Before) || !allHashOrdered(control.Before) {
-		return fmt.Sprintf("condition not established: the first listings are not hash-ordered, so their positions name fragments, not dentry hashes: trigger %s, control %s",
+		return false, "", fmt.Errorf("condition not established: the first listings are not hash-ordered, so their positions name fragments, not dentry hashes: trigger %s, control %s",
 			positions(trigger.Before), positions(control.Before))
 	}
 	if len(trigger.Before) != 2 || trigger.Before[0].hashOf() != trigger.Before[1].hashOf() {
-		return fmt.Sprintf("condition not established: the two names of the trigger directory do not share a dentry hash: positions %s", positions(trigger.Before))
+		return false, "", fmt.Errorf("condition not established: the two names of the trigger directory do not share a dentry hash: positions %s", positions(trigger.Before))
 	}
 	if trigger.Before[1].Name != changedTrigger {
-		return fmt.Sprintf("condition not established: the changed entry %s is not the second of its hash in the listing: %s", changedTrigger, positions(trigger.Before))
+		return false, "", fmt.Errorf("condition not established: the changed entry %s is not the second of its hash in the listing: %s", changedTrigger, positions(trigger.Before))
 	}
 	if len(control.Before) != 2 || control.Before[0].hashOf() == control.Before[1].hashOf() {
-		return fmt.Sprintf("condition not established: the two names of the control directory share a dentry hash: positions %s", positions(control.Before))
+		return false, "", fmt.Errorf("condition not established: the two names of the control directory share a dentry hash: positions %s", positions(control.Before))
 	}
 	triggerOK := sameNames(triggerNames, entryNames(trigger.After))
 	controlOK := sameNames(controlNames, entryNames(control.After))
 	switch {
 	case triggerOK && controlOK:
-		return ""
+		return false, fmt.Sprintf("after the snapdiff the warm mount lists both snapshots in full: trigger %s, control %s", positions(trigger.After), positions(control.After)), nil
 	case !controlOK:
-		return fmt.Sprintf("another fault: after a snapdiff the warm mount lists the control snapshot, whose names share no dentry hash, as %s (positions %s); the trigger snapshot as %s",
+		return false, "", fmt.Errorf("another fault: after a snapdiff the warm mount lists the control snapshot, whose names share no dentry hash, as %s (positions %s); the trigger snapshot as %s",
 			describe(controlNames, entryNames(control.After)), positions(control.After), describe(triggerNames, entryNames(trigger.After)))
 	}
-	return fmt.Sprintf("observed defect: after a snapdiff that named only %s, the warm mount lists the snapshot whose two names share a dentry hash as %s (positions %s, before the snapdiff %s); a fresh mount lists both names, and the control snapshot is listed in full",
-		changedTrigger, describe(triggerNames, entryNames(trigger.After)), positions(trigger.After), positions(trigger.Before))
+	return true, fmt.Sprintf("after a snapdiff that named only %s, the warm mount lists the snapshot whose two names share a dentry hash as %s (positions %s, before the snapdiff %s); a fresh mount lists both names, and the control snapshot is listed in full",
+		changedTrigger, describe(triggerNames, entryNames(trigger.After)), positions(trigger.After), positions(trigger.Before)), nil
 }
 
 // positions prints each entry with its next position: the hash (or, in a

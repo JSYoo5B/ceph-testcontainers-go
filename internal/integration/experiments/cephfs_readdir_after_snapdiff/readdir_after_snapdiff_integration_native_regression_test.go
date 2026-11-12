@@ -137,11 +137,12 @@ print(json.dumps(out))
 func TestCephFSListingAfterSnapdiff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "cephfs_readdir_after_snapdiff", "listing-after-snapdiff")
 	image, opts := harness.IntegrationImages(t)
 	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
-		t.Fatal(err)
+		repro.Inconclusive(t, "unavailable prerequisite: the filesystem is not ready: %v", err)
 	}
 	t.Logf("client: %s", harness.ExecOutput(t, ctx, client, "ceph", "--version"))
 	t.Logf("python3-cephfs: %s", harness.ExecOutput(t, ctx, client, "python3", "-c", "import cephfs;print(cephfs.__file__, cephfs.LibCephFS().version(), hasattr(cephfs.LibCephFS, 'opensnapdiff'))"))
@@ -179,7 +180,7 @@ func TestCephFSListingAfterSnapdiff(t *testing.T) {
 		Client uint64 `json:"client"`
 	}
 	if err := run(ctx, "prepare", &prepared); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var warm struct {
 		Client  uint64 `json:"client"`
@@ -187,7 +188,7 @@ func TestCephFSListingAfterSnapdiff(t *testing.T) {
 		Control dirRun `json:"control"`
 	}
 	if err := run(ctx, "warm", &warm); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	var fresh struct {
 		Client  uint64     `json:"client"`
@@ -195,7 +196,7 @@ func TestCephFSListingAfterSnapdiff(t *testing.T) {
 		Control []dirEntry `json:"control"`
 	}
 	if err := run(ctx, "fresh", &fresh); err != nil {
-		t.Fatalf("unavailable prerequisite: %v", err)
+		repro.Inconclusive(t, "unavailable prerequisite: %v", err)
 	}
 	for _, seen := range []struct {
 		dir   snapdiffDir
@@ -205,8 +206,15 @@ func TestCephFSListingAfterSnapdiff(t *testing.T) {
 		t.Logf("CEPHFS_READDIR_AFTER_SNAPDIFF_RECEIPT %s: warm client %d listed %s; snapdiff s1..s2 named %v; listed again %s; fresh client %d listed %s",
 			seen.dir.Name, warm.Client, positions(seen.run.Before), seen.run.Diff, positions(seen.run.After), fresh.Client, positions(seen.fresh))
 	}
-	if verdict := judgeAfterSnapdiff(snapdiffTrigger.Files, snapdiffControl.Files, snapdiffTrigger.Changed, snapdiffControl.Changed,
-		warm.Trigger, warm.Control, fresh.Trigger, fresh.Control); verdict != "" {
-		t.Fatal(verdict)
+	symptom, detail, err := judgeAfterSnapdiff(snapdiffTrigger.Files, snapdiffControl.Files, snapdiffTrigger.Changed, snapdiffControl.Changed,
+		warm.Trigger, warm.Control, fresh.Trigger, fresh.Control)
+	switch {
+	case err != nil:
+		repro.Inconclusive(t, "%v", err)
+	case symptom:
+		repro.Symptom(t, "listing-after-snapdiff", "%s", detail)
+	default:
+		repro.Absent(t, "listing-after-snapdiff", "%s", detail)
 	}
+	repro.Conclude()
 }

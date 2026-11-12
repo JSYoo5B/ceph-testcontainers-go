@@ -53,7 +53,8 @@ file is written to between the snapshots.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on every release it was run on.
+Deliberately failing reproducer: it reproduces on every release it was run
+on, so without an expectation it fails.
 No automatic run includes it (the default checks of a pull request, pushes
 to `main`, periodic samples), and it never gates anything. A maintainer can
 run it on demand, also on a pull request's head with the comment below.
@@ -123,8 +124,8 @@ A third client, a fresh mount, lists both snapshots once.
    the client reports (`d_off`) and computes no hash itself; the receipt
    prints every position decoded and raw.
 3. Oracle: the warm mount's second listing of `trigger` holds exactly the
-   two names. A missing name, a repeated one or a foreign one is
-   `observed defect`.
+   two names. A missing name, a repeated one or a foreign one is the
+   symptom.
 4. Control: the warm mount's second listing of `control` holds exactly its
    two names. If it does not, the result is `another fault`, whatever the
    trigger did: the damage is then not confined to names of one hash.
@@ -138,22 +139,47 @@ and on the official images of 20.2.5 (`sha256:4337ac8ac81d…`) and 19.2.2
 (`sha256:8214ebff6133…`) as aggregates. Linux amd64, bridge, one run per
 release.
 
-- **Observed bug:** the warm mount's first listing of `trigger` holds both
-  names at hash-ordered positions of one hash (`7f4abf`, counts 3 and 4,
-  raw `0xff7f4abf0000003` and `0xff7f4abf0000004`); the snapdiff
-  names `collision_2690` alone; the second listing holds `collision_2379`
-  only. The fresh mount lists both names, and `control`, whose names have
-  the hashes `6769c5` and `f51016`, is listed in full after its snapdiff.
-  Squid 19.2.2 (43 s) and 19.2.5 (44 s), Tentacle 20.2.4 (38 s) and 20.2.5
-  (38 s) and Umbrella 21.2.0 (38 s) all do this.
-- **Pass:** every listing holds its two names. No tested build passes.
-- **Another fault:** the control's second listing is not its two names.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  receipt line: the two names must share a hash and the snapdiff must name
-  the second one.
-- **Unavailable prerequisite:** the cluster or the filesystem does not
-  start, or a client run fails, for example because the client's `cephfs`
-  module has no `opensnapdiff`.
+The warm mount's first listing of `trigger` holds both names at
+hash-ordered positions of one hash (`7f4abf`, counts 3 and 4, raw
+`0xff7f4abf0000003` and `0xff7f4abf0000004`); the snapdiff names
+`collision_2690` alone; the second listing holds `collision_2379` only. The
+fresh mount lists both names, and `control`, whose names have the hashes
+`6769c5` and `f51016`, is listed in full after its snapdiff. Squid 19.2.2
+(43 s) and 19.2.5 (44 s), Tentacle 20.2.4 (38 s) and 20.2.5 (38 s) and
+Umbrella 21.2.0 (38 s) all do this: every tested build reproduces the
+defect.
+
+## Verdict
+
+The test is the reproduction unit `cephfs_readdir_after_snapdiff` with one
+planned observation, `listing-after-snapdiff`. It prints one line that
+starts with `REPRODUCTION_VERDICT case=cephfs_readdir_after_snapdiff`.
+
+- `REPRODUCED`: the conditions held, the control's second listing is its two
+  names, and the second listing of `trigger` is not exactly its two names.
+  Without an expectation the test fails with
+  `observed defect: listing-after-snapdiff:`.
+- `NOT_REPRODUCED`: the conditions held and both second listings hold their
+  two names. Without an expectation the test passes. On a build claimed to
+  be affected, check the receipt line: the two names must share a hash and
+  the snapdiff must name the second one.
+- `INCONCLUSIVE`: no verdict on the symptom; the test fails and the reason
+  starts with its category. `unavailable prerequisite:` the cluster or the
+  filesystem does not start, or a client run fails, for example because the
+  client's `cephfs` module has no `opensnapdiff`. `condition not
+  established:` a condition of the list above does not hold. `another
+  fault:` the control's second listing is not its two names.
+
+An expectation turns the verdict into the result: only the expected verdict
+passes, and a skip or `INCONCLUSIVE` never does. With the 20.2.4 role images
+exported as above:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=cephfs_readdir_after_snapdiff=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch cephfs_readdir_after_snapdiff \
+  --package ./internal/integration/experiments/cephfs_readdir_after_snapdiff \
+  --directory "artifacts/cephfs-readdir-after-snapdiff-$(date -u +%Y%m%dT%H%M%SZ)"
+```
 
 ## Cleanup and limits
 
