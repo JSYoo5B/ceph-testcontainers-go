@@ -78,7 +78,7 @@ python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation
 
 To check one case against an affected or a patched gateway, declare its
 expected verdict; the run then passes only on that verdict, and the other
-case only prints its own:
+units only print their own:
 
 ```sh
 CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/priority_tags_owner_class=REPRODUCED \
@@ -107,10 +107,14 @@ result.
 
 ## Verdict
 
-Each case is its own unit, named after its subtest, and prints its own
-`REPRODUCTION_VERDICT` line in each network variant. Both variants report
-the same unit; the observation names the variant (`bridge network:` or
-`host network:`), and an expectation applies to both.
+Each case is its own unit in each network variant, so one batch run prints
+one `REPRODUCTION_VERDICT` line per unit and a row expects exactly one of
+them. The bridge units are named after the subtests; the host-network units
+(`TestHostNetworkMultiClusterRGWSyncTranslationFiltering`) add a `host_`
+prefix: `rgw_sync_policy_translation/host_priority_tags_owner_class` and
+`rgw_sync_policy_translation/host_ordinary_user_denial_grant`. The
+observation also names the variant (`bridge network:` or `host network:`).
+The verdicts below are the same for both variants.
 
 - `rgw_sync_policy_translation/priority_tags_owner_class`, observation
   `priority`. **REPRODUCED:** the overlapping pipes do not resolve by
@@ -137,8 +141,8 @@ reproduction.
 
 Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails its subtest,
 absence passes it and an inconclusive run fails it. With
-`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/<case>=<REPRODUCED|NOT_REPRODUCED>`
-only that case's matching verdict passes; the other case's symptom does not
+`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/[host_]<case>=<REPRODUCED|NOT_REPRODUCED>`
+only that unit's matching verdict passes; the other units' symptoms do not
 fail the run.
 
 ## Cleanup and limits

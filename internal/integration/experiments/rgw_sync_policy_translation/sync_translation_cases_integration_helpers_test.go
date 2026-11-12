@@ -19,8 +19,9 @@ import (
 
 // testRGWSyncTranslationFiltering runs the two strict cases on one shared
 // realm, in the order the required supported cases use, each with its own
-// buckets and sync group. Each case is its own reproduction unit; network
-// names the variant in their observations.
+// buckets and sync group. Each case is its own reproduction unit in each
+// network variant: the bridge units are named after the subtests, the host
+// units add a host_ prefix, so one batch run reports one verdict per unit.
 func testRGWSyncTranslationFiltering(t *testing.T, network string, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
@@ -41,7 +42,12 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 	destB := f.DestB
 	body := f.Body
 	t.Run("priority_tags_owner_class", func(t *testing.T) {
-		repro := harness.StartReproduction(t, "rgw_sync_policy_translation/priority_tags_owner_class", "priority")
+		var repro *harness.Reproduction
+		if network == "host" {
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_priority_tags_owner_class", "priority")
+		} else {
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/priority_tags_owner_class", "priority")
+		}
 		const input, output, other = "/tc-sync-input", "/tc-sync-output", "/tc-sync-other"
 		for _, bucket := range []string{input, other} {
 			a.Request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
@@ -150,7 +156,12 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 	destB := f.DestB
 	body := f.Body
 	t.Run("ordinary_user_denial_grant", func(t *testing.T) {
-		repro := harness.StartReproduction(t, "rgw_sync_policy_translation/ordinary_user_denial_grant", "denial")
+		var repro *harness.Reproduction
+		if network == "host" {
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/host_ordinary_user_denial_grant", "denial")
+		} else {
+			repro = harness.StartReproduction(t, "rgw_sync_policy_translation/ordinary_user_denial_grant", "denial")
+		}
 		// User mode executes as B: B can write its destination, but initially has
 		// no read permission on A's source. S3 policy belongs to the client recipe.
 		const modeInput, modeOutput = "/tc-sync-mode-input", "/tc-sync-mode-output"
