@@ -1,0 +1,104 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/expect",
+  "count": 15,
+  "entries": [
+    {
+      "current": "rgw/expect.UsageScopeAccount",
+      "kind": "const",
+      "proposed": "rgw/expect.UsageScopeAccount",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UsageScopeUser",
+      "kind": "const",
+      "proposed": "rgw/expect.UsageScopeUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsage",
+      "kind": "type",
+      "proposed": "rgw/expect.UserUsage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsage.Evaluate",
+      "kind": "method",
+      "signature": "func(observed rgw.UserUsage) (UserUsageEvaluation, error)",
+      "receiver": "UserUsage",
+      "proposed": "rgw/expect.UserUsage.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageEvaluation",
+      "kind": "type",
+      "proposed": "rgw/expect.UserUsageEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "UserUsageEvaluation",
+      "proposed": "rgw/expect.UserUsageEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatch",
+      "kind": "type",
+      "proposed": "rgw/expect.UserUsageMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "UserUsageMismatch",
+      "proposed": "rgw/expect.UserUsageMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchObjects",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchObjects",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchOwner",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchOwner",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchReason",
+      "kind": "type",
+      "proposed": "rgw/expect.UserUsageMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchScope",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchScope",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchSize",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchTenant",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchTenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/expect.UserUsageMismatchUser",
+      "kind": "const",
+      "proposed": "rgw/expect.UserUsageMismatchUser",
+      "decision": "baseline"
+    }
+  ]
+}

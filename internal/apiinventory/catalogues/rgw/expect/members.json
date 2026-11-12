@@ -1,0 +1,27 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rgw/expect",
+  "count": 13,
+  "types": {
+    "rgw/expect.UserUsage": [
+      "UserUsage.Objects field uint64",
+      "UserUsage.OwnerID field string",
+      "UserUsage.Scope field string",
+      "UserUsage.SizeBytes field uint64",
+      "UserUsage.Tenant field string",
+      "UserUsage.UserID field string"
+    ],
+    "rgw/expect.UserUsageEvaluation": [
+      "UserUsageEvaluation.Expectation field UserUsage",
+      "UserUsageEvaluation.Matched field bool",
+      "UserUsageEvaluation.Mismatches field []UserUsageMismatch",
+      "UserUsageEvaluation.Observed field rgw.UserUsage"
+    ],
+    "rgw/expect.UserUsageMismatch": [
+      "UserUsageMismatch.Observed field string",
+      "UserUsageMismatch.Reason field UserUsageMismatchReason",
+      "UserUsageMismatch.Want field string"
+    ]
+  }
+}
