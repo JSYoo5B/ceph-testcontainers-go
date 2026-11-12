@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
@@ -172,13 +173,21 @@ func testRGWSyncWatch(t *testing.T) {
 	for i := range syncWatchObjects {
 		sourceS3.Request(t, ctx, http.MethodPut, fmt.Sprintf("/%s/held-%02d", syncWatchBucket, i), syncWatchPayload(i), http.StatusOK)
 	}
+	var lagging expect.MultisiteDataSyncEvaluation
 	lag := waitSyncEvent(t, zone, "data lag", 4*time.Minute, func(e multisite.SyncWatchEvent) bool {
-		return e.Err == nil && !e.Ready && len(e.Status.DataSources) == 1 && e.Status.DataSources[0].BehindShards > 0
+		if e.Err != nil || e.Ready {
+			return false
+		}
+		var err error
+		if lagging, err = (expect.MultisiteDataSync{Zone: "destination", Source: "source", State: expect.MultisiteDataSyncBehind}).Evaluate(e.Status); err != nil {
+			t.Fatalf("zone watch event %d: %v", e.Sequence, err)
+		}
+		return lagging.Matched
 	})
 	bucketLag := waitBucketEvent(t, checkpoint, "bucket lag", 4*time.Minute, func(e multisite.BucketSyncWatchEvent) bool {
 		return e.Err == nil && !e.Status.CaughtUp && e.Status.BehindShards > 0
 	})
-	t.Logf("SYNC_WATCH_LAG zone_event=%d behind_shards=%d bucket_event=%d bucket_behind_shards=%d", lag.Sequence, lag.Status.DataSources[0].BehindShards, bucketLag.Sequence, bucketLag.Status.BehindShards)
+	t.Logf("SYNC_WATCH_LAG zone_event=%d behind_shards=%d bucket_event=%d bucket_behind_shards=%d", lag.Sequence, lagging.Stream.BehindShards, bucketLag.Sequence, bucketLag.Status.BehindShards)
 
 	if err := link.Destination.Start(ctx); err != nil {
 		t.Fatal(err)

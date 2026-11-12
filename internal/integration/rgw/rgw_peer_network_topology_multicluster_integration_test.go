@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
@@ -287,22 +288,28 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	// The selected direction: b's native sync status, read by its CLI
 	// client, which is not cut, compares a's log with b's markers and finds
 	// shards behind, while a has caught up with b; and b still does not
-	// get the object.
+	// get the object. Each zone's status is its own read, so the two
+	// directions are two observations, not one state of both zones.
 	behind, err := harness.Observe(ctx, 3*time.Minute, time.Minute, 2*time.Second, func(probeCtx context.Context) (zoneLinkSync, bool, error) {
 		var seen zoneLinkSync
-		var err error
 		lacks()
-		if seen.b, err = fixture.SyncStatus(probeCtx, "b"); err != nil {
+		status, err := fixture.SyncStatus(probeCtx, "b")
+		if err != nil {
 			return seen, false, err
 		}
-		if seen.a, err = fixture.SyncStatus(probeCtx, "a"); err != nil {
+		if seen.fromA, err = (expect.MultisiteDataSync{Zone: "b", Source: "a", State: expect.MultisiteDataSyncBehind}).Evaluate(status); err != nil {
 			return seen, false, err
 		}
-		fromA, fromB := dataSource(seen.b, "a"), dataSource(seen.a, "b")
-		return seen, fromA.BehindShards > 0 && !fromA.CaughtUp && fromB.CaughtUp, nil
+		if status, err = fixture.SyncStatus(probeCtx, "a"); err != nil {
+			return seen, false, err
+		}
+		if seen.fromB, err = (expect.MultisiteDataSync{Zone: "a", Source: "b", State: expect.MultisiteDataSyncCaughtUp}).Evaluate(status); err != nil {
+			return seen, false, err
+		}
+		return seen, seen.fromA.Matched && seen.fromB.Matched, nil
 	})
 	if err != nil {
-		t.Fatalf("sync status during the cut: b %+v, a %+v: %v", behind.Value.b.DataSources, behind.Value.a.DataSources, err)
+		t.Fatalf("sync status during the cut: %v; %v: %v", behind.Value.fromA, behind.Value.fromB, err)
 	}
 	for time.Since(firstAbsent) < 12*time.Second {
 		select {
@@ -356,6 +363,10 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("zone b's sync status after Restore: %+v: %v", synced.DataSources, err)
 	}
+	recovered, err := expect.MultisiteDataSync{Zone: "b", Source: "a", State: expect.MultisiteDataSyncCaughtUp}.Evaluate(synced)
+	if err != nil || !recovered.Matched {
+		t.Fatalf("zone b's data sync after Restore: %v: %v", recovered, err)
+	}
 	for _, zone := range fixture.Zones() {
 		state, err := zone.Gateway.State(ctx)
 		if err != nil || !state.Running || state.Pid != pids[zone.Name] {
@@ -372,22 +383,13 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	}
 	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object in %d reads over %s from its first 404 to its last before Restore; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), and both gateways kept their processes and the period",
 		lease.ContainerID, lease.NetworkName, cut.Drops, lease.Peers, window, cut.Filters, len(fromB), readBack,
-		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, missing, absent, len(fromA), caughtUp, dataSource(synced, "a"))
+		behind.Value.fromA.Stream.BehindShards, behind.Value.fromA.Stream.Shards, missing, absent, len(fromA), caughtUp, recovered.Stream)
 }
 
-// zoneLinkSync is one look at both zones' sync status.
+// zoneLinkSync is one look at both directions during the cut: b's data sync
+// from a, evaluated in b's sync status, and a's from b, evaluated in a's.
 type zoneLinkSync struct {
-	a, b multisite.SyncStatus
-}
-
-// dataSource returns status's data sync from the zone named source.
-func dataSource(status multisite.SyncStatus, source string) multisite.DataSyncStatus {
-	for _, data := range status.DataSources {
-		if data.SourceZone == source {
-			return data
-		}
-	}
-	return multisite.DataSyncStatus{}
+	fromA, fromB expect.MultisiteDataSyncEvaluation
 }
 
 // zoneLinkObservation is one look at zone b catching up with zone a after
@@ -411,8 +413,15 @@ func zoneLinkObserve(ctx context.Context, fixture *multisite.Fixture, b harness.
 	objectOK := err == nil && code == http.StatusOK && bytes.Equal(body, want)
 	seen.Object = fmt.Sprintf("HTTP %d, %d bytes, payload matches %v, error %v", code, len(body), objectOK, err)
 	status, err := fixture.SyncStatus(ctx, "b")
-	fromA := dataSource(status, "a")
-	seen.Status = fmt.Sprintf("metadata caught up %v, data from a %+v, error %v", status.Metadata.CaughtUp, fromA, err)
+	var fromA expect.MultisiteDataSyncEvaluation
+	if err == nil {
+		fromA, err = expect.MultisiteDataSync{Zone: "b", Source: "a", State: expect.MultisiteDataSyncCaughtUp}.Evaluate(status)
+	}
+	if err == nil {
+		seen.Status = fmt.Sprintf("metadata caught up %v, %v", status.Metadata.CaughtUp, fromA)
+	} else {
+		seen.Status = fmt.Sprintf("metadata caught up %v, data from a %+v, error %v", status.Metadata.CaughtUp, status.DataSources, err)
+	}
 	native := func(zone string, args ...string) string {
 		out, err := fixture.ZoneAdmin(ctx, zone, args...)
 		if err != nil {
@@ -446,7 +455,7 @@ func zoneLinkObserve(ctx context.Context, fixture *multisite.Fixture, b harness.
 	}
 	seen.Bucket = strings.Join(kept, "\n")
 	seen.Errors = zoneLinkSyncErrors(native("b", "sync", "error", "list"))
-	seen.Done = objectOK && err == nil && fromA.CaughtUp && status.Metadata.CaughtUp
+	seen.Done = objectOK && err == nil && fromA.Matched && status.Metadata.CaughtUp
 	return seen
 }
 
