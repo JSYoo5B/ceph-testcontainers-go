@@ -2,7 +2,9 @@
 
 Owner: RBD mirroring. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRBDMirrorDemotionResumesAfterReceiverRestart`, optional batch
-`rbd_demote_restart`.
+`rbd_demote_restart`. The Docker-free judge tests in
+`demote_restart_fixture_test.go` (code batch `pure`) run in every Code checks
+run.
 
 ## Use case and native contract
 
@@ -32,8 +34,9 @@ Upstream references for the first defect:
   [ceph/ceph#66165](https://github.com/ceph/ceph/pull/66165), Tentacle
   backport [ceph/ceph#66164](https://github.com/ceph/ceph/pull/66164).
 
-The test fails on every published image at the exact-bytes step. That is the
-expected result for an unpatched defect; it is not a fixture failure.
+Every published image that resumes the copy reproduces the second defect at
+the exact-bytes step. That is the expected result for an unpatched defect; it
+is not a fixture failure.
 
 ## Requirements
 
@@ -48,8 +51,8 @@ expected result for an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 7 minutes and fails at
-the exact-bytes check on every published image. No automatic run includes it
+Deliberately failing reproducer (without an expectation): one run takes about
+7 minutes and fails at the exact-bytes check on every published image. No automatic run includes it
 (the default checks of a pull request, pushes to `main`, periodic samples),
 and it never gates anything. A maintainer can run it on demand, also on a pull
 request's head with the comment below.
@@ -74,6 +77,16 @@ python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
   --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
+To check one defect's reproducer, declare its expected verdict; the run then
+passes only on that verdict, and the other unit only prints its own:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rbd_mirror_demote_restart/resumed-bytes=REPRODUCED \
+python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
+  --package ./internal/integration/experiments/rbd_mirror_demote_restart \
+  --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
 
@@ -90,29 +103,49 @@ Record the image digest and the `ceph --version` source SHA with the result;
    container. Without this the trigger is not established.
 3. While the receiver is down the demoted `removed` primary is force-disabled
    and deleted, the rate limit is lifted and the same container is started.
-4. Effects: the same snapshot ID completes with the same `primary_snap_id`;
-   the destination `removed` image disappears; the `resumed` image exports
-   the source's exact bytes; non-forced promotion succeeds; the next write and
-   snapshot replicate back through the reverse link.
+4. Effects: the same snapshot ID completes with the same `primary_snap_id`
+   (observation `resume`); the `resumed` image exports the source's exact
+   bytes (observation `exact-bytes`); the destination `removed` image
+   disappears; non-forced promotion succeeds; the next write and snapshot
+   replicate back through the reverse link. The last three run only when
+   both observations found their symptom absent, and a failure there fails
+   the test whatever the verdicts.
 
-On a byte mismatch the failure message classifies every 256 KiB object as
-new, old or neither, so the skipped object number is in the log.
+On a byte mismatch the observation classifies every 256 KiB object as new,
+old or neither, so the skipped object number is in the verdict line.
 
-## Reading the result
+## Verdict
 
-- **Pass:** every effect above held. No published image passes today.
-- **Observed bug, defect 1:** the copy does not complete after the restart
-  (19.2.3: status `up+unknown`, "remote image is not primary").
-- **Observed bug, defect 2:** the copy completes, but the exact-bytes check
-  fails with exactly one old object at the recorded progress number.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that the
-  condition in step 2 was logged before treating it as fixed.
-- **Unavailable prerequisite:** the netem helper or the `rbd-aux` role is
-  missing, or a cluster or link does not start. The test fails before the
-  condition is observed.
-- **Condition not established:** the copy was already complete, or not yet
-  started, at the kill. The test fails at step 2; a timeout there is not a
-  reproduction.
+The test reports two units, one per defect, each in its own
+`REPRODUCTION_VERDICT` line, so a row can expect one of them:
+
+- `rbd_mirror_demote_restart/demotion-resume` (defect 1, observation
+  `resume`). **REPRODUCED:** the restarted receiver did not complete the same
+  demotion copy within five minutes (19.2.3: status `up+unknown`, "remote
+  image is not primary"). **NOT_REPRODUCED:** the copy completed with the
+  same `primary_snap_id` (19.2.4, 20.2.4 and later).
+- `rbd_mirror_demote_restart/resumed-bytes` (defect 2, observation
+  `exact-bytes`). **REPRODUCED:** the copy completed, but whole objects keep
+  the previous snapshot's bytes, in the recorded runs exactly one, at the
+  `last_copied_object_number` of the kill (every published image that
+  resumes). **NOT_REPRODUCED:** the destination exports the source's exact
+  bytes. When `demotion-resume` is REPRODUCED this unit has no verdict, since
+  no resumed copy exists.
+
+**INCONCLUSIVE** names the category. Unavailable prerequisite: the netem
+helper or the `rbd-aux` role is missing, or a cluster or link does not start
+(the test ends before a verdict). Condition not established: the copy was
+already complete, or not yet started, at the kill (step 2); a timeout there
+is not a reproduction. Another fault: the demotion copy disappeared or
+changed its primary snapshot, or the export has another size or an object
+that holds neither the old nor the new bytes.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction of either defect fails
+the test, absence of both lets the remaining effects decide, and an
+inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=rbd_mirror_demote_restart/<demotion-resume|resumed-bytes>=<REPRODUCED|NOT_REPRODUCED>`
+only that unit's matching verdict passes; the other unit's symptom does not
+fail the run.
 
 ## Cleanup and limits
 
