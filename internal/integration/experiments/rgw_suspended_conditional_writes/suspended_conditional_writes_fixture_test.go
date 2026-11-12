@@ -4,7 +4,11 @@
 
 package rgw_suspended_conditional_writes_test
 
-import "testing"
+import (
+	"net/http"
+	"strings"
+	"testing"
+)
 
 func TestCondValidator(t *testing.T) {
 	for _, etag := range []string{
@@ -30,6 +34,47 @@ func TestCondValidator(t *testing.T) {
 	} {
 		if condValidator(etag) {
 			t.Errorf("condValidator(%q) = true, want false", etag)
+		}
+	}
+}
+
+func TestJudgeCondSteps(t *testing.T) {
+	ok := condResult{Code: http.StatusOK}
+	missing := condResult{Code: http.StatusNotFound, ErrCode: "NoSuchKey"}
+	followed := []condStep{
+		{"existing-if-none-match", condPreconditionFailed, condPreconditionFailed},
+		{"existing-if-match", ok, ok},
+		{"deleted-if-match", missing, missing},
+	}
+	with := func(i int, got condResult) []condStep {
+		steps := append([]condStep{}, followed...)
+		steps[i].Got = got
+		return steps
+	}
+	for _, c := range []struct {
+		name    string
+		steps   []condStep
+		symptom bool
+		fault   bool
+	}{
+		{"aws semantics", followed, false, false},
+		{"refused if-match", with(1, condPreconditionFailed), true, false},
+		{"refused instead of missing", with(2, condPreconditionFailed), true, false},
+		{"accepted duplicate", with(0, ok), false, true},
+		{"server error", with(1, condResult{Code: http.StatusInternalServerError, ErrCode: "InternalError"}), false, true},
+		{"412 without a code", with(1, condResult{Code: http.StatusPreconditionFailed}), false, true},
+		{"symptom with another fault", func() []condStep { s := with(1, condPreconditionFailed); s[0].Got = ok; return s }(), false, true},
+		{"no step", nil, false, true},
+	} {
+		symptom, detail, err := judgeCondSteps(c.steps)
+		if c.fault {
+			if err == nil || !strings.HasPrefix(err.Error(), "another fault: ") {
+				t.Errorf("%s: %t %q %v, want another fault", c.name, symptom, detail, err)
+			}
+			continue
+		}
+		if err != nil || symptom != c.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", c.name, symptom, detail, err, c.symptom)
 		}
 	}
 }

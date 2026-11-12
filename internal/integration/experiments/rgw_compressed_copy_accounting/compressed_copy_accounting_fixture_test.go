@@ -7,6 +7,7 @@ package rgw_compressed_copy_accounting_test
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -77,6 +78,41 @@ func TestClassifyCopyResult(t *testing.T) {
 	for _, body := range []string{"", "<", `<CompleteMultipartUploadResult/>`} {
 		if got, err := harness.RGWClassifyResultBody([]byte(body), "CopyObjectResult"); err == nil {
 			t.Errorf("RGWClassifyResultBody(%q) = %+v, want an error", body, got)
+		}
+	}
+}
+
+func TestJudgeCopyAccounting(t *testing.T) {
+	data := []byte("logical bytes of the copy accounting case")
+	logical := uint64(len(data))
+	const compressedIndex, compressedBlocks = 12, 11
+	compressed := []uint64{compressedIndex, compressedBlocks}
+	sized := func(accounted uint64, listed int64, stats uint64) ccObservation {
+		return ccObservation{Bucket: "b", Index: ccIndexEntry{Size: logical, AccountedSize: accounted}, Stats: ccStats{Size: stats, NumObjects: 1}, ListedSize: listed, Data: data}
+	}
+	for _, c := range []struct {
+		name    string
+		o       ccObservation
+		symptom bool
+		fault   bool
+	}{
+		{"logical length", sized(logical, int64(logical), logical), false, false},
+		{"compressed index length", sized(compressedIndex, compressedIndex, compressedIndex), true, false},
+		{"compressed block length", sized(compressedBlocks, compressedBlocks, compressedBlocks), true, false},
+		{"sizes disagree", sized(compressedIndex, int64(logical), logical), false, true},
+		{"another length", sized(5, 5, 5), false, true},
+		{"larger than logical", sized(logical+1, int64(logical)+1, logical+1), false, true},
+		{"other bytes", func() ccObservation { o := sized(logical, int64(logical), logical); o.Data = data[1:]; return o }(), false, true},
+	} {
+		symptom, detail, err := judgeCopyAccounting(c.o, data, compressed)
+		if c.fault {
+			if err == nil || !strings.HasPrefix(err.Error(), "another fault: ") {
+				t.Errorf("%s: %t %q %v, want another fault", c.name, symptom, detail, err)
+			}
+			continue
+		}
+		if err != nil || symptom != c.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", c.name, symptom, detail, err, c.symptom)
 		}
 	}
 }

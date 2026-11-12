@@ -26,18 +26,12 @@ import (
 type expCase struct {
 	ctx    context.Context
 	client harness.S3HTTPClient
+	repro  *harness.Reproduction
 }
 
 func (c expCase) signed(t *testing.T, ctx context.Context, method, path string, payload []byte, headers http.Header) harness.RGWBackendResponse {
 	t.Helper()
 	return harness.RGWBackendSigned(t, ctx, c.client, "s3", method, path, payload, headers)
-}
-
-// expVersion is one version written by the test.
-type expVersion struct {
-	ID    string
-	Data  []byte
-	MTime time.Time
 }
 
 // putVersion writes data to path on a versioned bucket and returns its
@@ -48,7 +42,7 @@ func (c expCase) putVersion(t *testing.T, path string, data []byte) expVersion {
 	harness.RGWBackendRequire(t, r, http.StatusOK)
 	id := r.Headers.Get("X-Amz-Version-Id")
 	if id == "" || id == "null" {
-		t.Fatalf("condition not established: %s written on a versioned bucket has version %q", path, id)
+		c.repro.Inconclusive(t, "condition not established: %s written on a versioned bucket has version %q", path, id)
 	}
 	head := c.signed(t, c.ctx, http.MethodHead, path+"?versionId="+url.QueryEscape(id), nil, nil)
 	harness.RGWBackendRequire(t, head, http.StatusOK)
@@ -70,17 +64,8 @@ func (c expCase) versioning(t *testing.T, bucket string) {
 		Status string `xml:"Status"`
 	}
 	if err := xml.Unmarshal(r.Body, &state); err != nil || state.Status != "Enabled" {
-		t.Fatalf("condition not established: bucket %s versioning %q (%v)", bucket, state.Status, err)
+		c.repro.Inconclusive(t, "condition not established: bucket %s versioning %q (%v)", bucket, state.Status, err)
 	}
-}
-
-// expRule is one lifecycle rule of the case; a zero day count leaves the
-// action out.
-type expRule struct {
-	ID             string
-	Prefix         string
-	ExpirationDays int
-	NoncurrentDays int
 }
 
 func (r expRule) xml() string {
@@ -126,7 +111,7 @@ func (c expCase) lifecycle(t *testing.T, bucket string, rules ...expRule) {
 		} `xml:"Rule"`
 	}
 	if err := xml.Unmarshal(r.Body, &readBack); err != nil || len(readBack.Rules) != len(rules) {
-		t.Fatalf("condition not established: lifecycle of %s read back %d rules (%v)", bucket, len(readBack.Rules), err)
+		c.repro.Inconclusive(t, "condition not established: lifecycle of %s read back %d rules (%v)", bucket, len(readBack.Rules), err)
 	}
 	for i, want := range rules {
 		got := readBack.Rules[i]
@@ -139,19 +124,9 @@ func (c expCase) lifecycle(t *testing.T, bucket string, rules ...expRule) {
 		}
 		t.Logf("RGW_EXP lifecycle bucket=%s rule=%s prefix=%q status=%s expiration-days=%d noncurrent-days=%d", bucket, got.ID, got.Prefix, got.Status, expiration, noncurrent)
 		if got.ID != want.ID || got.Prefix != want.Prefix || got.Status != "Enabled" || expiration != want.ExpirationDays || noncurrent != want.NoncurrentDays {
-			t.Fatalf("condition not established: lifecycle rule %d of %s reads back %+v, want %+v", i, bucket, got, want)
+			c.repro.Inconclusive(t, "condition not established: lifecycle rule %d of %s reads back %+v, want %+v", i, bucket, got, want)
 		}
 	}
-}
-
-// expRequest is one GET or HEAD of the matrix.
-type expRequest struct {
-	Name      string
-	Path      string
-	Version   expVersion
-	Header    string
-	Present   bool
-	VersionID string
 }
 
 // query reads path, optionally at an explicit version, with GET and HEAD.
@@ -172,40 +147,12 @@ func (c expCase) query(t *testing.T, name, path string, explicit bool, v expVers
 	headValues, headPresent := head.Headers["X-Amz-Expiration"]
 	t.Logf("RGW_EXP request=%s path=%s version=%s get-expiration=%q head-expiration=%q", name, target, r.VersionID, r.Header, strings.Join(headValues, ","))
 	if !bytes.Equal(get.Body, v.Data) || r.VersionID != v.ID || head.Headers.Get("X-Amz-Version-Id") != v.ID {
-		t.Fatalf("condition not established: %s read version %q (%d bytes), want version %q with its exact bytes", target, r.VersionID, len(get.Body), v.ID)
+		c.repro.Inconclusive(t, "condition not established: %s read version %q (%d bytes), want version %q with its exact bytes", target, r.VersionID, len(get.Body), v.ID)
 	}
 	if headPresent != present || !slices.Equal(headValues, values) {
-		t.Errorf("%s: HEAD expiration %q differs from GET %q", target, strings.Join(headValues, ","), r.Header)
+		c.repro.Inconclusive(t, "another fault: %s: HEAD expiration %q differs from GET %q", target, strings.Join(headValues, ","), r.Header)
 	}
 	return r
-}
-
-// requireNoHeader requires that r carries no x-amz-expiration.
-func requireNoHeader(t *testing.T, r expRequest, why string) {
-	t.Helper()
-	if r.Present {
-		t.Errorf("%s (%s): x-amz-expiration %q, want none: %s", r.Name, r.Path, r.Header, why)
-	}
-}
-
-// requireRule requires that r reports rule with the expiry date that its
-// days give for the version's modification time.
-func requireRule(t *testing.T, r expRequest, rule expRule) {
-	t.Helper()
-	if !r.Present {
-		t.Errorf("%s (%s): no x-amz-expiration, want rule %s", r.Name, r.Path, rule.ID)
-		return
-	}
-	got, err := parseExpHeader(r.Header)
-	if err != nil {
-		t.Errorf("%s: %v", r.Name, err)
-		return
-	}
-	want := expExpected(r.Version.MTime, rule.ExpirationDays)
-	if got.RuleID != rule.ID || !got.Date.Equal(want) {
-		t.Errorf("%s (%s): rule %q expiring %s, want rule %q expiring %s (Expiration %d days from %s)", r.Name, r.Path, got.RuleID,
-			got.Date.Format(time.RFC1123), rule.ID, want.Format(time.RFC1123), rule.ExpirationDays, r.Version.MTime.UTC().Format(time.RFC3339))
-	}
 }
 
 // cleanup deletes every version and delete marker in buckets, the ones the
@@ -261,9 +208,15 @@ func (c expCase) cleanup(t *testing.T, buckets []string) {
 // treated like a versionId request and reports the NoncurrentVersionExpiration
 // action, and explicit-version requests get that header too. Tentacle 20.2.5
 // and Umbrella 21.2.0 pass.
+//
+// Both subtests are observations of the reproduction unit
+// rgw_lifecycle_expiration_header. In current-and-noncurrent, the reported
+// Expiration of the plain request and the absent header outside the prefix
+// are controls.
 func TestRGWLifecycleExpirationHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_lifecycle_expiration_header", "noncurrent-only", "current-and-noncurrent")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_EXP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -280,7 +233,7 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := expCase{ctx: ctx, client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
+	c := expCase{ctx: ctx, repro: repro, client: harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}}
 
 	const noncurrentOnly, both = "/tc-exp-noncurrent-only", "/tc-exp-current-and-noncurrent"
 	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, noncurrentOnly, both); err != nil {
@@ -296,18 +249,42 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 		older := c.putVersion(t, path, []byte(path+" older"))
 		current := c.putVersion(t, path, []byte(path+" current"))
 		if older.ID == current.ID {
-			t.Fatalf("condition not established: both writes of %s have version %q", path, older.ID)
+			c.repro.Inconclusive(t, "condition not established: both writes of %s have version %q", path, older.ID)
 		}
 		return path, older, current
 	}
 
+	// observe judges every request of one subtest and records the
+	// subtest's observation once: the symptom when any request shows it.
+	observe := func(t *testing.T, name string, rule expRule, current expVersion, requests ...expJudged) {
+		t.Helper()
+		var symptoms, absent []string
+		for _, q := range requests {
+			symptom, detail, err := judgeExpRequest(q.request, rule, q.reportsRule, current.MTime)
+			switch {
+			case err != nil:
+				repro.Inconclusive(t, "%v", err)
+			case symptom:
+				symptoms = append(symptoms, detail)
+			default:
+				absent = append(absent, detail)
+			}
+		}
+		if len(symptoms) > 0 {
+			repro.Symptom(t, name, "%s", strings.Join(symptoms, "; "))
+			return
+		}
+		repro.Absent(t, name, "%s", strings.Join(absent, "; "))
+	}
+
 	t.Run("noncurrent-only", func(t *testing.T) {
 		path, older, current := writeKey(t, noncurrentOnly)
-		c.lifecycle(t, noncurrentOnly, expRule{ID: "tc-noncurrent-only", Prefix: "docs/", NoncurrentDays: 30})
-		const why = "a NoncurrentVersionExpiration rule is not a current-version expiration"
-		requireNoHeader(t, c.query(t, "plain", path, false, current), why)
-		requireNoHeader(t, c.query(t, "explicit-current", path, true, current), "explicit version request")
-		requireNoHeader(t, c.query(t, "explicit-older", path, true, older), "explicit version request")
+		rule := expRule{ID: "tc-noncurrent-only", Prefix: "docs/", NoncurrentDays: 30}
+		c.lifecycle(t, noncurrentOnly, rule)
+		observe(t, "noncurrent-only", rule, current,
+			expJudged{c.query(t, "plain", path, false, current), false},
+			expJudged{c.query(t, "explicit-current", path, true, current), false},
+			expJudged{c.query(t, "explicit-older", path, true, older), false})
 	})
 
 	t.Run("current-and-noncurrent", func(t *testing.T) {
@@ -315,9 +292,14 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 		outside := c.putVersion(t, both+"/other/key", []byte("outside the rule prefix"))
 		rule := expRule{ID: "tc-current-and-noncurrent", Prefix: "docs/", ExpirationDays: 7, NoncurrentDays: 90}
 		c.lifecycle(t, both, rule)
-		requireRule(t, c.query(t, "plain", path, false, current), rule)
-		requireNoHeader(t, c.query(t, "explicit-current", path, true, current), "explicit version request, although it is the latest")
-		requireNoHeader(t, c.query(t, "explicit-older", path, true, older), "explicit version request")
-		requireNoHeader(t, c.query(t, "outside-prefix", both+"/other/key", false, outside), "the key is outside the rule's prefix")
+		// Control: a key outside the rule's prefix gets no header.
+		if r := c.query(t, "outside-prefix", both+"/other/key", false, outside); r.Present {
+			repro.Inconclusive(t, "control failed: %s (%s): x-amz-expiration %q, want none: the key is outside the rule's prefix", r.Name, r.Path, r.Header)
+		}
+		observe(t, "current-and-noncurrent", rule, current,
+			expJudged{c.query(t, "plain", path, false, current), true},
+			expJudged{c.query(t, "explicit-current", path, true, current), false},
+			expJudged{c.query(t, "explicit-older", path, true, older), false})
 	})
+	repro.Conclude()
 }

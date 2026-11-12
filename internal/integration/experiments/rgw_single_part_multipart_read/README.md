@@ -129,6 +129,38 @@ uploaded (`RGW_SP object=`), every numbered read, sent or not
    `400 InvalidPart`. Another error, such as `403 AccessDenied`, does not
    show that the part number was out of range.
 
+## Verdict
+
+The test reports one reproduction unit, `rgw_single_part_multipart_read`,
+with two planned observations, `single-small` and `single-large`, each over
+its reads of part 1. `two-part-control` and the refusal of part 2 are
+controls. `go test -v` prints one
+`REPRODUCTION_VERDICT case=rgw_single_part_multipart_read ...` line with the
+verdict, the decisive reads and the resolved images.
+
+- `REPRODUCED`: the conditions and controls hold, and a read of part 1 is
+  answered with another status, length, body or part count, or was written
+  to the gateway and did not end while the same gateway process ran
+  (`judgeOnlyPart`).
+- `NOT_REPRODUCED`: the conditions and controls hold, and every read of
+  part 1 of both objects answers the part.
+- `INCONCLUSIVE`: an unavailable prerequisite (the clock tick rate), a
+  condition not established (step 1), a failed control (step 2 or 6), or
+  another fault (step 4 or 5). The line names the reason.
+
+The batch stays a required characterization: without
+`CEPH_TEST_EXPECTED_VERDICT` a reproduction fails the observing subtest, an
+absent symptom passes, and an inconclusive run fails, so every supported
+release passes with `NOT_REPRODUCED`. An expectation turns the same run into
+a check of one verdict:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_single_part_multipart_read=NOT_REPRODUCED \
+  CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
+  -run '^TestRGWSinglePartMultipartNumberedRead$' \
+  ./internal/integration/experiments/rgw_single_part_multipart_read
+```
+
 ## Reading the result
 
 The results below ran on the pinned role images of the shared recipe: 20.2.4
@@ -142,12 +174,12 @@ candidate 19.1.0 (`sha256:56d1542f98c9…`) and Reef 18.2.7
 supported release; they were run once each to see the answers of builds
 without the fix. Linux amd64, bridge, one run per build.
 
-- **Pass:** every read of part 1 answers 200 with the part's length (65,536
+- **Pass, `NOT_REPRODUCED`:** every read of part 1 answers 200 with the part's length (65,536
   and 9,437,184), a part count of 1 and, for a GET, the exact bytes; part 2
   is refused with `400 InvalidPart`; the two-part control answers with a
   part count of 2. Squid 19.2.0 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and
   Umbrella 21.2.0 pass (31 to 38 s each).
-- **Observed defect:** a read of part 1 is answered with another status,
+- **Observed defect, `REPRODUCED`:** a read of part 1 is answered with another status,
   length, body or part count, or is not answered at all. The release
   candidate 19.1.0 does not answer the GET: the two-part control passes,
   then GET of part 1 of `single-small` and GET of part 1 of `single-large`
@@ -161,18 +193,18 @@ without the fix. Linux amd64, bridge, one run per build.
   requests are; that they loop in the manifest walk is the upstream
   description, not a finding of this case. The run takes about 156 s and
   the cleanup succeeds. No supported release does this.
-- **Control failed:** numbered reads do not work on the gateway. Reef 18.2.7
+- **Control failed, `INCONCLUSIVE`:** numbered reads do not work on the gateway. Reef 18.2.7
   answers every `?partNumber` read of the two-part object, part 3 included,
   with 200 and the whole object (5,308,416 bytes, no part count), so it does
   not read by part number and the single-part objects are not read.
-- **Another fault:** a read was not written to a connection within its
+- **Another fault, `INCONCLUSIVE`:** a read was not written to a connection within its
   deadline, a read does not end and the gateway was restarted or
   cannot be read, the request fails in transport, or the gateway is not the
   same healthy process after a read.
 - **Not reproduced:** a pass on a build claimed to be affected. Check the
   condition line of step 1: the ETag suffix and the manifest rules show that
   the object has one part.
-- **Unavailable prerequisite:** the cluster or the gateway does not start,
+- **Unavailable prerequisite, `INCONCLUSIVE`:** the cluster or the gateway does not start,
   or the gateway's clock tick rate cannot be read.
 
 ## Cleanup and limits

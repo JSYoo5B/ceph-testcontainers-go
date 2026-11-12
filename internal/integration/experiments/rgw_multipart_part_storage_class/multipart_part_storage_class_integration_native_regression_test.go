@@ -53,7 +53,7 @@ func (c *mpCase) admin(t *testing.T, args ...string) []byte {
 // configurePlacement adds the COLD storage class on its own data pool to
 // the default placement, restarts the gateway so that it loads the zone,
 // and requires the zone to read the mapping back.
-func (c *mpCase) configurePlacement(t *testing.T, cluster *ceph.Container) {
+func (c *mpCase) configurePlacement(t *testing.T, repro *harness.Reproduction, cluster *ceph.Container) {
 	t.Helper()
 	if _, err := cluster.CreatePool(c.ctx, ceph.PoolConfig{Name: mpColdPool, Application: "rgw"}); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func (c *mpCase) configurePlacement(t *testing.T, cluster *ceph.Container) {
 			}
 		}
 	}
-	t.Fatalf("condition not established: zone %s does not map %s to %s apart from STANDARD", zone.Name, mpColdClass, mpColdPool)
+	repro.Inconclusive(t, "condition not established: zone %s does not map %s to %s apart from STANDARD", zone.Name, mpColdClass, mpColdPool)
 }
 
 // upload completes a two-part upload of parts to bucket/obj with the
@@ -177,9 +177,14 @@ func (c *mpCase) cleanup(t *testing.T, buckets []string) {
 // object uses STANDARD. A whole-object GET, a part number beyond the last
 // part (a refusal control) and the placement of each object's part heads are
 // recorded alongside.
+//
+// cold-storage-class is the one observation of the reproduction unit
+// rgw_multipart_part_storage_class; standard-control and the refusal of the
+// part number after the last are controls.
 func TestRGWMultipartPartStorageClass(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	repro := harness.StartReproduction(t, "rgw_multipart_part_storage_class", "cold-storage-class")
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_MP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
@@ -189,7 +194,7 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 	t.Logf("RGW_MP gateway=%s", strings.TrimSpace(harness.ExecOutput(t, ctx, gateway, "radosgw", "--version")))
 	c := &mpCase{ctx: ctx, gateway: gateway, uploads: map[string]string{},
 		client: harness.S3HTTPClient{AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 60 * time.Second}}}
-	c.configurePlacement(t, cluster)
+	c.configurePlacement(t, repro, cluster)
 
 	const cold, standard = "tc-mp-cold", "tc-mp-standard"
 	if err := harness.RGWOwnBuckets(t, harness.RGWBackendBucketCreator(t, ctx, c.client), func(created []string) { c.cleanup(t, created) }, cold, standard); err != nil {
@@ -197,7 +202,7 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 	}
 	parts := [][]byte{bytes.Repeat([]byte("first part of the storage class case\n"), mpFirstPart/37+1)[:mpFirstPart],
 		bytes.Repeat([]byte("SECOND PART\n"), mpSecondPart/12+1)[:mpSecondPart]}
-	whole := append(append([]byte{}, parts[0]...), parts[1]...)
+	wholeBytes := append(append([]byte{}, parts[0]...), parts[1]...)
 	c.upload(t, cold, mpColdClass, parts)
 	c.upload(t, standard, "", parts)
 
@@ -223,36 +228,71 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 		return stat.Manifest.Tail.Rule
 	}
 	if rule := placement(cold); !strings.HasSuffix(rule, "/"+mpColdClass) {
-		t.Fatalf("condition not established: the parts of %s are not placed in %s (tail rule %q)", cold, mpColdClass, rule)
+		repro.Inconclusive(t, "condition not established: the parts of %s are not placed in %s (tail rule %q)", cold, mpColdClass, rule)
 	}
 	if rule := placement(standard); strings.Contains(rule, mpColdClass) {
-		t.Fatalf("control not established: the parts of %s are placed in %s (tail rule %q)", standard, mpColdClass, rule)
+		repro.Inconclusive(t, "control failed: the parts of %s are placed in %s (tail rule %q)", standard, mpColdClass, rule)
 	}
 
-	for _, test := range []struct {
-		name, bucket, class string
-	}{{"cold-storage-class", cold, mpColdClass}, {"standard-control", standard, "STANDARD"}} {
-		t.Run(test.name, func(t *testing.T) {
-			head := c.signed(t, ctx, http.MethodHead, "/"+test.bucket+"/"+mpObject, nil, nil)
-			class := head.Headers.Get("X-Amz-Storage-Class")
-			if class == "" {
-				class = "STANDARD"
-			}
-			got := c.signed(t, ctx, http.MethodGet, "/"+test.bucket+"/"+mpObject, nil, nil)
-			t.Logf("RGW_MP whole bucket=%s head=%d storage-class=%q get=%d bytes=%d matches=%t", test.bucket, head.Code, class, got.Code, len(got.Body), bytes.Equal(got.Body, whole))
-			if head.Code != http.StatusOK || class != test.class || got.Code != http.StatusOK || !bytes.Equal(got.Body, whole) {
-				t.Fatalf("condition not established: %s is not a readable %s object", test.bucket, test.class)
-			}
-			for i, part := range parts {
-				for _, method := range []string{http.MethodGet, http.MethodHead} {
-					if read := c.readPart(t, method, test.bucket, i+1, part); !partOK(read, part) {
-						t.Errorf("%s of part %d of the %s object: %s, want its %d bytes", method, i+1, test.class, read, len(part))
-					}
+	// whole requires a readable object of the class before any part read.
+	whole := func(t *testing.T, bucket, want string) {
+		t.Helper()
+		head := c.signed(t, ctx, http.MethodHead, "/"+bucket+"/"+mpObject, nil, nil)
+		class := head.Headers.Get("X-Amz-Storage-Class")
+		if class == "" {
+			class = "STANDARD"
+		}
+		got := c.signed(t, ctx, http.MethodGet, "/"+bucket+"/"+mpObject, nil, nil)
+		t.Logf("RGW_MP whole bucket=%s head=%d storage-class=%q get=%d bytes=%d matches=%t", bucket, head.Code, class, got.Code, len(got.Body), bytes.Equal(got.Body, wholeBytes))
+		if head.Code != http.StatusOK || class != want || got.Code != http.StatusOK || !bytes.Equal(got.Body, wholeBytes) {
+			repro.Inconclusive(t, "condition not established: %s is not a readable %s object", bucket, want)
+		}
+	}
+	beyond := func(t *testing.T, bucket string) {
+		t.Helper()
+		if read := c.readPart(t, http.MethodGet, bucket, len(parts)+1, nil); !beyondRefused(read) {
+			repro.Inconclusive(t, "control failed: part %d of the %d-part object in %s was not refused as 400 InvalidPart: %s", len(parts)+1, len(parts), bucket, read)
+		}
+	}
+
+	t.Run("standard-control", func(t *testing.T) {
+		whole(t, standard, "STANDARD")
+		for i, part := range parts {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				if read := c.readPart(t, method, standard, i+1, part); !partOK(read, part) {
+					repro.Inconclusive(t, "control failed: %s of part %d of the STANDARD object: %s, want its %d bytes", method, i+1, read, len(part))
 				}
 			}
-			if beyond := c.readPart(t, http.MethodGet, test.bucket, len(parts)+1, nil); !beyondRefused(beyond) {
-				t.Errorf("part %d of a %d-part object was not refused as 400 InvalidPart: %s", len(parts)+1, len(parts), beyond)
-			}
-		})
+		}
+		beyond(t, standard)
+	})
+	if t.Failed() {
+		return
 	}
+
+	t.Run("cold-storage-class", func(t *testing.T) {
+		whole(t, cold, mpColdClass)
+		var symptoms, absent []string
+		for i, part := range parts {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				symptom, detail, err := judgePartRead(c.readPart(t, method, cold, i+1, part), part)
+				switch {
+				case err != nil:
+					repro.Inconclusive(t, "%v", err)
+				case symptom:
+					symptoms = append(symptoms, detail)
+				default:
+					absent = append(absent, detail)
+				}
+			}
+		}
+		beyond(t, cold)
+		if len(symptoms) > 0 {
+			repro.Symptom(t, "cold-storage-class", "%d of %d part reads refused while the whole-object GET returns every byte: %s",
+				len(symptoms), len(symptoms)+len(absent), strings.Join(symptoms, "; "))
+			return
+		}
+		repro.Absent(t, "cold-storage-class", "every part read answers the part: %s", strings.Join(absent, "; "))
+	})
+	repro.Conclude()
 }

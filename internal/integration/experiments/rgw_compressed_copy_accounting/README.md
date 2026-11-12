@@ -2,8 +2,9 @@
 
 Owner: RGW. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRGWCompressedCopyAccounting`, optional batch `rgw_compressed_copy`.
-Pure tests of its bucket ownership and copy result classification
-(`TestOwnBuckets*`, `TestClassifyCopyResult`, batch `pure`).
+Pure tests of its bucket ownership, copy result classification and
+verdict judgement (`TestOwnBuckets*`, `TestClassifyCopyResult`,
+`TestJudgeCopyAccounting`, batch `pure`).
 
 ## Use case and native contract
 
@@ -60,8 +61,8 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Deliberately failing reproducer: it reports `REPRODUCED` and fails on the
+published Tentacle 20.2.4 images, the pull request default. No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -115,36 +116,58 @@ each copy resolved (`RGW_CC trace`).
    the listed `Size` (S3 `ListObjects`) and the bucket statistics' `size`
    (`bucket stats`, read until they count the one object, at most 30
    seconds) must all equal the logical length, and a fresh GET must return
-   the exact bytes. `size_actual` is the rounded size and is only logged.
+   the exact bytes (`judgeCopyAccounting`). `size_actual` is the rounded
+   size and is only logged.
 4. Each copy's response must have the XML root `CopyObjectResult`; a 200
    whose root is `Error`, in any namespace, fails with its code and message.
 
-## Reading the result
+## Verdict
 
-The results below ran on the pinned images of the shared recipe: the 20.2.4
-role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
+The test reports one reproduction unit, `rgw_compressed_copy_accounting`,
+with one planned observation, `compressed-source-uncompressed-destination`.
+The two other subtests are controls. `go test -v` prints one
+`REPRODUCTION_VERDICT case=rgw_compressed_copy_accounting ...` line with the
+verdict, the decisive observation and the resolved images.
+
+- `REPRODUCED`: the conditions and both controls hold, GET of the trigger
+  copy returns every byte, and its index `accounted_size`, listed `Size` and
+  bucket `size` all report the source's compressed length (its index raw
+  `size` or the sum of its compression blocks).
+- `NOT_REPRODUCED`: the conditions and both controls hold, and the three
+  sizes of the trigger copy equal the logical length.
+- `INCONCLUSIVE`: a condition is not established (the zone does not read back
+  the edits, the source is not compressed, the trigger copy carries
+  compression metadata), a control failed (a control copy is not stored as
+  intended, or does not account the logical length), or another fault (the
+  trigger copy's bytes differ, its sizes disagree with each other or report
+  another length). The line names the reason. A gateway or zone edit that
+  fails before the observation also ends without a verdict.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` the test keeps its pass/fail meaning: a
+reproduction fails the trigger subtest, an absent symptom passes, and an
+inconclusive run fails. With an expectation only the matching verdict passes:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_compressed_copy_accounting=REPRODUCED \
+  python3 .github/scripts/tag_scenarios.py optional --batch rgw_compressed_copy \
+  --package ./internal/integration/experiments/rgw_compressed_copy_accounting \
+  --directory "artifacts/rgw-compressed-copy-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+The recorded verdicts ran on the pinned images of the shared recipe: the
+20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
 `aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
 role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
 `9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
 client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 
-- **Pass:** every subtest met the contract. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `compressed-source-uncompressed-destination` reports the
-  compressed length (48905 bytes for the 1048630-byte payload) as index
-  `accounted_size`, listed `Size` and bucket `size`, while the raw `size`,
-  `size_utilized` and GET are the logical length; both controls pass.
-  Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  trigger evidence in step 2.
-- **Unavailable prerequisite:** the cluster or the gateway does not start,
-  the zone edits are refused, or the gateway does not restart.
-- **Condition not established:** the zone does not read back the edits, the
-  source is not compressed, or the trigger destination carries compression
-  metadata. The test fails with `condition not established`. Squid 19.2.5
-  keeps the source's zlib metadata and compressed bytes in the `COLD` copy,
-  so the trigger is not reached there (its accounted size is the logical
-  length).
+| Release | Verdict | Observation |
+| --- | --- | --- |
+| Tentacle 20.2.4 | `REPRODUCED` | the trigger copy accounts 48905 bytes (the compressed length) for the 1048630-byte payload as index `accounted_size`, listed `Size` and bucket `size`, while the raw `size`, `size_utilized` and GET are the logical length |
+| Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every size of the trigger copy is the logical length |
+| Squid 19.2.5 | `INCONCLUSIVE` | condition not established: the `COLD` copy keeps the source's zlib metadata and compressed bytes, so the trigger is not reached (its accounted size is the logical length) |
+
+The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set; the other rows read the pass or failure those images gave as a verdict.
 
 ## Cleanup and limits
 

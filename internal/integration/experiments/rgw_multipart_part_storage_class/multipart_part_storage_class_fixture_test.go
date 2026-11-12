@@ -6,6 +6,7 @@ package rgw_multipart_part_storage_class_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,37 @@ func TestBeyondRefused(t *testing.T) {
 	} {
 		if got := beyondRefused(test.read); got != test.ok {
 			t.Errorf("%s: beyondRefused(%s) = %t, want %t", name, test.read, got, test.ok)
+		}
+	}
+}
+
+func TestJudgePartRead(t *testing.T) {
+	part := make([]byte, 64<<10)
+	good := mpRead{Method: http.MethodGet, Part: 2, Status: http.StatusPartialContent, Length: int64(len(part)), PartsCount: "2", BodyMatches: true}
+	for name, test := range map[string]struct {
+		read    mpRead
+		symptom bool
+		fault   bool
+	}{
+		"part":                     {good, false, false},
+		"head of the part":         {func() mpRead { r := good; r.Method, r.BodyMatches = http.MethodHead, false; return r }(), false, false},
+		"invalid part":             {mpRead{Method: http.MethodGet, Part: 2, Status: http.StatusBadRequest, Length: 238, Code: "InvalidPart"}, true, false},
+		"invalid part head":        {mpRead{Method: http.MethodHead, Part: 2, Status: http.StatusBadRequest, Length: 238}, true, false},
+		"other 400":                {mpRead{Method: http.MethodGet, Part: 2, Status: http.StatusBadRequest, Code: "InvalidArgument"}, false, true},
+		"access denied":            {mpRead{Method: http.MethodGet, Part: 2, Status: http.StatusForbidden, Code: "AccessDenied"}, false, true},
+		"service unavailable head": {mpRead{Method: http.MethodHead, Part: 2, Status: http.StatusServiceUnavailable}, false, true},
+		"whole-object length":      {func() mpRead { r := good; r.Length = 5308416; return r }(), false, true},
+		"other bytes":              {func() mpRead { r := good; r.BodyMatches = false; return r }(), false, true},
+	} {
+		symptom, detail, err := judgePartRead(test.read, part)
+		if test.fault {
+			if err == nil || !strings.HasPrefix(err.Error(), "another fault: ") {
+				t.Errorf("%s: %t %q %v, want another fault", name, symptom, detail, err)
+			}
+			continue
+		}
+		if err != nil || symptom != test.symptom || detail == "" {
+			t.Errorf("%s: symptom=%t %q %v, want symptom=%t", name, symptom, detail, err, test.symptom)
 		}
 	}
 }
