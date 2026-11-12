@@ -1,0 +1,41 @@
+{
+  "schema": "ceph-reproductions/v1",
+  "roles": [
+    "essential",
+    "client",
+    "cephfs"
+  ],
+  "units": {
+    "cephfs_statfs_mixed_quota": {
+      "network": "bridge"
+    }
+  },
+  "combinations": [
+    {
+      "id": "20.2.4-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+        "client": "sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+        "cephfs": "sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80"
+      },
+      "verdicts": {
+        "cephfs_statfs_mixed_quota": "REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, tag runner comparing this verdict: REPRODUCED; parent/child misreports its byte quota, 33 s."
+    },
+    {
+      "id": "21.2.0-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+        "client": "sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+        "cephfs": "sha256:7ae447d4d4145a150c757e2aa29182d632faa86c4f7fe7ec6d63d59ed1906973"
+      },
+      "verdicts": {
+        "cephfs_statfs_mixed_quota": "NOT_REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 21.2.0 role images, tag runner comparing this verdict: NOT_REPRODUCED; every directory reports its quota, 33 s."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema": "ceph-reproductions/v1",
+  "roles": [
+    "essential",
+    "client",
+    "rgw"
+  ],
+  "units": {
+    "rgw_compressed_copy_accounting": {
+      "network": "bridge"
+    }
+  },
+  "combinations": [
+    {
+      "id": "20.2.4-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+        "client": "sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+        "rgw": "sha256:aac25fc48b5306425ceefaf6a46755d5820fb3f60805141334de4f99a4ea6d6c"
+      },
+      "verdicts": {
+        "rgw_compressed_copy_accounting": "REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, tag runner comparing this verdict: REPRODUCED; the uncompressed destination accounts 48905 bytes for a 1048630-byte object, 40 s."
+    },
+    {
+      "id": "21.2.0-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:119180026952289758051ae588aed3035b6d6f6304669655e0d93a510015cf0b",
+        "client": "sha256:e5f7edab88b6ec7b171686bdef74b29206e89ce6d23d624863e4bfa639185425",
+        "rgw": "sha256:9ef3fb34f7c4b41dbcd098c8c3d3a3b7d59e38f1892960dc5a92fd585b32fe98"
+      },
+      "verdicts": {
+        "rgw_compressed_copy_accounting": "NOT_REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 21.2.0 role images, tag runner comparing this verdict: NOT_REPRODUCED; every size equals the logical length, 41 s."
+    }
+  ]
+}

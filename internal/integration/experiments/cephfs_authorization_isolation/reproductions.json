@@ -1,0 +1,36 @@
+{
+  "schema": "ceph-reproductions/v1",
+  "roles": [
+    "essential",
+    "client",
+    "cephfs"
+  ],
+  "units": {
+    "cephfs_authorization_isolation/caps-per-filesystem": {
+      "network": "bridge"
+    },
+    "cephfs_authorization_isolation/deleted-directory-snapshot": {
+      "network": "bridge"
+    },
+    "cephfs_authorization_isolation/same-named-subvolumes": {
+      "network": "bridge"
+    }
+  },
+  "combinations": [
+    {
+      "id": "20.2.4-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+        "client": "sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+        "cephfs": "sha256:9566841eba0acc5c0163823cc42e189b1d67453ed781891b3773665ef8b2ea80"
+      },
+      "verdicts": {
+        "cephfs_authorization_isolation/caps-per-filesystem": "NOT_REPRODUCED",
+        "cephfs_authorization_isolation/deleted-directory-snapshot": "NOT_REPRODUCED",
+        "cephfs_authorization_isolation/same-named-subvolumes": "NOT_REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, go test of TestCephFSAuthorizationIsolation: NOT_REPRODUCED in all three units; every create and mkdir on the read-only filesystem refused, the snapshot still reads after the deletion, the tenants' namespaces stay apart, 104 s."
+    }
+  ]
+}

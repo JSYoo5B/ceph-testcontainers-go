@@ -1,0 +1,32 @@
+{
+  "schema": "ceph-reproductions/v1",
+  "roles": [
+    "essential",
+    "client",
+    "rbd-aux"
+  ],
+  "units": {
+    "rbd_mirror_demote_restart/demotion-resume": {
+      "network": "bridge"
+    },
+    "rbd_mirror_demote_restart/resumed-bytes": {
+      "network": "bridge"
+    }
+  },
+  "combinations": [
+    {
+      "id": "20.2.4-roles",
+      "platform": "linux/amd64",
+      "images": {
+        "essential": "sha256:3c7a6d0ae445018fb19f596b199e015befdfb64e2dc85b0cda3bd388df99a19c",
+        "client": "sha256:56b5c03d450c777cc53acd33aaeae0f1acbe0f066eae9710e7c6721d60038df5",
+        "rbd-aux": "sha256:2f0266c7dba5c18b1f8addd9d4ee25b56f4b3616a2afed6244520685391061fa"
+      },
+      "verdicts": {
+        "rbd_mirror_demote_restart/demotion-resume": "NOT_REPRODUCED",
+        "rbd_mirror_demote_restart/resumed-bytes": "REPRODUCED"
+      },
+      "evidence": "Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, same tag runner run, verdict line of this unit while resumed-bytes was expected: NOT_REPRODUCED; the restarted receiver completed the demotion copy. Native run 2026-11-12, Linux amd64, Docker 29.9.1, pinned 20.2.4 role images, tag runner comparing this verdict: REPRODUCED; object 44 keeps its old bytes after the resumed copy, 433 s."
+    }
+  ]
+}
