@@ -158,6 +158,8 @@ client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 | Tentacle 20.2.4, Squid 19.2.5 | `REPRODUCED` | every request for a `docs/` key, plain or explicit, carries a header with the rule ID whose date is the modification time plus the `NoncurrentVersionExpiration` days (30 on the first bucket, 90 instead of 7 on the second); the key outside the prefix has none |
 | Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every request follows the table |
 
+The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set; the other rows read the pass or failure those images gave as a verdict.
+
 ## Cleanup and limits
 
 The cleanup is registered before the first bucket is created and receives

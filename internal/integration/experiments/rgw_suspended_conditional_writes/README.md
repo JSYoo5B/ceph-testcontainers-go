@@ -159,6 +159,8 @@ CEPH_TEST_EXPECTED_VERDICT=rgw_suspended_conditional_writes=REPRODUCED \
 | Umbrella 21.2.0 | `NOT_REPRODUCED` | every step on both buckets follows AWS semantics (about 36 seconds) |
 | Squid 19.2.5 | `INCONCLUSIVE` | control failed: `never-versioned` fails at `existing-if-match` (put) and at the multipart create-once control (the duplicate completion answers 200) |
 
+The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set, on the pinned role images of the shared recipe; the Squid 19.2.5 row reads the failure those images gave as a verdict.
+
 ## Cleanup and limits
 
 Refused multipart uploads are aborted at once; objects stay in the test-owned

@@ -149,6 +149,8 @@ bridge.
 | --- | --- | --- |
 | Squid 19.2.5, Tentacle 20.2.4 and 20.2.5, Umbrella 21.2.0 | `REPRODUCED` | `cold-storage-class` answers `400 InvalidPart` for GET of parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as the length and no parts count, while the whole-object GET returns all 5,308,416 bytes; `standard-control` answers 200, the exact lengths (5,242,880 and 65,536), parts count 2 and the exact bytes (about 38 s each) |
 
+Tentacle 20.2.4 is the verdict line of a run with the expectation set; the other releases read the failure those images gave as a verdict.
+
 No tested build is fixed, so the case has no `NOT_REPRODUCED` reference.
 
 ## Cleanup and limits

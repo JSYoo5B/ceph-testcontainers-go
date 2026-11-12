@@ -170,6 +170,8 @@ client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
 | Tentacle 20.2.5, Umbrella 21.2.0 | `NOT_REPRODUCED` | every subtest follows the table |
 | Squid 19.2.5 | `INCONCLUSIVE` | control failed: `no-checksum-wrong-key` completes with 200 (the completion validates no key), and a `SHA256` part answers without its checksum, so the `sha256` controls stop with `condition not established` |
 
+The Tentacle 20.2.4 and Umbrella 21.2.0 rows are verdict lines of runs with the expectation set; the other rows read the pass or failure those images gave as a verdict.
+
 ## Cleanup and limits
 
 The cleanup is registered before the bucket is created and acts only when the
