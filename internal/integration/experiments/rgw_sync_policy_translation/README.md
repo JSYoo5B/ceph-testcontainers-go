@@ -6,7 +6,8 @@ Tests: `TestMultiClusterRGWSyncTranslationFiltering` and
 `native_rgw_translation`. The required test of the same name in
 `internal/integration/rgw` runs the supported cases (`tag_owner_class`,
 `tenant_system_user_isolation`) on the same realm setup,
-`harness.NewRGWSyncTranslationFixture`.
+`harness.NewRGWSyncTranslationFixture`. The judges of both cases have
+Docker-free tests in `sync_translation_fixture_test.go` (code batch `pure`).
 
 ## Use case and native contract
 
@@ -30,8 +31,8 @@ Both cases use the sync-policy model of the Ceph multisite documentation
 On Tentacle 20.2.4 neither holds reliably: pipe priority between overlapping
 pipes and source-side denial in user mode have no reliable effect (see the
 `rgw/multisite` README). No upstream issue or fix is recorded for either.
-The batch is expected to fail on the published images; it exists to verify a
-patched RGW image.
+Both cases are expected to reproduce on the published images; the batch
+exists to verify a patched RGW image.
 
 ## Requirements
 
@@ -46,7 +47,8 @@ patched RGW image.
 
 ## Tier and triggers
 
-Deliberately failing reproducer on the published images, with a bridge and a
+Deliberately failing reproducer on the published images (without an
+expectation), with a bridge and a
 host-network variant (about 8.5 minutes for the bridge variant on 20.2.4). No
 automatic run includes it (the default checks of a pull request, pushes to
 `main`, periodic samples), and it never gates anything. A maintainer can run
@@ -74,6 +76,17 @@ python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation
   --directory "artifacts/native-rgw-translation-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
+To check one case against an affected or a patched gateway, declare its
+expected verdict; the run then passes only on that verdict, and the other
+case only prints its own:
+
+```sh
+CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/priority_tags_owner_class=REPRODUCED \
+python3 .github/scripts/tag_scenarios.py optional --batch native_rgw_translation \
+  --package ./internal/integration/experiments/rgw_sync_policy_translation \
+  --directory "artifacts/native-rgw-translation-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
 
@@ -92,21 +105,41 @@ result.
   the replicas after the grant. Owner translation is checked by a forbidden
   read as the source owner on the destination.
 
-## Reading the result
+## Verdict
 
-- **Pass:** both cases held. On a patched gateway this is the evidence the
-  patch works for these cases.
-- **Observed bug:** the overlapping pipes do not resolve by priority (an
-  object or class goes the wrong way; on 20.2.4 the `red` object, which only
-  the higher-priority pipe selects, never arrives), or the denied object
-  replicates before the grant (20.2.4).
-- **Not reproduced:** a pass on the published 20.2.4 image. Compare the
-  gateway build before trusting it.
-- **Unavailable prerequisite:** the realm, zones, placement or policy import
-  do not complete. The failure names the setup step.
-- **Condition not established:** the policy import or the bucket checkpoint
-  does not complete within its window. That is a setup or timing outcome, not
-  a reproduction.
+Each case is its own unit, named after its subtest, and prints its own
+`REPRODUCTION_VERDICT` line in each network variant. Both variants report
+the same unit; the observation names the variant (`bridge network:` or
+`host network:`), and an expectation applies to both.
+
+- `rgw_sync_policy_translation/priority_tags_owner_class`, observation
+  `priority`. **REPRODUCED:** the overlapping pipes do not resolve by
+  priority: the `red` object, which only the higher-priority pipe selects,
+  never arrives within four minutes (20.2.4), or a replica is listed in the
+  lower-priority pipe's class. **NOT_REPRODUCED:** `blue` and `red`
+  replicate with their bytes and are listed in `STANDARD_IA` after the
+  pipe's bucket checkpoint. The exclusion, owner translation and fallback
+  checks run after that verdict and fail the test on their own.
+- `rgw_sync_policy_translation/ordinary_user_denial_grant`, observation
+  `denial`. **REPRODUCED:** the destination serves the object written while
+  the source denied the read, before the grant (20.2.4). **NOT_REPRODUCED:**
+  it stays `NoSuchKey` for 35 seconds and again after the pipe's bucket
+  checkpoint. The replication after the grant runs after that verdict and
+  fails the test on its own.
+
+**INCONCLUSIVE** names the category. Control failed: the `blue` object, which
+both pipes select, does not replicate. Another fault: the destination
+listing omits an arrived replica, or answers the denied object other than
+`NoSuchKey` or `200`. A realm, zone, placement, policy import or bucket
+checkpoint that does not complete ends the test before a verdict, with the
+failing setup step in the log; that is a setup or timing outcome, not a
+reproduction.
+
+Without `CEPH_TEST_EXPECTED_VERDICT` a reproduction fails its subtest,
+absence passes it and an inconclusive run fails it. With
+`CEPH_TEST_EXPECTED_VERDICT=rgw_sync_policy_translation/<case>=<REPRODUCED|NOT_REPRODUCED>`
+only that case's matching verdict passes; the other case's symptom does not
+fail the run.
 
 ## Cleanup and limits
 

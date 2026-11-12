@@ -59,6 +59,19 @@ func CleanupRGWTranslationSyncGroup(t *testing.T, link *multisite.Fixture, group
 
 func AssertRGWSyncClass(t *testing.T, ctx context.Context, client S3HTTPClient, bucket, key, class string) {
 	t.Helper()
+	listed, ok := RGWListedSyncClass(t, ctx, client, bucket, key)
+	if !ok {
+		t.Fatalf("replica listing omitted %s", key)
+	}
+	if listed != class {
+		t.Fatalf("replica %s class=%s want=%s", key, listed, class)
+	}
+}
+
+// RGWListedSyncClass returns the storage class a bucket listing gives a key,
+// and whether the listing has the key.
+func RGWListedSyncClass(t *testing.T, ctx context.Context, client S3HTTPClient, bucket, key string) (string, bool) {
+	t.Helper()
 	var listing struct {
 		Contents []struct{ Key, StorageClass string } `xml:"Contents"`
 	}
@@ -67,13 +80,10 @@ func AssertRGWSyncClass(t *testing.T, ctx context.Context, client S3HTTPClient, 
 	}
 	for _, entry := range listing.Contents {
 		if entry.Key == key {
-			if entry.StorageClass != class {
-				t.Fatalf("replica %s class=%s want=%s", key, entry.StorageClass, class)
-			}
-			return
+			return entry.StorageClass, true
 		}
 	}
-	t.Fatalf("replica listing omitted %s", key)
+	return "", false
 }
 
 // RGWSyncTranslationFixture is the two-zone realm, tiered placement, permission
@@ -218,6 +228,31 @@ type RGWAbsentObject struct {
 
 func RequireRGWObjectsAbsent(t *testing.T, ctx context.Context, duration time.Duration, objects ...RGWAbsentObject) {
 	t.Helper()
+	if answer, held := HoldRGWObjectsAbsent(ctx, duration, objects...); !held {
+		if answer.Path == "" {
+			t.Fatal(answer.Err)
+		}
+		t.Fatalf("excluded RGW object %s must remain NoSuchKey: %s", answer.Path, answer)
+	}
+}
+
+// RGWObjectAnswer is one answer to a GET of an object that must stay absent.
+// An empty Path is the context ending, with its error.
+type RGWObjectAnswer struct {
+	Path   string
+	Status int
+	Code   string
+	Err    error
+}
+
+func (a RGWObjectAnswer) String() string {
+	return fmt.Sprintf("status=%d error=%v code=%s", a.Status, a.Err, a.Code)
+}
+
+// HoldRGWObjectsAbsent reads the objects once a second for duration and
+// reports whether every answer was NoSuchKey; otherwise it returns the first
+// answer that was not, or the end of ctx.
+func HoldRGWObjectsAbsent(ctx context.Context, duration time.Duration, objects ...RGWAbsentObject) (RGWObjectAnswer, bool) {
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		for _, object := range objects {
@@ -228,15 +263,16 @@ func RequireRGWObjectsAbsent(t *testing.T, ctx context.Context, duration time.Du
 				Code string `xml:"Code"`
 			}
 			if err != nil || status != http.StatusNotFound || xml.Unmarshal(body, &s3Error) != nil || s3Error.Code != "NoSuchKey" {
-				t.Fatalf("excluded RGW object %s must remain NoSuchKey: status=%d error=%v code=%s", object.Path, status, err, s3Error.Code)
+				return RGWObjectAnswer{Path: object.Path, Status: status, Code: s3Error.Code, Err: err}, false
 			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal(ctx.Err())
+			return RGWObjectAnswer{Err: ctx.Err()}, false
 		case <-time.After(time.Second):
 		}
 	}
+	return RGWObjectAnswer{}, true
 }
 
 func WaitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) multisite.BucketSyncStatus {
@@ -255,6 +291,15 @@ func WaitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisit
 
 func WaitOwnedSyncObject(t *testing.T, ctx context.Context, client S3HTTPClient, path string, status int, payload []byte) {
 	t.Helper()
+	if err := AwaitOwnedSyncObject(t, ctx, client, path, status, payload); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// AwaitOwnedSyncObject is WaitOwnedSyncObject that returns the timeout,
+// with the last answer, instead of failing t.
+func AwaitOwnedSyncObject(t *testing.T, ctx context.Context, client S3HTTPClient, path string, status int, payload []byte) error {
+	t.Helper()
 	wait, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	started := time.Now()
@@ -271,7 +316,7 @@ func WaitOwnedSyncObject(t *testing.T, ctx context.Context, client S3HTTPClient,
 				matches := (status == http.StatusNotFound && code == "NoSuchKey") || (status != http.StatusNotFound && bytes.Equal(body, payload))
 				if wait.Err() == nil && readErr == nil && response.StatusCode == status && matches {
 					t.Logf("strict replica path=%s status=%d bytes=%d elapsed=%s", path, status, len(payload), time.Since(started).Round(time.Millisecond))
-					return
+					return nil
 				}
 				last = fmt.Sprintf("status=%d code=%s bytes=%d read_error=%v", response.StatusCode, code, len(body), readErr)
 			} else {
@@ -282,7 +327,7 @@ func WaitOwnedSyncObject(t *testing.T, ctx context.Context, client S3HTTPClient,
 		}
 		select {
 		case <-wait.Done():
-			t.Fatalf("wait owned RGW replica %s: %v; %s", path, wait.Err(), last)
+			return fmt.Errorf("wait owned RGW replica %s: %v; %s", path, wait.Err(), last)
 		case <-time.After(time.Second):
 		}
 	}
