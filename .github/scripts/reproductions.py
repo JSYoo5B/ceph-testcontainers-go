@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Reproduction catalogues of known-defect experiment cases.
+
+Each case that starts reproduction units (harness.StartReproduction) keeps a
+reproductions.json beside its tests: the image roles it consumes, its units
+with their network mode, and the image combinations whose verdicts a native
+run verified. The Go test selects the expected verdict of a unit from the
+combination whose images equal the ones it resolved; this module validates
+the catalogues and lets the tag runner require, for a run whose images match
+a combination, each expected unit's own REPRODUCTION_VERDICT line, so a skip
+or a missing line cannot pass.
+"""
+
+import json
+from pathlib import Path
+import re
+
+ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS = ROOT / "internal/integration/experiments"
+ROLE_IMAGES = ROOT / ".github/ceph-role-images.json"
+CATALOG = "reproductions.json"
+SCHEMA = "ceph-reproductions/v1"
+ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
+VERDICTS = ("REPRODUCED", "NOT_REPRODUCED")
+NETWORKS = ("bridge", "host")
+# The same syntax as harness.ParseReproductionCatalog.
+UNIT = re.compile(r"[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?\Z")
+COMBINATION = re.compile(r"[a-z0-9]+([.-][a-z0-9]+)*\Z")
+PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+\Z")
+START = re.compile(r'StartReproduction\(\s*t\s*,\s*"([^"]+)"')
+IMAGE_ROLES = re.compile(r"^//ci: .*\bimage-roles=(\S+)", re.MULTILINE)
+DEFAULT_IMAGE = re.compile(r'^const DefaultImage = "([^"]+)"$', re.MULTILINE)
+LINE = re.compile(r"REPRODUCTION_VERDICT case=(\S+) verdict=(\S+) expected=(\S+) combination=(\S+) attempts=(\d+) "
+                  r"platform=(\S+) network=(\S+) (.*)$")
+ROLE_VARIABLES = {"essential": "CEPH_TEST_ESSENTIAL_IMAGE", "client": "CEPH_TEST_CLIENT_IMAGE",
+                  "cephfs": "CEPH_TEST_CEPHFS_IMAGE", "rbd-aux": "CEPH_TEST_RBD_AUX_IMAGE", "rgw": "CEPH_TEST_RGW_IMAGE"}
+
+
+def source_units(directory):
+    """The unit names that the package's test files start."""
+    units = set()
+    for path in sorted(Path(directory).glob("*_test.go")):
+        units.update(START.findall(path.read_text(encoding="utf-8")))
+    return units
+
+
+def validate(document, label=CATALOG):
+    """A catalogue that a run can use to select one expectation; the same
+    rules as harness.ParseReproductionCatalog."""
+    if not isinstance(document, dict) or set(document) != {"schema", "roles", "units", "combinations"}:
+        raise ValueError(label + ": fields must be schema, roles, units and combinations")
+    if document["schema"] != SCHEMA:
+        raise ValueError("%s: schema %r, want %r" % (label, document["schema"], SCHEMA))
+    roles = document["roles"]
+    if not roles or len(set(roles)) != len(roles) or not set(roles) <= set(ROLES):
+        raise ValueError("%s: roles %r must be distinct roles of %r" % (label, roles, ROLES))
+    units = document["units"]
+    if not units:
+        raise ValueError(label + ": no units")
+    for name, unit in units.items():
+        if not UNIT.match(name) or unit != {"network": unit.get("network")} or unit["network"] not in NETWORKS:
+            raise ValueError("%s: unit %s must be <case>[/<subtest>] with network bridge or host" % (label, name))
+    ids, identities = set(), set()
+    for combination in document["combinations"]:
+        if set(combination) != {"id", "platform", "images", "verdicts", "evidence"}:
+            raise ValueError("%s: combination %r has other fields than id, platform, images, verdicts, evidence"
+                             % (label, combination.get("id")))
+        name = combination["id"]
+        if not COMBINATION.match(name) or name in ids:
+            raise ValueError("%s: combination id %r must be unique and lowercase" % (label, name))
+        ids.add(name)
+        if not PLATFORM.match(combination["platform"]):
+            raise ValueError("%s: combination %s platform %r" % (label, name, combination["platform"]))
+        images = combination["images"]
+        if set(images) != set(roles) or any(not image or image.strip() != image for image in images.values()):
+            raise ValueError("%s: combination %s must name an image for exactly the roles %r" % (label, name, roles))
+        if not combination["verdicts"] or not combination["evidence"].strip():
+            raise ValueError("%s: combination %s needs verdicts and native evidence" % (label, name))
+        for unit, verdict in combination["verdicts"].items():
+            if unit not in units or verdict not in VERDICTS:
+                raise ValueError("%s: combination %s expects %r of %s" % (label, name, verdict, unit))
+        identity = (combination["platform"], tuple(images[role] for role in roles))
+        if identity in identities:
+            raise ValueError("%s: combination %s repeats the images of another one" % (label, name))
+        identities.add(identity)
+    return document
+
+
+def load(package, root=ROOT):
+    """The validated catalogue of a package, or None when it starts no unit.
+    A package that starts units needs a catalogue listing exactly them."""
+    directory = Path(root) / package
+    units = source_units(directory)
+    path = directory / CATALOG
+    if not units:
+        if path.exists():
+            raise ValueError("%s: the package starts no reproduction unit" % path)
+        return None
+    if not path.exists():
+        raise ValueError("%s: the package starts %s and has no %s" % (package, sorted(units), CATALOG))
+    catalog = validate(json.loads(path.read_text(encoding="utf-8")), str(path))
+    if set(catalog["units"]) != units:
+        raise ValueError("%s: units %s, but the tests start %s" % (path, sorted(catalog["units"]), sorted(units)))
+    return catalog
+
+
+def default_image(root=ROOT):
+    match = DEFAULT_IMAGE.search((Path(root) / "ceph/ceph.go").read_text(encoding="utf-8"))
+    if match is None:
+        raise ValueError("ceph/ceph.go declares no DefaultImage")
+    return match[1]
+
+
+def resolved_images(environment, root=ROOT):
+    """The image of each role as harness.ResolveImageSet resolves it; a role
+    the role layout leaves unset is absent."""
+    if environment.get("CEPH_TEST_ESSENTIAL_IMAGE") or environment.get("SCENARIO_IMAGE_LAYOUT") == "roles":
+        if not environment.get("CEPH_TEST_ESSENTIAL_IMAGE"):
+            return {}
+        return {role: environment[variable] for role, variable in ROLE_VARIABLES.items() if environment.get(variable)}
+    aggregate = environment.get("CEPH_TEST_IMAGE") or default_image(root)
+    return {role: environment.get(variable) or aggregate for role, variable in ROLE_VARIABLES.items()}
+
+
+def expectations(catalog, environment, platform, network=None, root=ROOT):
+    """The matching combination's ID and the verdict it expects of each unit
+    that runs, or (None, {}). With a network, only the units of that mode
+    run (a matrix entry of a non-default network mode)."""
+    if catalog is None:
+        return None, {}
+    images = resolved_images(environment, root)
+    wanted = tuple(images.get(role) for role in catalog["roles"])
+    if None in wanted:
+        return None, {}
+    for combination in catalog["combinations"]:
+        if combination["platform"] == platform and tuple(combination["images"][role] for role in catalog["roles"]) == wanted:
+            verdicts = {unit: verdict for unit, verdict in combination["verdicts"].items()
+                        if network is None or catalog["units"][unit]["network"] == network}
+            return combination["id"], verdicts
+    return None, {}
+
+
+def verdict_lines(text):
+    """Every REPRODUCTION_VERDICT summary line of a verbose test log."""
+    lines = []
+    for raw in text.splitlines():
+        index = raw.find("REPRODUCTION_VERDICT ")
+        match = LINE.match(raw[index:]) if index >= 0 else None
+        if match:
+            lines.append({"unit": match[1], "verdict": match[2], "expected": match[3], "combination": match[4],
+                          "attempts": int(match[5]), "platform": match[6], "network": match[7]})
+    return lines
+
+
+def check(text, combination, verdicts):
+    """Whether the log meets the expectations: each expected unit reports
+    exactly one line, from the same combination, with the expected verdict."""
+    lines = verdict_lines(text)
+    result = {"combination": combination, "expected": verdicts, "verdicts": lines, "met": True, "reasons": []}
+    for unit, verdict in sorted(verdicts.items()):
+        own = [line for line in lines if line["unit"] == unit]
+        if len(own) != 1:
+            result["reasons"].append("%d REPRODUCTION_VERDICT lines of %s" % (len(own), unit))
+        elif (own[0]["verdict"], own[0]["expected"], own[0]["combination"]) != (verdict, verdict, combination):
+            result["reasons"].append("expected %s of %s in %s, the line reports %s, expected %s in %s"
+                                     % (verdict, unit, combination, own[0]["verdict"], own[0]["expected"],
+                                        own[0]["combination"]))
+    result["met"] = not result["reasons"]
+    return result
+
+
+def batch_roles(directory):
+    """The image roles that the //ci lines of a case's test files declare."""
+    declared = set()
+    for path in Path(directory).glob("*_test.go"):
+        declared.update(IMAGE_ROLES.findall(path.read_text(encoding="utf-8")))
+    return declared
+
+
+def pinned_releases(path=ROLE_IMAGES):
+    """The official role image IDs of each supported release."""
+    return {release: variants["official"] for release, variants in json.loads(Path(path).read_text())["images"].items()}
+
+
+def verify(root=ROOT, pins=None):
+    """Every catalogue of the experiment cases: its units are the ones the
+    tests start, its roles are the ones its batch declares, and each
+    combination is either a supported release's pinned role images or one
+    aggregate image for every role."""
+    pins = pinned_releases() if pins is None else pins
+    catalogs = {}
+    for directory in sorted(Path(root, "internal/integration/experiments").iterdir()):
+        if not directory.is_dir():
+            continue
+        package = str(directory.relative_to(root))
+        catalog = load(package, root)
+        if catalog is None:
+            continue
+        declared = batch_roles(directory)
+        if declared != {",".join(catalog["roles"])}:
+            raise ValueError("%s: roles %s, but the batch declares image-roles %s"
+                             % (package, ",".join(catalog["roles"]), sorted(declared)))
+        for combination in catalog["combinations"]:
+            images = combination["images"]
+            pinned = any(all(release_images.get(role) == images[role] for role in catalog["roles"])
+                         for release_images in pins.values())
+            if not pinned and len(set(images.values())) != 1:
+                raise ValueError("%s: combination %s is neither pinned role images nor one aggregate image"
+                                 % (package, combination["id"]))
+        catalogs[package] = catalog
+    return catalogs

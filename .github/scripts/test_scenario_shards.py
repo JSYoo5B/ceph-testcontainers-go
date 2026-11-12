@@ -299,7 +299,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scoped["rados_fixtures"], "essential,client,cephfs")
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
-        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", "reproduction-rows.yml", self.PERIODIC,
+        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
                     self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, self.ARM64, "structural-review.yml",
                     "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
@@ -800,6 +800,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(release_input, "options"), supported)
         self.assertEqual(scalar(release_input, "default"), default)
         self.assertIn("CAMPAIGN_RELEASE: ${{ inputs.release || " + default + " }}", periodic)
+        regressions = self.workflows["native-regressions.yml"].split("      release:\n", 1)[1].split("\n      rgw_image:\n", 1)[0]
+        self.assertEqual(scalar(regressions, "options"), supported)
+        self.assertEqual(scalar(regressions, "default"), default)
         self.assertRegex(self.workflows["block-fault-probe.yml"], r"(?m)^        release: " + re.escape(supported) + "$")
         runtime_input = self.workflows["tagged-runtime.yml"].split("\n      release:\n", 1)[1].split("\n      changed_since:", 1)[0]
         self.assertEqual(scalar(runtime_input, "default"), default)
@@ -903,6 +906,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(caller, "uses"), "./.github/workflows/tagged-runtime.yml")
         self.assertEqual(scalar(caller, "category"), "optional")
         self.assertEqual(scalar(caller, "optional_batch"), "${{ inputs.batch }}")
+        self.assertEqual(scalar(caller, "release"), "${{ inputs.release }}")
         workflow = self.workflows["native-regressions.yml"]
         self.assertIn("      batch:\n", workflow)
         self.assertIn("        type: choice\n        default: native_rgw_translation\n", workflow)

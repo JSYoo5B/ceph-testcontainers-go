@@ -23,10 +23,6 @@ on:
         description: Existing RGW role override for explicitly requested regressions
         default: ''
         type: string
-      expected_verdict:
-        description: Expected reproduction verdict <unit>=<REPRODUCED|NOT_REPRODUCED> of one known-defect unit (optional category only); empty keeps each test's own pass and fail
-        default: ''
-        type: string
       release:
         description: Ceph release of the published role images
         default: '20.2.4'
@@ -334,7 +330,6 @@ jobs:
           SCENARIO_BATCH: ${{ matrix.batch }}
           SCENARIO_PACKAGE: ${{ matrix.package }}
           CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}
-          CEPH_TEST_EXPECTED_VERDICT: ${{ inputs.expected_verdict }}
           # Empty for a batch whose tests declare no network modes. Another
           # mode than the batch's default runs only the tests that declare it.
           CEPH_TEST_NETWORK: ${{ matrix.network }}

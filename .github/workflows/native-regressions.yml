@@ -26,6 +26,11 @@ on:
           - rgw_object_lock_sync
           - rgw_sync_lease_lapse
           - failure_archive
+      release:
+        description: Supported Ceph release whose pinned role images the batch runs on; a reproduction case expects the verdicts its reproductions.json records for them
+        type: choice
+        options: ['20.2.4', '21.2.0', '19.2.5']
+        default: '20.2.4'
       rgw_image:
         description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
         type: string
@@ -42,4 +47,5 @@ jobs:
       category: optional
       check_name: Manual native checks
       optional_batch: ${{ inputs.batch }}
+      release: ${{ inputs.release }}
       rgw_image: ${{ inputs.rgw_image }}

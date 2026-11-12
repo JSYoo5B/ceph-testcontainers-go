@@ -21,7 +21,7 @@ import tempfile
 import time
 
 import registry_pull
-import reproduction_rows
+import reproductions
 import run_image_matrix as images
 
 
@@ -1503,10 +1503,9 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
                                         or timeout_seconds > duration_seconds(profile["timeout"])):
         raise ValueError("native timeout must be positive and no larger than the source timeout")
     timeout = str(timeout_seconds) + "s" if timeout_seconds is not None else profile["timeout"]
-    # An expected reproduction verdict must name a unit of this package; it
-    # is refused before Go starts.
-    expectation = reproduction_rows.parse_expectation(os.environ.get(reproduction_rows.ENV, ""))
-    reproduction_rows.require_unit(expectation, profile["package"], root)
+    # A reproduction catalogue is refused before Go starts when it is
+    # invalid or does not list exactly the units the package starts.
+    reproduction_catalog = reproductions.load(profile["package"], root)
     # A checker validates one mode's run, so its batch runs in one mode: the
     # matrix entry's, or the default when no entry selected one.
     network = os.environ.get("CEPH_TEST_NETWORK", "")
@@ -1596,9 +1595,15 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if receipt is not None:
         result["binary"] = {"directory": str(binary), "binary": receipt["binary"], "sha256": receipt["sha256"],
                             "build_key": receipt["build_key"]}
-    # With an expectation the unit's own verdict line must match it; a skip,
-    # a missing line or INCONCLUSIVE fails the row even if Go passed.
-    result["reproduction"] = reproduction_rows.check(text, expectation)
+    # When the images match a verified combination, every unit it expects a
+    # verdict of in this run must report that verdict in its own line; a
+    # skip, a missing line or INCONCLUSIVE fails even if Go passed.
+    combination, verdicts = None, {}
+    if reproduction_catalog is not None:
+        combination, verdicts = reproductions.expectations(reproduction_catalog, os.environ,
+                                                           native_platform(root)["target"],
+                                                           network if tests else None, root)
+    result["reproduction"] = reproductions.check(text, combination, verdicts)
     result["passed"] = result["classification"] == "passed" and result["reproduction"]["met"]
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
