@@ -17,6 +17,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # A failed request to the module proxy, such as a reset HTTP/2 stream,
+  # falls back to the module's origin; go.sum verifies either source.
+  GOPROXY: 'https://proxy.golang.org|direct'
+
 jobs:
   row:
     name: Resolve the row

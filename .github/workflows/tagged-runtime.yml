@@ -23,13 +23,13 @@ on:
         description: Existing RGW role override for explicitly requested regressions
         default: ''
         type: string
-      release:
-        description: Ceph release of the published role images
-        default: '20.2.4'
-        type: string
       expected_verdict:
         description: Expected reproduction verdict <unit>=<REPRODUCED|NOT_REPRODUCED> of one known-defect unit (optional category only); empty keeps each test's own pass and fail
         default: ''
+        type: string
+      release:
+        description: Ceph release of the published role images
+        default: '20.2.4'
         type: string
       changed_since:
         description: Base commit of a pull request; run only the batches whose own test files changed since it. Empty runs every batch
