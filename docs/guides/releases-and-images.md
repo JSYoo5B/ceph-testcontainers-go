@@ -277,6 +277,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestRBDTrashPurgeCutoffAcrossClientTimezones` (batch
   `rbd_trash_purge_timezone`, experiment case
   [`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)).
+- **Tentacle 20.2.4 and Umbrella 21.2.0, RBD group snapshot listed again
+  after its removal.** The class method that stores a group snapshot's
+  record accepts a COMPLETE update for a snapshot that was already removed
+  and writes the record again without its order entry. `rbd group snap ls`
+  then succeeds and names the removed snapshot as `complete`, although its
+  image snapshots are gone. The ordinary commands send such an update only
+  when a creation races with the removal; the test replays the stored record
+  through the `rados` Python binding. See
+  `TestRBDGroupSnapshotLateCompleteAfterRemoval` (batch
+  `rbd_group_snap_late_complete`, experiment case
+  [`rbd_group_snap_late_complete`](../../internal/integration/experiments/rbd_group_snap_late_complete/README.md)).
 - **Squid 19.2.5, SSE-S3 key left in Vault.** Deleting a bucket with
   SSE-S3 default encryption marks its Vault Transit key deletable and stops
   there: the gateway logs `Unable to remove KEK ID ... got -22` and sends no
@@ -369,6 +380,20 @@ These affect commands or client libraries you run yourself, not the typed API:
   `cephfsmirror.Container.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
+- **Squid 19.2.5, CephFS mirror of a file whose object stayed empty.** An
+  incremental `cephfs-mirror` synchronization asks the source MDS for the
+  changed blocks of each changed file. When a data object of the file is
+  empty in the previous snapshot and in the new one, as after a file was
+  truncated and extended without data before both snapshots, the MDS aborts
+  with `FAILED ceph_assert(len > 0)` in `MDCache::aggregate_snap_sets`. Its
+  container exits, the directory stays at `syncing`, and
+  `WaitSnapshotSynced` only times out, so check the MDS container when a
+  snapshot does not arrive on Squid. An object that is empty after a version
+  with data is synchronized correctly. Tentacle 20.2.4 and Umbrella 21.2.0
+  answer the request and synchronize the snapshot. See
+  `TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions` (optional
+  `native_regression` batch `cephfs_mirror_blockdiff_empty`, experiment case
+  [`cephfs_mirror_blockdiff_empty_versions`](../../internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions/README.md)).
 - **Every tested release, RBD snapshot copy resumed after a killed
   receiver.** When an `rbd-mirror` daemon is killed while it copies a mirror
   snapshot and the same daemon is started again, it resumes the copy and marks
