@@ -12,7 +12,25 @@ on:
         description: Experiment case directory under internal/integration/experiments
         type: choice
         options:
+          - cephfs_authorization_isolation
+          - cephfs_dangling_symlink_create
+          - cephfs_mirror_daemon_redistribution
+          - cephfs_readdir_after_snapdiff
+          - cephfs_snapshot_readdir_eviction
+          - cephfs_statfs_mixed_quota
+          - mon_log_ack_peon
+          - rbd_mirror_demote_restart
+          - rbd_trash_purge_timezone
+          - rgw_compressed_copy_accounting
           - rgw_empty_sse_header
+          - rgw_lifecycle_expiration_header
+          - rgw_multipart_part_storage_class
+          - rgw_multisite_object_lock_sync
+          - rgw_single_part_multipart_read
+          - rgw_ssec_multipart_completion
+          - rgw_suspended_conditional_writes
+          - rgw_sync_lease_lapse
+          - rgw_sync_policy_translation
       image:
         description: Fixed image to inject (empty runs the case's default image, which must reproduce)
         type: string
