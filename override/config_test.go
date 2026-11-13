@@ -323,3 +323,135 @@ func TestSetConfigConcurrentOverlapAdmitsOne(t *testing.T) {
 		t.Fatalf("%d overlapping calls applied, %d held", applied, len(heldConfig(c)))
 	}
 }
+
+// commandsAfter returns the config set and rm commands that ctr received
+// from index from on.
+func commandsAfter(ctr *configFixture, from int) [][]string {
+	var commands [][]string
+	for _, call := range ctr.calls[from:] {
+		if len(call) > 1 && (call[1] == "set" || call[1] == "rm") {
+			commands = append(commands, call)
+		}
+	}
+	return commands
+}
+
+// The MGR keeps an mgr/ key that a configuration update no longer carries,
+// so removal alone leaves the running module with the override. An empty
+// value erases it there first.
+func TestSetConfigRestoresAbsentMGRModuleOptionThroughAnEmptyValue(t *testing.T) {
+	for _, name := range []string{"mgr/balancer/mode", "mgr/alerts/x/smtp_password"} {
+		t.Run(name, func(t *testing.T) {
+			ctr := &configFixture{}
+			c := newConfigFixture(ctr)
+			change, err := SetConfig(t.Context(), c, ceph.ConfigSetting{Section: "mgr", Name: name, Value: "none"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			from := len(ctr.calls)
+			if err := change.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			want := [][]string{{"config", "set", "mgr", name, "", "--force"}, {"config", "rm", "mgr", name}}
+			if got := commandsAfter(ctr, from); !slices.EqualFunc(got, want, slices.Equal) {
+				t.Fatalf("restoration commands = %q, want %q", got, want)
+			}
+			if len(ctr.entries) != 0 || len(heldConfig(c)) != 0 {
+				t.Fatalf("restoration left %+v", ctr.entries)
+			}
+		})
+	}
+}
+
+func TestSetConfigRestoresOtherKeysWithoutAnEmptyValue(t *testing.T) {
+	cases := map[string]struct {
+		entries []ceph.ConfigEntry
+		setting ceph.ConfigSetting
+		want    [][]string
+	}{
+		"absent MGR daemon option": {
+			setting: ceph.ConfigSetting{Section: "mgr", Name: "mgr_stats_period", Value: "7"},
+			want:    [][]string{{"config", "rm", "mgr", "mgr_stats_period"}},
+		},
+		"present module option": {
+			entries: []ceph.ConfigEntry{{Section: "mgr", Name: "mgr/balancer/mode", Value: "upmap"}},
+			setting: ceph.ConfigSetting{Section: "mgr", Name: "mgr/balancer/mode", Value: "none"},
+			want:    [][]string{{"config", "set", "mgr", "mgr/balancer/mode", "upmap"}},
+		},
+		"absent module option overridden with the empty value": {
+			setting: ceph.ConfigSetting{Section: "mgr", Name: "mgr/alerts/smtp_password", Value: ""},
+			want:    [][]string{{"config", "rm", "mgr", "mgr/alerts/smtp_password"}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctr := &configFixture{entries: slices.Clone(tc.entries)}
+			c := newConfigFixture(ctr)
+			change, err := SetConfig(t.Context(), c, tc.setting)
+			if err != nil {
+				t.Fatal(err)
+			}
+			from := len(ctr.calls)
+			if err := change.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := commandsAfter(ctr, from); !slices.EqualFunc(got, tc.want, slices.Equal) {
+				t.Fatalf("restoration commands = %q, want %q", got, tc.want)
+			}
+			if !slices.Equal(ctr.entries, tc.entries) {
+				t.Fatalf("restored entries = %+v, want %+v", ctr.entries, tc.entries)
+			}
+		})
+	}
+}
+
+func TestSetConfigModuleRestoreRetryAcceptsItsOwnEmptyValue(t *testing.T) {
+	ctr := &configFixture{}
+	c := newConfigFixture(ctr)
+	setting := ceph.ConfigSetting{Section: "mgr", Name: "mgr/balancer/mode", Value: "none"}
+	change, err := SetConfig(t.Context(), c, setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctr.failAfter = "set --force"
+	if err := change.Restore(t.Context()); err == nil {
+		t.Fatal("lost reply of the empty module value hidden")
+	}
+	if len(ctr.entries) != 1 || ctr.entries[0].Value != "" || len(heldConfig(c)) != 1 {
+		t.Fatalf("lost empty value reply: entries %+v", ctr.entries)
+	}
+	ctr.failAfter = ""
+	from := len(ctr.calls)
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := commandsAfter(ctr, from), [][]string{{"config", "rm", "mgr", setting.Name}}; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("retry commands = %q, want %q", got, want)
+	}
+	if len(ctr.entries) != 0 || len(heldConfig(c)) != 0 {
+		t.Fatalf("retry left %+v", ctr.entries)
+	}
+}
+
+func TestSetConfigModuleRestoreRefusesAnOutsideEditAfterItsEmptyValue(t *testing.T) {
+	ctr := &configFixture{}
+	c := newConfigFixture(ctr)
+	setting := ceph.ConfigSetting{Section: "mgr", Name: "mgr/balancer/mode", Value: "none"}
+	change, err := SetConfig(t.Context(), c, setting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctr.failAfter = "set --force"
+	if err := change.Restore(t.Context()); err == nil {
+		t.Fatal("lost reply of the empty module value hidden")
+	}
+	ctr.failAfter = ""
+	ctr.entries = []ceph.ConfigEntry{{Section: "mgr", Name: setting.Name, Value: "crush-compat"}}
+	from := len(ctr.calls)
+	if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("outside edit after the empty value was not refused: %v", err)
+	}
+	if got := commandsAfter(ctr, from); len(got) != 0 || ctr.entries[0].Value != "crush-compat" {
+		t.Fatalf("outside edit overwritten: commands %q entries %+v", got, ctr.entries)
+	}
+}

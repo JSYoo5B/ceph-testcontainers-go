@@ -10,6 +10,7 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,21 @@ func TestReadMGRModulesCommandOrderAndMerge(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("modules = %+v", got)
+	}
+}
+
+// The override wait tells a respawned active MGR from the replaced one by the
+// gid of the same dump that its module membership was combined with.
+func TestReadMGRModuleSnapshotReportsTheActiveGIDOfItsDump(t *testing.T) {
+	withGID := strings.Replace(mgrDumpBody, `{"available":true,`, `{"available":true,"active_gid":4127,`, 1)
+	cli := &fakeCLI{replies: map[string][]byte{mgrModuleLsCmd: []byte(mgrModuleLsBody), mgrDumpCmd: []byte(withGID)}}
+	snapshot, err := readMGRModuleSnapshot(context.Background(), cli.run)
+	if err != nil || snapshot.activeGID != 4127 || len(snapshot.modules) != 3 {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+	cli = &fakeCLI{replies: map[string][]byte{mgrModuleLsCmd: []byte(mgrModuleLsBody), mgrDumpCmd: []byte(mgrDumpBody)}}
+	if snapshot, err := readMGRModuleSnapshot(context.Background(), cli.run); err != nil || snapshot.activeGID != 0 {
+		t.Fatalf("a dump without active_gid = %+v, %v", snapshot, err)
 	}
 }
 

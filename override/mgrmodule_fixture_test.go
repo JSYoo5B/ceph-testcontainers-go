@@ -46,12 +46,24 @@ type mgrModuleFixture struct {
 	failAfter, rawListing, rawDump                                                 string
 	dumps, failDumpAt, failDumpFrom, mutations, probes, filesystems, canceledReads int
 	mirrored                                                                       bool
-	cancelOnSet                                                                    context.CancelFunc
-	cancelOnDump                                                                   context.CancelFunc
+	// activeGID is the gid of the active MGR in mgr dump. A membership
+	// mutation respawns the MGR, which the fake models as a new gid at once
+	// unless staleDumps keeps the old one in that many dumps after it.
+	activeGID             uint64
+	staleDumps, staleLeft int
+	// staleAtMutation are the dumps that still named the replaced MGR when
+	// each mutation arrived: a nonzero one is a change sent before the
+	// previous change's respawn was observed.
+	staleAtMutation []int
+	// rejectSet fails that mutation (enable or disable) without the MON
+	// persisting it.
+	rejectSet    string
+	cancelOnSet  context.CancelFunc
+	cancelOnDump context.CancelFunc
 }
 
 func newMGRModuleFixture() *mgrModuleFixture {
-	return &mgrModuleFixture{enabled: map[string]bool{"mirroring": false, "rbd_support": true, "volumes": true}, always: map[string]bool{"rbd_support": true, "volumes": true}, forceDisabled: map[string]bool{}, canRun: map[string]bool{"mirroring": true, "rbd_support": true, "volumes": true}}
+	return &mgrModuleFixture{enabled: map[string]bool{"mirroring": false, "rbd_support": true, "volumes": true}, always: map[string]bool{"rbd_support": true, "volumes": true}, forceDisabled: map[string]bool{}, canRun: map[string]bool{"mirroring": true, "rbd_support": true, "volumes": true}, activeGID: 4100}
 }
 
 func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -101,7 +113,12 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			}
 			metadata = append(metadata, map[string]any{"name": name, "can_run": runnable, "error_string": diagnostic})
 		}
-		result = map[string]any{"available": true, "modules": enabled, "available_modules": metadata}
+		gid := ctr.activeGID
+		if ctr.staleLeft > 0 {
+			ctr.staleLeft--
+			gid--
+		}
+		result = map[string]any{"available": true, "active_gid": gid, "modules": enabled, "available_modules": metadata}
 		if len(ctr.dumpResponses) != 0 {
 			result = json.RawMessage(ctr.dumpResponses[0])
 			ctr.dumpResponses = ctr.dumpResponses[1:]
@@ -114,8 +131,14 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			cancel()
 		}
 	} else if len(args) == 4 && slices.Equal(args[:2], []string{"mgr", "module"}) && slices.Contains([]string{"enable", "disable"}, args[2]) {
+		if args[2] == ctr.rejectSet {
+			return 0, nil, errors.New("injected rejected module mutation")
+		}
 		ctr.mutations++
+		ctr.staleAtMutation = append(ctr.staleAtMutation, ctr.staleLeft)
 		ctr.enabled[args[3]] = args[2] == "enable"
+		ctr.activeGID++
+		ctr.staleLeft = ctr.staleDumps
 		if ctr.cancelOnSet != nil {
 			ctr.cancelOnSet()
 			ctr.cancelOnSet = nil

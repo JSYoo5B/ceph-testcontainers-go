@@ -77,8 +77,8 @@ type hooks interface {
 	OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error)
 	SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error
 	ValidMGRModuleName(name string) bool
-	MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error)
-	WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error
+	MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, uint64, error)
+	WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool, replaced uint64) error
 	SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error
 	ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error
 	OpenFullRatios(ctx context.Context, c *ceph.Container) (any, error)
@@ -88,6 +88,7 @@ type hooks interface {
 	ConfigWho(setting ceph.ConfigSetting) string
 	ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, error)
 	ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error
+	ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
 	ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
 	MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error)
 }
@@ -295,17 +296,19 @@ func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabl
 func ValidMGRModuleName(name string) bool { return get().ValidMGRModuleName(name) }
 
 // MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
-// and returns it. ctx carries the operation deadline. The caller holds the
-// mutex.
-func MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error) {
+// and returns it with the gid of the active MGR it came from. ctx carries the
+// operation deadline. The caller holds the mutex.
+func MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, uint64, error) {
 	return get().MGRModulesSnapshot(ctx, c)
 }
 
 // WaitMGRModuleMembership waits until the native listing shows the module in
-// the requested state with the given always-on property. The caller holds the
-// mutex.
-func WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error {
-	return get().WaitMGRModuleMembership(ctx, c, name, enabled, alwaysOn)
+// the requested state with the given always-on property, read through an
+// available active MGR whose gid is not replaced: a membership change
+// respawns the MGR, so the active MGR observed before the change is not the
+// one that serves commands after it. The caller holds the mutex.
+func WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool, replaced uint64) error {
+	return get().WaitMGRModuleMembership(ctx, c, name, enabled, alwaysOn, replaced)
 }
 
 // SetMGRModule enables or disables one module with the native command. The
@@ -366,6 +369,13 @@ func ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, 
 // mutex.
 func ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error {
 	return get().ConfigSet(ctx, c, setting, value)
+}
+
+// ConfigSetEmpty stores an empty value for a normalized setting without
+// option validation. The MGR applies an empty module option value as a
+// removal. The caller holds the mutex.
+func ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error {
+	return get().ConfigSetEmpty(ctx, c, setting)
 }
 
 // ConfigRemove removes the entry of a normalized setting. The caller holds the

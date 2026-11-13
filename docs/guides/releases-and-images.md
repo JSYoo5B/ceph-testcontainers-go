@@ -510,7 +510,10 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   image with `override.SetMGRModule`, configure it with `override.SetConfig`
   (`mgr/<module>/<option>`), and read its state with `Observer.MGRModules`:
   a module whose dependency is missing is advertised with `CanRun` false and
-  its `ErrorString`, and `SetMGRModule` refuses to enable it.
+  its `ErrorString`, and `SetMGRModule` refuses to enable it. A membership
+  change respawns every manager; `SetMGRModule` and its `Restore` return once
+  a respawned active manager is available, so `Observer.MGRModules` and other
+  MGR commands work right after them.
   `Observer.WaitMGRModuleReady` knows only built-in modules; probe a module of
   your own through its own command. The Dashboard, which the official image
   ships and essential does not, is prepared by the
@@ -527,9 +530,10 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
 MGR slot, an essential image without `ceph-mgr`, and a consumer image built
 from the official image with one small module, including a module whose
 dependency is missing and a module option value that Ceph refuses. In the same
-batch, `TestManagerPrometheusExporter`, `TestManagerMetrics` and
-`TestManagerWatchReportsFailoverAndServiceAdvertisement` run their managers
-from the `mgr-modules` role image. The batch declares
+batch, `TestManagerPrometheusExporter`, `TestManagerMetrics`,
+`TestManagerWatchReportsFailoverAndServiceAdvertisement` and
+`TestMGRRuntimeRestoration` run their managers from the `mgr-modules` role
+image. The batch declares
 `image-roles=essential,client,mgr-modules`, so CI supplies
 `CEPH_TEST_MGR_MODULES_IMAGE`; a role run without it fails before any cluster
 starts, rather than falling back to the essential or the official image.

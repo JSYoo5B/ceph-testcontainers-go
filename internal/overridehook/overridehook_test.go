@@ -118,13 +118,13 @@ func TestRegistryThroughHooks(t *testing.T) {
 		// Without a control container every native operation fails and none panics.
 		bounded, stop := context.WithTimeout(ctx, 200*time.Millisecond)
 		defer stop()
-		if _, err := overridehook.MGRModulesSnapshot(bounded, c); err == nil {
+		if _, _, err := overridehook.MGRModulesSnapshot(bounded, c); err == nil {
 			t.Error("MGR module snapshot without a control container")
 		}
 		if err := overridehook.SetMGRModule(ctx, c, "mirroring", true); err == nil {
 			t.Error("MGR module change without a control container")
 		}
-		if err := overridehook.WaitMGRModuleMembership(bounded, c, "mirroring", true, false); err == nil {
+		if err := overridehook.WaitMGRModuleMembership(bounded, c, "mirroring", true, false, 0); err == nil {
 			t.Error("MGR module readback without a control container")
 		}
 		if err := overridehook.ProtectMGRModule(ctx, c, "mirroring"); err == nil {

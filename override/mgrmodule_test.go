@@ -509,3 +509,176 @@ func TestMGRModuleRestoreAfterTerminateIsRefusedAndKeepsTheModule(t *testing.T) 
 		t.Fatalf("a set on a terminated cluster: %v", err)
 	}
 }
+
+// A membership change respawns the MGR, and the MON keeps the old active MGR
+// in the map, available, until the respawned one reports. Membership read
+// back from that map does not prove that the next MGR command is served.
+func TestSetMGRModuleWaitsForTheRespawnedActiveMGR(t *testing.T) {
+	for _, operation := range []string{"apply", "restore"} {
+		t.Run(operation, func(t *testing.T) {
+			ctr := newMGRModuleFixture()
+			c := mgrModuleCluster(ctr)
+			setStartupTimeout(c, 3*time.Second)
+			var change *MGRModuleHandle
+			if operation == "restore" {
+				var err error
+				if change, err = SetMGRModule(t.Context(), c, "mirroring", true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Three dumps after the mutation still name the replaced MGR.
+			ctr.staleDumps = 3
+			var err error
+			if operation == "apply" {
+				_, err = SetMGRModule(t.Context(), c, "mirroring", true)
+			} else {
+				err = change.Restore(t.Context())
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ctr.staleLeft != 0 {
+				t.Fatalf("returned while %d dumps still named the replaced active MGR", ctr.staleLeft)
+			}
+			observer, err := ceph.Observe(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := observer.MGRModules(t.Context()); err != nil {
+				t.Fatalf("observation right after the change failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestSetMGRModuleWithoutARespawnedActiveMGRIsUncertainWithinTheStartupTimeout(t *testing.T) {
+	ctr := newMGRModuleFixture()
+	c := mgrModuleCluster(ctr)
+	setStartupTimeout(c, 300*time.Millisecond)
+	ctr.staleDumps = 1 << 20
+	started := time.Now()
+	change, err := SetMGRModule(t.Context(), c, "mirroring", true)
+	if err == nil || refusedMGR(change) || heldMGR(c)["mirroring"] != change || !ctr.enabled["mirroring"] {
+		t.Fatalf("a change without a respawned active MGR must return the real handle with an error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "has not respawned") {
+		t.Fatalf("error does not name the missing respawn: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("the wait was not bounded by the startup timeout: %v", elapsed)
+	}
+	ctr.staleDumps = 0
+	ctr.staleLeft = 0
+	if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] {
+		t.Fatal("the uncertain change was not restorable", err)
+	}
+}
+
+func TestSetMGRModuleRespawnWaitEndsWithTheCallersContext(t *testing.T) {
+	ctr := newMGRModuleFixture()
+	c := mgrModuleCluster(ctr)
+	setStartupTimeout(c, time.Minute)
+	ctr.staleDumps = 1 << 20
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	change, err := SetMGRModule(ctx, c, "mirroring", true)
+	if !errors.Is(err, context.DeadlineExceeded) || refusedMGR(change) || heldMGR(c)["mirroring"] != change {
+		t.Fatalf("the wait did not end with the caller's context: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the wait outlived the caller's context: %v", elapsed)
+	}
+	ctr.staleDumps = 0
+	ctr.staleLeft = 0
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A change whose reply was lost or whose respawn was not observed stays
+// pending on the handle. Restore must not finish, or send another change,
+// while the MGR that its snapshot reads may still be replaced by that
+// change's respawn.
+func TestMGRModuleRestoreWaitsForThePendingChangesRespawn(t *testing.T) {
+	t.Run("lost restoration reply", func(t *testing.T) {
+		ctr := newMGRModuleFixture()
+		c := mgrModuleCluster(ctr)
+		change, err := SetMGRModule(t.Context(), c, "mirroring", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setStartupTimeout(c, 3*time.Second)
+		ctr.failAfter, ctr.staleDumps = "disable", 3
+		if err := change.Restore(t.Context()); err == nil || ctr.enabled["mirroring"] {
+			t.Fatal("the lost restoration reply was hidden")
+		}
+		ctr.failAfter = ""
+		before := ctr.mutations
+		if err := change.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if ctr.staleLeft != 0 || ctr.mutations != before || len(heldMGR(c)) != 0 {
+			t.Fatalf("the retry finished while %d dumps still named the replaced MGR (mutations %d, was %d)", ctr.staleLeft, ctr.mutations, before)
+		}
+	})
+	t.Run("restoration respawn not observed in time", func(t *testing.T) {
+		ctr := newMGRModuleFixture()
+		c := mgrModuleCluster(ctr)
+		change, err := SetMGRModule(t.Context(), c, "mirroring", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setStartupTimeout(c, 300*time.Millisecond)
+		ctr.staleDumps = 1 << 20
+		for attempt := 1; attempt <= 2; attempt++ {
+			if err := change.Restore(t.Context()); err == nil || heldMGR(c)["mirroring"] != change {
+				t.Fatalf("restore %d finished before the respawn: %v", attempt, err)
+			}
+		}
+		if ctr.mutations != 2 {
+			t.Fatalf("the retry sent the restoration again: %d mutations", ctr.mutations)
+		}
+		ctr.staleDumps, ctr.staleLeft = 0, 0
+		if err := change.Restore(t.Context()); err != nil || len(heldMGR(c)) != 0 || ctr.mutations != 2 {
+			t.Fatal("the restoration was not reconciled once the respawn was observed", err)
+		}
+	})
+	t.Run("apply respawn not observed in time", func(t *testing.T) {
+		ctr := newMGRModuleFixture()
+		c := mgrModuleCluster(ctr)
+		setStartupTimeout(c, 300*time.Millisecond)
+		ctr.staleDumps = 1 << 20
+		change, err := SetMGRModule(t.Context(), c, "mirroring", true)
+		if err == nil || heldMGR(c)["mirroring"] != change {
+			t.Fatal("the apply without a respawn was not uncertain", err)
+		}
+		// The apply's respawn shows up two dumps later.
+		ctr.staleDumps, ctr.staleLeft = 0, 2
+		setStartupTimeout(c, 3*time.Second)
+		if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] || len(heldMGR(c)) != 0 {
+			t.Fatal(err)
+		}
+		if !slices.Equal(ctr.staleAtMutation, []int{0, 0}) {
+			t.Fatalf("the restoration was sent before the apply's respawn was observed: %v", ctr.staleAtMutation)
+		}
+	})
+	t.Run("apply the MON did not persist", func(t *testing.T) {
+		ctr := newMGRModuleFixture()
+		c := mgrModuleCluster(ctr)
+		setStartupTimeout(c, 300*time.Millisecond)
+		ctr.rejectSet = "enable"
+		change, err := SetMGRModule(t.Context(), c, "mirroring", true)
+		if err == nil || heldMGR(c)["mirroring"] != change || ctr.enabled["mirroring"] {
+			t.Fatal("the rejected apply was not uncertain", err)
+		}
+		// No change landed, so no respawn is due: Restore finishes at once.
+		started := time.Now()
+		if err := change.Restore(t.Context()); err != nil || len(heldMGR(c)) != 0 || ctr.mutations != 0 {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+			t.Fatalf("Restore waited %v for a respawn of a change that did not land", elapsed)
+		}
+	})
+}
