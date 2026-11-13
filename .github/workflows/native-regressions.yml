@@ -11,11 +11,13 @@ on:
           - native_rgw_translation
           - native_shuffle
           - cephfs_dangling_symlink_create
+          - cephfs_mirror_blockdiff_empty
           - cephfs_readdir_after_snapdiff
           - cephfs_statfs_mixed_quota
           - cephfs_snapshot_readdir_eviction
           - mon_log_ack
           - rbd_demote_restart
+          - rbd_group_snap_late_complete
           - rbd_trash_purge_timezone
           - rgw_conditional_writes
           - rgw_ssec_completion

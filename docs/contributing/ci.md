@@ -920,12 +920,16 @@ that reproduce an upstream defect on their default image:
 ([`cephfs_snapshot_readdir_eviction`](../../internal/integration/experiments/cephfs_snapshot_readdir_eviction/README.md)),
 `cephfs_readdir_after_snapdiff`
 ([`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)),
+`cephfs_mirror_blockdiff_empty`
+([`cephfs_mirror_blockdiff_empty_versions`](../../internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions/README.md)),
 `mon_log_ack`
 ([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
 `rbd_demote_restart`
 ([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)),
 `rbd_trash_purge_timezone`
 ([`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)),
+`rbd_group_snap_late_complete`
+([`rbd_group_snap_late_complete`](../../internal/integration/experiments/rbd_group_snap_late_complete/README.md)),
 `rgw_conditional_writes`
 ([`rgw_suspended_conditional_writes`](../../internal/integration/experiments/rgw_suspended_conditional_writes/README.md)),
 `rgw_ssec_completion`
@@ -1035,6 +1039,8 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `cephfs_snapshot_readdir_eviction` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_readdir_after_snapdiff` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `rbd_group_snap_late_complete` judgement and report reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `cephfs_mirror_blockdiff_empty_versions` judgement and reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_single_part_multipart_read` judgement and process reading tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_sync_lease_lapse` log reader and gateway state tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
@@ -1050,6 +1056,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `cephfs_readdir_after_snapdiff` (`optional/cephfs_readdir_after_snapdiff`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; no fixed release | 20m | never | `/ci run cephfs_readdir_after_snapdiff [on <release>]` | never | `Experiments`, `case=cephfs_readdir_after_snapdiff`; `batch=cephfs_readdir_after_snapdiff` |
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | known-defect reproducer, default 19.2.3; prints the result and passes | `demotion-resume` REPRODUCED 760 s (fixed in 19.2.4); `resumed-bytes` REPRODUCED on 19.2.4 and 20.2.4, no fixed release | 30m | never | `/ci run rbd_demote_restart` | never | `Experiments`, `case=rbd_mirror_demote_restart`; `batch=rbd_demote_restart` |
 | `rbd_trash_purge_timezone` (`optional/rbd_trash_purge_timezone`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; no fixed release | 20m | never | `/ci run rbd_trash_purge_timezone [on <release>]` | never | `Experiments`, `case=rbd_trash_purge_timezone`; `batch=rbd_trash_purge_timezone` |
+| `rbd_group_snap_late_complete` (`optional/rbd_group_snap_late_complete`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 29 s; still REPRODUCED on 21.2.0 (29 s), no fixed release | 20m | never | `/ci run rbd_group_snap_late_complete [on <release>]` | never | `Experiments`, `case=rbd_group_snap_late_complete`; `batch=rbd_group_snap_late_complete` |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 35 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 35 s | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `Experiments`, `case=rgw_suspended_conditional_writes`; `batch=rgw_conditional_writes` |
 | `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | known-defect reproducer, default 20.2.4; prints the result and passes; HTTPS | REPRODUCED 34 s; 21.2.0 NOT_REPRODUCED 32 s | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `Experiments`, `case=rgw_ssec_multipart_completion`; `batch=rgw_ssec_completion` |
 | `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 20.2.5 NOT_REPRODUCED 30 s | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `Experiments`, `case=rgw_empty_sse_header`; `batch=rgw_empty_sse_header` |
@@ -1060,6 +1067,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `rgw_multisite_object_lock_sync` (`optional/rgw_object_lock_sync`) | known-defect reproducer, default 20.2.4; prints the result and passes; two clusters | REPRODUCED 216 s; 20.2.5 NOT_REPRODUCED 101 s, 21.2.0 79 s | 30m | never | `/ci run rgw_object_lock_sync [on <release>]` | never | `Experiments`, `case=rgw_multisite_object_lock_sync`; `batch=rgw_object_lock_sync` |
 | `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | known-defect reproducer, default 20.2.4; prints the result and passes; two network modes | REPRODUCED 650 s bridge, 647 s host; no fixed release | 60m | never | `/ci run native_rgw_translation` | never | `Experiments`, `case=rgw_sync_policy_translation`; `batch=native_rgw_translation` (default), with `rgw_image` |
 | `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | known-defect reproducer, default 20.2.4; prints the result and passes; two network modes | REPRODUCED 357 s bridge, 351 s host; still REPRODUCED on 20.2.5 and 21.2.0, no fixed release | 60m | never | `/ci run native_shuffle` | never | `Experiments`, `case=cephfs_mirror_daemon_redistribution`; `batch=native_shuffle` |
+| `cephfs_mirror_blockdiff_empty_versions` (`optional/cephfs_mirror_blockdiff_empty`) | known-defect reproducer, default 19.2.5; prints the result and passes; two clusters, aborts the source MDS | REPRODUCED 148 s; 20.2.4 NOT_REPRODUCED 131 s, 21.2.0 140 s | 30m | never | `/ci run cephfs_mirror_blockdiff_empty` | never | `Experiments`, `case=cephfs_mirror_blockdiff_empty_versions`; `batch=cephfs_mirror_blockdiff_empty` |
 
 - A cheap deterministic case is a required batch of a non-`short` category,
   so a pull request runs it only when it changes a file of the case's
