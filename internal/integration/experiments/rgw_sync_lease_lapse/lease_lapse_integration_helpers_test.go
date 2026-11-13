@@ -10,7 +10,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +22,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
+
+// image is the Ceph image every cluster and gateway of the case runs: Tentacle
+// 20.2.4, which reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_lease_lapse_test.image=<image>"
+//
+// No release fixes it: Squid 19.2.5 and Umbrella 21.2.0 have the same
+// coroutine window and lease check.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 const (
 	// leaseLapsePeriod is the sync lease period of a fixture gateway
@@ -91,13 +99,10 @@ func (s leaseLapseSeen) String() string {
 
 func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 	t.Helper()
-	source, destination, _, _ := harness.NewMultiClusterPairWithContext(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	image, _ := harness.IntegrationImages(t)
-	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
-	if rgwImage == "" {
-		rgwImage = image
-	}
-	fixture, err := multisite.Run(ctx, rgwImage, multisite.WithTopology(multisite.TopologyConfig{
+	t.Logf("image: %s", image)
+	source, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	fixture, err := multisite.Run(ctx, image, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}},
 	}))
@@ -486,12 +491,22 @@ func leaseLapseShards(round *leaseLapseRound, traces map[int]*shardTrace) string
 	return strings.Join(out, "\n")
 }
 
-// testSyncLeaseLapse runs three rounds and requires zone b to catch up with
-// zone a's writes after each, with the gateway processes it started with.
-// The first two are controls: zone b's gateway frozen past the sync lease
-// period while its shards are idle, and zone a's gateway not answering b's
-// reads for less than the lease period. The third is the trigger: zone a's
-// gateway not answering for longer than the lease period.
+// testSyncLeaseLapse reports whether zone b's data sync passes the data log
+// entries of a batch it read when its sync lease lapsed while zone a did not
+// answer.
+//
+// Given a two-zone realm whose seeds zone b serves and two controls that zone
+// b catches up after (zone b's gateway frozen past the sync lease period
+// while its shards are idle, and zone a's gateway not answering b's reads for
+// less than the lease period), when zone a's gateway does not answer for
+// longer than the lease period and a shard of the round finds its lease lost
+// inside a batch, then the defect is REPRODUCED if zone b does not catch up
+// within three minutes and every shard still behind shows the batch passed
+// on the lost lease, and NOT_REPRODUCED if zone b catches up without a
+// restart of its gateway. A shard behind without that signature is another
+// fault and fails the test.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func testSyncLeaseLapse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
@@ -564,40 +579,49 @@ func testSyncLeaseLapse(t *testing.T) {
 	seen, took, ok = l.catchUp(lapse, lapse.Resumed, 3*time.Minute)
 	traces = l.traces(lapse)
 	t.Logf("round lapse, %s after a wait of %s: %s\n%s", took, lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), seen, leaseLapseShards(lapse, traces))
+	sameProcesses("lapse")
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if ok {
-		sameProcesses("lapse")
 		t.Logf("RGW_SYNC_LEASE_LAPSE_RECEIPT zone b's shards %v of %d found their sync lease lost inside a batch read from zone a, which had not answered for %s, and zone b served every object and stored a's markers %s after a answered again, with its gateway process kept; controls: zone b frozen for %s over %d idle shards, zone a not answering for %s with %d of %d shards waiting in a read",
 			inBatch, len(lapse.Shards), lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), took,
 			idle.Resumed.Sub(idle.Frozen).Round(time.Millisecond), len(idle.Shards), short.Resumed.Sub(short.Frozen).Round(time.Millisecond), held, len(short.Shards))
+	} else {
+		// The shards still behind must all show the skipped batch; anything
+		// else is another failure, and the gateway is left as it is.
+		var skipped []int
+		for _, shard := range seen.Behind {
+			if !skippedBatch(traces[shard.Shard], shard.Source, shard.Destination) {
+				t.Fatalf("zone b did not catch up within 3m0s of zone a answering again, and shard %d does not show a batch passed on a lost lease (a's marker %s, b's stored marker %q, trace %+v): %s",
+					shard.Shard, shard.Source, shard.Destination, traces[shard.Shard], seen)
+			}
+			skipped = append(skipped, shard.Shard)
+		}
+		if len(skipped) == 0 {
+			t.Fatalf("zone b did not catch up within 3m0s of zone a answering again with no shard of the round behind: %s", seen)
+		}
+		errors, err := l.fixture.ZoneAdmin(ctx, "b", "sync", "error", "list")
+		t.Logf("sync error list of zone b: %d entries with an error, %v", bytes.Count(errors, []byte(`"error_code"`)), err)
+		// A restarted gateway reads its stored markers again.
+		gateway := l.zones[1].Gateway
+		if err := gateway.Stop(ctx, nil); err != nil {
+			t.Fatalf("stop zone b's gateway: %v", err)
+		}
+		if err := gateway.Start(ctx); err != nil {
+			t.Fatalf("start zone b's gateway: %v", err)
+		}
+		restarted := time.Now()
+		l.b = l.client(1)
+		after, recovered, caughtUp := l.catchUp(lapse, restarted, 5*time.Minute)
+		symptoms = append(symptoms, fmt.Sprintf("zone a did not answer zone b's reads of its data log for %s; zone b's shards %v then found their sync lease lost inside the batch they read, read on from a's newest markers without starting the entries, and left their stored markers behind; 3m0s after a answered again: %s. After a restart of zone b's gateway: caught up %v after %s: %s",
+			lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), skipped, seen, caughtUp, recovered, after))
+	}
+	if t.Failed() {
 		return
 	}
-	sameProcesses("lapse")
-	// The shards still behind must all show the skipped batch; anything
-	// else is another failure, and the gateway is left as it is.
-	var skipped []int
-	for _, shard := range seen.Behind {
-		if !skippedBatch(traces[shard.Shard], shard.Source, shard.Destination) {
-			t.Fatalf("zone b did not catch up within 3m0s of zone a answering again, and shard %d does not show a batch passed on a lost lease (a's marker %s, b's stored marker %q, trace %+v): %s",
-				shard.Shard, shard.Source, shard.Destination, traces[shard.Shard], seen)
-		}
-		skipped = append(skipped, shard.Shard)
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
 	}
-	if len(skipped) == 0 {
-		t.Fatalf("zone b did not catch up within 3m0s of zone a answering again with no shard of the round behind: %s", seen)
-	}
-	errors, err := l.fixture.ZoneAdmin(ctx, "b", "sync", "error", "list")
-	t.Logf("sync error list of zone b: %d entries with an error, %v", bytes.Count(errors, []byte(`"error_code"`)), err)
-	// A restarted gateway reads its stored markers again.
-	gateway := l.zones[1].Gateway
-	if err := gateway.Stop(ctx, nil); err != nil {
-		t.Fatalf("stop zone b's gateway: %v", err)
-	}
-	if err := gateway.Start(ctx); err != nil {
-		t.Fatalf("start zone b's gateway: %v", err)
-	}
-	restarted := time.Now()
-	l.b = l.client(1)
-	after, recovered, ok := l.catchUp(lapse, restarted, 5*time.Minute)
-	t.Fatalf("observed defect: zone a did not answer zone b's reads of its data log for %s; zone b's shards %v then found their sync lease lost inside the batch they read, read on from a's newest markers without starting the entries, and left their stored markers behind; 3m0s after a answered again: %s. After a restart of zone b's gateway: caught up %v after %s: %s",
-		lapse.Resumed.Sub(lapse.Frozen).Round(time.Millisecond), skipped, seen, ok, recovered, after)
+	t.Logf("EXPERIMENT_RESULT case=rgw_sync_lease_lapse result=%s image=%s symptoms=%q", result, image, symptoms)
 }

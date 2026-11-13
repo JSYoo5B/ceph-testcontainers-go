@@ -14,7 +14,7 @@ the connections stay up. After it answers again, the other zone must sync
 everything the source logged in the meantime without a restart of its own
 gateway.
 
-Every published image fails this when the source does not answer for longer
+Every published image loses entries when the source does not answer for longer
 than `rgw_sync_lease_period`. Two parts of RGW combine:
 
 1. A coroutine manager runs no other coroutine while 100 of its coroutines
@@ -51,15 +51,13 @@ Both parts are the same in Squid 19.2.5, Tentacle 20.2.4 and Umbrella
 recorded for it. With the default lease period of 120 seconds the source
 must stay unanswering that long; fixture gateways run with 30.
 
-The test fails on every published image in its last round. That is the
-expected result for an unpatched defect; it is not a fixture failure.
+Every published image reproduces it in the test's last round.
 
 ## Requirements
 
 - Two clusters, one OSD each, bridge mode only; an RGW realm with zones `a`
-  (metadata master, the source) and `b` (`multisite.Run`). Image roles
-  `essential`, `client` and `rgw`; `CEPH_TEST_RGW_IMAGE` selects the gateway
-  image.
+  (metadata master, the source) and `b` (`multisite.Run`). Both clusters
+  and both gateways run the package's `image`, one aggregate image.
 - A Docker engine that can pause containers (the cgroup freezer).
 - Fixture gateways run with `rgw_sync_lease_period` 30. The test raises
   `debug_rgw_sync` to 20 on zone b's gateway, whose log it reads, and sets
@@ -70,12 +68,15 @@ expected result for an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 9 minutes (527 s on
-Tentacle 20.2.4, 526 s on Umbrella 21.2.0, 553 s on Squid 19.2.5) and fails
-in the last round on every published image, after both controls passed. No automatic
-run includes it (the default checks of a pull request, pushes to `main`,
-periodic samples), and it never gates anything. A maintainer can run it on
-demand, also on a pull request's head with the comment below.
+Standalone reproducer: the test runs on its package-level `image`, Tentacle
+20.2.4 by default, which reproduces the defect. Its given and when steps (the
+realm, the seeds, both control rounds and the trigger's condition) fail the
+test; the then step does not. It prints one line,
+`EXPERIMENT_RESULT case=rgw_sync_lease_lapse result=<REPRODUCED|NOT_REPRODUCED>`,
+and passes either way. No automatic run includes it (the default checks of a
+pull request, pushes to `main`, periodic samples), and it never gates
+anything. A maintainer can run it on demand, also on a pull request's head
+with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rgw_sync_lease_lapse`.
 - Comment: `/ci run rgw_sync_lease_lapse` or
@@ -83,26 +84,27 @@ demand, also on a pull request's head with the comment below.
 
 ## Running it
 
+On the default image, which must print `result=REPRODUCED`:
+
 ```sh
-CEPH_TEST_RGW_IMAGE=<rgw image@sha256:...> \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
   -run '^TestMultiClusterRGWDataSyncAfterSyncLeaseLapse$' \
   ./internal/integration/experiments/rgw_sync_lease_lapse
 ```
 
-or, exactly as CI runs the batch:
+On another image, such as a patched build, injected into the package's
+`image` variable; a fixed image must print `result=NOT_REPRODUCED`. No
+release fixes the defect yet.
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_sync_lease_lapse \
-  --package ./internal/integration/experiments/rgw_sync_lease_lapse \
-  --directory "artifacts/rgw-sync-lease-lapse-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_lease_lapse_test.image=<image@sha256:...>" \
+  -run '^TestMultiClusterRGWDataSyncAfterSyncLeaseLapse$' \
+  ./internal/integration/experiments/rgw_sync_lease_lapse
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-Record the RGW image digest and the gateways' `ceph --version` with the
-result.
+The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
+not select the case's images.
 
 ## Observations and controls
 
@@ -136,7 +138,7 @@ When round 3 does not catch up, every shard still behind must show the
 skipped batch in the gateway's log: the lease lost inside a batch, later
 reads from zone a's newest marker, no entry of that marker ever started,
 and a stored marker that is not zone a's. Only then is zone b's gateway
-restarted, and the catch-up after the restart is reported with the failure.
+restarted, and the catch-up after the restart is reported with the symptom.
 A shard behind without that signature fails the test as another fault, and
 the gateway is not restarted.
 
@@ -145,30 +147,39 @@ connection stays up.
 
 ## Reading the result
 
-- **Pass:** a shard found its lease lost inside a batch, and zone b still
-  caught up without a restart. No published image passes today.
-- **Observed bug:** the failure starts with `observed defect:` and names the
-  shards that passed a batch, zone b's missing objects and stored markers
-  three minutes after zone a answered again, and whether zone b caught up
-  after the restart of its gateway.
-- **Not reproduced:** a pass on a build claimed to be affected. The receipt
-  (`RGW_SYNC_LEASE_LAPSE_RECEIPT`) names the shards that found the lease
-  lost inside a batch; check it before treating the build as fixed.
-- **Unavailable prerequisite:** a cluster, the realm or a gateway does not
-  start, or the engine cannot pause a container. The test fails before the
-  first round.
-- **Condition not established:** the failure starts with
-  `condition not established`: a shard of zone b read nothing before a
-  round, the writes added no data log entry, fewer than 100 shards came to
-  wait in a read, a control round's shards did not lose or keep their
-  leases as the round requires, no shard of the round found its lease
-  lost inside a batch in round 3, or a gateway container stopped while a
-  round paused or resumed it. Only 100 of the 128 shards get to read
-  while zone a does not answer, so a shard of the round can be among the
-  other 28; with six buckets at least one has waited in a read in every run
-  so far. It is not a reproduction and not a pass.
-- **Control failed:** the failure starts with `control failed`: zone b did
-  not catch up after a control round. The trigger was not reached.
+- **REPRODUCED:** the symptom names the shards that passed a batch, zone
+  b's missing objects and stored markers three minutes after zone a answered
+  again, and whether zone b caught up after the restart of its gateway.
+- **NOT_REPRODUCED:** a shard found its lease lost inside a batch, and zone
+  b still caught up without a restart. The receipt
+  (`RGW_SYNC_LEASE_LAPSE_RECEIPT`) names those shards; check it before
+  treating the build as fixed.
+- **Test failure (no result):**
+  - `condition not established`: a shard of zone b read nothing before a
+    round, the writes added no data log entry, fewer than 100 shards came to
+    wait in a read, a control round's shards did not lose or keep their
+    leases as the round requires, no shard of the round found its lease lost
+    inside a batch in round 3, or a gateway container stopped while a round
+    paused or resumed it. Only 100 of the 128 shards get to read while zone a
+    does not answer, so a shard of the round can be among the other 28; with
+    six buckets at least one has waited in a read in every run so far.
+  - `control failed`: zone b did not catch up after a control round. The
+    trigger was not reached.
+  - Zone b did not catch up after round 3 and a shard behind does not show
+    the skipped batch (another fault), or a cluster, the realm or a gateway
+    does not start, or the engine cannot pause a container.
+
+Native results (Linux amd64 host, Docker, aggregate image, one run):
+
+| Image | Result | Time |
+| --- | --- | --- |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: shards 2, 18, 34 and 66 passed a batch on a lost lease; four buckets' objects missing 3 minutes after zone a answered again; caught up 36 s after a restart of zone b's gateway | 528 s |
+
+No fixed image exists to run.
+
+Earlier, failing-test runs took about 9 minutes and reproduced on Tentacle
+20.2.4 (527 s), Umbrella 21.2.0 (526 s) and Squid 19.2.5 (553 s), after both
+controls passed.
 
 ## Cleanup and limits
 
