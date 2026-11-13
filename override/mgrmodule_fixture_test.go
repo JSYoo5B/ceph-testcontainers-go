@@ -51,8 +51,15 @@ type mgrModuleFixture struct {
 	// unless staleDumps keeps the old one in that many dumps after it.
 	activeGID             uint64
 	staleDumps, staleLeft int
-	cancelOnSet           context.CancelFunc
-	cancelOnDump          context.CancelFunc
+	// staleAtMutation are the dumps that still named the replaced MGR when
+	// each mutation arrived: a nonzero one is a change sent before the
+	// previous change's respawn was observed.
+	staleAtMutation []int
+	// rejectSet fails that mutation (enable or disable) without the MON
+	// persisting it.
+	rejectSet    string
+	cancelOnSet  context.CancelFunc
+	cancelOnDump context.CancelFunc
 }
 
 func newMGRModuleFixture() *mgrModuleFixture {
@@ -124,7 +131,11 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			cancel()
 		}
 	} else if len(args) == 4 && slices.Equal(args[:2], []string{"mgr", "module"}) && slices.Contains([]string{"enable", "disable"}, args[2]) {
+		if args[2] == ctr.rejectSet {
+			return 0, nil, errors.New("injected rejected module mutation")
+		}
 		ctr.mutations++
+		ctr.staleAtMutation = append(ctr.staleAtMutation, ctr.staleLeft)
 		ctr.enabled[args[3]] = args[2] == "enable"
 		ctr.activeGID++
 		ctr.staleLeft = ctr.staleDumps

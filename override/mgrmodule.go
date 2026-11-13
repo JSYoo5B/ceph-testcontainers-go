@@ -33,6 +33,16 @@ type mgrModuleState struct {
 	// refused is why the call was not applied. A handle with it owns no module
 	// and has no token.
 	refused error
+	// pending is a membership change that was sent, by the apply or a
+	// restoration, and not yet read back through a respawned active MGR.
+	pending *mgrModuleChange
+}
+
+// mgrModuleChange is a membership change and the gid of the active MGR
+// observed before it, which its respawn replaces.
+type mgrModuleChange struct {
+	enabled  bool
+	replaced uint64
 }
 
 // mgrModuleNotApplied returns the handle of a call that changed nothing.
@@ -154,11 +164,19 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	if module.Enabled == enabled {
 		return change, nil
 	}
+	// Recorded before the write: a lost reply or a wait that ends early leaves
+	// it for Restore, which must not act on the membership before the respawn
+	// that the change causes.
+	change.state.pending = &mgrModuleChange{enabled: enabled, replaced: activeGID}
 	setErr := overridehook.SetMGRModule(ctx, c, name, enabled)
 	if setErr == nil {
 		// The change respawns the MGR. Wait, within the operation's bound, for
 		// the membership and an available respawned active MGR.
-		return change, overridehook.WaitMGRModuleMembership(ctx, c, name, enabled, module.AlwaysOn, activeGID)
+		if err := overridehook.WaitMGRModuleMembership(ctx, c, name, enabled, module.AlwaysOn, activeGID); err != nil {
+			return change, err
+		}
+		change.state.pending = nil
+		return change, nil
 	}
 	// A lost reply cannot prove that the MON did not persist membership. Keep
 	// the lease and reconcile with a fresh bounded read, retaining the error.
@@ -169,13 +187,18 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
 	defer readCancel()
 	readErr := overridehook.WaitMGRModuleMembership(readCtx, c, name, enabled, module.AlwaysOn, activeGID)
+	if readErr == nil {
+		change.state.pending = nil
+	}
 	return change, errors.Join(setErr, readErr)
 }
 
 // Restore returns only this module to its original membership. Like
 // SetMGRModule, a change returns once the membership is read back through an
 // available respawned active MGR. It is idempotent and reconciles an uncertain
-// restoration reply before mutating again. It checks dependency metadata before
+// apply or restoration before mutating again: when the membership shows a
+// change whose read back was not confirmed, it first waits for the respawn
+// that change causes, and when it does not, the change did not land. It checks dependency metadata before
 // enabling and current filesystem/mirror usage before disabling. No-op leases
 // refuse an outside change. Outside writes equal to the applied or previous
 // boolean state cannot be distinguished and must not race.
@@ -212,13 +235,22 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
 	defer cancel()
-	modules, activeGID, err := overridehook.MGRModulesSnapshot(ctx, c)
+	module, activeGID, err := h.snapshot(ctx, c)
 	if err != nil {
 		return err
 	}
-	module, ok := findMGRModule(modules, h.name)
-	if !ok || module.AlwaysOn != h.state.alwaysOn || module.ForceDisabled {
-		return errors.New("MGR module availability or always-on policy changed outside this override")
+	if pending := h.state.pending; pending != nil {
+		if module.Enabled == pending.enabled {
+			// The change landed; the MGR that served this snapshot may be the
+			// one its respawn replaces.
+			if err := overridehook.WaitMGRModuleMembership(ctx, c, h.name, pending.enabled, h.state.alwaysOn, pending.replaced); err != nil {
+				return err
+			}
+			if module, activeGID, err = h.snapshot(ctx, c); err != nil {
+				return err
+			}
+		}
+		h.state.pending = nil
 	}
 	if module.Enabled == h.state.previous {
 		h.finish(c)
@@ -239,14 +271,30 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 			return err
 		}
 	}
+	h.state.pending = &mgrModuleChange{enabled: h.state.previous, replaced: activeGID}
 	if err := overridehook.SetMGRModule(ctx, c, h.name, h.state.previous); err != nil {
 		return err
 	}
 	if err := overridehook.WaitMGRModuleMembership(ctx, c, h.name, h.state.previous, h.state.alwaysOn, activeGID); err != nil {
 		return err
 	}
+	h.state.pending = nil
 	h.finish(c)
 	return nil
+}
+
+// snapshot reads the module and the active MGR gid, refusing a module whose
+// availability or always-on policy changed outside the handle.
+func (h *MGRModuleHandle) snapshot(ctx context.Context, c *ceph.Container) (ceph.MGRModuleState, uint64, error) {
+	modules, activeGID, err := overridehook.MGRModulesSnapshot(ctx, c)
+	if err != nil {
+		return ceph.MGRModuleState{}, 0, err
+	}
+	module, ok := findMGRModule(modules, h.name)
+	if !ok || module.AlwaysOn != h.state.alwaysOn || module.ForceDisabled {
+		return ceph.MGRModuleState{}, 0, errors.New("MGR module availability or always-on policy changed outside this override")
+	}
+	return module, activeGID, nil
 }
 
 func (h *MGRModuleHandle) finish(c *ceph.Container) {
