@@ -18,7 +18,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
-| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `cephfs_readdir_after_snapdiff`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -922,6 +922,8 @@ that reproduce an upstream defect on their default image:
 ([`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)),
 `cephfs_mirror_blockdiff_empty`
 ([`cephfs_mirror_blockdiff_empty_versions`](../../internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions/README.md)),
+`mgr_pg_merge_primary_override`
+([`mgr_pg_merge_primary_override`](../../internal/integration/experiments/mgr_pg_merge_primary_override/README.md)),
 `mon_log_ack`
 ([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
 `rbd_demote_restart`
@@ -943,7 +945,9 @@ that reproduce an upstream defect on their default image:
 `rgw_multipart_part_class`
 ([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)),
 `rgw_object_lock_sync`
-([`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md))
+([`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)),
+`rgw_slo_head_segment_reads`
+([`rgw_slo_head_segment_reads`](../../internal/integration/experiments/rgw_slo_head_segment_reads/README.md))
 and `rgw_sync_lease_lapse`
 ([`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md)).
 Each case's `README.md` gives its trigger, controls, command and the meaning
@@ -1041,6 +1045,8 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_group_snap_late_complete` judgement and report reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_mirror_blockdiff_empty_versions` judgement and reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `mgr_pg_merge_primary_override` OSDMap reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `rgw_slo_head_segment_reads` op history reader, window and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_single_part_multipart_read` judgement and process reading tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_sync_lease_lapse` log reader and gateway state tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
@@ -1057,6 +1063,8 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | known-defect reproducer, default 19.2.3; prints the result and passes | `demotion-resume` REPRODUCED 760 s (fixed in 19.2.4); `resumed-bytes` REPRODUCED on 19.2.4 and 20.2.4, no fixed release | 30m | never | `/ci run rbd_demote_restart` | never | `Experiments`, `case=rbd_mirror_demote_restart`; `batch=rbd_demote_restart` |
 | `rbd_trash_purge_timezone` (`optional/rbd_trash_purge_timezone`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; no fixed release | 20m | never | `/ci run rbd_trash_purge_timezone [on <release>]` | never | `Experiments`, `case=rbd_trash_purge_timezone`; `batch=rbd_trash_purge_timezone` |
 | `rbd_group_snap_late_complete` (`optional/rbd_group_snap_late_complete`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 29 s; still REPRODUCED on 21.2.0 (29 s), no fixed release | 20m | never | `/ci run rbd_group_snap_late_complete [on <release>]` | never | `Experiments`, `case=rbd_group_snap_late_complete`; `batch=rbd_group_snap_late_complete` |
+| `mgr_pg_merge_primary_override` (`optional/mgr_pg_merge_primary_override`) | known-defect reproducer, default 20.2.4; prints the result and passes; three OSDs, samples a blocked merge for two minutes | REPRODUCED 203 s; still REPRODUCED on 19.2.5 (210 s); 20.2.5 NOT_REPRODUCED 81 s, 21.2.0 80 s | 20m | never | `/ci run mgr_pg_merge_primary_override [on <release>]` | never | `Experiments`, `case=mgr_pg_merge_primary_override`; `batch=mgr_pg_merge_primary_override` |
+| `rgw_slo_head_segment_reads` (`optional/rgw_slo_head_segment_reads`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; still REPRODUCED on 19.2.5 (45 s), 20.2.5 (38 s) and 21.2.0 (40 s), no fixed release | 20m | never | `/ci run rgw_slo_head_segment_reads [on <release>]` | never | `Experiments`, `case=rgw_slo_head_segment_reads`; `batch=rgw_slo_head_segment_reads` |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 35 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 35 s | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `Experiments`, `case=rgw_suspended_conditional_writes`; `batch=rgw_conditional_writes` |
 | `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | known-defect reproducer, default 20.2.4; prints the result and passes; HTTPS | REPRODUCED 34 s; 21.2.0 NOT_REPRODUCED 32 s | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `Experiments`, `case=rgw_ssec_multipart_completion`; `batch=rgw_ssec_completion` |
 | `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 20.2.5 NOT_REPRODUCED 30 s | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `Experiments`, `case=rgw_empty_sse_header`; `batch=rgw_empty_sse_header` |
