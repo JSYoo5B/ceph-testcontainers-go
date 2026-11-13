@@ -1,0 +1,61 @@
+name: Experiments
+
+# Runs one known-defect experiment case with go test, as a developer would.
+# Without an image the case runs on its default image, which reproduces the
+# defect, so every EXPERIMENT_RESULT line must say REPRODUCED. With an image
+# (a fixed build), every line must say NOT_REPRODUCED. A failure of the case's
+# given or when steps fails the test and the run.
+on:
+  workflow_dispatch:
+    inputs:
+      case:
+        description: Experiment case directory under internal/integration/experiments
+        type: choice
+        options:
+          - rgw_empty_sse_header
+      image:
+        description: Fixed image to inject (empty runs the case's default image, which must reproduce)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    name: ${{ inputs.case }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+      - name: Run the case
+        env:
+          CASE: ${{ inputs.case }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          package="github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/$CASE"
+          want=REPRODUCED
+          flags=()
+          if [ -n "$IMAGE" ]; then
+            if ! printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9./:@_-]+$'; then
+              echo "::error::invalid image reference"
+              exit 1
+            fi
+            want=NOT_REPRODUCED
+            flags=(-ldflags "-X ${package}_test.image=$IMAGE")
+          fi
+          go test -tags=all,native_regression -count=1 -v -timeout 110m "${flags[@]}" "$package" | tee experiment.log
+          results=$(grep -o 'EXPERIMENT_RESULT case=[^ ]* result=[A-Z_]*' experiment.log || true)
+          if [ -z "$results" ]; then
+            echo "::error::the case printed no EXPERIMENT_RESULT line"
+            exit 1
+          fi
+          echo "$results"
+          if printf '%s\n' "$results" | grep -v "result=$want\$" >/dev/null; then
+            echo "::error::want every result $want"
+            exit 1
+          fi

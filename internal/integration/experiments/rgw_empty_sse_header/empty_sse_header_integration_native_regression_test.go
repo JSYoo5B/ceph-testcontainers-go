@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,6 +23,14 @@ import (
 )
 
 const sseHeader = "X-Amz-Server-Side-Encryption"
+
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 type sseCase struct {
 	ctx    context.Context
@@ -127,14 +136,11 @@ func (c *sseCase) requireNoDefaultEncryption(t *testing.T, bucket string) {
 	}
 }
 
-// requireRefused requires the validation refusal that the invalid algorithm
-// control also gets: 400 InvalidArgument with the same message, never a
-// SigV4 refusal.
-func requireRefused(t *testing.T, name string, r sseResult, control sseFailure) {
-	t.Helper()
-	if r.Code != http.StatusBadRequest || r.Failure.Code != "InvalidArgument" || r.Failure.Message != control.Message {
-		t.Errorf("%s: status %d %s %q, want 400 InvalidArgument %q", name, r.Code, r.Failure.Code, r.Failure.Message, control.Message)
-	}
+// refused reports whether r is the validation refusal that the invalid
+// algorithm control also gets: 400 InvalidArgument with the same message,
+// never a SigV4 refusal.
+func refused(r sseResult, control sseFailure) bool {
+	return r.Code == http.StatusBadRequest && r.Failure.Code == "InvalidArgument" && r.Failure.Message == control.Message
 }
 
 // cleanup deletes the versions the test owns in each bucket of buckets, the
@@ -204,20 +210,25 @@ func requireWireHeader(t *testing.T, client harness.S3HTTPClient) {
 	}
 }
 
-// TestRGWEmptySSEHeader requires that RGW refuses a PUT whose
-// x-amz-server-side-encryption header is present with an empty value, as it
-// refuses an invalid algorithm, instead of treating it as absent. An omitted
-// header writes an ordinary object, and a refused PUT creates no object and
-// leaves an existing version unchanged.
+// TestRGWEmptySSEHeader reports whether RGW accepts a PUT whose
+// x-amz-server-side-encryption header is present with an empty value,
+// instead of refusing it as it refuses an invalid algorithm.
 //
-// Tentacle 20.2.4 tests the header's value instead of its presence, so the
-// empty header is accepted and writes an unencrypted object (a new version
-// over an existing key); the invalid-algorithm control is refused there too.
-// Tentacle 20.2.5 and Umbrella 21.2.0 pass.
+// Given a gateway whose buckets have no default encryption, a client that
+// sends and signs the empty header, and the controls (an invalid algorithm is
+// refused and creates nothing; an omitted header writes an ordinary object),
+// when the empty header is sent for a new key and over an existing version,
+// then the defect is REPRODUCED if either PUT is accepted or changes what is
+// stored, and NOT_REPRODUCED if both get the control's refusal and nothing
+// changes. Tentacle 20.2.4 tests the header's value instead of its presence,
+// so it reproduces; Tentacle 20.2.5 and Umbrella 21.2.0 do not.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func TestRGWEmptySSEHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_SSE image=%s", image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SSE ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -264,14 +275,18 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 		}
 	})
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	t.Run("empty-new-key", func(t *testing.T) {
 		data := []byte("header present and empty")
 		r := c.put(t, bucket+"/empty", data, sseHeaders(""))
 		got := c.get(t, bucket+"/empty")
 		t.Logf("RGW_SSE empty-new-key stored=%t bytes-match=%t etag=%s encryption=%q", got.Data != nil, bytes.Equal(got.Data, data), got.ETag, got.Encryption)
-		requireRefused(t, "PUT with an empty header", r, invalid.Failure)
+		if !refused(r, invalid.Failure) {
+			symptoms = append(symptoms, fmt.Sprintf("new key: status %d %s, not the control's 400 InvalidArgument", r.Code, r.Failure.Code))
+		}
 		if got.Data != nil {
-			t.Errorf("the empty-header PUT left an object (exact bytes %t, encryption %q)", bytes.Equal(got.Data, data), got.Encryption)
+			symptoms = append(symptoms, fmt.Sprintf("new key: the PUT left an object (encryption %q)", got.Encryption))
 		}
 	})
 
@@ -286,12 +301,22 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 		before := c.get(t, versioned+"/key")
 		r := c.put(t, versioned+"/key", []byte("replacement from an empty header"), sseHeaders(""))
 		after := c.get(t, versioned+"/key")
-		requireRefused(t, "overwrite with an empty header", r, invalid.Failure)
+		if !refused(r, invalid.Failure) {
+			symptoms = append(symptoms, fmt.Sprintf("overwrite: status %d %s, not the control's 400 InvalidArgument", r.Code, r.Failure.Code))
+		}
 		if !bytes.Equal(after.Data, seed) || after.ETag != before.ETag || after.VersionID != seeded.VersionID {
-			t.Errorf("the empty-header overwrite changed the key: version %q -> %q, seed bytes kept %t", seeded.VersionID, after.VersionID, bytes.Equal(after.Data, seed))
+			symptoms = append(symptoms, fmt.Sprintf("overwrite: the key changed, version %q -> %q", seeded.VersionID, after.VersionID))
 		}
 		if list, markers := c.versions(t, versioned, "key"); len(list) != 1 || len(markers) != 0 || list[0].VersionID != seeded.VersionID {
-			t.Errorf("versions of the key after the empty-header overwrite: %+v %+v, want only %q", list, markers, seeded.VersionID)
+			symptoms = append(symptoms, fmt.Sprintf("overwrite: %d versions and %d delete markers, want only %q", len(list), len(markers), seeded.VersionID))
 		}
 	})
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_empty_sse_header result=%s image=%s symptoms=%q", result, image, symptoms)
 }
