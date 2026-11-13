@@ -51,8 +51,9 @@ def immutable_image(image):
         return True
     match = DIGEST_REFERENCE.match(image)
     return bool(match) and len(match["path"]) <= PATH_MAX
-START = re.compile(r'StartReproduction\(\s*t\s*,\s*"([^"]+)"')
-IMAGE_ROLES = re.compile(r"^//ci: .*\bimage-roles=(\S+)", re.MULTILINE)
+
+
+IMAGE_ROLES = re.compile(r"\bimage-roles=(\S+)")
 DEFAULT_IMAGE = re.compile(r'^const DefaultImage = "([^"]+)"$', re.MULTILINE)
 LINE = re.compile(r"REPRODUCTION_VERDICT case=(\S+) verdict=(\S+) expected=(\S+) combination=(\S+) attempts=(\d+) "
                   r"platform=(\S+) network=(\S+) (.*)$")
@@ -60,76 +61,51 @@ ROLE_VARIABLES = {"essential": "CEPH_TEST_ESSENTIAL_IMAGE", "client": "CEPH_TEST
                   "cephfs": "CEPH_TEST_CEPHFS_IMAGE", "rbd-aux": "CEPH_TEST_RBD_AUX_IMAGE", "rgw": "CEPH_TEST_RGW_IMAGE"}
 
 
-# A line that starts a top-level declaration of a gofmt'd file.
-DECLARATION = re.compile(r"(?:func|type|var|const|import)\b")
-FUNCTION_NAME = re.compile(r"func (?:\([^)]*\) )?(\w+)\b")
-IDENTIFIER = re.compile(r"\b\w+\b")
+def package_files(catalog, package):
+    """The test files of package in the tagcatalog catalog, whatever their tags."""
+    return [file for file in catalog if Path(file["path"]).parent == Path(package)]
 
 
-def top_level_declarations(text):
-    """The source of each top-level declaration of a Go file, in order. A
-    declaration runs from its keyword at the start of a line, outside any
-    brace, string, rune or comment, to the start of the next one."""
-    starts, depth, i, line_start = [], 0, 0, True
-    while i < len(text):
-        if line_start and depth == 0 and DECLARATION.match(text, i):
-            starts.append(i)
-        line_start = False
-        char = text[i]
-        if text.startswith("//", i):
-            i = text.find("\n", i)
-            i = len(text) if i < 0 else i
-            continue
-        if text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            i = len(text) if end < 0 else end + 2
-            continue
-        if char in "\"'":
-            i += 1
-            while i < len(text) and text[i] != char and text[i] != "\n":
-                i += 2 if text[i] == "\\" else 1
-            i += 1
-            continue
-        if char == "`":
-            end = text.find("`", i + 1)
-            i = len(text) if end < 0 else end + 1
-            continue
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth = max(depth - 1, 0)
-        elif char == "\n":
-            line_start = True
-        i += 1
-    return [text[start:end] for start, end in zip(starts, starts[1:] + [len(text)])]
-
-
-def started_units(paths, tests):
-    """The units that the named top-level tests start: in their own bodies or
-    in a package function that they reach by naming it, directly or through
-    other such functions. paths are the test files compiled into the run."""
-    bodies = {}
-    for path in paths:
-        for declaration in top_level_declarations(Path(path).read_text(encoding="utf-8")):
-            match = FUNCTION_NAME.match(declaration)
-            if match:
-                bodies[match[1]] = bodies.get(match[1], "") + declaration
-    reached, pending = set(), [test for test in tests if test in bodies]
+def started_units(files, tests):
+    """The units that the named top-level tests start. files are the
+    tagcatalog records of the test files compiled into the run; their
+    reproductions say, per package-level declaration, the units its code
+    starts and the names it uses (read with go/ast, so comments and string
+    contents never count). A declaration reaches the functions and variables
+    that it names and the methods that it selects by name; a test also reaches
+    the methods of the testify suites that it runs. The walk follows them
+    transitively."""
+    declarations, methods, receivers, suites = {}, {}, {}, set()
+    for file in files:
+        for key, reach in file.get("reproductions", {}).items():
+            merged = declarations.setdefault(key, {"starts": set(), "names": set(), "selectors": set()})
+            for field, values in merged.items():
+                values.update(reach[field])
+            if "." in key:
+                receiver, method = key.split(".", 1)
+                methods.setdefault(method, set()).add(key)
+                receivers.setdefault(receiver, set()).add(key)
+        for test in tests:
+            suites.update(file.get("suite_runs", {}).get(test, ()))
+    pending = [test for test in tests if test in declarations]
+    pending += [method for suite in suites for method in receivers.get(suite, ())]
+    reached = set()
     while pending:
-        name = pending.pop()
-        if name in reached:
+        key = pending.pop()
+        if key in reached:
             continue
-        reached.add(name)
-        pending.extend(word for word in set(IDENTIFIER.findall(bodies[name])) if word in bodies and word not in reached)
-    return {unit for name in reached for unit in START.findall(bodies[name])}
+        reached.add(key)
+        reach = declarations[key]
+        # A method key has a dot, which no identifier has.
+        pending += [name for name in reach["names"] if name in declarations]
+        pending += [method for name in reach["selectors"] for method in methods.get(name, ())]
+    return {unit for key in reached for unit in declarations[key]["starts"]}
 
 
-def source_units(directory):
-    """The unit names that the package's test files start."""
-    units = set()
-    for path in sorted(Path(directory).glob("*_test.go")):
-        units.update(START.findall(path.read_text(encoding="utf-8")))
-    return units
+def source_units(catalog, package):
+    """The units that any test file of the package starts."""
+    return {unit for file in package_files(catalog, package)
+            for reach in file.get("reproductions", {}).values() for unit in reach["starts"]}
 
 
 def validate(document, label=CATALOG):
@@ -178,11 +154,12 @@ def validate(document, label=CATALOG):
     return document
 
 
-def load(package, root=ROOT):
+def load(catalog, package, root=ROOT):
     """The validated catalogue of a package, or None when it starts no unit.
-    A package that starts units needs a catalogue listing exactly them."""
+    A package that starts units needs a catalogue listing exactly them.
+    catalog is the tagcatalog record of every test file."""
     directory = Path(root) / package
-    units = source_units(directory)
+    units = source_units(catalog, package)
     path = directory / CATALOG
     if not units:
         if path.exists():
@@ -261,15 +238,13 @@ def check(text, combination, verdicts):
     return result
 
 
-def batch_roles(directory):
+def batch_roles(catalog, package):
     """The image roles that the //ci lines of a case's test files declare."""
-    declared = set()
-    for path in Path(directory).glob("*_test.go"):
-        declared.update(IMAGE_ROLES.findall(path.read_text(encoding="utf-8")))
-    return declared
+    return {role for file in package_files(catalog, package)
+            for line in file.get("metadata", ()) for role in IMAGE_ROLES.findall(line)}
 
 
-def verify(root=ROOT):
+def verify(catalog, root=ROOT):
     """Every catalogue of the experiment cases: its units are the ones the
     tests start and its roles are the ones its batch declares. Its
     combinations stay valid when the CI release pins change, since each names
@@ -279,12 +254,12 @@ def verify(root=ROOT):
         if not directory.is_dir():
             continue
         package = str(directory.relative_to(root))
-        catalog = load(package, root)
-        if catalog is None:
+        catalogue = load(catalog, package, root)
+        if catalogue is None:
             continue
-        declared = batch_roles(directory)
-        if declared != {",".join(catalog["roles"])}:
+        declared = batch_roles(catalog, package)
+        if declared != {",".join(catalogue["roles"])}:
             raise ValueError("%s: roles %s, but the batch declares image-roles %s"
-                             % (package, ",".join(catalog["roles"]), sorted(declared)))
-        catalogs[package] = catalog
+                             % (package, ",".join(catalogue["roles"]), sorted(declared)))
+        catalogs[package] = catalogue
     return catalogs

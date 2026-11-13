@@ -47,7 +47,22 @@ type file struct {
 	// run it, wherever in the package the method is declared.
 	SuiteCases []string            `json:"suite_cases"`
 	SuiteRuns  map[string][]string `json:"suite_runs"`
-	SHA256     string              `json:"sha256"`
+	// Reproductions are, per package-level declaration of the file, what it
+	// contributes to the reproduction units a test starts (readReproductions).
+	Reproductions map[string]reproductionReach `json:"reproductions"`
+	SHA256        string                       `json:"sha256"`
+}
+
+// reproductionReach is one package-level function, method (Type.Method) or
+// variable: the units its code starts with harness.StartReproduction, the
+// identifiers it uses that are not its own parameters or locals, which may
+// name another package-level function or variable, and the names it selects
+// (x.Name), which may name a method. Only code counts: comments and string
+// contents are not identifiers.
+type reproductionReach struct {
+	Starts    []string `json:"starts"`
+	Names     []string `json:"names"`
+	Selectors []string `json:"selectors"`
 }
 
 func convert(e constraint.Expr, tags map[string]bool) *expression {
@@ -90,7 +105,7 @@ func inspect(root, path string) (file, error) {
 		return file{}, err
 	}
 	hash := sha256.Sum256(data)
-	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SuiteCases: []string{}, SuiteRuns: map[string][]string{}, SHA256: hex.EncodeToString(hash[:])}
+	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SuiteCases: []string{}, SuiteRuns: map[string][]string{}, Reproductions: map[string]reproductionReach{}, SHA256: hex.EncodeToString(hash[:])}
 	for _, group := range f.Comments {
 		if group.Pos() > f.Package {
 			continue
@@ -168,7 +183,129 @@ func inspect(root, path string) (file, error) {
 		return file{}, fmt.Errorf("%s: %w", rel, err)
 	}
 	out.Networks, out.NetworkTests = networks, tests
+	if out.Reproductions, err = readReproductions(f); err != nil {
+		return file{}, fmt.Errorf("%s: %w", rel, err)
+	}
 	return out, nil
+}
+
+// readReproductions records, per package-level declaration of a file, its
+// reproductionReach. The tag runner follows the names and selectors from the
+// tests that a profile runs to the units they start, so it expects verdicts
+// of those units only. The unit of each harness.StartReproduction call is a
+// string literal, the name the catalogue lists.
+func readReproductions(f *ast.File) (map[string]reproductionReach, error) {
+	out := map[string]reproductionReach{}
+	var failure error
+	add := func(key string, nodes ...ast.Node) {
+		starts, names, selectors := map[string]bool{}, map[string]bool{}, map[string]bool{}
+		var visit func(ast.Node) bool
+		visit = func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.CallExpr:
+				if !startReproductionCall(v.Fun) {
+					return true
+				}
+				if len(v.Args) < 2 {
+					failure = fmt.Errorf("%s: harness.StartReproduction without a unit", key)
+					return false
+				}
+				lit, ok := v.Args[1].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					failure = fmt.Errorf("%s: the unit of harness.StartReproduction is not a string literal", key)
+					return false
+				}
+				unit, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					failure = fmt.Errorf("%s: %w", key, err)
+					return false
+				}
+				starts[unit] = true
+			case *ast.SelectorExpr:
+				selectors[v.Sel.Name] = true
+				ast.Inspect(v.X, visit)
+				return false
+			case *ast.Ident:
+				// A parameter or local of the same name shadows a
+				// package-level declaration; the parser resolves those.
+				// A name declared in another file of the package stays
+				// unresolved (nil Obj), like an import.
+				if v.Name != "_" && (v.Obj == nil || f.Scope.Objects[v.Name] == v.Obj) {
+					names[v.Name] = true
+				}
+			}
+			return true
+		}
+		for _, node := range nodes {
+			if node != nil {
+				ast.Inspect(node, visit)
+			}
+		}
+		reach := out[key]
+		reach.Starts = merged(reach.Starts, starts)
+		reach.Names = merged(reach.Names, names)
+		reach.Selectors = merged(reach.Selectors, selectors)
+		out[key] = reach
+	}
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Body == nil {
+				continue
+			}
+			key := d.Name.Name
+			if d.Recv != nil {
+				key = receiverType(d.Recv.List[0].Type) + "." + key
+			}
+			add(key, d.Body)
+		case *ast.GenDecl:
+			if d.Tok != token.VAR && d.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range d.Specs {
+				value := spec.(*ast.ValueSpec)
+				for i, name := range value.Names {
+					if name.Name == "_" {
+						continue
+					}
+					// var a, b = x, y gives each name its own value; var
+					// a, b = f() gives both the one call.
+					if len(value.Values) == len(value.Names) {
+						add(name.Name, value.Values[i])
+						continue
+					}
+					nodes := make([]ast.Node, 0, len(value.Values))
+					for _, expr := range value.Values {
+						nodes = append(nodes, expr)
+					}
+					add(name.Name, nodes...)
+				}
+			}
+		}
+	}
+	return out, failure
+}
+
+func startReproductionCall(fun ast.Expr) bool {
+	sel, ok := fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "StartReproduction" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "harness"
+}
+
+// merged is the sorted union of names and the keys of set.
+func merged(names []string, set map[string]bool) []string {
+	for _, name := range names {
+		set[name] = true
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // receiverType is the type name of a method receiver: T or *T.

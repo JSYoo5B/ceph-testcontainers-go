@@ -994,10 +994,15 @@ pass/fail meaning, so a reproduction there still fails. The tag runner
 refuses an invalid catalogue before Go starts and, after the run, requires
 each expected unit's own `REPRODUCTION_VERDICT` line with the expected
 verdict. A unit is expected of a run only when one of the tests it runs
-starts the unit, in its own body or through package functions it names, so
-the `code/pure` batch of a case's helper tests expects no verdict, while a
-selected reproducer that reports none still fails. The result is in `report.json` under `reproduction`, beside the
-image, cleanup and every other phase, which keep their own results. A
+starts the unit, in its own body or through the package functions,
+variables and methods its code reaches, so the `code/pure` batch of a case's
+helper tests expects no verdict, while a selected reproducer that reports
+none still fails. `internal/tools/tagcatalog` reads this reach with `go/ast`,
+so a name in a comment or a string is not a call, and it refuses a
+`harness.StartReproduction` call whose unit is not a string literal, since
+the catalogue lists units by name. The result is in `report.json` under
+`reproduction`, beside the image, cleanup and every other phase, which keep
+their own results. A
 required batch such as `topology/rgw_single_part_read` compares the same way
 on the pull request release. 20.2.5 has no pinned role images; its
 combinations use the aggregate image and are checked with `go test` and

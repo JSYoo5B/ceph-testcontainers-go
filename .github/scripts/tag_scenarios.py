@@ -1172,10 +1172,9 @@ def selected_tests(catalog, package, tags):
     return sorted(tests)
 
 
-def compiled_paths(catalog, package, tags, root=ROOT):
-    """The test files of package that the tags compile."""
-    return [Path(root) / file["path"] for file in catalog
-            if package_path(file) == package and evaluate(file["constraint"], set(tags.split(",")))]
+def compiled_files(catalog, package, tags):
+    """The catalog records of the test files of package that the tags compile."""
+    return [file for file in catalog if package_path(file) == package and evaluate(file["constraint"], set(tags.split(",")))]
 
 
 def selected_suite_cases(catalog, package, tags, expected):
@@ -1511,7 +1510,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     timeout = str(timeout_seconds) + "s" if timeout_seconds is not None else profile["timeout"]
     # A reproduction catalogue is refused before Go starts when it is
     # invalid or does not list exactly the units the package starts.
-    reproduction_catalog = reproductions.load(profile["package"], root)
+    reproduction_catalog = reproductions.load(catalog, profile["package"], root)
     # A checker validates one mode's run, so its batch runs in one mode: the
     # matrix entry's, or the default when no entry selected one.
     network = os.environ.get("CEPH_TEST_NETWORK", "")
@@ -1611,8 +1610,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         combination, verdicts = reproductions.expectations(reproduction_catalog, os.environ,
                                                            native_platform(root)["target"],
                                                            network if tests else None, root)
-        started = reproductions.started_units(compiled_paths(catalog, profile["package"], profile["tags"], root),
-                                              expected)
+        started = reproductions.started_units(compiled_files(catalog, profile["package"], profile["tags"]), expected)
         verdicts = {unit: verdict for unit, verdict in verdicts.items() if unit in started}
     result["reproduction"] = reproductions.check(text, combination, verdicts)
     result["passed"] = result["classification"] == "passed" and result["reproduction"]["met"]
