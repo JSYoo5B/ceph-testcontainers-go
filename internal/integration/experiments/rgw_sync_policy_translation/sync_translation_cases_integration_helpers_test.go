@@ -48,8 +48,8 @@ func newTranslationFixture(t *testing.T, ctx context.Context, opts ...testcontai
 	t.Helper()
 	t.Logf("image: %s", image)
 	clusterOpts := append(append([]testcontainers.ContainerCustomizer(nil), opts...), harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	source, _ := harness.NewServiceClusterWithOptions(t, image, clusterOpts...)
-	destination, _ := harness.NewServiceClusterWithOptions(t, image, clusterOpts...)
+	source, _ := harness.NewSingleImageCluster(t, ceph.Run, image, clusterOpts...)
+	destination, _ := harness.NewSingleImageCluster(t, ceph.Run, image, clusterOpts...)
 	t.Logf("ceph: source %s, destination %s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
 	link, err := multisite.Run(ctx, image, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"}))
 	if link != nil {

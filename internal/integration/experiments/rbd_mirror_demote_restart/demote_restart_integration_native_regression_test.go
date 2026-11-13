@@ -117,8 +117,8 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	defer cancel()
 	netem := harness.NetemImage(t)
 	t.Logf("image: %s", image)
-	source, sourceClient := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	destination, destinationClient := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	source, sourceClient := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, destinationClient := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("ceph: source %s, destination %s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
 	const pool = "tc-rbd-demote"
 	const resumed, removed = pool + "/resumed", pool + "/removed"

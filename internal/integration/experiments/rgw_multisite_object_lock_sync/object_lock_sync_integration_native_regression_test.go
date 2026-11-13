@@ -249,8 +249,8 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	t.Logf("RGW_LOCK image=%s", image)
-	source, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	destination, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	source, _ := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, _ := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_LOCK ceph=%s,%s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
 	fixture, err := multisite.Run(ctx, image, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",

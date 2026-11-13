@@ -31,7 +31,7 @@ func testCephFSAuthorizationIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	t.Logf("CEPHFS_AUTHORIZATION_ISOLATION image=%s", image)
-	cluster, admin := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t),
+	cluster, admin := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)),
 		cephfs.WithFilesystems(cephfs.Config{Name: harness.CephFSIsolationFSA},

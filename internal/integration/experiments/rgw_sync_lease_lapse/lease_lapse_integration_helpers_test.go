@@ -100,8 +100,8 @@ func (s leaseLapseSeen) String() string {
 func newLeaseLapse(t *testing.T, ctx context.Context) *leaseLapse {
 	t.Helper()
 	t.Logf("image: %s", image)
-	source, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	destination, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	source, _ := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, _ := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	fixture, err := multisite.Run(ctx, image, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}},

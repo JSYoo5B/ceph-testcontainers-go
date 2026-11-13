@@ -187,7 +187,7 @@ func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	t.Logf("CEPHFS_SNAPSHOT_READDIR_EVICTION image=%s", image)
-	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
+	cluster, client := harness.NewSingleImageCluster(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)

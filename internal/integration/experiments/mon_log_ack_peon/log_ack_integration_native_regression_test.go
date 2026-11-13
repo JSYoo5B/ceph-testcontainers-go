@@ -50,7 +50,7 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	t.Logf("MON_LOG_ACK image=%s", image)
-	cluster, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3)))
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3)))
 	t.Logf("MON_LOG_ACK ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	mons := clusteraccess.Monitors(t, cluster)
 	osds := clusteraccess.OSDs(t, cluster)

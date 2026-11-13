@@ -691,7 +691,11 @@ fixture parts, and `cephfs_authorization_isolation` and
     a package-level string variable, `image`, whose default is a
     digest-pinned image that reproduces the defect. A run selects another
     image with `-ldflags "-X <import path>_test.image=<image>"`, and an image
-    that no longer reproduces it is one where the defect is resolved.
+    that no longer reproduces it is one where the defect is resolved. Every
+    container the case starts from a Ceph image (cluster, admin client,
+    mirror daemon, gateway) runs that image: a case starts its cluster with
+    `harness.NewSingleImageCluster` or the package `Run` functions, never
+    with a helper that reads the batch's role images.
   - Running that single test is enough to reproduce the defect:
 
     ```sh
@@ -704,7 +708,8 @@ fixture parts, and `cephfs_authorization_isolation` and
     The first prints `result=REPRODUCED`, the second `result=NOT_REPRODUCED`,
     and both pass. The `Experiments` workflow runs the same command for one
     case and requires every result line to be `REPRODUCED` on the default
-    image, or `NOT_REPRODUCED` when a fixed image is given.
+    image. When a fixed image is given it runs the second command afterwards
+    and requires every line to be `NOT_REPRODUCED`.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a

@@ -306,7 +306,7 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	t.Logf("RGW_SSEC image=%s", image)
-	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SSEC ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	// SSE-C requires a secure transport (rgw_crypt_require_ssl stays at its
 	// default), so every request goes over verified HTTPS.

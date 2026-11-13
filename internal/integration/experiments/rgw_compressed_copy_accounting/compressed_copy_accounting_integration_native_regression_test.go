@@ -327,7 +327,7 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	t.Logf("RGW_CC image=%s", image)
-	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_CC ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
