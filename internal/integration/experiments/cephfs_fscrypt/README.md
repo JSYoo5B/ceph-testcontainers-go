@@ -135,7 +135,8 @@ its own CephX identity and its own mount:
   directory and reads it back; `b` reads the same policy. Both clients also
   accepted, from root in the client container, a policy naming a key that was
   never added (errno 0): the kernel lets a caller with `CAP_FOWNER` do that,
-  and `ceph-fuse` does not check. On the qualified client cohorts the test requires errno 0.
+  and `ceph-fuse` does not check. On the established client cohorts the test
+  requires errno 0.
 - **Keyed view.** `a` reads two files byte for byte, a symlink target and a
   subdirectory under their plaintext names.
 - **Locked view.** `b` has no key (`a`'s key is absent in `b`'s key status,
@@ -174,9 +175,21 @@ its own CephX identity and its own mount:
   `ceph-fuse` subtest recorded `FSCRYPT_CLIENT_REFUSED` for a client without
   fscrypt (19.2.5, 20.2.4).
 - **Observed change:** the kernel subtest is refused by the policy query, a
-  plaintext name or byte reaches `b` or RADOS, or the `ceph-fuse` subtest on
-  the pinned official 21.2.0 image on Linux 6.8.0 x86-64 is refused. Other
-  FUSE client builds are characterized by their actual policy-query result.
+  plaintext name or byte reaches `b` or RADOS, or a `ceph-fuse` binary that
+  reports 21.2.0 on Linux 6.8.0 x86-64 is refused or answers differently
+  from the results above.
+- **Established cohorts and other clients.** The answers above were
+  established on Linux 6.8.0 x86-64 with the kernel client on Ceph 19.2.5,
+  20.2.4 and 21.2.0 and with `ceph-fuse` 21.2.0, and the test requires them
+  of exactly those clients. The cohort of a `ceph-fuse` subtest is the
+  release that `ceph-fuse --version` reports in the client container, not
+  the reference or digest of the image that supplied the binary: a rebuilt,
+  retagged or locally loaded image of the same client is held to the same
+  answers. Any other client (another release, kernel or machine) runs every
+  probe, the test logs `FSCRYPT_UNESTABLISHED` with the client, kernel and
+  machine it observed, and its policy-query result, locked metadata, policy
+  for a never-added key and snapshot name are recorded in the receipt
+  (`established=false`) without being required.
 - **Unavailable prerequisite:** the subtest fails with `CephFS fscrypt over
   the <path> client refused: <requirement>`: `kernel ceph filesystem`,
   `ceph-fuse binary`, `/dev/fuse device`, `CAP_SYS_ADMIN`,

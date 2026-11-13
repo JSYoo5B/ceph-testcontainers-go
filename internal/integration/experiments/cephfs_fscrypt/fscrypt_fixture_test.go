@@ -213,17 +213,27 @@ func TestFscryptRetainedKeyRemovalEvidence(t *testing.T) {
 
 func TestFscryptFuseQualificationMatchesTheObservedClient(t *testing.T) {
 	admission := fscryptAdmission{Machine: "x86_64", Kernel: "6.8.0-117-generic"}
-	if !admission.qualifiedView(fusePath, "21.2.0", qualifiedFuseImage) {
-		t.Fatal("qualified FUSE client lost its required capability check")
+	// The cohort is the release that the ceph-fuse binary reports, whatever
+	// image supplied the binary.
+	if !admission.qualifiedView(fusePath, "21.2.0") {
+		t.Fatal("established FUSE client lost its required capability check")
 	}
-	for _, tc := range []struct{ version, image string }{{"21.2.0", "custom-client"}, {"21.2.1", qualifiedFuseImage}} {
-		if admission.qualifiedView(fusePath, tc.version, tc.image) {
-			t.Fatal("unqualified build was assigned the reference FUSE behavior")
+	for _, release := range []string{"21.2.1", "20.2.4", "19.2.5", ""} {
+		if admission.qualifiedView(fusePath, release) {
+			t.Fatalf("ceph-fuse %q was assigned the reference FUSE behavior", release)
 		}
 	}
-	admission.Machine = "aarch64"
-	if admission.qualifiedView(fusePath, "21.2.0", qualifiedFuseImage) {
-		t.Fatal("unqualified platform was assigned the reference FUSE behavior")
+	if !admission.qualifiedView(kernelPath, "20.2.4") || admission.qualifiedView(kernelPath, "20.2.5") || admission.qualifiedView("other", "21.2.0") {
+		t.Fatal("kernel client cohort changed")
+	}
+	for _, alter := range []func(*fscryptAdmission){
+		func(a *fscryptAdmission) { a.Machine = "aarch64" }, func(a *fscryptAdmission) { a.Kernel = "6.11.0-8-generic" },
+	} {
+		other := admission
+		alter(&other)
+		if other.qualifiedView(fusePath, "21.2.0") || other.qualifiedView(kernelPath, "21.2.0") {
+			t.Fatalf("unestablished platform %+v was assigned the reference behavior", other)
+		}
 	}
 }
 
