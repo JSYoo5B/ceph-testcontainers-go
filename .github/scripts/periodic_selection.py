@@ -134,7 +134,7 @@ def freeze_test_images(plan, resolved=None, deadline=None):
     the plan, rather than disappearing or selecting a different cohort.
     """
     import in_test_images
-    import periodic_campaign
+    import role_image_pins
     deadline = time.monotonic() + 180 if deadline is None else deadline
     resolved = {} if resolved is None else resolved
     def run(argv, **kwargs):
@@ -161,7 +161,7 @@ def freeze_test_images(plan, resolved=None, deadline=None):
             references.update(image['reference'] for image in planned)
         for reference in sorted(references):
             if reference not in resolved:
-                resolved[reference] = periodic_campaign.resolve(reference, run)
+                resolved[reference] = role_image_pins.resolve(reference, run)
             manifest = resolved[reference]
             if '@' in reference and reference.rsplit('@', 1)[1] != manifest:
                 raise ValueError('source-pinned helper resolved to another digest')

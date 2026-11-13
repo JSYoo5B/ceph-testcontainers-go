@@ -159,13 +159,13 @@ class SelectionTests(unittest.TestCase):
 
     def test_helper_resolution_failure_remains_a_frozen_preparation_failure(self):
         import in_test_images
-        import periodic_campaign
+        import role_image_pins
         plan = self.plan()
         with mock.patch.object(sample.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='{}')), \
                 mock.patch.object(in_test_images, 'reaper_reference', return_value='testcontainers/ryuk:v1'), \
                 mock.patch.object(in_test_images, 'validate_analysis', return_value=[]), \
                 mock.patch.object(in_test_images, 'plan_images', return_value=([], [])), \
-                mock.patch.object(periodic_campaign, 'resolve', side_effect=RuntimeError('registry unavailable')):
+                mock.patch.object(role_image_pins, 'resolve', side_effect=RuntimeError('registry unavailable')):
             frozen = sample.freeze_test_images(plan)
         self.assertEqual(frozen['test_images_error'], 'helper_image_identity_unavailable')
         sample.validate_plan(frozen, self.catalog)
