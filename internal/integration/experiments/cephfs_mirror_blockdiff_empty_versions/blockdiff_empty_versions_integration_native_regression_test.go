@@ -7,7 +7,6 @@ package cephfs_mirror_blockdiff_empty_versions_test
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -132,14 +131,16 @@ var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a0bc6f
 // requests by an MDS that stays live, with the source's sizes and content),
 // when a further snapshot in which only the trigger file changed, with an
 // empty object version on either side, is synchronized, then the defect is
-// REPRODUCED if the MDS process ends with the interval assertion in the
-// function that aggregates object versions, and NOT_REPRODUCED if the same
-// MDS process served a further blockdiff request and the snapshot arrived
-// with the source's sizes and content.
+// REPRODUCED if the MDS container is read as stopped with a failure and its
+// log, read to the end, has the interval assertion followed by the function
+// that aggregates object versions, and NOT_REPRODUCED if the same MDS
+// process is read as live, served a further blockdiff request and the
+// snapshot is read on the destination with the source's sizes and content.
 //
-// A failure of the given or when steps fails the test, and so does a live
-// MDS that was never asked for the trigger file's blocks; the result does
-// not.
+// A failure of the given or when steps fails the test. So does a live MDS
+// that was never asked for the trigger file's blocks, an observation of the
+// outcome that failed, and an MDS that ended in any other way; the result
+// does not.
 func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
@@ -202,16 +203,19 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 	script := func(client testcontainers.Container, filesystem, phase, snapshot string) blockdiffSnapshot {
 		t.Helper()
 		out := harness.MultiClusterExecOutput(t, ctx, client, "python3", blockdiffScriptPath, filesystem, phase, snapshot)
-		var got blockdiffSnapshot
-		if err := json.Unmarshal(out, &got); err != nil {
-			t.Fatalf("%s %s: %v: %s", phase, snapshot, err, out)
+		got, err := parseBlockdiffSnapshot(out)
+		if err != nil {
+			t.Fatalf("%s %s: %v", phase, snapshot, err)
+		}
+		if got.Name != snapshot {
+			t.Fatalf("%s %s: the report is about snapshot %s", phase, snapshot, got.Name)
 		}
 		return got
 	}
 	take := func(phase, snapshot string) blockdiffSnapshot {
 		t.Helper()
 		got := script(sourceClient, sourceFS.FilesystemName, phase, snapshot)
-		if !got.Present || got.ID == 0 || len(got.Files) != 2 {
+		if !got.Present {
 			t.Fatalf("source snapshot %s: %+v", snapshot, got)
 		}
 		return got
@@ -234,37 +238,32 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 		if err != nil {
 			return 0, err
 		}
-		var dump struct {
-			Server struct {
-				Blockdiff *struct {
-					Count uint64 `json:"avgcount"`
-				} `json:"req_blockdiff_latency"`
-			} `json:"mds_server"`
-		}
-		if err := json.Unmarshal(out, &dump); err != nil || dump.Server.Blockdiff == nil {
-			return 0, fmt.Errorf("the MDS reports no blockdiff request counter: %s: %v", out, err)
-		}
-		return dump.Server.Blockdiff.Count, nil
+		return blockdiffRequests(out)
 	}
-	// generation returns what identifies the source MDS process: the start
-	// time of its container, which must be running, and the daemon's GID.
-	generation := func() (string, error) {
+	// observe reads the source MDS process: the state of its container
+	// and, while it runs, the GID of the filesystem's one active daemon,
+	// which must be this one.
+	observe := func() (mdsProcess, error) {
 		state, err := mds.State(ctx)
 		if err != nil {
-			return "", err
+			return mdsProcess{}, err
 		}
-		process := fmt.Sprintf("container status %s, exit code %d, started %s", state.Status, state.ExitCode, state.StartedAt)
-		if !state.Running {
-			return process, errors.New("the MDS container is not running")
+		process := mdsProcess{Running: state.Running, Status: string(state.Status), ExitCode: state.ExitCode, StartedAt: state.StartedAt}
+		if process.StartedAt == "" {
+			return process, errors.New("the MDS container reports no start time")
+		}
+		if !process.Running {
+			return process, nil
 		}
 		status, err := sourceFS.MDSStatus(ctx)
 		if err != nil {
 			return process, err
 		}
-		if len(status.Active) != 1 || status.Active[0].Name != mds.ID {
-			return process, fmt.Errorf("the active MDS daemons are %+v, want only %s", status.Active, mds.ID)
+		if len(status.Active) != 1 || status.Active[0].Name != mds.ID || status.Active[0].GID == 0 {
+			return process, fmt.Errorf("the active MDS daemons are %+v, want only %s with a GID", status.Active, mds.ID)
 		}
-		return fmt.Sprintf("%s, GID %d", process, status.Active[0].GID), nil
+		process.GID = status.Active[0].GID
+		return process, nil
 	}
 
 	// Given: a mirror whose baseline snapshot arrived.
@@ -312,9 +311,9 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 	// The control: an empty head after a version with data, and a file with
 	// data in both versions, go through blockdiff requests that the MDS
 	// survives.
-	first, err := generation()
-	if err != nil {
-		t.Fatalf("condition not established: %v (%s)", err, first)
+	first, err := observe()
+	if err != nil || !first.live() {
+		t.Fatalf("condition not established: the source MDS is not a live process: %s: %v", first, err)
 	}
 	asked, err := requests()
 	if err != nil {
@@ -335,7 +334,7 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 	if afterControl <= asked {
 		t.Fatalf("condition not established: the mirror synchronized the control snapshot without a blockdiff request (%d served before, %d after)", asked, afterControl)
 	}
-	if now, err := generation(); err != nil || now != first {
+	if now, err := observe(); err != nil || now != first {
 		t.Fatalf("control failed: the source MDS process changed during the control snapshot: %s, then %s: %v", first, now, err)
 	}
 	t.Logf("control: snapshot %s synchronized with %d blockdiff requests; source MDS %s", control.Name, afterControl-asked, first)
@@ -371,13 +370,13 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trigger not established: %v", err)
 	}
-	if now, err := generation(); err != nil || now != first {
+	if now, err := observe(); err != nil || now != first {
 		t.Fatalf("trigger not established: the source MDS process changed before the trigger: %s, then %s: %v", first, now, err)
 	}
 	if err := daemon.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := blockdiffOutcome{RequestsBefore: before, Source: trigger}
+	got := blockdiffOutcome{Before: first, RequestsBefore: before, Source: trigger}
 	deadline := time.Now().Add(blockdiffSyncWait)
 	for {
 		state, err := mds.State(ctx)
@@ -405,24 +404,28 @@ func TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions(t *testing.T) {
 		}
 	}
 
-	// Then: the MDS process is the same one and served the request, or it
-	// ended.
-	now, err := generation()
-	got.Process, got.SameProcess = now, err == nil && now == first
-	if err != nil {
-		got.Process = fmt.Sprintf("%s (%v)", now, err)
+	// Then: every observation is recorded with whether it succeeded, and
+	// the outcome is judged from what was observed.
+	if got.After, err = observe(); err != nil {
+		got.AfterError = err.Error()
+	} else {
+		got.AfterRead = true
 	}
-	if got.SameProcess {
-		got.RequestsAfter, err = requests()
-		got.RequestsRead = err == nil
-		if err != nil {
-			t.Logf("blockdiff request counter after the trigger: %v", err)
+	if got.AfterRead && got.After.Running {
+		if got.RequestsAfter, err = requests(); err != nil {
+			got.RequestsError = err.Error()
+		} else {
+			got.RequestsRead = true
 		}
 	}
-	got.Log = blockdiffLog(t, mds)
-	got.Destination = arrived(trigger.Name)
-	t.Logf("CEPHFS_MIRROR_BLOCKDIFF_EMPTY_VERSIONS_RECEIPT source MDS before: %s; after: %s; blockdiff requests %d before, %d after (read: %t); mirror: %s; destination snapshot %s present: %t",
-		first, got.Process, got.RequestsBefore, got.RequestsAfter, got.RequestsRead, got.Status, trigger.Name, got.Destination.Present)
+	if got.Log, err = blockdiffLog(mds); err != nil {
+		got.LogError = err.Error()
+	} else {
+		got.LogRead = true
+	}
+	got.Destination, got.DestinationRead = arrived(trigger.Name), true
+	t.Logf("CEPHFS_MIRROR_BLOCKDIFF_EMPTY_VERSIONS_RECEIPT source MDS before: %s; after: %s (read: %t %s); blockdiff requests %d before, %d after (read: %t %s); matching MDS log lines: %d (log read: %t %s); mirror: %s; destination snapshot %s present: %t",
+		got.Before, got.After, got.AfterRead, got.AfterError, got.RequestsBefore, got.RequestsAfter, got.RequestsRead, got.RequestsError, len(got.Log), got.LogRead, got.LogError, got.Status, trigger.Name, got.Destination.Present)
 	symptoms, err := judgeBlockdiff(got)
 	if err != nil {
 		t.Fatal(err)
@@ -444,24 +447,18 @@ func snapshotName(snapshot *cephfsmirror.Snapshot) string {
 	return fmt.Sprintf("%s(%d)", snapshot.Name, snapshot.ID)
 }
 
-// blockdiffLog returns the distinct lines of the MDS container's log that
-// contain the interval assertion or name the function that aggregates object
-// versions.
-func blockdiffLog(t *testing.T, mds *cephfs.MDS) []string {
-	t.Helper()
+// blockdiffLog reads the MDS container's log to its end and returns, in
+// their order, the distinct lines that contain the interval assertion or
+// name the function that aggregates object versions. A log that cannot be
+// opened or read to its end is an error, whatever was read of it.
+func blockdiffLog(mds *cephfs.MDS) (found []string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	logs, err := mds.Logs(ctx)
 	if err != nil {
-		t.Logf("MDS log unavailable: %v", err)
-		return nil
+		return nil, err
 	}
-	defer func() {
-		if err := logs.Close(); err != nil {
-			t.Logf("close MDS log: %v", err)
-		}
-	}()
-	var found []string
+	defer func() { err = errors.Join(err, logs.Close()) }()
 	scanner := bufio.NewScanner(logs)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 	for scanner.Scan() {
@@ -470,8 +467,5 @@ func blockdiffLog(t *testing.T, mds *cephfs.MDS) []string {
 			found = append(found, line)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		t.Logf("read MDS log: %v", err)
-	}
-	return found
+	return found, scanner.Err()
 }

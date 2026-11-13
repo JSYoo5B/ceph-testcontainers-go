@@ -2,8 +2,9 @@
 
 Owner: CephFS mirroring. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions`, optional batch
-`cephfs_mirror_blockdiff_empty`. Its judgement of the outcome and its reader
-of object versions have Docker-free tests in the same package (`code/pure`).
+`cephfs_mirror_blockdiff_empty`. Its judgement of the outcome and its readers
+of object versions, of the request counter and of the snapshot report have
+Docker-free tests in the same package (`code/pure`).
 
 ## Use case and native contract
 
@@ -97,7 +98,14 @@ destination. The versions of a file's first data object come from
 `rados listsnaps` in the source client container. The number of blockdiff
 requests the source MDS served is `req_blockdiff_latency.avgcount` of
 `ceph tell mds.<id> perf dump mds_server`. The MDS process is identified by
-its container's start time, which must be running, and its GID in the FSMap.
+its container's start time and, while the container runs, the GID of the
+filesystem's one active daemon in the FSMap.
+
+Every value a decision rests on must be in what was read: the counter's
+count as a number, each object version's ID and size and each clone's
+snapshot IDs, each snapshot report's presence, ID and files with inode
+number, size and SHA-256. A count or a size of 0 is an observation; a
+missing or null one fails the test and is never read as 0.
 
 An image whose mirror daemon has `cephfs_mirror_blockdiff_min_file_size`
 (Umbrella) copies files up to that size whole and never asks for their
@@ -127,15 +135,17 @@ and Tentacle have none and always ask.
 
 ## Reading the result
 
-- **REPRODUCED:** the MDS container of step 2 is no longer running that
-  process, and its log has `FAILED ceph_assert(len > 0)` and a line that
-  names `aggregate_snap_sets`. The symptoms give the container's state,
-  those log lines, and the mirror's last status with whether `s3` is on the
-  destination.
-- **NOT_REPRODUCED:** the same MDS process is live with the same GID, its
-  blockdiff request counter rose during step 4, the mirror reported `s3` as
-  last synchronized, and both files of `s3` on the destination have the
-  source's sizes and SHA-256. Since only `f` changed in `s3`, the further
+- **REPRODUCED:** the MDS container of step 2 was read as stopped, with the
+  start time of step 2 and a nonzero exit code, its log was read to the end,
+  and the log has `FAILED ceph_assert(len > 0)` followed by a backtrace line
+  with `MDCache::aggregate_snap_sets(`. The symptoms give the container's
+  state, those two log lines, and the mirror's last status with whether `s3`
+  is on the destination.
+- **NOT_REPRODUCED:** the MDS container was read as running with the start
+  time and the GID of step 2, its blockdiff request counter was read again
+  and rose during step 4, the mirror reported `s3` as last synchronized, and
+  `s3` was read on the destination with both files at the source's sizes and
+  SHA-256. Since only `f` changed in `s3`, the further
   request was for `f`.
 - **Test failure (no result):**
   - `condition not established` or `control failed`: the baseline or the
@@ -146,11 +156,19 @@ and Tentacle have none and always ask.
     empty versions, or the MDS stayed live and its counter did not rise in
     step 4. An image that copies the file whole ends here instead of
     printing `NOT_REPRODUCED` for a question it was not asked.
-  - `another fault:`: the MDS process ended without the assertion in the
-    aggregation, or it is live and served the request but `s3` did not
-    arrive within four minutes or differs from the source.
-  - A cluster, a filesystem, a client or the mirror does not start, or the
-    MDS reports no blockdiff request counter.
+  - `outcome not observed`: after the trigger the state of the MDS
+    container or the FSMap could not be read, the log of a stopped
+    container could not be read to its end, or the counter of a live MDS
+    could not be read. A failed observation decides nothing, also when the
+    part of the log that was read has the assertion.
+  - `another fault:`: the MDS container stopped without the assertion
+    followed by the aggregation in its log, with exit code 0, or after a
+    restart; it runs another process or GID; or the same process is live
+    and served the request but `s3` did not arrive within four minutes or
+    differs from the source.
+  - A cluster, a filesystem, a client or the mirror does not start, a
+    command of the case fails, or something read lacks a value (see above),
+    such as an MDS without a blockdiff request counter.
 
 Native results (Linux amd64 host, Docker 29.9.1, aggregate images, one run
 each unless noted):
