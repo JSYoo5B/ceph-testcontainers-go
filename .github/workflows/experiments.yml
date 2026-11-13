@@ -3,9 +3,9 @@ name: Experiments
 # Runs one known-defect experiment case with go test, as a developer would.
 # The case always runs on its default image, which reproduces the defect, so
 # every EXPERIMENT_RESULT line must say REPRODUCED. With an image (a fixed
-# build) the case then runs again with it, and every line must say
-# NOT_REPRODUCED. A failure of the case's given or when steps fails the test
-# and the run.
+# build) the case then runs again with it, and every result the default run
+# reproduced must be printed again as NOT_REPRODUCED. A failure of the case's
+# given or when steps fails the test and the run.
 on:
   workflow_dispatch:
     inputs:

@@ -6,10 +6,11 @@ REPRODUCED or NOT_REPRODUCED, and passes either way; only its given and when
 steps fail it. The case always runs on its default image first, which
 reproduces the defect, so every line must be REPRODUCED. With an image (a
 fixed build) the case then runs again with that image injected into its
-package-level image variable, and every line must be NOT_REPRODUCED. The
-default run is the control of the fixed one: a trigger that no longer elicits
-the defect on any image fails it. A run fails when go test fails, when no line
-is printed, or when a line has the other result.
+package-level image variable, and every defect the default run reproduced
+must be printed again as NOT_REPRODUCED. A defect the fixed run evaluates but
+the default run did not (one that is reachable only once the first is fixed)
+is printed and not judged: the dispatch claims nothing about it. A run also
+fails when go test fails or when no line is printed.
 """
 import argparse
 from pathlib import Path
@@ -36,17 +37,35 @@ def command(case, image=""):
     return ["go", "test", "-tags=all,native_regression", "-count=1", "-v", "-timeout", "110m", *flags, package]
 
 
-def check(log, image=""):
-    """The reasons the log does not meet the expectation; empty when it does."""
-    want = "NOT_REPRODUCED" if image else "REPRODUCED"
-    results = RESULT.findall(log)
-    if not results:
+def results(log):
+    """The (name, result) pairs of the log's EXPERIMENT_RESULT lines, in order."""
+    return RESULT.findall(log)
+
+
+def check_default(log):
+    """The reasons a default-image log is not a reproduction; empty when it is."""
+    found = results(log)
+    if not found:
         return ["the case printed no EXPERIMENT_RESULT line"]
-    return ["%s: %s, want %s" % (case, result, want) for case, result in results if result != want]
+    return ["%s: %s, want REPRODUCED" % pair for pair in found if pair[1] != "REPRODUCED"]
+
+
+def check_fixed(log, reproduced):
+    """The reasons a fixed-image log does not resolve the reproduced names."""
+    found = results(log)
+    if not found:
+        return ["the case printed no EXPERIMENT_RESULT line"]
+    reasons = []
+    for name in reproduced:
+        got = [result for other, result in found if other == name]
+        if not got:
+            reasons.append("%s: no result, want NOT_REPRODUCED" % name)
+        reasons += ["%s: %s, want NOT_REPRODUCED" % (name, result) for result in got if result != "NOT_REPRODUCED"]
+    return reasons
 
 
 def run(case, image=""):
-    """Run case once, streaming its output; the reasons it failed."""
+    """Run case once, streaming its output; go test's exit code and the log."""
     print("== %s on %s" % (case, image or "its default image"), flush=True)
     process = subprocess.Popen(command(case, image), cwd=ROOT, text=True,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -56,12 +75,9 @@ def run(case, image=""):
         lines.append(line)
     code = process.wait()
     log = "".join(lines)
-    for name, result in RESULT.findall(log):
+    for name, result in results(log):
         print("result %s %s" % (name, result))
-    reasons = check(log, image)
-    if code:
-        reasons.insert(0, "go test exited %d" % code)
-    return ["%s: %s" % ("fixed image" if image else "default image", reason) for reason in reasons]
+    return code, log
 
 
 def main(argv=None):
@@ -70,9 +86,13 @@ def main(argv=None):
     parser.add_argument("--image", default="")
     args = parser.parse_args(argv)
     command(args.case, args.image)  # refuse a bad case or image before the first run
-    reasons = run(args.case)
+    code, log = run(args.case)
+    reasons = ["default image: " + reason for reason in (["go test exited %d" % code] if code else []) + check_default(log)]
     if args.image:
-        reasons += run(args.case, args.image)
+        reproduced = list(dict.fromkeys(name for name, result in results(log) if result == "REPRODUCED"))
+        code, log = run(args.case, args.image)
+        reasons += ["fixed image: " + reason
+                    for reason in (["go test exited %d" % code] if code else []) + check_fixed(log, reproduced)]
     for reason in reasons:
         print("::error::" + reason)
     return 1 if reasons else 0

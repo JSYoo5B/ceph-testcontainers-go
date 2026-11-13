@@ -709,7 +709,8 @@ fixture parts, and `cephfs_authorization_isolation` and
     and both pass. The `Experiments` workflow runs the same command for one
     case and requires every result line to be `REPRODUCED` on the default
     image. When a fixed image is given it runs the second command afterwards
-    and requires every line to be `NOT_REPRODUCED`.
+    and requires each result the default run reproduced to be printed again
+    as `NOT_REPRODUCED`.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a
