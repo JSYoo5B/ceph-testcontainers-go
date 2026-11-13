@@ -10,8 +10,8 @@ const Old = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92
 // Official completes an image reference with the version at run time.
 func Official(version string) string { return "quay.io/ceph/ceph:v" + version }
 
-// Pins names the file of pinned role images.
-func Pins() string { return "../../.github/ceph-role-images.json" }
+// Squid is a published role tag of another release than the batch's own.
+const Squid = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential"
 
 // Netem names an image of another package.
 func Netem() string { return lib.Helper }

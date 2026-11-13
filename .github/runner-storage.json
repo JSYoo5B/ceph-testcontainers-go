@@ -8,7 +8,6 @@
         "TestPausedObjectWatcher"
       ],
       "sources_sha256": "66b90bd9a10f8c3bb2dbf3fed669753f40899c1321f833ce0d9499fa0ef5f80f",
-      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "roles": "essential,client",
       "platform": "linux/amd64",
       "releases": [
@@ -23,7 +22,6 @@
       ]
     },
     {
-      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "platform": "linux/amd64",
       "releases": [
         "20.2.4"
@@ -61,7 +59,6 @@
       ]
     },
     {
-      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "platform": "linux/amd64",
       "releases": [
         "20.2.4"
@@ -96,7 +93,6 @@
       "max_parallel_fixtures": 2
     },
     {
-      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "platform": "linux/amd64",
       "releases": [
         "20.2.4"
@@ -124,7 +120,6 @@
       ]
     },
     {
-      "role_pins_sha256": "b1cc827181732b83a47c03fa2c048466e334d973a6f948d2a353a802a3d2f700",
       "platform": "linux/amd64",
       "releases": [
         "20.2.4"

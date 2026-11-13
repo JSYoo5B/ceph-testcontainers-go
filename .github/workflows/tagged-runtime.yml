@@ -265,8 +265,8 @@ jobs:
           SCENARIO_PROFILE_TAGS: ${{ matrix.tags }}
           SCENARIO_GOARCH: ${{ matrix.goarch }}
         run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --goarch "$SCENARIO_GOARCH" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --directory artifacts/scenario/compile
-      # Skip cleanup only for an exact qualified workload/image cohort with
-      # enough headroom on every actual Docker storage filesystem.
+      # Skip cleanup only for an exact qualified workload on its release and
+      # roles with enough headroom on every actual Docker storage filesystem.
       - name: Prepare runner storage
         id: storage
         if: matrix.requires_ceph
@@ -274,9 +274,8 @@ jobs:
           STORAGE_POLICY: ${{ inputs.storage_policy }}
           STORAGE_RELEASE: ${{ inputs.release }}
           STORAGE_ROLES: ${{ matrix.image_roles }}
-          STORAGE_DIGESTS: ${{ inputs.role_digests }}
           STORAGE_TESTS: ${{ matrix.tests }}
-        run: python3 .github/scripts/runner_storage.py prepare --compile artifacts/scenario/compile --release "$STORAGE_RELEASE" --roles "$STORAGE_ROLES" --digests "$STORAGE_DIGESTS" --tests "$STORAGE_TESTS" --policy "$STORAGE_POLICY" --directory artifacts/scenario/runner-storage
+        run: python3 .github/scripts/runner_storage.py prepare --compile artifacts/scenario/compile --release "$STORAGE_RELEASE" --roles "$STORAGE_ROLES" --tests "$STORAGE_TESTS" --policy "$STORAGE_POLICY" --directory artifacts/scenario/runner-storage
       - name: Docker baseline and engine identity
         id: docker_baseline
         uses: ./.github/actions/runtime-cleanup
@@ -302,8 +301,7 @@ jobs:
         env:
           SCENARIO_RELEASE: ${{ inputs.release }}
           SCENARIO_TESTS: ${{ matrix.tests }}
-          SCENARIO_ROLES: ${{ matrix.image_roles }}
-        run: python3 .github/scripts/in_test_images.py --compile artifacts/scenario/compile --tests "$SCENARIO_TESTS" --release "$SCENARIO_RELEASE" --roles "$SCENARIO_ROLES" --directory artifacts/scenario/test-images
+        run: python3 .github/scripts/in_test_images.py --compile artifacts/scenario/compile --tests "$SCENARIO_TESTS" --release "$SCENARIO_RELEASE" --directory artifacts/scenario/test-images
       - name: Record runner storage with the images
         if: matrix.requires_ceph
         continue-on-error: true
@@ -317,9 +315,8 @@ jobs:
         env:
           STORAGE_RELEASE: ${{ inputs.release }}
           STORAGE_ROLES: ${{ matrix.image_roles }}
-          STORAGE_DIGESTS: ${{ inputs.role_digests }}
           STORAGE_TESTS: ${{ matrix.tests }}
-        run: python3 .github/scripts/runner_storage.py ready --compile artifacts/scenario/compile --release "$STORAGE_RELEASE" --roles "$STORAGE_ROLES" --digests "$STORAGE_DIGESTS" --tests "$STORAGE_TESTS" --directory artifacts/scenario/runner-storage
+        run: python3 .github/scripts/runner_storage.py ready --compile artifacts/scenario/compile --release "$STORAGE_RELEASE" --roles "$STORAGE_ROLES" --tests "$STORAGE_TESTS" --directory artifacts/scenario/runner-storage
       # Runs the binary that the compile step built and recorded, after
       # verifying its sha256, build key, sources and inventory; it never
       # builds again.

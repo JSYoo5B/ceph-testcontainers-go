@@ -398,37 +398,45 @@ class SnapshotTests(unittest.TestCase):
 
 
 class QualificationTests(unittest.TestCase):
-    def test_pinned_compiled_cohort_matches_and_changes_expire_it(self):
+    def test_compiled_workload_matches_and_changes_expire_it(self):
         import hashlib
         import copy
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".github").mkdir()
             (root / "compile").mkdir()
-            pins = {"images": {"20.2.4": {"official": {"essential": "sha256:one", "client": "sha256:two"}}}}
-            pins_file = root / ".github/ceph-role-images.json"
-            pins_file.write_text(json.dumps(pins))
             sources = {"fixture.go": "synthetic-source-hash", "go.mod": "modules", "go.sum": "sums"}
             build = {"passed": True, "profile": {"id": "short-watch", "package": "./internal/integration", "image_roles": "essential,client", "sources": ["fixture.go"]},
                      "binary": {"tests": ["TestWatcher"], "sources": sources,
                                 "build_key": {"goos": "linux", "goarch": "amd64", "tags": "ci,watch"}}}
             budget = dict(BUDGET, profile="short-watch", package="./internal/integration", tests=["TestWatcher"],
                           roles="essential,client", releases=["20.2.4"], platform="linux/amd64", tags="ci,watch",
-                          sources_sha256=hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
-                          role_pins_sha256=hashlib.sha256(pins_file.read_bytes()).hexdigest())
+                          sources_sha256=hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
             catalog_file = root / ".github/runner-storage.json"
             catalog = {"schema": 2, "profiles": [budget]}
             catalog_file.write_text(json.dumps(catalog))
             compile_file = root / "compile/compile-report.json"
-            def check(value, **kwargs):
+            def check(value, release="20.2.4", roles="essential,client", **kwargs):
                 compile_file.write_text(json.dumps(value))
-                return storage.qualification(root / "compile", "20.2.4", "essential,client", root=root, **kwargs)
+                return storage.qualification(root / "compile", release, roles, root=root, **kwargs)
             self.assertIsNotNone(check(build))
             unrelated = copy.deepcopy(build)
             unrelated["binary"]["sources"]["unrelated-library.go"] = "changed"
             self.assertIsNotNone(check(unrelated))
-            self.assertIsNotNone(check(build, digests="essential=sha256:one,client=sha256:two"))
-            self.assertIsNone(check(build, digests="essential=sha256:other"))
+            # The role images are the release's published tags: no image
+            # digest is part of the cohort, but its release and roles are.
+            self.assertIsNone(check(build, release="21.2.0"))
+            self.assertIsNone(check(build, roles="essential,client,rgw"))
+            self.assertIsNone(check(build, roles="essential"))
+            # What a republished tag may cost is bounded instead: the
+            # allowance before the pull, and after it the headroom that the
+            # images actually pulled left for the workload.
+            allowed = check(build)
+            floor = 30 * GIB + allowed["runtime_bytes"]
+            self.assertTrue(storage.headroom(snapshot(floor + allowed["image_prepare_bytes"]), allowed, True)["passed"])
+            self.assertFalse(storage.headroom(snapshot(floor + allowed["image_prepare_bytes"] - 1), allowed, True)["passed"])
+            self.assertTrue(storage.ready(root / "ready-enough", allowed, snapshot=lambda: snapshot(floor))["passed"])
+            self.assertFalse(storage.ready(root / "ready-short", allowed, snapshot=lambda: snapshot(floor - 1))["passed"])
             self.assertIsNone(check(build, tests="TestOther"))
             for field, value in (("sources", {"fixture.go": "changed"}), ("tests", ["TestWatcher", "TestNew"])):
                 changed = copy.deepcopy(build)
@@ -477,8 +485,6 @@ class QualificationTests(unittest.TestCase):
             for parallel in ("0", "3", "-1", "invalid", " 2", "٢"):
                 self.assertIsNone(check(changed, environ={"CEPH_TEST_PARALLEL": parallel}))
             self.assertIsNotNone(check(build, environ={"CEPH_TEST_PARALLEL": "3"}))
-            pins_file.write_text(json.dumps(pins) + "\n")
-            self.assertIsNone(check(build))
 
     def test_missing_receipts_or_budget_are_unknown(self):
         with tempfile.TemporaryDirectory() as directory:

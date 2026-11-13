@@ -37,8 +37,9 @@ func TestImagesFollowTheTestsDeclarations(t *testing.T) {
 	}{
 		// A constant of the shared package.
 		"constant": {tests: []string{"TestOld"}, want: []string{old}},
-		// A prefix completed at run time, and the pinned role file.
-		"run time": {tests: []string{"TestRelease"}, want: []string{"prefix quay.io/ceph/ceph:v", "role-pins "}},
+		// A prefix completed at run time, and a published role tag.
+		"run time": {tests: []string{"TestRelease"}, want: []string{"prefix quay.io/ceph/ceph:v",
+			"image ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential"}},
 		// A constant of a library imported from export data, and a function
 		// of the package itself that its external tests import; no
 		// placeholder counts.

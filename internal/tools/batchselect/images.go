@@ -135,13 +135,9 @@ func isPrefix(text string) bool {
 	return !reservedHost(strings.SplitN(text, "/", 2)[0])
 }
 
-// rolePins is the file of pinned role images of every supported release: a
-// test that names it reads role images of other releases than its own.
-const rolePins = ".github/ceph-role-images.json"
-
 type imageUse struct {
-	// Kind is image (Reference is complete), prefix (Reference is completed at
-	// run time) or role-pins (the test reads the pinned role images).
+	// Kind is image (Reference is complete) or prefix (Reference is completed
+	// at run time).
 	Kind string `json:"kind"`
 	// RoleFallback is true only when every reachable use is the integration
 	// harness fallback that prepared role images replace. Explicit uses win.
@@ -205,15 +201,10 @@ func testImages(opts options, tags string, tests []string) (imagesResult, error)
 					kind = "prefix"
 				case !v.prefix && isImage(v.text):
 					kind = "image"
-				case !v.prefix && strings.HasSuffix(v.text, rolePins):
-					kind = "role-pins"
 				default:
 					continue
 				}
 				reference := v.text
-				if kind == "role-pins" {
-					reference = ""
-				}
 				key := kind + "\x00" + reference
 				use := uses[key]
 				declaration := g.nodes[n]

@@ -118,16 +118,14 @@ jobs:
           python3 helper-source/image/extension_check.py --extension blockio --image "$helper" \
             > artifacts/blockio/helper-check.log
           printf '%s\n' "$GITHUB_SHA" "$HELPER_REVISION" "$helper" > artifacts/blockio/sources.txt
-      - name: Pull fixed Ceph role digests
-        shell: python
-        run: |
-          import json, os, subprocess
-          pins = json.load(open('.github/ceph-role-images.json'))['images'][os.environ['CEPH_RELEASE']]['official']
-          with open(os.environ['GITHUB_ENV'], 'a') as output:
-              for role in ('essential', 'client'):
-                  image = 'ghcr.io/jsyoo5b/ceph-testcontainers-images@' + pins[role]
-                  subprocess.run(['docker', 'pull', image], check=True)
-                  output.write('CEPH_TEST_' + role.upper() + '_IMAGE=' + image + '\n')
+      # The published role tags of the release, resolved once to local image
+      # IDs for the tests; the summary under artifacts/blockio/role-images
+      # records the registry digests this run pulled.
+      - name: Prepare the published Ceph role images
+        run: >-
+          python3 .github/scripts/run_image_matrix.py --variant official --layout roles
+          --release "$CEPH_RELEASE" --prepare-only --roles essential,client
+          --github-env "$GITHUB_ENV" --output-dir artifacts/blockio/role-images
       - uses: ./.github/actions/runtime-cleanup
         id: baseline
         with:

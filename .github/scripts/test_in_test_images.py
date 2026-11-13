@@ -86,9 +86,8 @@ class PreparationTests(unittest.TestCase):
             use["role_fallback"] = role_fallback
         self.engine.analysis.append(use)
 
-    def run_preparation(self, tests="", release="20.2.4", roles="essential,client", layout="roles"):
-        arguments = argparse.Namespace(compile=self.compile, tests=tests, release=release, roles=roles,
-                                       directory=self.output)
+    def run_preparation(self, tests="", release="20.2.4", layout="roles"):
+        arguments = argparse.Namespace(compile=self.compile, tests=tests, release=release, directory=self.output)
         sleeps = []
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             code = prepare.prepare(arguments, environ={"SCENARIO_IMAGE_LAYOUT": layout} if layout else {},
@@ -145,7 +144,7 @@ class PreparationTests(unittest.TestCase):
         self.use("image", "busybox:1.37.0", tests=("TestNetwork",))
         self.use("image", matrix.DEFAULT_IMAGE, tests=("TestNetwork",), role_fallback=True)
         self.engine.missing.add(REAPER)
-        code, summary = self.run_preparation(roles="", layout=None)
+        code, summary = self.run_preparation(layout=None)
         self.assertEqual(code, 0, summary)
         self.assertEqual(self.references(summary), ["busybox:1.37.0", matrix.DEFAULT_IMAGE])
         self.assertEqual(summary["skipped"], [])
@@ -203,13 +202,43 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cannot name", summary["error"])
 
-    def test_pinned_role_file_prepares_the_declared_roles_of_every_release(self):
-        self.use("role-pins")
-        code, summary = self.run_preparation(roles="essential,client")
+    def test_role_tags_that_a_test_names_are_prepared_by_tag(self):
+        # A test that names role images itself, such as both releases of the
+        # rolling upgrade, gets them by tag even when the job's own roles are
+        # prepared: only the harness fallback is replaced.
+        named = [matrix.role_tag("official", release, role)
+                 for release in ("19.2.5", "20.2.4") for role in ("essential", "client")]
+        for reference in named:
+            self.use("image", reference)
+        self.use("image", matrix.DEFAULT_IMAGE, position="harness/services_integration.go:35", role_fallback=True)
+        self.engine.missing |= set(named)
+        code, summary = self.run_preparation()
         self.assertEqual(code, 0, summary)
-        expected = sorted(matrix.REGISTRY + "@" + matrix.published_role_pins(release)[role]
-                          for release in matrix.RELEASES for role in ("essential", "client"))
-        self.assertEqual(sorted(self.references(summary)), expected)
+        self.assertEqual(sorted(self.references(summary)), sorted(named))
+        self.assertEqual([item["reference"] for item in summary["skipped"]], [matrix.DEFAULT_IMAGE])
+        pulled = [command[-1] for command in self.engine.commands if command[:2] == ["docker", "pull"]]
+        self.assertEqual(sorted(reference for reference in pulled if reference in named), sorted(named))
+
+    def test_a_retired_analysis_kind_is_refused(self):
+        self.use("role-pins")
+        code, summary = self.run_preparation()
+        self.assertEqual(code, 1)
+        self.assertIn("invalid entry", summary["error"])
+
+    def test_only_a_published_tag_is_replaced_as_the_role_fallback(self):
+        # A fallback that is no published role tag, such as a digest of one
+        # build or an image of another registry, is prepared as named.
+        for index, reference in enumerate((matrix.REGISTRY + "@sha256:" + "b" * 64,
+                                           matrix.REGISTRY + ":official-20.2.4-unknown",
+                                           "ghcr.io/other/images:official-20.2.4-all")):
+            with self.subTest(reference=reference):
+                self.engine.analysis = []
+                self.use("image", reference, role_fallback=True)
+                self.output = self.root / ("fallback-" + str(index))
+                code, summary = self.run_preparation()
+                self.assertEqual(code, 0, summary)
+                self.assertEqual(self.references(summary), [reference])
+                self.assertEqual(summary["skipped"], [])
 
     def test_transport_failures_are_retried_and_classified(self):
         self.use("image", OLD)

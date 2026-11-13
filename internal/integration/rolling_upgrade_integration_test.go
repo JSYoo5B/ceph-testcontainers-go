@@ -7,7 +7,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"slices"
 	"strconv"
 	"testing"
@@ -19,33 +18,20 @@ import (
 )
 
 // The one pair this PoC upgrades: the previous supported release to the
-// current one, both from the pinned official role images. Upstream supports
-// upgrading Squid to Tentacle; downgrade is not attempted.
+// current one, both from the published official role tags of that release.
+// Upstream supports upgrading Squid to Tentacle; downgrade is not attempted.
+// The references are complete constants, so that CI's test image preparation
+// finds and pulls them; the scenarios check the release that each daemon
+// reports, not which build a tag names.
 const (
 	upgradeFrom = "19.2.5"
 	upgradeTo   = "20.2.4"
-)
 
-// upgradeImages reads the pinned role images of one release.
-func upgradeImages(t *testing.T, release string) (essential, client string) {
-	t.Helper()
-	data, err := os.ReadFile("../../.github/ceph-role-images.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pinned struct {
-		Images map[string]map[string]map[string]string `json:"images"`
-	}
-	if err := json.Unmarshal(data, &pinned); err != nil {
-		t.Fatal(err)
-	}
-	roles := pinned.Images[release]["official"]
-	if roles["essential"] == "" || roles["client"] == "" {
-		t.Fatalf("no pinned official role images for %s", release)
-	}
-	const repo = "ghcr.io/jsyoo5b/ceph-testcontainers-images@"
-	return repo + roles["essential"], repo + roles["client"]
-}
+	upgradeFromEssential = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential"
+	upgradeFromClient    = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-client"
+	upgradeToEssential   = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-essential"
+	upgradeToClient      = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-client"
+)
 
 // upgradeLayout is the checkpoint with mon, mgr and osd counts of the source
 // and the destination release, in that order.
@@ -69,7 +55,7 @@ func upgradeLayout(mon, mgr, osd [2]int) upgradeCheckpoint {
 // set for the upgrade.
 func startUpgradeCluster(t *testing.T, ctx context.Context, host bool) *upgradeRun {
 	t.Helper()
-	from, fromClient := upgradeImages(t, upgradeFrom)
+	from, fromClient := upgradeFromEssential, upgradeFromClient
 	opts := []testcontainers.ContainerCustomizer{
 		ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: from, Client: fromClient})),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3).WithPoolDefaults(3, 2)),
@@ -140,7 +126,7 @@ func TestRollingUpgradeSquidToTentacle(t *testing.T) {
 func rollingUpgrade(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	to, _ := upgradeImages(t, upgradeTo)
+	to := upgradeToEssential
 	u := startUpgradeCluster(t, ctx, host)
 	cluster := u.cluster
 	defer func() {
@@ -216,8 +202,7 @@ func TestRollingUpgradeResumesAfterInterruptions(t *testing.T) {
 func interruptedUpgrade(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	from, _ := upgradeImages(t, upgradeFrom)
-	to, toClient := upgradeImages(t, upgradeTo)
+	from, to, toClient := upgradeFromEssential, upgradeToEssential, upgradeToClient
 	u := startUpgradeCluster(t, ctx, host)
 	cluster := u.cluster
 	defer func() {

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Prepare and record actual Docker storage on disposable CI runners.
 
-Only an exact source/image cohort with independently sufficient filesystem
-headroom may skip the existing allowlist cleanup. Unknown work/layout keeps
-cleanup. Both paths recheck bytes and inodes; a post-image check gates native
-assertions before Ceph's 30% MON free-space threshold can be crossed.
+Only an exact workload on its qualified release, roles and platform with
+independently sufficient filesystem headroom may skip the existing allowlist
+cleanup. Unknown work/layout keeps cleanup. The role images are the release's
+published tags, so a qualification names no image digest: its image allowance
+is a bound that both paths recheck in bytes and inodes, and a post-image check
+of the images actually pulled gates native assertions before Ceph's 30% MON
+free-space threshold can be crossed.
 """
 
 import argparse
@@ -156,11 +159,15 @@ GIB = 1 << 30
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def qualification(compile_directory, release, roles, digests="", tests="", root=ROOT, environ=os.environ):
-    """An exact workload declaration/dependency and immutable image cohort only.
+def qualification(compile_directory, release, roles, tests="", root=ROOT, environ=os.environ):
+    """An exact workload declaration/dependency on its release and roles only.
 
-    A workload/dependency or image-pin change expires the small qualification;
-    it does not grant an unmeasured workload the old storage allowance.
+    A workload/dependency change expires the small qualification; it does not
+    grant an unmeasured workload the old storage allowance. The images are the
+    published role tags of the release. A republished tag keeps the
+    qualification: image_prepare_bytes bounds what its pull may take, and
+    ready() refuses the job when the images actually pulled left less than
+    the runtime allowance.
     """
     try:
         catalog = json.loads((root / ".github/runner-storage.json").read_text())
@@ -187,7 +194,6 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
         paths = sorted(set(profile["sources"] + budget.get("helper_sources", []) + ["go.mod", "go.sum"]))
         sources = {path: binary["sources"][path] for path in paths}
         source_hash = hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        pins_file = root / ".github/ceph-role-images.json"
         if (compiled.get("passed") is not True
                 or profile["id"] != budget["profile"] or profile["package"] != budget["package"]
                 or key["tags"] != budget["tags"]
@@ -195,12 +201,7 @@ def qualification(compile_directory, release, roles, digests="", tests="", root=
                 or roles != budget["roles"] or profile["image_roles"] != roles
                 or release not in budget["releases"]
                 or key["goos"] + "/" + key["goarch"] != budget["platform"]
-                or source_hash != budget["sources_sha256"]
-                or hashlib.sha256(pins_file.read_bytes()).hexdigest() != budget["role_pins_sha256"]):
-            return None
-        pins = json.loads(pins_file.read_text())["images"][release]["official"]
-        overrides = dict(entry.split("=", 1) for entry in digests.split(",") if entry)
-        if any(role not in pins or digest != pins[role] for role, digest in overrides.items()):
+                or source_hash != budget["sources_sha256"]):
             return None
         for name in ("image_prepare_bytes", "runtime_bytes", "minimum_free_inodes"):
             if type(budget[name]) is not int or budget[name] <= 0:
@@ -416,7 +417,6 @@ def main(argv=None):
             child.add_argument("--compile", type=Path, required=True)
             child.add_argument("--release", required=True)
             child.add_argument("--roles", required=True)
-            child.add_argument("--digests", default="")
             child.add_argument("--tests", default="")
             if action == "prepare":
                 child.add_argument("--policy", choices=POLICIES, default="auto")
@@ -429,7 +429,7 @@ def main(argv=None):
             print("Qualification pressure allocation removed or already absent.", flush=True)
             return 0
         if args.action in ("prepare", "ready"):
-            budget = qualification(args.compile, args.release, args.roles, args.digests, args.tests)
+            budget = qualification(args.compile, args.release, args.roles, args.tests)
             report = (prepare(args.directory, budget, args.policy) if args.action == "prepare"
                       else ready(args.directory, budget))
             print("Runner storage %s: %s" % (args.action, json.dumps(report, sort_keys=True)), flush=True)

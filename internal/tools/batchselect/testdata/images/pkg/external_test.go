@@ -9,7 +9,7 @@ import (
 
 func TestOld(t *testing.T) { t.Log(harness.Old) }
 
-func TestRelease(t *testing.T) { t.Log(harness.Official("20.2.4"), harness.Pins()) }
+func TestRelease(t *testing.T) { t.Log(harness.Official("20.2.4"), harness.Squid) }
 
 func TestLibrary(t *testing.T) { t.Log(harness.Netem(), pkg.Vault(), harness.Placeholders()) }
 

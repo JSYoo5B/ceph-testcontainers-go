@@ -102,7 +102,7 @@ def validate_plan(plan, catalog):
         raise ValueError('invalid, stale or unbounded periodic plan')
     expected_images = image_identity(plan['release'], 'reference' in plan['images'], plan['entries'])
     if plan['images'] != expected_images:
-        raise ValueError('planned images differ from the source pins')
+        raise ValueError('planned images differ from the source-declared references')
     profiles = {p['id']: p for p in tags.discover(catalog)['include'] + tags.discover_optional(catalog)['include']}
     if len({e['id'] for e in plan['entries']}) != len(plan['entries']):
         raise ValueError('duplicate planned entry')
@@ -157,8 +157,7 @@ def freeze_test_images(plan, resolved=None, deadline=None):
             if result.returncode:
                 raise ValueError('test image analysis failed')
             uses = in_test_images.validate_analysis(json.loads(result.stdout), p['package'], item['tests'])
-            planned, _ = in_test_images.plan_images(uses, plan['release'], images.parse_roles(p['image_roles']),
-                                                   True, 'reference' in plan['images'])
+            planned, _ = in_test_images.plan_images(uses, plan['release'], True, 'reference' in plan['images'])
             references.update(image['reference'] for image in planned)
         for reference in sorted(references):
             if reference not in resolved:

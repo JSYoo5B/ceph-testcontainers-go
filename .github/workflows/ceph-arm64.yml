@@ -16,7 +16,6 @@ on:
       - '.github/workflows/ceph-arm64.yml'
       - '.github/workflows/tagged-runtime.yml'
       - '.github/actions/**'
-      - '.github/ceph-role-images.json'
       - '.github/runner-storage.json'
       - '.github/scripts/tag_scenarios.py'
       - '.github/scripts/in_test_images.py'
