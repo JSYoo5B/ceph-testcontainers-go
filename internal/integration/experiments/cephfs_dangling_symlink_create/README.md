@@ -35,10 +35,8 @@ directory of the new name and look the last component up without following
 it, and report `EEXIST`. Upstream reference:
 [tracker 82376](https://tracker.ceph.com/issues/82376).
 
-The test fails on Squid 19.2.3 and on every later release it ran on, and
-passes on Squid 19.2.2.
-The failure is the expected result for an unpatched defect; it is not a
-fixture failure.
+The defect is reproduced on Squid 19.2.3 and on every later release it ran
+on, and not on Squid 19.2.2.
 
 ## Requirements
 
@@ -52,35 +50,24 @@ fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
-the role images of all three release lines. No automatic run includes it (the default checks of
-a pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
+Standalone reproducer. The test fails only when its setup, a condition or a
+control does not hold; the documented symptom does not fail it. It prints
+one `EXPERIMENT_RESULT` line instead, `REPRODUCED` on its default image,
+Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
+request, pushes to `main`, periodic samples), and it never gates anything. A
+maintainer can run it on demand, also on a pull request's head with the
+comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=cephfs_dangling_symlink_create`.
 - Comment: `/ci run cephfs_dangling_symlink_create` or
   `/ci run cephfs_dangling_symlink_create on umbrella`.
 
+Every container the test starts uses the package variable `image`, so the
+role images that a batch exports do not reach it.
+
 ## Running it
 
-Prepare the pinned role images of one supported release (20.2.4, 21.2.0 or
-19.2.5) and export them:
-
-```sh
-release=20.2.4
-dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
-python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,cephfs --prepare-only --output-dir "$dir" \
-  --github-env "$dir/role-images.env" &&
-  . "./$dir/role-images.env" &&
-  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE
-```
-
-Tentacle 20.2.5 and the Squid patches before 19.2.5 have no published role
-images. Run them on the upstream aggregate that
-`.github/ceph-discovery-images.json` pins, with no role variable set
-(`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2@sha256:...`).
+On the default image, which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -88,19 +75,18 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/cephfs_dangling_symlink_create
 ```
 
-or, exactly as CI runs the batch:
+No release is fixed. Squid 19.2.2, which predates the defect, shows what an unaffected client does:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch cephfs_dangling_symlink_create \
-  --package ./internal/integration/experiments/cephfs_dangling_symlink_create \
-  --directory "artifacts/cephfs-dangling-symlink-create-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_dangling_symlink_create_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23" \
+  -run '^TestCephFSCreateAtADanglingSymlink$' \
+  ./internal/integration/experiments/cephfs_dangling_symlink_create
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
 The test logs the client's `ceph --version` and the release its `cephfs`
-module reports; record the image digests with the result.
+module reports, and the `CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT` lines
+give what each mount reported.
 
 ## Observations and controls
 
@@ -142,30 +128,37 @@ client, so what it reads is what the filesystem holds.
 
 ## Reading the result
 
-The results below ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
+Standalone runs, Linux amd64 host, bridge networking, one run per image:
+
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 33 s; all eight operations succeeded at
+  the dangling symlink and made their entry at its target.
+- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…`:
+  `NOT_REPRODUCED` in 39 s.
+
+The release comparison ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
 19.2.5 role images (essential `43ee23624e7a…`, client `a69e1319ce88…`, cephfs `99f0ff6e827c…`), the 21.2.0 role images
 (essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the upstream aggregates of 20.2.5
 (`sha256:4337ac8ac81d…`), 19.2.3 (`sha256:af0c5903e901…`) and 19.2.2 (`sha256:8214ebff6133…`), each with the client module
 of its own release.
 
-Five releases failed with `observed defect:` in all eight cases, after
+Five releases showed the defect in all eight cases, after
 every control held: Tentacle 20.2.4 in 34 s, Tentacle 20.2.5 in 34 s,
 Umbrella 21.2.0 in 35 s, Squid 19.2.5 in 40 s and Squid 19.2.3 in 41 s. In
 each case the operation at `link` returned
 success, `link` stayed the same symlink, and `there/absent` was a directory
 (`mkdir`), a symlink (`symlink`), a hard link of `source` (`link`) or a
-regular file (`mknod`). Squid 19.2.2 passed (41 s): all eight
+regular file (`mknod`). Squid 19.2.2 did not (41 s): all eight
 operations reported `EEXIST` and made nothing. The behaviour changes
 between 19.2.2 and 19.2.3.
 
-- **Pass:** every operation reported `EEXIST` at the dangling symlink and
-  made nothing. Squid 19.2.2 passes; no later release that was run does.
-- **Observed bug:** the failure starts with `observed defect:` and names
-  each case in which the operation succeeded and what it makes is at the
+- **NOT_REPRODUCED:** every operation reported `EEXIST` at the dangling
+  symlink and made nothing. Squid 19.2.2 does this; no later release that
+  was run does.
+- **REPRODUCED:** the symptom names each case in which the operation succeeded and what it makes is at the
   symlink's target, with the symlink unchanged. As at `fresh`, a file there
   counts for `link` only with the inode of `source`, and a symlink for
   `symlink` only with the given text.
-- **Not reproduced:** a pass on a build claimed to be affected. Check in
+- **NOT_REPRODUCED on a build claimed to be affected:** check in
   the receipts (`CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT`) that every
   `link_before` is a symlink with its target and every `target_before` is
   empty.

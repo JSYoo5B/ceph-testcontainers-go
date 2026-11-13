@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,16 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
+
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_dangling_symlink_create_test.image=<image>"
+//
+// No release is fixed: Squid 19.2.3 and every later release that was run
+// (19.2.5, 20.2.5, 21.2.0) reproduce it. Squid 19.2.2, which predates the
+// defect, does not.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 // createRoot is the directory of the filesystem that holds the cases.
 const createRoot = "/dangling-symlink-create"
@@ -121,17 +132,27 @@ finally:
     fs.shutdown()
 `
 
-// TestCephFSCreateAtADanglingSymlink runs mkdir, symlink, hard link and
-// mknod through libcephfs at a name occupied by a symlink whose target does
-// not exist, and requires EEXIST with the symlink kept and nothing made at
-// its target. Each operation also runs at an unused name, at a regular file
-// and at a symlink to an existing file. A client mounted afterwards reads
-// what the names are.
+// TestCephFSCreateAtADanglingSymlink reports whether mkdir, symlink, hard
+// link and mknod through libcephfs follow a symlink in the last component
+// of the new name when its target does not exist.
+//
+// Given a directory per case with a dangling symlink, a regular file and a
+// symlink to an existing file, and the controls (each operation creates at
+// an unused name and reports EEXIST at the regular file and at the live
+// symlink), when a second mount runs each operation at the dangling symlink
+// and a third mount reads what the names are, then the defect is REPRODUCED
+// if an operation succeeded and made its entry at the symlink's target, and
+// NOT_REPRODUCED if every operation reported EEXIST and made nothing.
+// Tentacle 20.2.4 reproduces it; Squid 19.2.2 does not.
+//
+// A failure of the given or when steps fails the test, and so does a result
+// at the dangling symlink that is neither the contract nor the defect; the
+// result does not.
 func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := harness.IntegrationImages(t)
-	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
+	t.Logf("CEPHFS_DANGLING_SYMLINK_CREATE image=%s", image)
+	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -196,7 +217,21 @@ func TestCephFSCreateAtADanglingSymlink(t *testing.T) {
 	}
 	t.Logf("CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT acted: %s", actedRaw)
 	t.Logf("CEPHFS_DANGLING_SYMLINK_CREATE_RECEIPT observed by a later mount: %s", observedRaw)
+	// The symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if err := judgeCreate(cases, acted.Cases, observed.Cases); err != nil {
-		t.Fatal(err)
+		defect, ok := strings.CutPrefix(err.Error(), "observed defect: ")
+		if !ok {
+			t.Fatal(err)
+		}
+		symptoms = append(symptoms, defect)
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=cephfs_dangling_symlink_create result=%s image=%s symptoms=%q", result, image, symptoms)
 }
