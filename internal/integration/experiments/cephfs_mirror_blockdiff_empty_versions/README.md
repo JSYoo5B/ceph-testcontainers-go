@@ -140,7 +140,12 @@ and Tentacle have none and always ask.
   and the log has `FAILED ceph_assert(len > 0)` followed by a backtrace line
   with `MDCache::aggregate_snap_sets(`. The symptoms give the container's
   state, those two log lines, and the mirror's last status with whether `s3`
-  is on the destination.
+  is on the destination. Both log lines and the exit code were observed on
+  the default image, whose MDS prints a backtrace with function names; the
+  assertion text is that of `src/common/assert.cc` for the condition in
+  `src/include/interval_set.h`. An image whose backtrace has no function
+  names would fail the test as `another fault` instead of printing a
+  result.
 - **NOT_REPRODUCED:** the MDS container was read as running with the start
   time and the GID of step 2, its blockdiff request counter was read again
   and rose during step 4, the mirror reported `s3` as last synchronized, and
