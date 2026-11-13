@@ -140,9 +140,24 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 | Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` | `NOT_REPRODUCED` | `REPRODUCED`: object 44 old, 63 new | 430 s |
 
 So the default image reproduces `demotion-resume` only, and a run on a
-release that fixes it still prints `resumed-bytes result=REPRODUCED`: the
-Experiments workflow's rule that every line of a fixed image is
-`NOT_REPRODUCED` cannot hold for this case until defect 2 is fixed.
+release that fixes it still prints `resumed-bytes result=REPRODUCED`.
+
+The Experiments workflow compares a fixed image with the default run by
+result name. The default run reproduces `demotion-resume` alone, so that is
+the comparison target: a fixed image passes when it prints
+`demotion-resume result=NOT_REPRODUCED`. `resumed-bytes`, which only the
+fixed run reaches, is printed and not judged, so the dispatch says nothing
+about defect 2:
+
+```sh
+gh workflow run Experiments -f case=rbd_mirror_demote_restart \
+  -f image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0
+```
+
+The table above is from separate `go test` runs. The scripted pair (19.2.3,
+then 19.2.4, through `run_experiment.py`) has not been run for this case;
+its comparison is covered only by the script's unit tests with simulated
+logs.
 
 ## Cleanup and limits
 

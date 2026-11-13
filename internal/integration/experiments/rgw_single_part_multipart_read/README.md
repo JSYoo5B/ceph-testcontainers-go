@@ -88,8 +88,9 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 
 The `topology/rgw_single_part_read` batch (`tag_scenarios.py run --category
 topology --batch rgw_single_part_read`) still runs the case and so runs
-19.1.0. It exports role images, which the case ignores, except that the
-harness attaches its client container from the exported client role image.
+19.1.0. It exports role images,
+which the case ignores: the cluster and its client container both run
+`image`.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as

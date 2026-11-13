@@ -91,8 +91,9 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 
 The batch `rgw_conditional_writes` (`tag_scenarios.py optional --batch
 rgw_conditional_writes`, or the Native regressions workflow) still runs the
-case. It exports role images, which the case ignores, except that the
-harness attaches its client container from the exported client role image.
+case. It exports role images,
+which the case ignores: the cluster and its client container both run
+`image`.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_COND ceph=`), every step's native status and error code, and the

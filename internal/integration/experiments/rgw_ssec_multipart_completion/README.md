@@ -89,8 +89,8 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 
 The batch `rgw_ssec_completion` (`tag_scenarios.py optional --batch rgw_ssec_completion`, or the
 Native regressions workflow) still runs the case. It exports role images,
-which the case ignores, except that the harness attaches its client
-container from the exported client role image.
+which the case ignores: the cluster and its client container both run
+`image`.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored

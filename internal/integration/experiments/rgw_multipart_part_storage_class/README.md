@@ -88,8 +88,9 @@ No fixed release is known, so no image is expected to answer
 
 The batch `rgw_multipart_part_class` (`tag_scenarios.py optional --batch
 rgw_multipart_part_class`, or the Native regressions workflow) still runs the
-case. It exports role images, which the case ignores, except that the
-harness attaches its client container from the exported client role image.
+case. It exports role images,
+which the case ignores: the cluster and its client container both run
+`image`.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_MP ceph=`), the zone placement read back (`RGW_MP zone=`), each
