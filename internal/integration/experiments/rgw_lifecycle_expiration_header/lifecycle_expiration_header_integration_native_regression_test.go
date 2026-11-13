@@ -23,6 +23,14 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_lifecycle_expiration_header_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 type expCase struct {
 	ctx    context.Context
 	client harness.S3HTTPClient
@@ -175,37 +183,41 @@ func (c expCase) query(t *testing.T, name, path string, explicit bool, v expVers
 		t.Fatalf("condition not established: %s read version %q (%d bytes), want version %q with its exact bytes", target, r.VersionID, len(get.Body), v.ID)
 	}
 	if headPresent != present || !slices.Equal(headValues, values) {
-		t.Errorf("%s: HEAD expiration %q differs from GET %q", target, strings.Join(headValues, ","), r.Header)
+		t.Errorf("control failed: %s: HEAD expiration %q differs from GET %q", target, strings.Join(headValues, ","), r.Header)
 	}
 	return r
 }
 
-// requireNoHeader requires that r carries no x-amz-expiration.
-func requireNoHeader(t *testing.T, r expRequest, why string) {
-	t.Helper()
+// unexpectedHeader describes the x-amz-expiration that r carries although
+// it must carry none, or returns "".
+func unexpectedHeader(r expRequest, why string) string {
 	if r.Present {
-		t.Errorf("%s (%s): x-amz-expiration %q, want none: %s", r.Name, r.Path, r.Header, why)
+		return fmt.Sprintf("%s (%s): x-amz-expiration %q, want none: %s", r.Name, r.Path, r.Header, why)
 	}
+	return ""
 }
 
-// requireRule requires that r reports rule with the expiry date that its
-// days give for the version's modification time.
-func requireRule(t *testing.T, r expRequest, rule expRule) {
+// wrongRule describes how r, which must report rule, reports another rule
+// or expiry date than its days give for the version's modification time, or
+// returns "". A missing or malformed header is not that symptom: it fails
+// the eligibility control.
+func wrongRule(t *testing.T, r expRequest, rule expRule) string {
 	t.Helper()
 	if !r.Present {
-		t.Errorf("%s (%s): no x-amz-expiration, want rule %s", r.Name, r.Path, rule.ID)
-		return
+		t.Errorf("control failed: %s (%s): no x-amz-expiration, want rule %s", r.Name, r.Path, rule.ID)
+		return ""
 	}
 	got, err := parseExpHeader(r.Header)
 	if err != nil {
-		t.Errorf("%s: %v", r.Name, err)
-		return
+		t.Errorf("control failed: %s: %v", r.Name, err)
+		return ""
 	}
 	want := expExpected(r.Version.MTime, rule.ExpirationDays)
 	if got.RuleID != rule.ID || !got.Date.Equal(want) {
-		t.Errorf("%s (%s): rule %q expiring %s, want rule %q expiring %s (Expiration %d days from %s)", r.Name, r.Path, got.RuleID,
+		return fmt.Sprintf("%s (%s): rule %q expiring %s, want rule %q expiring %s (Expiration %d days from %s)", r.Name, r.Path, got.RuleID,
 			got.Date.Format(time.RFC1123), rule.ID, want.Format(time.RFC1123), rule.ExpirationDays, r.Version.MTime.UTC().Format(time.RFC3339))
 	}
+	return ""
 }
 
 // cleanup deletes every version and delete marker in buckets, the ones the
@@ -249,22 +261,33 @@ func (c expCase) cleanup(t *testing.T, buckets []string) {
 	t.Logf("RGW_EXP cleanup buckets=%d failed=%t", len(buckets), failed)
 }
 
-// TestRGWLifecycleExpirationHeader requires the S3 rule for
-// x-amz-expiration on a versioned bucket: the header reports only the
+// TestRGWLifecycleExpirationHeader reports whether RGW breaks the S3 rule
+// for x-amz-expiration on a versioned bucket: the header reports only the
 // current-version Expiration action, for a request without versionId, and a
 // request for an explicit version, the latest one included, gets no header.
-// A NoncurrentVersionExpiration rule alone never produces it, and a key
-// outside the rule's prefix gets none.
+// A NoncurrentVersionExpiration rule alone never produces it.
 //
-// Tentacle 20.2.4 derives the header from the instance that RGW resolved
-// for the current version, so a plain request on a versioned bucket is
+// Given two versioned buckets whose docs/ key has two versions, one with a
+// NoncurrentVersionExpiration rule only and one with an Expiration and a
+// NoncurrentVersionExpiration rule, when each key is read with GET and HEAD
+// plainly and at each explicit version, then the defect is REPRODUCED if a
+// request that must carry no header carries one, or the plain request on the
+// second bucket reports another rule or date than its Expiration action, and
+// NOT_REPRODUCED otherwise. Tentacle 20.2.4 derives the header from the
+// instance that RGW resolved for the current version, so a plain request is
 // treated like a versionId request and reports the NoncurrentVersionExpiration
-// action, and explicit-version requests get that header too. Tentacle 20.2.5
-// and Umbrella 21.2.0 pass.
+// action, and explicit-version requests get that header too: it reproduces.
+// Tentacle 20.2.5 and Umbrella 21.2.0 do not.
+//
+// A failure of the given or when steps, or of a control (HEAD answers the
+// header GET answers, the eligible plain request carries a well-formed
+// header, a key outside the rule's prefix gets none), fails the test; the
+// result does not.
 func TestRGWLifecycleExpirationHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_EXP image=%s", image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_EXP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -301,13 +324,21 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 		return path, older, current
 	}
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
+	observe := func(symptom string) {
+		if symptom != "" {
+			symptoms = append(symptoms, symptom)
+		}
+	}
+
 	t.Run("noncurrent-only", func(t *testing.T) {
 		path, older, current := writeKey(t, noncurrentOnly)
 		c.lifecycle(t, noncurrentOnly, expRule{ID: "tc-noncurrent-only", Prefix: "docs/", NoncurrentDays: 30})
 		const why = "a NoncurrentVersionExpiration rule is not a current-version expiration"
-		requireNoHeader(t, c.query(t, "plain", path, false, current), why)
-		requireNoHeader(t, c.query(t, "explicit-current", path, true, current), "explicit version request")
-		requireNoHeader(t, c.query(t, "explicit-older", path, true, older), "explicit version request")
+		observe(unexpectedHeader(c.query(t, "plain", path, false, current), why))
+		observe(unexpectedHeader(c.query(t, "explicit-current", path, true, current), "explicit version request"))
+		observe(unexpectedHeader(c.query(t, "explicit-older", path, true, older), "explicit version request"))
 	})
 
 	t.Run("current-and-noncurrent", func(t *testing.T) {
@@ -315,9 +346,19 @@ func TestRGWLifecycleExpirationHeader(t *testing.T) {
 		outside := c.putVersion(t, both+"/other/key", []byte("outside the rule prefix"))
 		rule := expRule{ID: "tc-current-and-noncurrent", Prefix: "docs/", ExpirationDays: 7, NoncurrentDays: 90}
 		c.lifecycle(t, both, rule)
-		requireRule(t, c.query(t, "plain", path, false, current), rule)
-		requireNoHeader(t, c.query(t, "explicit-current", path, true, current), "explicit version request, although it is the latest")
-		requireNoHeader(t, c.query(t, "explicit-older", path, true, older), "explicit version request")
-		requireNoHeader(t, c.query(t, "outside-prefix", both+"/other/key", false, outside), "the key is outside the rule's prefix")
+		observe(wrongRule(t, c.query(t, "plain", path, false, current), rule))
+		observe(unexpectedHeader(c.query(t, "explicit-current", path, true, current), "explicit version request, although it is the latest"))
+		observe(unexpectedHeader(c.query(t, "explicit-older", path, true, older), "explicit version request"))
+		if failure := unexpectedHeader(c.query(t, "outside-prefix", both+"/other/key", false, outside), "the key is outside the rule's prefix"); failure != "" {
+			t.Errorf("control failed: %s", failure)
+		}
 	})
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_lifecycle_expiration_header result=%s image=%s symptoms=%q", result, image, symptoms)
 }

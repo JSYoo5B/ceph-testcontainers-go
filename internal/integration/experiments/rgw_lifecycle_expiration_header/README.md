@@ -49,8 +49,8 @@ Upstream references:
 ## Requirements
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
-  user), plain HTTP. Image roles `essential`, `client` and `rgw`, all of one
-  release. Bridge networking.
+  user), plain HTTP, all on the image `image` (see [Running it](#running-it)).
+  Bridge networking.
 - Requests are signed by the test's own SigV4 client (`harness.RGWBackendSigned`).
 - No lifecycle processing, clock change or deletion is needed: the case
   reads response metadata only, with day counts far in the future.
@@ -58,8 +58,8 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Known-defect reproducer: on its default image the test passes and reports
+`REPRODUCED` (see [Result line](#result-line)). No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -70,9 +70,9 @@ head with the comment below.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+The case runs on its own pinned image, the package variable `image`, and not
+on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -80,16 +80,19 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_lifecycle_expiration_header
 ```
 
-Or run the batch exactly as CI does:
+Another image, such as a fixed release, is injected at link time:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_expiration_header \
-  --package ./internal/integration/experiments/rgw_lifecycle_expiration_header \
-  --directory "artifacts/rgw-expiration-header-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_lifecycle_expiration_header_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -run '^TestRGWLifecycleExpirationHeader$' \
+  ./internal/integration/experiments/rgw_lifecycle_expiration_header
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
+The batch `rgw_expiration_header` (`tag_scenarios.py optional --batch rgw_expiration_header`, or the
+Native regressions workflow) still runs the case. It exports role images,
+which the case ignores, except that the harness attaches its client
+container from the exported client role image.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_EXP ceph=` and the daemon versions), every version ID with its
@@ -110,6 +113,34 @@ request.
 4. Control: on the bucket with an `Expiration` action, the plain request
    must report it (the rule is eligible) and a key outside the prefix must
    get no header.
+
+## Result line
+
+A failure of a given or when step (a condition not established, an
+unavailable prerequisite, a failed control) fails the test, and the test then
+prints no result. Otherwise the test passes whatever the gateway did and
+prints one line:
+
+```text
+EXPERIMENT_RESULT case=rgw_lifecycle_expiration_header result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
+```
+
+`REPRODUCED`: a request that must carry no `x-amz-expiration` carries one
+(the plain and explicit-version requests of `noncurrent-only`, the
+explicit-version requests of `current-and-noncurrent`), or the plain request
+of `current-and-noncurrent` reports another rule or date than its 7-day
+`Expiration`; `symptoms` lists each such request with its header.
+`NOT_REPRODUCED`: every request follows the table. The controls must hold
+for any result to print: HEAD carries the header GET carries, the eligible
+plain request carries a well-formed header, and the key outside the prefix
+carries none.
+
+Standalone runs, Linux amd64 host, Docker, bridge, one run each:
+
+| Image | Result | Test time |
+| --- | --- | --- |
+| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: six symptoms, every `docs/` request carries the noncurrent days (30, or 90 instead of 7) | 30.9 s |
+| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 30.8 s |
 
 ## Reading the result
 
