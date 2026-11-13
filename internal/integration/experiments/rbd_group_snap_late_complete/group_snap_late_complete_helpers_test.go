@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -20,12 +18,20 @@ const (
 )
 
 // groupSnapInvalid is EINVAL: the errno with which a server that refuses an
-// update of a missing group snapshot record answers, and the errno of a
-// listing that refuses a record without an order entry.
+// update of a missing group snapshot record answers, and the errno with
+// which a listing refuses a record without an order entry. The listing
+// command prints nothing for that refusal and exits with the errno.
 const groupSnapInvalid = 22
 
-// groupSnapComplete is the stored state byte of a complete snapshot.
-const groupSnapComplete = 1
+// groupSnapExists is EEXIST: the errno with which the server refuses an
+// INCOMPLETE update of a snapshot whose record exists.
+const groupSnapExists = 17
+
+// The stored state bytes of a snapshot record.
+const (
+	groupSnapIncomplete = 0
+	groupSnapComplete   = 1
+)
 
 // groupSnapRecord is one snapshot record of a group header object. State is
 // the stored state byte and Value the stored encoded record in hex.
@@ -46,6 +52,23 @@ type groupSnapHeader struct {
 	Error     string
 	Keys      []string
 	Snapshots []groupSnapRecord
+}
+
+// withState returns the stored value of record, in hex, with its state byte
+// replaced by state. The value starts with a header of six bytes; the ID and
+// the name follow, each as a 32-bit length and its text, and then the state
+// byte. It refuses a value in which that byte is not the record's state.
+func (record groupSnapRecord) withState(state byte) (string, error) {
+	value, err := hex.DecodeString(record.Value)
+	if err != nil {
+		return "", fmt.Errorf("value of record %s: %w", record.ID, err)
+	}
+	at := 6 + 4 + len(record.ID) + 4 + len(record.Name)
+	if record.ID == "" || record.Name == "" || at >= len(value) || record.State < 0 || record.State > 255 || value[at] != byte(record.State) {
+		return "", fmt.Errorf("value of record %s (%s) has no state byte %d at offset %d: %s", record.ID, record.Name, record.State, at, record.Value)
+	}
+	value[at] = state
+	return hex.EncodeToString(value), nil
 }
 
 // record returns the record named name.
@@ -132,24 +155,6 @@ func parseGroupSnapListing(listing []byte) ([]string, error) {
 	return names, nil
 }
 
-// groupSnapErrno matches the errno that a native tool reports, as in
-// "(22) Invalid argument".
-var groupSnapErrno = regexp.MustCompile(`\((\d+)\) \S`)
-
-// listingErrno returns the last errno that the output of a failed listing
-// command reports, or 0 when it reports none.
-func listingErrno(output string) int {
-	matches := groupSnapErrno.FindAllStringSubmatch(output, -1)
-	if len(matches) == 0 {
-		return 0
-	}
-	errno, err := strconv.Atoi(matches[len(matches)-1][1])
-	if err != nil {
-		return 0
-	}
-	return errno
-}
-
 // groupSnapOutcome is what the group that got the late update shows after it.
 type groupSnapOutcome struct {
 	// Return is the result of the late group_snap_set: 0 when the server
@@ -173,8 +178,11 @@ type groupSnapOutcome struct {
 // identified observations, each together with the snapshot's record back in
 // the header object without its order entry after an accepted update: the
 // listing succeeds and names the removed snapshot again beside its sibling,
-// or the listing fails and reports EINVAL, the refusal of a record without
-// an order. It returns neither symptoms nor an error when the listing
+// or the listing command exits with EINVAL, the status of a listing that
+// refuses a record without an order. The command reports that refusal by
+// its status alone, so its output decides nothing: an empty output is
+// accepted, and a text that names EINVAL beside another status is not. It
+// returns neither symptoms nor an error when the listing
 // succeeds with exactly the healthy sibling, whether the server accepted the
 // update or refused it as invalid. Everything else is an error. An update
 // that ended in another way was not delivered. A listing that failed in any
@@ -192,8 +200,8 @@ func judgeLateComplete(victimID string, got groupSnapOutcome) ([]string, error) 
 	evidence := fmt.Sprintf("the late update returned %d and the header object has the keys %v", got.Return, got.Keys)
 	if got.ListExit != 0 {
 		failure := fmt.Sprintf("the listing exited %d: %s", got.ListExit, strings.TrimSpace(got.ListOutput))
-		if errno := listingErrno(got.ListOutput); errno != groupSnapInvalid || got.ListExit != groupSnapInvalid {
-			return nil, fmt.Errorf("outcome not observed: %s; only a listing that exits %d and reports errno %d (it reported %d) is the refusal of a record without an order: %s", failure, groupSnapInvalid, groupSnapInvalid, errno, evidence)
+		if got.ListExit != groupSnapInvalid {
+			return nil, fmt.Errorf("outcome not observed: %s; only a listing that exits %d is the refusal of a record without an order: %s", failure, groupSnapInvalid, evidence)
 		}
 		if !orphan {
 			return nil, fmt.Errorf("another fault: %s, and the removed snapshot has no record without an order entry after an accepted update: %s", failure, evidence)

@@ -109,44 +109,57 @@ from before its removal and sends it again with
    existing snapshot, is sent with the same call. The server must accept it
    (return 0) and the header object and the listing must not change. The
    client, the object and the method therefore work before the trigger.
-3. `rbd group snap rm` removes `victim` from both groups. Both listings
+3. Refusal control, in `late`: the same record with its state byte set to
+   INCOMPLETE is sent. The class refuses an INCOMPLETE update of a snapshot
+   whose record exists with `EEXIST`; the call must return -17 and the
+   header object and the listing must not change. A refusal by the server
+   therefore reaches the test as its negative errno.
+4. `rbd group snap rm` removes `victim` from both groups. Both listings
    must name only `healthy`, and neither header object may keep the
    record or the order entry of its `victim`.
-4. Trigger, in `late` only: the stored record of the removed `victim` is
+5. Trigger, in `late` only: the stored record of the removed `victim` is
    sent again. Its result is recorded.
-5. Control group: `control`, which got no late update, must still list only
+6. Control group: `control`, which got no late update, must still list only
    `healthy`.
-6. `late` is judged by its listing and its header object.
+7. `late` is judged by its listing and its header object.
 
 ## Reading the result
 
 - **REPRODUCED:** the server accepted the late update, the header object of
   `late` has `snapshot_<victim id>` again without `snap_order_<victim id>`,
   and the listing names `healthy` and `victim`. The symptoms give the
-  listing, the result of the update and the omap keys. A listing that
-  exits 22 and reports `(22) Invalid argument`, the refusal of a record
-  without an order, while the header object holds that orphan record is
-  reported as `REPRODUCED` too; no tested image does that.
+  listing, the result of the update and the omap keys. A listing command
+  that exits with status 22 (`EINVAL`) while the header object holds that
+  orphan record is reported as `REPRODUCED` too. The command returns the
+  error of the library's listing call without printing it and exits with
+  its absolute value (`src/tools/rbd/action/Group.cc`,
+  `src/tools/rbd/Shell.cc`), and the listing that refuses a record without
+  an order ends with `-EINVAL` (`src/librbd/group/ListSnapshotsRequest.cc`),
+  so the status decides and the output, which may be empty, does not. No
+  tested image fails its listing.
 - **NOT_REPRODUCED:** the listing of `late` succeeds and names only
   `healthy`. That is the result when the server refuses the late update
   with `EINVAL`, which is what the upstream correction does: the mechanism
   control showed that the same call on the same object is accepted for an
-  existing record, so the refusal is the server's answer to an update of a
-  removed snapshot. It is also the result when a server accepts the update
+  existing record, and the refusal control that a refusal arrives as its
+  errno, so the refusal is the server's answer to an update of a removed
+  snapshot. It is also the result when a server accepts the update
   and the listing does not show the snapshot. The receipt
   (`RBD_GROUP_SNAP_LATE_COMPLETE_RECEIPT`) gives the result of the update
   and the omap keys in either case.
 - **Test failure (no result):**
   - `condition not established`: a group does not start with the two
     complete snapshots, the mechanism control is refused or changes the
+    group, the refusal control does not return `EEXIST` or changes the
     group, the removal leaves the record or the order entry, or the control
     group does not list only `healthy` at the end.
   - `trigger not delivered`: the late update ended with a result other than
     0 or `EINVAL`, such as a timeout.
-  - `outcome not observed`: the listing of `late` failed in any way other
-    than exit code 22 with errno 22, such as a timeout, a permission error
-    or a group that is not found. Such a listing saw nothing of the group,
-    so it is never the symptom, whatever the header object holds.
+  - `outcome not observed`: the listing command of `late` exited with any
+    status other than 0 or 22, such as 110 for a timeout, 1 for a missing
+    permission, 2 for a group that is not found or 137 when it was killed.
+    Such a listing saw nothing of the group, so it is never the symptom,
+    whatever the header object holds and whatever the command printed.
   - `another fault:`: the listing of `late` is wrong in a way the orphan
     record does not explain, for example it names `victim` after a refused
     update, lacks `healthy`, or fails as invalid without the orphan record.
@@ -164,8 +177,10 @@ each):
 | Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same | 29 s |
 
 No fixed image exists to run, so `NOT_REPRODUCED` has not been observed
-natively; the refusal and the clean listing are covered only by the
-judgement tests, and so is the listing that fails as invalid.
+natively. A late update refused with `EINVAL`, a clean listing after it
+and a listing command that exits with status 22 are covered only by the
+judgement tests; that a refused update arrives as its negative errno is
+observed in every run, with `EEXIST`, by the refusal control.
 
 ## Cleanup and limits
 

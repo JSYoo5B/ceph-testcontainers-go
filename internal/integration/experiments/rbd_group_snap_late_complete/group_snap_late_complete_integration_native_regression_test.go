@@ -79,12 +79,14 @@ var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791
 // Given two groups set up the same way, each with one image and the
 // snapshots healthy and victim, the stored record of each victim, an update
 // of the existing healthy record that the server accepts and that changes
-// nothing (the client and the method work), and the removal of victim from
+// nothing (the client and the method work), an INCOMPLETE update of it that
+// the server refuses (a refusal reaches the test as its errno), and the
+// removal of victim from
 // both groups, after which neither listing nor header object names it, when
 // the stored COMPLETE record of the removed victim is sent again to one
 // group, then the defect is REPRODUCED if that group's listing names victim
-// again, or fails as invalid (EINVAL), with the record back in the header
-// object without its order entry, and NOT_REPRODUCED if the listing succeeds
+// again, or its listing command exits with EINVAL, with the record back in
+// the header object without its order entry, and NOT_REPRODUCED if the listing succeeds
 // with only healthy, whether the server accepted the update or refused it as
 // invalid. The other group gets no late update and must keep listing only
 // healthy.
@@ -160,6 +162,17 @@ func TestRBDGroupSnapshotLateCompleteAfterRemoval(t *testing.T) {
 	healthy, _ := before.record(groupSnapHealthy)
 	if result, after := set(late, healthy.Value); result != 0 || !slices.Equal(after.Keys, before.Keys) || !slices.Equal(after.Snapshots, before.Snapshots) {
 		t.Fatalf("condition not established: the update of the existing record of %s returned %d and left %+v, want 0 and %+v", groupSnapHealthy, result, after, before)
+	}
+	listed(late, groupSnapHealthy, groupSnapVictim)
+	// The refusal control: the same record as an INCOMPLETE update, which
+	// the server refuses for a snapshot that exists. The refusal must reach
+	// the test as that errno and change nothing.
+	incomplete, err := healthy.withState(groupSnapIncomplete)
+	if err != nil {
+		t.Fatalf("condition not established: %v", err)
+	}
+	if result, after := set(late, incomplete); result != -groupSnapExists || !slices.Equal(after.Keys, before.Keys) || !slices.Equal(after.Snapshots, before.Snapshots) {
+		t.Fatalf("condition not established: the INCOMPLETE update of the existing record of %s returned %d and left %+v, want %d and %+v", groupSnapHealthy, result, after, -groupSnapExists, before)
 	}
 	listed(late, groupSnapHealthy, groupSnapVictim)
 	// The victim is removed from both groups by the ordinary command.

@@ -25,15 +25,20 @@ func TestJudgeLateCompleteReportsOnlyTheResurrectedSnapshot(t *testing.T) {
 	}{
 		{name: "accepted and listed again", got: groupSnapOutcome{Keys: orphan, Listed: []string{"healthy", "victim"}}, symptoms: 2},
 		{name: "accepted and the listing fails on the orphan record", got: groupSnapOutcome{Keys: orphan, ListExit: 22, ListOutput: "rbd: failed to list group snapshots: (22) Invalid argument"}, symptoms: 2},
-		// A listing that failed for a reason of its own saw nothing of the
-		// group, whatever the header object holds.
+		// The listing command reports the refusal of a record without an
+		// order by its status alone.
+		{name: "accepted and the listing exits as invalid without output", got: groupSnapOutcome{Keys: orphan, ListExit: 22}, symptoms: 2},
+		{name: "accepted and the listing exits as invalid with a text without an errno", got: groupSnapOutcome{Keys: orphan, ListExit: 22, ListOutput: "rbd: listing snapshots failed"}, symptoms: 2},
+		{name: "accepted and the listing exits as invalid with a text of another errno", got: groupSnapOutcome{Keys: orphan, ListExit: 22, ListOutput: "rbd: (110) Connection timed out"}, symptoms: 2},
+		// A listing that failed with another status saw nothing of the
+		// group, whatever the header object holds and whatever it printed.
 		{name: "orphan record and the listing times out", got: groupSnapOutcome{Keys: orphan, ListExit: 110, ListOutput: "rbd: couldn't connect to the cluster: (110) Connection timed out"}, want: "outcome not observed:"},
 		{name: "orphan record and the listing is not permitted", got: groupSnapOutcome{Keys: orphan, ListExit: 1, ListOutput: "rbd: failed to list group snapshots: (1) Operation not permitted"}, want: "outcome not observed:"},
 		{name: "orphan record and the listing does not find the group", got: groupSnapOutcome{Keys: orphan, ListExit: 2, ListOutput: "rbd: failed to list group snapshots: (2) No such file or directory"}, want: "outcome not observed:"},
-		{name: "orphan record and the listing fails without an errno", got: groupSnapOutcome{Keys: orphan, ListExit: 22, ListOutput: "rbd: failed to list group snapshots"}, want: "outcome not observed:"},
 		{name: "orphan record and the listing reports the errno with another exit code", got: groupSnapOutcome{Keys: orphan, ListExit: 1, ListOutput: "rbd: failed to list group snapshots: (22) Invalid argument"}, want: "outcome not observed:"},
 		{name: "orphan record and the listing is killed", got: groupSnapOutcome{Keys: orphan, ListExit: 137}, want: "outcome not observed:"},
-		{name: "orphan record and a later error than the invalid one", got: groupSnapOutcome{Keys: orphan, ListExit: 22, ListOutput: "(22) Invalid argument\nrbd: (110) Connection timed out"}, want: "outcome not observed:"},
+		{name: "orphan record and the listing fails with status 1 without output", got: groupSnapOutcome{Keys: orphan, ListExit: 1}, want: "outcome not observed:"},
+		{name: "orphan record and the listing exits 255", got: groupSnapOutcome{Keys: orphan, ListExit: 255}, want: "outcome not observed:"},
 		{name: "refused as invalid, absent", got: groupSnapOutcome{Return: -22, Keys: removed, Listed: []string{"healthy"}}},
 		{name: "accepted without a record, absent", got: groupSnapOutcome{Keys: removed, Listed: []string{"healthy"}}},
 		{name: "accepted with an orphan record that the listing hides", got: groupSnapOutcome{Keys: orphan, Listed: []string{"healthy"}}},
@@ -46,6 +51,8 @@ func TestJudgeLateCompleteReportsOnlyTheResurrectedSnapshot(t *testing.T) {
 		{name: "listed again without the sibling", got: groupSnapOutcome{Keys: orphan, Listed: []string{"victim"}}, want: "another fault:"},
 		{name: "listed again with a third snapshot", got: groupSnapOutcome{Keys: orphan, Listed: []string{"healthy", "victim", "other"}}, want: "another fault:"},
 		{name: "the listing fails as invalid without an orphan record", got: groupSnapOutcome{Keys: removed, ListExit: 22, ListOutput: "rbd: failed to list group snapshots: (22) Invalid argument"}, want: "another fault:"},
+		{name: "the listing exits as invalid without output and without an orphan record", got: groupSnapOutcome{Keys: removed, ListExit: 22}, want: "another fault:"},
+		{name: "the listing exits as invalid without output after a refusal", got: groupSnapOutcome{Return: -22, Keys: orphan, ListExit: 22}, want: "another fault:"},
 		{name: "the listing fails as invalid with the order entry", got: groupSnapOutcome{Keys: restored, ListExit: 22, ListOutput: "rbd: failed to list group snapshots: (22) Invalid argument"}, want: "another fault:"},
 		{name: "the listing fails as invalid after a refusal", got: groupSnapOutcome{Return: -22, Keys: orphan, ListExit: 22, ListOutput: "rbd: failed to list group snapshots: (22) Invalid argument"}, want: "another fault:"},
 		{name: "the listing fails otherwise without an orphan record", got: groupSnapOutcome{Keys: removed, ListExit: 2, ListOutput: "rbd: failed to list group snapshots"}, want: "outcome not observed:"},
@@ -159,16 +166,29 @@ func TestParseGroupSnapListingTellsAnEmptyListingFromNone(t *testing.T) {
 	}
 }
 
-func TestListingErrnoReadsTheLastReportedErrno(t *testing.T) {
-	for output, want := range map[string]int{
-		"rbd: failed to list group snapshots: (22) Invalid argument": 22,
-		"(22) Invalid argument\nrbd: (110) Connection timed out":     110,
-		"rbd: failed to list group snapshots":                        0,
-		"":                                                           0,
-		"exit status (22)":                                           0,
+// These records are synthetic stored values: a header of six bytes, the ID
+// and the name with their lengths, the state byte and the member list.
+func TestGroupSnapRecordWithStateReplacesOnlyTheStateByte(t *testing.T) {
+	const complete = "010117000000" + "04000000" + "30663066" + "07000000" + "6865616c746879" + "01" + "00000000"
+	const incomplete = "010117000000" + "04000000" + "30663066" + "07000000" + "6865616c746879" + "00" + "00000000"
+	record := groupSnapRecord{ID: "0f0f", Name: "healthy", State: groupSnapComplete, Value: complete}
+	if got, err := record.withState(groupSnapIncomplete); err != nil || got != incomplete {
+		t.Fatalf("value %s, error %v, want %s", got, err, incomplete)
+	}
+	if got, err := record.withState(groupSnapComplete); err != nil || got != complete {
+		t.Fatalf("value %s, error %v, want the value unchanged", got, err)
+	}
+	for name, bad := range map[string]groupSnapRecord{
+		"another state than the stored byte": {ID: "0f0f", Name: "healthy", State: groupSnapIncomplete, Value: complete},
+		"a longer name than the stored one":  {ID: "0f0f", Name: "healthy-and-more", State: groupSnapComplete, Value: complete},
+		"a value that ends before the state": {ID: "0f0f", Name: "healthy", State: groupSnapComplete, Value: complete[:len(complete)-10]},
+		"a value that is not hex":            {ID: "0f0f", Name: "healthy", State: groupSnapComplete, Value: "xy"},
+		"no ID":                              {Name: "healthy", State: groupSnapComplete, Value: complete},
+		"no name":                            {ID: "0f0f", State: groupSnapComplete, Value: complete},
+		"a state that is no byte":            {ID: "0f0f", Name: "healthy", State: 257, Value: complete},
 	} {
-		if got := listingErrno(output); got != want {
-			t.Errorf("errno of %q: %d, want %d", output, got, want)
+		if got, err := bad.withState(groupSnapIncomplete); err == nil {
+			t.Errorf("%s: value %s, want an error", name, got)
 		}
 	}
 }
