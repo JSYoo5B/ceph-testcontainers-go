@@ -133,10 +133,9 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if gatewayRelease != facts.CephVersion {
-				t.Fatalf("the selected gateway image runs radosgw %s on a %s cluster: not one release", gatewayRelease, facts.CephVersion)
-			}
-			t.Logf("RGW_POLL_BOOTSTRAP ceph=%s elapsed=%s", facts.CephVersion, time.Since(bootstrap))
+			// The polling measured is the gateways': their own binary names
+			// the release of the cohort, whatever the cluster's daemons run.
+			t.Logf("RGW_POLL_BOOTSTRAP ceph=%s radosgw=%s elapsed=%s", facts.CephVersion, gatewayRelease, time.Since(bootstrap))
 			for trial, seconds := range []int{20, 1, 20, 1, 20, 1} {
 				t.Run(fmt.Sprintf("trial-%d-poll-%d", trial, seconds), func(t *testing.T) {
 					started := time.Now()
@@ -346,10 +345,12 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 			if link == nil || link.Source == nil || link.Source.Container == nil {
 				t.Fatalf("startup timing profile retained no owned source gateway: fixture=%t error=%v", link != nil, err)
 			}
-			if version := harness.NativeBinaryRelease(t, ctx, link.Source.Container, "radosgw"); version != "20.2.4" {
-				if err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), "(observed "+version+")") {
-					t.Fatalf("unqualified profile did not retain its partial fixture: radosgw=%s error=%v", version, err)
-				}
+			version := harness.NativeBinaryRelease(t, ctx, link.Source.Container, "radosgw")
+			refused, problem := pollTimingProfileOutcome(version, err)
+			if problem != nil {
+				t.Fatal(problem)
+			}
+			if refused {
 				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer stop()
 				if err := link.Terminate(cleanup); err != nil {
@@ -357,9 +358,6 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 				}
 				t.Logf("RGW startup timing: unqualified release %s refused and partial fixture cleaned up", version)
 				return
-			}
-			if err != nil {
-				t.Fatal(err)
 			}
 			clients := make([]harness.S3HTTPClient, 2)
 			for i, gateway := range []*rgw.Gateway{link.Source, link.Destination} {
@@ -418,6 +416,10 @@ func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	images := pollTimingSelectedImages(t)
+	// What Run must answer depends on the gateway binary alone, so it is
+	// read from the selected gateway image itself, before Run and whatever
+	// Run then returns.
+	gatewayRelease := pollTimingGatewayImageRelease(t, ctx, images.gateway)
 	clusters := pollTimingClusters(t, ctx, images, 3, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	link, err := multisite.Run(ctx, images.gateway, multisite.WithTopology(multisite.TopologyConfig{
 		Zones:          []multisite.ZoneConfig{{Name: "source", Cluster: clusters[0]}, {Name: "destination", Cluster: clusters[1]}},
@@ -432,14 +434,16 @@ func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
 			}
 		})
 	}
-	if pollTimingProfileRefused(t, clusters[0], err) {
+	refused, problem := pollTimingProfileOutcome(gatewayRelease, err)
+	if problem != nil {
+		t.Fatal(problem)
+	}
+	if refused {
+		t.Logf("RGW startup timing: unqualified gateway release %s refused: %v", gatewayRelease, err)
 		return
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	pollTimingZonesRun(t, ctx, link, gatewayRelease)
 	for _, zone := range link.Zones() {
-		pollTimingProbePrerequisites(t, ctx, zone.Gateway)
 		pollTimingStartupEffective(t, ctx, zone.Gateway)
 	}
 	if _, err := link.AddZone(ctx, images.gateway, multisite.ZoneConfig{Name: "added", Cluster: clusters[2]}); err != nil {
@@ -449,30 +453,39 @@ func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
 	if len(zones) != 3 {
 		t.Fatalf("after AddZone: got %d owned gateways", len(zones))
 	}
+	pollTimingZonesRun(t, ctx, link, gatewayRelease)
 	for _, zone := range zones {
-		pollTimingProbePrerequisites(t, ctx, zone.Gateway)
 		pollTimingStartupEffective(t, ctx, zone.Gateway)
 	}
 }
 
-// pollTimingProfileRefused reports that Run refused the startup timing
-// profile because the selected images are of a release the profile is not
-// qualified for. The profile is qualified for 20.2.4 only, so on another
-// selected release the refusal that names the observed release is the
-// expected outcome, not a failure; a refusal on 20.2.4, or one that names
-// another release than the selected one, is fatal.
-func pollTimingProfileRefused(t *testing.T, cluster *ceph.Container, err error) bool {
+// pollTimingZonesRun checks every gateway of the topology for the probe's
+// prerequisites and for the release that the selected gateway image
+// reported before Run: an accepted profile on a gateway of another release
+// is not the outcome that was judged.
+func pollTimingZonesRun(t *testing.T, ctx context.Context, link *multisite.Fixture, release string) {
 	t.Helper()
-	if err == nil || !strings.Contains(err.Error(), "qualified only") {
-		return false
+	gateways := []*rgw.Gateway{}
+	for _, zone := range link.Zones() {
+		gateways = append(gateways, zone.Gateway)
 	}
-	facts, factsErr := ceph.FactsOf(cluster)
-	if factsErr != nil {
-		t.Fatal(factsErr)
+	if got := pollTimingSameGatewayRelease(t, ctx, gateways...); got != release {
+		t.Fatalf("the topology's gateways run radosgw %s, the selected gateway image reported %s", got, release)
 	}
-	if facts.CephVersion == "20.2.4" || !strings.Contains(err.Error(), "(observed "+facts.CephVersion+")") {
-		t.Fatalf("startup timing profile refused on the selected release %s: %v", facts.CephVersion, err)
+}
+
+// pollTimingGatewayImageRelease reads the radosgw release of a gateway image
+// in a container of its own, which runs no daemon.
+func pollTimingGatewayImageRelease(t *testing.T, ctx context.Context, image string) string {
+	t.Helper()
+	ctr, err := testcontainers.Run(ctx, image, ceph.WithIdleEntrypoint())
+	testcontainers.CleanupContainer(t, ctr)
+	if err != nil {
+		t.Fatalf("start a container of the selected gateway image: %v", err)
 	}
-	t.Logf("RGW startup timing: the selected release %s is not qualified for the profile, which Run refused: %v", facts.CephVersion, err)
-	return true
+	release := harness.NativeBinaryRelease(t, ctx, ctr, "radosgw")
+	if err := ctr.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return release
 }
