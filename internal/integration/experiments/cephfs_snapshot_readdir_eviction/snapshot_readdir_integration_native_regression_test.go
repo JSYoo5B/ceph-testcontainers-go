@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
+
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_snapshot_readdir_eviction_test.image=<image>"
+//
+// No release is fixed: Squid 19.2.2 and 19.2.5, Tentacle 20.2.5 and
+// Umbrella 21.2.0 reproduce it too.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 const (
 	// snapshotRoot is the directory of the filesystem that holds the case.
@@ -157,17 +167,27 @@ if mode=="list":
 print(json.dumps(out))
 `
 
-// TestCephFSSnapshotListingAcrossCacheEviction reads a snapshot directory
-// through one libcephfs handle, with lookups elsewhere between the first
-// entries and the rest, from a client whose cache is too small to keep the
-// snapshot's dentries, and requires exactly the snapshot's names. A client
-// with the default cache does the same as the control, and each client
-// lists the live directory afterwards.
+// TestCephFSSnapshotListingAcrossCacheEviction reports whether a libcephfs
+// handle of a snapshot directory returns entries of the live directory once
+// the client's cache trim drops the snapshot's dentries.
+//
+// Given a snapshotted directory with more entries than one readdir reply and
+// a live directory of other names, and the conditions and controls (a client
+// with the default cache lists the snapshot exactly, both clients list the
+// live directory exactly, and the small-cache client dropped its dentry of
+// the snapshot between its first entries and the rest), when a client with a
+// small cache reads the first entries, looks up files elsewhere, waits a few
+// ticks and reads on, then the defect is REPRODUCED if the entries read after
+// the trim hold names of the live directory, and NOT_REPRODUCED if the
+// listing is the snapshot. Tentacle 20.2.4 reproduces it.
+//
+// A failure of the given or when steps fails the test, and so does a listing
+// that is neither the snapshot nor the defect; the result does not.
 func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := harness.IntegrationImages(t)
-	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
+	t.Logf("CEPHFS_SNAPSHOT_READDIR_EVICTION image=%s", image)
+	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -228,7 +248,21 @@ func TestCephFSSnapshotListingAcrossCacheEviction(t *testing.T) {
 			listing.name, got.Client, got.Cache, got.First, got.Stats, snapshotSettle, got.Trimmed, got.Requests, got.HeadRequests,
 			snapshotDiffer(want, live, got.Names), snapshotDiffer(live, want, got.Live), got.Evidence)
 	}
+	// The symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if err := judgeSnapshotListings(want, live, control, trigger); err != nil {
-		t.Fatal(err)
+		defect, ok := strings.CutPrefix(err.Error(), "observed defect: ")
+		if !ok {
+			t.Fatal(err)
+		}
+		symptoms = append(symptoms, defect)
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=cephfs_snapshot_readdir_eviction result=%s image=%s symptoms=%q", result, image, symptoms)
 }

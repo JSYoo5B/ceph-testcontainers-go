@@ -53,33 +53,24 @@ file is written to between the snapshots.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on every release it was run on.
-No automatic run includes it (the default checks of a pull request, pushes
-to `main`, periodic samples), and it never gates anything. A maintainer can
-run it on demand, also on a pull request's head with the comment below.
+Standalone reproducer. The test fails only when its setup, a condition or a
+control does not hold; the documented symptom does not fail it. It prints
+one `EXPERIMENT_RESULT` line instead, `REPRODUCED` on its default image,
+Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
+request, pushes to `main`, periodic samples), and it never gates anything. A
+maintainer can run it on demand, also on a pull request's head with the
+comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=cephfs_readdir_after_snapdiff`.
 - Comment: `/ci run cephfs_readdir_after_snapdiff` or
   `/ci run cephfs_readdir_after_snapdiff on umbrella`.
 
+Every container the test starts uses the package variable `image`, so the
+role images that a batch exports do not reach it.
+
 ## Running it
 
-Prepare the pinned role images of one supported release (20.2.4, 21.2.0 or
-19.2.5) and export them:
-
-```sh
-release=20.2.4
-dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
-python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,cephfs --prepare-only --output-dir "$dir" \
-  --github-env "$dir/role-images.env" &&
-  . "./$dir/role-images.env" &&
-  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE
-```
-
-Releases without published role images run on the upstream aggregate that
-`.github/ceph-discovery-images.json` pins, with no role variable set
-(`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:...`).
+On the default image, which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -87,17 +78,17 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/cephfs_readdir_after_snapdiff
 ```
 
-or, exactly as CI runs the batch:
+No release is fixed. Another image runs the same way, for example Umbrella 21.2.0:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch cephfs_readdir_after_snapdiff \
-  --package ./internal/integration/experiments/cephfs_readdir_after_snapdiff \
-  --directory "artifacts/cephfs-readdir-after-snapdiff-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_readdir_after_snapdiff_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -run '^TestCephFSListingAfterSnapdiff$' \
+  ./internal/integration/experiments/cephfs_readdir_after_snapdiff
 ```
 
 The test logs the client's `ceph --version`, the release its `cephfs`
-module reports and whether the module has `opensnapdiff`; record the image
-digests with the result. One `CEPHFS_READDIR_AFTER_SNAPDIFF_RECEIPT` line
+module reports and whether the module has `opensnapdiff`. One `CEPHFS_READDIR_AFTER_SNAPDIFF_RECEIPT` line
 per directory gives every listing with its positions
 (`name->hash+count (raw 0x…)`, or `name->frag …` for a position without the
 hash-order marker) and the snapdiff's entries.
@@ -131,14 +122,20 @@ A third client, a fresh mount, lists both snapshots once.
 
 ## Reading the result
 
-The results below ran on the pinned role images of 20.2.4 (essential
+Standalone runs, Linux amd64 host, bridge networking, one run per image:
+
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 38 s; the second listing of `trigger`
+  held `collision_2379` only, and `control` was listed in full.
+
+The release comparison ran on the pinned role images of 20.2.4 (essential
 `3c7a6d0ae445…`), 21.2.0 (essential `119180026952…`) and 19.2.5 (essential
 `43ee23624e7a…`) with the `client` and `cephfs` roles of the same releases,
 and on the official images of 20.2.5 (`sha256:4337ac8ac81d…`) and 19.2.2
 (`sha256:8214ebff6133…`) as aggregates. Linux amd64, bridge, one run per
 release.
 
-- **Observed bug:** the warm mount's first listing of `trigger` holds both
+- **REPRODUCED:** the symptom starts with `after a snapdiff that named
+  only collision_2690`. In the release comparison the warm mount's first listing of `trigger` holds both
   names at hash-ordered positions of one hash (`7f4abf`, counts 3 and 4,
   raw `0xff7f4abf0000003` and `0xff7f4abf0000004`); the snapdiff
   names `collision_2690` alone; the second listing holds `collision_2379`
@@ -146,12 +143,16 @@ release.
   the hashes `6769c5` and `f51016`, is listed in full after its snapdiff.
   Squid 19.2.2 (43 s) and 19.2.5 (44 s), Tentacle 20.2.4 (38 s) and 20.2.5
   (38 s) and Umbrella 21.2.0 (38 s) all do this.
-- **Pass:** every listing holds its two names. No tested build passes.
-- **Another fault:** the control's second listing is not its two names.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
+- **NOT_REPRODUCED:** every listing holds its two names. No tested build
+  does this.
+- **Failure, another fault:** the control's second listing is not its two
+  names.
+- **Failure, condition not established:** a condition of the list above
+  did not hold; no line is printed.
+- **NOT_REPRODUCED on a build claimed to be affected:** check the
   receipt line: the two names must share a hash and the snapdiff must name
   the second one.
-- **Unavailable prerequisite:** the cluster or the filesystem does not
+- **Failure, unavailable prerequisite:** the cluster or the filesystem does not
   start, or a client run fails, for example because the client's `cephfs`
   module has no `opensnapdiff`.
 

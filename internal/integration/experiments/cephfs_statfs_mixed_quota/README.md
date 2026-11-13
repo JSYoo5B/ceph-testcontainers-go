@@ -31,8 +31,7 @@ and [`v20.2.5`](https://github.com/ceph/ceph/blob/v20.2.5/src/client/Client.cc).
 This is a capacity observation only. Enforcement of either quota is not
 part of the case, and nothing here shows it broken.
 
-The test fails on Tentacle 20.2.4. That is the expected result for an
-unpatched defect; it is not a fixture failure.
+The defect is reproduced on Tentacle 20.2.4 and not on Tentacle 20.2.5.
 
 ## Requirements
 
@@ -47,7 +46,9 @@ unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
+Standalone reproducer. The test fails only when its setup, a condition or a
+control does not hold; the documented symptom does not fail it. It prints
+one `EXPERIMENT_RESULT` line instead, `REPRODUCED` on its default image,
 Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
 request, pushes to `main`, periodic samples), and it never gates anything. A
 maintainer can run it on demand, also on a pull request's head with the
@@ -57,24 +58,12 @@ comment below.
 - Comment: `/ci run cephfs_statfs_mixed_quota` or
   `/ci run cephfs_statfs_mixed_quota on umbrella`.
 
+Every container the test starts uses the package variable `image`, so the
+role images that a batch exports do not reach it.
+
 ## Running it
 
-Prepare the pinned role images of one supported release (20.2.4, 21.2.0 or
-19.2.5) and export them:
-
-```sh
-release=20.2.4
-dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
-python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,cephfs --prepare-only --output-dir "$dir" \
-  --github-env "$dir/role-images.env" &&
-  . "./$dir/role-images.env" &&
-  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE
-```
-
-Tentacle 20.2.5 has no published role images. Run it on the upstream
-aggregate that `.github/ceph-discovery-images.json` pins, with no role
-variable set (`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:...`).
+On the default image, which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -82,19 +71,18 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/cephfs_statfs_mixed_quota
 ```
 
-or, exactly as CI runs the batch:
+A fixed image, Tentacle 20.2.5 (or Umbrella 21.2.0), prints `NOT_REPRODUCED`:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch cephfs_statfs_mixed_quota \
-  --package ./internal/integration/experiments/cephfs_statfs_mixed_quota \
-  --directory "artifacts/cephfs-statfs-mixed-quota-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_statfs_mixed_quota_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  -run '^TestCephFSStatfsWithNestedByteAndFileQuotas$' \
+  ./internal/integration/experiments/cephfs_statfs_mixed_quota
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
 The test logs the client's `ceph --version` and the release its `cephfs`
-module reports; record the image digests with the result.
+module reports, and the `CEPHFS_STATFS_MIXED_QUOTA_RECEIPT` line gives the
+fresh mount's report.
 
 ## Observations and controls
 
@@ -136,18 +124,27 @@ the other releases 2 everywhere).
 
 ## Reading the result
 
-The results below ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
+Standalone runs, Linux amd64 host, bridge networking, one run per image:
+
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 33 s; `parent/child` reported 236 blocks
+  with 236 free, as the directory without a byte quota does.
+- Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…`:
+  `NOT_REPRODUCED` in 34 s.
+- Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…`:
+  `NOT_REPRODUCED` in 34 s.
+
+The release comparison ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
 19.2.5 role images (essential `43ee23624e7a…`, client `a69e1319ce88…`, cephfs `99f0ff6e827c…`), the 21.2.0 role images
 (essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the 20.2.5 aggregate `sha256:4337ac8ac81d…`, each with
 the client module of its own release.
 
-- **Pass:** every directory below a byte quota reported that quota. Squid
-  19.2.5 (40 s), Tentacle 20.2.5 (34 s) and Umbrella 21.2.0 (34 s) pass.
-- **Observed bug:** the failure starts with `observed defect:` and names
-  `parent/child` with the blocks it reported. Tentacle 20.2.4 (33 s) reports
+- **NOT_REPRODUCED:** every directory below a byte quota reported that
+  quota. Squid 19.2.5 (40 s), Tentacle 20.2.5 (34 s) and Umbrella 21.2.0
+  (34 s) do this.
+- **REPRODUCED:** the symptom names `parent/child` with the blocks it reported. Tentacle 20.2.4 (33 s) reports
   236 blocks with 236 free there, which is what `unlimited` reports, while
   every control reports its quota.
-- **Not reproduced:** a pass on a build claimed to be affected. Check in the
+- **NOT_REPRODUCED on a build claimed to be affected:** check in the
   receipt (`CEPHFS_STATFS_MIXED_QUOTA_RECEIPT`) that `parent/child` has
   `max_files` 100 and `max_bytes` 0 and that the client reports the release.
 - **Unavailable prerequisite:** the failure starts with

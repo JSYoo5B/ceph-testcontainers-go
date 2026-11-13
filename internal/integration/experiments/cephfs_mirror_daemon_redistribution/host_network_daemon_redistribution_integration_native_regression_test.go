@@ -6,10 +6,10 @@ package cephfs_mirror_daemon_redistribution_test
 
 import (
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
+// The host-network variant of TestMultiClusterCephFSMirrorDaemonTopology:
+// both clusters and the mirror daemons use the host network.
 func TestHostNetworkCephFSMirrorDaemonTopology(t *testing.T) {
-	harness.RunCephFSMirrorDaemonTopology(t, true)
+	testDaemonRedistribution(t, "host", true)
 }

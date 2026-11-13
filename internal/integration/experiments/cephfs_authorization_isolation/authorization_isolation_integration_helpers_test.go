@@ -17,11 +17,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// image is the Ceph image the case runs on: Squid 19.2.2, which reproduces
+// all three defects. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_authorization_isolation_test.image=<image>"
+//
+// Squid 19.2.3 fixes the snapshot defect, 19.2.4 the subvolume one and
+// 19.2.5 the caps one; 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 reproduce
+// none of them.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23"
+
 func testCephFSAuthorizationIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
-	image, _ := harness.IntegrationImages(t)
-	cluster, admin := harness.NewServiceCluster(t,
+	t.Logf("CEPHFS_AUTHORIZATION_ISOLATION image=%s", image)
+	cluster, admin := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(1<<30).WithStartupBenchmark(ceph.OSDBenchmarkSkip)),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)),
 		cephfs.WithFilesystems(cephfs.Config{Name: harness.CephFSIsolationFSA},
@@ -40,7 +50,7 @@ func testCephFSAuthorizationIsolation(t *testing.T) {
 	}
 	newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
 		t.Helper()
-		client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), identity.WithIdentity(),
+		client, err := testcontainers.Run(ctx, image, identity.WithIdentity(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import cephfs, rados"})))
 		if client != nil {
@@ -53,17 +63,46 @@ func testCephFSAuthorizationIsolation(t *testing.T) {
 	}
 	harness.CephFSIsolationJSON(t, ctx, admin, harness.CephFSIsolationSeed, harness.CephFSIsolationFSA, harness.CephFSIsolationFSB)
 
-	t.Run("caps per filesystem", func(t *testing.T) { testIsolationFilesystemCaps(t, ctx, cluster, newClient) })
-	t.Run("snapshot of a deleted directory", func(t *testing.T) { testIsolationDeletedDirectorySnapshot(t, ctx, cluster, admin, newClient) })
-	t.Run("same-named subvolumes", func(t *testing.T) { testIsolationSameNamedSubvolumes(t, ctx, fsA, admin, newClient) })
+	// Each subtest is one defect and collects the symptoms its then step
+	// observes; none means NOT_REPRODUCED for that defect.
+	defects := []struct {
+		name, result string
+		symptoms     []string
+		run          func(*testing.T, *[]string)
+	}{
+		{name: "caps per filesystem", result: "caps-per-filesystem", run: func(t *testing.T, symptoms *[]string) {
+			testIsolationFilesystemCaps(t, ctx, cluster, newClient, symptoms)
+		}},
+		{name: "snapshot of a deleted directory", result: "snapshot-of-a-deleted-directory", run: func(t *testing.T, symptoms *[]string) {
+			testIsolationDeletedDirectorySnapshot(t, ctx, cluster, admin, newClient, symptoms)
+		}},
+		{name: "same-named subvolumes", result: "same-named-subvolumes", run: func(t *testing.T, symptoms *[]string) {
+			testIsolationSameNamedSubvolumes(t, ctx, fsA, admin, newClient, symptoms)
+		}},
+	}
+	for i := range defects {
+		t.Run(defects[i].name, func(t *testing.T) { defects[i].run(t, &defects[i].symptoms) })
+	}
+	if t.Failed() {
+		return
+	}
+	for _, defect := range defects {
+		result := "NOT_REPRODUCED"
+		if len(defect.symptoms) > 0 {
+			result = "REPRODUCED"
+		}
+		t.Logf("EXPERIMENT_RESULT case=cephfs_authorization_isolation/%s result=%s image=%s symptoms=%q", defect.result, result, image, defect.symptoms)
+	}
 }
 
-// testIsolationFilesystemCaps checks that MDS caps with one clause per
-// filesystem grant each filesystem only its own clause, whatever the clause
-// order. Both OSD data pools are writable, so a refused create is the MDS's.
-// Each probe is a new libcephfs client, which authenticates with the current
-// caps.
-func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *ceph.Container, newClient func(*ceph.ClientConfig) testcontainers.Container) {
+// testIsolationFilesystemCaps reports whether MDS caps with one clause per
+// filesystem grant writes on a filesystem whose clause is read-only, in
+// either clause order. Both OSD data pools are writable, so a refused create
+// is the MDS's. Each probe is a new libcephfs client, which authenticates
+// with the current caps. A create or mkdir that succeeds in the read-only
+// filesystem is a symptom; the writable filesystem, the seed reads and the
+// principal without an iso-b clause are controls.
+func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *ceph.Container, newClient func(*ceph.ClientConfig) testcontainers.Container, symptoms *[]string) {
 	osd := "allow rw tag cephfs data=" + harness.CephFSIsolationFSA + ", allow rw tag cephfs data=" + harness.CephFSIsolationFSB
 	clause := func(access, fs string) string { return "allow " + access + " fsname=" + fs }
 	variants := []struct {
@@ -99,7 +138,10 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 				t.Fatalf("caps %q on %s: %v", variant.mds, fs, result)
 			}
 			for _, op := range []string{"create", "mkdir"} {
-				if (writable && result[op] != "ok") || (!writable && result[op] != "EACCES") {
+				switch {
+				case !writable && result[op] == "ok":
+					*symptoms = append(*symptoms, fmt.Sprintf("caps %q: %s succeeded in the read-only filesystem %s", variant.mds, op, fs))
+				case (writable && result[op] != "ok") || (!writable && result[op] != "EACCES"):
 					t.Fatalf("caps %q on %s (writable=%t): %s=%v, all %v", variant.mds, fs, writable, op, result[op], result)
 				}
 			}
@@ -125,11 +167,13 @@ func testIsolationFilesystemCaps(t *testing.T, ctx context.Context, cluster *cep
 	}
 }
 
-// testIsolationDeletedDirectorySnapshot checks the MDS path check for an
-// inode that is reachable only through a snapshot: the live directory was
-// unlinked into the MDS stray directory, so its current path is no longer
-// under the principal's path.
-func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cluster *ceph.Container, admin testcontainers.Container, newClient func(*ceph.ClientConfig) testcontainers.Container) {
+// testIsolationDeletedDirectorySnapshot reports whether the MDS path check
+// refuses an inode that is reachable only through a snapshot: the live
+// directory was unlinked into the MDS stray directory, so its current path is
+// no longer under the principal's path. A snapshot read that fails after the
+// deletion is a symptom; the reads before it, the live child and the refused
+// mounts of / and /dir2 are controls.
+func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cluster *ceph.Container, admin testcontainers.Container, newClient func(*ceph.ClientConfig) testcontainers.Container, symptoms *[]string) {
 	identity, err := cluster.CreateClient(ctx, "iso-dir1", ceph.ClientCaps{Mon: "allow r",
 		MDS: "allow rw fsname=" + harness.CephFSIsolationFSB + " path=/dir1", OSD: "allow rw tag cephfs data=" + harness.CephFSIsolationFSB})
 	if err != nil {
@@ -139,14 +183,19 @@ func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cl
 	harness.CephFSIsolationJSON(t, ctx, admin, isolationSnapshotSeed, harness.CephFSIsolationFSB)
 	before := harness.CephFSIsolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), harness.CephFSIsolationFSB, "before")
 	after := harness.CephFSIsolationJSON(t, ctx, client, isolationSnapshotProbe, identity.User(), identity.KeyringPath(), harness.CephFSIsolationFSB, "delete")
+	readable := func(result map[string]any) bool {
+		return result["snapshot read"] == "dir1-child-bytes" && result["snapshot size"] == float64(len("dir1-child-bytes"))
+	}
 	for phase, result := range map[string]map[string]any{"before deletion": before, "after deletion": after} {
-		if result["snapshot read"] != "dir1-child-bytes" || result["snapshot size"] != float64(len("dir1-child-bytes")) ||
-			result["mount /"] != "EPERM" || result["mount /dir2"] != "EPERM" {
+		if result["mount /"] != "EPERM" || result["mount /dir2"] != "EPERM" {
 			t.Fatalf("%s: %v", phase, result)
 		}
 	}
-	if before["live read"] != "dir1-child-bytes" || after["deleted"] != "ok" || after["live read"] != "ENOENT" {
-		t.Fatalf("the live child was not readable before or present after its deletion: before=%v after=%v", before, after)
+	if !readable(before) || before["live read"] != "dir1-child-bytes" || after["deleted"] != "ok" || after["live read"] != "ENOENT" {
+		t.Fatalf("the child was not readable live and through the snapshot before, or present after its deletion: before=%v after=%v", before, after)
+	}
+	if !readable(after) {
+		*symptoms = append(*symptoms, fmt.Sprintf("after the deletion the snapshot read is %v and its size %v", after["snapshot read"], after["snapshot size"]))
 	}
 	harness.CephFSIsolationJSON(t, ctx, admin, isolationSnapshotCleanup, harness.CephFSIsolationFSB)
 	if err := identity.Delete(ctx); err != nil {
@@ -154,10 +203,12 @@ func testIsolationDeletedDirectorySnapshot(t *testing.T, ctx context.Context, cl
 	}
 }
 
-// testIsolationSameNamedSubvolumes checks that a subvolume name used in two
-// groups maps to two RADOS namespaces, so that the OSD cap of each group's
-// authorization covers only its own file data.
-func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, admin testcontainers.Container, newClient func(*ceph.ClientConfig) testcontainers.Container) {
+// testIsolationSameNamedSubvolumes reports whether a subvolume name used in
+// two groups maps to one RADOS namespace, so that the OSD cap of each
+// group's authorization also covers the other's file data. One namespace, a
+// reader cap that names the other's namespace, and a read of the other's
+// object are symptoms; the readers' own file and object are controls.
+func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, admin testcontainers.Container, newClient func(*ceph.ClientConfig) testcontainers.Container, symptoms *[]string) {
 	type tenant struct {
 		volume *subvolume.Subvolume
 		info   *subvolume.Metadata
@@ -186,19 +237,33 @@ func testIsolationSameNamedSubvolumes(t *testing.T, ctx context.Context, fs *cep
 		tenants = append(tenants, &tenant{volume: volume, info: info, reader: reader, object: fmt.Sprint(object)})
 	}
 	a, b := tenants[0], tenants[1]
-	if a.info.PoolNamespace == "" || a.info.PoolNamespace == b.info.PoolNamespace || a.info.DataPool != b.info.DataPool {
-		t.Fatalf("same-named subvolumes share a RADOS namespace: %s=%q %s=%q", a.volume.GroupName, a.info.PoolNamespace, b.volume.GroupName, b.info.PoolNamespace)
+	if a.info.PoolNamespace == "" || b.info.PoolNamespace == "" || a.info.DataPool != b.info.DataPool {
+		t.Fatalf("the namespace-isolated subvolumes have no namespace or different data pools: %s=%+v %s=%+v", a.volume.GroupName, a.info, b.volume.GroupName, b.info)
+	}
+	shared := a.info.PoolNamespace == b.info.PoolNamespace
+	if shared {
+		*symptoms = append(*symptoms, fmt.Sprintf("same-named subvolumes share the RADOS namespace %q", a.info.PoolNamespace))
 	}
 	for _, pair := range [][2]*tenant{{a, b}, {b, a}} {
 		own, other := pair[0], pair[1]
 		identity := own.reader.Client
 		caps, err := identity.Capabilities(ctx)
-		if err != nil || !strings.Contains(caps.OSD, "namespace="+own.info.PoolNamespace) || strings.Contains(caps.OSD, "namespace="+other.info.PoolNamespace) {
+		if err != nil || !strings.Contains(caps.OSD, "namespace="+own.info.PoolNamespace) {
 			t.Fatalf("reader of %s has OSD caps %q (error %v)", own.volume.GroupName, caps.OSD, err)
+		}
+		if !shared && strings.Contains(caps.OSD, "namespace="+other.info.PoolNamespace) {
+			*symptoms = append(*symptoms, fmt.Sprintf("reader of %s has OSD caps %q, which name the other namespace", own.volume.GroupName, caps.OSD))
 		}
 		result := harness.CephFSIsolationJSON(t, ctx, newClient(identity), isolationTenantProbe, identity.User(), identity.KeyringPath(), fs.FilesystemName,
 			own.volume.Path, own.info.DataPool, own.info.PoolNamespace, own.object, other.info.PoolNamespace, other.object)
-		if result["own file"] != "bytes-of-"+own.volume.GroupName || result["own object"] != "bytes-of-"+own.volume.GroupName || result["other object"] != "EPERM" {
+		if result["own file"] != "bytes-of-"+own.volume.GroupName || result["own object"] != "bytes-of-"+own.volume.GroupName {
+			t.Fatalf("reader of %s: %v", own.volume.GroupName, result)
+		}
+		switch result["other object"] {
+		case "EPERM":
+		case "bytes-of-" + other.volume.GroupName:
+			*symptoms = append(*symptoms, fmt.Sprintf("reader of %s read the object of %s", own.volume.GroupName, other.volume.GroupName))
+		default:
 			t.Fatalf("reader of %s: %v", own.volume.GroupName, result)
 		}
 	}
