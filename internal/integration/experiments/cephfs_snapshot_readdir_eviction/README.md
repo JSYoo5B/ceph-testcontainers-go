@@ -36,8 +36,7 @@ all do this; no release that was run lists the snapshot. Upstream
 reference:
 [tracker 82652](https://tracker.ceph.com/issues/82652).
 
-The test fails on every release it ran on. That is the expected result for
-an unpatched defect; it is not a fixture failure.
+The defect is reproduced on every release it ran on.
 
 ## Requirements
 
@@ -53,34 +52,24 @@ an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 50 seconds and fails on
-the role images of all three release lines. No automatic run includes it
-(the default checks of a pull request, pushes to `main`, periodic samples),
-and it never gates anything. A maintainer can run it on demand, also on a
-pull request's head with the comment below.
+Standalone reproducer. The test fails only when its setup, a condition or a
+control does not hold; the documented symptom does not fail it. It prints
+one `EXPERIMENT_RESULT` line instead, `REPRODUCED` on its default image,
+Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
+request, pushes to `main`, periodic samples), and it never gates anything. A
+maintainer can run it on demand, also on a pull request's head with the
+comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=cephfs_snapshot_readdir_eviction`.
 - Comment: `/ci run cephfs_snapshot_readdir_eviction` or
   `/ci run cephfs_snapshot_readdir_eviction on umbrella`.
 
+Every container the test starts uses the package variable `image`, so the
+role images that a batch exports do not reach it.
+
 ## Running it
 
-Prepare the pinned role images of one supported release (20.2.4, 21.2.0 or
-19.2.5) and export them:
-
-```sh
-release=20.2.4
-dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
-python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,cephfs --prepare-only --output-dir "$dir" \
-  --github-env "$dir/role-images.env" &&
-  . "./$dir/role-images.env" &&
-  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE
-```
-
-Releases without published role images run on the upstream aggregate that
-`.github/ceph-discovery-images.json` pins, with no role variable set
-(`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:...`).
+On the default image, which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -88,19 +77,18 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/cephfs_snapshot_readdir_eviction
 ```
 
-or, exactly as CI runs the batch:
+No release is fixed. Another image runs the same way, for example Umbrella 21.2.0:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch cephfs_snapshot_readdir_eviction \
-  --package ./internal/integration/experiments/cephfs_snapshot_readdir_eviction \
-  --directory "artifacts/cephfs-snapshot-readdir-eviction-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_snapshot_readdir_eviction_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -run '^TestCephFSSnapshotListingAcrossCacheEviction$' \
+  ./internal/integration/experiments/cephfs_snapshot_readdir_eviction
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
 The test logs the client's `ceph --version` and the release its `cephfs`
-module reports; record the image digests with the result.
+module reports, and one `CEPHFS_SNAPSHOT_READDIR_EVICTION_RECEIPT` line per
+listing client.
 
 ## Observations and controls
 
@@ -137,12 +125,18 @@ not name the snapshot in their path, and whether it dropped its dentry of
 
 ## Reading the result
 
-The results below ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
+Standalone runs, Linux amd64 host, bridge networking, one run per image:
+
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 47 s; the trigger handle returned 2987
+  entries, 372 snapshot names and 2615 live names, and 7 of its 8 readdir
+  requests did not name the snapshot.
+
+The release comparison ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
 19.2.5 role images (essential `43ee23624e7a…`, client `a69e1319ce88…`, cephfs `99f0ff6e827c…`), the 21.2.0 role images
 (essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the upstream aggregates of 20.2.5
 (`sha256:4337ac8ac81d…`) and 19.2.2 (`sha256:8214ebff6133…`), each with the client module of its own release.
 
-All five failed with `observed defect:` and the same numbers, after every
+All five showed the defect with the same numbers, after every
 condition and control held: Tentacle 20.2.4 (47 s), Tentacle 20.2.5 (47 s),
 Umbrella 21.2.0 (47 s), Squid 19.2.5 (53 s) and Squid 19.2.2 (51 s). The
 trigger client dropped its dentry of `s1` during the wait and then sent 7
@@ -157,16 +151,16 @@ all 3000 snapshot names with 2 requests, its log showed no dropped dentry,
 and the test stopped with `condition not established`: lookups alone, faster
 than a tick, do not open the window.
 
-- **Pass:** the trigger client dropped its dentry of the snapshot and still
+- **NOT_REPRODUCED:** the trigger client dropped its dentry of the snapshot and still
   listed exactly the snapshot.
-- **Observed bug:** the failure starts with `observed defect:`: the first
+- **REPRODUCED:** the first
   50 entries are distinct names of the snapshot, and the entries read after
   the dentry was dropped hold live names. It gives the counts of the trigger's snapshot listing: entries returned, snapshot
   names found and missing, and live names, with a few of each, and how many
-  of the handle's readdir requests did not name the snapshot. The receipt
+  of the handle's readdir requests did not name the snapshot (the symptom). The receipt
   (`CEPHFS_SNAPSHOT_READDIR_EVICTION_RECEIPT`) quotes the client's log line
   for the dropped dentry and the first two such requests.
-- **Not reproduced:** a pass on a build claimed to be affected. Check in
+- **NOT_REPRODUCED on a build claimed to be affected:** check in
   the trigger's receipt that the dentry was dropped and that the handle
   sent several requests.
 - **Unavailable prerequisite:** the failure starts with
