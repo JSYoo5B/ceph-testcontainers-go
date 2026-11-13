@@ -11,9 +11,9 @@ import (
 )
 
 func TestMultiClusterRGWSyncTranslationFiltering(t *testing.T) {
-	testRGWSyncTranslationFiltering(t)
+	testRGWSyncTranslationFiltering(t, "bridge")
 }
 
 func TestHostNetworkMultiClusterRGWSyncTranslationFiltering(t *testing.T) {
-	testRGWSyncTranslationFiltering(t, ceph.WithHostNetwork())
+	testRGWSyncTranslationFiltering(t, "host", ceph.WithHostNetwork())
 }
