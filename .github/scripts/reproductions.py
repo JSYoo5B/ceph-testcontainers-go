@@ -60,10 +60,48 @@ ROLE_VARIABLES = {"essential": "CEPH_TEST_ESSENTIAL_IMAGE", "client": "CEPH_TEST
                   "cephfs": "CEPH_TEST_CEPHFS_IMAGE", "rbd-aux": "CEPH_TEST_RBD_AUX_IMAGE", "rgw": "CEPH_TEST_RGW_IMAGE"}
 
 
-# A top-level declaration of a gofmt'd file: the function's name and its body,
-# which ends at the first line that is only a closing brace.
-FUNCTION = re.compile(r"^func (?:\([^)]*\) )?(\w+)\b.*?^}$", re.MULTILINE | re.DOTALL)
+# A line that starts a top-level declaration of a gofmt'd file.
+DECLARATION = re.compile(r"(?:func|type|var|const|import)\b")
+FUNCTION_NAME = re.compile(r"func (?:\([^)]*\) )?(\w+)\b")
 IDENTIFIER = re.compile(r"\b\w+\b")
+
+
+def top_level_declarations(text):
+    """The source of each top-level declaration of a Go file, in order. A
+    declaration runs from its keyword at the start of a line, outside any
+    brace, string, rune or comment, to the start of the next one."""
+    starts, depth, i, line_start = [], 0, 0, True
+    while i < len(text):
+        if line_start and depth == 0 and DECLARATION.match(text, i):
+            starts.append(i)
+        line_start = False
+        char = text[i]
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            i = len(text) if i < 0 else i
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = len(text) if end < 0 else end + 2
+            continue
+        if char in "\"'":
+            i += 1
+            while i < len(text) and text[i] != char and text[i] != "\n":
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
+        if char == "`":
+            end = text.find("`", i + 1)
+            i = len(text) if end < 0 else end + 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(depth - 1, 0)
+        elif char == "\n":
+            line_start = True
+        i += 1
+    return [text[start:end] for start, end in zip(starts, starts[1:] + [len(text)])]
 
 
 def started_units(paths, tests):
@@ -72,8 +110,10 @@ def started_units(paths, tests):
     other such functions. paths are the test files compiled into the run."""
     bodies = {}
     for path in paths:
-        for match in FUNCTION.finditer(Path(path).read_text(encoding="utf-8")):
-            bodies[match[1]] = bodies.get(match[1], "") + match[0]
+        for declaration in top_level_declarations(Path(path).read_text(encoding="utf-8")):
+            match = FUNCTION_NAME.match(declaration)
+            if match:
+                bodies[match[1]] = bodies.get(match[1], "") + declaration
     reached, pending = set(), [test for test in tests if test in bodies]
     while pending:
         name = pending.pop()

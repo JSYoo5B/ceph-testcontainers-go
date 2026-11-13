@@ -1013,7 +1013,9 @@ class CompletionTests(unittest.TestCase):
                                                  "\t_ = parseResponse(\"x\")\n}\n")
                 (root / case / "case_helpers_test.go").write_text(
                     "package rgw_case_test\n\nfunc parseResponse(text string) string {\n\treturn text\n}\n")
-                (root / native["path"]).write_text("package rgw_case_test\n\nfunc TestCase(t *testing.T) {\n"
+                # A one-line helper right above the reproducer must not
+                # absorb it (gofmt keeps such a declaration on one line).
+                (root / native["path"]).write_text("package rgw_case_test\n\nfunc noop() {}\n\nfunc TestCase(t *testing.T) {\n"
                                                    "\trepro := harness.StartReproduction(t, \"rgw_case\", \"trigger\")\n"
                                                    "\t_ = parseResponse(\"y\")\n\trepro.Finish()\n}\n")
                 (root / case / "reproductions.json").write_text(json.dumps({

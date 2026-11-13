@@ -249,6 +249,41 @@ class StartedUnitTests(unittest.TestCase):
             self.assertEqual(reproductions.started_units(paths, ["TestCase", "TestHostCase", "TestParsesTheResponse"]),
                              {"rgw_case", "rgw_case/host"})
 
+    def test_declaration_boundaries_survive_one_line_functions_and_literals(self):
+        source = """package rgw_case_test
+
+import "testing"
+
+func helper() {}
+
+func TestNative(t *testing.T) {
+	repro := harness.StartReproduction(t, "rgw_case", "trigger")
+	repro.Finish()
+}
+
+func describe(v interface{}) string { return "}" + '{' + `}` } // }
+
+/* func TestHidden(t *testing.T) { } */
+var template = `
+func TestRaw(t *testing.T) {
+}
+`
+
+func TestOther(t *testing.T) {
+	_ = describe(helper)
+	_ = "\\"}"
+}
+"""
+        names = [reproductions.FUNCTION_NAME.match(d)[1] for d in reproductions.top_level_declarations(source)
+                 if reproductions.FUNCTION_NAME.match(d)]
+        self.assertEqual(names, ["helper", "TestNative", "describe", "TestOther"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "case_native_regression_test.go"
+            path.write_text(source)
+            self.assertEqual(reproductions.source_units(directory), {"rgw_case"})
+            self.assertEqual(reproductions.started_units([path], ["TestNative"]), {"rgw_case"})
+            self.assertEqual(reproductions.started_units([path], ["TestOther"]), set())
+
     def test_repository_profiles_expect_verdicts_only_of_their_reproducers(self):
         import tag_scenarios
         source = tag_scenarios.load_catalog(ROOT)
