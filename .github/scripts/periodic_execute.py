@@ -105,8 +105,9 @@ def cpu_eligible(baseline, architecture, run=read_command):
 def role_environment(plan, prepared):
     """The CEPH_TEST_* variables of the prepared images. A historical
     aggregate serves the five dependency roles; the published role images
-    serve every role the plan references, optional ones too, and
-    SCENARIO_IMAGE_ROLES names exactly the roles supplied."""
+    serve the roles the plan references, which are the ones its entries
+    declare, optional ones too, and SCENARIO_IMAGE_ROLES names exactly the
+    roles supplied."""
     if 'reference' in plan['images']:
         roles = tuple(images.ROLE_ENV)
     else:
@@ -316,7 +317,7 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
                 snapshot = True
                 args = [sys.executable, '.github/scripts/in_test_images.py', '--compile', str(compiled),
                         '--tests', ','.join(item['tests']), '--release', plan['release'],
-                        '--roles', p['image_roles'], '--directory', str(work / 'test-images')]
+                        '--directory', str(work / 'test-images')]
                 if 'reference' in plan['images']:
                     args += ['--discovery']
                 record['phases']['test_images'] = runner(args, work / 'test-images.log', 300, environment)

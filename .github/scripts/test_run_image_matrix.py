@@ -59,7 +59,8 @@ class Runtime:
             platform = runner.native_platform(self.info)
             image = {"Id": "sha256:" + hashlib.sha256(reference.encode()).hexdigest(),
                      "Os": "linux", "Architecture": platform.split("/")[1],
-                     "RepoDigests": [reference.split("@")[0] + "@sha256:" + "a" * 64]}
+                     # Docker records the repository and the manifest digest, never the tag.
+                     "RepoDigests": [runner.REGISTRY + "@sha256:" + "a" * 64]}
             image.update(self.inspect_overrides.get(reference, {}))
             return subprocess.CompletedProcess(command, 0, json.dumps([image]), "")
         raise AssertionError("unexpected command (no builds, prune, or Docker run permitted): " + repr(command))
@@ -92,7 +93,6 @@ class MatrixTests(unittest.TestCase):
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
         self.write(".github/scripts/registry_pull.py", SCRIPT.with_name("registry_pull.py").read_text())
-        self.write(".github/ceph-role-images.json", (SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
         self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.DEFAULT_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
         self.write("ceph/internal/scripts/essential.sh", "#!/bin/sh\n")
@@ -117,12 +117,12 @@ class MatrixTests(unittest.TestCase):
     def summary(self):
         return json.loads((self.output / "summary.json").read_text())
 
-    def test_aggregate_pins_all_roles(self):
+    def test_aggregate_tag_serves_all_roles(self):
         self.assertEqual(self.invoke(env={name: "unrelated:mutable" for name in runner.ROLE_ENV.values()}), 0)
         report = self.summary()
         self.assertEqual(report["images"]["all"]["reference"], runner.DEFAULT_IMAGE)
         self.assertEqual(report["images"]["all"]["repo_digests"],
-                         [runner.DEFAULT_IMAGE.split("@")[0] + "@sha256:" + "a" * 64])
+                         [runner.REGISTRY + "@sha256:" + "a" * 64])
         self.assertEqual(report["platform"], "linux/arm64")
         # The index digest and the platform child that Docker selected are
         # recorded apart.
@@ -148,7 +148,12 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(report["preparation_passed"])
         self.assertEqual(report["runtime_result"], "not_run")
         self.assertIsNone(self.runtime.make_environment)
-        self.assertTrue(all("@sha256:" in item["reference"] for item in report["images"].values()))
+        # The role tags are prepared as tags; the resolved identity of each
+        # is what the summary records next to it.
+        self.assertEqual({role: item["reference"] for role, item in report["images"].items()},
+                         {role: runner.role_tag("official", "20.2.4", role) for role in ("essential", "client")})
+        self.assertTrue(all(runner.IMAGE_ID.fullmatch(item["image_id"]) and item["repo_digests"]
+                            for item in report["images"].values()))
 
     def test_all_six_reference_mappings(self):
         for variant in ("official", "debian", "ubuntu"):
@@ -157,12 +162,11 @@ class MatrixTests(unittest.TestCase):
                     refs = runner.image_references(variant, layout, "20.2.4")
                     if layout == "all":
                         self.assertEqual(set(refs), {"all"})
-                        expected = runner.REGISTRY + "@" + runner.published_role_pins("20.2.4", variant)["all"]
-                        self.assertEqual(refs["all"], expected)
+                        self.assertEqual(refs["all"], runner.REGISTRY + ":" + variant + "-20.2.4-all")
                     else:
                         self.assertEqual(set(refs), set(runner.ROLE_ENV))
                         for role, reference in refs.items():
-                            self.assertEqual(reference, runner.REGISTRY + "@" + runner.published_role_pins("20.2.4", variant)[role])
+                            self.assertEqual(reference, runner.REGISTRY + ":" + variant + "-20.2.4-" + role)
 
     def test_roles_freeze_five_role_ids(self):
         self.assertEqual(self.invoke(["--variant", "official", "--layout", "roles", "--platform", "linux/arm64"],
@@ -337,8 +341,8 @@ class MatrixTests(unittest.TestCase):
             runner.image_references("official", "all", "20.2.4", ("essential",))
 
     def test_digest_pins_pull_the_pinned_manifest_of_each_role(self):
-        # A campaign pins the role tags once, so that every attempt runs the
-        # same manifests even if a tag moves during the campaign.
+        # A run resolves the role tags once, so that every job and attempt
+        # runs the same manifests even if a tag moves during the run.
         essential, client = "sha256:" + "c" * 64, "sha256:" + "d" * 64
         pinned = runner.REGISTRY + "@" + essential
         self.runtime.missing.add(pinned)
@@ -350,6 +354,23 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(report["pinned_digests"], {"essential": essential, "client": client})
         # Without pins the tags are pulled as before.
         self.assertEqual(runner.pin_references({"essential": "r:t"}, {}), {"essential": "r:t"})
+
+    def test_a_prepared_role_without_a_pin_is_refused_before_any_pull(self):
+        # A run pins the roles its batches declare. A job that prepares a
+        # role outside those pins must not pull that role's tag next to the
+        # pinned ones: nothing is pulled and nothing is exported.
+        env_file = self.write("github-env", "")
+        pins = "essential=sha256:" + "c" * 64 + ",client=sha256:" + "d" * 64
+        self.runtime.missing |= {runner.role_tag("official", "20.2.4", "mgr-modules"),
+                                 runner.REGISTRY + "@sha256:" + "c" * 64, runner.REGISTRY + "@sha256:" + "d" * 64}
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential,client,mgr-modules",
+                                      "--digests", pins, "--github-env", str(env_file)]), 1)
+        report = self.summary()
+        self.assertIn("name no mgr-modules role", report["error"])
+        self.assertFalse(report["preparation_passed"])
+        self.assertEqual((self.runtime.stream_commands, report["images"], env_file.read_text()), ([], {}, ""))
+        with self.assertRaisesRegex(ValueError, "name no client,rgw role"):
+            runner.pin_references({"essential": "a", "client": "b", "rgw": "c"}, {"essential": "sha256:" + "c" * 64})
 
     def test_digest_pins_are_validated_before_tools_or_output(self):
         digest = "sha256:" + "e" * 64
@@ -655,53 +676,64 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
 
     def test_each_release_selects_its_own_published_images(self):
-        self.assertEqual(runner.DEFAULT_IMAGE, runner.REGISTRY+"@"+runner.published_role_pins(runner.RELEASE)["all"])
+        self.assertEqual(runner.DEFAULT_IMAGE, runner.REGISTRY + ":official-" + runner.RELEASE + "-all")
         for release, official in runner.RELEASES.items():
             with self.subTest(release=release):
                 self.assertRegex(official, r"^quay\.io/ceph/ceph:v" + re.escape(release) + r"@sha256:[0-9a-f]{64}$")
-                self.assertEqual(runner.image_references("official", "all", release), {"all": runner.REGISTRY+"@"+runner.published_role_pins(release)["all"]})
+                self.assertEqual(runner.image_references("official", "all", release),
+                                 {"all": runner.REGISTRY + ":official-" + release + "-all"})
                 self.assertEqual(runner.image_references("ubuntu", "roles", release)["essential"],
-                                 runner.REGISTRY+"@"+runner.published_role_pins(release,"ubuntu")["essential"])
+                                 runner.REGISTRY + ":ubuntu-" + release + "-essential")
                 self.assertEqual(runner.parse_arguments(("--release", release)).release, release)
 
 
 class RoleSelectionTests(unittest.TestCase):
-    def test_library_default_and_all_variants_are_digest_pinned(self):
+    def test_library_default_and_all_variants_are_release_role_tags(self):
         source = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
         self.assertIn('const DefaultImage = "' + runner.DEFAULT_IMAGE + '"', source)
+        tag = re.compile(re.escape(runner.REGISTRY) + r":(official|debian|ubuntu)-[0-9]+\.[0-9]+\.[0-9]+-[a-z-]+\Z")
+        self.assertRegex(runner.DEFAULT_IMAGE, tag)
         for release in runner.RELEASES:
-            for variant in ("official", "debian", "ubuntu"):
-                pins = runner.published_role_pins(release, variant)
+            for variant in runner.VARIANTS:
                 refs = runner.image_references(variant, "roles", release)
-                self.assertEqual(set(refs), set(runner.ROLE_ENV))
-                self.assertEqual(refs, {role:runner.REGISTRY+"@"+pins[role] for role in runner.ROLE_ENV})
-                self.assertEqual(runner.image_references(variant,"all",release), {"all":runner.REGISTRY+"@"+pins["all"]})
+                self.assertEqual(refs, {role: runner.role_tag(variant, release, role) for role in runner.ROLE_ENV})
+                self.assertEqual(runner.image_references(variant, "all", release),
+                                 {"all": runner.role_tag(variant, release, "all")})
+                # No reference of the matrix names a digest: a rebuild under
+                # the tag needs no change here. Only a run's own pins do.
+                for reference in list(refs.values()) + [runner.role_tag(variant, release, "all")]:
+                    self.assertRegex(reference, tag)
+                    self.assertIn(reference, runner.published_references())
                 override = "sha256:" + "f" * 64
-                self.assertEqual(runner.pin_references(refs,{"essential":override})["essential"],runner.REGISTRY+"@"+override)
+                pins = {role: override for role in refs} | {"mgr-modules": override}
+                self.assertEqual(runner.pin_references(refs, pins),
+                                 {role: runner.REGISTRY + "@" + override for role in refs})
+                with self.assertRaisesRegex(ValueError, "refusing to pull an unpinned tag"):
+                    runner.pin_references(refs, {"essential": override})
+
+    def test_no_script_or_workflow_reads_a_checked_in_role_digest_map(self):
+        root = SCRIPT.parents[2]
+        name = "ceph-role-" + "images.json"
+        self.assertFalse((root / ".github" / name).exists())
+        readers = [path.relative_to(root).as_posix()
+                   for directory in (".github", "internal", "ceph", "docs", "Makefile")
+                   for path in ([root / directory] if (root / directory).is_file() else (root / directory).rglob("*"))
+                   if path.is_file() and path.suffix in (".py", ".yml", ".yaml", ".go", ".md", ".json", "")
+                   and name in path.read_text(encoding="utf-8", errors="replace")]
+        self.assertEqual(readers, [])
 
     def test_mgr_modules_is_an_optional_role_of_the_official_variant(self):
         self.assertEqual(runner.published_roles("official"), tuple(runner.ROLE_ENV) + ("mgr-modules",))
         self.assertEqual(runner.published_roles("debian"), tuple(runner.ROLE_ENV))
         for release in runner.RELEASES:
             with self.subTest(release=release):
-                pins = runner.published_role_pins(release)
                 self.assertEqual(runner.image_references("official", "roles", release, ("essential", "mgr-modules")),
-                                 {role: runner.REGISTRY + "@" + pins[role] for role in ("essential", "mgr-modules")})
+                                 {role: runner.role_tag("official", release, role) for role in ("essential", "mgr-modules")})
                 for variant in ("debian", "ubuntu"):
                     with self.assertRaisesRegex(ValueError, "publishes no mgr-modules role"):
                         runner.image_references(variant, "roles", release, ("essential", "mgr-modules"))
-        # The pins of a variant are exactly the roles it publishes.
-        data = json.loads((SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
-        for variant, change in (("official", lambda pins: pins.pop("mgr-modules")),
-                                ("debian", lambda pins: pins.update({"mgr-modules": "sha256:" + "e" * 64}))):
-            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory, \
-                    mock.patch.object(runner, "ROOT", Path(directory)):
-                edited = json.loads(json.dumps(data))
-                change(edited["images"]["20.2.4"][variant])
-                (Path(directory) / ".github").mkdir()
-                (Path(directory) / ".github/ceph-role-images.json").write_text(json.dumps(edited))
-                with self.assertRaisesRegex(ValueError, "pins are incomplete"):
-                    runner.published_role_pins("20.2.4", variant)
+                    self.assertNotIn(runner.role_tag(variant, release, "mgr-modules"), runner.published_references())
+        self.assertIn(runner.role_tag("official", runner.RELEASE, "mgr-modules"), runner.published_references())
 
     def test_unknown_role_and_missing_essential_are_refused(self):
         self.assertEqual(runner.parse_arguments([]).roles, tuple(runner.ROLE_ENV))
@@ -711,13 +743,6 @@ class RoleSelectionTests(unittest.TestCase):
         for roles in ("control", "client", "essential,osd", "essential,client,client"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 runner.parse_arguments(["--layout","roles","--prepare-only","--roles",roles])
-
-    def test_missing_variant_pins_fail_before_runtime(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(runner,"ROOT",Path(directory)):
-            root=Path(directory);(root/".github").mkdir()
-            (root/".github/ceph-role-images.json").write_text(json.dumps({"schema":1,"images":{}}))
-            with self.assertRaisesRegex(ValueError,"pins are incomplete"):
-                runner.image_references("official","roles","20.2.4")
 
     def test_prepared_environment_has_exactly_selected_ids(self):
         with tempfile.TemporaryDirectory() as directory:

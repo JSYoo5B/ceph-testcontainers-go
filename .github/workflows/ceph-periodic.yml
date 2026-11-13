@@ -261,7 +261,7 @@ jobs:
         id: images
         env:
           CAMPAIGN_RELEASE: ${{ inputs.release || '20.2.4' }}
-        run: python3 .github/scripts/periodic_campaign.py pin --release "$CAMPAIGN_RELEASE" --github-output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/role_image_pins.py pin --release "$CAMPAIGN_RELEASE" --github-output "$GITHUB_OUTPUT"
   representative:
     name: Representative
     needs: pin

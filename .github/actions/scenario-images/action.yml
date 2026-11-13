@@ -11,7 +11,7 @@ inputs:
     description: Comma-separated role images that the batch declares, essential included
     default: 'essential,client,cephfs,rbd-aux,rgw'
   digests:
-    description: Comma-separated role=sha256:<digest> overrides of the published role indexes; empty uses checked-in pins
+    description: Comma-separated role=sha256:<digest> pins that the run resolved from the published role tags, naming every role in roles; empty pulls the tags
     default: ''
   platform:
     description: The planned native platform; preparation fails on a Docker engine of another one

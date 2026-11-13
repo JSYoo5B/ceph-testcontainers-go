@@ -395,7 +395,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             # attempt of the source-owned representative batches.
             pin, representative, history = jobs.pop("pin"), jobs.pop("representative"), jobs.pop("history")
             self.assertEqual(scalar(pin, "if"), "needs.gate.outputs.campaign == 'true'")
-            self.assertIn("python3 .github/scripts/periodic_campaign.py pin --release", pin)
+            self.assertIn("python3 .github/scripts/role_image_pins.py pin --release", pin)
             self.assertEqual(scalar(representative, "needs"), "pin")
             self.assertEqual(scalar(representative, "category"), "representative")
             self.assertEqual(scalar(representative, "ref"), "${{ needs.pin.outputs.sha }}")
@@ -680,7 +680,16 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(reusable.count("          ref: ${{ inputs.ref }}\n"), 2)
         runtime_steps = steps(runtime)
         prepared = next(step for step in runtime_steps if "uses: ./.github/actions/scenario-images" in step)
-        self.assertEqual(scalar(prepared, "digests"), "${{ inputs.role_digests }}")
+        # Plan pins the role tags once for the run, or keeps the caller's
+        # pins; every runtime job prepares exactly those.
+        pinning = next(step for step in steps(plan) if "role_image_pins.py pin" in run_command(step))
+        self.assertEqual(scalar(pinning, "id"), "role_images")
+        self.assertEqual(scalar(pinning, "SCENARIO_ROLE_DIGESTS"), "${{ inputs.role_digests }}")
+        self.assertIn('--digests "$SCENARIO_ROLE_DIGESTS" --plan artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"',
+                      run_command(pinning))
+        self.assertIn("      role_digests: ${{ steps.role_images.outputs.digests }}\n", plan)
+        self.assertEqual(scalar(prepared, "digests"), "${{ needs.plan.outputs.role_digests }}")
+        self.assertNotIn("inputs.role_digests", runtime)
         # Each attempt has its own artifacts but keeps the profile ID.
         names = re.findall(r"(?:artifact_name|          name): ((?:runtime-cleanup|scenario-images|tag-scenario)-.*)$",
                            runtime, re.M)

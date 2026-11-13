@@ -65,7 +65,9 @@ func startFscryptCluster(t *testing.T, ctx context.Context) *fscryptCluster {
 // clientImage returns the image of path's client containers: the cluster's
 // client image for the kernel client, which needs only python3, and for
 // ceph-fuse the client image when it ships ceph-fuse, otherwise the
-// official image of the cluster's release, which does.
+// official image of the cluster's release, which does. Which build the
+// reference names is not part of the case: the client container reports its
+// own ceph-fuse release and answers the policy query itself.
 func (c *fscryptCluster) clientImage(t *testing.T, ctx context.Context, path string) string {
 	t.Helper()
 	image := harness.StaticFacts(c.cluster).Images.Client
@@ -75,39 +77,12 @@ func (c *fscryptCluster) clientImage(t *testing.T, ctx context.Context, path str
 	if code, _, err := harness.SessionExec(ctx, c.admin, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
 		t.Fatal(err)
 	} else if code == 0 {
-		if c.version == "21.2.0" {
-			// Matrix preparation can pass the same official image by local
-			// image ID or another tag. Check the image actually in use.
-			docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := docker.Close(); err != nil {
-					t.Error(err)
-				}
-			}()
-			running, err := c.admin.Inspect(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			built, err := docker.ImageInspect(ctx, running.Image)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if slices.Contains(built.RepoDigests, qualifiedFuseImage) {
-				return qualifiedFuseImage
-			}
-		}
 		return image
 	} else if code != 1 {
 		t.Fatalf("check for ceph-fuse in the client image: exit %d", code)
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(c.version) {
 		t.Fatalf("client image %s has no ceph-fuse, and Ceph version %q names no official image", image, c.version)
-	}
-	if c.version == "21.2.0" {
-		return qualifiedFuseImage
 	}
 	return "quay.io/ceph/ceph:v" + c.version
 }
@@ -635,7 +610,18 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 	// unencrypted directory.
 	var query fscryptPolicy
 	a.probe(t, ctx, &query, nil, "getpolicy", path, a.point+base+"/enc")
-	qualifiedMetadata := admission.qualifiedView(path, c.version, image)
+	// The client whose behavior the case judges: the host kernel's CephFS
+	// client for the cluster's release, or the ceph-fuse binary that this
+	// container runs, whatever image supplied it.
+	clientRelease := c.version
+	if path == fusePath {
+		clientRelease = harness.NativeBinaryRelease(t, ctx, a.ctr, "ceph-fuse")
+	}
+	qualifiedMetadata := admission.qualifiedView(path, clientRelease)
+	if !qualifiedMetadata {
+		t.Logf("FSCRYPT_UNESTABLISHED path=%s client=%s kernel=%s machine=%s: %s; this client's answers are recorded, not required",
+			path, clientRelease, admission.Kernel, admission.Machine, establishedCohorts)
+	}
 	refusal, classified := policyRefusal(path, query.Errno)
 	if !classified {
 		t.Fatalf("policy query on a new directory through the %s client: %+v", path, query)
@@ -646,7 +632,7 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		}
 		// The client build lacks the fscrypt ioctls: the recorded outcome.
 		a.umount(t, ctx)
-		t.Logf("FSCRYPT_CLIENT_REFUSED %s image=%s kernel=%s: %v; the mount, its MDS session and the client container are removed", c.version, image, admission.Kernel, refusal)
+		t.Logf("FSCRYPT_CLIENT_REFUSED %s client=%s image=%s kernel=%s: %v; the mount, its MDS session and the client container are removed", c.version, clientRelease, image, admission.Kernel, refusal)
 		return
 	}
 
@@ -811,8 +797,8 @@ func testFscryptPath(t *testing.T, ctx context.Context, c *fscryptCluster, path 
 		}
 	}
 
-	t.Logf("FSCRYPT_RECEIPT %s path=%s image=%s kernel=%s: a policy naming a key never added: errno %d; key %s added through client a, v2 AES-256-XTS/AES-256-CTS pad 32 set on an empty directory and read back through both clients; client a reads the plaintext names, %d bytes and the link target; client b without the key and with a wrong key (%s) lists 4 encoded names, ENOKEY on open, ENOENT for every plaintext name, exposed metadata %s; the control directory is plaintext through b; RADOS data object %s holds %d bytes without the plaintext and the control object holds it exactly; the encrypted directory object has 4 omap keys without a plaintext name, the control object has %s_head; key removal with a retained fd: %s; a remount is locked until the same key is added again (same identifier); snapshot %q of the encrypted directory reads the exact bytes with the key, its name is %s to client b, whose view of it is locked; keys removed (%s), mounts, MDS sessions and client containers gone",
-		c.version, path, image, admission.Kernel, noKey.Errno, added.Identifier, len(names.data), wrongAdded.Identifier, exposedMetadata,
+	t.Logf("FSCRYPT_RECEIPT %s path=%s client=%s established=%t image=%s kernel=%s: a policy naming a key never added: errno %d; key %s added through client a, v2 AES-256-XTS/AES-256-CTS pad 32 set on an empty directory and read back through both clients; client a reads the plaintext names, %d bytes and the link target; client b without the key and with a wrong key (%s) lists 4 encoded names, ENOKEY on open, ENOENT for every plaintext name, exposed metadata %s; the control directory is plaintext through b; RADOS data object %s holds %d bytes without the plaintext and the control object holds it exactly; the encrypted directory object has 4 omap keys without a plaintext name, the control object has %s_head; key removal with a retained fd: %s; a remount is locked until the same key is added again (same identifier); snapshot %q of the encrypted directory reads the exact bytes with the key, its name is %s to client b, whose view of it is locked; keys removed (%s), mounts, MDS sessions and client containers gone",
+		c.version, path, clientRelease, qualifiedMetadata, image, admission.Kernel, noKey.Errno, added.Identifier, len(names.data), wrongAdded.Identifier, exposedMetadata,
 		object(encSeed.Ino), len(stored), names.file, retainedDescription, snapName, map[bool]string{true: "plaintext", false: "encoded"}[snapVisible], strings.Join(cleanup, ", "))
 }
 

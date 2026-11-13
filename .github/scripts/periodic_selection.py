@@ -59,18 +59,23 @@ def image_identity(release, discovery, entries=()):
     """The image identity of a plan. A historical aggregate serves only the
     five dependency roles: whether one ships the modules of an optional role
     is not established, so a plan whose entries declare one is not eligible
-    on it rather than run on a guessed image."""
+    on it rather than run on a guessed image. A published release supplies
+    the role images that the plan's entries declare, and no other: a role
+    that no selected entry uses is neither pulled nor able to fail the
+    sample. Essential is always one of them, because image preparation reads
+    the native build from it."""
     inventory = patch_inventory()
+    declared = {role for item in entries if item['profile']['image_roles']
+                for role in images.parse_roles(item['profile']['image_roles'])}
     if discovery:
         row = dict(inventory[release])
-        optional = sorted({role for item in entries if item['profile']['image_roles']
-                           for role in images.parse_roles(item['profile']['image_roles'])
-                           if role in images.OPTIONAL_ROLE_ENV})
+        optional = sorted(declared & set(images.OPTIONAL_ROLE_ENV))
         if optional and row['eligibility'] == 'available':
             row.update(eligibility='artifact_unavailable', unavailable_roles=optional)
         return row
+    roles = tuple(role for role in images.DECLARABLE_ROLE_ENV if role in declared | {'essential'})
     return {'eligibility': 'available', 'layout': 'roles',
-            'references': images.image_references('official', 'roles', release, images.published_roles('official')),
+            'references': images.image_references('official', 'roles', release, roles),
             'cpu_baseline': inventory.get(release, {}).get('cpu_baseline', {})}
 
 def entry(profile, tests, network, core=False):
@@ -102,7 +107,7 @@ def validate_plan(plan, catalog):
         raise ValueError('invalid, stale or unbounded periodic plan')
     expected_images = image_identity(plan['release'], 'reference' in plan['images'], plan['entries'])
     if plan['images'] != expected_images:
-        raise ValueError('planned images differ from the source pins')
+        raise ValueError('planned images differ from the source-declared references')
     profiles = {p['id']: p for p in tags.discover(catalog)['include'] + tags.discover_optional(catalog)['include']}
     if len({e['id'] for e in plan['entries']}) != len(plan['entries']):
         raise ValueError('duplicate planned entry')
@@ -134,7 +139,7 @@ def freeze_test_images(plan, resolved=None, deadline=None):
     the plan, rather than disappearing or selecting a different cohort.
     """
     import in_test_images
-    import periodic_campaign
+    import role_image_pins
     deadline = time.monotonic() + 180 if deadline is None else deadline
     resolved = {} if resolved is None else resolved
     def run(argv, **kwargs):
@@ -157,12 +162,11 @@ def freeze_test_images(plan, resolved=None, deadline=None):
             if result.returncode:
                 raise ValueError('test image analysis failed')
             uses = in_test_images.validate_analysis(json.loads(result.stdout), p['package'], item['tests'])
-            planned, _ = in_test_images.plan_images(uses, plan['release'], images.parse_roles(p['image_roles']),
-                                                   True, 'reference' in plan['images'])
+            planned, _ = in_test_images.plan_images(uses, plan['release'], True, 'reference' in plan['images'])
             references.update(image['reference'] for image in planned)
         for reference in sorted(references):
             if reference not in resolved:
-                resolved[reference] = periodic_campaign.resolve(reference, run)
+                resolved[reference] = role_image_pins.resolve(reference, run)
             manifest = resolved[reference]
             if '@' in reference and reference.rsplit('@', 1)[1] != manifest:
                 raise ValueError('source-pinned helper resolved to another digest')

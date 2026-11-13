@@ -488,9 +488,6 @@ if command == "rmdir":
 emit(errno=-1, error="unknown command " + command)
 `
 
-// The official FUSE build qualified with directory ioctls in the experiment.
-const qualifiedFuseImage = "quay.io/ceph/ceph@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
-
 // Key status values of FS_IOC_GET_ENCRYPTION_KEY_STATUS and the removal
 // status flags of FS_IOC_REMOVE_ENCRYPTION_KEY.
 const (
@@ -521,17 +518,28 @@ func (r fscryptRetained) matches(plaintext []byte) bool {
 		r.FinalStatus == keyAbsent && (r.ReopenErrno == errnoENOENT || r.ReopenErrno == errnoENOKEY)
 }
 
-// qualifiedView identifies the observed client cohorts for metadata and the
-// privileged empty-directory policy. Other builds still run the capability probe.
-func (a fscryptAdmission) qualifiedView(clientPath, version, image string) bool {
+// establishedCohorts names the clients whose answers earlier runs of this
+// case established, for the report of a client outside them.
+const establishedCohorts = "the required answers were established on Linux 6.8.0 x86-64 with the kernel client on Ceph 19.2.5, 20.2.4 and 21.2.0 and with ceph-fuse 21.2.0"
+
+// qualifiedView reports whether the client is of a cohort whose answers
+// earlier runs established: the locked metadata, a policy for a key never
+// added, the snapshot name of the locked view and, for ceph-fuse, the
+// directory ioctls themselves are required of it. release is the Ceph
+// release of the client that was observed: the cluster's for the kernel
+// client, and what the ceph-fuse binary of the client container reports for
+// ceph-fuse. No image reference takes part: a rebuilt or relocated image of
+// the same client is the same cohort, and a client of another release,
+// kernel or machine still runs every probe and has its answers recorded.
+func (a fscryptAdmission) qualifiedView(clientPath, release string) bool {
 	if a.Machine != "x86_64" || !strings.HasPrefix(a.Kernel, "6.8.0-") {
 		return false
 	}
 	switch clientPath {
 	case kernelPath:
-		return slices.Contains([]string{"19.2.5", "20.2.4", "21.2.0"}, version)
+		return slices.Contains([]string{"19.2.5", "20.2.4", "21.2.0"}, release)
 	case fusePath:
-		return version == "21.2.0" && image == qualifiedFuseImage
+		return release == "21.2.0"
 	default:
 		return false
 	}

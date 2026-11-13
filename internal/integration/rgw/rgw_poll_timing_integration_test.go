@@ -25,10 +25,61 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// pollTimingAggregateImage fixes this comparison cohort to one native release
-// and supplies the Ceph CLI used only by its live admin-socket probes. Every
-// role in this qualifier uses this image, regardless of the job's role inputs.
-const pollTimingAggregateImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+// pollTimingImages are the images of one qualification: the role images the
+// runner selected, or the local aggregate. They are read once, so that every
+// cluster, gateway and added zone of the compared phases starts from the same
+// inputs.
+type pollTimingImages struct {
+	// cluster and options are the img and the image set of ceph.Run.
+	cluster string
+	options []testcontainers.ContainerCustomizer
+	// gateway is the img of multisite.Run and AddZone: the rgw role.
+	gateway string
+}
+
+func pollTimingSelectedImages(t *testing.T) pollTimingImages {
+	t.Helper()
+	cluster, options := harness.NativeIntegrationImages(t)
+	gateway, err := harness.IntegrationImage(os.Getenv, "CEPH_TEST_RGW_IMAGE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("RGW_POLL_IMAGES cluster=%s gateway=%s", cluster, gateway)
+	return pollTimingImages{cluster: cluster, options: options, gateway: gateway}
+}
+
+// pollTimingProbePrerequisites checks what the live admin-socket probe runs
+// inside a gateway container: python3 to find the listening socket of PID 1
+// and the ceph CLI to query it. A gateway image without either cannot be
+// qualified, and that is reported as such instead of as a timing failure.
+func pollTimingProbePrerequisites(t *testing.T, ctx context.Context, gateway *rgw.Gateway) {
+	t.Helper()
+	for _, tool := range []string{"python3", "ceph"} {
+		code, _, err := gateway.Exec(ctx, []string{"sh", "-c", "command -v " + tool})
+		if err != nil {
+			t.Fatalf("check the gateway image for %s: %v", tool, err)
+		}
+		if code != 0 {
+			t.Fatalf("missing prerequisite: the selected gateway image has no %s, which the admin-socket probe of this qualification needs", tool)
+		}
+	}
+}
+
+// pollTimingSameGatewayRelease is the radosgw release that every gateway of
+// the comparison runs; gateways of different releases are not one cohort.
+func pollTimingSameGatewayRelease(t *testing.T, ctx context.Context, gateways ...*rgw.Gateway) string {
+	t.Helper()
+	release := ""
+	for _, gateway := range gateways {
+		pollTimingProbePrerequisites(t, ctx, gateway)
+		version := harness.NativeBinaryRelease(t, ctx, gateway.Container, "radosgw")
+		if release != "" && version != release {
+			t.Fatalf("the compared gateways run radosgw %s and %s: not the same inputs", release, version)
+		}
+		release = version
+	}
+	return release
+}
 
 // TestRGWIncrementalPollTimingQualification compares caught-up incremental
 // work with native notifications enabled. It does not change sync lease
@@ -47,9 +98,9 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 			if mode.Host {
 				options = append(options, ceph.WithHostNetwork())
 			}
-			source, destination := pollTimingAggregatePair(t, ctx, options...)
-			image := pollTimingAggregateImage
-			link, err := multisite.Run(ctx, image, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, SourceZone: "source", DestinationZone: "destination"}))
+			images := pollTimingSelectedImages(t)
+			source, destination := pollTimingPair(t, ctx, images, options...)
+			link, err := multisite.Run(ctx, images.gateway, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, SourceZone: "source", DestinationZone: "destination"}))
 			if link != nil {
 				t.Cleanup(func() {
 					cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -63,6 +114,7 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 				t.Fatal(err)
 			}
 			gateways := []*rgw.Gateway{link.Source, link.Destination}
+			gatewayRelease := pollTimingSameGatewayRelease(t, ctx, gateways...)
 			clients := make([]harness.S3HTTPClient, 2)
 			for i, gateway := range gateways {
 				endpoint, err := gateway.S3Endpoint(ctx)
@@ -81,7 +133,9 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("RGW_POLL_BOOTSTRAP ceph=%s elapsed=%s", facts.CephVersion, time.Since(bootstrap))
+			// The polling measured is the gateways': their own binary names
+			// the release of the cohort, whatever the cluster's daemons run.
+			t.Logf("RGW_POLL_BOOTSTRAP ceph=%s radosgw=%s elapsed=%s", facts.CephVersion, gatewayRelease, time.Since(bootstrap))
 			for trial, seconds := range []int{20, 1, 20, 1, 20, 1} {
 				t.Run(fmt.Sprintf("trial-%d-poll-%d", trial, seconds), func(t *testing.T) {
 					started := time.Now()
@@ -146,26 +200,26 @@ func TestRGWIncrementalPollTimingQualification(t *testing.T) {
 	}
 }
 
-// pollTimingAggregatePair keeps the native qualification image explicit;
-// harness.NewMultiClusterPair deliberately uses the job-selected role layout.
-func pollTimingAggregatePair(t *testing.T, ctx context.Context, options ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container) {
+// pollTimingPair starts both clusters of a comparison from the same images.
+func pollTimingPair(t *testing.T, ctx context.Context, images pollTimingImages, options ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container) {
 	t.Helper()
-	clusters := pollTimingClusters(t, ctx, 2, options...)
+	clusters := pollTimingClusters(t, ctx, images, 2, options...)
 	return clusters[0], clusters[1]
 }
 
-func pollTimingClusters(t *testing.T, ctx context.Context, count int, options ...testcontainers.ContainerCustomizer) []*ceph.Container {
+func pollTimingClusters(t *testing.T, ctx context.Context, images pollTimingImages, count int, options ...testcontainers.ContainerCustomizer) []*ceph.Container {
 	t.Helper()
 	clusters := make([]*ceph.Container, count)
 	for index := range clusters {
-		opts := append([]testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: pollTimingAggregateImage})), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip))}, options...)
-		cluster, err := ceph.Run(ctx, pollTimingAggregateImage, opts...)
+		opts := append(append([]testcontainers.ContainerCustomizer{}, images.options...), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))
+		opts = append(opts, options...)
+		cluster, err := ceph.Run(ctx, images.cluster, opts...)
 		if cluster != nil {
 			t.Cleanup(func() {
 				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer stop()
 				if err := cluster.Terminate(cleanup); err != nil {
-					t.Errorf("terminate aggregate polling cluster: %v", err)
+					t.Errorf("terminate polling cluster: %v", err)
 				}
 			})
 		}
@@ -291,10 +345,12 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 			if link == nil || link.Source == nil || link.Source.Container == nil {
 				t.Fatalf("startup timing profile retained no owned source gateway: fixture=%t error=%v", link != nil, err)
 			}
-			if version := harness.NativeBinaryRelease(t, ctx, link.Source.Container, "radosgw"); version != "20.2.4" {
-				if err == nil || !strings.Contains(err.Error(), "qualified only") || !strings.Contains(err.Error(), "(observed "+version+")") {
-					t.Fatalf("unqualified profile did not retain its partial fixture: radosgw=%s error=%v", version, err)
-				}
+			version := harness.NativeBinaryRelease(t, ctx, link.Source.Container, "radosgw")
+			refused, problem := pollTimingProfileOutcome(version, err)
+			if problem != nil {
+				t.Fatal(problem)
+			}
+			if refused {
 				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer stop()
 				if err := link.Terminate(cleanup); err != nil {
@@ -303,9 +359,6 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 				t.Logf("RGW startup timing: unqualified release %s refused and partial fixture cleaned up", version)
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
 			clients := make([]harness.S3HTTPClient, 2)
 			for i, gateway := range []*rgw.Gateway{link.Source, link.Destination} {
 				endpoint, err := gateway.S3Endpoint(ctx)
@@ -313,6 +366,7 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 					t.Fatal(err)
 				}
 				clients[i] = harness.S3HTTPClient{Endpoint: endpoint, AccessKey: link.Source.AccessKey, SecretKey: link.Source.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 20 * time.Second}}
+				pollTimingProbePrerequisites(t, ctx, gateway)
 				pollTimingStartupEffective(t, ctx, gateway)
 				// Public Run has verified the actual binary version and PID1 arguments.
 				args := harness.ExecOutput(t, ctx, gateway, "cat", "/proc/1/cmdline")
@@ -361,8 +415,13 @@ func TestRGWStartupPollTimingProfile(t *testing.T) {
 func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	clusters := pollTimingClusters(t, ctx, 3, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	link, err := multisite.Run(ctx, pollTimingAggregateImage, multisite.WithTopology(multisite.TopologyConfig{
+	images := pollTimingSelectedImages(t)
+	// What Run must answer depends on the gateway binary alone, so it is
+	// read from the selected gateway image itself, before Run and whatever
+	// Run then returns.
+	gatewayRelease := pollTimingGatewayImageRelease(t, ctx, images.gateway)
+	clusters := pollTimingClusters(t, ctx, images, 3, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	link, err := multisite.Run(ctx, images.gateway, multisite.WithTopology(multisite.TopologyConfig{
 		Zones:          []multisite.ZoneConfig{{Name: "source", Cluster: clusters[0]}, {Name: "destination", Cluster: clusters[1]}},
 		MetadataMaster: "source", Timing: multisite.TimingProfile{IncrementalSync: true},
 	}))
@@ -375,20 +434,58 @@ func TestRGWTopologyStartupTimingEffectiveValues(t *testing.T) {
 			}
 		})
 	}
-	if err != nil {
-		t.Fatal(err)
+	refused, problem := pollTimingProfileOutcome(gatewayRelease, err)
+	if problem != nil {
+		t.Fatal(problem)
 	}
+	if refused {
+		t.Logf("RGW startup timing: unqualified gateway release %s refused: %v", gatewayRelease, err)
+		return
+	}
+	pollTimingZonesRun(t, ctx, link, gatewayRelease)
 	for _, zone := range link.Zones() {
 		pollTimingStartupEffective(t, ctx, zone.Gateway)
 	}
-	if _, err := link.AddZone(ctx, pollTimingAggregateImage, multisite.ZoneConfig{Name: "added", Cluster: clusters[2]}); err != nil {
+	if _, err := link.AddZone(ctx, images.gateway, multisite.ZoneConfig{Name: "added", Cluster: clusters[2]}); err != nil {
 		t.Fatal(err)
 	}
 	zones := link.Zones()
 	if len(zones) != 3 {
 		t.Fatalf("after AddZone: got %d owned gateways", len(zones))
 	}
+	pollTimingZonesRun(t, ctx, link, gatewayRelease)
 	for _, zone := range zones {
 		pollTimingStartupEffective(t, ctx, zone.Gateway)
 	}
+}
+
+// pollTimingZonesRun checks every gateway of the topology for the probe's
+// prerequisites and for the release that the selected gateway image
+// reported before Run: an accepted profile on a gateway of another release
+// is not the outcome that was judged.
+func pollTimingZonesRun(t *testing.T, ctx context.Context, link *multisite.Fixture, release string) {
+	t.Helper()
+	gateways := []*rgw.Gateway{}
+	for _, zone := range link.Zones() {
+		gateways = append(gateways, zone.Gateway)
+	}
+	if got := pollTimingSameGatewayRelease(t, ctx, gateways...); got != release {
+		t.Fatalf("the topology's gateways run radosgw %s, the selected gateway image reported %s", got, release)
+	}
+}
+
+// pollTimingGatewayImageRelease reads the radosgw release of a gateway image
+// in a container of its own, which runs no daemon.
+func pollTimingGatewayImageRelease(t *testing.T, ctx context.Context, image string) string {
+	t.Helper()
+	ctr, err := testcontainers.Run(ctx, image, ceph.WithIdleEntrypoint())
+	testcontainers.CleanupContainer(t, ctr)
+	if err != nil {
+		t.Fatalf("start a container of the selected gateway image: %v", err)
+	}
+	release := harness.NativeBinaryRelease(t, ctx, ctr, "radosgw")
+	if err := ctr.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return release
 }

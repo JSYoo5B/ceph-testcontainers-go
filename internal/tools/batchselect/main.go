@@ -15,8 +15,8 @@
 // With -images TAGS -tests A,B it instead reports the images that the
 // declarations reachable from those tests name: each complete image
 // reference among their string constants (also constants of other packages),
-// each image reference prefix that a test completes at run time, and a use of
-// the pinned role image file. CI prepares those images before the tests run.
+// and each image reference prefix that a test completes at run time. CI
+// prepares those images before the tests run.
 package main
 
 import (

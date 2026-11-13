@@ -11,10 +11,12 @@ registry_pull's bounded retry of transport failures, and records them.
 
 The images come from the source, not from a list: batchselect -images walks
 the declarations reachable from the batch's compiled tests and reports each
-image reference among their constants, a reference prefix that a test
-completes with the Ceph version at run time, and a read of the pinned role
-image file. Ryuk is the ReaperDefaultImage of the testcontainers-go version in
-go.mod. Nothing here creates a container or removes an image.
+image reference among their constants, and a reference prefix that a test
+completes with the Ceph version at run time. A published role tag that a test
+names itself, such as the role images of another release, is one of those
+constants and is pulled by its tag. Ryuk is the ReaperDefaultImage of the
+testcontainers-go version in go.mod. Nothing here creates a container or
+removes an image.
 """
 
 import argparse
@@ -106,29 +108,18 @@ def validate_analysis(analysis, package, tests):
             or not isinstance(analysis.get("images"), list)):
         raise ValueError("the image analysis does not describe this package and these tests")
     for use in analysis["images"]:
-        if not isinstance(use, dict) or use.get("kind") not in ("image", "prefix", "role-pins") \
+        if not isinstance(use, dict) or use.get("kind") not in ("image", "prefix") \
                 or not isinstance(use.get("tests"), list) \
                 or ("role_fallback" in use and not isinstance(use["role_fallback"], bool)):
             raise ValueError("the image analysis has an invalid entry")
     return analysis["images"]
 
 
-def published_role_digests():
-    digests = set()
-    for release in matrix.RELEASES:
-        for variant in ("official", "debian", "ubuntu"):
-            try:
-                digests.update(matrix.published_role_pins(release, variant).values())
-            except ValueError:
-                continue
-    return digests
-
-
-def plan_images(uses, release, roles, roles_prepared, discovery=False):
+def plan_images(uses, release, roles_prepared, discovery=False):
     """(planned, skipped): the references to prepare, each with the
     analysis entries that named it, and the entries that need none."""
     planned, skipped = {}, []
-    published = published_role_digests() if roles_prepared else set()
+    published = matrix.published_references() if roles_prepared else set()
 
     def add(reference, use, note=None):
         entry = planned.setdefault(reference, {"reference": reference, "kinds": [], "tests": [], "positions": []})
@@ -144,11 +135,9 @@ def plan_images(uses, release, roles, roles_prepared, discovery=False):
             raise ValueError("discovery contract needs an image outside its pinned single-release aggregate")
         reference = use.get("reference", "")
         if use["kind"] == "image":
-            repository, _, digest = reference.partition("@")
-            if (roles_prepared and use.get("role_fallback") is True
-                    and repository.split(":")[0] == matrix.REGISTRY and digest in published):
+            if roles_prepared and use.get("role_fallback") is True and reference in published:
                 # Only source-proven harness fallbacks are replaced by prepared
-                # roles. A test can explicitly require the same published image.
+                # roles. A test can explicitly require the same published tag.
                 skipped.append({"reference": reference, "position": use.get("position"),
                                 "reason": "published role image; the job's role images replace it"})
                 continue
@@ -162,11 +151,6 @@ def plan_images(uses, release, roles, roles_prepared, discovery=False):
             # The test names the tag, so the tag is pulled; the pin says
             # which manifest that tag should resolve to.
             add(tagged, use, "official image of " + release + " by tag; pinned " + digest)
-        else:
-            for each in matrix.RELEASES:
-                pins = matrix.published_role_pins(each)
-                for role in roles:
-                    add(matrix.REGISTRY + "@" + pins[role], use, "pinned " + role + " role image of " + each)
     return list(planned.values()), skipped
 
 
@@ -192,7 +176,6 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
                 raise ValueError("unknown discovery patch")
         elif arguments.release not in matrix.RELEASES:
             raise ValueError("unsupported release " + arguments.release)
-        roles = matrix.parse_roles(arguments.roles) if arguments.roles else ()
         roles_prepared = environ.get("SCENARIO_IMAGE_LAYOUT") == "roles"
         package, tags, tests, build_platform = compiled_profile(arguments.compile, arguments.tests)
         summary |= {"package": package, "tags": tags, "tests": tests, "roles_prepared": roles_prepared,
@@ -202,7 +185,7 @@ def prepare(arguments, environ=os.environ, runner=run, sleep=None):
             raise ValueError("the image analysis failed: " + analysed.stderr.strip()[-500:])
         uses = validate_analysis(json.loads(analysed.stdout), package, tests)
         summary["analysis"] = uses
-        planned, summary["skipped"] = plan_images(uses, arguments.release, roles, roles_prepared, discovery)
+        planned, summary["skipped"] = plan_images(uses, arguments.release, roles_prepared, discovery)
         listed = capture(["go", "list", "-m", "-f", "{{.Dir}}", TESTCONTAINERS])
         if listed.returncode:
             raise ValueError("go list cannot locate " + TESTCONTAINERS)
@@ -263,7 +246,6 @@ def main(argv=None):
     parser.add_argument("--tests", default="", help="The matrix entry's comma-separated test selection")
     parser.add_argument("--release", required=True)
     parser.add_argument("--discovery", action="store_true", help="Use the separate pinned patch inventory; no extra test images")
-    parser.add_argument("--roles", default="", help="The batch's declared role images, for the pinned role file")
     parser.add_argument("--directory", type=Path, required=True, help="New directory for the receipt and pull logs")
     return prepare(parser.parse_args(argv))
 

@@ -38,14 +38,43 @@ class SelectionTests(unittest.TestCase):
     def plan(self, mode='rotate', **kwargs):
         return self.bundle(mode, **kwargs)['runs'][0]
 
-    def test_published_role_plans_supply_the_optional_roles(self):
+    def test_published_role_plans_supply_exactly_the_declared_roles(self):
+        order = list(executor.images.DECLARABLE_ROLE_ENV)
+
+        def declared(plan):
+            roles = {'essential'} | {role for e in plan['entries'] for role in e['profile']['image_roles'].split(',') if role}
+            return [role for role in order if role in roles]
+
+        def environment(plan):
+            prepared = {role: {'image_id': 'sha256:' + str(number) * 64}
+                        for number, role in enumerate(plan['images']['references'], 1)}
+            return executor.role_environment(plan, prepared), prepared
+
+        # A plan whose entries need no optional role references none: its
+        # tag is neither pulled nor able to fail the sample.
         plan = self.plan()
-        self.assertEqual(list(plan['images']['references']), list(executor.images.published_roles('official')))
-        prepared = {role: {'image_id': 'sha256:' + str(number) * 64}
-                    for number, role in enumerate(plan['images']['references'], 1)}
-        environment = executor.role_environment(plan, prepared)
-        self.assertEqual(environment['SCENARIO_IMAGE_ROLES'], 'essential,client,cephfs,rbd-aux,rgw,mgr-modules')
-        self.assertEqual(environment['CEPH_TEST_MGR_MODULES_IMAGE'], prepared['mgr-modules']['image_id'])
+        self.assertEqual(list(plan['images']['references']), declared(plan))
+        self.assertNotIn('mgr-modules', plan['images']['references'])
+        self.assertEqual(plan['images']['references'],
+                         {role: executor.images.role_tag('official', plan['release'], role) for role in declared(plan)})
+        env, _ = environment(plan)
+        self.assertEqual(env['SCENARIO_IMAGE_ROLES'], ','.join(declared(plan)))
+        self.assertNotIn('CEPH_TEST_MGR_MODULES_IMAGE', env)
+        # A plan with an entry that declares the optional role gets it.
+        mgr = next(p for p in tags.discover(self.catalog)['include'] if p['batch'] == 'mgr_image')
+        plan = self.plan('targeted', release='20.2.4', profiles=mgr['id'], tests='TestManagerMetrics')
+        self.assertEqual(list(plan['images']['references']), mgr['image_roles'].split(','))
+        env, prepared = environment(plan)
+        self.assertEqual(env['SCENARIO_IMAGE_ROLES'], mgr['image_roles'])
+        self.assertEqual(env['CEPH_TEST_MGR_MODULES_IMAGE'], prepared['mgr-modules']['image_id'])
+        sample.validate_plan(plan, self.catalog)
+        # The references follow the entries: a plan edited to reference
+        # another role set is refused.
+        widened = json.loads(json.dumps(plan))
+        widened['images']['references']['rgw'] = executor.images.role_tag('official', '20.2.4', 'rgw')
+        widened['plan_sha256'] = sample.digest({k: v for k, v in widened.items() if k != 'plan_sha256'})
+        with self.assertRaisesRegex(ValueError, 'planned images differ'):
+            sample.validate_plan(widened, self.catalog)
         # A historical aggregate serves the five dependency roles and declares
         # no optional role, so a test that needs one fails instead of falling
         # back to the aggregate.
@@ -159,13 +188,13 @@ class SelectionTests(unittest.TestCase):
 
     def test_helper_resolution_failure_remains_a_frozen_preparation_failure(self):
         import in_test_images
-        import periodic_campaign
+        import role_image_pins
         plan = self.plan()
         with mock.patch.object(sample.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='{}')), \
                 mock.patch.object(in_test_images, 'reaper_reference', return_value='testcontainers/ryuk:v1'), \
                 mock.patch.object(in_test_images, 'validate_analysis', return_value=[]), \
                 mock.patch.object(in_test_images, 'plan_images', return_value=([], [])), \
-                mock.patch.object(periodic_campaign, 'resolve', side_effect=RuntimeError('registry unavailable')):
+                mock.patch.object(role_image_pins, 'resolve', side_effect=RuntimeError('registry unavailable')):
             frozen = sample.freeze_test_images(plan)
         self.assertEqual(frozen['test_images_error'], 'helper_image_identity_unavailable')
         sample.validate_plan(frozen, self.catalog)

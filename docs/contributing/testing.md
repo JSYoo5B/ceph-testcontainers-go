@@ -290,7 +290,10 @@ CI supplies image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`,
 the batch declares. A missing selected role never falls back to essential.
 
 Without role variables a local run uses `ceph.DefaultImage` for every role, or
-the aggregate image in `CEPH_TEST_IMAGE`. For split images, set essential and
+the aggregate image in `CEPH_TEST_IMAGE`. `ceph.DefaultImage` is a release
+tag: an engine that already has it keeps its local image, so run
+`docker pull` on it to pick up a republished build, or set `CEPH_TEST_IMAGE`
+to a digest reference to run one exact build. For split images, set essential and
 the roles the test needs:
 
 ```sh
@@ -312,8 +315,10 @@ exported. To use your own images, set all five role variables and
 
 ### Reproducing CI's role images
 
-CI uses the role image digests in `.github/ceph-role-images.json`. Resolve
-them locally without running a test:
+CI uses the published `official-<release>-<role>` tags of
+`ghcr.io/jsyoo5b/ceph-testcontainers-images`; the repository records no
+digest of them (see [CI](ci.md#role-images-of-a-run)). Resolve them locally
+without running a test:
 
 ```sh
 python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
@@ -322,8 +327,13 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 
 Use `--release 21.2.0` for Umbrella or `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
 resolve only some roles. The script pulls only missing images, never builds,
-and refuses an existing `--output-dir`. `summary.json` lists the `CEPH_TEST_*`
-values under `prepared_environment`; export them for a test or the tag runner.
+and refuses an existing `--output-dir`. An engine that already has a role
+tag keeps that image: `docker pull` the tag first to run what the registry
+publishes now, or pass `--digests <role>=sha256:<digest>,...` to prepare the
+exact manifests of an earlier run, which its `scenario-images-*` artifact
+lists. `summary.json` lists the `CEPH_TEST_*` values under
+`prepared_environment`, with the image ID and registry digests each role
+resolved to under `images`; export the values for a test or the tag runner.
 `make scenario` with `SCENARIO_IMAGE_LAYOUT=roles` needs all five role
 variables, so use it only after preparing every role; with a subset, run the
 batch with `tag_scenarios.py run` or `optional` instead.

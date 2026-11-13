@@ -9,15 +9,34 @@ for each daemon role, and what an image must contain.
 
 ## Default image
 
-`ceph.DefaultImage` is the published, pruned Tentacle dependency-role aggregate,
-pinned to the tested native AMD64/ARM64 index digest:
+`ceph.DefaultImage` is the published, pruned Tentacle dependency-role
+aggregate, named by its release tag:
 
 ```text
-ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b
+ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all
 ```
 
-The digest is a multi-architecture manifest for `linux/amd64` and
+The tag is a multi-architecture manifest for `linux/amd64` and
 `linux/arm64`; Docker pulls the variant of the engine's native architecture.
+[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images#published-images)
+publishes every image as `<variant>-<release>-<role>` and replaces a
+published image under the same tag when it is rebuilt, for example after a
+packaging correction or when a role gains a binary the module needs. The
+default therefore follows compatible rebuilds without a new module version.
+
+Which build a host runs is the caller's choice, as for any image reference:
+
+- The module passes the reference to Docker unchanged. An engine that already
+  has the tag keeps its local image until you pull the tag again
+  (`docker pull`), so refreshing and caching follow your own pull policy.
+- For one exact build, pass its digest reference
+  (`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:...`) or a local image
+  ID to `Run` instead of the default. Tags, digests and local image IDs are
+  all accepted, for `Run` and for every `ImageSet` role.
+- The module neither resolves a tag to a digest, checks that an image is
+  current, nor reports which build ran. Record `docker image inspect` output
+  in your own test run when you need that evidence.
+
 The module needs no image of its own. It supplies the FSID, keys,
 configuration, daemon IDs, addresses, bootstrap commands and entrypoints when
 it starts each container, so any image that meets the
@@ -31,8 +50,8 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 
 | Release | Status | Tested image |
 | --- | --- | --- |
-| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate pinned by `ceph.DefaultImage` |
-| Umbrella 21.2.x | Periodic CI on 21.2.0, with the issues listed below; the default remains Tentacle | Published official role images, pinned in `.github/ceph-role-images.json`; official amd64 requires x86-64-v3 |
+| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate that `ceph.DefaultImage` names, and the `official-20.2.4-<role>` role tags |
+| Umbrella 21.2.x | Periodic CI on 21.2.0, with the issues listed below; the default remains Tentacle | Published official role images, the `official-21.2.0-<role>` tags; official amd64 requires x86-64-v3 |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
@@ -280,7 +299,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   `ObjectNotFound`: when the native call fails, the binding's iterator is
   freed with its original entry count and frees entries that the call never
   filled, so no `except` clause runs.
-  It crashed in every attempt with the pinned 20.2.4 aggregate. Tentacle
+  It crashed in every attempt with the published 20.2.4 aggregate. Tentacle
   20.2.5 and Umbrella 21.2.0 raise the exception and continue. Check that the
   group exists (`rbd group ls`) before listing its snapshots from Python on
   20.2.4, or run the listing in a child process. The module does not list the
@@ -454,9 +473,11 @@ if cluster != nil { testcontainers.CleanupContainer(t, cluster) }
 if err != nil { t.Fatal(err) }
 ```
 
-Use matching Ceph releases. Published immutable references are recorded in
-[the role digest map](../../.github/ceph-role-images.json), grouped by release,
-variant and role. The SDK default is the qualified official-derived aggregate.
+Use matching Ceph releases. The published role images are the
+`<variant>-<release>-<role>` tags of
+`ghcr.io/jsyoo5b/ceph-testcontainers-images`, for example
+`official-20.2.4-essential`; this repository keeps no digest list of them.
+The module default is the official-derived aggregate, `official-20.2.4-all`.
 
 Cluster administration remains on MON/the stable multi-MON CLI. Ordinary
 RBD/CephFS and native userspace oracles use the owned lazy client toolkit;
@@ -475,11 +496,11 @@ Essential (with `All`, the All image), so a set without it runs managers as
 before; no other role has a default. Use it to run an image that ships
 modules the essential role image omits, together with the role images of the
 other daemons: the `mgr-modules` role image of the release, which the official
-variant publishes and the role digest map pins, the official image, or a
+variant publishes (`official-<release>-mgr-modules`), the official image, or a
 consumer image built from either with additional modules:
 
 ```go
-// mgrModulesRef is the mgr-modules role image of the same release, pinned by digest.
+// mgrModulesRef is the mgr-modules role image of the same release.
 images := ceph.ImageSet{Essential: essentialRef, Client: clientRef, MGR: mgrModulesRef}
 cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)))
 // FactsOf(cluster).Images.MGR is the MGR image; every ManagerContainer.Image reports it.
@@ -637,7 +658,8 @@ Read this scope before relying on it:
 
 `TestRollingUpgradeSquidToTentacle` (optional batch `rolling_upgrade`) moves a
 running 19.2.5 cluster to 20.2.4 one daemon at a time, in the upstream order,
-with the pinned official role images of both releases, on the host network and
+with the published official role images of both releases (the
+`official-19.2.5-<role>` and `official-20.2.4-<role>` tags), on the host network and
 on a bridge:
 
 1. `osd set noout`.

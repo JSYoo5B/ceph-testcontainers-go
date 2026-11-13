@@ -843,7 +843,7 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 	base := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))}
 	if imageHasKeyTypes(t, ctx, image) {
-		t.Fatalf("%s has ceph-authtool --key-type", image)
+		t.Fatalf("negative control lost its property: ceph-authtool of %s has --key-type", image)
 	}
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)

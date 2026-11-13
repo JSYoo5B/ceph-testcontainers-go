@@ -414,10 +414,10 @@ architecture, because it warms the build cache that the jobs restore.
 | Restore the Go module and build caches | n/a | Restores what a `Plan` job saved. A build-cache miss only slows compilation. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` first refuses a runner whose Go toolchain is not natively the matrix entry's `goarch` (host and target), then runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
-| Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload/images and actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
+| Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload, on its qualified release, roles and platform, and the actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, freezes local image IDs and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
-| Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source, for the GOOS and GOARCH that the compile receipt records, and the step refuses a Docker engine of another platform: each image reference among the constants of the declarations that the tests reach (constants of other packages included), a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag), and a read of `.github/ceph-role-images.json` (the declared roles of every supported release). With prepared role images, the published role image fallback is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
+| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images`, each by the digest that `Plan` resolved its `official-<release>-<role>` tag to for this run (see [Role images of a run](#role-images-of-a-run)), for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, freezes local image IDs and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
+| Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source, for the GOOS and GOARCH that the compile receipt records, and the step refuses a Docker engine of another platform: each image reference among the constants of the declarations that the tests reach (constants of other packages included), and a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag). A published role tag that a test names itself, such as both releases of the rolling upgrade, is one of those constants and is pulled by its tag. With prepared role images, the harness fallback to a published role tag (`ceph.DefaultImage`) is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Verify post-image runner headroom | Post-image runner headroom | Ceph batches only. `runner_storage.py ready` refuses the job before the tests when the pulled images left too little headroom for the workload. Writes `runner-storage/storage-ready.json`. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
@@ -738,9 +738,9 @@ periodic job. The command fails unless every required profile runs on every
 release of the scope exactly once, and `test_scenario_shards.py` checks the
 same offline.
 
-To add a release, add its row and the published digests to
-`.github/ceph-role-images.json` once ceph-testcontainers-images publishes its
-role images, add it to the `release` options of `ceph-periodic.yml` and the
+To add a release, add its row once ceph-testcontainers-images publishes its
+role images under the `<variant>-<release>-<role>` tags, add it to the
+`release` options of `ceph-periodic.yml` and the
 `public-api` matrix of `block-fault-probe.yml`, which cannot read the table
 (`test_scenario_shards.py` fails until they match), run the CI tooling tests,
 and for a new major release add it to
@@ -749,6 +749,49 @@ every release-limited row of the test expectation table (see
 a row is refused. The default release (`RELEASE`, the `release` defaults of
 `tagged-runtime.yml`, `ceph-periodic.yml` and the scenario-images action, and
 `ceph.DefaultImage`) changes only with the current release.
+
+### Role images of a run
+
+CI is a consumer of the published role images like any other: it selects
+them by tag and decides itself how exactly a run is replayed. No file of this
+repository names a digest of a role image, so a compatible rebuild that
+ceph-testcontainers-images publishes under the same tag needs no change
+here. The next run uses it.
+
+- `image_references` in `.github/scripts/run_image_matrix.py` names the
+  images: `ghcr.io/jsyoo5b/ceph-testcontainers-images:<variant>-<release>-<role>`,
+  with `all` for the aggregate. `ceph.DefaultImage` is `official-20.2.4-all`.
+- One run uses one image per role. The `Plan` job of `tagged-runtime.yml`
+  resolves, once, the tag of each role that the plan's batches declare to
+  its registry digest (`role_image_pins.py pin --plan`, a registry read with
+  the bounded retry of transport failures) and hands the digests to the
+  runtime jobs, which pull `<repository>@<digest>`. A tag republished while
+  the run is in progress therefore reaches no job of that run, and a failed
+  job that is run again later reuses the digests of its run's `Plan`.
+- Only the declared roles are resolved: the union of the plan entries'
+  `image_roles`. A role that no selected batch uses, such as the optional
+  `mgr-modules` when its tag is unavailable, is never asked of the registry
+  and cannot stop the run, and a plan without a Ceph batch asks nothing. A
+  caller that pinned the images itself (the representative campaign, which
+  pins every published role before its plan exists) passes its digests
+  through the `role_digests` input; `Plan` refuses pins that do not name
+  every role the plan declares.
+- A runtime job never mixes pinned and unpinned roles. Given the run's pins,
+  `run_image_matrix.py` refuses to prepare a role they do not name, before
+  any pull, instead of pulling that role's tag.
+- Each job records what it ran: `scenario-images-*/summary.json` has, for
+  every role, the reference it prepared, the local image ID, the registry
+  digests and the platform child, and `pinned_digests` for the run's pins.
+  `test-images/summary.json` has the same for Ryuk and for every image a
+  test names itself. To replay a run on its exact images, pass those digests
+  to `run_image_matrix.py --digests` (see
+  [Reproducing CI's role images](testing.md#reproducing-cis-role-images)).
+- A periodic sample (`rotate`, `targeted`) references the role tags that
+  its selected entries declare, with essential always among them, prepares
+  each once, in its single job, and records the same identities in its
+  `images/summary.json`; its helper images are frozen to digests in the plan.
+- The module takes no part in this: it resolves no tag, enforces no
+  freshness and reports no identity.
 
 ### Release phase
 
@@ -773,11 +816,11 @@ batch.
 It runs only through an explicit dispatch with mode `representative`:
 
 1. `Pin` resolves the commit (the `ref` input or the run's commit) and the
-   registry digest of every role image (`periodic_campaign.py pin`).
+   registry digest of every role image (`role_image_pins.py pin`).
 2. `Representative` calls the template with `category: representative`. Each
    entry repeats `repetitions` times (default 1, at most 10) as separate jobs
    named `<batch> #<n>`, artifacts ending in `-r<n>`, each checking out the
-   pinned commit and pulling `tag@digest`. History rows carry
+   pinned commit and pulling the pinned digests. History rows carry
    `repetition_id` `<n>`.
 3. Every attempt keeps the normal completion, no-skip and cleanup proofs;
    nothing is retried.
@@ -936,8 +979,8 @@ missing requirement and never skips. Outside the tag runner, build it with
 `go test -tags all,cephfs_fuse`.
 
 `rolling_upgrade` (`TestRollingUpgradeSquidToTentacle`) upgrades a 19.2.5
-cluster to 20.2.4 one daemon at a time with the pinned official role images
-of both releases; see
+cluster to 20.2.4 one daemon at a time with the published official role
+images of both releases, which it names by tag; see
 [Rolling upgrade from Squid to Tentacle](../guides/releases-and-images.md#rolling-upgrade-from-squid-to-tentacle).
 It pulls the images of both releases whatever release the profile names.
 
@@ -1121,7 +1164,11 @@ The receipt's `docker_root` marker identifies the metadata filesystem for the
 controlled pressure file; it does not locate the MON store.
 `storage-ready.json` repeats the check after actual image pulls, retaining the
 runtime allowance. Failure of
-either guard stops the job before native assertions.
+either guard stops the job before native assertions. A qualification names
+no image digest: the role images are the release's published tags, the
+image-preparation allowance bounds what their pull may take before it, and
+this post-image check is what refuses a job whose images, for example after
+a republished tag grew, left less than the runtime allowance.
 
 The qualifications in `.github/runner-storage.json` cover these Tentacle AMD64
 profiles. Each has an 8GiB image-preparation allowance and 100,000 free inodes,
@@ -1144,8 +1191,8 @@ or a measured runtime peak. Control stores, client data and logs are additional;
 the qualification evidence records sampled filesystem consumption separately.
 
 The catalog selects exactly one entry for the compiled profile. Its workload
-sources, listed startup/data helpers, dependency manifests, tags, selected tests
-and image pins must match. Changes to a relevant helper expire that workload's
+sources, listed startup/data helpers, dependency manifests, tags, selected
+tests, release, declared roles and platform must match. Changes to a relevant helper expire that workload's
 qualification. Unrelated profiles cannot inherit its allowance, and an ambiguous
 or missing entry retains conservative cleanup. The data and RBD default qualifications
 also require `CEPH_TEST_PARALLEL` to be at most two; higher or invalid values

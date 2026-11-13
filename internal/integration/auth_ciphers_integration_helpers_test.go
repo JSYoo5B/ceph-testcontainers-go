@@ -22,8 +22,12 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// tentacleWithoutKeyTypes is the last Tentacle release whose ceph-authtool
-// has no --key-type and whose monmaptool has no cipher options.
+// tentacleWithoutKeyTypes is the negative control of the key type tests: a
+// client and cluster image whose ceph-authtool has no --key-type and whose
+// monmaptool has no cipher options. What the control needs is that missing
+// option, not this build: the reference is the last official Tentacle
+// release without it, and every test that uses it first checks, in the image
+// it actually runs, that the option is absent, and fails when it is not.
 const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
 
 // cephxKeyType decodes the type field of a Cephx secret: 1 is AES and 2 is
@@ -143,7 +147,9 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 // now and then and Ceph aborted it during activation. With key type support it also checks AES256K
 // clients and a second cluster whose service cipher differs from its key
 // type; without it, that AES256K requests are refused before any change.
-func runAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
+// withoutKeyTypes marks the negative control: an image that turns out to
+// have key type support fails instead of running the other branch.
+func runAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer, withoutKeyTypes bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	base := append(slices.Clone(imageOpts), ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
@@ -151,6 +157,9 @@ func runAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	}))...)
 	keyTypes := keyTypeOption(t, ctx, cluster)
+	if withoutKeyTypes && keyTypes {
+		t.Fatalf("negative control lost its property: ceph-authtool of %s has --key-type, so the refusal of AES256K keys without key type support is not exercised", image)
+	}
 
 	// Every key the fixture created is AES, and the daemons run with the
 	// fractional lifetimes.

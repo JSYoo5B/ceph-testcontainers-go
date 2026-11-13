@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Run the nine supplied-image compatibility tests without building images.
 
-An absent image is explicitly pulled for the Docker engine's native platform.
-Existing references are resolved once to local image IDs before invoking make.
+The images are the published <variant>-<release>-<role> tags of
+ceph-testcontainers-images; nothing here names a digest of one. An absent
+image is explicitly pulled for the Docker engine's native platform; an image
+that the engine already has under its tag is used as it is, so a persistent
+engine picks up a republished tag only after its own docker pull.
+Existing references are resolved once to local image IDs before invoking make,
+and the summary records each reference with the image ID and registry digests
+it resolved to.
 This is module compatibility evidence, not the separate image contract checker.
 Preparation mode resolves those same images without executing compatibility tests,
 or, with --roles, only the role images that a batch declares. A pull that
@@ -34,7 +40,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # category on each row (tag_scenarios.py releases), so a new release is one row here
 # once ceph-testcontainers-images publishes its role images. A release or
 # patch that is not a row is refused, never mapped to a neighbouring one.
-# RELEASE is the default Ceph version; DEFAULT_IMAGE matches ceph.DefaultImage.
+# RELEASE is the default Ceph version; DEFAULT_IMAGE, its official aggregate
+# tag, matches ceph.DefaultImage.
 SUPPORTED_RELEASES = (
     ("20.2.4", "tentacle",
      "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"),
@@ -57,7 +64,18 @@ OPTIONAL_ROLE_VARIANTS = {"mgr-modules": ("official",)}
 # optional ones.
 DECLARABLE_ROLE_ENV = {**ROLE_ENV, **OPTIONAL_ROLE_ENV}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
-DEFAULT_IMAGE = REGISTRY + "@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+VARIANTS = ("official", "debian", "ubuntu")
+AGGREGATE = "all"
+
+
+def role_tag(variant, release, role):
+    """The tag under which ceph-testcontainers-images publishes one role
+    image, or the aggregate, of a release: a compatible rebuild replaces the
+    image under the same tag."""
+    return REGISTRY + ":" + variant + "-" + release + "-" + role
+
+
+DEFAULT_IMAGE = role_tag("official", RELEASE, AGGREGATE)
 EXPECTED_TESTS = (
     "TestClusterLifecycle",
     "TestRBDLifecycle",
@@ -85,7 +103,7 @@ RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0
 
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=("official", "debian", "ubuntu"), default="official")
+    parser.add_argument("--variant", choices=VARIANTS, default="official")
     parser.add_argument("--layout", choices=("all", "roles"), default="all")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
                         help="Must match the Docker engine; omitted means its native platform")
@@ -101,8 +119,8 @@ def parse_arguments(argv=None):
                              "never an optional role. "
                              "Requires --prepare-only and --layout roles")
     parser.add_argument("--digests", default="",
-                        help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
-                             "Requires --layout roles")
+                        help="Comma-separated role=sha256:<digest> pins of the role tags, which the caller "
+                             "resolved for this run; empty pulls the tags. Requires --layout roles")
     args = parser.parse_args(argv)
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
@@ -152,36 +170,40 @@ def parse_digests(text):
 
 
 def pin_references(references, digests):
-    """Pin each role tag to its registry digest, so that every attempt of a
-    campaign pulls the same manifest even when the tag moves. A pinned role
-    that this run does not prepare is ignored."""
-    return {role: reference.split("@", 1)[0] + "@" + digests[role] if role in digests else reference
-            for role, reference in references.items()}
+    """Replace each role's tag by the registry digest that the caller
+    resolved it to, so that every job and attempt of one run pulls the same
+    manifest even when the tag moves meanwhile. Without pins the tags stay.
+    With pins every prepared role must be pinned: a run pins the roles its
+    batches declare, so a prepared role without a pin is a mismatch between
+    the run's pins and this job, and pulling its tag next to pinned roles
+    would mix identities unnoticed. A pinned role that this job does not
+    prepare is ignored."""
+    if not digests:
+        return dict(references)
+    missing = [role for role in references if role not in digests]
+    if missing:
+        raise ValueError("the pins of this run name no " + ",".join(missing)
+                         + " role; refusing to pull an unpinned tag next to pinned roles")
+    return {role: REGISTRY + "@" + digests[role] for role in references}
 
 
-def published_role_pins(release, variant="official"):
-    """Immutable indexes of the published role images: every role the
-    variant publishes and the aggregate, no other."""
-    data = json.loads((ROOT / ".github/ceph-role-images.json").read_text())
-    pins = data.get("images", {}).get(release, {}).get(variant, {})
-    if (data.get("schema") != 1 or variant not in ("official", "debian", "ubuntu")
-            or set(pins) != set(published_roles(variant)) | {"all"}
-            or any(not isinstance(value, str) or DIGEST.fullmatch(value) is None for value in pins.values())):
-        raise ValueError("published role pins are incomplete or invalid for " + release + "/" + variant)
-    return pins
+def published_references():
+    """Every role and aggregate tag of the supported releases, in every
+    variant that publishes the role."""
+    return {role_tag(variant, release, role) for release in RELEASES for variant in VARIANTS
+            for role in published_roles(variant) + (AGGREGATE,)}
 
 
 def image_references(variant, layout, release, roles=None):
     roles = tuple(ROLE_ENV) if roles is None else tuple(roles)
-    if release not in RELEASES or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
+    if release not in RELEASES or variant not in VARIANTS or layout not in ("all", "roles"):
         raise ValueError("unsupported image matrix cell")
     if layout == "all" and roles != tuple(ROLE_ENV):
         raise ValueError("the all layout serves every role")
     if not set(roles) <= set(published_roles(variant)):
         raise ValueError("the " + variant + " variant publishes no " + ",".join(sorted(set(roles) - set(published_roles(variant))))
                          + " role")
-    pins = published_role_pins(release, variant)
-    return {role: REGISTRY + "@" + pins[role] for role in (("all",) if layout == "all" else roles)}
+    return {role: role_tag(variant, release, role) for role in ((AGGREGATE,) if layout == "all" else roles)}
 
 
 def native_platform(info):
@@ -200,8 +222,7 @@ def source_manifest(root):
     # label as proof of unmodified source. Generated output is never included.
     paths = {root / "Makefile", root / "go.mod", root / "go.sum",
              root / ".github/scripts/run_image_matrix.py",
-             root / ".github/scripts/registry_pull.py",
-             root / ".github/ceph-role-images.json"}
+             root / ".github/scripts/registry_pull.py"}
     for directory in ("ceph", "cephfs", "rgw", "rbd", "internal"):
         paths.update((root / directory).rglob("*.go"))
     paths.update(path for path in (root / "ceph/internal/scripts").rglob("*") if path.is_file())
