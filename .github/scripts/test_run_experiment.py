@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """The Experiments workflow's command and result check."""
 
+import io
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 
 import run_experiment as experiment
 
@@ -38,6 +41,39 @@ class CheckTests(unittest.TestCase):
 
     def test_a_run_without_a_result_line_fails(self):
         self.assertEqual(experiment.check("--- PASS: TestCase (0.00s)\n"), ["the case printed no EXPERIMENT_RESULT line"])
+
+
+class MainTests(unittest.TestCase):
+    def runs(self, argv, results):
+        """main's exit code and the images it ran, with each run printing results[image]."""
+        images = []
+
+        def popen(command, **_):
+            image = command[command.index("-ldflags") + 1].split("image=")[1] if "-ldflags" in command else ""
+            images.append(image)
+            process = mock.Mock()
+            process.stdout = io.StringIO(LINE % ("a", results[image]))
+            process.wait.return_value = 0
+            return process
+
+        with mock.patch.object(experiment.subprocess, "Popen", popen), redirect_stdout(io.StringIO()):
+            return experiment.main(argv), images
+
+    def test_the_default_image_alone_runs_once(self):
+        self.assertEqual(self.runs(["--case", "rgw_empty_sse_header"], {"": "REPRODUCED"}), (0, [""]))
+
+    def test_a_fixed_image_runs_after_the_default_control(self):
+        argv = ["--case", "rgw_empty_sse_header", "--image", "fixed"]
+        self.assertEqual(self.runs(argv, {"": "REPRODUCED", "fixed": "NOT_REPRODUCED"}), (0, ["", "fixed"]))
+
+    def test_a_trigger_that_reproduces_on_no_image_fails_the_fixed_dispatch(self):
+        argv = ["--case", "rgw_empty_sse_header", "--image", "fixed"]
+        code, images = self.runs(argv, {"": "NOT_REPRODUCED", "fixed": "NOT_REPRODUCED"})
+        self.assertEqual((code, images), (1, ["", "fixed"]))
+
+    def test_a_fixed_image_that_still_reproduces_fails(self):
+        argv = ["--case", "rgw_empty_sse_header", "--image", "fixed"]
+        self.assertEqual(self.runs(argv, {"": "REPRODUCED", "fixed": "REPRODUCED"})[0], 1)
 
 
 if __name__ == "__main__":

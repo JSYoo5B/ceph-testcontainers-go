@@ -1,10 +1,11 @@
 name: Experiments
 
 # Runs one known-defect experiment case with go test, as a developer would.
-# Without an image the case runs on its default image, which reproduces the
-# defect, so every EXPERIMENT_RESULT line must say REPRODUCED. With an image
-# (a fixed build), every line must say NOT_REPRODUCED. A failure of the case's
-# given or when steps fails the test and the run.
+# The case always runs on its default image, which reproduces the defect, so
+# every EXPERIMENT_RESULT line must say REPRODUCED. With an image (a fixed
+# build) the case then runs again with it, and every line must say
+# NOT_REPRODUCED. A failure of the case's given or when steps fails the test
+# and the run.
 on:
   workflow_dispatch:
     inputs:
@@ -32,7 +33,7 @@ on:
           - rgw_sync_lease_lapse
           - rgw_sync_policy_translation
       image:
-        description: Fixed image to inject (empty runs the case's default image, which must reproduce)
+        description: Fixed image for a second run that must not reproduce (the default image always runs first and must reproduce)
         type: string
         default: ''
 
@@ -46,7 +47,7 @@ jobs:
   experiment:
     name: ${{ inputs.case }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 230
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

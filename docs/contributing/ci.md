@@ -17,7 +17,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
-| Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, or `NOT_REPRODUCED` with an injected fixed image |
+| Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, `NOT_REPRODUCED` with it injected |
 | Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `cephfs_readdir_after_snapdiff`, `mon_log_ack`, `rbd_demote_restart`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_sync_lease_lapse`, `rbd_trash_purge_timezone`) or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
@@ -1029,9 +1029,13 @@ on a fixed image. The batch budget is the `//ci:` timeout.
   passes either way; only its given and when steps fail it. An expensive one
   stays an optional `native_regression` batch that runs only on request.
   `Experiments` runs one case with `go test`: on the case's default image
-  every result line must be `REPRODUCED`, and with an injected fixed image
-  every line must be `NOT_REPRODUCED`. A case whose defect has no fixed
-  release has no fixed-image run. `Native regressions` and
+  every result line must be `REPRODUCED`. When a fixed image is given, the
+  case then runs again with it injected and every line must be
+  `NOT_REPRODUCED`; the default run stays as the control, so a trigger that
+  stopped eliciting the defect on every image fails the dispatch. A case
+  whose defect has no fixed release has only the default run. The cluster and
+  every client a case starts run its one image, whatever role images the
+  batch environment names. `Native regressions` and
   `/ci run <batch> on <release>` still run the batch, but take only its pass
   or failure.
 - An expensive case that passes on the published images would be scheduled

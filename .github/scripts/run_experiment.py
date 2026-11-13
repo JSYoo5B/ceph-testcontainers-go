@@ -3,10 +3,12 @@
 
 A case prints one EXPERIMENT_RESULT line per independently evaluated defect,
 REPRODUCED or NOT_REPRODUCED, and passes either way; only its given and when
-steps fail it. Without an image the case runs on its default image, which
+steps fail it. The case always runs on its default image first, which
 reproduces the defect, so every line must be REPRODUCED. With an image (a
-fixed build) injected into the case's package-level image variable, every
-line must be NOT_REPRODUCED. The run fails when go test fails, when no line
+fixed build) the case then runs again with that image injected into its
+package-level image variable, and every line must be NOT_REPRODUCED. The
+default run is the control of the fixed one: a trigger that no longer elicits
+the defect on any image fails it. A run fails when go test fails, when no line
 is printed, or when a line has the other result.
 """
 import argparse
@@ -43,23 +45,34 @@ def check(log, image=""):
     return ["%s: %s, want %s" % (case, result, want) for case, result in results if result != want]
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--case", required=True)
-    parser.add_argument("--image", default="")
-    args = parser.parse_args(argv)
-    process = subprocess.Popen(command(args.case, args.image), cwd=ROOT, text=True,
+def run(case, image=""):
+    """Run case once, streaming its output; the reasons it failed."""
+    print("== %s on %s" % (case, image or "its default image"), flush=True)
+    process = subprocess.Popen(command(case, image), cwd=ROOT, text=True,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     lines = []
     for line in process.stdout:
         sys.stdout.write(line)
         lines.append(line)
     code = process.wait()
-    reasons = check("".join(lines), args.image)
-    for case, result in RESULT.findall("".join(lines)):
-        print("result %s %s" % (case, result))
+    log = "".join(lines)
+    for name, result in RESULT.findall(log):
+        print("result %s %s" % (name, result))
+    reasons = check(log, image)
     if code:
         reasons.insert(0, "go test exited %d" % code)
+    return ["%s: %s" % ("fixed image" if image else "default image", reason) for reason in reasons]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--case", required=True)
+    parser.add_argument("--image", default="")
+    args = parser.parse_args(argv)
+    command(args.case, args.image)  # refuse a bad case or image before the first run
+    reasons = run(args.case)
+    if args.image:
+        reasons += run(args.case, args.image)
     for reason in reasons:
         print("::error::" + reason)
     return 1 if reasons else 0
