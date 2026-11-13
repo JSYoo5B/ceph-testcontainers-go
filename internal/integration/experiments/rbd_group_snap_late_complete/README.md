@@ -3,7 +3,8 @@
 Owner: RBD. Kind: upstream bug reproducer (`native_regression`).
 Test: `TestRBDGroupSnapshotLateCompleteAfterRemoval`, optional batch
 `rbd_group_snap_late_complete`. Its judgement of what the group shows after
-the late update has Docker-free tests in the same package (`code/pure`).
+the late update, and its readers of the header report and of the listing,
+have Docker-free tests in the same package (`code/pure`).
 
 ## Use case and native contract
 
@@ -89,7 +90,11 @@ INCOMPLETE and COMPLETE. A Python process in the client container reads the
 group header object (`rbd_group_header.<group id>`) through the `rados`
 binding: its omap keys and, decoded from each `snapshot_<id>` value, the ID,
 name and state of the record. The listing is always
-`rbd group snap ls --format json`.
+`rbd group snap ls --format json`. A header report must carry its key list,
+its record list, every record's ID, name, state and value and, for an
+update, the result; a listing must be an array of named entries. A report or
+listing that lacks one of them fails the test, so an absent field is never
+read as an empty list, a state of 0 or a result of 0.
 
 The late update is not produced by a race. The payload of
 `rbd.group_snap_set` is an encoded group snapshot, which is also the value
@@ -118,9 +123,10 @@ from before its removal and sends it again with
 - **REPRODUCED:** the server accepted the late update, the header object of
   `late` has `snapshot_<victim id>` again without `snap_order_<victim id>`,
   and the listing names `healthy` and `victim`. The symptoms give the
-  listing, the result of the update and the omap keys. A listing that fails
-  while the header object holds that orphan record is reported as
-  `REPRODUCED` too; no tested image does that.
+  listing, the result of the update and the omap keys. A listing that
+  exits 22 and reports `(22) Invalid argument`, the refusal of a record
+  without an order, while the header object holds that orphan record is
+  reported as `REPRODUCED` too; no tested image does that.
 - **NOT_REPRODUCED:** the listing of `late` succeeds and names only
   `healthy`. That is the result when the server refuses the late update
   with `EINVAL`, which is what the upstream correction does: the mechanism
@@ -137,9 +143,15 @@ from before its removal and sends it again with
     group does not list only `healthy` at the end.
   - `trigger not delivered`: the late update ended with a result other than
     0 or `EINVAL`, such as a timeout.
+  - `outcome not observed`: the listing of `late` failed in any way other
+    than exit code 22 with errno 22, such as a timeout, a permission error
+    or a group that is not found. Such a listing saw nothing of the group,
+    so it is never the symptom, whatever the header object holds.
   - `another fault:`: the listing of `late` is wrong in a way the orphan
     record does not explain, for example it names `victim` after a refused
-    update, lacks `healthy`, or fails without the orphan record.
+    update, lacks `healthy`, or fails as invalid without the orphan record.
+  - A header report or a listing lacks a field (see above), or any other
+    command of the case fails.
   - The cluster or its client does not start, or the client's `python3`
     lacks the `rados` module.
 
@@ -153,7 +165,7 @@ each):
 
 No fixed image exists to run, so `NOT_REPRODUCED` has not been observed
 natively; the refusal and the clean listing are covered only by the
-judgement tests.
+judgement tests, and so is the listing that fails as invalid.
 
 ## Cleanup and limits
 

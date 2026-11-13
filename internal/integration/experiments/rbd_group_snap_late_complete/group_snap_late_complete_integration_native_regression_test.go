@@ -6,7 +6,6 @@ package rbd_group_snap_late_complete_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"slices"
 	"strings"
@@ -26,11 +25,14 @@ import (
 // value replays the update that wrote it. The script reports the result of
 // the call (0, or the negative errno of a refusal), the omap keys of the
 // header and the ID, name, state and stored value of every snapshot record.
+// It fails, without a report, on a stored value it cannot decode and on a
+// refusal that carries no errno.
 const groupSnapScript = `import json,struct,sys
 import rados
 mode,pool,group=sys.argv[1:4]
 def text(buf,at):
     n,=struct.unpack_from('<I',buf,at)
+    assert at+4+n<=len(buf),'text of %d bytes at %d in a value of %d'%(n,at,len(buf))
     return buf[at+4:at+4+n].decode(),at+4+n
 def record(value):
     # struct_v, struct_compat and a 32-bit length, then the ID, the name and
@@ -52,43 +54,13 @@ with rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.
             try:
                 out['return'],_=ioctx.execute(oid,'rbd','group_snap_set',bytes.fromhex(sys.argv[4]))
             except rados.Error as e:
+                assert e.errno,'a refusal without an errno: %r'%e
                 out['return'],out['error']=-abs(e.errno),type(e).__name__+': '+str(e)
         values=omap(ioctx,oid)
         out['keys']=sorted(values)
         out['snapshots']=[record(values[k]) for k in sorted(values) if k.startswith('snapshot_')]
         print(json.dumps(out))
 `
-
-// groupSnapRecord is one snapshot record of a group header object. State is
-// the stored state byte, groupSnapComplete for a complete snapshot, and
-// Value the stored encoded record in hex.
-type groupSnapRecord struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State int    `json:"state"`
-	Value string `json:"value"`
-}
-
-const groupSnapComplete = 1
-
-// groupSnapHeader is what groupSnapScript reports.
-type groupSnapHeader struct {
-	Object    string            `json:"object"`
-	Return    *int              `json:"return"`
-	Error     string            `json:"error"`
-	Keys      []string          `json:"keys"`
-	Snapshots []groupSnapRecord `json:"snapshots"`
-}
-
-// record returns the record named name.
-func (header groupSnapHeader) record(name string) (groupSnapRecord, bool) {
-	for _, record := range header.Snapshots {
-		if record.Name == name {
-			return record, true
-		}
-	}
-	return groupSnapRecord{}, false
-}
 
 const groupSnapPool = "tc-group-snap"
 
@@ -111,12 +83,14 @@ var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791
 // both groups, after which neither listing nor header object names it, when
 // the stored COMPLETE record of the removed victim is sent again to one
 // group, then the defect is REPRODUCED if that group's listing names victim
-// again, or fails, with the record back in the header object without its
-// order entry, and NOT_REPRODUCED if the listing succeeds with only healthy,
-// whether the server accepted the update or refused it as invalid. The other
-// group gets no late update and must keep listing only healthy.
+// again, or fails as invalid (EINVAL), with the record back in the header
+// object without its order entry, and NOT_REPRODUCED if the listing succeeds
+// with only healthy, whether the server accepted the update or refused it as
+// invalid. The other group gets no late update and must keep listing only
+// healthy.
 //
-// A failure of the given or when steps fails the test; the result does not.
+// A failure of the given or when steps fails the test, and so does a listing
+// that fails in any other way; the result does not.
 func TestRBDGroupSnapshotLateCompleteAfterRemoval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -129,26 +103,26 @@ func TestRBDGroupSnapshotLateCompleteAfterRemoval(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: groupSnapPool, PGNum: 1, Application: "rbd"}); err != nil {
 		t.Fatal(err)
 	}
-	header := func(group string, args ...string) groupSnapHeader {
+	header := func(group string, update bool, args ...string) groupSnapHeader {
 		t.Helper()
 		out := harness.ExecOutput(t, ctx, client, append([]string{"python3", "-c", groupSnapScript}, args...)...)
-		var got groupSnapHeader
-		if err := json.Unmarshal([]byte(out), &got); err != nil {
-			t.Fatalf("header of %s: %v: %s", group, err, out)
+		got, err := parseGroupSnapHeader([]byte(out), update)
+		if err != nil {
+			t.Fatalf("header of %s: %v", group, err)
 		}
 		return got
 	}
-	read := func(group string) groupSnapHeader { t.Helper(); return header(group, "read", groupSnapPool, group) }
+	read := func(group string) groupSnapHeader {
+		t.Helper()
+		return header(group, false, "read", groupSnapPool, group)
+	}
 	// set sends payload to the group's header object as a group_snap_set
 	// and returns its result with the header after it.
 	set := func(group, payload string) (int, groupSnapHeader) {
 		t.Helper()
-		got := header(group, "set", groupSnapPool, group, payload)
-		if got.Return == nil {
-			t.Fatalf("the update of %s reported no result: %+v", group, got)
-		}
-		t.Logf("group_snap_set on %s (%s): return %d %s", got.Object, group, *got.Return, got.Error)
-		return *got.Return, got
+		got := header(group, true, "set", groupSnapPool, group, payload)
+		t.Logf("group_snap_set on %s (%s): return %d %s", got.Object, group, got.Return, got.Error)
+		return got.Return, got
 	}
 	// listed requires the listing of group to succeed with exactly names.
 	listed := func(group string, names ...string) {
@@ -222,9 +196,10 @@ func TestRBDGroupSnapshotLateCompleteAfterRemoval(t *testing.T) {
 }
 
 // groupSnapList runs the ordinary listing command for group and returns its
-// exit code, its output and, when it succeeded, the snapshot names in its
-// order. The command failing is an outcome; only a failure to run it, or
-// output that is not the listing, fails the test.
+// exit code, its output and, when it exited 0, the snapshot names in its
+// order. The command failing is an observation for the caller to judge; a
+// failure to run it, or output of a successful command that is not a
+// listing, fails the test.
 func groupSnapList(t *testing.T, ctx context.Context, client testcontainers.Container, group string) (int, string, []string) {
 	t.Helper()
 	execCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -240,18 +215,9 @@ func groupSnapList(t *testing.T, ctx context.Context, client testcontainers.Cont
 	if exit != 0 {
 		return exit, string(output), nil
 	}
-	var snapshots []struct {
-		Snapshot string `json:"snapshot"`
-	}
-	if err := json.Unmarshal(output, &snapshots); err != nil {
-		t.Fatalf("listing of %s: %v: %s", group, err, output)
-	}
-	var names []string
-	for _, snapshot := range snapshots {
-		if snapshot.Snapshot == "" {
-			t.Fatalf("listing of %s has an entry without a name: %s", group, output)
-		}
-		names = append(names, snapshot.Snapshot)
+	names, err := parseGroupSnapListing(output)
+	if err != nil {
+		t.Fatalf("listing of %s: %v", group, err)
 	}
 	return exit, string(output), names
 }
