@@ -53,6 +53,9 @@ Documentation for a published release is available at its Git tag.
   - [`cephfs/mirror`](cephfs/mirror/README.md): snapshot mirroring between two
     clusters.
 - [`rgw`](rgw/README.md): S3 and Swift gateways, users, tenants and quotas.
+  - [`rgw/expect`](rgw/expect/README.md): pure evaluations of captured
+    storage accounting and multisite data sync observations, with mismatch
+    explanations.
   - [`rgw/account`](rgw/account/README.md): accounts, their quotas and root
     users.
   - [`rgw/placement`](rgw/placement/README.md): placement targets, storage

@@ -60,7 +60,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    and give the SUT the new CA the way it reads its configuration.
 6. **Observe and verify**: `User.Info`, `User.Usage`, `notification.Queue`
    for a persistent notification topic, and `Gateway.Admin` for anything
-   without a typed API.
+   without a typed API. [`rgw/expect`](expect/README.md) evaluates one
+   captured `User.Usage` observation against a stated owner and totals.
 7. **Clean up**: terminate the cluster; gateways, users and data go with it.
    `Gateway.Remove`, `User.Remove` and `Role.Remove` are for tests of those
    steps.
