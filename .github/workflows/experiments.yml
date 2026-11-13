@@ -39,6 +39,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOPROXY: 'https://proxy.golang.org|direct'
+
 jobs:
   experiment:
     name: ${{ inputs.case }}
@@ -49,31 +52,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
+          check-latest: true
+          cache: false
       - name: Run the case
         env:
           CASE: ${{ inputs.case }}
           IMAGE: ${{ inputs.image }}
-        run: |
-          set -euo pipefail
-          package="github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/$CASE"
-          want=REPRODUCED
-          flags=()
-          if [ -n "$IMAGE" ]; then
-            if ! printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9./:@_-]+$'; then
-              echo "::error::invalid image reference"
-              exit 1
-            fi
-            want=NOT_REPRODUCED
-            flags=(-ldflags "-X ${package}_test.image=$IMAGE")
-          fi
-          go test -tags=all,native_regression -count=1 -v -timeout 110m "${flags[@]}" "$package" | tee experiment.log
-          results=$(grep -o 'EXPERIMENT_RESULT case=[^ ]* result=[A-Z_]*' experiment.log || true)
-          if [ -z "$results" ]; then
-            echo "::error::the case printed no EXPERIMENT_RESULT line"
-            exit 1
-          fi
-          echo "$results"
-          if printf '%s\n' "$results" | grep -v "result=$want\$" >/dev/null; then
-            echo "::error::want every result $want"
-            exit 1
-          fi
+        run: python3 .github/scripts/run_experiment.py --case "$CASE" --image "$IMAGE"
