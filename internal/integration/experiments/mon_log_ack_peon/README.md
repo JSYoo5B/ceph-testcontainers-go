@@ -42,11 +42,14 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published images (about 100
-seconds on 20.2.4) and passes on 19.2.2 (about 55 seconds). No automatic run
-includes it (the default checks of a pull request, pushes to `main`, periodic
-samples), and it never gates anything. A maintainer can run it on demand, also
-on a pull request's head with the comment below.
+Standalone reproducer: the test runs on its package-level `image`, Tentacle
+20.2.4 by default, which reproduces the defect. Its given and when steps fail
+the test; the then step does not. It prints one line,
+`EXPERIMENT_RESULT case=mon_log_ack_peon result=<REPRODUCED|NOT_REPRODUCED>`,
+and passes either way. No automatic run includes it (the default checks of a
+pull request, pushes to `main`, periodic samples), and it never gates
+anything. A maintainer can run it on demand, also on a pull request's head
+with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=mon_log_ack`.
 - Comment: `/ci run mon_log_ack` (a non-gating run on a pull request's head).
@@ -55,25 +58,26 @@ on a pull request's head with the comment below.
 
 ## Running it
 
+On the default image, which must print `result=REPRODUCED`:
+
 ```sh
-CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-or through the tag runner:
+On another image, injected into the package's `image` variable. No release
+fixes the defect yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
+which predates the introducing change, must print `result=NOT_REPRODUCED`:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch mon_log_ack \
-  --package ./internal/integration/experiments/mon_log_ack_peon \
-  --directory "artifacts/mon-log-ack-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/mon_log_ack_peon_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23" \
+  -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-The log line `MON_LOG_ACK ceph=...` records the version the cluster runs; pin
-the image by digest when the result is evidence.
+Every container of the case runs `image`; the role image variables
+(`CEPH_TEST_IMAGE`, `CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The log
+line `MON_LOG_ACK ceph=...` records the version the cluster runs.
 
 ## Observations and controls
 
@@ -93,15 +97,25 @@ the image by digest when the result is evidence.
 
 ## Reading the result
 
-- **Pass:** every OSD was acknowledged in a stable window (19.2.2).
-- **Observed bug:** the leader-connected control is acknowledged, the
-  peon-connected OSDs are not, and the peon logs a discarded route (20.2.4).
-- **Not reproduced:** a pass on a build that carries the introducing change.
-- **Unavailable prerequisite:** three MONs or OSDs do not start, or no layout
-  with a leader and a peon session is reached.
-- **Condition not established:** the leader-connected control is not
-  acknowledged, or the window is rejected for a leader, epoch or session
-  change. A plain timeout is not a reproduction.
+- **REPRODUCED:** the leader-connected control is acknowledged, a
+  peon-connected OSD is not, and the symptom names the peons' discarded
+  routes ("don't have routed request").
+- **NOT_REPRODUCED:** every OSD was acknowledged in a stable window, each
+  peon-connected one through its own peon.
+- **Test failure (no result):** three MONs or OSDs do not start, no layout
+  with a leader and a peon session is reached, the entries do not reach the
+  cluster log, the leader-connected control is not acknowledged, the window
+  is rejected for a leader, epoch or session change, or a peon-connected OSD
+  is acknowledged other than through its peon. A plain timeout is not a
+  reproduction.
+
+Native results (Linux amd64 host, Docker, aggregate images, one run each):
+
+| Image | Result | Time |
+| --- | --- | --- |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: osd.0 and osd.2 on peons never acknowledged; peons discarded 39 and 12 routed MLogAcks | 104 s |
+| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `REPRODUCED`: osd.2 on a peon never acknowledged | 104 s |
+| Squid 19.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…` | `NOT_REPRODUCED` | 46 s |
 
 ## Cleanup and limits
 

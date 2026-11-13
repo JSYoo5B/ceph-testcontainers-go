@@ -677,45 +677,44 @@ fixture parts, and `cephfs_authorization_isolation` and
   test manual-only, and moving a case changes its package path, so run
   [`plan --verify`](#verify-batch-profiles-before-pushing) and update every
   `--package` that names it.
+- A case that reproduces a known defect is a standalone test written at
+  consumer-code level as given, when and then, with nothing shared between
+  cases:
+  - A failure in the given or when steps (setup, controls, preconditions,
+    the trigger) fails the test. That is a real problem with the case or the
+    fixture.
+  - The then step decides whether the documented symptom occurred and only
+    reports it, in one line per independently evaluated defect:
+    `EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]`.
+    The result never fails the test.
+  - The image is the only input that changes the given step's premise. It is
+    a package-level string variable, `image`, whose default is a
+    digest-pinned image that reproduces the defect. A run selects another
+    image with `-ldflags "-X <import path>_test.image=<image>"`, and an image
+    that no longer reproduces it is one where the defect is resolved. Every
+    container the case starts from a Ceph image (cluster, admin client,
+    mirror daemon, gateway) runs that image: a case starts its cluster with
+    `harness.NewSingleImageCluster` or the package `Run` functions, never
+    with a helper that reads the batch's role images.
+  - Running that single test is enough to reproduce the defect:
+
+    ```sh
+    go test -tags=all,native_regression -count=1 -v ./internal/integration/experiments/rgw_empty_sse_header/
+    go test -tags=all,native_regression -count=1 -v \
+      -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+      ./internal/integration/experiments/rgw_empty_sse_header/
+    ```
+
+    The first prints `result=REPRODUCED`, the second `result=NOT_REPRODUCED`,
+    and both pass. The `Experiments` workflow runs the same command for one
+    case and requires every result line to be `REPRODUCED` on the default
+    image. When a fixed image is given it runs the second command afterwards
+    and requires each result the default run reproduced to be printed again
+    as `NOT_REPRODUCED`.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a
   release-prefix branch because it exists.
-
-#### Images for the RGW S3 cases
-
-The RGW S3 cases (`rgw_empty_sse_header`, `rgw_ssec_multipart_completion`,
-`rgw_lifecycle_expiration_header`, `rgw_compressed_copy_accounting`,
-`rgw_multipart_part_storage_class` and `rgw_single_part_multipart_read`)
-compare releases: most compare the affected Tentacle 20.2.4 with the fixed
-20.2.5 and Umbrella 21.2.0, `rgw_multipart_part_storage_class` fails on all
-of them and `rgw_single_part_multipart_read` passes on all of them. Each needs the
-`essential`, `client` and `rgw` roles of one release. For
-a supported release (20.2.4, 21.2.0 or 19.2.5), prepare the pinned role images
-of `.github/ceph-role-images.json` and export them:
-
-```sh
-release=20.2.4
-dir="artifacts/roles-$release-$(date -u +%Y%m%dT%H%M%SZ)"
-python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
-  --release "$release" --roles essential,client,rgw --prepare-only --output-dir "$dir" \
-  --github-env "$dir/role-images.env" &&
-  . "./$dir/role-images.env" &&
-  export CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_RGW_IMAGE
-```
-
-Tentacle 20.2.5 has no published role images. Run it on the upstream
-aggregate that `.github/ceph-discovery-images.json` pins, with no role
-variable set:
-
-```sh
-unset SCENARIO_IMAGE_LAYOUT CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE \
-  CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE
-export CEPH_TEST_IMAGE=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c
-```
-
-After the selected setup succeeds, run the case's `go test` or `tag_scenarios.py optional` command from its
-manual. Each manual names the images its recorded result ran on.
 
 ### Messenger coverage manifest
 

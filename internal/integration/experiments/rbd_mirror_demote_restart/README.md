@@ -32,14 +32,15 @@ Upstream references for the first defect:
   [ceph/ceph#66165](https://github.com/ceph/ceph/pull/66165), Tentacle
   backport [ceph/ceph#66164](https://github.com/ceph/ceph/pull/66164).
 
-The test fails on every published image at the exact-bytes step. That is the
-expected result for an unpatched defect; it is not a fixture failure.
+The case reports the two defects as two units, `demotion-resume` and
+`resumed-bytes`. No image reproduces both: `resumed-bytes` can be judged
+only after the copy resumed, which an image with defect 1 never does.
 
 ## Requirements
 
 - Two clusters, one OSD each, bridge mode only; forward and reverse
-  `rbdmirror.Run` links in snapshot mode. Image roles `essential`, `client`
-  and `rbd-aux`, all of one release.
+  `rbdmirror.Run` links in snapshot mode. The clusters, their clients and
+  both receivers run the package's `image`, one aggregate image.
 - The netem helper image (`CEPH_TEST_NETEM_IMAGE`, default
   `fault.NetemHelperImage`) limits only the source OSD's packets to the
   forward receiver to 2 Mbit/s, so each 16 MiB image (256 KiB objects) takes
@@ -48,37 +49,48 @@ expected result for an unpatched defect; it is not a fixture failure.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 7 minutes and fails at
-the exact-bytes check on every published image. No automatic run includes it
-(the default checks of a pull request, pushes to `main`, periodic samples),
-and it never gates anything. A maintainer can run it on demand, also on a pull
-request's head with the comment below.
+Standalone reproducer: the test runs on its package-level `image`, Squid
+19.2.3 by default, which reproduces `demotion-resume`. Its given and when
+steps (steps 1 to 3 below) fail the test; the then step does not. It prints
+`EXPERIMENT_RESULT case=rbd_mirror_demote_restart/demotion-resume result=...`,
+and, only when the copy resumed,
+`EXPERIMENT_RESULT case=rbd_mirror_demote_restart/resumed-bytes result=...`.
+It passes either way. No automatic run includes it (the default checks of a
+pull request, pushes to `main`, periodic samples), and it never gates
+anything. A maintainer can run it on demand, also on a pull request's head
+with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rbd_demote_restart`.
 - Comment: `/ci run rbd_demote_restart` or `/ci run rbd_demote_restart on squid`.
 
 ## Running it
 
+On the default image, which must print `demotion-resume result=REPRODUCED`
+and no `resumed-bytes` line:
+
 ```sh
-CEPH_TEST_IMAGE=<aggregate image@sha256:...> \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' \
   ./internal/integration/experiments/rbd_mirror_demote_restart
 ```
 
-or, exactly as CI runs the batch:
+On another image, injected into the package's `image` variable. A release
+that fixes defect 1 (Squid 19.2.4 here; Tentacle 20.2.1 and later too) must
+print `demotion-resume result=NOT_REPRODUCED`; every such release qualified
+so far prints `resumed-bytes result=REPRODUCED`, because no release fixes
+defect 2:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rbd_demote_restart \
-  --package ./internal/integration/experiments/rbd_mirror_demote_restart \
-  --directory "artifacts/rbd-demote-restart-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_mirror_demote_restart_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0" \
+  -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' \
+  ./internal/integration/experiments/rbd_mirror_demote_restart
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-Record the image digest and the `ceph --version` source SHA with the result;
-`harness.StaticFacts` logs the versions the cluster runs.
+The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, ...)
+do not select the case's images. The netem helper image
+(`CEPH_TEST_NETEM_IMAGE`) is not a Ceph image and keeps its own selection.
+The test logs the image and the clusters' Ceph versions.
 
 ## Observations and controls
 
@@ -90,29 +102,62 @@ Record the image digest and the `ceph --version` source SHA with the result;
    container. Without this the trigger is not established.
 3. While the receiver is down the demoted `removed` primary is force-disabled
    and deleted, the rate limit is lifted and the same container is started.
-4. Effects: the same snapshot ID completes with the same `primary_snap_id`;
-   the destination `removed` image disappears; the `resumed` image exports
-   the source's exact bytes; non-forced promotion succeeds; the next write and
-   snapshot replicate back through the reverse link.
+4. `demotion-resume`: the same snapshot ID completes with the same
+   `primary_snap_id`, and the destination `removed` image disappears.
+5. `resumed-bytes`, only when the snapshot completed: the `resumed` image
+   exports the source's exact bytes.
+6. Only when neither unit reproduced: non-forced promotion succeeds, and the
+   next write and snapshot replicate back through the reverse link. A
+   failure here fails the test.
 
-On a byte mismatch the failure message classifies every 256 KiB object as
-new, old or neither, so the skipped object number is in the log.
+On a byte mismatch the `resumed-bytes` symptom classifies every 256 KiB
+object as new, old or neither, so the skipped object number is in the log.
 
 ## Reading the result
 
-- **Pass:** every effect above held. No published image passes today.
-- **Observed bug, defect 1:** the copy does not complete after the restart
-  (19.2.3: status `up+unknown`, "remote image is not primary").
-- **Observed bug, defect 2:** the copy completes, but the exact-bytes check
-  fails with exactly one old object at the recorded progress number.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that the
-  condition in step 2 was logged before treating it as fixed.
-- **Unavailable prerequisite:** the netem helper or the `rbd-aux` role is
-  missing, or a cluster or link does not start. The test fails before the
-  condition is observed.
-- **Condition not established:** the copy was already complete, or not yet
-  started, at the kill. The test fails at step 2; a timeout there is not a
-  reproduction.
+- **`demotion-resume` REPRODUCED:** the copy does not complete after the
+  restart (19.2.3: status `up+unknown`, "remote image is not primary"), or
+  the destination keeps the `removed` replica. When the copy did not
+  complete, `resumed-bytes` is not evaluated (`resumed-bytes not evaluated`).
+- **`demotion-resume` NOT_REPRODUCED:** the same snapshot completed and the
+  `removed` replica is gone.
+- **`resumed-bytes` REPRODUCED:** the copy completed, but the destination
+  does not read back the demotion snapshot's bytes; the symptom names one
+  old object at the recorded progress number.
+- **`resumed-bytes` NOT_REPRODUCED:** the destination holds the exact bytes.
+  No published image does this today.
+- **Test failure (no result):** the netem helper is missing, a cluster or
+  link does not start, the control read-back fails, or the copy was already
+  complete, or not yet started, at the kill (step 2; a timeout there is not
+  a reproduction).
+
+Native results (Linux amd64 host, Docker, aggregate images, one run each):
+
+| Image | `demotion-resume` | `resumed-bytes` | Time |
+| --- | --- | --- | --- |
+| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77c…` (default) | `REPRODUCED`: copy never completed (`up+unknown`, "remote image is not primary"); the `removed` replica stayed | not evaluated | 760 s |
+| Squid 19.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8…` | `NOT_REPRODUCED` | `REPRODUCED`: object 37 old, 63 new | 426 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` | `NOT_REPRODUCED` | `REPRODUCED`: object 44 old, 63 new | 430 s |
+
+So the default image reproduces `demotion-resume` only, and a run on a
+release that fixes it still prints `resumed-bytes result=REPRODUCED`.
+
+The Experiments workflow compares a fixed image with the default run by
+result name. The default run reproduces `demotion-resume` alone, so that is
+the comparison target: a fixed image passes when it prints
+`demotion-resume result=NOT_REPRODUCED`. `resumed-bytes`, which only the
+fixed run reaches, is printed and not judged, so the dispatch says nothing
+about defect 2:
+
+```sh
+gh workflow run Experiments -f case=rbd_mirror_demote_restart \
+  -f image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0
+```
+
+The table above is from separate `go test` runs. The scripted pair (19.2.3,
+then 19.2.4, through `run_experiment.py`) has not been run for this case;
+its comparison is covered only by the script's unit tests with simulated
+logs.
 
 ## Cleanup and limits
 

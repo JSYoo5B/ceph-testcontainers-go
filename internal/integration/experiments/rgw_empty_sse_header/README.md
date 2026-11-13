@@ -40,7 +40,8 @@ Upstream references:
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
   user), plain HTTP: the algorithm check runs before any secure-transport
-  check. Image roles `essential`, `client` and `rgw`, all of one release.
+  check. Every container runs the package's `image`, by default the Tentacle
+20.2.4 aggregate.
   Bridge networking. No KMS or SSE-S3 backend.
 - Requests are signed by the test's own SigV4 client
   (`harness.RGWBackendSigned`), which signs every `x-amz-*` header it sends.
@@ -48,42 +49,37 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
-checks of a pull request, pushes to `main`, periodic samples), and it never
-gates anything. A maintainer can run it on demand, also on a pull request's
-head with the comment below.
+Known-defect reproducer: the test passes whether or not the defect occurs and
+prints the result; only a failure of its given or when steps fails it. It
+stays an optional batch, so no automatic run includes it.
 
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_empty_sse_header`.
-- Comment: `/ci run rgw_empty_sse_header` or
-  `/ci run rgw_empty_sse_header on umbrella`.
+- Manual: `gh workflow run Experiments -f case=rgw_empty_sse_header`
+  requires `REPRODUCED`; adding
+  `-f image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c`
+  requires `NOT_REPRODUCED`.
+- Comment: `/ci run rgw_empty_sse_header` runs the batch and takes only its
+  pass or failure.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+On the default image, Tentacle 20.2.4, which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -run '^TestRGWEmptySSEHeader$' \
   ./internal/integration/experiments/rgw_empty_sse_header
 ```
 
-Or run the batch exactly as CI does:
+On another image, for example the fixed Tentacle 20.2.5:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_empty_sse_header \
-  --package ./internal/integration/experiments/rgw_empty_sse_header \
-  --directory "artifacts/rgw-empty-sse-header-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  ./internal/integration/experiments/rgw_empty_sse_header
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-Record the image digests with the result; the log names the Ceph version
-(`RGW_SSE ceph=` and the daemon versions) and every PUT's header, status,
-error code and message, and what a fresh GET found.
+The log names the image and Ceph version (`RGW_SSE image=`, `RGW_SSE ceph=`
+and the daemon versions), every PUT's header, status, error code and message,
+and what a fresh GET found.
 
 ## Observations and controls
 
@@ -106,27 +102,23 @@ error code and message, and what a fresh GET found.
 
 ## Reading the result
 
-The results below ran on the pinned images of the shared recipe: the 20.2.4
-role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
-`aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
-role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
-client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
+The test ends with one line:
+`EXPERIMENT_RESULT case=rgw_empty_sse_header result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]`.
 
-- **Pass:** every step followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `empty-new-key` answers 200 and stores the exact bytes
-  unencrypted, and `empty-overwrite` answers 200 and adds a second version.
-  The control and `omitted` pass. Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the wire condition was logged.
-- **Unavailable prerequisite:** the cluster or the gateway does not start, or
-  the invalid-algorithm control is not refused with 400 `InvalidArgument`.
-  Squid 19.2.5 refuses the invalid algorithm with 400 `InvalidRequest` and no
-  message, so the case stops before the subtests there.
-- **Condition not established:** the client did not send and sign the empty
-  header, a bucket has a default encryption configuration, or the seed write
-  has no version ID. The test fails with `condition not established`.
+- **REPRODUCED:** an empty-header PUT is not refused with the control's 400
+  `InvalidArgument`, or it changes what is stored: `empty-new-key` stores an
+  unencrypted object, `empty-overwrite` adds a version.
+- **NOT_REPRODUCED:** both PUTs get the control's refusal and nothing changes.
+
+Native results on a Linux amd64 host, one run each:
+
+| Image | Result | Time |
+| --- | --- | --- |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a…` (default) | REPRODUCED: both PUTs answered 200, a new object and a new version | 31 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8a…` | NOT_REPRODUCED | 30 s |
+
+Earlier runs on split role images recorded the same behaviour on 20.2.4, and
+no reproduction on Umbrella 21.2.0.
 
 ## Cleanup and limits
 

@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -30,6 +31,18 @@ const (
 	rbdDemoteRestartImageSize = 16 << 20
 	rbdDemoteRestartRate      = 2 * fault.MegabitPerSecond
 )
+
+// image is the Ceph image every cluster, client and receiver of the case
+// runs: Squid 19.2.3, which reproduces demotion-resume. A run selects another
+// image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_mirror_demote_restart_test.image=<image>"
+//
+// Squid 19.2.4 and Tentacle 20.2.1 fix demotion-resume. resumed-bytes is
+// evaluated only on an image that resumes the copy, and every such image
+// qualified so far (19.2.4, 19.2.5, 20.2.4, 21.2.0) reproduces it; no image
+// reproduces both.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77cf1a45da918d090681744f610977c790f15cb8a6646f35fd8d44c"
 
 // rbdMirrorSnapshot is one entry of rbd snap ls --all with the mirror
 // snapshot namespace fields that tell a copied demotion snapshot apart.
@@ -69,23 +82,30 @@ func rbdIncompleteDemotion(snaps []rbdMirrorSnapshot) bool {
 	return last.Type == "mirror" && last.State == "demoted" && last.PrimaryMirrorUUID != "" && last.Complete != nil && !*last.Complete
 }
 
-// TestRBDMirrorDemotionResumesAfterReceiverRestart kills the receiver while
-// it copies a planned demotion snapshot and restarts the same daemon
-// container. The rewritten image's demotion snapshot reaches the destination
-// through a limited source OSD path, so the copy is observed incomplete before
-// and after the SIGKILL. After the restart the same snapshot must complete; a
-// receiver that treats the incomplete demotion copy as an orphan never
-// resumes it (observed on Squid 19.2.3). A second image, whose demoted
-// primary is force-disabled and removed while the receiver is down, must be
-// removed on the destination too, because the incomplete copy leaves that
-// image non-primary. The destination must then hold the source's exact
-// bytes, be promoted without force, and replicate its next write back.
+// TestRBDMirrorDemotionResumesAfterReceiverRestart reports two defects of a
+// receiver that is killed while it copies a planned demotion snapshot and is
+// started again as the same container.
 //
-// It fails on every qualified image (19.2.4, 19.2.5, 20.2.4, 21.2.0) at the
-// exact-bytes check: the resumed copy reports complete but skips the object
-// numbered last_copied_object_number at the time of the kill, which keeps the
-// previous snapshot's bytes. An ordinary mirror snapshot copy shows the same
-// loss, so it is not specific to demotion.
+// Given two clusters whose images read back exactly on the destination, and
+// a demotion snapshot of each rewritten image copied through a limited source
+// OSD path, observed incomplete before and after the SIGKILL of the receiver,
+// when the demoted primary of the second image is force-disabled and removed
+// while the receiver is down and the receiver is started again, then:
+//
+//   - demotion-resume is REPRODUCED if the same demotion snapshot does not
+//     complete or the removed image's replica is not removed, and
+//     NOT_REPRODUCED if both happen. A receiver that treats the incomplete
+//     demotion copy as an orphan never resumes it (Squid 19.2.3).
+//   - resumed-bytes, evaluated only once the copy completed, is REPRODUCED if
+//     the destination does not hold the source's exact bytes, and
+//     NOT_REPRODUCED if it does. The resumed copy of 19.2.4, 19.2.5, 20.2.4
+//     and 21.2.0 skips the object numbered last_copied_object_number at the
+//     kill, which keeps the previous snapshot's bytes.
+//
+// When neither is reproduced, the destination must also be promoted without
+// force and replicate its next write back.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func TestRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	for _, mode := range harness.NetworkModes(t, "bridge") {
 		t.Run(mode.Name, testRBDMirrorDemotionResumesAfterReceiverRestart)
@@ -96,13 +116,16 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	netem := harness.NetemImage(t)
-	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("image: %s", image)
+	source, sourceClient := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, destinationClient := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("ceph: source %s, destination %s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
 	const pool = "tc-rbd-demote"
 	const resumed, removed = pool + "/resumed", pool + "/removed"
 	harness.RBDMultiClusterPool(t, ctx, source, sourceClient, pool)
 	harness.RBDMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	forward := harness.RBDScenarioRunLink(t, ctx, source, destination, pool, "source", "destination")
-	reverse := harness.RBDScenarioRunLink(t, ctx, destination, source, pool, "destination", "source")
+	forward := rbdDemoteRestartLink(t, ctx, source, destination, pool, "source", "destination")
+	reverse := rbdDemoteRestartLink(t, ctx, destination, source, pool, "destination", "source")
 	harness.RBDScenarioWaitTransmitPeer(t, ctx, forward.SourceRBD, pool, "destination")
 	harness.RBDScenarioWaitTransmitPeer(t, ctx, reverse.SourceRBD, pool, "source")
 
@@ -200,7 +223,19 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The same demotion snapshot completes, with the source's exact bytes.
+	// Each symptom observed by the then step, by defect; none means
+	// NOT_REPRODUCED.
+	var resumeSymptoms, bytesSymptoms []string
+	report := func(unit string, symptoms []string) {
+		result := "NOT_REPRODUCED"
+		if len(symptoms) > 0 {
+			result = "REPRODUCED"
+		}
+		t.Logf("EXPERIMENT_RESULT case=rbd_mirror_demote_restart/%s result=%s image=%s symptoms=%q", unit, result, image, symptoms)
+	}
+
+	// demotion-resume: the same demotion snapshot completes, and the replica
+	// of the removed primary is removed.
 	completed, err := harness.Observe(ctx, 5*time.Minute, 20*time.Second, 2*time.Second, func(probeCtx context.Context) (string, bool, error) {
 		snaps, raw, err := rbdMirrorSnapshots(probeCtx, destinationClient, resumed)
 		if err != nil {
@@ -216,11 +251,13 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		}
 		return raw, false, fmt.Errorf("demotion copy %d is gone", demotion[resumed].ID)
 	})
-	if err != nil {
+	resumedCopy := err == nil
+	if resumedCopy {
+		t.Logf("demotion copy %d of %s completed after the restart: %s", demotion[resumed].ID, resumed, completed.Value)
+	} else {
 		status, statusErr := forward.ImageStatus(ctx, "resumed")
-		t.Fatalf("the restarted receiver did not complete demotion copy %d of %s: %v; snapshots %s; status %+v %v", demotion[resumed].ID, resumed, err, completed.Value, status, statusErr)
+		resumeSymptoms = append(resumeSymptoms, fmt.Sprintf("the restarted receiver did not complete demotion copy %d of %s: %v; snapshots %s; status %+v %v", demotion[resumed].ID, resumed, err, completed.Value, status, statusErr))
 	}
-	t.Logf("demotion copy %d of %s completed after the restart: %s", demotion[resumed].ID, resumed, completed.Value)
 
 	gone, err := harness.Observe(ctx, 5*time.Minute, 20*time.Second, 2*time.Second, func(probeCtx context.Context) (string, bool, error) {
 		code, out, err := harness.RBDMultiClusterExec(probeCtx, destinationClient, "rbd", "ls", "--format", "json", pool)
@@ -239,10 +276,29 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 		return string(out), true, nil
 	})
 	if err != nil {
-		t.Fatalf("the destination retains %s after its demoted primary was removed: %v; images %s", removed, err, gone.Value)
+		resumeSymptoms = append(resumeSymptoms, fmt.Sprintf("the destination retains %s after its demoted primary was removed: %v; images %s", removed, err, gone.Value))
+	}
+	if t.Failed() {
+		return
+	}
+	report("demotion-resume", resumeSymptoms)
+	if !resumedCopy {
+		t.Logf("resumed-bytes not evaluated: demotion copy %d of %s did not complete", demotion[resumed].ID, resumed)
+		return
 	}
 
-	rbdDemoteRestartWaitBytes(t, ctx, destinationClient, resumed, before[resumed], after[resumed])
+	// resumed-bytes: the completed copy holds the demotion snapshot's bytes.
+	if symptom := rbdDemoteRestartWaitBytes(t, ctx, destinationClient, resumed, before[resumed], after[resumed]); symptom != "" {
+		bytesSymptoms = append(bytesSymptoms, symptom)
+	}
+	if t.Failed() {
+		return
+	}
+	report("resumed-bytes", bytesSymptoms)
+	if len(resumeSymptoms)+len(bytesSymptoms) != 0 {
+		t.Logf("promotion and reverse replay not run: a defect was reproduced")
+		return
+	}
 
 	// Planned failover completes: non-forced promotion, then the new
 	// primary's next write and checkpoint replicate back to the old source.
@@ -256,6 +312,32 @@ func testRBDMirrorDemotionResumesAfterReceiverRestart(t *testing.T) {
 	harness.RBDScenarioCommand(t, ctx, reverse.SourceRBD, "mirror", "image", "snapshot", resumed)
 	harness.RBDScenarioWaitBytes(t, ctx, sourceClient, resumed, final)
 	t.Logf("demotion copy %d of %s completed after a restart of receiver %s; %s removed with its demoted primary; promoted destination replicated back", demotion[resumed].ID, resumed, daemon.DaemonName, removed)
+}
+
+// rbdDemoteRestartLink runs one snapshot-mode rbdmirror link of image from
+// source to destination.
+func rbdDemoteRestartLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Container {
+	t.Helper()
+	link, err := rbdmirror.Run(ctx, image, rbdmirror.WithConfig(rbdmirror.Config{
+		Source: source, Destination: destination, Pool: pool,
+		SourceSite: sourceSite, DestinationSite: destinationSite,
+	}))
+	if link != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if t.Failed() && link.Container != nil {
+				harness.MultiClusterLogContainer(t, cleanupCtx, link.Container)
+			}
+			if err := link.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate rbdmirror link: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link
 }
 
 // rbdKillContainer sends SIGKILL to the container's process, so the daemon
@@ -290,9 +372,9 @@ func rbdKillContainer(t *testing.T, parent context.Context, ctr testcontainers.C
 }
 
 // rbdDemoteRestartWaitBytes waits for image to read back as after. On a
-// timeout it reports, per 256 KiB object, how many objects hold the new
-// bytes, the old bytes or neither.
-func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, before, after []byte) {
+// timeout it returns the symptom, which classifies every 256 KiB object as
+// holding the new bytes, the old bytes or neither.
+func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcontainers.Container, image string, before, after []byte) string {
 	t.Helper()
 	const object = 256 << 10
 	read := func(probeCtx context.Context) ([]byte, error) {
@@ -317,7 +399,7 @@ func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcon
 	})
 	if err == nil {
 		t.Logf("RBD %s holds the demotion snapshot's bytes: sha256=%x", image, sha256.Sum256(after))
-		return
+		return ""
 	}
 	classify := func(data []byte) string {
 		if len(data) != len(after) {
@@ -337,5 +419,5 @@ func rbdDemoteRestartWaitBytes(t *testing.T, ctx context.Context, client testcon
 		}
 		return fmt.Sprintf("objects new=%d old=%v neither=%v", len(fresh), stale, other)
 	}
-	t.Fatalf("%s does not hold the demotion snapshot's bytes: %v; %s", image, err, classify(observed.Value))
+	return fmt.Sprintf("%s does not hold the demotion snapshot's bytes: %v; %s", image, err, classify(observed.Value))
 }

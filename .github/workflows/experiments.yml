@@ -1,0 +1,62 @@
+name: Experiments
+
+# Runs one known-defect experiment case with go test, as a developer would.
+# The case always runs on its default image, which reproduces the defect, so
+# every EXPERIMENT_RESULT line must say REPRODUCED. With an image (a fixed
+# build) the case then runs again with it, and every result the default run
+# reproduced must be printed again as NOT_REPRODUCED. A failure of the case's
+# given or when steps fails the test and the run.
+on:
+  workflow_dispatch:
+    inputs:
+      case:
+        description: Experiment case directory under internal/integration/experiments
+        type: choice
+        options:
+          - cephfs_authorization_isolation
+          - cephfs_dangling_symlink_create
+          - cephfs_mirror_daemon_redistribution
+          - cephfs_readdir_after_snapdiff
+          - cephfs_snapshot_readdir_eviction
+          - cephfs_statfs_mixed_quota
+          - mon_log_ack_peon
+          - rbd_mirror_demote_restart
+          - rbd_trash_purge_timezone
+          - rgw_compressed_copy_accounting
+          - rgw_empty_sse_header
+          - rgw_lifecycle_expiration_header
+          - rgw_multipart_part_storage_class
+          - rgw_multisite_object_lock_sync
+          - rgw_single_part_multipart_read
+          - rgw_ssec_multipart_completion
+          - rgw_suspended_conditional_writes
+          - rgw_sync_lease_lapse
+          - rgw_sync_policy_translation
+      image:
+        description: Fixed image for a second run that must not reproduce (the default image always runs first and must reproduce)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  GOPROXY: 'https://proxy.golang.org|direct'
+
+jobs:
+  experiment:
+    name: ${{ inputs.case }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 230
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      - name: Run the case
+        env:
+          CASE: ${{ inputs.case }}
+          IMAGE: ${{ inputs.image }}
+        run: python3 .github/scripts/run_experiment.py --case "$CASE" --image "$IMAGE"

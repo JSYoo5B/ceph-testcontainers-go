@@ -28,6 +28,14 @@ import (
 
 const ssecBucket = "/tc-ssec-completion"
 
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_ssec_multipart_completion_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 // ssecKey is a customer key of the test. Only its headers leave the test;
 // nothing logs them.
 type ssecKey struct{ raw []byte }
@@ -277,20 +285,28 @@ func ssecCompositeSHA256(t *testing.T, parts ...string) string {
 	return fmt.Sprintf("%s-%d", base64.StdEncoding.EncodeToString(digest[:]), len(parts))
 }
 
-// TestRGWSSECMultipartCompletion requires the S3 rule for completing an
-// SSE-C multipart upload: an upload without an additional checksum
-// completes without the customer-key headers and reads back with the key,
-// while an upload with the SHA256 checksum algorithm still needs the key at
-// completion, and a key sent with the completion is always validated.
+// TestRGWSSECMultipartCompletion reports whether RGW refuses to complete an
+// SSE-C multipart upload without an additional checksum when the completion
+// carries no customer-key headers, which S3 completes.
 //
-// Tentacle 20.2.4 decrypts the upload's metadata while it parses every
-// completion, so the no-checksum completion without the key answers 400
-// InvalidArgument; the other subtests pass. Tentacle 20.2.5 and Umbrella
-// 21.2.0 pass.
+// Given a gateway on verified HTTPS and the controls (an unencrypted upload
+// completes; with no checksum, the correct key completes and another valid
+// key is refused by the key MD5 check; with the SHA256 checksum algorithm,
+// the completion needs the key and answers the composite checksum), when an
+// SSE-C upload without a checksum is completed without the key, then the
+// defect is REPRODUCED if the completion is refused, and NOT_REPRODUCED if
+// it completes and the object reads back encrypted with the key. Tentacle
+// 20.2.4 decrypts the upload's metadata while it parses every completion, so
+// it answers 400 InvalidArgument and reproduces; Tentacle 20.2.5 and Umbrella
+// 21.2.0 do not.
+//
+// A failure of the given or when steps, or of a control, fails the test;
+// the result does not.
 func TestRGWSSECMultipartCompletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_SSEC image=%s", image)
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SSEC ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	// SSE-C requires a secure transport (rgw_crypt_require_ssl stays at its
 	// default), so every request goes over verified HTTPS.
@@ -353,13 +369,16 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		c.requireAbsent(t, "no-checksum-wrong-key", owner)
 	})
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	t.Run("no-checksum-omitted-key", func(t *testing.T) {
 		data := payload("omitted key")
 		u := c.start(t, "no-checksum-omitted-key", data, owner.headers(), owner.headers(), false)
 		done := c.complete(t, u, nil)
 		if !done.completed() {
 			c.requireAbsent(t, "no-checksum-omitted-key", owner)
-			t.Fatalf("completion of an SSE-C upload without a checksum and without the customer key: status %d embedded-error %t %s %q, S3 wants a completed 200", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message)
+			symptoms = append(symptoms, fmt.Sprintf("completion without a checksum and without the customer key: status %d embedded-error %t %s %q, S3 wants a completed 200", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message))
+			return
 		}
 		c.requireEncryptedAtRest(t, "no-checksum-omitted-key", owner, data)
 	})
@@ -386,4 +405,12 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		}
 		c.requireEncryptedAtRest(t, "sha256-correct-key", owner, data)
 	})
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_ssec_multipart_completion result=%s image=%s symptoms=%q", result, image, symptoms)
 }

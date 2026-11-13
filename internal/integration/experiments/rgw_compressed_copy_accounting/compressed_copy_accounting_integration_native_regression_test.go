@@ -29,6 +29,14 @@ const (
 	ccObject    = "obj"
 )
 
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_compressed_copy_accounting_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 type ccCase struct {
 	ctx     context.Context
 	gateway *rgw.Gateway
@@ -297,23 +305,29 @@ func (c *ccCase) cleanup(t *testing.T, buckets []string) {
 	t.Logf("RGW_CC cleanup buckets=%d failed=%t", len(buckets), failed)
 }
 
-// TestRGWCompressedCopyAccounting requires that a copy whose data is
-// rewritten keeps the object's logical size in the destination bucket
-// index and statistics. The source is zlib-compressed (STANDARD storage
-// class), the destination storage class COLD is not, so RGW decompresses
-// the data and writes no compression attribute: the accounted size must be
-// the logical length, not the compressed byte count it read.
+// TestRGWCompressedCopyAccounting reports whether a copy whose data is
+// rewritten loses the object's logical size in the destination bucket index
+// and statistics.
 //
-// Tentacle 20.2.4 accounts such a copy with the number of raw bytes read
-// from the compressed source, so the destination's index entry, listing
-// size and bucket statistics report the compressed length while GET
-// returns every byte. Tentacle 20.2.5 and Umbrella 21.2.0 pass. The
-// controls (an uncompressed source, and a compressed destination with its
-// own compression metadata) pass on every tested release.
+// Given a zone whose STANDARD storage class is zlib-compressed and whose
+// COLD class is not, a zlib-compressed source and an uncompressed one, when
+// the compressed source is copied to COLD (RGW decompresses the data and
+// writes no compression attribute) and the controls are copied (to a
+// compressed destination, and from the uncompressed source), then the defect
+// is REPRODUCED if the COLD destination's index accounted_size, listed Size
+// or bucket statistics size is not the logical length, and NOT_REPRODUCED if
+// all three are. Tentacle 20.2.4 accounts such a copy with the number of raw
+// bytes read from the compressed source, so it reproduces; Tentacle 20.2.5
+// and Umbrella 21.2.0 do not. The controls must keep the logical size on
+// every release.
+//
+// A failure of the given or when steps, or of a control, fails the test; the
+// result does not.
 func TestRGWCompressedCopyAccounting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_CC image=%s", image)
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_CC ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -371,16 +385,22 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		t.Logf("RGW_CC trace %s", line)
 	}
 
-	requireLogical := func(t *testing.T, o ccObservation) {
+	// lostLogical requires the exact bytes from GET and describes how the
+	// accounting of o differs from the logical size, or returns "".
+	lostLogical := func(t *testing.T, o ccObservation) string {
 		t.Helper()
 		if !bytes.Equal(o.Data, data) {
 			t.Fatalf("%s: GET returned %d bytes that differ from the %d written", o.Bucket, len(o.Data), len(data))
 		}
 		if o.Index.AccountedSize != logical || uint64(o.ListedSize) != logical || o.Stats.Size != logical {
-			t.Errorf("%s: logical size %d, but index accounted_size=%d, listed Size=%d, bucket stats size=%d",
+			return fmt.Sprintf("%s: logical size %d, but index accounted_size=%d, listed Size=%d, bucket stats size=%d",
 				o.Bucket, logical, o.Index.AccountedSize, o.ListedSize, o.Stats.Size)
 		}
+		return ""
 	}
+
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 
 	t.Run("compressed-source-uncompressed-destination", func(t *testing.T) {
 		o := c.observe(t, uncompressed)
@@ -389,7 +409,9 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		if o.Compression != nil || o.Index.StorageClass != ccColdClass || o.Index.Size != logical || o.Stats.SizeUtilized != logical {
 			t.Fatalf("condition not established: the destination is not an uncompressed %s copy: %s", ccColdClass, o)
 		}
-		requireLogical(t, o)
+		if symptom := lostLogical(t, o); symptom != "" {
+			symptoms = append(symptoms, symptom)
+		}
 	})
 
 	t.Run("compressed-destination-control", func(t *testing.T) {
@@ -397,7 +419,9 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		if o.Compression == nil || o.Compression.OrigSize != logical || o.Index.Size >= logical {
 			t.Fatalf("control not established: the STANDARD copy is not stored compressed: %s", o)
 		}
-		requireLogical(t, o)
+		if failure := lostLogical(t, o); failure != "" {
+			t.Errorf("control failed: %s", failure)
+		}
 	})
 
 	t.Run("uncompressed-source-control", func(t *testing.T) {
@@ -405,6 +429,16 @@ func TestRGWCompressedCopyAccounting(t *testing.T) {
 		if o.Compression != nil || o.Index.Size != logical {
 			t.Fatalf("control not established: the copy of the plain source is not uncompressed: %s", o)
 		}
-		requireLogical(t, o)
+		if failure := lostLogical(t, o); failure != "" {
+			t.Errorf("control failed: %s", failure)
+		}
 	})
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_compressed_copy_accounting result=%s image=%s symptoms=%q", result, image, symptoms)
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
+
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_readdir_after_snapdiff_test.image=<image>"
+//
+// No release is fixed: Squid 19.2.5, Tentacle 20.2.5 and Umbrella 21.2.0
+// reproduce it too.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 // snapdiffRoot is the directory of the filesystem that holds the case.
 const snapdiffRoot = "/readdir-after-snapdiff"
@@ -127,18 +137,27 @@ finally:
 print(json.dumps(out))
 `
 
-// TestCephFSListingAfterSnapdiff lists a snapshot directory on a libcephfs
-// mount, reads a snapdiff of that directory on the same mount and lists the
-// snapshot again, entry by entry. The second listing must hold exactly the
-// snapshot's names. The trigger directory holds two names of one dentry
-// hash, of which the second changed between the snapshots; the control
-// directory's two names have different hashes. A fresh mount lists both
-// snapshots as the reference.
+// TestCephFSListingAfterSnapdiff reports whether a libcephfs mount that
+// read a snapdiff of a snapshot directory loses an entry when it lists the
+// snapshot again.
+//
+// Given two snapshotted directories (the trigger, whose two names share a
+// dentry hash and the second of which changed between the snapshots, and the
+// control, whose names do not share one) and the conditions (the first
+// listing on the warm mount and a fresh mount's listing are the snapshot,
+// the snapdiff names only the changed entry, and the positions show the
+// layout), when the warm mount lists the second snapshot, reads the snapdiff
+// and lists it again, then the defect is REPRODUCED if the second listing of
+// the trigger snapshot is not exactly its names while the control's is, and
+// NOT_REPRODUCED if both are exact. Tentacle 20.2.4 reproduces it.
+//
+// A failure of the given or when steps fails the test, and so does a control
+// snapshot that is not listed in full; the result does not.
 func TestCephFSListingAfterSnapdiff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := harness.IntegrationImages(t)
-	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
+	t.Logf("CEPHFS_READDIR_AFTER_SNAPDIFF image=%s", image)
+	cluster, client := harness.NewSingleImageCluster(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -205,8 +224,22 @@ func TestCephFSListingAfterSnapdiff(t *testing.T) {
 		t.Logf("CEPHFS_READDIR_AFTER_SNAPDIFF_RECEIPT %s: warm client %d listed %s; snapdiff s1..s2 named %v; listed again %s; fresh client %d listed %s",
 			seen.dir.Name, warm.Client, positions(seen.run.Before), seen.run.Diff, positions(seen.run.After), fresh.Client, positions(seen.fresh))
 	}
+	// The symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if verdict := judgeAfterSnapdiff(snapdiffTrigger.Files, snapdiffControl.Files, snapdiffTrigger.Changed, snapdiffControl.Changed,
 		warm.Trigger, warm.Control, fresh.Trigger, fresh.Control); verdict != "" {
-		t.Fatal(verdict)
+		defect, ok := strings.CutPrefix(verdict, "observed defect: ")
+		if !ok {
+			t.Fatal(verdict)
+		}
+		symptoms = append(symptoms, defect)
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=cephfs_readdir_after_snapdiff result=%s image=%s symptoms=%q", result, image, symptoms)
 }

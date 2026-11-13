@@ -46,8 +46,8 @@ Upstream references:
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
   user) with a native HTTPS listener (`rgw.Config.TLS`, a certificate of a
-  test CA). Image roles `essential`, `client` and `rgw`, all of one release.
-  Bridge networking.
+  test CA), all on the image `image` (see [Running it](#running-it)). Bridge
+  networking.
 - `rgw_crypt_require_ssl` keeps its default (true), so every request goes over
   HTTPS verified against the test CA. Requests are signed by the test's own
   SigV4 client (`harness.RGWBackendSigned`); it sends no optional checksum of
@@ -56,8 +56,8 @@ Upstream references:
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published Tentacle 20.2.4
-images, the pull request default. No automatic run includes it (the default
+Known-defect reproducer: on its default image the test passes and reports
+`REPRODUCED` (see [Result line](#result-line)). No automatic run includes it (the default
 checks of a pull request, pushes to `main`, periodic samples), and it never
 gates anything. A maintainer can run it on demand, also on a pull request's
 head with the comment below.
@@ -68,9 +68,9 @@ head with the comment below.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+The case runs on its own pinned image, the package variable `image`, and not
+on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -78,16 +78,19 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_ssec_multipart_completion
 ```
 
-Or run the batch exactly as CI does:
+Another image, such as a fixed release, is injected at link time:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_ssec_completion \
-  --package ./internal/integration/experiments/rgw_ssec_multipart_completion \
-  --directory "artifacts/rgw-ssec-completion-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_ssec_multipart_completion_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -run '^TestRGWSSECMultipartCompletion$' \
+  ./internal/integration/experiments/rgw_ssec_multipart_completion
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
+The batch `rgw_ssec_completion` (`tag_scenarios.py optional --batch rgw_ssec_completion`, or the
+Native regressions workflow) still runs the case. It exports role images,
+which the case ignores: the cluster and its client container both run
+`image`.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored
@@ -116,6 +119,32 @@ Customer keys are never logged.
    signing, TLS or malformed XML.
 5. Checksums: the `SHA256` completion with the key answers the composite
    SHA-256 of the part (`<digest>-1`).
+
+## Result line
+
+A failure of a given or when step (a condition not established, an
+unavailable prerequisite, a failed control) fails the test, and the test then
+prints no result. Otherwise the test passes whatever the gateway did and
+prints one line:
+
+```text
+EXPERIMENT_RESULT case=rgw_ssec_multipart_completion result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
+```
+
+`REPRODUCED`: the completion of the SSE-C upload without a checksum and
+without the customer key (`no-checksum-omitted-key`) is refused, and no
+object is left; `symptoms` names its status, code and message.
+`NOT_REPRODUCED`: it completes and the object reads back encrypted with the
+key. A completion that succeeds and stores something else, or a refused one
+that leaves an object, fails the test. The other subtests are controls and
+must pass for any result to print.
+
+Standalone runs, Linux amd64 host, Docker, bridge, one run each:
+
+| Image | Result | Test time |
+| --- | --- | --- |
+| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: 400 `InvalidArgument` "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm." | 33.6 s |
+| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 32.3 s |
 
 ## Reading the result
 

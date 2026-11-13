@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
+
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_statfs_mixed_quota_test.image=<image>"
+//
+// Tentacle 20.2.5 is fixed; neither it nor Squid 19.2.5 or Umbrella 21.2.0
+// reproduces it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 // statfsRoot is the directory of the filesystem that holds the layout.
 const statfsRoot = "/statfs-mixed-quota"
@@ -110,17 +120,26 @@ finally:
     fs.shutdown()
 `
 
-// TestCephFSStatfsWithNestedByteAndFileQuotas reads statfs through libcephfs
-// at a directory that has only a file quota below a directory that has a
-// byte quota, and requires the capacity of the byte quota there, as at the
-// controls: a directory with only a byte quota, one with both quotas, the
-// parent itself and a child of it without any quota. A directory without a
-// byte quota above it shows what the client reports otherwise.
+// TestCephFSStatfsWithNestedByteAndFileQuotas reports whether libcephfs
+// statfs at a directory that has only a file quota, below a directory that
+// has a byte quota, reports the data pool instead of the byte quota.
+//
+// Given the layout (a parent with a byte quota; below it a directory with
+// only a file quota, one with only a byte quota, one with both and one with
+// none; and a directory without a byte quota above it) and the conditions
+// (the quotas read back, the recursive bytes reached the layout's), when a
+// fresh mount reads statfs at every directory, then the defect is REPRODUCED
+// if only the file-quota directory does not report its parent's byte quota,
+// and NOT_REPRODUCED if it does, as the controls do. Tentacle 20.2.4
+// reproduces it.
+//
+// A failure of the given or when steps fails the test, and so does a control
+// directory that does not report its byte quota; the result does not.
 func TestCephFSStatfsWithNestedByteAndFileQuotas(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := harness.IntegrationImages(t)
-	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
+	t.Logf("CEPHFS_STATFS_MIXED_QUOTA image=%s", image)
+	cluster, client := harness.NewSingleImageCluster(t, harness.CEPHFSRun, image, harness.FunctionalOSDConfig(t))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -170,7 +189,21 @@ func TestCephFSStatfsWithNestedByteAndFileQuotas(t *testing.T) {
 		t.Fatalf("condition not established: the observing client is the preparing client %d", prepared.Client)
 	}
 	t.Logf("CEPHFS_STATFS_MIXED_QUOTA_RECEIPT prepared by client %d; observed by a fresh mount: %s", prepared.Client, raw)
+	// The symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if err := judgeStatfs(statfsLayout, report); err != nil {
-		t.Fatal(err)
+		defect, ok := strings.CutPrefix(err.Error(), "observed defect: ")
+		if !ok {
+			t.Fatal(err)
+		}
+		symptoms = append(symptoms, defect)
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=cephfs_statfs_mixed_quota result=%s image=%s symptoms=%q", result, image, symptoms)
 }

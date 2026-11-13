@@ -33,6 +33,15 @@ const (
 	mpSecondPart = 1 << 16
 )
 
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multipart_part_storage_class_test.image=<image>"
+//
+// No release is known to fix it: Squid 19.2.5, Tentacle 20.2.5 and Umbrella
+// 21.2.0 reproduce it too, so a run on them reports REPRODUCED.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 type mpCase struct {
 	ctx     context.Context
 	gateway *rgw.Gateway
@@ -170,17 +179,26 @@ func (c *mpCase) cleanup(t *testing.T, buckets []string) {
 	t.Logf("RGW_MP cleanup buckets=%d failed=%t", len(buckets), failed)
 }
 
-// TestRGWMultipartPartStorageClass requires that every numbered part of a
-// completed multipart object can be read with GET and HEAD ?partNumber,
-// whatever the object's storage class. The trigger object is uploaded to the
-// COLD storage class, whose data pool is not the default one; the control
-// object uses STANDARD. A whole-object GET, a part number beyond the last
-// part (a refusal control) and the placement of each object's part heads are
-// recorded alongside.
+// TestRGWMultipartPartStorageClass reports whether a numbered part of a
+// completed multipart object in a non-default storage class cannot be read
+// with GET and HEAD ?partNumber.
+//
+// Given a zone whose COLD storage class has its own data pool, and two
+// two-part objects, one uploaded to COLD and one to STANDARD, both readable
+// whole, when every part of each object is read with GET and HEAD
+// ?partNumber, then the defect is REPRODUCED if a part of the COLD object is
+// not answered with its bytes, length and part count, and NOT_REPRODUCED if
+// every part is. Tentacle 20.2.4 answers 400 InvalidPart for the parts of
+// the COLD object, so it reproduces; no tested release does not.
+//
+// A failure of the given or when steps, or of a control (the STANDARD
+// object's parts, and the refusal of a part number beyond the last part of
+// either object), fails the test; the result does not.
 func TestRGWMultipartPartStorageClass(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_MP image=%s", image)
+	cluster, _ := harness.NewSingleImageCluster(t, ceph.Run, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_MP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -229,9 +247,12 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 		t.Fatalf("control not established: the parts of %s are placed in %s (tail rule %q)", standard, mpColdClass, rule)
 	}
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	for _, test := range []struct {
 		name, bucket, class string
-	}{{"cold-storage-class", cold, mpColdClass}, {"standard-control", standard, "STANDARD"}} {
+		trigger             bool
+	}{{"cold-storage-class", cold, mpColdClass, true}, {"standard-control", standard, "STANDARD", false}} {
 		t.Run(test.name, func(t *testing.T) {
 			head := c.signed(t, ctx, http.MethodHead, "/"+test.bucket+"/"+mpObject, nil, nil)
 			class := head.Headers.Get("X-Amz-Storage-Class")
@@ -245,14 +266,29 @@ func TestRGWMultipartPartStorageClass(t *testing.T) {
 			}
 			for i, part := range parts {
 				for _, method := range []string{http.MethodGet, http.MethodHead} {
-					if read := c.readPart(t, method, test.bucket, i+1, part); !partOK(read, part) {
-						t.Errorf("%s of part %d of the %s object: %s, want its %d bytes", method, i+1, test.class, read, len(part))
+					read := c.readPart(t, method, test.bucket, i+1, part)
+					if partOK(read, part) {
+						continue
+					}
+					failure := fmt.Sprintf("%s of part %d of the %s object: %s, want its %d bytes", method, i+1, test.class, read, len(part))
+					if test.trigger {
+						symptoms = append(symptoms, failure)
+					} else {
+						t.Errorf("control failed: %s", failure)
 					}
 				}
 			}
 			if beyond := c.readPart(t, http.MethodGet, test.bucket, len(parts)+1, nil); !beyondRefused(beyond) {
-				t.Errorf("part %d of a %d-part object was not refused as 400 InvalidPart: %s", len(parts)+1, len(parts), beyond)
+				t.Errorf("control failed: part %d of a %d-part object was not refused as 400 InvalidPart: %s", len(parts)+1, len(parts), beyond)
 			}
 		})
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_multipart_part_storage_class result=%s image=%s symptoms=%q", result, image, symptoms)
 }

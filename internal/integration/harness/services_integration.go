@@ -140,8 +140,23 @@ var (
 	RGWRun    = serviceRun(rgw.Run, func(c *rgw.Container) *ceph.Container { return c.Container })
 )
 
-// NewServiceClusterRun starts a cluster with run and attaches a client.
+// NewServiceClusterRun starts a cluster with run and attaches a client. In a
+// roles batch the client runs the batch's client role image.
 func NewServiceClusterRun(t *testing.T, run ClusterRun, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
+	t.Helper()
+	return newServiceCluster(t, run, image, NativeClientImage(t, image), opts...)
+}
+
+// NewSingleImageCluster starts a cluster with run and attaches a client, both
+// from image whatever role images the environment names. A known-defect
+// experiment case uses it: its result names one image, so every command it
+// runs has to come from that build.
+func NewSingleImageCluster(t *testing.T, run ClusterRun, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
+	t.Helper()
+	return newServiceCluster(t, run, image, image, opts...)
+}
+
+func newServiceCluster(t *testing.T, run ClusterRun, image, clientImage string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
 	cluster, err := run(t.Context(), image, opts...)
 	if cluster != nil {
@@ -202,7 +217,7 @@ func NewServiceClusterRun(t *testing.T, run ClusterRun, image string, opts ...te
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(t.Context(), NativeClientImage(t, image), cluster.WithClient(),
+	client, err := testcontainers.Run(t.Context(), clientImage, cluster.WithClient(),
 		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)

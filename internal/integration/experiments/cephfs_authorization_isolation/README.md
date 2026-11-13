@@ -19,50 +19,56 @@ probes with a fresh libcephfs or librados client.
 | `snapshot of a deleted directory` | A principal restricted to `/dir1` that deletes a child still reads the child's bytes through an earlier `/dir1` snapshot, and is refused `/` and `/dir2`. | Squid before 19.2.3: the snapshot read is refused once the live directory is unlinked. | [tracker 66828](https://tracker.ceph.com/issues/66828), [ceph/ceph#58419](https://github.com/ceph/ceph/pull/58419), Squid [ceph/ceph#59518](https://github.com/ceph/ceph/pull/59518) |
 | `same-named subvolumes` | Namespace-isolated subvolumes with one name in two groups get two RADOS namespaces; each reader's OSD caps name only its own, and it is refused the other's object. | Squid before 19.2.4: both share one namespace, so each reader reads the other's data through librados. | [tracker 70668](https://tracker.ceph.com/issues/70668), [ceph/ceph#62668](https://github.com/ceph/ceph/pull/62668), Squid [ceph/ceph#64205](https://github.com/ceph/ceph/pull/64205) |
 
-Every supported release (19.2.5, 20.2.4, 21.2.0) is fixed, so the test passes
-there. It fails on the affected builds; that failure is the documented defect,
-not a fixture fault.
+Each subtest is one defect and prints its own `EXPERIMENT_RESULT` line,
+`case=cephfs_authorization_isolation/<defect>` with the defect
+`caps-per-filesystem`, `snapshot-of-a-deleted-directory` or
+`same-named-subvolumes`. The default image, Squid 19.2.2, is affected by all
+three; Squid 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 by none.
 
 ## Requirements
 
 - One cluster: 1 MON, 1 MGR, 1 OSD on a 1 GiB block, filesystems `iso-a` (one
-  MDS) and `iso-b` (an active and a standby-replay MDS). Image roles
-  `essential`, `client` and `cephfs`, all of one release; clients are fresh
-  containers of the client role with Python libcephfs and librados.
+  MDS) and `iso-b` (an active and a standby-replay MDS). The cluster and
+  every probe client run the package variable `image`, an aggregate image
+  with Python libcephfs and librados; clients are fresh containers of it.
 - The test bounds itself to 25 minutes; the batch timeout is 30 minutes.
 
 ## Tier and triggers
 
-Cheap and deterministic on the supported releases: one run takes about
-105 seconds on 20.2.4.
+Standalone reproducer. The test fails only when its setup or a control does
+not hold; a documented symptom does not fail it. On the default image every
+line says `REPRODUCED`.
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `topology` batch).
 - Comment: `/ci run cephfs_authorization_isolation [on squid|umbrella]`.
-- Periodic: `rotate` can draw it on the supported releases.
+- Periodic: `rotate` can draw it.
+
+Every container the test starts uses `image`, so the role images that a
+batch exports do not reach it: a batch run reports on the default image.
 
 ## Running it
 
+On the default image, which reproduces all three defects:
+
 ```sh
-CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5 \
 CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=30m \
   -run '^TestCephFSAuthorizationIsolation$' \
   ./internal/integration/experiments/cephfs_authorization_isolation
 ```
 
-or exactly as CI runs the batch:
+On a fixed image, such as Tentacle 20.2.4, every line says `NOT_REPRODUCED`:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py run --category topology \
-  --batch cephfs_authorization_isolation \
-  --package ./internal/integration/experiments/cephfs_authorization_isolation \
-  --directory "artifacts/cephfs-authorization-isolation-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=30m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_authorization_isolation_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b" \
+  -run '^TestCephFSAuthorizationIsolation$' \
+  ./internal/integration/experiments/cephfs_authorization_isolation
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-Pin the image by digest when the result is evidence; every probe line
+Squid 19.2.3 (fixed snapshot read) and 19.2.4 (also fixed subvolume
+namespaces) separate the three defects; their aggregates are pinned in
+`.github/ceph-discovery-images.json`. Every probe line
 (`native probe: {...}`) is logged.
 
 ## Observations and controls
@@ -78,15 +84,32 @@ Pin the image by digest when the result is evidence; every probe line
 
 ## Reading the result
 
-- **Pass:** all three contracts hold on the build.
-- **Observed bug:** a create or mkdir succeeds in the read-only filesystem
-  (caps), the snapshot read is refused after the deletion (snapshot), or the
-  namespaces are equal or the other object reads (subvolumes).
-- **Not reproduced:** a pass on a build listed as affected.
-- **Unavailable prerequisite:** a filesystem, MDS or client container does not
-  start; the failure names the setup step.
-- **Condition not established:** a seed, a cap update or a subvolume creation
-  fails, so the subtest never probed the contract.
+- **REPRODUCED** (per defect): a create or mkdir succeeds in the read-only
+  filesystem (caps); the snapshot read fails after the deletion (snapshot);
+  the two subvolumes share one namespace, a reader's OSD caps name the other
+  namespace, or a reader reads the other's object (subvolumes). The
+  `symptoms` field names each.
+- **NOT_REPRODUCED** (per defect): the contract held.
+- **Failure, unavailable prerequisite:** a filesystem, MDS or client
+  container does not start; the failure names the setup step. No line is
+  printed.
+- **Failure, condition or control:** a seed, a cap update or a subvolume
+  creation fails, the writable filesystem refuses a create, a principal
+  without an `iso-b` clause mounts it, `/` or `/dir2` mounts for the `/dir1`
+  principal, the live child or the snapshot read fails before the deletion,
+  or a reader cannot read its own data. The subtest never probed its
+  contract, and no line is printed.
+
+Native results, Linux amd64 host, bridge networking, one run per image:
+
+- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…`
+  (default), 112 s: all three `REPRODUCED`. Caps: in all four clause
+  orders the create and the mkdir succeeded in the read-only filesystem.
+  Snapshot: after the deletion the snapshot read and stat returned `EACCES`.
+  Subvolumes: both got the namespace `fsvolumens_shared-name`, and each
+  reader read the other's object.
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…`,
+  105 s: all three `NOT_REPRODUCED`.
 
 ## Cleanup and limits
 

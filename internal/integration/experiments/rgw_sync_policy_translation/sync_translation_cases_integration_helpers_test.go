@@ -6,29 +6,242 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// image is the Ceph image every cluster and gateway of the case runs: Tentacle
+// 20.2.4, which reproduces both defects. A run selects another image, such as
+// a patched gateway build, with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_policy_translation_test.image=<image>"
+//
+// No release is known to fix either.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 // testRGWSyncTranslationFiltering runs the two strict cases on one shared
 // realm, in the order the required supported cases use, each with its own
-// buckets and sync group.
-func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+// buckets and sync group. network names the variant in the result lines.
+func testRGWSyncTranslationFiltering(t *testing.T, network string, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	f := harness.NewRGWSyncTranslationFixture(t, ctx, opts...)
-	rgwSyncPriorityTagsOwnerClass(t, f)
-	rgwSyncOrdinaryUserDenialGrant(t, f)
+	f := newTranslationFixture(t, ctx, opts...)
+	rgwSyncPriorityTagsOwnerClass(t, network, f)
+	rgwSyncOrdinaryUserDenialGrant(t, network, f)
 }
 
-func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFixture) {
+// newTranslationFixture is harness.NewRGWSyncTranslationFixture with both
+// clusters and both gateways on image: the two-zone realm, the tiered
+// placement in both zones, the permission policy and the two source owners.
+func newTranslationFixture(t *testing.T, ctx context.Context, opts ...testcontainers.ContainerCustomizer) *harness.RGWSyncTranslationFixture {
+	t.Helper()
+	t.Logf("image: %s", image)
+	clusterOpts := append(append([]testcontainers.ContainerCustomizer(nil), opts...), harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	source, _ := harness.NewSingleImageCluster(t, ceph.Run, image, clusterOpts...)
+	destination, _ := harness.NewSingleImageCluster(t, ceph.Run, image, clusterOpts...)
+	t.Logf("ceph: source %s, destination %s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
+	link, err := multisite.Run(ctx, image, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"}))
+	if link != nil {
+		t.Cleanup(func() {
+			if t.Failed() {
+				for _, name := range []string{"source", "destination"} {
+					inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
+					state, statusErr := link.SyncStatus(inspect, name)
+					stop()
+					t.Logf("sync translation diagnostic zone=%s status=%+v error=%v", name, state, statusErr)
+				}
+			}
+			cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer stop()
+			if err := link.Terminate(cleanup); err != nil {
+				t.Errorf("terminate translation fixture: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cluster := range []*ceph.Container{source, destination} {
+		for _, pool := range []string{"tc-sync-index", "tc-sync-extra", "tc-sync-standard", "tc-sync-ia"} {
+			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Application: "rgw"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inline := false
+	placementConfig := placement.Config{Name: "tc-sync-tiered", IndexPool: "tc-sync-index", DataExtraPool: "tc-sync-extra", InlineData: &inline, StorageClasses: []placement.StorageClass{{Name: "STANDARD", DataPool: "tc-sync-standard"}, {Name: "STANDARD_IA", DataPool: "tc-sync-ia"}}}
+	primaryPlacement, err := placement.Create(ctx, link.Source, placementConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryPlacement, err := placement.Create(ctx, link.Destination, placementConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := primaryPlacement.Apply(ctx, link.Source); err != nil {
+		t.Fatal(err)
+	}
+	if err := link.PullDestinationPeriod(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondaryPlacement.Reload(ctx, link.Destination); err != nil {
+		t.Fatal(err)
+	}
+	global, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "permission", Status: multisite.SyncAllowed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := global.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := global.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := global.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
+		t.Fatal(err)
+	}
+	ownerA, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-owner-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerB, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-owner-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceEndpoint, err := link.Source.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destEndpoint, err := link.Destination.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := func(t *testing.T, user *rgw.User, endpoint string) harness.S3HTTPClient {
+		t.Helper()
+		access, secret, err := user.CreationKey().Credentials()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return harness.S3HTTPClient{Endpoint: endpoint, AccessKey: access, SecretKey: secret, Region: link.Source.Region, HTTP: &http.Client{Timeout: 15 * time.Second}}
+	}
+	a, b := client(t, ownerA, sourceEndpoint), client(t, ownerB, sourceEndpoint)
+	destA, destB := client(t, ownerA, destEndpoint), client(t, ownerB, destEndpoint)
+	body := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + primaryPlacement.LocationConstraint + `</LocationConstraint></CreateBucketConfiguration>`)
+	return &harness.RGWSyncTranslationFixture{Ctx: ctx, Source: source, Destination: destination, Link: link, PrimaryPlacement: primaryPlacement, SecondaryPlacement: secondaryPlacement, OwnerA: ownerA, OwnerB: ownerB, Client: client, SourceEndpoint: sourceEndpoint, DestEndpoint: destEndpoint, A: a, B: b, DestA: destA, DestB: destB, Body: body}
+}
+
+// replicated waits up to four minutes for path to read back as payload. It
+// returns the last answer when it does not, without failing the test.
+func replicated(ctx context.Context, client harness.S3HTTPClient, path string, payload []byte) (string, bool) {
+	wait, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	for {
+		attempt, stop := context.WithTimeout(wait, 15*time.Second)
+		status, body, err := harness.RGWScenarioRequest(attempt, client, http.MethodGet, path)
+		stop()
+		if err == nil && status == http.StatusOK && bytes.Equal(body, payload) {
+			return "", true
+		}
+		last := fmt.Sprintf("status=%d code=%s bytes=%d error=%v", status, harness.RGWBackendErrorCode(body), len(body), err)
+		select {
+		case <-wait.Done():
+			return last, false
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// replicaClass is the storage class the bucket listing gives key, or "" when
+// the listing omits it.
+func replicaClass(t *testing.T, ctx context.Context, client harness.S3HTTPClient, bucket, key string) string {
+	t.Helper()
+	var listing struct {
+		Contents []struct{ Key, StorageClass string } `xml:"Contents"`
+	}
+	if err := xml.Unmarshal(client.Request(t, ctx, http.MethodGet, bucket+"?list-type=2", nil, http.StatusOK), &listing); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range listing.Contents {
+		if entry.Key == key {
+			return entry.StorageClass
+		}
+	}
+	return ""
+}
+
+// present reads each object every second for duration and returns those that
+// a read found, as harness.RequireRGWObjectsAbsent does without failing the
+// test for them. An answer other than the object or NoSuchKey fails it.
+func present(t *testing.T, ctx context.Context, duration time.Duration, objects ...harness.RGWAbsentObject) []string {
+	t.Helper()
+	found := map[string]bool{}
+	var out []string
+	for deadline := time.Now().Add(duration); time.Now().Before(deadline); {
+		for _, object := range objects {
+			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+			status, body, err := harness.RGWScenarioRequest(attempt, object.Client, http.MethodGet, object.Path)
+			cancel()
+			switch code := harness.RGWBackendErrorCode(body); {
+			case err == nil && status == http.StatusOK:
+				if !found[object.Path] {
+					found[object.Path] = true
+					out = append(out, object.Path)
+				}
+			case err == nil && status == http.StatusNotFound && code == "NoSuchKey":
+			default:
+				t.Fatalf("excluded RGW object %s answered neither the object nor NoSuchKey: status=%d error=%v code=%s", object.Path, status, err, code)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+	return out
+}
+
+// report prints the result line of one subtest.
+func report(t *testing.T, unit string, symptoms []string) {
+	t.Helper()
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_sync_policy_translation/%s result=%s image=%s symptoms=%q", unit, result, image, symptoms)
+}
+
+// rgwSyncPriorityTagsOwnerClass reports whether two overlapping bucket
+// pipes resolve by priority.
+//
+// Given a pipe of priority 1 (blue tags, STANDARD) and one of priority 7 (red
+// or blue tags, STANDARD_IA) on the same prefix with owner translation, whose
+// policy the destination imported, when objects of every combination of
+// prefix, tag and bucket are written and the blue object, which both pipes
+// select, replicates with owner translation, then the defect is REPRODUCED
+// if the red object, which only the higher-priority pipe selects, does not
+// replicate, a replica is not of the higher-priority pipe's class, an object
+// that no pipe selects replicates, or, after the higher-priority pipe is
+// removed, a new write does not replicate with the lower-priority pipe's
+// class or an earlier replica changes. It is NOT_REPRODUCED otherwise.
+func rgwSyncPriorityTagsOwnerClass(t *testing.T, network string, f *harness.RGWSyncTranslationFixture) {
 	ctx := f.Ctx
 	destination := f.Destination
 	link := f.Link
@@ -82,17 +295,36 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 		if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 			t.Fatal(err)
 		}
+		// Control: the object both pipes select replicates.
 		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/blue", http.StatusOK, payload(input+"/published/blue"))
-		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/red", http.StatusOK, payload(input+"/published/red"))
+
+		// Each symptom observed by the then step; none means NOT_REPRODUCED.
+		var symptoms []string
+		// The replicas the higher-priority pipe must have written, by color.
+		arrived := map[string]bool{"blue": true}
+		if last, ok := replicated(ctx, destB, output+"/published/red", payload(input+"/published/red")); ok {
+			arrived["red"] = true
+		} else {
+			symptoms = append(symptoms, "the red object, which only the higher-priority pipe selects, did not replicate: "+last)
+		}
 		harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, high.ID)
-		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/blue", "STANDARD_IA")
-		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/red", "STANDARD_IA")
-		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated blue STANDARD_IA", payload(input+"/published/blue"))
-		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated red STANDARD_IA", payload(input+"/published/red"))
-		// Object ownership changed to the destination bucket's ordinary owner.
+		for _, color := range []string{"blue", "red"} {
+			if !arrived[color] {
+				continue
+			}
+			if class := replicaClass(t, ctx, destB, output, "published/"+color); class != "STANDARD_IA" {
+				symptoms = append(symptoms, fmt.Sprintf("the %s replica has class %q, not the higher-priority pipe's STANDARD_IA", color, class))
+				continue
+			}
+			harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "translated "+color+" STANDARD_IA", payload(input+"/published/"+color))
+		}
+		// Control: object ownership changed to the destination bucket's
+		// ordinary owner.
 		destA.Request(t, ctx, http.MethodGet, output+"/published/blue", nil, http.StatusForbidden)
 		putTagged(destB, output+"/published/reverse", "blue", payload(output+"/published/reverse"))
-		harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destB, Path: output + "/published/green"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/untagged"}, harness.RGWAbsentObject{Client: destB, Path: output + "/private/blue"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/from-other-bucket"}, harness.RGWAbsentObject{Client: b, Path: output + "/published/reverse"})
+		if found := present(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destB, Path: output + "/published/green"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/untagged"}, harness.RGWAbsentObject{Client: destB, Path: output + "/private/blue"}, harness.RGWAbsentObject{Client: destB, Path: output + "/published/from-other-bucket"}, harness.RGWAbsentObject{Client: b, Path: output + "/published/reverse"}); len(found) != 0 {
+			symptoms = append(symptoms, fmt.Sprintf("objects that no pipe selects replicated: %v", found))
+		}
 		// Remove only the high-priority pipe. The matching lower-priority pipe
 		// now selects STANDARD for a new write and preserves previous IA objects.
 		if err := selected.RemovePipe(ctx, high.ID); err != nil {
@@ -101,25 +333,50 @@ func rgwSyncPriorityTagsOwnerClass(t *testing.T, f *harness.RGWSyncTranslationFi
 		harness.WaitRGWTranslationPolicyReady(t, ctx, link, selected)
 		fallback := bytes.Repeat([]byte("new write after priority pipe removal\n"), 2048)
 		putTagged(a, input+"/published/fallback", "blue", fallback)
-		harness.WaitOwnedSyncObject(t, ctx, destB, output+"/published/fallback", http.StatusOK, fallback)
-		harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, low.ID)
-		harness.AssertRGWSyncClass(t, ctx, destB, output, "published/fallback", "STANDARD")
-		harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-standard", "translated fallback STANDARD", fallback)
+		if last, ok := replicated(ctx, destB, output+"/published/fallback", fallback); !ok {
+			symptoms = append(symptoms, "a new write after the higher-priority pipe was removed did not replicate through the lower-priority pipe: "+last)
+		} else {
+			harness.WaitOwnedBucketCheckpoint(t, ctx, link, selected, low.ID)
+			if class := replicaClass(t, ctx, destB, output, "published/fallback"); class != "STANDARD" {
+				symptoms = append(symptoms, fmt.Sprintf("the replica written after the higher-priority pipe was removed has class %q, not the lower-priority pipe's STANDARD", class))
+			} else {
+				harness.RGWPlacementPoolPayload(t, ctx, destination, "tc-sync-standard", "translated fallback STANDARD", fallback)
+			}
+		}
 		for _, color := range []string{"blue", "red"} {
+			if !arrived[color] {
+				continue
+			}
 			path := "/published/" + color
 			if got := destB.Request(t, ctx, http.MethodGet, output+path, nil, http.StatusOK); !bytes.Equal(got, payload(input+path)) {
-				t.Fatalf("priority removal changed the %s replica", color)
+				symptoms = append(symptoms, fmt.Sprintf("priority removal changed the %s replica's bytes", color))
 			}
-			harness.AssertRGWSyncClass(t, ctx, destB, output, "published/"+color, "STANDARD_IA")
+			if class := replicaClass(t, ctx, destB, output, "published/"+color); class != "STANDARD_IA" {
+				symptoms = append(symptoms, fmt.Sprintf("after priority removal the %s replica has class %q, not STANDARD_IA", color, class))
+			}
 		}
 		if err := selected.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
-		t.Log("captured cross-bucket instances; prefix AND (blue OR red), owner translation, priority winner and fallback classes verified with S3 bytes and exact native data pools")
+		if t.Failed() {
+			return
+		}
+		report(t, network+"/priority_tags_owner_class", symptoms)
 	})
 }
 
-func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationFixture) {
+// rgwSyncOrdinaryUserDenialGrant reports whether a user-mode pipe replicates
+// an object that the source denies its user.
+//
+// Given a user-mode pipe that runs as ordinary user B, which may read the
+// source object's ACL but whose direct read of the object is denied, and
+// whose policy the destination imported, when an object is written to the
+// source and the destination's sync becomes ready, then the defect is
+// REPRODUCED if the object replicates before the grant, over a window or
+// after the pipe's bucket checkpoint, and NOT_REPRODUCED if it does not.
+// After the source grants s3:GetObject, a later write must replicate exactly
+// (a control).
+func rgwSyncOrdinaryUserDenialGrant(t *testing.T, network string, f *harness.RGWSyncTranslationFixture) {
 	ctx := f.Ctx
 	link := f.Link
 	ownerB := f.OwnerB
@@ -156,11 +413,19 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 		if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 			t.Fatal(err)
 		}
-		harness.RequireRGWObjectsAbsent(t, ctx, 35*time.Second, harness.RGWAbsentObject{Client: destB, Path: modeOutput + "/auth/before-grant"})
+
+		// Each symptom observed by the then step; none means NOT_REPRODUCED.
+		var symptoms []string
+		denial := harness.RGWAbsentObject{Client: destB, Path: modeOutput + "/auth/before-grant"}
+		if found := present(t, ctx, 35*time.Second, denial); len(found) != 0 {
+			symptoms = append(symptoms, "the object the source denies the pipe's user replicated before the grant")
+		}
 		// Require native progress while the source still denies this principal.
 		// A worker that merely paused must not satisfy the exclusion proof.
 		harness.WaitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
-		harness.RequireRGWObjectsAbsent(t, ctx, time.Second, harness.RGWAbsentObject{Client: destB, Path: modeOutput + "/auth/before-grant"})
+		if found := present(t, ctx, time.Second, denial); len(found) != 0 && len(symptoms) == 0 {
+			symptoms = append(symptoms, "the object the source denies the pipe's user replicated by the bucket checkpoint before the grant")
+		}
 		// Native impersonated replication GET first requires GetObjectAcl,
 		// then GetObject for this unversioned source, unlike an ordinary GET.
 		policy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": []string{"s3:GetObject", "s3:GetObjectAcl"}, "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
@@ -168,6 +433,7 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 		if got := b.Request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {
 			t.Fatal("granted principal read wrong bytes")
 		}
+		// Control: a write after the grant replicates exactly.
 		a.Request(t, ctx, http.MethodPut, modeInput+"/auth/after-grant", modePayload, http.StatusOK)
 		harness.WaitOwnedSyncObject(t, ctx, destB, modeOutput+"/auth/after-grant", http.StatusOK, modePayload)
 		harness.WaitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
@@ -177,6 +443,9 @@ func rgwSyncOrdinaryUserDenialGrant(t *testing.T, f *harness.RGWSyncTranslationF
 		if got := destB.Request(t, ctx, http.MethodGet, modeOutput+"/auth/after-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {
 			t.Fatal("user-mode policy removal changed previously replicated bytes")
 		}
-		t.Log("ordinary confirmed user mode refused a source read before client policy grant and replicated exact future bytes after grant; owned policy removal retained destination data")
+		if t.Failed() {
+			return
+		}
+		report(t, network+"/ordinary_user_denial_grant", symptoms)
 	})
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,15 +92,35 @@ var trashPurgeZones = []struct {
 	offset   int64
 }{{"utc", "UTC0", 0}, {"ahead-9h", "TST-9", 9 * 3600}, {"behind-9h", "TST9", -9 * 3600}}
 
-// TestRBDTrashPurgeCutoffAcrossClientTimezones purges equivalent trash
-// contents with one timezone-aware cutoff from client processes in three
-// timezones and requires each to remove exactly the images whose deferment
-// ended by that instant. judgeTrashPurge tells the failed UTC control and a
-// result no reading of the cutoff explains from the timezone shift.
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_trash_purge_timezone_test.image=<image>"
+//
+// No release fixes it: Squid 19.2.5 and Umbrella 21.2.0 have the same
+// conversion.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
+// TestRBDTrashPurgeCutoffAcrossClientTimezones reports whether the Python
+// binding's trash_purge reads a timezone-aware cutoff in the timezone of the
+// client process.
+//
+// Given equivalent trash contents in three pools, with every deadline clear
+// of one cutoff and of that cutoff shifted nine hours either way, and a
+// purge from a client process in UTC (the control) that removes exactly the
+// images whose deferment ended by the cutoff, when client processes nine
+// hours ahead of and behind UTC purge with the same UTC-aware datetime, then
+// the defect is REPRODUCED if either retains what the cutoff's fields read as
+// local time keep (judgeTrashPurge's "observed defect"), and NOT_REPRODUCED
+// if both remove exactly what the instant requires. A result that matches
+// neither prediction is another fault and fails the test.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
+	t.Logf("image: %s", image)
+	cluster, client := harness.NewSingleImageCluster(t, ceph.Run, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +176,8 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 	// The purge from UTC is the control and runs first. The other purges
 	// are judged only after it removed what the instant requires.
 	control := true
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	for _, zone := range trashPurgeZones {
 		passed := t.Run(zone.name, func(t *testing.T) {
 			pool := trashPurgePool(zone.name)
@@ -182,7 +205,11 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 			}
 			t.Logf("RBD_TRASH_PURGE_TIMEZONE_RECEIPT client timezone %s (UTC%+dh): cutoff %d (%s); the cutoff's fields read as local time are %+dh from it; deadlines from the cutoff %v; retained %v, by the instant %v, by the local reading %v",
 				zone.tz, got.UTCOffset/3600, got.Cutoff, got.CutoffText, (got.MkTime-got.Cutoff)/3600, trashPurgeRelative(moved[pool], cutoff), trashPurgeNames(got.After), trashPurgeKept(moved[pool], cutoff), trashPurgeKept(moved[pool], got.MkTime))
-			if err := judgeTrashPurge(got.UTCOffset, got.Cutoff, got.MkTime, moved[pool], got.After); err != nil {
+			switch err := judgeTrashPurge(got.UTCOffset, got.Cutoff, got.MkTime, moved[pool], got.After); {
+			case err == nil:
+			case zone.offset != 0 && strings.HasPrefix(err.Error(), "observed defect:"):
+				symptoms = append(symptoms, zone.name+": "+err.Error())
+			default:
 				t.Fatal(err)
 			}
 		})
@@ -190,6 +217,14 @@ func TestRBDTrashPurgeCutoffAcrossClientTimezones(t *testing.T) {
 			control = passed
 		}
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rbd_trash_purge_timezone result=%s image=%s symptoms=%q", result, image, symptoms)
 }
 
 func trashPurgePool(zone string) string { return "tc-trash-purge-" + zone }
