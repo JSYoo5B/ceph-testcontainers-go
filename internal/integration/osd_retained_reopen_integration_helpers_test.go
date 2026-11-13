@@ -33,13 +33,15 @@ func osdMessengerAddrs(t *testing.T, ctx context.Context, cluster *ceph.Containe
 // parseOSDMessengerAddrs reads osd.id's public and cluster address vectors
 // from `osd dump --format json`. Each vector must be present and nonempty: a
 // comparison made with one of them missing would say nothing about that
-// vector's reuse.
+// vector's reuse. Each entry must carry its type, address and nonce: an
+// absent or null field would decode to a zero value, and a nonce that was
+// never observed would compare as different from the reopened one.
 func parseOSDMessengerAddrs(data []byte, id int) (osdAddrs, error) {
 	type vector struct {
 		Addrs []struct {
-			Type  string `json:"type"`
-			Addr  string `json:"addr"`
-			Nonce uint64 `json:"nonce"`
+			Type  *string `json:"type"`
+			Addr  *string `json:"addr"`
+			Nonce *uint64 `json:"nonce"`
 		} `json:"addrvec"`
 	}
 	var dump struct {
@@ -64,11 +66,11 @@ func parseOSDMessengerAddrs(data []byte, id int) (osdAddrs, error) {
 			if v.vector == nil || len(v.vector.Addrs) == 0 {
 				return osdAddrs{}, fmt.Errorf("osd.%d has no %s in the OSD map", id, name)
 			}
-			for _, a := range v.vector.Addrs {
-				if a.Type == "" || a.Addr == "" {
-					return osdAddrs{}, fmt.Errorf("osd.%d %s entry %+v lacks a type or address", id, name, a)
+			for i, a := range v.vector.Addrs {
+				if a.Type == nil || *a.Type == "" || a.Addr == nil || *a.Addr == "" || a.Nonce == nil {
+					return osdAddrs{}, fmt.Errorf("osd.%d %s entry %d lacks a type, an address or a nonce", id, name, i)
 				}
-				*v.into = append(*v.into, fmt.Sprintf("%s:%s/%d", a.Type, a.Addr, a.Nonce))
+				*v.into = append(*v.into, fmt.Sprintf("%s:%s/%d", *a.Type, *a.Addr, *a.Nonce))
 			}
 		}
 		return out, nil

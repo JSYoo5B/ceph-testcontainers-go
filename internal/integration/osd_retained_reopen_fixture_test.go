@@ -36,13 +36,25 @@ func TestParseOSDMessengerAddrsNeedsBothVectors(t *testing.T) {
 	if err != nil || !slices.Equal(got.Public, []string{"v2:10.0.0.2:6800/1"}) || !slices.Equal(got.Cluster, []string{"v2:10.0.0.2:6801/1"}) {
 		t.Fatalf("both vectors: %+v, %v", got, err)
 	}
+	// An explicit zero is a nonce the map reported, unlike an omitted one.
+	zero, err := parseOSDMessengerAddrs(reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 0), reopenAddrvec("10.0.0.2:6801", 0)), 0)
+	if err != nil || !slices.Equal(zero.Public, []string{"v2:10.0.0.2:6800/0"}) {
+		t.Fatalf("explicit zero nonce: %+v, %v", zero, err)
+	}
 	for name, data := range map[string][]byte{
-		"cluster vector omitted": reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), ""),
-		"public vector omitted":  reopenOSDDump("", reopenAddrvec("10.0.0.2:6801", 2)),
-		"empty cluster vector":   reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": []}`),
-		"entry without address":  reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "nonce": 2}]}`),
-		"OSD absent":             []byte(`{"osds": [{"osd": 1, "public_addrs": {"addrvec": [{"type": "v2", "addr": "a:1", "nonce": 1}]}, "cluster_addrs": {"addrvec": [{"type": "v2", "addr": "a:2", "nonce": 1}]}}]}`),
-		"not JSON":               []byte(`osd dump failed`),
+		"cluster vector omitted":  reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), ""),
+		"public vector omitted":   reopenOSDDump("", reopenAddrvec("10.0.0.2:6801", 2)),
+		"empty cluster vector":    reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": []}`),
+		"entry without address":   reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "nonce": 2}]}`),
+		"entry with null address": reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "addr": null, "nonce": 2}]}`),
+		"entry without type":      reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"addr": "10.0.0.2:6801", "nonce": 2}]}`),
+		"entry with empty type":   reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "", "addr": "10.0.0.2:6801", "nonce": 2}]}`),
+		"entry without nonce":     reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "addr": "10.0.0.2:6801"}]}`),
+		"entry with null nonce":   reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "addr": "10.0.0.2:6801", "nonce": null}]}`),
+		"public nonce omitted":    reopenOSDDump(`{"addrvec": [{"type": "v2", "addr": "10.0.0.2:6800"}]}`, reopenAddrvec("10.0.0.2:6801", 2)),
+		"negative nonce":          reopenOSDDump(reopenAddrvec("10.0.0.2:6800", 2), `{"addrvec": [{"type": "v2", "addr": "10.0.0.2:6801", "nonce": -1}]}`),
+		"OSD absent":              []byte(`{"osds": [{"osd": 1, "public_addrs": {"addrvec": [{"type": "v2", "addr": "a:1", "nonce": 1}]}, "cluster_addrs": {"addrvec": [{"type": "v2", "addr": "a:2", "nonce": 1}]}}]}`),
+		"not JSON":                []byte(`osd dump failed`),
 	} {
 		if got, err := parseOSDMessengerAddrs(data, 0); err == nil {
 			t.Errorf("%s: accepted %+v", name, got)
