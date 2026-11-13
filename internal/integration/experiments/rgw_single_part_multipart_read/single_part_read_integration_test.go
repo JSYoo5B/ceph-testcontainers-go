@@ -33,6 +33,15 @@ const (
 	spStallWindow = 3 * time.Second
 )
 
+// image is the Ceph image the case runs on: the Squid release candidate
+// 19.1.0, which reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_single_part_multipart_read_test.image=<image>"
+//
+// and a fixed one (Squid 19.2.0 and every later release) does not reproduce
+// it.
+var image = "quay.io/ceph/ceph:v19.1.0@sha256:56d1542f98c99516890898f79f1ba6010922be479a1432d7f380203a73405517"
+
 type spCase struct {
 	ctx     context.Context
 	gateway *rgw.Gateway
@@ -187,19 +196,32 @@ func (c *spCase) cleanup(t *testing.T, buckets, objects []string) {
 	t.Logf("RGW_SP cleanup buckets=%d failed=%t", len(buckets), failed)
 }
 
-// TestRGWSinglePartMultipartNumberedRead requires that the only part of a
-// completed multipart upload can be read with GET and HEAD ?partNumber=1 in
-// the default storage class: the part's length, a part count of 1 and, for a
-// GET, its bytes. Two such objects are read, one of a single stripe and one
-// of three. A two-part object is the control for numbered reads, and the
-// part number after the last part of every object must be refused. Each
-// numbered read has its own deadline. A read that the client wrote to the
-// gateway and that did not end fails the contract; the process-wide CPU
-// time recorded with it does not establish the cause.
+// TestRGWSinglePartMultipartNumberedRead reports whether the only part of a
+// completed multipart upload in the default storage class cannot be read
+// with GET and HEAD ?partNumber=1: the part's length, a part count of 1 and,
+// for a GET, its bytes.
+//
+// Given three completed multipart objects that read back whole, one of a
+// single one-stripe part, one of a single three-stripe part and a two-part
+// control whose numbered reads answer, when part 1 of each single-part
+// object is read with GET and then HEAD, each with its own deadline, then
+// the defect is REPRODUCED if a read is answered otherwise or is written to
+// the gateway and does not end while the same gateway process runs
+// (judgeOnlyPart's "observed defect"), and NOT_REPRODUCED if every read
+// answers the part. The process-wide CPU time recorded with a read that did
+// not end does not establish the cause. The Squid release candidate 19.1.0
+// does not answer the GET, so it reproduces; Squid 19.2.0 and every later
+// release do not.
+//
+// A failure of the given or when steps, of a control (the two-part object,
+// the refusal of the part number after the last part), or another fault
+// (a read that never reached the gateway, a restarted or unreadable
+// gateway) fails the test; the result does not.
 func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_SP image=%s", image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_SP ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -271,6 +293,8 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 		t.Fatal("control failed: the single-part objects were not read")
 	}
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	for _, o := range []object{small, large} {
 		t.Run(o.name, func(t *testing.T) {
 			part := o.parts[0]
@@ -285,7 +309,12 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 					stall = c.stall(t, before, ticks, c.unanswered)
 					c.unanswered++
 				}
-				if verdict := judgeOnlyPart(read, len(part), stall); verdict != "" {
+				verdict := judgeOnlyPart(read, len(part), stall)
+				defect := strings.HasPrefix(verdict, "observed defect")
+				if defect {
+					symptoms = append(symptoms, fmt.Sprintf("%s: %s", o.name, verdict))
+				}
+				if verdict != "" {
 					if read.TimedOut || read.Err != "" {
 						// A request that did not end may still hold a
 						// gateway thread, so this object is not read
@@ -297,9 +326,14 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 						}
 						t.Logf("RGW_SP read object=%s %s", o.name, spRead{Method: http.MethodGet, Part: 2,
 							NotSent: "a read of part 1 did not end; the refusal of part 2 is untested for this object"})
+						if defect {
+							return
+						}
 						t.Fatal(verdict)
 					}
-					t.Error(verdict)
+					if !defect {
+						t.Error(verdict)
+					}
 				}
 				// Gateway health after the read: the same process still
 				// answers the whole object.
@@ -315,4 +349,12 @@ func TestRGWSinglePartMultipartNumberedRead(t *testing.T) {
 			}
 		})
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_single_part_multipart_read result=%s image=%s symptoms=%q", result, image, symptoms)
 }

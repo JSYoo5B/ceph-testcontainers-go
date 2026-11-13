@@ -1,6 +1,6 @@
 # RGW numbered reads of a multipart object that has one part
 
-Owner: RGW. Kind: cross-build characterization of a fixed upstream defect.
+Owner: RGW. Kind: known-defect reproducer of a fixed upstream defect.
 Test: `TestRGWSinglePartMultipartNumberedRead`, batch
 `topology/rgw_single_part_read`. Pure tests of the judgement and of the
 process reading, and of the phases of a read against a stub transport
@@ -43,9 +43,8 @@ covers numbered reads in a non-default storage class.
 ## Requirements
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
-  user), plain HTTP, no zone edits. Image roles `essential`, `client` and
-  `rgw`, all of one release, or one aggregate image (`CEPH_TEST_IMAGE`).
-  Bridge networking.
+  user), plain HTTP, no zone edits, all on the image `image` (see
+  [Running it](#running-it)). Bridge networking.
 - Requests are signed by the test's own SigV4 client. A numbered read uses
   an HTTP client without a timeout of its own and a 30 second deadline per
   request.
@@ -55,34 +54,42 @@ covers numbered reads in a non-default storage class.
 
 ## Tier and triggers
 
-Cheap and deterministic: one run takes about 31 seconds on 20.2.4 (37 on
-19.2.5, 32 on 21.2.0).
+Known-defect reproducer: on its default image, 19.1.0, the test passes and
+reports `REPRODUCED` (see [Result line](#result-line)) in about 165 seconds,
+since both unanswered reads wait out their deadline. Every run of the batch
+runs 19.1.0, whatever release the run selects.
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `topology` batch).
 - Comment: `/ci run rgw_single_part_read [on squid|umbrella]`.
-- Periodic: `rotate` can draw it on the supported releases.
+- Periodic: `rotate` can draw it; it still runs 19.1.0.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+The case runs on its own pinned image, the package variable `image`, and not
+on the role images of the environment. The default is the official Squid release candidate 19.1.0, the only available
+build without the fix,
+(`quay.io/ceph/ceph:v19.1.0@sha256:56d1542f98c99516890898f79f1ba6010922be479a1432d7f380203a73405517`), which reproduces the defect:
 
 ```sh
-CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWSinglePartMultipartNumberedRead$' \
   ./internal/integration/experiments/rgw_single_part_multipart_read
 ```
 
-or exactly as CI runs the batch:
+Another image, such as a fixed release, is injected at link time:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py run --category topology \
-  --batch rgw_single_part_read \
-  --package ./internal/integration/experiments/rgw_single_part_multipart_read \
-  --directory "artifacts/rgw-single-part-read-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_single_part_multipart_read_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:dc4a21955b5c1babf0a22cf8e3b58b7763aacc8cacfa0fdcd72d894fc2cb7e55" \
+  -run '^TestRGWSinglePartMultipartNumberedRead$' \
+  ./internal/integration/experiments/rgw_single_part_multipart_read
 ```
+
+The `topology/rgw_single_part_read` batch (`tag_scenarios.py run --category
+topology --batch rgw_single_part_read`) still runs the case and so runs
+19.1.0. It exports role images, which the case ignores, except that the
+harness attaches its client container from the exported client role image.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as
@@ -128,6 +135,35 @@ uploaded (`RGW_SP object=`), every numbered read, sent or not
 6. Refusal control, per single-part object: GET of part 2 must answer
    `400 InvalidPart`. Another error, such as `403 AccessDenied`, does not
    show that the part number was out of range.
+
+## Result line
+
+A failure of a given or when step (a condition not established, an
+unavailable prerequisite, a failed control) fails the test, and the test then
+prints no result. Otherwise the test passes whatever the gateway did and
+prints one line:
+
+```text
+EXPERIMENT_RESULT case=rgw_single_part_multipart_read result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
+```
+
+`REPRODUCED`: a read of part 1 of `single-small` or `single-large` gets
+the verdict `observed defect` of `judgeOnlyPart`: it is answered with
+another status, length, body or part count, or it is written to the gateway
+and does not end within its deadline while the same gateway process runs.
+`symptoms` holds each such verdict. After a read that did not end, that
+object's remaining reads are not sent, and the subtest stops without failing.
+`NOT_REPRODUCED`: every read of part 1 answers the part. The two-part
+control, the refusal of the part number after the last part, and the gateway
+health checks must hold, and no read may end as `another fault`, for any
+result to print.
+
+Standalone runs, Linux amd64 host, Docker, bridge, one run each:
+
+| Image | Result | Test time |
+| --- | --- | --- |
+| default, 19.1.0 official `sha256:56d1542f98c9…` | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
+| 19.2.0 aggregate `sha256:dc4a21955b5c…` | `NOT_REPRODUCED` | 61.4 s |
 
 ## Reading the result
 

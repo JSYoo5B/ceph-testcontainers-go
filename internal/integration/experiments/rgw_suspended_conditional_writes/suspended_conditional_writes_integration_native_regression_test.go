@@ -19,6 +19,14 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_suspended_conditional_writes_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
 // condResult is the native answer to one conditional write.
 type condResult struct {
 	Code    int
@@ -167,9 +175,9 @@ func (c condCase) requireNoPendingUploads(t *testing.T, bucket string) {
 // current object is initial with ETag initialTag. Every write is followed by
 // a fresh signed GET: an accepted write must read back its exact bytes and a
 // refused one must leave the key unchanged; either violation is a different
-// defect and stops the sequence. A status other than the AWS one fails the
-// step and the sequence continues from the state the GET shows.
-func condSequence(t *testing.T, c condCase, write condWriter, path string, initial []byte, suspended bool) condObject {
+// defect and stops the sequence. A status other than the AWS one is passed
+// to mismatch and the sequence continues from the state the GET shows.
+func condSequence(t *testing.T, c condCase, write condWriter, path string, initial []byte, suspended bool, mismatch func(string)) condObject {
 	t.Helper()
 	current := c.get(t, path)
 	if !bytes.Equal(current.Data, initial) {
@@ -189,7 +197,7 @@ func condSequence(t *testing.T, c condCase, write condWriter, path string, initi
 		}
 		current = after
 		if r.Code != wantCode || r.ErrCode != wantErr {
-			t.Errorf("%s: status %d %q, AWS semantics want %d %q", name, r.Code, r.ErrCode, wantCode, wantErr)
+			mismatch(fmt.Sprintf("%s %s: status %d %q, AWS semantics want %d %q", path, name, r.Code, r.ErrCode, wantCode, wantErr))
 			return false
 		}
 		return true
@@ -236,24 +244,35 @@ func condFreshKey(t *testing.T, c condCase, write condWriter, path string) {
 	}
 }
 
-// TestRGWSuspendedConditionalWrites requires AWS conditional-write semantics
-// for keys written while versioning was enabled, after versioning is
-// suspended: If-Match with the current ETag replaces the null version, and
-// after a delete marker If-None-Match "*" creates the key and If-Match
-// answers 404. Both an ordinary PUT and CompleteMultipartUpload carry the
-// precondition. A never-versioned bucket runs the same sequence as the
-// control.
+// TestRGWSuspendedConditionalWrites reports whether RGW breaks AWS
+// conditional-write semantics for keys written while versioning was
+// enabled, after versioning is suspended: If-Match with the current ETag
+// replaces the null version, and after a delete marker If-None-Match "*"
+// creates the key and If-Match answers 404.
 //
-// Tentacle 20.2.4 checks the precondition against the OLH head instead of the
-// current version, so the suspended subtests fail at existing-if-match,
-// deleted-if-match and deleted-if-none-match for both writers while the
-// control passes; Umbrella 21.2.0 passes. Squid 19.2.5 already fails the
-// control: it compares a quoted If-Match with the unquoted stored ETag, and
-// it ignores the precondition of CompleteMultipartUpload.
+// Given a never-versioned bucket on which the whole sequence follows AWS
+// semantics (the control), and a suspended bucket whose keys each hold one
+// version written while versioning was enabled, when the sequence is sent
+// with an ordinary PUT and with CompleteMultipartUpload on the suspended
+// bucket, then the defect is REPRODUCED if a step answers another status
+// than AWS semantics want, and NOT_REPRODUCED if every step does. Tentacle
+// 20.2.4 checks the precondition against the OLH head instead of the current
+// version, so existing-if-match, deleted-if-match and deleted-if-none-match
+// are refused for both writers: it reproduces. Tentacle 20.2.5 and Umbrella
+// 21.2.0 do not.
+// Squid 19.2.5 fails the control: it compares a quoted If-Match with the
+// unquoted stored ETag, and it ignores the precondition of
+// CompleteMultipartUpload.
+//
+// A failure of the given or when steps, of the control, or of an effect
+// check (a write whose result does not read back, a refused write that
+// changed the key, a final version listing inconsistent with the GET) fails
+// the test; the result does not.
 func TestRGWSuspendedConditionalWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_COND image=%s", image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_COND ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
@@ -278,12 +297,14 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 				initial := []byte(path + " v1")
 				harness.RGWBackendRequire(t, c.signed(t, http.MethodPut, path, initial, nil), http.StatusOK)
 				condFreshKey(t, c, w.write, bucket+"/fresh-"+w.name)
-				condSequence(t, c, w.write, path, initial, false)
+				condSequence(t, c, w.write, path, initial, false, func(failure string) { t.Errorf("control failed: %s", failure) })
 				c.requireNoPendingUploads(t, bucket)
 			})
 		}
 	})
 
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	t.Run("suspended", func(t *testing.T) {
 		const bucket = "/tc-cond-suspended"
 		harness.RGWBackendRequire(t, c.signed(t, http.MethodPut, bucket, nil, nil), http.StatusOK)
@@ -306,7 +327,7 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 					t.Fatalf("condition not established: %s is not a single latest version %q", path, firstIDs[w.name])
 				}
 				condFreshKey(t, c, w.write, bucket+"/fresh-"+w.name)
-				final := condSequence(t, c, w.write, path, []byte(path+" v1"), true)
+				final := condSequence(t, c, w.write, path, []byte(path+" v1"), true, func(symptom string) { symptoms = append(symptoms, symptom) })
 
 				// The version written while versioning was enabled survives
 				// every step, and the null entry is the one the GET reads.
@@ -332,4 +353,12 @@ func TestRGWSuspendedConditionalWrites(t *testing.T) {
 			})
 		}
 	})
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_suspended_conditional_writes result=%s image=%s symptoms=%q", result, image, symptoms)
 }

@@ -50,15 +50,16 @@ instead of 404 for a missing key; and it reads no precondition for
 ## Requirements
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
-  user). Image roles `essential`, `client` and `rgw`, all of one release.
-  Bridge networking; nothing depends on the network mode.
+  user), all on the image `image` (see [Running it](#running-it)). Bridge
+  networking; nothing depends on the network mode.
 - Requests are signed by the test's own SigV4 client (`harness.RGWBackendSigned`).
 - The test bounds itself to 10 minutes; the batch timeout is 20 minutes.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 35 seconds and fails on
-the published Tentacle 20.2.4 images, the pull request default. No automatic
+Known-defect reproducer: one run takes about 35 seconds and, on its default
+image, passes and reports `REPRODUCED` (see [Result line](#result-line)). No
+automatic
 run includes it (the default checks of a pull request, pushes to `main`,
 periodic samples), and it never gates anything. A maintainer can run it on
 demand, also on a pull request's head with the comment below.
@@ -69,28 +70,29 @@ demand, also on a pull request's head with the comment below.
 
 ## Running it
 
+The case runs on its own pinned image, the package variable `image`, and not
+on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
+
 ```sh
-CEPH_TEST_ESSENTIAL_IMAGE=<essential role@sha256:...> \
-CEPH_TEST_CLIENT_IMAGE=<client role@sha256:...> \
-CEPH_TEST_RGW_IMAGE=<rgw role@sha256:...> \
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWSuspendedConditionalWrites$' \
   ./internal/integration/experiments/rgw_suspended_conditional_writes
 ```
 
-Resolve the role images with `run_image_matrix.py --variant official
---layout roles --release <release> --roles essential,client,rgw
---prepare-only` (see [Testing](../../../../docs/contributing/testing.md)),
-or run the batch exactly as CI does:
+Another image, such as a fixed release, is injected at link time:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_conditional_writes \
-  --package ./internal/integration/experiments/rgw_suspended_conditional_writes \
-  --directory "artifacts/rgw-conditional-writes-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_suspended_conditional_writes_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -run '^TestRGWSuspendedConditionalWrites$' \
+  ./internal/integration/experiments/rgw_suspended_conditional_writes
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
+The batch `rgw_conditional_writes` (`tag_scenarios.py optional --batch
+rgw_conditional_writes`, or the Native regressions workflow) still runs the
+case. It exports role images, which the case ignores, except that the
+harness attaches its client container from the exported client role image.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_COND ceph=`), every step's native status and error code, and the
@@ -118,10 +120,36 @@ version listings.
    the GET: a null version with the current ETag, or a null delete marker.
    No multipart upload of the test may stay pending.
 
+## Result line
+
+A failure of a given or when step (a condition not established, an
+unavailable prerequisite, a failed control) fails the test, and the test then
+prints no result. Otherwise the test passes whatever the gateway did and
+prints one line:
+
+```text
+EXPERIMENT_RESULT case=rgw_suspended_conditional_writes result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
+```
+
+`REPRODUCED`: a step of the sequence on the suspended bucket, with either
+writer, answers another status than AWS semantics want; `symptoms` lists
+each such step with its status. `NOT_REPRODUCED`: every step on the
+suspended bucket does. The `never-versioned` control, the create-once
+controls, the effect checks of step 4 and the final listing of step 5 must
+hold for any result to print.
+
+Standalone runs, Linux amd64 host, Docker, bridge, one run each:
+
+| Image | Result | Test time |
+| --- | --- | --- |
+| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: `existing-if-match` (412), `deleted-if-match` (412 instead of 404) and `deleted-if-none-match` (412) for both writers, six symptoms | 34.6 s |
+| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 35.3 s |
+| 20.2.5 official `sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 35.1 s |
+
 ## Reading the result
 
-- **Pass:** every step on both buckets followed AWS semantics. Umbrella
-  21.2.0 passes (about 36 seconds).
+- **Pass:** every step on both buckets followed AWS semantics. Tentacle
+  20.2.5 and Umbrella 21.2.0 pass (about 35 seconds).
 - **Observed bug:** `never-versioned` passes and `suspended/put` and
   `suspended/multipart` fail at `existing-if-match` (412), `deleted-if-match`
   (412 instead of 404) and `deleted-if-none-match` (412); the later steps are
@@ -142,7 +170,6 @@ version listings.
 ## Cleanup and limits
 
 Refused multipart uploads are aborted at once; objects stay in the test-owned
-buckets and the cluster is removed by its cleanup. Not run: arm64, Tentacle
-20.2.5 (source only), multipart uploads of several parts, `If-Match` on a key
+buckets and the cluster is removed by its cleanup. Not run: arm64, multipart uploads of several parts, `If-Match` on a key
 whose OLH points at an older version, and copy or tagging writes with
 preconditions.

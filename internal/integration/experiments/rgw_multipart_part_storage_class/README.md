@@ -39,8 +39,8 @@ answers every part.
 ## Requirements
 
 - One cluster with one OSD and one gateway (`rgw.Start` with its generated
-  user), plain HTTP. Image roles `essential`, `client` and `rgw`, all of one
-  release, or one aggregate image (`CEPH_TEST_IMAGE`). Bridge networking.
+  user), plain HTTP, all on the image `image` (see [Running it](#running-it)).
+  Bridge networking.
 - The case creates the pool `tc-mp.cold.data` (`ceph.Container.CreatePool`)
   and edits the gateway's own zone and zonegroup with `radosgw-admin
   zonegroup placement add` and `zone placement add` (`Gateway.Admin`), then
@@ -51,8 +51,9 @@ answers every part.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on every published release image
-and on the Tentacle 20.2.5 official image. No automatic run includes it (the
+Known-defect reproducer: the test passes and reports `REPRODUCED` (see
+[Result line](#result-line)) on its default image, on every published release
+image and on the Tentacle 20.2.5 official image. No automatic run includes it (the
 default checks of a pull request, pushes to `main`, periodic samples), and it
 never gates anything. A maintainer can run it on demand, also on a pull
 request's head with the comment below.
@@ -63,9 +64,9 @@ request's head with the comment below.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+The case runs on its own pinned image, the package variable `image`, and not
+on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -73,13 +74,22 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_multipart_part_storage_class
 ```
 
-Or run the batch exactly as CI does:
+Another image, such as a fixed release, is injected at link time:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_multipart_part_class \
-  --package ./internal/integration/experiments/rgw_multipart_part_storage_class \
-  --directory "artifacts/rgw-multipart-part-class-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multipart_part_storage_class_test.image=<image>" \
+  -run '^TestRGWMultipartPartStorageClass$' \
+  ./internal/integration/experiments/rgw_multipart_part_storage_class
 ```
+
+No fixed release is known, so no image is expected to answer
+`NOT_REPRODUCED` yet; a run on a candidate fix uses the second form.
+
+The batch `rgw_multipart_part_class` (`tag_scenarios.py optional --batch
+rgw_multipart_part_class`, or the Native regressions workflow) still runs the
+case. It exports role images, which the case ignores, except that the
+harness attaches its client container from the exported client role image.
 
 Record the image digests with the result; the log names the Ceph version
 (`RGW_MP ceph=`), the zone placement read back (`RGW_MP zone=`), each
@@ -102,6 +112,31 @@ object's head and tail placement rules (`RGW_MP placement`), its whole read
    (`beyondRefused`). Another error, such as `403 AccessDenied` or
    `503 ServiceUnavailable`, does not show that the part number was out of
    range and fails the control.
+
+## Result line
+
+A failure of a given or when step (a condition not established, an
+unavailable prerequisite, a failed control) fails the test, and the test then
+prints no result. Otherwise the test passes whatever the gateway did and
+prints one line:
+
+```text
+EXPERIMENT_RESULT case=rgw_multipart_part_storage_class result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
+```
+
+`REPRODUCED`: a GET or HEAD of part 1 or 2 of the `COLD` object
+(`cold-storage-class`) does not answer the part's length, a part count of 2
+and, for a GET, its bytes; `symptoms` lists each such read. `NOT_REPRODUCED`:
+every part read of the `COLD` object answers the part. The controls must
+hold for any result to print: every part of the `STANDARD` object answers,
+and part 3 of either object is refused with `400 InvalidPart`.
+
+Standalone runs, Linux amd64 host, Docker, bridge, one run each:
+
+| Image | Result | Test time |
+| --- | --- | --- |
+| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: GET and HEAD of both parts of the `COLD` object answer 400 (`InvalidPart` for GET) with the 238-byte error document | 39.3 s |
+| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `REPRODUCED`, the same four symptoms | 38.3 s |
 
 ## Reading the result
 
