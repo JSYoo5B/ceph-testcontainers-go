@@ -26,9 +26,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// DefaultImage pins the published, pruned dependency-role aggregate on both
-// native architectures. Explicit ImageSet selections avoid unused feature roles.
-const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+// DefaultImage is the published official Tentacle aggregate, which supplies
+// every dependency role on both native architectures. It is a release tag of
+// ceph-testcontainers-images: a compatible rebuild replaces the image under
+// the same tag, and the Docker engine's pull and cache policy decides when a
+// host picks it up. Pass a digest reference or a local image ID to Run for an
+// exact build. Explicit ImageSet selections avoid unused feature roles.
+const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 //go:embed internal/scripts/*.sh
 var scripts embed.FS

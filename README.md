@@ -101,8 +101,10 @@ exist.
   [the host network guide](docs/guides/host-network.md).
 - Access to pull the Ceph image and the Ryuk image.
 
-The default image is the published, pruned official Tentacle 20.2.4 aggregate,
-pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
+The default image, `ceph.DefaultImage`, is the release tag of the published,
+pruned official Tentacle 20.2.4 aggregate for AMD64 and ARM64. A compatible
+rebuild is published under the same tag; pass a digest reference to `Run`
+when a test needs one exact build.
 Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
 Runtime CI uses these dependency roles directly. Umbrella 21.2.x and Squid
