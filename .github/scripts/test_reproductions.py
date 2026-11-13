@@ -19,7 +19,8 @@ def catalog(affected="REPRODUCED"):
     return reproductions.validate({
         "schema": reproductions.SCHEMA,
         "roles": ["essential", "client", "rgw"],
-        "units": {"rgw_case": {"network": "bridge"}, "rgw_case/host": {"network": "host"}},
+        "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]},
+                  "rgw_case/host": {"network": "host", "tests": ["TestHostCase"]}},
         "combinations": [
             {"id": "affected", "platform": "linux/amd64", "images": {"essential": E1, "client": C1, "rgw": R1},
              "verdicts": {"rgw_case": affected, "rgw_case/host": "REPRODUCED"}, "evidence": "native run"},
@@ -33,10 +34,10 @@ AFFECTED = {"CEPH_TEST_ESSENTIAL_IMAGE": E1, "CEPH_TEST_CLIENT_IMAGE": C1, "CEPH
 FIXED = {"CEPH_TEST_ESSENTIAL_IMAGE": E2, "CEPH_TEST_CLIENT_IMAGE": C2, "CEPH_TEST_RGW_IMAGE": R2}
 
 
-def record(path, starts=(), metadata=()):
-    """A tagcatalog record of a test file whose test starts the units."""
-    return {"path": path, "metadata": list(metadata),
-            "reproductions": {"TestCase": {"starts": list(starts), "names": ["t"], "selectors": []}}}
+def record(path, starts=(), metadata=(), tests=("TestCase", "TestHostCase")):
+    """A tagcatalog record of a test file that declares the tests and
+    starts the units."""
+    return {"path": path, "metadata": list(metadata), "tests": list(tests), "reproduction_units": list(starts)}
 
 
 @functools.cache
@@ -61,6 +62,12 @@ class CatalogTests(unittest.TestCase):
             ("unknown field", lambda d: d["combinations"][0].update(release="20.2.4")),
             ("unknown role", lambda d: d.update(roles=["essential", "client", "gateway"])),
             ("bad network", lambda d: d["units"]["rgw_case"].update(network="none")),
+            ("no tests", lambda d: d["units"]["rgw_case"].update(tests=[])),
+            ("tests absent", lambda d: d["units"]["rgw_case"].pop("tests")),
+            ("duplicate test", lambda d: d["units"]["rgw_case"].update(tests=["TestCase", "TestCase"])),
+            ("subtest name", lambda d: d["units"]["rgw_case"].update(tests=["TestCase/host"])),
+            ("not a test name", lambda d: d["units"]["rgw_case"].update(tests=["Testcase"])),
+            ("other unit field", lambda d: d["units"]["rgw_case"].update(timeout="20m")),
             ("no evidence", lambda d: d["combinations"][0].update(evidence=" ")),
             ("same images twice", lambda d: d["combinations"][1].update(images=dict(d["combinations"][0]["images"]))),
             ("duplicate id", lambda d: d["combinations"][1].update(id="affected")),
@@ -100,6 +107,10 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(set(reproductions.load(source, "./case", temporary)["units"]), {"rgw_case", "rgw_case/host"})
             with self.assertRaises(ValueError):
                 reproductions.load([record("case/case_test.go", ["rgw_case"])], "case", temporary)
+            # Each unit's tests are tests of the package.
+            with self.assertRaisesRegex(ValueError, "does not declare"):
+                reproductions.load([record("case/case_test.go", ["rgw_case", "rgw_case/host"], tests=("TestCase",))],
+                                   "case", temporary)
             (Path(temporary) / "other" / reproductions.CATALOG).write_text(json.dumps(catalog()))
             with self.assertRaises(ValueError):
                 reproductions.load(source, "other", temporary)
@@ -206,147 +217,43 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(met["verdicts"], unmet["verdicts"])
 
 
-IMPORTS = """import (
+class StartedUnitTests(unittest.TestCase):
+    def test_a_run_expects_the_units_whose_entry_lists_a_test_it_runs(self):
+        document = catalog()
+        for tests, units in ((["TestParsesTheResponse"], set()), (["TestCase"], {"rgw_case"}),
+                             (["TestHostCase"], {"rgw_case/host"}),
+                             (["TestCase", "TestHostCase", "TestParsesTheResponse"], {"rgw_case", "rgw_case/host"})):
+            with self.subTest(tests=tests):
+                self.assertEqual(reproductions.started_units(document, tests), units)
+        self.assertEqual(reproductions.started_units(None, ["TestCase"]), set())
+
+    def test_go_code_alone_starts_a_unit(self):
+        """tagcatalog reads the started units with go/ast."""
+        source = """package rgw_case_test
+
+import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
-"""
-PURE_SOURCE = """package rgw_case_test
 
-import "testing"
-
-func TestParsesTheResponse(t *testing.T) {
-	if parseResponse("x") == "" {
-		t.Fatal("empty")
-	}
-}
-"""
-HELPER_SOURCE = """package rgw_case_test
-
-""" + IMPORTS + """
-func parseResponse(text string) string {
-	return text
-}
-
-func runCase(t *testing.T) {
-	repro := harness.StartReproduction(t, "rgw_case", "trigger")
-	_ = parseResponse("y")
-	repro.Absent(t, "trigger", "absent")
-}
-
-func runHost(t *testing.T) {
-	startHost(t)
-}
-
-func startHost(t *testing.T) {
-	_ = harness.StartReproduction(t, "rgw_case/host", "trigger")
-}
-"""
-NATIVE_SOURCE = """package rgw_case_test
-
-import "testing"
-
-func TestCase(t *testing.T) {
-	runCase(t)
-}
-
-func TestHostCase(t *testing.T) {
-	t.Run("host", func(t *testing.T) { runHost(t) })
-}
-"""
-# Names in comments and strings, declaration boundaries that a text scan
-# misreads, and the other ways Go code reaches a reproducer.
-DECLARATIONS_SOURCE = """package rgw_other_test
-
-""" + IMPORTS + """
-func TestPure(t *testing.T) {}
-
-// TestNative runs against the selected image.
+// TestNative starts harness.StartReproduction(t, "rgw_comment", "trigger").
 func TestNative(t *testing.T) {
-	repro := harness.StartReproduction(t, "rgw_other", "trigger")
+	repro := harness.StartReproduction(t, "rgw_case", "trigger")
 	repro.Absent(t, "trigger", "absent")
+	t.Log("harness.StartReproduction(t, \\"rgw_string\\", \\"trigger\\")")
 }
 
-func noop() {}
-
-// TestComments names TestNative and runCase(t) only in comments and strings.
-func TestComments(t *testing.T) {
-	/* TestNative(t) */
-	t.Log("TestNative", `TestNative(t)`)
-	noop()
-}
-
-func describe(v any) string { return "}" + string('{') + `}` } // }
-
-func TestLiterals(t *testing.T) { _ = describe("TestNative") }
-
-// var hidden = harness.StartReproduction(t, "rgw_other/hidden", "trigger")
-
-type reproducer struct{}
-
-func (reproducer) start(t *testing.T) { _ = harness.StartReproduction(t, "rgw_other/method", "trigger") }
-
-func TestMethod(t *testing.T) { reproducer{}.start(t) }
-
-var startVariable = func(t *testing.T) { _ = harness.StartReproduction(t, "rgw_other/variable", "trigger") }
-
-func TestVariable(t *testing.T) { startVariable(t) }
-
-// A local of the same name hides the package-level reproducer.
-func TestShadow(t *testing.T) {
-	startVariable := func(*testing.T) {}
-	startVariable(t)
-}
+// func TestHidden(t *testing.T) { harness.StartReproduction(t, "rgw_hidden", "trigger") }
 """
-
-
-class StartedUnitTests(unittest.TestCase):
-    """started_units over records that tagcatalog reads from Go source."""
-
-    @classmethod
-    def setUpClass(cls):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text("module example\n")
-            for path, text in (("rgw_case/pure_fixture_test.go", PURE_SOURCE),
-                               ("rgw_case/case_helpers_test.go", HELPER_SOURCE),
-                               ("rgw_case/case_native_regression_test.go", NATIVE_SOURCE),
-                               ("rgw_other/declarations_test.go", DECLARATIONS_SOURCE)):
-                (root / path).parent.mkdir(exist_ok=True)
-                (root / path).write_text(text)
-            cls.files = {Path(file["path"]).name: file for file in tag_scenarios.load_catalog(root)}
-
-    def test_only_the_tests_that_run_start_units(self):
-        files = [self.files[name] for name in ("pure_fixture_test.go", "case_helpers_test.go",
-                                               "case_native_regression_test.go")]
-        # A pure profile shares the helper file but runs no reproducer.
-        self.assertEqual(reproductions.started_units(files[:2], ["TestParsesTheResponse"]), set())
-        self.assertEqual(reproductions.started_units(files, ["TestCase"]), {"rgw_case"})
-        self.assertEqual(reproductions.started_units(files, ["TestHostCase"]), {"rgw_case/host"})
-        self.assertEqual(reproductions.started_units(files, ["TestCase", "TestHostCase", "TestParsesTheResponse"]),
-                         {"rgw_case", "rgw_case/host"})
-        self.assertEqual(reproductions.source_units(files, "rgw_case"), {"rgw_case", "rgw_case/host"})
-
-    def test_only_go_code_reaches_a_reproducer(self):
-        files = [self.files["declarations_test.go"]]
-        for tests, units in ((["TestPure"], set()), (["TestNative"], {"rgw_other"}), (["TestComments"], set()),
-                             (["TestLiterals"], set()), (["TestMethod"], {"rgw_other/method"}),
-                             (["TestVariable"], {"rgw_other/variable"}), (["TestShadow"], set()),
-                             (["TestPure", "TestComments", "TestLiterals", "TestShadow"], set())):
-            with self.subTest(tests=tests):
-                self.assertEqual(reproductions.started_units(files, tests), units)
-        # The commented-out call starts nothing, so no catalogue lists it.
-        self.assertEqual(reproductions.source_units(files, "rgw_other"),
-                         {"rgw_other", "rgw_other/method", "rgw_other/variable"})
-
-    def test_a_testify_suite_reaches_its_methods(self):
-        methods = {"path": "x/suite_test.go", "reproductions": {
-            "caseSuite.TestTrigger": {"starts": ["rgw_case"], "names": [], "selectors": []},
-            "otherSuite.TestTrigger": {"starts": ["rgw_case/host"], "names": [], "selectors": []}}}
-        runner = {"path": "x/run_test.go", "suite_runs": {"TestSuite": ["caseSuite"]},
-                  "reproductions": {"TestSuite": {"starts": [], "names": ["caseSuite", "suite", "t"], "selectors": ["Run"]}}}
-        self.assertEqual(reproductions.started_units([methods, runner], ["TestSuite"]), {"rgw_case"})
+            (root / "rgw_case").mkdir()
+            (root / "rgw_case/case_native_regression_test.go").write_text(source)
+            records = tag_scenarios.load_catalog(root)
+        self.assertEqual(reproductions.source_units(records, "rgw_case"), {"rgw_case"})
+        self.assertEqual(reproductions.source_tests(records, "rgw_case"), {"TestNative"})
 
     def test_repository_profiles_expect_verdicts_only_of_their_reproducers(self):
         source = repository_catalog()
@@ -357,8 +264,7 @@ class StartedUnitTests(unittest.TestCase):
             if catalogue is None:
                 continue
             units = reproductions.started_units(
-                tag_scenarios.compiled_files(source, profile["package"], profile["tags"]),
-                tag_scenarios.selected_tests(source, profile["package"], profile["tags"]))
+                catalogue, tag_scenarios.selected_tests(source, profile["package"], profile["tags"]))
             if not profile["requires_ceph"]:
                 self.assertEqual(units, set(), profile["id"])
             started.setdefault(profile["package"], set()).update(units)

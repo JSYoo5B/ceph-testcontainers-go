@@ -993,14 +993,16 @@ combination of the case runs as an investigation and keeps the case's
 pass/fail meaning, so a reproduction there still fails. The tag runner
 refuses an invalid catalogue before Go starts and, after the run, requires
 each expected unit's own `REPRODUCTION_VERDICT` line with the expected
-verdict. A unit is expected of a run only when one of the tests it runs
-starts the unit, in its own body or through the package functions,
-variables and methods its code reaches, so the `code/pure` batch of a case's
+verdict. A unit is expected of a run only when its catalogue entry lists
+one of the tests the run selects, so the `code/pure` batch of a case's
 helper tests expects no verdict, while a selected reproducer that reports
-none still fails. `internal/tools/tagcatalog` reads this reach with `go/ast`,
-so a name in a comment or a string is not a call, and it refuses a
-`harness.StartReproduction` call whose unit is not a string literal, since
-the catalogue lists units by name. The result is in `report.json` under
+none still fails. The list is checked on every native run of the unit:
+`harness.StartReproduction` refuses the unit in a top-level test the entry
+does not list, and a listed test that does not report it fails here. The
+runner also refuses a catalogue whose units differ from the string-literal
+units of the package's `harness.StartReproduction` calls, which
+`internal/tools/tagcatalog` reads with `go/ast`, or whose listed tests the
+package does not declare. The result is in `report.json` under
 `reproduction`, beside the image, cleanup and every other phase, which keep
 their own results. A
 required batch such as `topology/rgw_single_part_read` compares the same way

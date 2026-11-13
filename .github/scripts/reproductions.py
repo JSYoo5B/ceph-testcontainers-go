@@ -26,6 +26,8 @@ NETWORKS = ("bridge", "host")
 UNIT = re.compile(r"[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?\Z")
 COMBINATION = re.compile(r"[a-z0-9]+([.-][a-z0-9]+)*\Z")
 PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+\Z")
+# A top-level Go test name, as harness.ParseReproductionCatalog accepts it.
+TEST = re.compile(r"Test(?:[A-Z0-9_][A-Za-z0-9_]*)?\Z")
 # An expectation is stored only for bytes that cannot change: a local image
 # ID, or a reference with a sha256 digest (a tag beside it is kept). The name
 # grammar is the distribution reference grammar (v0.6.0) that the harness
@@ -66,46 +68,25 @@ def package_files(catalog, package):
     return [file for file in catalog if Path(file["path"]).parent == Path(package)]
 
 
-def started_units(files, tests):
-    """The units that the named top-level tests start. files are the
-    tagcatalog records of the test files compiled into the run; their
-    reproductions say, per package-level declaration, the units its code
-    starts and the names it uses (read with go/ast, so comments and string
-    contents never count). A declaration reaches the functions and variables
-    that it names and the methods that it selects by name; a test also reaches
-    the methods of the testify suites that it runs. The walk follows them
-    transitively."""
-    declarations, methods, receivers, suites = {}, {}, {}, set()
-    for file in files:
-        for key, reach in file.get("reproductions", {}).items():
-            merged = declarations.setdefault(key, {"starts": set(), "names": set(), "selectors": set()})
-            for field, values in merged.items():
-                values.update(reach[field])
-            if "." in key:
-                receiver, method = key.split(".", 1)
-                methods.setdefault(method, set()).add(key)
-                receivers.setdefault(receiver, set()).add(key)
-        for test in tests:
-            suites.update(file.get("suite_runs", {}).get(test, ()))
-    pending = [test for test in tests if test in declarations]
-    pending += [method for suite in suites for method in receivers.get(suite, ())]
-    reached = set()
-    while pending:
-        key = pending.pop()
-        if key in reached:
-            continue
-        reached.add(key)
-        reach = declarations[key]
-        # A method key has a dot, which no identifier has.
-        pending += [name for name in reach["names"] if name in declarations]
-        pending += [method for name in reach["selectors"] for method in methods.get(name, ())]
-    return {unit for key in reached for unit in declarations[key]["starts"]}
+def started_units(catalogue, tests):
+    """The units that a run of the named top-level tests starts: those whose
+    entry lists one of them. The harness refuses a unit in a test its entry
+    does not list, and a listed test that runs without reporting the unit
+    fails the runner's line check, so the list matches the code on every
+    native run of the unit."""
+    if catalogue is None:
+        return set()
+    return {unit for unit, entry in catalogue["units"].items() if set(entry["tests"]) & set(tests)}
 
 
 def source_units(catalog, package):
-    """The units that any test file of the package starts."""
-    return {unit for file in package_files(catalog, package)
-            for reach in file.get("reproductions", {}).values() for unit in reach["starts"]}
+    """The units that the package's test files start, whatever their tags."""
+    return {unit for file in package_files(catalog, package) for unit in file.get("reproduction_units", ())}
+
+
+def source_tests(catalog, package):
+    """The top-level tests that the package's test files declare."""
+    return {test for file in package_files(catalog, package) for test in file.get("tests", ())}
 
 
 def validate(document, label=CATALOG):
@@ -122,8 +103,15 @@ def validate(document, label=CATALOG):
     if not units:
         raise ValueError(label + ": no units")
     for name, unit in units.items():
-        if not UNIT.match(name) or unit != {"network": unit.get("network")} or unit["network"] not in NETWORKS:
-            raise ValueError("%s: unit %s must be <case>[/<subtest>] with network bridge or host" % (label, name))
+        if not UNIT.match(name) or not isinstance(unit, dict) or set(unit) != {"network", "tests"} \
+                or unit["network"] not in NETWORKS:
+            raise ValueError("%s: unit %s must be <case>[/<subtest>] with network bridge or host and its tests"
+                             % (label, name))
+        tests = unit["tests"]
+        if not isinstance(tests, list) or not tests or len(set(tests)) != len(tests) \
+                or not all(isinstance(test, str) and TEST.match(test) for test in tests):
+            raise ValueError("%s: unit %s needs distinct top-level Go test names that start it, got %r"
+                             % (label, name, tests))
     ids, identities = set(), set()
     for combination in document["combinations"]:
         if set(combination) != {"id", "platform", "images", "verdicts", "evidence"}:
@@ -154,12 +142,13 @@ def validate(document, label=CATALOG):
     return document
 
 
-def load(catalog, package, root=ROOT):
+def load(source, package, root=ROOT):
     """The validated catalogue of a package, or None when it starts no unit.
-    A package that starts units needs a catalogue listing exactly them.
-    catalog is the tagcatalog record of every test file."""
+    A package that starts units needs a catalogue listing exactly them, and
+    each unit's tests are tests of the package. source is the tagcatalog
+    record of every test file."""
     directory = Path(root) / package
-    units = source_units(catalog, package)
+    units = source_units(source, package)
     path = directory / CATALOG
     if not units:
         if path.exists():
@@ -170,6 +159,11 @@ def load(catalog, package, root=ROOT):
     catalog = validate(json.loads(path.read_text(encoding="utf-8")), str(path))
     if set(catalog["units"]) != units:
         raise ValueError("%s: units %s, but the tests start %s" % (path, sorted(catalog["units"]), sorted(units)))
+    declared = source_tests(source, package)
+    for unit, entry in sorted(catalog["units"].items()):
+        if not set(entry["tests"]) <= declared:
+            raise ValueError("%s: unit %s lists tests %s that the package does not declare"
+                             % (path, unit, sorted(set(entry["tests"]) - declared)))
     return catalog
 
 

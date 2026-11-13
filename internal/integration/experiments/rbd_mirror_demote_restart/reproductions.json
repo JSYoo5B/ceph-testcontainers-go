@@ -7,10 +7,16 @@
   ],
   "units": {
     "rbd_mirror_demote_restart/demotion-resume": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestRBDMirrorDemotionResumesAfterReceiverRestart"
+      ]
     },
     "rbd_mirror_demote_restart/resumed-bytes": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestRBDMirrorDemotionResumesAfterReceiverRestart"
+      ]
     }
   },
   "combinations": [

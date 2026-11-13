@@ -993,15 +993,9 @@ class CompletionTests(unittest.TestCase):
         case = "internal/integration/experiments/rgw_case/"
         pure = fixture(path=case + "case_fixture_test.go", tests=("TestParsesTheResponse",), batch="pure")
         native = fixture(path=case + "case_native_regression_test.go", tests=("TestCase",), batch="rgw_case")
-        helpers = fixture(path=case + "case_helpers_test.go", tests=(), batch="pure")
-        # What tagcatalog reads: the pure test and the reproducer share a
-        # helper, and only the reproducer starts the unit.
-        reach = lambda starts=(), names=(), selectors=(): {"starts": list(starts), "names": list(names),
-                                                           "selectors": list(selectors)}
-        pure["reproductions"] = {"TestParsesTheResponse": reach(names=("parseResponse", "t"))}
-        helpers["reproductions"] = {"parseResponse": reach(names=("text",))}
-        native["reproductions"] = {"TestCase": reach(("rgw_case",), ("harness", "parseResponse", "repro", "t"),
-                                                     ("Absent", "StartReproduction"))}
+        # What tagcatalog reads: only the reproducer's file starts the unit,
+        # and the catalogue lists TestCase as the test that starts it.
+        pure["reproduction_units"], native["reproduction_units"] = [], ["rgw_case"]
         plan = engine.discover([pure, native])
         images = {"essential": "sha256:" + "e" * 64, "client": "sha256:" + "c" * 64, "rgw": "sha256:" + "b" * 64}
         environment = {"CEPH_TEST_ESSENTIAL_IMAGE": images["essential"], "CEPH_TEST_CLIENT_IMAGE": images["client"],
@@ -1020,14 +1014,14 @@ class CompletionTests(unittest.TestCase):
                 (root / case).mkdir(parents=True)
                 (root / case / "reproductions.json").write_text(json.dumps({
                     "schema": "ceph-reproductions/v1", "roles": ["essential", "client", "rgw"],
-                    "units": {"rgw_case": {"network": "bridge"}},
+                    "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]}},
                     "combinations": [{"id": "affected", "platform": "linux/amd64", "images": images,
                                       "verdicts": {"rgw_case": "REPRODUCED"}, "evidence": "native run"}]}))
                 with patch.object(engine, "compile_inventory", return_value=[test]), \
                         patch.object(engine.subprocess, "Popen", return_value=process), \
                         patch.object(engine, "native_platform", return_value={"host": "linux/amd64", "target": "linux/amd64"}), \
                         patch("sys.stdout", new=io.StringIO()), patch.dict(os.environ, environment):
-                    return engine.run_profile([pure, helpers, native], plan, "short", batch, None, root / "output", root)
+                    return engine.run_profile([pure, native], plan, "short", batch, None, root / "output", root)
 
         package = "example/internal/integration/experiments/rgw_case"
         report = run("pure", "TestParsesTheResponse", native_log(("TestParsesTheResponse",), package))

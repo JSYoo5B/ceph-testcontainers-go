@@ -709,15 +709,18 @@ controls and observation logic on every build:
 | `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation without a symptom, or a test that ended before `Conclude`; the reason is reported |
 
 The expected verdict belongs to the case. Its `reproductions.json` lists the
-image roles the case consumes, its units with their network mode, and each
-verified image combination with the verdict a native run observed for each
-unit and that run as evidence:
+image roles the case consumes, its units with their network mode and the
+top-level tests that start each one, and each verified image combination
+with the verdict a native run observed for each unit and that run as
+evidence. `StartReproduction` fails a unit started in a top-level test its
+entry does not list (a subtest counts as its top-level test), and the tag
+runner expects a unit's verdict only of a run that selects a listed test:
 
 ```json
 {
   "schema": "ceph-reproductions/v1",
   "roles": ["essential", "client", "rgw"],
-  "units": {"rgw_empty_sse_header": {"network": "bridge"}},
+  "units": {"rgw_empty_sse_header": {"network": "bridge", "tests": ["TestRGWEmptySSEHeader"]}},
   "combinations": [
     {
       "id": "20.2.4-roles",

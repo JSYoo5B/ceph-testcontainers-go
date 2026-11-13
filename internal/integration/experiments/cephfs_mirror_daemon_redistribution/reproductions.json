@@ -7,10 +7,16 @@
   ],
   "units": {
     "cephfs_mirror_daemon_redistribution": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestMultiClusterCephFSMirrorDaemonTopology"
+      ]
     },
     "cephfs_mirror_daemon_redistribution/host-network": {
-      "network": "host"
+      "network": "host",
+      "tests": [
+        "TestHostNetworkCephFSMirrorDaemonTopology"
+      ]
     }
   },
   "combinations": [

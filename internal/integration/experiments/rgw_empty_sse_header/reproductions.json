@@ -7,7 +7,10 @@
   ],
   "units": {
     "rgw_empty_sse_header": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestRGWEmptySSEHeader"
+      ]
     }
   },
   "combinations": [

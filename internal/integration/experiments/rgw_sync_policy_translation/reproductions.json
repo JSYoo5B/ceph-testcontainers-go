@@ -7,16 +7,28 @@
   ],
   "units": {
     "rgw_sync_policy_translation/host_ordinary_user_denial_grant": {
-      "network": "host"
+      "network": "host",
+      "tests": [
+        "TestHostNetworkMultiClusterRGWSyncTranslationFiltering"
+      ]
     },
     "rgw_sync_policy_translation/host_priority_tags_owner_class": {
-      "network": "host"
+      "network": "host",
+      "tests": [
+        "TestHostNetworkMultiClusterRGWSyncTranslationFiltering"
+      ]
     },
     "rgw_sync_policy_translation/ordinary_user_denial_grant": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestMultiClusterRGWSyncTranslationFiltering"
+      ]
     },
     "rgw_sync_policy_translation/priority_tags_owner_class": {
-      "network": "bridge"
+      "network": "bridge",
+      "tests": [
+        "TestMultiClusterRGWSyncTranslationFiltering"
+      ]
     }
   },
   "combinations": [
