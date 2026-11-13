@@ -21,25 +21,36 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
-// TestMONLogAckThroughPeon requires every OSD's cluster log entries to be
-// acknowledged, whether its MON session is with the leader or with a peon
-// that forwards them (issue 389). It fails on images whose leader also calls
-// no_reply for a forwarded MLog, such as 20.2.4: the leader commits the
-// peon-forwarded MLog, but the peon discards the MLogAck, so the OSD's
-// LogClient queue is never trimmed. It passes on 19.2.2.
+// image is the Ceph image the case runs on: Tentacle 20.2.4, which
+// reproduces the defect. A run selects another image with
 //
-// Three MONs and three OSDs start. If the OSDs' sessions do not include one
-// with the leader and one with a peon, the MON holding most of them is
-// restarted, before any measurement, until they do. With debug_monc 10 on
-// the OSDs and debug_mon 10 on the MONs, each OSD writes two cluster log
-// entries (scrub_purged_snaps). The entries must reach the cluster log, the
-// leader-connected OSD must be acknowledged (otherwise the oracle is
-// invalid), and then every OSD must be. The leader, election epoch and
-// sessions must not change during the window.
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/mon_log_ack_peon_test.image=<image>"
+//
+// No release fixes it yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
+// which predates the introducing change, does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+
+// TestMONLogAckThroughPeon reports whether a peon loses the MLogAck of a
+// cluster log entry that it forwarded to the leader (issue 389).
+//
+// Given three MONs and three OSDs whose sessions include one with the leader
+// and one with a peon (the MON holding most of them is restarted, before any
+// measurement, until they do), debug_monc 10 on the OSDs and debug_mon 10 on
+// the MONs, when each OSD writes two cluster log entries (scrub_purged_snaps)
+// and they reach the cluster log, with the leader-connected OSD acknowledged
+// and the leader, election epoch and sessions unchanged over the window, then
+// the defect is REPRODUCED if a peon-connected OSD is never acknowledged, and
+// NOT_REPRODUCED if every OSD is acknowledged through its own MON. A leader
+// that also calls no_reply for a forwarded MLog, such as 20.2.4's, routes an
+// empty reply first, and the peon discards the MLogAck that follows, so the
+// OSD's LogClient queue is never trimmed. Squid 19.2.2 does not.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func TestMONLogAckThroughPeon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3)))
+	t.Logf("MON_LOG_ACK image=%s", image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3)))
 	t.Logf("MON_LOG_ACK ceph=%s", harness.StaticFacts(cluster).CephVersion)
 	mons := clusteraccess.Monitors(t, cluster)
 	osds := clusteraccess.OSDs(t, cluster)
@@ -161,18 +172,29 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 	if len(peonless) != 0 {
 		t.Fatalf("the leader-connected OSDs %v were not acknowledged, so the oracle is invalid: %v", peonless, progress)
 	}
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
 	if len(unacked) != 0 {
 		counts := map[string]int{}
 		for mon, acks := range lost {
 			counts[mon] = len(acks)
 		}
-		t.Fatalf("the cluster log entries of the peon-connected OSDs %v were committed but never acknowledged (%v); the peons discarded routed MLogAcks %v", unacked, routes, counts)
-	}
-	for entity, role := range roles {
-		if role == "peon" && !strings.HasPrefix(routes[entity], "acknowledged through") {
-			t.Fatalf("%s was acknowledged, but not through its peon: %s", entity, routes[entity])
+		symptoms = append(symptoms, fmt.Sprintf("the cluster log entries of the peon-connected OSDs %v were committed but never acknowledged (%v); the peons discarded routed MLogAcks %v", unacked, routes, counts))
+	} else {
+		for entity, role := range roles {
+			if role == "peon" && !strings.HasPrefix(routes[entity], "acknowledged through") {
+				t.Fatalf("%s was acknowledged, but not through its peon: %s", entity, routes[entity])
+			}
 		}
 	}
+	if t.Failed() {
+		return
+	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=mon_log_ack_peon result=%s image=%s symptoms=%q", result, image, symptoms)
 }
 
 // arrangeLogAckSessions waits for a stable three-MON quorum whose OSD

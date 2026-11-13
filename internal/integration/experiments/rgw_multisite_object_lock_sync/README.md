@@ -44,19 +44,22 @@ zones (`metadata-has-obj_lock`).
 
 - Two clusters with one OSD each and a realm of two zones in one zonegroup
   (`multisite.Run` with `WithTopology`), one gateway per zone, plain HTTP.
-  Image roles `essential`, `client` and `rgw`, all of one release, or one
-  aggregate image (`CEPH_TEST_IMAGE`). Bridge networking.
+  Both clusters and both gateways run the package's `image`, one aggregate
+  image. Bridge networking.
 - Requests are signed by the test's own SigV4 client with each gateway's
   generated user. The bucket record is read with `Fixture.ZoneAdmin`.
 - The test bounds itself to 20 minutes; the batch timeout is 30 minutes.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: it fails on the published role images of
-Tentacle 20.2.4 and Squid 19.2.5. No automatic run includes it (the default
-checks of a pull request, pushes to `main`, periodic samples), and it never
-gates anything. A maintainer can run it on demand, also on a pull request's
-head with the comment below.
+Standalone reproducer: the test runs on its package-level `image`, Tentacle
+20.2.4 by default, which reproduces the defect. Its given and when steps fail
+the test; the then step does not. It prints one line,
+`EXPERIMENT_RESULT case=rgw_multisite_object_lock_sync result=<REPRODUCED|NOT_REPRODUCED>`,
+for both steps, and passes either way. No automatic run includes it (the
+default checks of a pull request, pushes to `main`, periodic samples), and it
+never gates anything. A maintainer can run it on demand, also on a pull
+request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rgw_object_lock_sync`.
 - Comment: `/ci run rgw_object_lock_sync` or
@@ -64,9 +67,7 @@ head with the comment below.
 
 ## Running it
 
-Export the images of one release first, as
-[Images for the RGW S3 cases](../../../../docs/contributing/testing.md#images-for-the-rgw-s3-cases)
-describes, then:
+On the default image, which must print `result=REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
@@ -74,21 +75,26 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rgw_multisite_object_lock_sync
 ```
 
-Or run the batch exactly as CI does:
+On a fixed image, injected into the package's `image` variable, which must
+print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
+`quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d`,
+is fixed too):
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rgw_object_lock_sync \
-  --package ./internal/integration/experiments/rgw_multisite_object_lock_sync \
-  --directory "artifacts/rgw-object-lock-sync-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multisite_object_lock_sync_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  -run '^TestMultiClusterRGWBucketObjectLockSync$' \
+  ./internal/integration/experiments/rgw_multisite_object_lock_sync
 ```
 
-Record the image digests with the result; the log names the Ceph version of
-both clusters (`RGW_LOCK ceph=`), each zone's ID and gateway binary
-(`RGW_LOCK zone=`), the canary (`RGW_LOCK canary`), every configuration read
-(`RGW_LOCK read step=`) with the raw body of the reads that are judged
-(`RGW_LOCK raw`), the versioning read-back (`RGW_LOCK versioning`), each
-metadata checkpoint (`RGW_LOCK checkpoint`) and the bucket record in each
-zone (`RGW_LOCK stored`).
+The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
+not select the case's images. The log names the image (`RGW_LOCK image=`),
+the Ceph version of both clusters (`RGW_LOCK ceph=`), each zone's ID and
+gateway binary (`RGW_LOCK zone=`), the canary (`RGW_LOCK canary`), every
+configuration read (`RGW_LOCK read step=`) with the raw body of the reads
+that are judged (`RGW_LOCK raw`), the versioning read-back
+(`RGW_LOCK versioning`), each metadata checkpoint (`RGW_LOCK checkpoint`) and
+the bucket record in each zone (`RGW_LOCK stored`).
 
 ## Observations and controls
 
@@ -131,32 +137,37 @@ zone (`RGW_LOCK stored`).
 
 ## Reading the result
 
-The results below ran on the pinned role images of the shared recipe: 20.2.4
-(essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw `aac25fc48b53…`),
-21.2.0 (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and 19.2.5 (essential `43ee23624e7a…`, client
-`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`), and on the 20.2.5 official image
-`sha256:4337ac8ac81d…` as the aggregate. Linux amd64, bridge, one run per
-release.
+- **REPRODUCED:** a step's symptom starts with `observed defect`: zone b
+  answers no configuration (`404 ObjectLockConfigurationNotFoundError`, or
+  `200` enabled without a rule, which is what it answered before the rule was
+  applied) or another one, after the checkpoint was reached. When the
+  `initial` step reproduces, the `update` step is not run
+  (`RGW_LOCK step=update not run`). The bucket record then holds no object
+  lock configuration (`metadata-has-obj_lock=false`).
+- **NOT_REPRODUCED:** zone b answers `GOVERNANCE`, 1 day, after the first
+  checkpoint and `COMPLIANCE`, 1 year, after the second. Check that both
+  gateways are of the build under test (`RGW_LOCK zone=`).
+- **Test failure (no result):** `condition not established` (the data path,
+  the source read-back or the versioning prerequisite does not hold),
+  `control failed` (the control bucket does not answer
+  `404 ObjectLockConfigurationNotFoundError`), `another fault` (a checkpoint
+  is not reached, or zone b does not answer about the configuration at all),
+  or the clusters or the realm do not start.
 
-- **Observed bug:** the `initial` step fails with `observed defect`. Zone
-  `a` reads back `GOVERNANCE`, 1 day; the checkpoint is reached at once
-  (metadata caught up, the marker bucket answered by zone `b`); zone `b`
-  answers `200` with object lock enabled and no rule in every one of 60
-  reads over 2 minutes, which is also what it answered before the rule was
-  applied. The bucket record holds no object lock configuration in either
-  zone (`metadata-has-obj_lock=false`), the control bucket answers
-  `404 ObjectLockConfigurationNotFoundError` in both, and the `update` step
-  is not run. Tentacle 20.2.4 (217 s) and Squid 19.2.5 (224 s) do this.
-- **Pass:** zone `b` answers `GOVERNANCE`, 1 day, in the first read after
-  the checkpoint, and `COMPLIANCE`, 1 year, in the first read after the
-  second; the bucket record holds the configuration in both zones. Tentacle
-  20.2.5 (100 s) and Umbrella 21.2.0 (80 s) pass.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  both gateways are of that build (`RGW_LOCK zone=`).
-- **Another fault:** a checkpoint is not reached, or zone `b` does not
-  answer about the configuration at all.
-- **Unavailable prerequisite:** the clusters or the realm do not start.
+Native results (Linux amd64 host, Docker, aggregate images, one run each):
+
+| Image | Result | Time |
+| --- | --- | --- |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: zone b answers `200` enabled without a rule after the `initial` checkpoint; `update` not run | 216 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 101 s |
+| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 79 s |
+
+Earlier, failing-test results on the pinned role images of the shared
+recipe agree: 20.2.4 (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
+`aac25fc48b53…`, 217 s) and 19.2.5 (essential `43ee23624e7a…`, client
+`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`, 224 s) reproduced; 21.2.0 (essential
+`119180026952…`, client `e5f7edab88b6…`, rgw `9ef3fb34f7c4…`, 80 s) and the
+20.2.5 official image (100 s) did not.
 
 ## Cleanup and limits
 

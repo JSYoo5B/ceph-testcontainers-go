@@ -25,10 +25,9 @@ it passed.
 Squid 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 have the same conversion.
 Upstream reference: [tracker 80938](https://tracker.ceph.com/issues/80938).
 
-The test fails on every published image in the two subtests away from UTC.
-That is the expected result for an unpatched defect; it is not a fixture
-failure. The `rbd trash purge --expires-before` command does not use this
-conversion and is not covered.
+Every published image reproduces it in the two subtests away from UTC. The
+`rbd trash purge --expires-before` command does not use this conversion and
+is not covered.
 
 ## Requirements
 
@@ -41,12 +40,14 @@ conversion and is not covered.
 
 ## Tier and triggers
 
-Deliberately failing reproducer: one run takes about 40 seconds (38 s on
-Tentacle 20.2.4, 37 s on Umbrella 21.2.0, 45 s on Squid 19.2.5) and fails in
-the `ahead-9h` and `behind-9h` subtests on every published image. No
+Standalone reproducer: the test runs on its package-level `image`, Tentacle
+20.2.4 by default, which reproduces the defect. Its given and when steps fail
+the test; the then step does not. It prints one line,
+`EXPERIMENT_RESULT case=rbd_trash_purge_timezone result=<REPRODUCED|NOT_REPRODUCED>`,
+for both subtests away from UTC together, and passes either way. No
 automatic run includes it (the default checks of a pull request, pushes to
-`main`, periodic samples), and it never gates anything. A maintainer can
-run it on demand, also on a pull request's head with the comment below.
+`main`, periodic samples), and it never gates anything. A maintainer can run
+it on demand, also on a pull request's head with the comment below.
 
 - Manual: `gh workflow run "Native regressions" -f batch=rbd_trash_purge_timezone`.
 - Comment: `/ci run rbd_trash_purge_timezone` or
@@ -54,25 +55,28 @@ run it on demand, also on a pull request's head with the comment below.
 
 ## Running it
 
+On the default image, which must print `result=REPRODUCED`:
+
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRBDTrashPurgeCutoffAcrossClientTimezones$' \
   ./internal/integration/experiments/rbd_trash_purge_timezone
 ```
 
-or, exactly as CI runs the batch:
+On another image, such as a patched build, injected into the package's
+`image` variable; a fixed image must print `result=NOT_REPRODUCED`. No
+release fixes the defect yet.
 
 ```sh
-python3 .github/scripts/tag_scenarios.py optional --batch rbd_trash_purge_timezone \
-  --package ./internal/integration/experiments/rbd_trash_purge_timezone \
-  --directory "artifacts/rbd-trash-purge-timezone-$(date -u +%Y%m%dT%H%M%SZ)"
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_trash_purge_timezone_test.image=<image@sha256:...>" \
+  -run '^TestRBDTrashPurgeCutoffAcrossClientTimezones$' \
+  ./internal/integration/experiments/rbd_trash_purge_timezone
 ```
 
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
-
-The test logs the client's `ceph --version`; record the image digests with
-the result.
+The cluster runs `image`; the role image variables (`CEPH_TEST_IMAGE`,
+`CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The test logs the client's
+`ceph --version`.
 
 ## Observations and controls
 
@@ -116,31 +120,38 @@ timezone.
 
 ## Reading the result
 
-- **Pass:** all three subtests retained the 15-hour and 30-hour images. No
-  published image passes today.
-- **Observed bug:** the failure starts with `observed defect:`: the trash
-  retains what the cutoff's fields read as local time keep. Nine hours
-  ahead of UTC the 6-hour image is retained as well; nine hours behind,
-  only the 30-hour image is, so an image whose deferment ends five hours
-  after the cutoff was removed. The receipt
+- **REPRODUCED:** a subtest away from UTC retained what the cutoff's fields
+  read as local time keep; the symptom starts with the subtest name and
+  `observed defect:`. Nine hours ahead of UTC the 6-hour image is retained as
+  well; nine hours behind, only the 30-hour image is, so an image whose
+  deferment ends five hours after the cutoff was removed. The receipt
   (`RBD_TRASH_PURGE_TIMEZONE_RECEIPT`) gives the shift of the cutoff.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  receipts: each must name its UTC offset.
-- **Unavailable prerequisite:** the cluster or its client does not start,
-  or the client's `python3` lacks the `rbd` module. The test or the script
-  fails before a receipt.
-- **Condition not established:** the failure starts with
-  `condition not established`: a deadline is not where the cutoff needs
-  it, the process did not run in the timezone or did not purge with the one
-  cutoff, the trash changed between the moves and the purge, or the
-  cutoff's fields read as local time are not the client's UTC offset from
-  it.
-- **Control failed:** the failure starts with `control failed`: the purge
-  from UTC did not retain exactly the 15-hour and 30-hour images. The other
-  subtests fail with the same prefix without purging.
-- **Another fault:** the failure starts with `another fault:`: a purge away
-  from UTC retained neither the entries the cutoff keeps nor the entries
-  its local reading keeps. It is not the defect of this case.
+- **NOT_REPRODUCED:** all three subtests retained the 15-hour and 30-hour
+  images. Check the receipts: each must name its UTC offset.
+- **Test failure (no result):**
+  - `condition not established`: a deadline is not where the cutoff needs
+    it, the process did not run in the timezone or did not purge with the
+    one cutoff, the trash changed between the moves and the purge, or the
+    cutoff's fields read as local time are not the client's UTC offset from
+    it.
+  - `control failed`: the purge from UTC did not retain exactly the 15-hour
+    and 30-hour images. The other subtests fail with the same prefix without
+    purging.
+  - `another fault:`: a purge away from UTC retained neither the entries the
+    cutoff keeps nor the entries its local reading keeps. It is not the
+    defect of this case.
+  - The cluster or its client does not start, or the client's `python3`
+    lacks the `rbd` module.
+
+Native results (Linux amd64 host, Docker, aggregate image, one run):
+
+| Image | Result | Time |
+| --- | --- | --- |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: ahead-9h retains `due-6h` too; behind-9h retains only `due-30h` | 38 s |
+
+No fixed image exists to run. Earlier, failing-test runs on role images
+reproduced on Tentacle 20.2.4 (38 s), Umbrella 21.2.0 (37 s) and Squid
+19.2.5 (45 s).
 
 ## Cleanup and limits
 

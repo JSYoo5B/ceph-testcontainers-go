@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +33,14 @@ const (
 	// before the checkpoint returns.
 	lockArrivalBound = 2 * time.Minute
 )
+
+// image is the Ceph image every cluster and gateway of the case runs: Tentacle
+// 20.2.4, which reproduces the defect. A run selects another image with
+//
+//	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multisite_object_lock_sync_test.image=<image>"
+//
+// and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
 
 type lockCase struct {
 	t       *testing.T
@@ -220,25 +227,32 @@ func (c *lockCase) cleanup() {
 	c.t.Logf("RGW_LOCK cleanup buckets=%d failed=%t", len(buckets), failed)
 }
 
-// TestMultiClusterRGWBucketObjectLockSync requires that a bucket's object
-// lock configuration, applied in the metadata master zone, is answered by
-// the other zone of the realm after metadata sync: enabled, with the same
-// default retention mode and period. The first configuration is applied to
-// a bucket created with object lock; once both zones answer it, a second
-// one replaces it and must arrive as well. A bucket created without object
-// lock is the control in both zones, and an object written to it shows that
-// the data path between the zones works, apart from the configuration.
+// TestMultiClusterRGWBucketObjectLockSync reports whether a bucket's object
+// lock configuration, applied in the metadata master zone, fails to reach the
+// other zone of the realm through metadata sync.
+//
+// Given a two-zone realm whose data path works (an object of a bucket created
+// without object lock, the control, reaches zone b with its bytes) and a
+// bucket created with object lock that zone a reads back with versioning
+// enabled, when a default retention rule is applied in zone a, zone a reads
+// it back and a metadata checkpoint created after it reaches zone b, then the
+// defect is REPRODUCED if zone b answers no configuration or another one
+// (judgeDestination's "observed defect"), and NOT_REPRODUCED if zone b
+// answers the same rule, and later the rule that replaces it. An answer that
+// is not about the configuration is another fault and fails the test.
+// Tentacle 20.2.4 leaves the rule out of the bucket instance record that
+// metadata sync transfers, so it reproduces; Tentacle 20.2.5 and Umbrella
+// 21.2.0 do not.
+//
+// A failure of the given or when steps fails the test; the result does not.
 func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	source, destination, _, _ := harness.NewMultiClusterPairWithContext(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	t.Logf("RGW_LOCK image=%s", image)
+	source, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	destination, _ := harness.NewServiceClusterWithOptions(t, image, harness.FunctionalOSDConfig(t), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	t.Logf("RGW_LOCK ceph=%s,%s", harness.StaticFacts(source).CephVersion, harness.StaticFacts(destination).CephVersion)
-	image, _ := harness.IntegrationImages(t)
-	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
-	if rgwImage == "" {
-		rgwImage = image
-	}
-	fixture, err := multisite.Run(ctx, rgwImage, multisite.WithTopology(multisite.TopologyConfig{
+	fixture, err := multisite.Run(ctx, image, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}},
 	}))
@@ -322,13 +336,33 @@ func TestMultiClusterRGWBucketObjectLockSync(t *testing.T) {
 
 	first := lockConfig{Enabled: true, Mode: "GOVERNANCE", Days: 1}
 	second := lockConfig{Enabled: true, Mode: "COMPLIANCE", Years: 1}
-	if verdict := c.propagate("initial", lockFirstMarker, first); verdict != "" {
+	// Each symptom observed by the then step; none means NOT_REPRODUCED.
+	var symptoms []string
+	observe := func(verdict string) bool {
+		switch {
+		case verdict == "":
+			return true
+		case strings.HasPrefix(verdict, "observed defect:"):
+			symptoms = append(symptoms, verdict)
+		default:
+			t.Fatal(verdict)
+		}
+		return false
+	}
+	if observe(c.propagate("initial", lockFirstMarker, first)) {
+		// An initial configuration that arrives does not show that a change
+		// of it does: the second one differs in mode and in the unit of its
+		// period.
+		observe(c.propagate("update", lockSecondMarker, second))
+	} else {
 		t.Logf("RGW_LOCK step=update not run: the first configuration did not reach zone b, so an update has nothing to replace there")
-		t.Fatal(verdict)
 	}
-	// An initial configuration that arrives does not show that a change of
-	// it does: the second one differs in mode and in the unit of its period.
-	if verdict := c.propagate("update", lockSecondMarker, second); verdict != "" {
-		t.Fatal(verdict)
+	if t.Failed() {
+		return
 	}
+	result := "NOT_REPRODUCED"
+	if len(symptoms) > 0 {
+		result = "REPRODUCED"
+	}
+	t.Logf("EXPERIMENT_RESULT case=rgw_multisite_object_lock_sync result=%s image=%s symptoms=%q", result, image, symptoms)
 }
