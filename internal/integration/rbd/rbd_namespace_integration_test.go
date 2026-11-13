@@ -15,6 +15,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -167,25 +168,36 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 				t.Fatal(err)
 			}
 			held, err := rbd.ImageClients(ctx, cluster, pool, "blue", "held")
-			if err != nil || len(held.Watchers) == 0 || held.ExclusiveOwner() == nil {
-				t.Fatalf("owned RBD holder did not acquire a watch and exclusive lock: %+v error=%v", held, err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			acquired, err := expect.ImageClients{Lock: expect.ExclusiveLockHeld, OwnerWatches: true}.Evaluate(*held)
+			if err != nil || !acquired.Matched {
+				t.Fatalf("owned RBD holder did not acquire a watch and exclusive lock: %v error=%v", acquired, err)
 			}
 			if err := holder.Terminate(ctx, testcontainers.StopTimeout(0)); err != nil {
 				t.Fatal(err)
 			}
 			settle, stop := context.WithTimeout(ctx, time.Minute)
 			defer stop()
+			// The crashed holder's lock record outlives its watch, so only
+			// the watchers are compared.
+			unwatched := expect.ImageClients{Unwatched: true}
 			for {
 				held, err = rbd.ImageClients(settle, cluster, pool, "blue", "held")
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(held.Watchers) == 0 {
+				settled, err := unwatched.Evaluate(*held)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if settled.Matched {
 					break
 				}
 				select {
 				case <-settle.Done():
-					t.Fatal("crashed owned RBD client's watch did not settle", settle.Err())
+					t.Fatalf("crashed owned RBD client's watch did not settle: %v: %v", settled, settle.Err())
 				case <-time.After(time.Second):
 				}
 			}

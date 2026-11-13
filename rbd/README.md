@@ -62,8 +62,9 @@ if err != nil {
 
 - Everything in [`ceph`](../ceph/README.md) applies to the returned cluster:
   clients and Cephx, pools, configuration, health, faults and topology changes.
-  Mirroring between two clusters is in [`rbd/mirror`](mirror/README.md), and
-  pure evaluations of its receiver and image replay observations are in
+  Mirroring between two clusters is in [`rbd/mirror`](mirror/README.md).
+  Pure evaluations of `rbd.ImageClients` lock and watcher observations and of
+  the mirror receiver and image replay observations are in
   [`rbd/expect`](expect/README.md).
 - Images: `ceph.DefaultImage` (Ceph Tentacle) supplies every role. With an
   explicit image set, essential supplies the daemons, client the ordinary

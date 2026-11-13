@@ -23,5 +23,5 @@
 // A mismatch is a result; an error means there is no verdict. Polling,
 // retries and assertion failures stay with the test and its own tools.
 // Evaluations of service observations live in the service's own expect
-// package, such as cephfs/expect or rbd/expect.
+// package, such as cephfs/expect, rbd/expect or rgw/expect.
 package expect

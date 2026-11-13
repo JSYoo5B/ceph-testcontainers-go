@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -91,17 +92,22 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				t.Fatal(err)
 			}
 			harness.ExecOutput(t, ctx, first, "rbd", "create", pool+"/"+imageName, "--size", "16M")
-			clients := func() *rbd.ImageClientStatus {
+			clients := func(want expect.ImageClients) *rbd.ImageClientStatus {
 				t.Helper()
 				status, err := rbd.ImageClients(ctx, cluster, pool, "", imageName)
 				if err != nil {
 					t.Fatal(err)
 				}
+				result, err := want.Evaluate(*status)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !result.Matched {
+					t.Fatal(result)
+				}
 				return status
 			}
-			if status := clients(); len(status.Watchers) != 0 || status.ExclusiveOwner() != nil {
-				t.Fatalf("idle image has clients: %+v", status)
-			}
+			clients(expect.ImageClients{Lock: expect.ExclusiveLockFree, Unwatched: true})
 			start := func(ctr testcontainers.Container, workdir, payload string) {
 				t.Helper()
 				harness.ExecOutput(t, ctx, ctr, "sh", "-c", `mkdir -p "$3" && printf '%s' "$1" > "$3/client.py" && nohup python3 "$3/client.py" "$2" disk "$3" "$4" > "$3/log" 2>&1 &`,
@@ -126,17 +132,13 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				}
 				return result.Errno
 			}
-			owner := func(id uint64) *rbd.ImageLock {
+			// owner requires client.<id> to hold the lock and watch the image,
+			// and the departed addresses to watch it no longer.
+			owner := func(id uint64, departed ...string) *rbd.ImageLock {
 				t.Helper()
-				status := clients()
-				lock := status.ExclusiveOwner()
-				if lock == nil || lock.Locker != "client."+strconv.FormatUint(id, 10) {
-					t.Fatalf("exclusive owner = %+v, want client.%d; watchers %+v", lock, id, status.Watchers)
-				}
-				if !slices.ContainsFunc(status.Watchers, func(w rbd.ImageWatcher) bool { return w.Address == lock.Address }) {
-					t.Fatalf("owner %s does not watch the image: %+v", lock.Address, status.Watchers)
-				}
-				return lock
+				return clients(expect.ImageClients{
+					Lock: expect.ExclusiveLockHeld, Owner: "client." + strconv.FormatUint(id, 10), OwnerWatches: true, Departed: departed,
+				}).ExclusiveOwner()
 			}
 			pause := func(ctr testcontainers.Container) *fault.PauseLease {
 				t.Helper()
@@ -176,10 +178,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			if b.Seconds < 10 {
 				t.Fatalf("lock moved in %.1fs, before the frozen owner's watch could expire", b.Seconds)
 			}
-			bLock := owner(b.ID)
-			if slices.ContainsFunc(clients().Watchers, func(w rbd.ImageWatcher) bool { return w.Address == aLock.Address }) {
-				t.Fatal("expired owner still watches the image")
-			}
+			bLock := owner(b.ID, aLock.Address) // the expired owner no longer watches
 			if !blocklisted(aLock.Address) {
 				t.Fatalf("broken lock owner %s is not blocklisted", aLock.Address)
 			}

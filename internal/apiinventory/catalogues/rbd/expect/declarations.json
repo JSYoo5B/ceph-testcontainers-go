@@ -2,8 +2,104 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/expect",
-  "count": 36,
+  "count": 51,
   "entries": [
+    {
+      "current": "rbd/expect.ExclusiveLock",
+      "kind": "type",
+      "proposed": "rbd/expect.ExclusiveLock",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ExclusiveLockFree",
+      "kind": "const",
+      "proposed": "rbd/expect.ExclusiveLockFree",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ExclusiveLockHeld",
+      "kind": "const",
+      "proposed": "rbd/expect.ExclusiveLockHeld",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClients",
+      "kind": "type",
+      "proposed": "rbd/expect.ImageClients",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClients.Evaluate",
+      "kind": "method",
+      "signature": "func(observed rbd.ImageClientStatus) (ImageClientsEvaluation, error)",
+      "receiver": "ImageClients",
+      "proposed": "rbd/expect.ImageClients.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsEvaluation",
+      "kind": "type",
+      "proposed": "rbd/expect.ImageClientsEvaluation",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsEvaluation.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ImageClientsEvaluation",
+      "proposed": "rbd/expect.ImageClientsEvaluation.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatch",
+      "kind": "type",
+      "proposed": "rbd/expect.ImageClientsMismatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatch.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ImageClientsMismatch",
+      "proposed": "rbd/expect.ImageClientsMismatch.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchDeparted",
+      "kind": "const",
+      "proposed": "rbd/expect.ImageClientsMismatchDeparted",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchLock",
+      "kind": "const",
+      "proposed": "rbd/expect.ImageClientsMismatchLock",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchOwner",
+      "kind": "const",
+      "proposed": "rbd/expect.ImageClientsMismatchOwner",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchOwnerWatch",
+      "kind": "const",
+      "proposed": "rbd/expect.ImageClientsMismatchOwnerWatch",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchReason",
+      "kind": "type",
+      "proposed": "rbd/expect.ImageClientsMismatchReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/expect.ImageClientsMismatchWatched",
+      "kind": "const",
+      "proposed": "rbd/expect.ImageClientsMismatchWatched",
+      "decision": "baseline"
+    },
     {
       "current": "rbd/expect.MirrorImage",
       "kind": "type",

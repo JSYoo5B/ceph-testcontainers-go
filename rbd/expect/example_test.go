@@ -2,6 +2,7 @@ package expect_test
 
 import (
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 )
@@ -47,4 +48,24 @@ func ExampleMirrorImage_Evaluate() {
 	fmt.Println(result)
 	// Output:
 	// image volumes/:/volume want replaying=true new instance: replay: want true, observed false; state: want up+replaying, observed up+starting_replay; instance: want other than 4101, observed 4101
+}
+
+// After a lock handoff the new owner must hold the exclusive lock and watch
+// the image, and the former owner's watch must be gone. The two native reads
+// behind the observation can disagree during the handoff, so the test decides
+// whether to read again.
+func ExampleImageClients_Evaluate() {
+	observed := rbd.ImageClientStatus{
+		Watchers: []rbd.ImageWatcher{{Address: "10.0.0.1:0/1001", ClientID: 4101, Cookie: 91}},
+		Locks:    []rbd.ImageLock{{ID: "auto 92", Locker: "client.4102", Address: "10.0.0.2:0/2001", Managed: true}},
+	}
+	result, err := expect.ImageClients{
+		Lock: expect.ExclusiveLockHeld, Owner: "client.4102", OwnerWatches: true, Departed: []string{"10.0.0.1:0/1001"},
+	}.Evaluate(observed)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(result)
+	// Output:
+	// image clients want lock=held owner=client.4102 owner-watches departed=[10.0.0.1:0/1001]: owner-watch: want 10.0.0.2:0/2001 among watchers [10.0.0.1:0/1001]; departed: 10.0.0.1:0/1001 still watches
 }

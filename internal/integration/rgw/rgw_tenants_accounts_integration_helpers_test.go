@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -191,8 +192,12 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	// native user stats for either root aggregate the same account owner.
 	for _, root := range roots {
 		usage, err := root.Usage(ctx)
-		if err != nil || usage.UserID != root.ID() || usage.Tenant != "account_tenant" || usage.Scope != "account" || usage.OwnerID != owned.ID() || usage.OwnerID == root.ID() || usage.NumObjects != 1 || usage.SizeBytes != uint64(len(accountPayload)) {
-			t.Fatalf("native account aggregate mislabeled as individual user: usage=%+v error=%v expected_account=%q", usage, err, owned.ID())
+		if err != nil {
+			t.Fatalf("native account aggregate read for %s: %v", root.ID(), err)
+		}
+		want := expect.UserUsage{UserID: root.ID(), Tenant: "account_tenant", Scope: expect.UsageScopeAccount, OwnerID: owned.ID(), Objects: 1, SizeBytes: uint64(len(accountPayload))}
+		if result, err := want.Evaluate(usage); err != nil || !result.Matched {
+			t.Fatalf("native account aggregate mislabeled as individual user: %v; usage=%+v error=%v", result, usage, err)
 		}
 		t.Logf("RGW_USER_USAGE stage=account-after-write scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 	}

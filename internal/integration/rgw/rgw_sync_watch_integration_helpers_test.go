@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
@@ -172,13 +173,19 @@ func testRGWSyncWatch(t *testing.T) {
 	for i := range syncWatchObjects {
 		sourceS3.Request(t, ctx, http.MethodPut, fmt.Sprintf("/%s/held-%02d", syncWatchBucket, i), syncWatchPayload(i), http.StatusOK)
 	}
+	var lagging expect.MultisiteDataSyncEvaluation
 	lag := waitSyncEvent(t, zone, "data lag", 4*time.Minute, func(e multisite.SyncWatchEvent) bool {
-		return e.Err == nil && !e.Ready && len(e.Status.DataSources) == 1 && e.Status.DataSources[0].BehindShards > 0
+		matched, evaluation, err := syncWatchDataLag(e)
+		if err != nil {
+			t.Fatalf("zone watch event %d: %v", e.Sequence, err)
+		}
+		lagging = evaluation
+		return matched
 	})
 	bucketLag := waitBucketEvent(t, checkpoint, "bucket lag", 4*time.Minute, func(e multisite.BucketSyncWatchEvent) bool {
 		return e.Err == nil && !e.Status.CaughtUp && e.Status.BehindShards > 0
 	})
-	t.Logf("SYNC_WATCH_LAG zone_event=%d behind_shards=%d bucket_event=%d bucket_behind_shards=%d", lag.Sequence, lag.Status.DataSources[0].BehindShards, bucketLag.Sequence, bucketLag.Status.BehindShards)
+	t.Logf("SYNC_WATCH_LAG zone_event=%d behind_shards=%d bucket_event=%d bucket_behind_shards=%d", lag.Sequence, lagging.Stream.BehindShards, bucketLag.Sequence, bucketLag.Status.BehindShards)
 
 	if err := link.Destination.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -229,6 +236,21 @@ func testRGWSyncWatch(t *testing.T) {
 		t.Fatalf("the bucket watch ended with %v", err)
 	}
 	t.Logf("SYNC_WATCH_RECREATED bucket watch ended: %v", checkpoint.Stop())
+}
+
+// syncWatchDataLag reports whether a zone watch event shows the destination
+// behind the source in this two-zone fixture. The fixture configures exactly
+// one remote source, so an event listing any other data sync stream is not
+// the lag this scenario waits for, even when the source stream is behind.
+func syncWatchDataLag(e multisite.SyncWatchEvent) (bool, expect.MultisiteDataSyncEvaluation, error) {
+	if e.Err != nil || e.Ready {
+		return false, expect.MultisiteDataSyncEvaluation{}, nil
+	}
+	evaluation, err := (expect.MultisiteDataSync{Zone: "destination", Source: "source", State: expect.MultisiteDataSyncBehind}).Evaluate(e.Status)
+	if err != nil {
+		return false, evaluation, err
+	}
+	return evaluation.Matched && len(e.Status.DataSources) == 1, evaluation, nil
 }
 
 // checkBucketRecreationEvent checks one bucket watch event drained after the

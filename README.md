@@ -34,9 +34,9 @@ Documentation for a published release is available at its Git tag.
     `Terminate`.
 - [`rbd`](rbd/README.md): RBD pools and namespaces, image watchers and locks,
   backup and restore.
-  - [`rbd/expect`](rbd/expect/README.md): pure evaluations of captured
-    `rbd-mirror` receiver and image replay observations, with mismatch
-    explanations.
+  - [`rbd/expect`](rbd/expect/README.md): pure evaluations of captured image
+    lock and watcher observations and `rbd-mirror` receiver and image replay
+    observations, with mismatch explanations.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
     clusters.
 - [`cephfs`](cephfs/README.md): filesystems, MDS topology and data pools.
@@ -53,6 +53,9 @@ Documentation for a published release is available at its Git tag.
   - [`cephfs/mirror`](cephfs/mirror/README.md): snapshot mirroring between two
     clusters.
 - [`rgw`](rgw/README.md): S3 and Swift gateways, users, tenants and quotas.
+  - [`rgw/expect`](rgw/expect/README.md): pure evaluations of captured
+    storage accounting and multisite data sync observations, with mismatch
+    explanations.
   - [`rgw/account`](rgw/account/README.md): accounts, their quotas and root
     users.
   - [`rgw/placement`](rgw/placement/README.md): placement targets, storage
