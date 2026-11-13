@@ -170,12 +170,21 @@ def parse_digests(text):
 
 
 def pin_references(references, digests):
-    """Replace each pinned role's tag by the registry digest that the caller
+    """Replace each role's tag by the registry digest that the caller
     resolved it to, so that every job and attempt of one run pulls the same
-    manifest even when the tag moves meanwhile. A pinned role that this run
-    does not prepare is ignored."""
-    return {role: REGISTRY + "@" + digests[role] if role in digests else reference
-            for role, reference in references.items()}
+    manifest even when the tag moves meanwhile. Without pins the tags stay.
+    With pins every prepared role must be pinned: a run pins the roles its
+    batches declare, so a prepared role without a pin is a mismatch between
+    the run's pins and this job, and pulling its tag next to pinned roles
+    would mix identities unnoticed. A pinned role that this job does not
+    prepare is ignored."""
+    if not digests:
+        return dict(references)
+    missing = [role for role in references if role not in digests]
+    if missing:
+        raise ValueError("the pins of this run name no " + ",".join(missing)
+                         + " role; refusing to pull an unpinned tag next to pinned roles")
+    return {role: REGISTRY + "@" + digests[role] for role in references}
 
 
 def published_references():

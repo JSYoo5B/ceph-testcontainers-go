@@ -59,18 +59,23 @@ def image_identity(release, discovery, entries=()):
     """The image identity of a plan. A historical aggregate serves only the
     five dependency roles: whether one ships the modules of an optional role
     is not established, so a plan whose entries declare one is not eligible
-    on it rather than run on a guessed image."""
+    on it rather than run on a guessed image. A published release supplies
+    the role images that the plan's entries declare, and no other: a role
+    that no selected entry uses is neither pulled nor able to fail the
+    sample. Essential is always one of them, because image preparation reads
+    the native build from it."""
     inventory = patch_inventory()
+    declared = {role for item in entries if item['profile']['image_roles']
+                for role in images.parse_roles(item['profile']['image_roles'])}
     if discovery:
         row = dict(inventory[release])
-        optional = sorted({role for item in entries if item['profile']['image_roles']
-                           for role in images.parse_roles(item['profile']['image_roles'])
-                           if role in images.OPTIONAL_ROLE_ENV})
+        optional = sorted(declared & set(images.OPTIONAL_ROLE_ENV))
         if optional and row['eligibility'] == 'available':
             row.update(eligibility='artifact_unavailable', unavailable_roles=optional)
         return row
+    roles = tuple(role for role in images.DECLARABLE_ROLE_ENV if role in declared | {'essential'})
     return {'eligibility': 'available', 'layout': 'roles',
-            'references': images.image_references('official', 'roles', release, images.published_roles('official')),
+            'references': images.image_references('official', 'roles', release, roles),
             'cpu_baseline': inventory.get(release, {}).get('cpu_baseline', {})}
 
 def entry(profile, tests, network, core=False):

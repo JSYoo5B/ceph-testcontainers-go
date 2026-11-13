@@ -11,8 +11,15 @@ once, before any runtime job starts, and every job and attempt pulls that
 digest. The digests live in the run's outputs and artifacts only.
 
 pin writes digests=<role>=sha256:<hex>,... (and release=) to GITHUB_OUTPUT.
-A caller that already pinned the images passes its digests, which are
-validated and written as they are; a plan without a Ceph batch pins nothing.
+With a plan it resolves exactly the roles that the plan's batches declare, so
+a role that no selected batch uses, such as an optional one whose tag is
+unavailable, cannot stop the run, and a plan without a Ceph batch pins
+nothing. Without a plan (a campaign pins before its plan exists) it resolves
+every published role of the release. A caller that already pinned the images
+passes its digests, which are validated, must cover the plan's roles and are
+written as they are. Image preparation refuses a role that it is asked to
+prepare from pins that do not name it, so no job pulls an unpinned tag next
+to pinned ones.
 It reads the registry only through `docker buildx imagetools inspect`, with
 registry_pull's bounded retry of transport failures; it pulls, builds and
 runs nothing.
@@ -52,22 +59,34 @@ def resolve(reference, run=None, sleep=None):
     return digest
 
 
-def pin(release, run=None, sleep=None):
-    """role -> digest for every published role image of the release,
-    optional roles included."""
-    references = run_image_matrix.image_references("official", "roles", release,
-                                                   run_image_matrix.published_roles("official"))
+def pin(release, roles=None, run=None, sleep=None):
+    """role -> digest for the given role images of the release, in contract
+    order; without roles, for every published one, optional roles included.
+    Only the named roles are asked of the registry."""
+    published = run_image_matrix.published_roles("official")
+    roles = published if roles is None else tuple(role for role in published if role in roles)
+    references = run_image_matrix.image_references("official", "roles", release, roles) if roles else {}
     return {role: resolve(reference, run, sleep) for role, reference in references.items()}
 
 
-def needs_role_images(plan):
-    """Whether any entry of a tag_scenarios.py plan declares role images. A
-    plan of Docker-only batches needs no registry answer."""
+def plan_roles(plan):
+    """The roles that the entries of a tag_scenarios.py plan declare, in
+    contract order: the union of their image_roles. A plan of Docker-only
+    batches declares none and needs no registry answer."""
     data = json.loads(Path(plan).read_text(encoding="utf-8"))
     entries = data.get("include") if isinstance(data, dict) else None
     if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
         raise ValueError("the plan lists no matrix entries")
-    return any(entry.get("image_roles") for entry in entries)
+    declared = set()
+    for entry in entries:
+        roles = entry.get("image_roles", "")
+        if not isinstance(roles, str):
+            raise ValueError("a plan entry declares no role list")
+        if roles:
+            # parse_roles refuses an unknown or repeated role and a list
+            # without essential, as image preparation would later.
+            declared.update(run_image_matrix.parse_roles(roles))
+    return tuple(role for role in run_image_matrix.DECLARABLE_ROLE_ENV if role in declared)
 
 
 def main(argv=None):
@@ -76,17 +95,25 @@ def main(argv=None):
     command = commands.add_parser("pin", help="Resolve the role tags of a release to digests")
     command.add_argument("--release", required=True, choices=tuple(run_image_matrix.RELEASES))
     command.add_argument("--digests", default="",
-                         help="The caller's role=sha256:<digest> pins; not empty, they are kept and no tag is resolved")
-    command.add_argument("--plan", help="A tag_scenarios.py plan; without an entry that declares role images, pin nothing")
+                         help="The caller's role=sha256:<digest> pins; not empty, they are kept and no tag is resolved. "
+                              "With --plan they must name every role the plan declares")
+    command.add_argument("--plan", help="A tag_scenarios.py plan; pin exactly the roles its entries declare, none "
+                                        "when no entry declares one. Without it, pin every published role")
     command.add_argument("--github-output", help="Append release= and digests= here")
     args = parser.parse_args(argv)
     try:
+        roles = plan_roles(args.plan) if args.plan else None
         if args.digests:
             digests, source = run_image_matrix.parse_digests(args.digests), "the caller's pins"
-        elif args.plan and not needs_role_images(args.plan):
+            missing = [role for role in roles or () if role not in digests]
+            if missing:
+                raise ValueError("the caller's pins name no " + ",".join(missing) + " role, which the plan declares")
+        elif roles == ():
             digests, source = {}, "no batch of the plan declares role images"
+        elif roles is None:
+            digests, source = pin(args.release), "every published role, resolved from the role tags"
         else:
-            digests, source = pin(args.release), "resolved from the role tags"
+            digests, source = pin(args.release, roles), "the roles the plan declares, resolved from the role tags"
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
         print("Role image pinning failed: " + str(error), file=sys.stderr)
         return 1

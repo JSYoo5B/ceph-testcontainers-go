@@ -105,8 +105,9 @@ def cpu_eligible(baseline, architecture, run=read_command):
 def role_environment(plan, prepared):
     """The CEPH_TEST_* variables of the prepared images. A historical
     aggregate serves the five dependency roles; the published role images
-    serve every role the plan references, optional ones too, and
-    SCENARIO_IMAGE_ROLES names exactly the roles supplied."""
+    serve the roles the plan references, which are the ones its entries
+    declare, optional ones too, and SCENARIO_IMAGE_ROLES names exactly the
+    roles supplied."""
     if 'reference' in plan['images']:
         roles = tuple(images.ROLE_ENV)
     else:

@@ -355,6 +355,23 @@ class MatrixTests(unittest.TestCase):
         # Without pins the tags are pulled as before.
         self.assertEqual(runner.pin_references({"essential": "r:t"}, {}), {"essential": "r:t"})
 
+    def test_a_prepared_role_without_a_pin_is_refused_before_any_pull(self):
+        # A run pins the roles its batches declare. A job that prepares a
+        # role outside those pins must not pull that role's tag next to the
+        # pinned ones: nothing is pulled and nothing is exported.
+        env_file = self.write("github-env", "")
+        pins = "essential=sha256:" + "c" * 64 + ",client=sha256:" + "d" * 64
+        self.runtime.missing |= {runner.role_tag("official", "20.2.4", "mgr-modules"),
+                                 runner.REGISTRY + "@sha256:" + "c" * 64, runner.REGISTRY + "@sha256:" + "d" * 64}
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential,client,mgr-modules",
+                                      "--digests", pins, "--github-env", str(env_file)]), 1)
+        report = self.summary()
+        self.assertIn("name no mgr-modules role", report["error"])
+        self.assertFalse(report["preparation_passed"])
+        self.assertEqual((self.runtime.stream_commands, report["images"], env_file.read_text()), ([], {}, ""))
+        with self.assertRaisesRegex(ValueError, "name no client,rgw role"):
+            runner.pin_references({"essential": "a", "client": "b", "rgw": "c"}, {"essential": "sha256:" + "c" * 64})
+
     def test_digest_pins_are_validated_before_tools_or_output(self):
         digest = "sha256:" + "e" * 64
         for value in ("essential=" + digest[:-1], "unknown=" + digest, "essential=" + digest + ",essential=" + digest,
@@ -688,8 +705,11 @@ class RoleSelectionTests(unittest.TestCase):
                     self.assertRegex(reference, tag)
                     self.assertIn(reference, runner.published_references())
                 override = "sha256:" + "f" * 64
-                self.assertEqual(runner.pin_references(refs, {"essential": override}),
-                                 refs | {"essential": runner.REGISTRY + "@" + override})
+                pins = {role: override for role in refs} | {"mgr-modules": override}
+                self.assertEqual(runner.pin_references(refs, pins),
+                                 {role: runner.REGISTRY + "@" + override for role in refs})
+                with self.assertRaisesRegex(ValueError, "refusing to pull an unpinned tag"):
+                    runner.pin_references(refs, {"essential": override})
 
     def test_no_script_or_workflow_reads_a_checked_in_role_digest_map(self):
         root = SCRIPT.parents[2]

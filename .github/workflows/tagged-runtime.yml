@@ -52,7 +52,7 @@ on:
         default: ''
         type: string
       role_digests:
-        description: Comma-separated role=sha256:<digest> pins of the role image tags that the caller resolved; empty lets Plan resolve the tags once for this run
+        description: Comma-separated role=sha256:<digest> pins of the role image tags that the caller resolved, naming every role the plan declares; empty lets Plan resolve the declared roles once for this run
         default: ''
         type: string
       max_parallel:
@@ -168,11 +168,14 @@ jobs:
             python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
       # The role images are published tags, and no file of this repository
-      # names a digest of one. Each tag is resolved to its registry digest
-      # once per run, here, so that every runtime job and every later attempt
-      # of a failed one pulls the same manifests even when a tag is
-      # republished meanwhile. A caller's own pins are kept as they are, and
-      # a plan without a Ceph batch asks the registry nothing.
+      # names a digest of one. The tag of each role that the plan's batches
+      # declare is resolved to its registry digest once per run, here, so
+      # that every runtime job and every later attempt of a failed one pulls
+      # the same manifests even when a tag is republished meanwhile. A role
+      # that no batch declares is not resolved, so its tag cannot fail the
+      # run, and a plan without a Ceph batch asks the registry nothing. A
+      # caller's own pins are kept as they are and must name every declared
+      # role.
       - name: Pin the role image tags of this run
         id: role_images
         env:

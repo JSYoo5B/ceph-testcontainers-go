@@ -41,7 +41,7 @@ class PinTests(unittest.TestCase):
 
     def test_every_role_tag_of_the_release_is_pinned_to_a_digest(self):
         registry = self.registry()
-        digests = campaign.pin("19.2.5", registry)
+        digests = campaign.pin("19.2.5", run=registry)
         # The optional roles of the official variant are pinned too.
         self.assertEqual(list(digests), list(run_image_matrix.ROLE_ENV) + ["mgr-modules"])
         self.assertEqual([call[4] for call in registry.calls],
@@ -53,7 +53,7 @@ class PinTests(unittest.TestCase):
     def test_an_unresolvable_or_malformed_tag_fails_the_pinning(self):
         reference = run_image_matrix.image_references("official", "roles", "20.2.4")["essential"]
         with self.assertRaisesRegex(RuntimeError, "cannot resolve"):
-            campaign.pin("20.2.4", self.registry([reference]))
+            campaign.pin("20.2.4", run=self.registry([reference]))
         for stdout in ("{}", "[]", "not json", json.dumps({"digest": "sha256:short"})):
             with self.subTest(stdout=stdout), self.assertRaisesRegex(RuntimeError, "no sha256 manifest digest"):
                 campaign.resolve("r:t", lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout, ""))
@@ -74,11 +74,71 @@ class PinTests(unittest.TestCase):
             campaign.resolve("r:t", registry, sleeps.append)
         self.assertEqual((len(registry.calls), sleeps), (1, []))
 
+    def test_a_plan_pins_exactly_the_roles_its_batches_declare(self):
+        optional = run_image_matrix.role_tag("official", "20.2.4", "mgr-modules")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def plan(name, *roles):
+                path = root / (name + ".json")
+                path.write_text(json.dumps({"include": [{"id": "b" + str(index), "image_roles": value}
+                                                        for index, value in enumerate(roles)]}))
+                return path
+
+            def run(path, registry, digests=""):
+                output = root / (path.stem + "-" + str(len(list(root.iterdir()))) + ".out")
+                with mock.patch.object(campaign.subprocess, "run", registry), \
+                        mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()) as stderr:
+                    code = campaign.main(["pin", "--release", "20.2.4", "--plan", str(path), "--digests", digests,
+                                          "--github-output", str(output)])
+                pinned = run_image_matrix.parse_digests(output.read_text().splitlines()[1].split("=", 1)[1]) if code == 0 else None
+                return code, pinned, stderr.getvalue()
+
+            # An essential,client batch with the optional mgr-modules tag
+            # unavailable: the tag is never asked for, and Plan passes.
+            registry = self.registry(broken=[optional])
+            code, pinned, _ = run(plan("ordinary", "essential,client", ""), registry)
+            self.assertEqual((code, list(pinned)), (0, ["essential", "client"]))
+            self.assertEqual([call[4] for call in registry.calls],
+                             [run_image_matrix.role_tag("official", "20.2.4", role) for role in ("essential", "client")])
+            # The union of every batch, in contract order, each role once.
+            registry = self.registry(broken=[optional])
+            code, pinned, _ = run(plan("union", "essential,rgw", "essential,client,cephfs", "essential,client"), registry)
+            self.assertEqual((code, list(pinned)), (0, ["essential", "client", "cephfs", "rgw"]))
+            self.assertEqual(len(registry.calls), 4)
+            # A batch that declares the optional role does need its tag.
+            registry = self.registry(broken=[optional])
+            code, pinned, error = run(plan("optional", "essential,client", "essential,client,mgr-modules"), registry)
+            self.assertEqual((code, pinned), (1, None))
+            self.assertIn("cannot resolve " + optional, error)
+            registry = self.registry()
+            code, pinned, _ = run(plan("optional-available", "essential,client,mgr-modules"), registry)
+            self.assertEqual((code, list(pinned)), (0, ["essential", "client", "mgr-modules"]))
+            # A caller's pins must cover what the plan declares.
+            given = "essential=sha256:" + "a" * 64 + ",client=sha256:" + "b" * 64
+            refuse = mock.Mock(side_effect=AssertionError("no tag is resolved"))
+            code, pinned, _ = run(plan("covered", "essential,client"), refuse, given)
+            self.assertEqual((code, list(pinned)), (0, ["essential", "client"]))
+            code, pinned, error = run(plan("uncovered", "essential,client", "essential,rgw"), refuse, given)
+            self.assertEqual((code, pinned), (1, None))
+            self.assertIn("name no rgw role, which the plan declares", error)
+            # A malformed role list is refused here, not in a runtime job.
+            for roles in ("client", "essential,unknown", "essential,essential", ["essential"]):
+                with self.subTest(roles=roles):
+                    self.assertEqual(run(plan("malformed", roles), refuse)[0], 1)
+        # Without a plan the campaign still pins every published role, and
+        # pin itself asks only for the roles it is given.
+        registry = self.registry()
+        self.assertEqual(list(campaign.pin("20.2.4", run=registry)), list(run_image_matrix.published_roles("official")))
+        registry = self.registry(broken=[optional])
+        self.assertEqual(list(campaign.pin("20.2.4", ("client", "essential"), run=registry)), ["essential", "client"])
+        self.assertEqual(campaign.pin("20.2.4", (), run=refuse), {})
+
     def test_a_callers_pins_are_kept_and_a_plan_without_ceph_pins_nothing(self):
         refuse = mock.Mock(side_effect=AssertionError("no tag is resolved"))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            given = "essential=sha256:" + "a" * 64 + ",rgw=sha256:" + "b" * 64
+            given = "essential=sha256:" + "a" * 64 + ",client=sha256:" + "b" * 64
             docker_only, ceph = root / "docker.json", root / "ceph.json"
             docker_only.write_text(json.dumps({"include": [{"id": "docker-a", "image_roles": ""}]}))
             ceph.write_text(json.dumps({"include": [{"id": "docker-a", "image_roles": ""},
@@ -94,8 +154,8 @@ class PinTests(unittest.TestCase):
             with mock.patch.object(campaign.subprocess, "run", self.registry()), mock.patch("sys.stdout", new=io.StringIO()):
                 self.assertEqual(campaign.main(["pin", "--release", "21.2.0", "--plan", str(ceph),
                                                 "--github-output", str(output)]), 0)
-            self.assertEqual(sorted(run_image_matrix.parse_digests(output.read_text().splitlines()[1].split("=", 1)[1])),
-                             sorted(run_image_matrix.published_roles("official")))
+            self.assertEqual(list(run_image_matrix.parse_digests(output.read_text().splitlines()[1].split("=", 1)[1])),
+                             ["essential", "client"])
             # Invalid pins and an unreadable plan fail before any output.
             for arguments in (["--digests", "essential=sha256:short"], ["--plan", str(root / "missing.json")],
                               ["--plan", str(root / "given")]):

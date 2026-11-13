@@ -762,15 +762,23 @@ here. The next run uses it.
   images: `ghcr.io/jsyoo5b/ceph-testcontainers-images:<variant>-<release>-<role>`,
   with `all` for the aggregate. `ceph.DefaultImage` is `official-20.2.4-all`.
 - One run uses one image per role. The `Plan` job of `tagged-runtime.yml`
-  resolves every role tag of the release to its registry digest once
-  (`role_image_pins.py pin`, a registry read with the bounded retry of
-  transport failures) and hands the digests to the runtime jobs, which pull
-  `<repository>@<digest>`. A tag republished while the run is in progress
-  therefore reaches no job of that run, and a failed job that is run again
-  later reuses the digests of its run's `Plan`. A caller that pinned the
-  images itself (the representative campaign) passes its digests through the
-  `role_digests` input, and a plan without a Ceph batch asks the registry
-  nothing.
+  resolves, once, the tag of each role that the plan's batches declare to
+  its registry digest (`role_image_pins.py pin --plan`, a registry read with
+  the bounded retry of transport failures) and hands the digests to the
+  runtime jobs, which pull `<repository>@<digest>`. A tag republished while
+  the run is in progress therefore reaches no job of that run, and a failed
+  job that is run again later reuses the digests of its run's `Plan`.
+- Only the declared roles are resolved: the union of the plan entries'
+  `image_roles`. A role that no selected batch uses, such as the optional
+  `mgr-modules` when its tag is unavailable, is never asked of the registry
+  and cannot stop the run, and a plan without a Ceph batch asks nothing. A
+  caller that pinned the images itself (the representative campaign, which
+  pins every published role before its plan exists) passes its digests
+  through the `role_digests` input; `Plan` refuses pins that do not name
+  every role the plan declares.
+- A runtime job never mixes pinned and unpinned roles. Given the run's pins,
+  `run_image_matrix.py` refuses to prepare a role they do not name, before
+  any pull, instead of pulling that role's tag.
 - Each job records what it ran: `scenario-images-*/summary.json` has, for
   every role, the reference it prepared, the local image ID, the registry
   digests and the platform child, and `pinned_digests` for the run's pins.
@@ -778,8 +786,9 @@ here. The next run uses it.
   test names itself. To replay a run on its exact images, pass those digests
   to `run_image_matrix.py --digests` (see
   [Reproducing CI's role images](testing.md#reproducing-cis-role-images)).
-- A periodic sample (`rotate`, `targeted`) prepares each role tag once, in
-  its single job, and records the same identities in its
+- A periodic sample (`rotate`, `targeted`) references the role tags that
+  its selected entries declare, with essential always among them, prepares
+  each once, in its single job, and records the same identities in its
   `images/summary.json`; its helper images are frozen to digests in the plan.
 - The module takes no part in this: it resolves no tag, enforces no
   freshness and reports no identity.
