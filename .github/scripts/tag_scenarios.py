@@ -1505,7 +1505,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     timeout = str(timeout_seconds) + "s" if timeout_seconds is not None else profile["timeout"]
     # A reproduction catalogue is refused before Go starts when it is
     # invalid or does not list exactly the units the package starts.
-    reproduction_catalog = reproductions.load(catalog, profile["package"], root)
+    reproduction_catalog = reproductions.load(profile["package"], root)
     # A checker validates one mode's run, so its batch runs in one mode: the
     # matrix entry's, or the default when no entry selected one.
     network = os.environ.get("CEPH_TEST_NETWORK", "")
@@ -1595,18 +1595,15 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if receipt is not None:
         result["binary"] = {"directory": str(binary), "binary": receipt["binary"], "sha256": receipt["sha256"],
                             "build_key": receipt["build_key"]}
-    # When the images match a verified combination, every unit it expects a
-    # verdict of in this run must report that verdict in its own line; a
-    # skip, a missing line or INCONCLUSIVE fails even if Go passed. A unit
-    # counts as in this run only when its entry lists a test that runs, so a
-    # profile of the package's pure tests expects no verdict.
+    # When the images match a verified combination, each verdict line of a
+    # unit it expects must report that combination and the expected verdict;
+    # INCONCLUSIVE or another verdict fails even if Go passed. Skips and tests
+    # that did not finish already fail the completion check.
     combination, verdicts = None, {}
     if reproduction_catalog is not None:
         combination, verdicts = reproductions.expectations(reproduction_catalog, os.environ,
                                                            native_platform(root)["target"],
                                                            network if tests else None, root)
-        started = reproductions.started_units(reproduction_catalog, expected)
-        verdicts = {unit: verdict for unit, verdict in verdicts.items() if unit in started}
     result["reproduction"] = reproductions.check(text, combination, verdicts)
     result["passed"] = result["classification"] == "passed" and result["reproduction"]["met"]
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

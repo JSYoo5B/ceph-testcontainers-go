@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_multipart_part_storage_class": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWMultipartPartStorageClass"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -48,11 +47,7 @@ type file struct {
 	// run it, wherever in the package the method is declared.
 	SuiteCases []string            `json:"suite_cases"`
 	SuiteRuns  map[string][]string `json:"suite_runs"`
-	// ReproductionUnits are the units the file's harness.StartReproduction
-	// calls start: string literals, the names the case's reproductions.json
-	// lists.
-	ReproductionUnits []string `json:"reproduction_units"`
-	SHA256            string   `json:"sha256"`
+	SHA256     string              `json:"sha256"`
 }
 
 func convert(e constraint.Expr, tags map[string]bool) *expression {
@@ -95,7 +90,7 @@ func inspect(root, path string) (file, error) {
 		return file{}, err
 	}
 	hash := sha256.Sum256(data)
-	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SuiteCases: []string{}, SuiteRuns: map[string][]string{}, ReproductionUnits: []string{}, SHA256: hex.EncodeToString(hash[:])}
+	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SuiteCases: []string{}, SuiteRuns: map[string][]string{}, SHA256: hex.EncodeToString(hash[:])}
 	for _, group := range f.Comments {
 		if group.Pos() > f.Package {
 			continue
@@ -173,62 +168,7 @@ func inspect(root, path string) (file, error) {
 		return file{}, fmt.Errorf("%s: %w", rel, err)
 	}
 	out.Networks, out.NetworkTests = networks, tests
-	if out.ReproductionUnits, err = readReproductionUnits(f); err != nil {
-		return file{}, fmt.Errorf("%s: %w", rel, err)
-	}
 	return out, nil
-}
-
-// readReproductionUnits returns the units of a file's harness.StartReproduction
-// calls, sorted and without duplicates. A unit that is not a string literal
-// is refused: reproductions.json lists units by name, and each unit's entry
-// names the tests that start it, which the harness checks when it starts.
-func readReproductionUnits(f *ast.File) ([]string, error) {
-	units := map[string]bool{}
-	var failure error
-	ast.Inspect(f, func(n ast.Node) bool {
-		if failure != nil {
-			return false
-		}
-		call, ok := n.(*ast.CallExpr)
-		if !ok || !startReproductionCall(call.Fun) {
-			return true
-		}
-		if len(call.Args) < 2 {
-			failure = errors.New("harness.StartReproduction without a unit")
-			return false
-		}
-		lit, ok := call.Args[1].(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			failure = errors.New("the unit of harness.StartReproduction is not a string literal")
-			return false
-		}
-		unit, err := strconv.Unquote(lit.Value)
-		if err != nil {
-			failure = err
-			return false
-		}
-		units[unit] = true
-		return true
-	})
-	if failure != nil {
-		return nil, failure
-	}
-	out := make([]string, 0, len(units))
-	for unit := range units {
-		out = append(out, unit)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func startReproductionCall(fun ast.Expr) bool {
-	sel, ok := fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "StartReproduction" {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "harness"
 }
 
 // receiverType is the type name of a method receiver: T or *T.

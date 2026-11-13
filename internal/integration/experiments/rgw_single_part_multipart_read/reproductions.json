@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_single_part_multipart_read": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWSinglePartMultipartNumberedRead"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_multisite_object_lock_sync": {
-      "network": "bridge",
-      "tests": [
-        "TestMultiClusterRGWBucketObjectLockSync"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

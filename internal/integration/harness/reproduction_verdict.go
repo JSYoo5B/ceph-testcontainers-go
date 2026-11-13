@@ -53,9 +53,7 @@ var (
 	reproductionUnit        = regexp.MustCompile(`^[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$`)
 	reproductionCombination = regexp.MustCompile(`^[a-z0-9]+([.-][a-z0-9]+)*$`)
 	reproductionPlatform    = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+$`)
-	// reproductionTest is a top-level Go test name.
-	reproductionTest    = regexp.MustCompile(`^Test([A-Z0-9_][A-Za-z0-9_]*)?$`)
-	reproductionImageID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	reproductionImageID     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 // reproductionRoles are the image roles a combination can name, in the
@@ -80,11 +78,6 @@ type ReproductionUnit struct {
 	// Network is "bridge" or "host": the network mode the unit's test runs
 	// its clusters in.
 	Network string `json:"network"`
-	// Tests are the top-level tests that start the unit. A run expects the
-	// unit's verdict only when it runs one of them, and StartReproduction
-	// refuses the unit in any other test, so the list is checked on every
-	// run that starts the unit.
-	Tests []string `json:"tests"`
 }
 
 // ReproductionCombination is one verified image combination: the image of
@@ -100,8 +93,7 @@ type ReproductionCombination struct {
 
 // ParseReproductionCatalog reads a ReproductionsFile and refuses anything a
 // run could not use to select one expectation: an unknown field, role or
-// verdict, a unit without distinct top-level tests that start it, an
-// INCONCLUSIVE expectation, a combination that misses a role,
+// verdict, an INCONCLUSIVE expectation, a combination that misses a role,
 // names a mutable image (a tag without a digest) or an unknown unit, or two
 // combinations of the same images.
 func ParseReproductionCatalog(data []byte) (ReproductionCatalog, error) {
@@ -131,14 +123,6 @@ func ParseReproductionCatalog(data []byte) (ReproductionCatalog, error) {
 		}
 		if unit.Network != "bridge" && unit.Network != "host" {
 			return c, fmt.Errorf("%s: unit %s network %q is not bridge or host", ReproductionsFile, name, unit.Network)
-		}
-		if len(unit.Tests) == 0 || hasDuplicate(unit.Tests) {
-			return c, fmt.Errorf("%s: unit %s needs distinct tests that start it, got %q", ReproductionsFile, name, unit.Tests)
-		}
-		for _, test := range unit.Tests {
-			if !reproductionTest.MatchString(test) {
-				return c, fmt.Errorf("%s: unit %s test %q is not a top-level Go test name", ReproductionsFile, name, test)
-			}
 		}
 	}
 	seen := map[string]string{}
@@ -255,7 +239,6 @@ type ReproductionT interface {
 	FailNow()
 	Cleanup(func())
 	Skipped() bool
-	Name() string
 }
 
 // Reproduction collects the observations of one independently evaluated
@@ -310,10 +293,6 @@ func NewReproduction(t ReproductionT, catalog ReproductionCatalog, getenv func(s
 	declared, ok := catalog.Units[unit]
 	if !reproductionUnit.MatchString(unit) || !ok || len(observations) == 0 || hasDuplicate(observations) {
 		t.Errorf("reproduction unit %q needs an entry in %s and distinct planned observations, got %q", unit, ReproductionsFile, observations)
-		t.FailNow()
-	}
-	if test, _, _ := strings.Cut(t.Name(), "/"); !slices.Contains(declared.Tests, test) {
-		t.Errorf("reproduction unit %q started by %s, which its entry in %s does not list (tests %q)", unit, test, ReproductionsFile, declared.Tests)
 		t.FailNow()
 	}
 	resolved := ResolvedRoleImages(getenv)

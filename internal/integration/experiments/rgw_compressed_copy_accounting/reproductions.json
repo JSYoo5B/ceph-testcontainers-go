@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_compressed_copy_accounting": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWCompressedCopyAccounting"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

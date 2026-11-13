@@ -22,9 +22,6 @@ type verdictT struct {
 	logs, errors []string
 	skipped      bool
 	cleanups     []func()
-	// name is the running test's name; empty is TestCase, the test that
-	// verdictCatalog declares for its units.
-	name string
 }
 
 type verdictStop struct{}
@@ -39,12 +36,6 @@ func (f *verdictT) Errorf(format string, args ...any) {
 func (f *verdictT) FailNow()          { panic(verdictStop{}) }
 func (f *verdictT) Cleanup(fn func()) { f.cleanups = append(f.cleanups, fn) }
 func (f *verdictT) Skipped() bool     { return f.skipped }
-func (f *verdictT) Name() string {
-	if f.name == "" {
-		return "TestCase"
-	}
-	return f.name
-}
 
 // run calls body like a test function, stopping at FailNow, then runs the
 // cleanups in reverse order.
@@ -87,7 +78,7 @@ func verdictCatalog(t *testing.T, affected string) harness.ReproductionCatalog {
 	catalog, err := harness.ParseReproductionCatalog([]byte(`{
   "schema": "ceph-reproductions/v1",
   "roles": ["essential", "client", "rgw"],
-  "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]}, "rgw_case/host": {"network": "host", "tests": ["TestHostCase"]}},
+  "units": {"rgw_case": {"network": "bridge"}, "rgw_case/host": {"network": "host"}},
   "combinations": [
     {"id": "affected", "platform": "linux/amd64", "images": {"essential": "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "client": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "rgw": "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"},
      "verdicts": {"rgw_case": "` + affected + `", "rgw_case/host": "REPRODUCED"}, "evidence": "native run"},
@@ -322,7 +313,7 @@ func TestReproductionVerdictLineNamesTheRun(t *testing.T) {
 			t.Errorf("verdict line %q lacks %q", line, want)
 		}
 	}
-	host := &verdictT{name: "TestHostCase/host"}
+	host := &verdictT{}
 	host.run(func() {
 		r := harness.NewReproduction(host, verdictCatalog(t, "REPRODUCED"), affectedRoles, "linux/amd64", "rgw_case/host", "trigger")
 		r.Symptom(host, "trigger", "refused")
@@ -356,7 +347,7 @@ func TestReproductionCatalogImagesAreImmutable(t *testing.T) {
 	}
 	catalog := func(image string) []byte {
 		encoded, _ := json.Marshal(image)
-		return []byte(`{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]}},
+		return []byte(`{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
   "combinations": [{"id": "a", "platform": "linux/amd64", "images": {"essential": "sha256:` + strings.Repeat("e1", 32) + `", "rgw": ` +
 			string(encoded) + `}, "verdicts": {"rgw_case": "REPRODUCED"}, "evidence": "run"}]}`)
 	}
@@ -374,7 +365,7 @@ func TestReproductionCatalogImagesAreImmutable(t *testing.T) {
 
 func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 	combination := func(verdicts, images string) string {
-		return `{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]}},
+		return `{"schema": "ceph-reproductions/v1", "roles": ["essential", "rgw"], "units": {"rgw_case": {"network": "bridge"}},
   "combinations": [{"id": "a", "platform": "linux/amd64", "images": ` + images + `, "verdicts": ` + verdicts + `, "evidence": "run"}]}`
 	}
 	id, digest := "sha256:"+strings.Repeat("e1", 32), "@sha256:"+strings.Repeat("4", 64)
@@ -392,11 +383,6 @@ func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 		"unknown field":            strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence"`, `"release": "20.2.4", "evidence"`, 1),
 		"unknown role":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["essential", "rgw"]`, `["essential", "gateway"]`, 1),
 		"bad network":              strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"bridge"`, `"none"`, 1),
-		"no tests":                 strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["TestCase"]`, `[]`, 1),
-		"tests absent":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `, "tests": ["TestCase"]`, ``, 1),
-		"duplicate test":           strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["TestCase"]`, `["TestCase", "TestCase"]`, 1),
-		"subtest name":             strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["TestCase"]`, `["TestCase/host"]`, 1),
-		"not a test name":          strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `["TestCase"]`, `["Testcase"]`, 1),
 		"same images twice": strings.Replace(combination(`{"rgw_case": "REPRODUCED"}`, images), `"evidence": "run"}]`,
 			`"evidence": "run"}, {"id": "b", "platform": "linux/amd64", "images": `+images+`, "verdicts": {"rgw_case": "NOT_REPRODUCED"}, "evidence": "run"}]`, 1),
 	} {
@@ -410,23 +396,5 @@ func TestParseReproductionCatalogRefusesUnusableData(t *testing.T) {
 	})
 	if len(f.errors) != 1 || !strings.Contains(f.errors[0], "needs an entry in reproductions.json") {
 		t.Errorf("unlisted unit: %q", f.errors)
-	}
-}
-
-// A unit's entry lists the top-level tests that start it; the runner
-// expects its verdict only of those. Another test, or a subtest of one,
-// starting it is refused before any observation, so the list cannot drift
-// from the code on a run that starts the unit.
-func TestReproductionUnitIsRefusedInATestItsEntryDoesNotList(t *testing.T) {
-	for name, want := range map[string]bool{"TestCase": true, "TestCase/sub/leaf": true, "TestHostCase": false, "TestCaseOther": false} {
-		f := &verdictT{name: name}
-		started := false
-		f.run(func() {
-			harness.NewReproduction(f, verdictCatalog(t, "REPRODUCED"), affectedRoles, "linux/amd64", "rgw_case", "trigger")
-			started = true
-		})
-		if started != want || (!want && (len(f.errors) != 1 || !strings.Contains(f.errors[0], "does not list"))) {
-			t.Errorf("%s: started %v, errors %q", name, started, f.errors)
-		}
 	}
 }

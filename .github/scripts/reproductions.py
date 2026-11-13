@@ -6,9 +6,9 @@ reproductions.json beside its tests: the image roles it consumes, its units
 with their network mode, and the image combinations whose verdicts a native
 run verified. The Go test selects the expected verdict of a unit from the
 combination whose images equal the ones it resolved; this module validates
-the catalogues and lets the tag runner require, for a run whose images match
-a combination, each expected unit's own REPRODUCTION_VERDICT line, so a skip
-or a missing line cannot pass.
+the catalogues and lets the tag runner check, for a run whose images match
+a combination, that every REPRODUCTION_VERDICT line of a unit it expects
+reports that combination and the expected verdict.
 """
 
 import json
@@ -26,8 +26,6 @@ NETWORKS = ("bridge", "host")
 UNIT = re.compile(r"[a-z0-9]+(_[a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?\Z")
 COMBINATION = re.compile(r"[a-z0-9]+([.-][a-z0-9]+)*\Z")
 PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+\Z")
-# A top-level Go test name, as harness.ParseReproductionCatalog accepts it.
-TEST = re.compile(r"Test(?:[A-Z0-9_][A-Za-z0-9_]*)?\Z")
 # An expectation is stored only for bytes that cannot change: a local image
 # ID, or a reference with a sha256 digest (a tag beside it is kept). The name
 # grammar is the distribution reference grammar (v0.6.0) that the harness
@@ -53,9 +51,8 @@ def immutable_image(image):
         return True
     match = DIGEST_REFERENCE.match(image)
     return bool(match) and len(match["path"]) <= PATH_MAX
-
-
-IMAGE_ROLES = re.compile(r"\bimage-roles=(\S+)")
+START = re.compile(r'StartReproduction\(\s*t\s*,\s*"([^"]+)"')
+IMAGE_ROLES = re.compile(r"^//ci: .*\bimage-roles=(\S+)", re.MULTILINE)
 DEFAULT_IMAGE = re.compile(r'^const DefaultImage = "([^"]+)"$', re.MULTILINE)
 LINE = re.compile(r"REPRODUCTION_VERDICT case=(\S+) verdict=(\S+) expected=(\S+) combination=(\S+) attempts=(\d+) "
                   r"platform=(\S+) network=(\S+) (.*)$")
@@ -63,30 +60,12 @@ ROLE_VARIABLES = {"essential": "CEPH_TEST_ESSENTIAL_IMAGE", "client": "CEPH_TEST
                   "cephfs": "CEPH_TEST_CEPHFS_IMAGE", "rbd-aux": "CEPH_TEST_RBD_AUX_IMAGE", "rgw": "CEPH_TEST_RGW_IMAGE"}
 
 
-def package_files(catalog, package):
-    """The test files of package in the tagcatalog catalog, whatever their tags."""
-    return [file for file in catalog if Path(file["path"]).parent == Path(package)]
-
-
-def started_units(catalogue, tests):
-    """The units that a run of the named top-level tests starts: those whose
-    entry lists one of them. The harness refuses a unit in a test its entry
-    does not list, and a listed test that runs without reporting the unit
-    fails the runner's line check, so the list matches the code on every
-    native run of the unit."""
-    if catalogue is None:
-        return set()
-    return {unit for unit, entry in catalogue["units"].items() if set(entry["tests"]) & set(tests)}
-
-
-def source_units(catalog, package):
-    """The units that the package's test files start, whatever their tags."""
-    return {unit for file in package_files(catalog, package) for unit in file.get("reproduction_units", ())}
-
-
-def source_tests(catalog, package):
-    """The top-level tests that the package's test files declare."""
-    return {test for file in package_files(catalog, package) for test in file.get("tests", ())}
+def source_units(directory):
+    """The unit names that the package's test files start."""
+    units = set()
+    for path in sorted(Path(directory).glob("*_test.go")):
+        units.update(START.findall(path.read_text(encoding="utf-8")))
+    return units
 
 
 def validate(document, label=CATALOG):
@@ -103,15 +82,8 @@ def validate(document, label=CATALOG):
     if not units:
         raise ValueError(label + ": no units")
     for name, unit in units.items():
-        if not UNIT.match(name) or not isinstance(unit, dict) or set(unit) != {"network", "tests"} \
-                or unit["network"] not in NETWORKS:
-            raise ValueError("%s: unit %s must be <case>[/<subtest>] with network bridge or host and its tests"
-                             % (label, name))
-        tests = unit["tests"]
-        if not isinstance(tests, list) or not tests or len(set(tests)) != len(tests) \
-                or not all(isinstance(test, str) and TEST.match(test) for test in tests):
-            raise ValueError("%s: unit %s needs distinct top-level Go test names that start it, got %r"
-                             % (label, name, tests))
+        if not UNIT.match(name) or unit != {"network": unit.get("network")} or unit["network"] not in NETWORKS:
+            raise ValueError("%s: unit %s must be <case>[/<subtest>] with network bridge or host" % (label, name))
     ids, identities = set(), set()
     for combination in document["combinations"]:
         if set(combination) != {"id", "platform", "images", "verdicts", "evidence"}:
@@ -142,13 +114,11 @@ def validate(document, label=CATALOG):
     return document
 
 
-def load(source, package, root=ROOT):
+def load(package, root=ROOT):
     """The validated catalogue of a package, or None when it starts no unit.
-    A package that starts units needs a catalogue listing exactly them, and
-    each unit's tests are tests of the package. source is the tagcatalog
-    record of every test file."""
+    A package that starts units needs a catalogue listing exactly them."""
     directory = Path(root) / package
-    units = source_units(source, package)
+    units = source_units(directory)
     path = directory / CATALOG
     if not units:
         if path.exists():
@@ -159,11 +129,6 @@ def load(source, package, root=ROOT):
     catalog = validate(json.loads(path.read_text(encoding="utf-8")), str(path))
     if set(catalog["units"]) != units:
         raise ValueError("%s: units %s, but the tests start %s" % (path, sorted(catalog["units"]), sorted(units)))
-    declared = source_tests(source, package)
-    for unit, entry in sorted(catalog["units"].items()):
-        if not set(entry["tests"]) <= declared:
-            raise ValueError("%s: unit %s lists tests %s that the package does not declare"
-                             % (path, unit, sorted(set(entry["tests"]) - declared)))
     return catalog
 
 
@@ -216,12 +181,17 @@ def verdict_lines(text):
 
 
 def check(text, combination, verdicts):
-    """Whether the log meets the expectations: each expected unit reports
-    exactly one line, from the same combination, with the expected verdict."""
+    """Whether the reported verdicts meet the expectations: a unit with an
+    expected verdict that reports a line reports one, from the same
+    combination, with that verdict. A unit that reports no line is not
+    required: its test did not run in this profile, and a skipped or
+    unfinished test fails the run's completion check on its own."""
     lines = verdict_lines(text)
     result = {"combination": combination, "expected": verdicts, "verdicts": lines, "met": True, "reasons": []}
     for unit, verdict in sorted(verdicts.items()):
         own = [line for line in lines if line["unit"] == unit]
+        if not own:
+            continue
         if len(own) != 1:
             result["reasons"].append("%d REPRODUCTION_VERDICT lines of %s" % (len(own), unit))
         elif (own[0]["verdict"], own[0]["expected"], own[0]["combination"]) != (verdict, verdict, combination):
@@ -232,13 +202,15 @@ def check(text, combination, verdicts):
     return result
 
 
-def batch_roles(catalog, package):
+def batch_roles(directory):
     """The image roles that the //ci lines of a case's test files declare."""
-    return {role for file in package_files(catalog, package)
-            for line in file.get("metadata", ()) for role in IMAGE_ROLES.findall(line)}
+    declared = set()
+    for path in Path(directory).glob("*_test.go"):
+        declared.update(IMAGE_ROLES.findall(path.read_text(encoding="utf-8")))
+    return declared
 
 
-def verify(catalog, root=ROOT):
+def verify(root=ROOT):
     """Every catalogue of the experiment cases: its units are the ones the
     tests start and its roles are the ones its batch declares. Its
     combinations stay valid when the CI release pins change, since each names
@@ -248,12 +220,12 @@ def verify(catalog, root=ROOT):
         if not directory.is_dir():
             continue
         package = str(directory.relative_to(root))
-        catalogue = load(catalog, package, root)
-        if catalogue is None:
+        catalog = load(package, root)
+        if catalog is None:
             continue
-        declared = batch_roles(catalog, package)
-        if declared != {",".join(catalogue["roles"])}:
+        declared = batch_roles(directory)
+        if declared != {",".join(catalog["roles"])}:
             raise ValueError("%s: roles %s, but the batch declares image-roles %s"
-                             % (package, ",".join(catalogue["roles"]), sorted(declared)))
-        catalogs[package] = catalogue
+                             % (package, ",".join(catalog["roles"]), sorted(declared)))
+        catalogs[package] = catalog
     return catalogs

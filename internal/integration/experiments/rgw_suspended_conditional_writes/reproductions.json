@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_suspended_conditional_writes": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWSuspendedConditionalWrites"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

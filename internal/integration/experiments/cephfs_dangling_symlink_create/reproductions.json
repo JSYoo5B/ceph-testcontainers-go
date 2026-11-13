@@ -7,10 +7,7 @@
   ],
   "units": {
     "cephfs_dangling_symlink_create": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSCreateAtADanglingSymlink"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

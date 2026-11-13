@@ -7,10 +7,7 @@
   ],
   "units": {
     "cephfs_readdir_after_snapdiff": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSListingAfterSnapdiff"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

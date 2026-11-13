@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_sync_lease_lapse": {
-      "network": "bridge",
-      "tests": [
-        "TestMultiClusterRGWDataSyncAfterSyncLeaseLapse"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

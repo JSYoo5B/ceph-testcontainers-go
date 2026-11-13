@@ -6,10 +6,7 @@
   ],
   "units": {
     "mon_log_ack_peon": {
-      "network": "bridge",
-      "tests": [
-        "TestMONLogAckThroughPeon"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

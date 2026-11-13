@@ -7,10 +7,7 @@
   ],
   "units": {
     "cephfs_snapshot_readdir_eviction": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSSnapshotListingAcrossCacheEviction"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

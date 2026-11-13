@@ -7,22 +7,13 @@
   ],
   "units": {
     "cephfs_authorization_isolation/caps-per-filesystem": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSAuthorizationIsolation"
-      ]
+      "network": "bridge"
     },
     "cephfs_authorization_isolation/deleted-directory-snapshot": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSAuthorizationIsolation"
-      ]
+      "network": "bridge"
     },
     "cephfs_authorization_isolation/same-named-subvolumes": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSAuthorizationIsolation"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

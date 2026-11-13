@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_ssec_multipart_completion": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWSSECMultipartCompletion"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

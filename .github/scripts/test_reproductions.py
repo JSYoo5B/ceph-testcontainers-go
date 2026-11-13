@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Reproduction catalogues: validation, image resolution and the log check."""
 
-import functools
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 import reproductions
-import tag_scenarios
 
 ROOT = Path(__file__).resolve().parents[2]
 E1, C1, R1 = "sha256:e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
@@ -19,8 +17,7 @@ def catalog(affected="REPRODUCED"):
     return reproductions.validate({
         "schema": reproductions.SCHEMA,
         "roles": ["essential", "client", "rgw"],
-        "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]},
-                  "rgw_case/host": {"network": "host", "tests": ["TestHostCase"]}},
+        "units": {"rgw_case": {"network": "bridge"}, "rgw_case/host": {"network": "host"}},
         "combinations": [
             {"id": "affected", "platform": "linux/amd64", "images": {"essential": E1, "client": C1, "rgw": R1},
              "verdicts": {"rgw_case": affected, "rgw_case/host": "REPRODUCED"}, "evidence": "native run"},
@@ -32,17 +29,6 @@ def catalog(affected="REPRODUCED"):
 IMAGES = json.loads((ROOT / "internal/integration/testdata/reproduction_images.json").read_text())
 AFFECTED = {"CEPH_TEST_ESSENTIAL_IMAGE": E1, "CEPH_TEST_CLIENT_IMAGE": C1, "CEPH_TEST_RGW_IMAGE": R1}
 FIXED = {"CEPH_TEST_ESSENTIAL_IMAGE": E2, "CEPH_TEST_CLIENT_IMAGE": C2, "CEPH_TEST_RGW_IMAGE": R2}
-
-
-def record(path, starts=(), metadata=(), tests=("TestCase", "TestHostCase")):
-    """A tagcatalog record of a test file that declares the tests and
-    starts the units."""
-    return {"path": path, "metadata": list(metadata), "tests": list(tests), "reproduction_units": list(starts)}
-
-
-@functools.cache
-def repository_catalog():
-    return tag_scenarios.load_catalog(ROOT)
 
 
 def line(unit, verdict, expected, combination="affected", network="bridge"):
@@ -62,12 +48,6 @@ class CatalogTests(unittest.TestCase):
             ("unknown field", lambda d: d["combinations"][0].update(release="20.2.4")),
             ("unknown role", lambda d: d.update(roles=["essential", "client", "gateway"])),
             ("bad network", lambda d: d["units"]["rgw_case"].update(network="none")),
-            ("no tests", lambda d: d["units"]["rgw_case"].update(tests=[])),
-            ("tests absent", lambda d: d["units"]["rgw_case"].pop("tests")),
-            ("duplicate test", lambda d: d["units"]["rgw_case"].update(tests=["TestCase", "TestCase"])),
-            ("subtest name", lambda d: d["units"]["rgw_case"].update(tests=["TestCase/host"])),
-            ("not a test name", lambda d: d["units"]["rgw_case"].update(tests=["Testcase"])),
-            ("other unit field", lambda d: d["units"]["rgw_case"].update(timeout="20m")),
             ("no evidence", lambda d: d["combinations"][0].update(evidence=" ")),
             ("same images twice", lambda d: d["combinations"][1].update(images=dict(d["combinations"][0]["images"]))),
             ("duplicate id", lambda d: d["combinations"][1].update(id="affected")),
@@ -96,27 +76,20 @@ class CatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             package = Path(temporary) / "case"
             package.mkdir()
-            source = [record("case/case_test.go", ["rgw_case", "rgw_case/host"]), record("other/other_test.go")]
+            (package / "case_test.go").write_text('repro := harness.StartReproduction(t, "rgw_case", "trigger")\n'
+                                                  'host := harness.StartReproduction(t, "rgw_case/host", "trigger")\n')
             (Path(temporary) / "other").mkdir()
-            self.assertIsNone(reproductions.load(source, "other", temporary))
+            self.assertIsNone(reproductions.load("other", temporary))
             with self.assertRaises(ValueError):
-                reproductions.load(source, "case", temporary)
+                reproductions.load("case", temporary)
             (package / reproductions.CATALOG).write_text(json.dumps(catalog()))
-            self.assertEqual(set(reproductions.load(source, "case", temporary)["units"]), {"rgw_case", "rgw_case/host"})
-            # The runner names a package as package_path does.
-            self.assertEqual(set(reproductions.load(source, "./case", temporary)["units"]), {"rgw_case", "rgw_case/host"})
+            self.assertEqual(set(reproductions.load("case", temporary)["units"]), {"rgw_case", "rgw_case/host"})
+            (package / "case_test.go").write_text('repro := harness.StartReproduction(t, "rgw_case", "trigger")\n')
             with self.assertRaises(ValueError):
-                reproductions.load([record("case/case_test.go", ["rgw_case"])], "case", temporary)
-            # Each unit's tests are tests of the package.
-            with self.assertRaisesRegex(ValueError, "does not declare"):
-                reproductions.load([record("case/case_test.go", ["rgw_case", "rgw_case/host"], tests=("TestCase",))],
-                                   "case", temporary)
-            (Path(temporary) / "other" / reproductions.CATALOG).write_text(json.dumps(catalog()))
-            with self.assertRaises(ValueError):
-                reproductions.load(source, "other", temporary)
+                reproductions.load("case", temporary)
 
     def test_repository_catalogues(self):
-        catalogs = reproductions.verify(repository_catalog())
+        catalogs = reproductions.verify()
         self.assertGreaterEqual(len(catalogs), 19)
         sse = catalogs["internal/integration/experiments/rgw_empty_sse_header"]
         self.assertEqual({c["verdicts"]["rgw_empty_sse_header"] for c in sse["combinations"]}, {"REPRODUCED", "NOT_REPRODUCED"})
@@ -125,8 +98,9 @@ class CatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             package = Path(temporary) / "internal/integration/experiments/rgw_case"
             package.mkdir(parents=True)
-            path = "internal/integration/experiments/rgw_case/case_test.go"
-            source = [record(path, ["rgw_case", "rgw_case/host"], ["timeout=20m image-roles=essential,client,rgw"])]
+            (package / "case_test.go").write_text('//ci: timeout=20m image-roles=essential,client,rgw\n'
+                                                  'a := harness.StartReproduction(t, "rgw_case", "trigger")\n'
+                                                  'b := harness.StartReproduction(t, "rgw_case/host", "trigger")\n')
             document = catalog()
             # Role IDs no release pin names any more, one with a separately
             # built client, and digest references with and without a tag.
@@ -138,7 +112,7 @@ class CatalogTests(unittest.TestCase):
                     "client": "quay.io/ceph/ceph:v20.2.5@sha256:" + "4" * 64,
                     "rgw": "localhost:5000/ceph/rgw@sha256:" + "5" * 64}})
             (package / reproductions.CATALOG).write_text(json.dumps(document))
-            self.assertEqual(len(reproductions.verify(source, temporary)), 1)
+            self.assertEqual(len(reproductions.verify(temporary)), 1)
             for image in IMAGES["mutable"]:
                 with self.subTest(image):
                     mutable = catalog()
@@ -147,11 +121,13 @@ class CatalogTests(unittest.TestCase):
                         reproductions.validate(mutable)
                     (package / reproductions.CATALOG).write_text(json.dumps(mutable))
                     with self.assertRaises(ValueError):
-                        reproductions.verify(source, temporary)
+                        reproductions.verify(temporary)
             (package / reproductions.CATALOG).write_text(json.dumps(catalog()))
-            source = [record(path, ["rgw_case", "rgw_case/host"], ["timeout=20m image-roles=essential,client"])]
+            (package / "case_test.go").write_text('//ci: timeout=20m image-roles=essential,client\n'
+                                                  'a := harness.StartReproduction(t, "rgw_case", "trigger")\n'
+                                                  'b := harness.StartReproduction(t, "rgw_case/host", "trigger")\n')
             with self.assertRaises(ValueError):
-                reproductions.verify(source, temporary)
+                reproductions.verify(temporary)
 
 
 class ResolutionTests(unittest.TestCase):
@@ -190,7 +166,7 @@ class ResolutionTests(unittest.TestCase):
 
 
 class CheckTests(unittest.TestCase):
-    def test_each_expected_unit_needs_its_own_matching_line(self):
+    def test_each_reported_line_of_an_expected_unit_must_match(self):
         expected = {"rgw_case": "REPRODUCED"}
         for name, text, met in (
             ("matching line", line("rgw_case", "REPRODUCED", "REPRODUCED"), True),
@@ -198,8 +174,11 @@ class CheckTests(unittest.TestCase):
             ("inconclusive", line("rgw_case", "INCONCLUSIVE", "REPRODUCED"), False),
             ("the test did not select the expectation", line("rgw_case", "REPRODUCED", "none", "none"), False),
             ("another combination", line("rgw_case", "REPRODUCED", "REPRODUCED", "fixed"), False),
-            ("missing line, e.g. a skip that never started the unit", "--- SKIP: TestCase (0.00s)", False),
-            ("only another unit reported", line("rgw_other", "REPRODUCED", "REPRODUCED"), False),
+            # The profile did not run the unit's test, e.g. a pure batch of
+            # the case's helpers: nothing to compare. A skip fails the run's
+            # completion check instead.
+            ("no line of the unit", "--- PASS: TestParsesTheResponse (0.00s)", True),
+            ("only a unit without an expectation reported", line("rgw_other", "REPRODUCED", "REPRODUCED"), True),
             ("two lines", line("rgw_case", "REPRODUCED", "REPRODUCED") + "\n" + line("rgw_case", "REPRODUCED", "REPRODUCED"), False),
         ):
             with self.subTest(name):
@@ -215,62 +194,6 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(met["met"])
         self.assertFalse(unmet["met"])
         self.assertEqual(met["verdicts"], unmet["verdicts"])
-
-
-class StartedUnitTests(unittest.TestCase):
-    def test_a_run_expects_the_units_whose_entry_lists_a_test_it_runs(self):
-        document = catalog()
-        for tests, units in ((["TestParsesTheResponse"], set()), (["TestCase"], {"rgw_case"}),
-                             (["TestHostCase"], {"rgw_case/host"}),
-                             (["TestCase", "TestHostCase", "TestParsesTheResponse"], {"rgw_case", "rgw_case/host"})):
-            with self.subTest(tests=tests):
-                self.assertEqual(reproductions.started_units(document, tests), units)
-        self.assertEqual(reproductions.started_units(None, ["TestCase"]), set())
-
-    def test_go_code_alone_starts_a_unit(self):
-        """tagcatalog reads the started units with go/ast."""
-        source = """package rgw_case_test
-
-import (
-	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-)
-
-// TestNative starts harness.StartReproduction(t, "rgw_comment", "trigger").
-func TestNative(t *testing.T) {
-	repro := harness.StartReproduction(t, "rgw_case", "trigger")
-	repro.Absent(t, "trigger", "absent")
-	t.Log("harness.StartReproduction(t, \\"rgw_string\\", \\"trigger\\")")
-}
-
-// func TestHidden(t *testing.T) { harness.StartReproduction(t, "rgw_hidden", "trigger") }
-"""
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "go.mod").write_text("module example\n")
-            (root / "rgw_case").mkdir()
-            (root / "rgw_case/case_native_regression_test.go").write_text(source)
-            records = tag_scenarios.load_catalog(root)
-        self.assertEqual(reproductions.source_units(records, "rgw_case"), {"rgw_case"})
-        self.assertEqual(reproductions.source_tests(records, "rgw_case"), {"TestNative"})
-
-    def test_repository_profiles_expect_verdicts_only_of_their_reproducers(self):
-        source = repository_catalog()
-        profiles = tag_scenarios.discover(source)["include"] + tag_scenarios.discover_optional(source)["include"]
-        started = {}
-        for profile in profiles:
-            catalogue = reproductions.load(source, profile["package"], ROOT)
-            if catalogue is None:
-                continue
-            units = reproductions.started_units(
-                catalogue, tag_scenarios.selected_tests(source, profile["package"], profile["tags"]))
-            if not profile["requires_ceph"]:
-                self.assertEqual(units, set(), profile["id"])
-            started.setdefault(profile["package"], set()).update(units)
-        self.assertTrue(started)
-        for package, units in started.items():
-            self.assertEqual(units, set(reproductions.load(source, package, ROOT)["units"]), package)
 
 
 if __name__ == "__main__":

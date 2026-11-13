@@ -6,10 +6,7 @@
   ],
   "units": {
     "rbd_trash_purge_timezone": {
-      "network": "bridge",
-      "tests": [
-        "TestRBDTrashPurgeCutoffAcrossClientTimezones"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

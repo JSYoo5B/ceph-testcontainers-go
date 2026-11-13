@@ -7,10 +7,7 @@
   ],
   "units": {
     "rgw_lifecycle_expiration_header": {
-      "network": "bridge",
-      "tests": [
-        "TestRGWLifecycleExpirationHeader"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

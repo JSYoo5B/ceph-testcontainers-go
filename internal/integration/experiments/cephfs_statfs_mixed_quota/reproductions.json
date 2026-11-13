@@ -7,10 +7,7 @@
   ],
   "units": {
     "cephfs_statfs_mixed_quota": {
-      "network": "bridge",
-      "tests": [
-        "TestCephFSStatfsWithNestedByteAndFileQuotas"
-      ]
+      "network": "bridge"
     }
   },
   "combinations": [

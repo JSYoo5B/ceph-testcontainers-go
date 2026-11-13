@@ -989,20 +989,19 @@ class CompletionTests(unittest.TestCase):
             engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
                                Path(temporary) / "output", Path(temporary))
 
-    def test_verdicts_are_expected_only_of_the_reproducers_a_profile_runs(self):
+    def test_reported_verdicts_are_compared_and_a_profile_without_them_passes(self):
         case = "internal/integration/experiments/rgw_case/"
         pure = fixture(path=case + "case_fixture_test.go", tests=("TestParsesTheResponse",), batch="pure")
         native = fixture(path=case + "case_native_regression_test.go", tests=("TestCase",), batch="rgw_case")
-        # What tagcatalog reads: only the reproducer's file starts the unit,
-        # and the catalogue lists TestCase as the test that starts it.
-        pure["reproduction_units"], native["reproduction_units"] = [], ["rgw_case"]
         plan = engine.discover([pure, native])
         images = {"essential": "sha256:" + "e" * 64, "client": "sha256:" + "c" * 64, "rgw": "sha256:" + "b" * 64}
         environment = {"CEPH_TEST_ESSENTIAL_IMAGE": images["essential"], "CEPH_TEST_CLIENT_IMAGE": images["client"],
                        "CEPH_TEST_RGW_IMAGE": images["rgw"]}
-        verdict = ("    case_native_regression_test.go:9: REPRODUCTION_VERDICT case=rgw_case verdict=REPRODUCED "
-                   "expected=REPRODUCED combination=affected attempts=1 platform=linux/amd64 network=bridge images=x "
-                   "observation=trigger: x")
+
+        def verdict(actual):
+            return ("    case_native_regression_test.go:9: REPRODUCTION_VERDICT case=rgw_case verdict=%s "
+                    "expected=REPRODUCED combination=affected attempts=1 platform=linux/amd64 network=bridge "
+                    "images=x observation=trigger: x\n" % actual)
 
         def run(batch, test, log):
             process = unittest.mock.Mock()
@@ -1012,9 +1011,11 @@ class CompletionTests(unittest.TestCase):
                 root = Path(temporary)
                 (root / "go.mod").write_text("module example\n")
                 (root / case).mkdir(parents=True)
+                (root / native["path"]).write_text('package rgw_case_test\n\nfunc TestCase(t *testing.T) {\n'
+                                                   '\t_ = harness.StartReproduction(t, "rgw_case", "trigger")\n}\n')
                 (root / case / "reproductions.json").write_text(json.dumps({
                     "schema": "ceph-reproductions/v1", "roles": ["essential", "client", "rgw"],
-                    "units": {"rgw_case": {"network": "bridge", "tests": ["TestCase"]}},
+                    "units": {"rgw_case": {"network": "bridge"}},
                     "combinations": [{"id": "affected", "platform": "linux/amd64", "images": images,
                                       "verdicts": {"rgw_case": "REPRODUCED"}, "evidence": "native run"}]}))
                 with patch.object(engine, "compile_inventory", return_value=[test]), \
@@ -1024,14 +1025,15 @@ class CompletionTests(unittest.TestCase):
                     return engine.run_profile([pure, native], plan, "short", batch, None, root / "output", root)
 
         package = "example/internal/integration/experiments/rgw_case"
+        # The case's pure batch runs on the same images and reports nothing.
         report = run("pure", "TestParsesTheResponse", native_log(("TestParsesTheResponse",), package))
         self.assertTrue(report["passed"], report["reproduction"])
-        self.assertEqual((report["reproduction"]["combination"], report["reproduction"]["expected"]), ("affected", {}))
-        missing = run("rgw_case", "TestCase", native_log(("TestCase",), package))
-        self.assertFalse(missing["passed"])
-        self.assertEqual(missing["reproduction"]["reasons"], ["0 REPRODUCTION_VERDICT lines of rgw_case"])
-        reported = run("rgw_case", "TestCase", verdict + "\n" + native_log(("TestCase",), package))
+        self.assertEqual(report["reproduction"]["combination"], "affected")
+        reported = run("rgw_case", "TestCase", verdict("REPRODUCED") + native_log(("TestCase",), package))
         self.assertTrue(reported["passed"], reported["reproduction"])
+        other = run("rgw_case", "TestCase", verdict("NOT_REPRODUCED") + native_log(("TestCase",), package))
+        self.assertFalse(other["passed"])
+        self.assertEqual(len(other["reproduction"]["reasons"]), 1)
 
     def test_native_command_has_tags_and_never_test_name_selector(self):
         file = fixture()

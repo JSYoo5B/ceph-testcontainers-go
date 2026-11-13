@@ -709,18 +709,15 @@ controls and observation logic on every build:
 | `INCONCLUSIVE` | `Inconclusive`, an unrecorded observation without a symptom, or a test that ended before `Conclude`; the reason is reported |
 
 The expected verdict belongs to the case. Its `reproductions.json` lists the
-image roles the case consumes, its units with their network mode and the
-top-level tests that start each one, and each verified image combination
-with the verdict a native run observed for each unit and that run as
-evidence. `StartReproduction` fails a unit started in a top-level test its
-entry does not list (a subtest counts as its top-level test), and the tag
-runner expects a unit's verdict only of a run that selects a listed test:
+image roles the case consumes, its units with their network mode, and each
+verified image combination with the verdict a native run observed for each
+unit and that run as evidence:
 
 ```json
 {
   "schema": "ceph-reproductions/v1",
   "roles": ["essential", "client", "rgw"],
-  "units": {"rgw_empty_sse_header": {"network": "bridge", "tests": ["TestRGWEmptySSEHeader"]}},
+  "units": {"rgw_empty_sse_header": {"network": "bridge"}},
   "combinations": [
     {
       "id": "20.2.4-roles",
@@ -794,11 +791,12 @@ fails.
 
 The tag runner (`tag_scenarios.py run` or `optional`) refuses a catalogue
 that is invalid or does not list exactly the units the package starts,
-before Go runs. When the run's images match a combination, it also requires
-each unit that combination expects in the run (all of them, or the units of
-the selected network mode) to report its own line with the expected verdict
-and combination, and records the comparison in `report.json` under
-`reproduction`. Both loaders accept only immutable images in a combination: a local image
+before Go runs. When the run's images match a combination, it also checks
+that each line of a unit the combination expects (all of them, or the units
+of the selected network mode) reports that combination and the expected
+verdict, and records the comparison in `report.json` under `reproduction`.
+A unit that prints no line, because the profile does not run its test, is
+not required; a skipped or unfinished test already fails the run. Both loaders accept only immutable images in a combination: a local image
 ID (`sha256:<64 hex>`) or a reference pinned by digest
 (`<name>[:<tag>]@sha256:<64 hex>`, the name in the Docker distribution
 reference grammar, so custom registries such as `[::1]:5000/team/ceph--debug`

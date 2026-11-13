@@ -61,7 +61,6 @@ func (f *leaseLapseT) Errorf(format string, args ...any) {
 func (f *leaseLapseT) FailNow()       { panic("FailNow") }
 func (f *leaseLapseT) Cleanup(func()) {}
 func (f *leaseLapseT) Skipped() bool  { return false }
-func (f *leaseLapseT) Name() string   { return "TestMultiClusterRGWDataSyncAfterSyncLeaseLapse" }
 
 // A matching REPRODUCED verdict followed by a failed restart keeps the
 // verdict and still fails the test for the gateway operation.
