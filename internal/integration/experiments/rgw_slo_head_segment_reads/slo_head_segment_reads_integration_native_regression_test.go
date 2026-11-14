@@ -240,10 +240,13 @@ func TestRGWSLOHeadSegmentReads(t *testing.T) {
 	stored := strings.Fields(harness.ExecOutput(t, ctx, client, "timeout", "60", "rados", "-p", sloDataPool, "ls"))
 	manifestObject := sloMarker + sloObject
 	var segments []segment
+	expected := []string{manifestObject, dloMarker + dloObject, s3Marker + singleObject, s3Marker + multipartObject}
 	for i := range sloSegments {
-		segments = append(segments, segment{Object: fmt.Sprintf("%s%s%04d", sloSegmentMarker, segmentNamePrefix, i), Size: sloSegmentSize})
+		name := fmt.Sprintf("%s%04d", segmentNamePrefix, i)
+		segments = append(segments, segment{Object: sloSegmentMarker + name, Size: sloSegmentSize})
+		expected = append(expected, sloSegmentMarker+name, dloSegmentMarker+name)
 	}
-	for _, object := range append([]string{manifestObject, dloMarker + dloObject, s3Marker + singleObject, s3Marker + multipartObject}, segments[0].Object, segments[1].Object, segments[2].Object) {
+	for _, object := range expected {
 		if !slices.Contains(stored, object) {
 			t.Fatalf("condition not established: the data pool has no object %s: %v", object, stored)
 		}
@@ -259,13 +262,15 @@ func TestRGWSLOHeadSegmentReads(t *testing.T) {
 
 	// The observation: the OSD's history of client operations, which is
 	// made to keep every operation of the test, and its counter of bytes
-	// returned for reads.
+	// returned for reads. With the op tracker's messages gathered, the OSD
+	// describes an operation when it receives it, so the history names the
+	// method of a class call and the extent a read asks for.
 	osd, err := harness.FindOSD(ctx, cluster, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for option, value := range map[string]int{"osd_op_history_size": sloHistorySize, "osd_op_history_duration": sloHistoryDuration} {
-		if out, err := osd.AdminSocket(ctx, "config", "set", option, strconv.Itoa(value)); err != nil {
+	for option, value := range map[string]string{"osd_op_history_size": strconv.Itoa(sloHistorySize), "osd_op_history_duration": strconv.Itoa(sloHistoryDuration), "debug_optracker": "0/6"} {
+		if out, err := osd.AdminSocket(ctx, "config", "set", option, value); err != nil {
 			t.Fatalf("set %s: %v: %s", option, err, out)
 		}
 	}
@@ -320,7 +325,7 @@ func TestRGWSLOHeadSegmentReads(t *testing.T) {
 		}
 		for _, op := range got.Ops {
 			if windows > 1 && !seen[op.ReqID] && op.Pool == state.ID && op.Object != marker {
-				t.Logf("RGW_SLO_HEAD window=%s object=%s operation=%v", name, op.Object, op.Subs)
+				t.Logf("RGW_SLO_HEAD window=%s object=%s operation=%q", name, op.Object, op.Subs)
 			}
 		}
 		ops, err := windowOps(got, seen, state.ID, marker)
@@ -344,18 +349,17 @@ func TestRGWSLOHeadSegmentReads(t *testing.T) {
 	for _, control := range []struct {
 		name, head string
 		request    func() harness.RGWBackendResponse
-		prefixes   []string
 	}{
 		{"head-single-put", s3Marker + singleObject, func() harness.RGWBackendResponse {
 			return c.signed(t, http.MethodHead, "/"+s3Bucket+"/"+singleObject, nil)
-		}, []string{s3Marker}},
+		}},
 		{"head-multipart", s3Marker + multipartObject, func() harness.RGWBackendResponse {
 			return c.signed(t, http.MethodHead, "/"+s3Bucket+"/"+multipartObject, nil)
-		}, []string{s3Marker}},
-		{"head-dynamic-large-object", dloMarker + dloObject, func() harness.RGWBackendResponse { return c.swift(t, http.MethodHead, dloPath, nil, nil) }, []string{dloMarker, dloSegmentMarker}},
+		}},
+		{"head-dynamic-large-object", dloMarker + dloObject, func() harness.RGWBackendResponse { return c.swift(t, http.MethodHead, dloPath, nil, nil) }},
 	} {
 		got := window(control.name, func() { requireHead(t, control.request()) })
-		if err := requireMetadataOnly(got.Ops, control.head, control.prefixes...); err != nil {
+		if err := requireMetadataOnly(got.Ops, control.head); err != nil {
 			t.Fatalf("%s: %v", control.name, err)
 		}
 	}

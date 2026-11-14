@@ -14,8 +14,8 @@ import (
 // operation. They are synthetic inputs of the readers, not native evidence
 // of what a gateway sends.
 const (
-	opManifest = `osd_op(client.4567.0:10 7.3 7:c1a2b3d4:::m.1_slo:head [call rgw.obj_check_attrs_prefix in=20b,getxattrs,stat] snapc 0=[] ondisk+read+known_if_redirected e45)`
-	opSegment  = `osd_op(client.4567.0:11 7.1 7:81a2b3d4:::s.2_segment-0000:head [call rgw.obj_check_attrs_prefix in=20b,getxattrs,stat,read 0~3145728] snapc 0=[] ondisk+read+known_if_redirected e45)`
+	opManifest = `osd_op(client.4567.0:10 7.3 7:c1a2b3d4:::m.1_slo:head [call version.read in=11b,getxattrs,stat] snapc 0=[] ondisk+read+known_if_redirected e45)`
+	opSegment  = `osd_op(client.4567.0:11 7.1 7:81a2b3d4:::s.2_segment-0000:head [call version.read in=11b,getxattrs,stat,read 0~3145728] snapc 0=[] ondisk+read+known_if_redirected e45)`
 	opMarker   = `osd_op(client.9000.0:1 7.0 7:01a2b3d4:::tc-slo-window-1:head [create] snapc 0=[] ondisk+write+known_if_redirected e45)`
 	opIndex    = `osd_op(client.4567.0:12 6.2 6:41a2b3d4:::.dir.s.2.0:head [call rgw.bucket_list in=40b] snapc 0=[] ondisk+read+known_if_redirected e45)`
 )
@@ -34,8 +34,8 @@ func TestParseOpHistoryReadsClientOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := opHistory{Size: 20000, Total: 3, Ops: []osdOp{
-		{ReqID: "client.4567.0:10", Pool: 7, Object: "m.1_slo", Subs: []string{"call rgw.obj_check_attrs_prefix in=20b", "getxattrs", "stat"}},
-		{ReqID: "client.4567.0:11", Pool: 7, Object: "s.2_segment-0000", Subs: []string{"call rgw.obj_check_attrs_prefix in=20b", "getxattrs", "stat", "read 0~3145728"}},
+		{ReqID: "client.4567.0:10", Pool: 7, Object: "m.1_slo", Subs: []string{"call version.read in=11b", "getxattrs", "stat"}},
+		{ReqID: "client.4567.0:11", Pool: 7, Object: "s.2_segment-0000", Subs: []string{"call version.read in=11b", "getxattrs", "stat", "read 0~3145728"}},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("history = %+v, want %+v", got, want)
@@ -89,25 +89,33 @@ func TestParseOSDOpKeepsWhatItCannotRead(t *testing.T) {
 }
 
 func TestParseSubClassifiesReads(t *testing.T) {
-	for sub, want := range map[string]*extent{
-		"read 0~3145728":                         {Off: 0, Len: 3145728},
-		"read 4194304~1048576":                   {Off: 4194304, Len: 1048576},
-		"read 0~0":                               {Off: 0, Len: 0},
-		"read 0~3145728 out=3145728b":            {Off: 0, Len: 3145728},
-		"read 0~4096 [1@0] [fadvise_sequential]": {Off: 0, Len: 4096},
+	for sub, want := range map[string]extent{
+		"read 0~3145728":       {Off: 0, Len: 3145728},
+		"read 0~4194304":       {Off: 0, Len: 4194304},
+		"read 4194304~1048576": {Off: 4194304, Len: 1048576},
 	} {
-		if got, other := parseSub(sub); other || got == nil || *got != *want {
-			t.Errorf("%q = %v, other %t, want %v", sub, got, other, *want)
+		if got, other := parseSub(sub); other || got == nil || *got != want {
+			t.Errorf("%q = %v, other %t, want %v", sub, got, other, want)
 		}
 	}
-	for _, sub := range []string{"call rgw.obj_check_attrs_prefix in=20b", "getxattrs", "getxattr user.rgw.acl", "stat"} {
+	for _, sub := range []string{"call version.read in=11b", "call version.read", "getxattrs", "stat"} {
 		if got, other := parseSub(sub); other || got != nil {
 			t.Errorf("%q = %v, other %t, want a metadata sub-operation", sub, got, other)
 		}
 	}
-	// A data operation in a form the case does not size, a write and a
-	// malformed read are none of the two.
-	for _, sub := range []string{"", "read", "read 0", "read x~1", "read 0~y", "read -1~4", "read 0~4 retry", "sparse-read 0~4096", "sync_read 0~4096", "mapext 0~4096", "cmpext 0~4096", "checksum", "writefull 0~4096", "create", "setxattr user.rgw.acl (10)"} {
+	// Everything else is unclassified: a call of another method, of a
+	// method the history does not name, or with anything but the size of
+	// its input after it; a metadata verb with anything after it; a read
+	// in another form or with anything after its extent; other data
+	// operations and writes.
+	for _, sub := range []string{
+		"", "call", "call in=11b", "call rgw.obj_store_pg_ver in=20b", "call version.read_all in=11b", "call version.read out=48b",
+		"call version.read in=11b out=48b", "call version.read in=x", "call version.set in=30b", "call refcount.read in=2b",
+		"getxattr user.rgw.acl", "getxattrs in=4b", "stat out=16b", "statfs", "getxattrsx",
+		"read", "read 0", "read x~1", "read 0~y", "read -1~4", "read 0~-4", "read 0~4 retry", "read 0~4096 [1@0]",
+		"read 0~4096 [fadvise_sequential]", "read 0~3145728 out=3145728b", "read 0~4096 in=0b", "readx 0~4",
+		"sparse-read 0~4096", "sync_read 0~4096", "mapext 0~4096", "cmpext 0~4096", "checksum", "writefull 0~4096", "create", "setxattr user.rgw.acl (10)",
+	} {
 		if got, other := parseSub(sub); !other || got != nil {
 			t.Errorf("%q = %v, other %t, want an unclassified sub-operation", sub, got, other)
 		}
@@ -120,20 +128,22 @@ func TestObjectOpsCovers(t *testing.T) {
 		reads []extent
 		size  int64
 		want  bool
+		bytes int64
 	}{
-		{"one read of the object", []extent{{0, 100}}, 100, true},
-		{"a read beyond the end", []extent{{0, 4096}}, 100, true},
-		{"adjacent reads in any order", []extent{{50, 50}, {0, 50}}, 100, true},
-		{"overlapping reads", []extent{{0, 60}, {40, 60}}, 100, true},
-		{"no read", nil, 100, false},
-		{"a read of the first bytes", []extent{{0, 99}}, 100, false},
-		{"a read that starts late", []extent{{1, 99}}, 100, false},
-		{"a hole between reads", []extent{{0, 40}, {60, 40}}, 100, false},
-		{"an empty read", []extent{{0, 0}}, 100, false},
-		{"an object without a size", []extent{{0, 100}}, 0, false},
+		{"one read of the object", []extent{{0, 100}}, 100, true, 100},
+		{"a read beyond the end", []extent{{0, 4096}}, 100, true, 100},
+		{"adjacent reads in any order", []extent{{50, 50}, {0, 50}}, 100, true, 100},
+		{"overlapping reads", []extent{{0, 60}, {40, 60}}, 100, true, 120},
+		{"no read", nil, 100, false, 0},
+		{"a read of the first bytes", []extent{{0, 99}}, 100, false, 99},
+		{"a read that starts late", []extent{{1, 99}}, 100, false, 99},
+		{"a hole between reads", []extent{{0, 40}, {60, 40}}, 100, false, 80},
+		{"a read that starts beyond the end", []extent{{100, 50}}, 100, false, 0},
+		{"an object without a size", []extent{{0, 100}}, 0, false, 0},
 	} {
-		if got := (objectOps{Reads: tc.reads}).covers(tc.size); got != tc.want {
-			t.Errorf("%s: covers = %t, want %t", tc.name, got, tc.want)
+		ops := objectOps{Reads: tc.reads}
+		if got, bytes := ops.covers(tc.size), ops.readBytes(tc.size); got != tc.want || bytes != tc.bytes {
+			t.Errorf("%s: covers = %t with %d bytes, want %t with %d", tc.name, got, bytes, tc.want, tc.bytes)
 		}
 	}
 }
@@ -158,10 +168,11 @@ func TestWindowOpsReturnsTheNewOperationsOfTheDataPool(t *testing.T) {
 	}
 	// An unread operation of another pool does not concern the window, and
 	// an operation on a PG of the data pool is kept without an object name.
-	history, err = parseOpHistory(historyReport("20000",
+	held := []string{opManifest, opSegment, opIndex, opMarker,
 		"osd_op(client.4567.0:20 6.3 6.c1a2b3d4 (undecoded) ondisk+read e45)",
 		"osd_op(client.4567.0:21 7.0 7:00000000::::head [pgnls start_epoch 9] snapc 0=[] ondisk+read e45)",
-		strings.ReplaceAll(strings.ReplaceAll(opMarker, "window-1", "window-9"), "client.9000.0:1", "client.9009.0:1")))
+		strings.ReplaceAll(strings.ReplaceAll(opMarker, "window-1", "window-9"), "client.9000.0:1", "client.9009.0:1")}
+	history, err = parseOpHistory(historyReport("20000", held...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,16 +180,32 @@ func TestWindowOpsReturnsTheNewOperationsOfTheDataPool(t *testing.T) {
 	if want := (map[string]objectOps{"": {Requests: 1, Other: []string{"pgnls start_epoch 9"}}}); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("window = %+v, %v, want %+v", got, err, want)
 	}
-	// A sub-operation that is neither a read nor a metadata read is kept.
-	write := `osd_op(client.4567.0:13 7.3 7:c1a2b3d4:::m.1_slo:head [writefull 0~10,setxattr user.rgw.acl (10)] snapc 0=[] ondisk+write e45)`
-	next := strings.ReplaceAll(strings.ReplaceAll(opMarker, "window-1", "window-2"), "client.9000.0:1", "client.9001.0:1")
-	history, err = parseOpHistory(historyReport("20000", opManifest, write, next))
+	// A sub-operation that is neither a read nor a known metadata read is
+	// kept: a write, and a call of a method the case does not know.
+	held = append(held,
+		`osd_op(client.4567.0:13 7.3 7:c1a2b3d4:::m.1_slo:head [writefull 0~10,setxattr user.rgw.acl (10)] snapc 0=[] ondisk+write e45)`,
+		`osd_op(client.4567.0:14 7.1 7:81a2b3d4:::s.2_segment-0000:head [call refcount.read in=2b,getxattrs,stat] snapc 0=[] ondisk+read e45)`,
+		`osd_op(client.4567.0:15 7.1 7:81a2b3d4:::s.2_segment-0001:head [call,getxattrs,stat] snapc 0=[] ondisk+read e45)`,
+		strings.ReplaceAll(strings.ReplaceAll(opMarker, "window-1", "window-2"), "client.9000.0:1", "client.9001.0:1"))
+	history, err = parseOpHistory(historyReport("20000", held...))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err = windowOps(history, seen, 7, "tc-slo-window-2")
-	if want := (map[string]objectOps{"m.1_slo": {Requests: 1, Other: []string{"writefull 0~10", "setxattr user.rgw.acl (10)"}}}); err != nil || !reflect.DeepEqual(got, want) {
+	want = map[string]objectOps{
+		"m.1_slo":          {Requests: 1, Other: []string{"writefull 0~10", "setxattr user.rgw.acl (10)"}},
+		"s.2_segment-0000": {Requests: 1, Other: []string{"call refcount.read in=2b"}},
+		"s.2_segment-0001": {Requests: 1, Other: []string{"call"}},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("window = %+v, %v, want %+v", got, err, want)
+	}
+	// Such a call on a segment is never read as a HEAD without data reads.
+	segments := []segment{{"s.2_segment-0000", 3145728}}
+	full := sloWindow{Ops: map[string]objectOps{"m.1_slo": {Requests: 1}, "s.2_segment-0000": {Requests: 1, Reads: []extent{{0, 3145728}}}}, OutBytes: 3145728}
+	head := sloWindow{Ops: map[string]objectOps{"m.1_slo": {Requests: 1}, "s.2_segment-0000": got["s.2_segment-0000"]}}
+	if symptoms, err := judgeSLOHead("m.1_slo", segments, full, head); err == nil || !strings.Contains(err.Error(), "window not observed") {
+		t.Fatalf("a call of an unknown method on a segment was judged as %q, %v", symptoms, err)
 	}
 }
 
@@ -206,24 +233,24 @@ func TestWindowOpsRefusesAnIncompleteHistory(t *testing.T) {
 
 func TestRequireMetadataOnly(t *testing.T) {
 	head := objectOps{Requests: 1}
-	if err := requireMetadataOnly(map[string]objectOps{"b.1_single": head}, "b.1_single", "b.1_"); err != nil {
-		t.Fatal(err)
-	}
-	if err := requireMetadataOnly(map[string]objectOps{"d.1_dlo": head, "d.2_segment-0000": head}, "d.1_dlo", "d.1_", "d.2_"); err != nil {
+	if err := requireMetadataOnly(map[string]objectOps{"b.1_single": head}, "b.1_single"); err != nil {
 		t.Fatal(err)
 	}
 	for name, window := range map[string]map[string]objectOps{
-		"no operation at all":        {},
-		"no operation on the head":   {"b.1__shadow_single_1": head},
-		"an object of another":       {"b.1_single": head, "x.9_other": head},
-		"an operation on a PG":       {"b.1_single": head, "": {Requests: 1, Other: []string{"pgnls start_epoch 9"}}},
-		"a data read of the head":    {"b.1_single": {Requests: 1, Reads: []extent{{0, 4194304}}}},
-		"a data read of a tail":      {"b.1_single": head, "b.1__shadow_single_1": {Requests: 1, Reads: []extent{{0, 1}}}},
-		"an empty data read":         {"b.1_single": {Requests: 1, Reads: []extent{{0, 0}}}},
-		"an unclassified operation":  {"b.1_single": {Requests: 1, Other: []string{"sparse-read 0~4096"}}},
-		"a write on the head object": {"b.1_single": {Requests: 1, Other: []string{"writefull 0~10"}}},
+		"no operation at all":            {},
+		"no operation on the head":       {"b.1__shadow_single_1": head},
+		"an object of another bucket":    {"b.1_single": head, "x.9_other": head},
+		"another object of the bucket":   {"b.1_single": head, "b.1_multipart": head},
+		"an object the head's name ends": {"b.1_single": head, "b.1_single2": head},
+		"a tail object of the head":      {"b.1_single": head, "b.1__shadow_single_1": head},
+		"an operation on a PG":           {"b.1_single": head, "": {Requests: 1, Other: []string{"pgnls start_epoch 9"}}},
+		"a data read of the head":        {"b.1_single": {Requests: 1, Reads: []extent{{0, 4194304}}}},
+		"an empty read of the head":      {"b.1_single": {Requests: 1, Reads: []extent{{0, 0}}}},
+		"an unclassified read":           {"b.1_single": {Requests: 1, Other: []string{"sparse-read 0~4096"}}},
+		"a call of an unknown method":    {"b.1_single": {Requests: 1, Other: []string{"call rgw.obj_store_pg_ver in=20b"}}},
+		"a write on the head object":     {"b.1_single": {Requests: 1, Other: []string{"writefull 0~10"}}},
 	} {
-		if err := requireMetadataOnly(window, "b.1_single", "b.1_"); err == nil {
+		if err := requireMetadataOnly(window, "b.1_single"); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -236,6 +263,8 @@ func TestJudgeSLOHead(t *testing.T) {
 	segments := []segment{{"s.2_segment-0000", 100}, {"s.2_segment-0001", 100}, {"s.2_segment-0002", 50}}
 	stat := objectOps{Requests: 1}
 	full := func(size int64) objectOps { return objectOps{Requests: 1, Reads: []extent{{0, size}}} }
+	// rest is a read that starts at offset and has no length.
+	rest := func(offset int64) objectOps { return objectOps{Requests: 1, Reads: []extent{{offset, 0}}} }
 	read := map[string]objectOps{manifest: stat, "s.2_segment-0000": full(100), "s.2_segment-0001": full(100), "s.2_segment-0002": full(50)}
 	get := sloWindow{Ops: read, OutBytes: 260}
 	with := func(base map[string]objectOps, object string, ops objectOps) map[string]objectOps {
@@ -255,6 +284,8 @@ func TestJudgeSLOHead(t *testing.T) {
 		{name: "the HEAD reads every segment", get: get, head: sloWindow{Ops: read, OutBytes: 255}, symptoms: 4},
 		{name: "the HEAD reads every segment in chunks", get: get,
 			head: sloWindow{Ops: with(read, "s.2_segment-0000", objectOps{Requests: 2, Reads: []extent{{0, 64}, {64, 36}}}), OutBytes: 250}, symptoms: 4},
+		{name: "the HEAD asks for more than every segment holds", get: get,
+			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(4096), "s.2_segment-0001": full(4096), "s.2_segment-0002": full(4096)}, OutBytes: 255}, symptoms: 4},
 		{name: "the HEAD reads only the manifest", get: get, head: sloWindow{Ops: map[string]objectOps{manifest: stat}, OutBytes: 0}},
 		{name: "the HEAD reads the attributes of the segments", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": stat, "s.2_segment-0001": stat, "s.2_segment-0002": stat}, OutBytes: 49}},
@@ -272,8 +303,8 @@ func TestJudgeSLOHead(t *testing.T) {
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(10), "s.2_segment-0001": full(10), "s.2_segment-0002": full(10)}, OutBytes: 30}, want: "another state"},
 		{name: "the HEAD reads one segment of three", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(100)}, OutBytes: 100}, want: "another state"},
-		{name: "the HEAD reads an empty extent of a segment", get: get,
-			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": {Requests: 1, Reads: []extent{{0, 0}}}}}, want: "another state"},
+		{name: "the HEAD reads every segment from beyond its end", get: get,
+			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(200), "s.2_segment-0001": rest(200), "s.2_segment-0002": rest(200)}}, want: "another state"},
 		// The operations and the byte counter disagree.
 		{name: "full reads, but fewer bytes returned", get: get, head: sloWindow{Ops: read, OutBytes: 249}, want: "outcome not observed"},
 		{name: "no read, but a segment's worth of bytes returned", get: get, head: sloWindow{Ops: map[string]objectOps{manifest: stat}, OutBytes: 50}, want: "outcome not observed"},

@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -120,44 +121,56 @@ func parseOSDOp(description string) (osdOp, error) {
 	return op, nil
 }
 
-// extent is the byte range of one read sub-operation.
+// extent is the byte range one read sub-operation asks for.
 type extent struct{ Off, Len int64 }
 
-// The sub-operations that return no object data: the calls of an object
-// class method and the reads of attributes and of the object's size.
-var metadataSubs = []string{"call", "getxattrs", "getxattr", "stat"}
+// within returns the bytes [start, end) of an object of size bytes that the
+// read returns: the OSD cuts a read off at the end of the object. A read
+// that starts at or beyond the end returns nothing.
+func (e extent) within(size int64) (start, end int64) {
+	if e.Off >= size {
+		return size, size
+	}
+	if e.Off+e.Len > size {
+		return e.Off, size
+	}
+	return e.Off, e.Off + e.Len
+}
 
-// parseSub classifies one sub-operation. A "read <offset>~<length>" is a
-// data read with its extent; the OSD may print the truncation and the flags
-// of the read in brackets and the sizes of its input and output after it. A
-// metadata sub-operation returns no extent. Anything else, including a read
-// in another form, is returned as other: the case cannot say how many bytes
-// of the object it returned.
+// metadataCall is the one object class method the case knows to return no
+// object data: version.read, which reads the object's version from one of
+// its attributes. Any other method may read the object's data inside the
+// OSD without returning it, so it is not classified.
+const metadataCall = "call version.read"
+
+// sizeSuffix matches the size of the input a sub-operation carries.
+var sizeSuffix = regexp.MustCompile(`^in=[0-9]+b$`)
+
+// parseSub classifies one sub-operation by its whole text, as the OSD
+// prints it for an operation it has not executed yet. "read
+// <offset>~<length>" is a data read of that extent. "getxattrs", "stat" and
+// "call version.read", the last with the size of its input, read attributes
+// and the object's size and return no extent. Everything else is returned
+// as other, because the case cannot say what it read of the object: a call
+// of another method or of no named method, a read in another form or with
+// anything after its extent, and every other sub-operation.
 func parseSub(sub string) (read *extent, other bool) {
 	fields := strings.Fields(sub)
-	if len(fields) == 0 {
-		return nil, true
-	}
-	if slices.Contains(metadataSubs, fields[0]) {
+	switch {
+	case sub == "getxattrs" || sub == "stat":
 		return nil, false
-	}
-	if fields[0] != "read" || len(fields) < 2 {
+	case strings.Join(fields[:min(2, len(fields))], " ") == metadataCall:
+		return nil, len(fields) > 3 || (len(fields) == 3 && !sizeSuffix.MatchString(fields[2]))
+	case len(fields) != 2 || fields[0] != "read":
 		return nil, true
 	}
 	offText, lenText, ok := strings.Cut(fields[1], "~")
-	off, errOff := strconv.ParseInt(offText, 10, 64)
-	length, errLen := strconv.ParseInt(lenText, 10, 64)
-	if !ok || errOff != nil || errLen != nil || off < 0 || length < 0 {
+	off, errOff := strconv.ParseUint(offText, 10, 63)
+	length, errLen := strconv.ParseUint(lenText, 10, 63)
+	if !ok || errOff != nil || errLen != nil {
 		return nil, true
 	}
-	for _, suffix := range fields[2:] {
-		bracket := strings.HasPrefix(suffix, "[") && strings.HasSuffix(suffix, "]")
-		size := (strings.HasPrefix(suffix, "in=") || strings.HasPrefix(suffix, "out=")) && strings.HasSuffix(suffix, "b")
-		if !bracket && !size {
-			return nil, true
-		}
-	}
-	return &extent{Off: off, Len: length}, false
+	return &extent{Off: int64(off), Len: int64(length)}, false
 }
 
 // objectOps is what one window recorded on one object of the data pool: the
@@ -169,26 +182,32 @@ type objectOps struct {
 	Other    []string
 }
 
-// readBytes is the sum of the lengths of the reads.
-func (o objectOps) readBytes() int64 {
+// readBytes is the number of bytes the reads return of an object of size
+// bytes, counting a byte once per read that returns it.
+func (o objectOps) readBytes(size int64) int64 {
 	var sum int64
 	for _, read := range o.Reads {
-		sum += read.Len
+		start, end := read.within(size)
+		sum += end - start
 	}
 	return sum
 }
 
-// covers reports whether the reads together cover the first size bytes of
-// the object.
+// covers reports whether the reads together return every byte of an object
+// of size bytes.
 func (o objectOps) covers(size int64) bool {
-	reads := slices.Clone(o.Reads)
-	slices.SortFunc(reads, func(a, b extent) int { return cmp.Compare(a.Off, b.Off) })
+	type span struct{ start, end int64 }
+	spans := make([]span, len(o.Reads))
+	for i, read := range o.Reads {
+		spans[i].start, spans[i].end = read.within(size)
+	}
+	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	var end int64
-	for _, read := range reads {
-		if read.Off > end {
+	for _, s := range spans {
+		if s.start > end {
 			break
 		}
-		end = max(end, read.Off+read.Len)
+		end = max(end, s.end)
 	}
 	return size > 0 && end >= size
 }
@@ -244,22 +263,21 @@ func windowOps(history opHistory, seen map[string]bool, pool int64, marker strin
 
 // requireMetadataOnly requires a window of a HEAD that reads no object data:
 // at least one operation on the head object, so the request reached the
-// OSD, no operation on an object outside the request's buckets, whose
-// objects start with one of prefixes, and no data read or unclassified
-// sub-operation on any object.
-func requireMetadataOnly(window map[string]objectOps, head string, prefixes ...string) error {
+// OSD, no operation on any other object, and no data read or unclassified
+// sub-operation.
+func requireMetadataOnly(window map[string]objectOps, head string) error {
 	if window[head].Requests == 0 {
 		return fmt.Errorf("condition not established: the window has no operation on the head object %s: %v", head, window)
 	}
 	for name, object := range window {
-		if !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
-			return fmt.Errorf("window not observed: an operation on %s, which is not an object of the request: %v", name, window)
+		if name != head {
+			return fmt.Errorf("window not observed: an operation on %s, which is not the head object %s: %v", name, head, window)
 		}
 		if len(object.Other) > 0 {
 			return fmt.Errorf("window not observed: unclassified sub-operations %q on %s", object.Other, name)
 		}
 		if len(object.Reads) > 0 {
-			return fmt.Errorf("control not established: the HEAD read %d bytes of %s: %v", object.readBytes(), name, object.Reads)
+			return fmt.Errorf("control not established: the HEAD read data of %s: %v", name, object.Reads)
 		}
 	}
 	return nil
@@ -339,7 +357,7 @@ func judgeSLOHead(manifest string, segments []segment, get, head sloWindow) ([]s
 		case len(ops.Reads) == 0:
 			untouched = append(untouched, s.Object)
 		default:
-			return nil, fmt.Errorf("another state: the HEAD read %d of the %d bytes of segment %s, neither none nor all of it: %v", ops.readBytes(), s.Size, s.Object, ops.Reads)
+			return nil, fmt.Errorf("another state: the HEAD read %d bytes of the %d of segment %s, neither none nor all of it: %v", ops.readBytes(s.Size), s.Size, s.Object, ops.Reads)
 		}
 	}
 	switch {
