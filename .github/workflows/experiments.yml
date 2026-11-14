@@ -31,7 +31,9 @@ on:
           - rbd_trash_purge_timezone
           - rgw_compressed_copy_accounting
           - rgw_empty_sse_header
+          - rgw_legacy_replication_destination
           - rgw_lifecycle_expiration_header
+          - rgw_multipart_completion_replay_etag
           - rgw_multipart_part_storage_class
           - rgw_multisite_object_lock_sync
           - rgw_post_usage_bytes_received

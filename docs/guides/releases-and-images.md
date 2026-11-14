@@ -199,6 +199,17 @@ These affect commands or client libraries you run yourself, not the typed API:
   and echoes no part checksum. See `TestRGWSSECMultipartCompletion` (optional
   `native_regression` batch `rgw_ssec_completion`, experiment case
   [`rgw_ssec_multipart_completion`](../../internal/integration/experiments/rgw_ssec_multipart_completion/README.md)).
+- **Multipart completion replay on 19.2.5, 20.2.2 and 20.2.4.**
+  Replaying the same signed completion returned HTTP 200 and left the object
+  intact on all three releases. The response XML lost the ETag on replay on
+  19.2.5 and 20.2.2, while 20.2.4 retained it. Neither completion returned
+  an HTTP ETag header on these releases.
+  [Multipart completion replay experiment](../../internal/integration/experiments/rgw_multipart_completion_replay_etag/README.md).
+- **Replication policy readback after upgrading a 19.2.5 writer.**
+  When the stored destination already contained the full ARN, a 20.2.2 reader
+  returned the S3 ARN prefix twice. A 20.2.4 reader returned it once.
+  Each reader returned the correct destination for a policy it wrote itself.
+  [Legacy replication destination experiment](../../internal/integration/experiments/rgw_legacy_replication_destination/README.md).
 - **Tentacle 20.2.4, empty `x-amz-server-side-encryption`.** A PUT whose
   header is present with an empty value is treated as if the header were
   absent: it answers 200 and writes an unencrypted object (a new version over
