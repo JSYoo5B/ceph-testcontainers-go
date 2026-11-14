@@ -56,20 +56,19 @@ Upstream references:
 
 ## Tier and triggers
 
-Known-defect reproducer: on its default image the test passes and reports
-`REPRODUCED` (see [Result line](#result-line)). No automatic run includes it (the default
-checks of a pull request, pushes to `main`, periodic samples), and it never
-gates anything. A maintainer can run it on demand, also on a pull request's
-head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_ssec_completion`.
-- Comment: `/ci run rgw_ssec_completion` or
-  `/ci run rgw_ssec_completion on umbrella`.
+Known-defect reproducer, optional batch `rgw_ssec_completion` with a
+20-minute budget; no automatic run includes it. On its default image the test
+passes and reports `REPRODUCED` (see [Result line](#result-line)). It runs
+over HTTPS. It is an `Experiments` case (`case=rgw_ssec_multipart_completion`),
+and its fixed image there is `quay.io/ceph/ceph:v21.2.0`.
+`/ci run rgw_ssec_completion` takes an `on <release>` such as `on umbrella`.
+The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its completion classification tests are Docker-free `code/pure`
+tests that Code checks runs on every change.
 
 ## Running it
 
-The case runs on its own image, the package variable `image`, and not
-on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+The default image is the Tentacle 20.2.4 aggregate
 (`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
@@ -78,7 +77,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_ssec_multipart_completion
 ```
 
-Another image, such as a fixed release, is injected at link time:
+On a fixed image, Umbrella 21.2.0:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -87,10 +86,8 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_ssec_multipart_completion
 ```
 
-The batch `rgw_ssec_completion` (`tag_scenarios.py optional --batch rgw_ssec_completion`, or the
-Native regressions workflow) still runs the case. It exports role images,
-which the case ignores: the cluster and its client container both run
-`image`.
+The batch runs the same test through the tag runner with
+`tag_scenarios.py optional --batch rgw_ssec_completion`.
 
 The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored
@@ -122,14 +119,8 @@ Customer keys are never logged.
 
 ## Result line
 
-A failure of a given or when step (a condition not established, an
-unavailable prerequisite, a failed control) fails the test, and the test then
-prints no result. Otherwise the test passes whatever the gateway did and
-prints one line:
-
-```text
-EXPERIMENT_RESULT case=rgw_ssec_multipart_completion result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
-```
+The test prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=rgw_ssec_multipart_completion`.
 
 `REPRODUCED`: the completion of the SSE-C upload without a checksum and
 without the customer key (`no-checksum-omitted-key`) is refused, and no

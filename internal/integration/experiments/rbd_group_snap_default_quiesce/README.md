@@ -8,9 +8,17 @@ In required mode both snapshot types deliver one quiesce and one unquiesce notif
 
 The Docker-free `TestQuiesceVerdictRequiresCallbacks` supplies synthetic callback counts to the same verdict function in normal and optimized Python. Missing required callbacks must fail in both modes.
 
+## Tier and triggers
+
+Known-defect reproducer, optional batch `rbd_group_snap_default_quiesce` with a 20-minute budget; no
+automatic run includes it. It is an `Experiments` case, and its fixed image
+there is `quay.io/ceph/ceph:v19.2.3`. `TestQuiesceVerdictRequiresCallbacks` is the package's `code/pure` batch and runs in Code checks for every change. The triggers, the result checks and the image
+injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Run and interpret the result
 
-This optional `native_regression` experiment uses one aggregate Ceph image for the cluster and client (essential and client roles). The default is `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all`. Both observed outcomes pass. The case emits `EXPERIMENT_RESULT` with `REPRODUCED` when the documented symptom occurs and `NOT_REPRODUCED` when it observes the corrected behavior. A missing prerequisite or an unclassified result fails the test.
+The cluster and client run one aggregate image (essential and client roles); the default is `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all`. The case prints one [result line](../../../../docs/contributing/testing.md#experiment-result-lines): `REPRODUCED` when the group snapshot in skip mode delivers quiesce notifications, `NOT_REPRODUCED` when it delivers none. 19.2.2 printed `REPRODUCED`, 19.2.3 `NOT_REPRODUCED`. A missing prerequisite or an unclassified result fails the test.
 
 ```sh
 pkg=github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_group_snap_default_quiesce

@@ -10,14 +10,30 @@ Before the transition both objects must report default storage and their origina
 
 On the published Tentacle 20.2.1 aggregate, HEAD confirmed COLD for the plaintext object and STANDARD with AES256 for the encrypted control. Both objects returned the expected full and range bytes before and after processing. The pre-correction encrypted transition itself remains unmeasured on that release.
 
+## Tier and triggers
+
+Optional `native_regression` batch `rgw_encrypted_multipart_transition` with a
+20-minute budget: an integrity check, not a known-defect reproducer, so it
+prints no result line and is not an `Experiments` case. No automatic run
+includes it; run it with
+`gh workflow run "Native regressions" -f batch=rgw_encrypted_multipart_transition`
+or `/ci run rgw_encrypted_multipart_transition`. 20.2.2 and 20.2.4 returned
+the expected bytes after the encrypted transition; 20.2.1 passed the separate
+encryption and transition controls. The shared triggers are in
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Running
 
-Optional batch `rgw_encrypted_multipart_transition` runs the independent controls with the caller's normal aggregate or split-role selection. It also checks the encrypted transition on `quay.io/ceph/ceph:v20.2.2` and `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`. The latter two rows use their specified aggregate for every daemon and client. An upstream source boundary alone does not establish an affected release. The encrypted object's reads in the selected-release control cover default storage only.
+The batch runs the independent controls with the caller's normal aggregate or split-role selection. It also checks the encrypted transition on `quay.io/ceph/ceph:v20.2.2` and `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`. The latter two rows use their specified aggregate for every daemon and client. An upstream source boundary alone does not establish an affected release. The encrypted object's reads in the selected-release control cover default storage only.
 
 ```sh
 CEPH_TEST_IMAGE=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.1-all \
   go test -count=1 -tags=all,native_regression -timeout=20m -v \
+  -run '^TestRGWEncryptedMultipartTransition$' \
   ./internal/integration/experiments/rgw_encrypted_multipart_transition
 ```
+
+The independent controls read the image variables of the testing guide like
+other integration tests; the two fixed-release rows ignore them.
 
 Each subtest bounds its operations to six minutes, purges its own bucket and tears down its cluster and disposable data pool before the next row starts.

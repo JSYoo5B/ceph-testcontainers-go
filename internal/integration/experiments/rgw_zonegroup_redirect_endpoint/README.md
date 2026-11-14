@@ -61,22 +61,16 @@ a listing with a query, as an ordinary user.
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rgw_zonegroup_redirect_endpoint result=<REPRODUCED|NOT_REPRODUCED>`,
-for all four redirects, and passes either way. No automatic run includes it
-(the default checks of a pull request, pushes to `main`, periodic samples),
-and it never gates anything. A maintainer can run it on demand, also on a
-pull request's head with the comment below.
-
-- Manual: `gh workflow run "Experiments" -f case=rgw_zonegroup_redirect_endpoint`
-  requires `REPRODUCED`; adding `-f image=quay.io/ceph/ceph:v20.2.5`
-  requires `NOT_REPRODUCED` on Tentacle 20.2.5 afterwards.
-  `gh workflow run "Native regressions" -f batch=rgw_zonegroup_redirect_endpoint`
-  reports its pass or failure only.
-- Comment: `/ci run rgw_zonegroup_redirect_endpoint` or
-  `/ci run rgw_zonegroup_redirect_endpoint on umbrella`.
+Known-defect reproducer, optional batch `rgw_zonegroup_redirect_endpoint`
+with a 30-minute budget; no automatic run includes it. Its default image is
+Tentacle 20.2.4; it starts two clusters with two zonegroups and prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines) for all four redirects. It is an
+`Experiments` case, and its fixed image there is `quay.io/ceph/ceph:v20.2.5`.
+`/ci run rgw_zonegroup_redirect_endpoint` takes an `on <release>` such as
+`on umbrella`. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its period reader, redirect classification and
+judgement tests are Docker-free `code/pure` tests that Code checks runs on
+every change (under 1 s).
 
 ## Running it
 
@@ -88,8 +82,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rgw_zonegroup_redirect_endpoint
 ```
 
-On a fixed image, injected into the package's `image` variable, which must
-print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
+On a fixed image, which must print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
 `quay.io/ceph/ceph:v21.2.0`, is fixed too):
 
 ```sh
@@ -99,8 +92,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rgw_zonegroup_redirect_endpoint
 ```
 
-The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
-not select the case's images. The log names the image
+The log names the image
 (`RGW_REDIRECT image=`), the Ceph version of both clusters
 (`RGW_REDIRECT ceph=`), each zone's ID and gateway binary
 (`RGW_REDIRECT zone=`), each zone's period (`RGW_REDIRECT period`), the two

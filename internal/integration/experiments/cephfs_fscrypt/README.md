@@ -80,7 +80,9 @@ option or `client_fscrypt_dummy_encryption` is used.
 
 ## Tier and triggers
 
-Optional: no required CI environment is proven to give client containers
+Optional batch `cephfs_fscrypt` with its own opt-in tag and a 30-minute
+budget; it passes on the published images and prints no result line. It is
+not an `Experiments` case. No required CI environment is proven to give client containers
 `CAP_SYS_ADMIN` and an unconfined profile or to have the kernel module
 registered. One run takes about 50 seconds on a Linux amd64 Docker Engine
 host with warm images (46 s on 20.2.4, 51 s on 19.2.5, 55 s on 21.2.0).
@@ -88,6 +90,8 @@ host with warm images (46 s on 20.2.4, 51 s on 19.2.5, 55 s on 21.2.0).
 - Pull request: not in the default checks; a maintainer runs it on the
   head with `/ci run cephfs_fscrypt [on squid|umbrella]`.
 - Periodic: never.
+
+The shared triggers and the tag runner are described in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -108,9 +112,6 @@ python3 .github/scripts/tag_scenarios.py optional --batch cephfs_fscrypt \
   --package ./internal/integration/experiments/cephfs_fscrypt \
   --directory "artifacts/cephfs-fscrypt-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
-
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
 
 Each subtest logs one `FSCRYPT_RECEIPT` line, or `FSCRYPT_CLIENT_REFUSED`
 for a client build without fscrypt.

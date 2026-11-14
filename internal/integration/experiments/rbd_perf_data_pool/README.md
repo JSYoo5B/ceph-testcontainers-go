@@ -10,9 +10,17 @@ Unfiltered `rbd perf image iostat` must report positive writes to both identifie
 
 Three consecutive qualifying samples at least six seconds apart must agree. If the filter returns the EC-backed image, the caller also checks that the CLI reports positive writes for that exact pool and image. A missing control, malformed reply or failed writer fails the test. The observation loop is bounded to 130 seconds and individual commands to 60 seconds. Test teardown stops both writers and removes the cluster, clients and disposable storage.
 
+## Tier and triggers
+
+Known-defect reproducer, optional batch `rbd_perf_data_pool` with a 20-minute budget; no
+automatic run includes it. It is an `Experiments` case, and its fixed image
+there is `quay.io/ceph/ceph:v19.2.7`. The triggers, the result checks and the image
+injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Run and interpret the result
 
-This optional `native_regression` experiment runs MON, MGR, three OSDs and the admin client on one aggregate image (essential and client roles). On the default 19.2.5 aggregate the EC filter returns no active image while both controls report writes. With upstream 19.2.7, the selected EC pool returns the image under its original metadata-pool name. The case passes on either observation and prints the corresponding `EXPERIMENT_RESULT`. This characterizes the native stats query and requires no fixture API change.
+MON, MGR, three OSDs and the admin client run on one aggregate image (essential and client roles). On the default 19.2.5 aggregate the EC filter returns no active image while both controls report writes, and the case prints `REPRODUCED`. With upstream 19.2.7, the selected EC pool returns the image under its original metadata-pool name, and the case prints `NOT_REPRODUCED`. Either way it prints one [result line](../../../../docs/contributing/testing.md#experiment-result-lines) and passes. This characterizes the native stats query and requires no fixture API change.
 
 ```sh
 pkg=github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_perf_data_pool

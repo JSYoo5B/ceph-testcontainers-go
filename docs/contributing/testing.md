@@ -722,23 +722,19 @@ mixes fixture coverage with native characterization, split it by subtest:
 fixture parts, and `cephfs_authorization_isolation` and
 `rgw_kms_failure_modes` hold the native ones.
 
-- The case directory holds a `README.md` manual: use case, native contract
-  and trigger, upstream issue and fix links, topology and image roles,
-  resource and time bounds, the runnable command and image inputs, the
-  observations and controls, the meaning of pass, observed bug, not
-  reproduced, unavailable prerequisite and condition not established, and
-  cleanup and limits. It describes the current reproduction, not a diary;
-  logs and full reports stay in issues and artifacts. Upstream Ceph issue and
-  fix links go in this manual; code comments, test messages, commits and pull
-  requests describe the mechanism instead.
+Each case has a tier that decides where it runs (see
+[Experiment case tiers](ci.md#experiment-case-tiers)):
+
+| Tier | Build constraint | Runs |
+| --- | --- | --- |
+| Docker-free unit tests of a case (judgement, readers) | the `code` category, batch `pure` | Code checks, every change |
+| Cheap deterministic case, a characterization or a reproducer | a required batch of a non-`short` category | a pull request that changes a file of the case, `ci:full`, Periodic |
+| Known-defect reproducer that is expensive or fails on the published images | an optional `native_regression` batch | only on request |
+| Case with privileges or host prerequisites no required runner has | an optional batch with its own opt-in tag (`cephfs_fscrypt`) | only on request |
+
 - Its `_test.go` files keep the usual build constraints, `//ci:` lines and
-  batches, and its tier decides which: a cheap deterministic case is a
-  required batch of a non-`short` category, so a pull request runs it only
-  when the case's files change; a case that fails on the unpatched published
-  images is an optional `native_regression` batch that runs only on request
-  (see [Experiment case tiers](ci.md#experiment-case-tiers)). Give the
-  manual the tier and the exact command. A case directory does not make a
-  test manual-only, and moving a case changes its package path, so run
+  batches. A case directory does not make a test manual-only, and moving a
+  case changes its package path, so run
   [`plan --verify`](#verify-batch-profiles-before-pushing) and update every
   `--package` that names it.
 - A case that reproduces a known defect is a standalone test written at
@@ -748,9 +744,8 @@ fixture parts, and `cephfs_authorization_isolation` and
     the trigger) fails the test. That is a real problem with the case or the
     fixture.
   - The then step decides whether the documented symptom occurred and only
-    reports it, in one line per independently evaluated defect:
-    `EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]`.
-    The result never fails the test.
+    reports it, in one [result line](#experiment-result-lines) per
+    independently evaluated defect. The result never fails the test.
   - The image is the only input that changes the given step's premise. It is
     a package-level string variable, `image`, whose default is the release
     tag of an image that reproduces the defect: the published aggregate
@@ -758,35 +753,107 @@ fixture parts, and `cephfs_authorization_isolation` and
     or the upstream tag (`quay.io/ceph/ceph:v<release>`) of a release that
     has no published aggregate. The default never names a digest
     ([Image references](../../AGENTS.md#image-references)); the manual and
-    its examples name images by tag too. A run selects another
-    image with `-ldflags "-X <import path>_test.image=<image>"`, any
-    reference the caller chooses, and an image
-    that no longer reproduces it is one where the defect is resolved. The
-    result comes from the symptom and the prerequisites observed on the image
-    that ran, never from which build it is. Every
-    container the case starts from a Ceph image (cluster, admin client,
-    mirror daemon, gateway) runs that image: a case starts its cluster with
-    `harness.NewSingleImageCluster` or the package `Run` functions, never
-    with a helper that reads the batch's role images.
-  - Running that single test is enough to reproduce the defect:
-
-    ```sh
-    go test -tags=all,native_regression -count=1 -v ./internal/integration/experiments/rgw_empty_sse_header/
-    go test -tags=all,native_regression -count=1 -v \
-      -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5" \
-      ./internal/integration/experiments/rgw_empty_sse_header/
-    ```
-
-    The first prints `result=REPRODUCED`, the second `result=NOT_REPRODUCED`,
-    and both pass. The `Experiments` workflow runs the same command for one
-    case and requires every result line to be `REPRODUCED` on the default
-    image. When a fixed image is given it runs the second command afterwards
-    and requires each result the default run reproduced to be printed again
-    as `NOT_REPRODUCED`.
+    its examples name images by tag too. An image that no longer reproduces
+    the defect is one where the defect is resolved. The result comes from the
+    symptom and the prerequisites observed on the image that ran, never from
+    which build it is. Every container the case starts from a Ceph image
+    (cluster, admin client, mirror daemon, gateway) runs that image: a case
+    starts its cluster with `harness.NewSingleImageCluster` or the package
+    `Run` functions, never with a helper that reads the batch's role images.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a
   release-prefix branch because it exists.
+
+#### Experiment case manuals
+
+The case directory holds a `README.md` manual with what is specific to the
+case, and links to [Running an experiment case](#running-an-experiment-case)
+for the shared conventions instead of repeating them:
+
+- the use case, the native contract and the trigger, with the upstream issue
+  and fix links;
+- the topology, image roles and other prerequisites, and the resource and
+  time bounds;
+- the tier, the batch and its budget, the measured run times, and the
+  triggers that differ from the shared ones (for example the releases a
+  `/ci run` makes sense on, or no `Experiments` entry);
+- at least one directly runnable command, with the case's own `-run`,
+  timeout, environment and flags, and for a reproducer the fixed image to
+  inject, if any;
+- the observations and controls, what each result or failure means for this
+  case (observed bug, not reproduced, unavailable prerequisite, condition not
+  established), and the releases and images it ran on with their results;
+- cleanup and limits.
+
+It describes the current reproduction, not a diary; logs and full reports
+stay in issues and artifacts. Upstream Ceph issue and fix links go in this
+manual; code comments, test messages, commits and pull requests describe the
+mechanism instead.
+
+#### Running an experiment case
+
+Run a case from the module root. Its manual names the test, the batch and
+any prerequisite of its own.
+
+- **Build tags.** A case in a required batch needs `-tags=all`, one in an
+  optional `native_regression` batch `-tags=all,native_regression`, and an
+  opt-in case its own tag (`-tags=all,cephfs_fscrypt`). The Docker-free tests of a case
+  run with a plain `go test` of its package.
+- **Images.** A known-defect reproducer runs every Ceph container from its
+  package variable `image` and ignores the image variables of
+  [Choosing images](#choosing-images), including the role images that a CI
+  batch exports. Another image is injected at link time, with any reference
+  you choose:
+
+  ```sh
+  name=rgw_empty_sse_header   # the case directory
+  go test -tags=all,native_regression -count=1 -v -timeout=20m \
+    -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/${name}_test.image=quay.io/ceph/ceph:v20.2.5" \
+    "./internal/integration/experiments/${name}"
+  ```
+
+  A case without that variable reads the image variables like any other
+  integration test; its manual says so.
+- **The tag runner.** `tag_scenarios.py` runs a case's batch exactly as CI
+  does (see [One CI batch](#one-ci-batch-exactly-as-ci-runs-it)):
+  `optional --batch <batch>` for an optional batch, `run --category
+  <category> --batch <batch>` for a required one, each with
+  `--package ./internal/integration/experiments/<case>`. It refuses an
+  existing `--directory`, so give every run, such as each release of a
+  comparison, its own (for example with a timestamp).
+- **CI triggers.** A required case runs on a pull request only when a file of
+  its directory changes, or with `ci:full`, and Periodic `rotate` can draw
+  it. Any case's batch runs on a pull request's head with
+  `/ci run <batch> [on <release>]` (see
+  [Running chosen batches from a comment](ci.md#running-chosen-batches-from-a-comment)).
+  A known-defect reproducer that has an entry in `experiments.yml` runs
+  through `Experiments`, which checks its results:
+
+  ```sh
+  gh workflow run Experiments -f case=<case> [-f image=<fixed image>]
+  ```
+
+  Every result line must be `REPRODUCED` on the default image. With a fixed
+  image the case then runs again with it injected, and every result the
+  default run reproduced must be printed again as `NOT_REPRODUCED`.
+  `gh workflow run "Native regressions" -f batch=<batch>` and `/ci run` run
+  the batch and take only its pass or failure.
+
+##### Experiment result lines
+
+A known-defect reproducer that passes its given and when steps prints one
+line per independently evaluated defect, and passes whatever it found:
+
+```text
+EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]
+```
+
+`REPRODUCED` means the documented symptom occurred on the image that ran,
+`NOT_REPRODUCED` that it did not; `symptoms` names what was observed. A
+failure of a given or when step (a condition not established, an unavailable
+prerequisite, a failed control) fails the test, which then prints no result
+for that defect. The manual says what each result means for the case.
 
 ### Messenger coverage manifest
 

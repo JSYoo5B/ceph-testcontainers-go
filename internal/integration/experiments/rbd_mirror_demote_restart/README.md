@@ -49,19 +49,19 @@ only after the copy resumed, which an image with defect 1 never does.
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Squid
-19.2.3 by default, which reproduces `demotion-resume`. Its given and when
-steps (steps 1 to 3 below) fail the test; the then step does not. It prints
-`EXPERIMENT_RESULT case=rbd_mirror_demote_restart/demotion-resume result=...`,
-and, only when the copy resumed,
-`EXPERIMENT_RESULT case=rbd_mirror_demote_restart/resumed-bytes result=...`.
-It passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rbd_demote_restart`.
-- Comment: `/ci run rbd_demote_restart` or `/ci run rbd_demote_restart on squid`.
+Known-defect reproducer, optional batch `rbd_demote_restart` with a 30-minute
+budget; no automatic run includes it. The default image is Squid 19.2.3,
+which reproduces `demotion-resume`. Its given and when steps are steps 1 to 3
+below. It prints the
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines)
+`case=rbd_mirror_demote_restart/demotion-resume`, and, only when the copy
+resumed, `case=rbd_mirror_demote_restart/resumed-bytes`. It is an
+`Experiments` case; with the fixed image
+`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all` the dispatch
+requires `demotion-resume` to be `NOT_REPRODUCED` and prints `resumed-bytes`
+without judging it, since only that run reaches it. A comment run can name a
+release, for example `/ci run rbd_demote_restart on squid`. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -74,8 +74,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rbd_mirror_demote_restart
 ```
 
-On another image, injected into the package's `image` variable. A release
-that fixes defect 1 (Squid 19.2.4 here; Tentacle 20.2.1 and later too) must
+On another image. A release that fixes defect 1 (Squid 19.2.4 here; Tentacle 20.2.1 and later too) must
 print `demotion-resume result=NOT_REPRODUCED`; every such release qualified
 so far prints `resumed-bytes result=REPRODUCED`, because no release fixes
 defect 2:
@@ -87,8 +86,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rbd_mirror_demote_restart
 ```
 
-The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, ...)
-do not select the case's images. The netem helper image
+The netem helper image
 (`CEPH_TEST_NETEM_IMAGE`) is not a Ceph image and keeps its own selection.
 The test logs the image and the clusters' Ceph versions.
 

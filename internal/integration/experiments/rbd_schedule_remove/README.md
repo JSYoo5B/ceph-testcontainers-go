@@ -37,8 +37,11 @@ Upstream references:
 
 ## Tier and triggers
 
-Cheap and deterministic: one native run takes about 20 seconds on 20.2.4
-(76 seconds on 19.2.2 including the image pull) and passes on every build.
+Cheap deterministic characterization, required `topology` batch
+`discovery_schedule` with a 7-minute budget: one native run takes about 20
+seconds on 20.2.4 (76 seconds on 19.2.2 including the image pull) and passes
+on every build. It is not an `Experiments` case. The shared triggers are in
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 - Pull request: only when a file of this directory changes (a required
   `topology` batch), or with the `ci:full` label. The test uses no fixture API
@@ -54,7 +57,7 @@ From the module root:
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.2 \
-CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=10m \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=7m \
   -run '^TestDiscoveryTrashScheduleBoundary$' \
   ./internal/integration/experiments/rbd_schedule_remove
 ```
@@ -67,9 +70,6 @@ python3 .github/scripts/tag_scenarios.py run --category topology \
   --package ./internal/integration/experiments/rbd_schedule_remove \
   --directory "artifacts/rbd-schedule-remove-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
-
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
 
 Name the image you ran (`quay.io/ceph/ceph:v19.2.2` or the published role
 aggregate) with a result you report.

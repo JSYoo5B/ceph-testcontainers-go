@@ -38,20 +38,15 @@ workaround.
 
 ## Tier and triggers
 
-Standalone reproducer with a bridge and a host-network variant. The test
-fails only when its setup or a control does not hold; the documented
-symptom does not fail it. Each variant prints one `EXPERIMENT_RESULT` line,
-`case=cephfs_mirror_daemon_redistribution/bridge` or `/host`, `REPRODUCED`
-on its default image, Tentacle 20.2.4. No automatic run includes it (the
-default checks of a pull request, pushes to `main`, periodic samples), and
-it never gates anything. A maintainer can run it on demand, also on a pull
-request's head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=native_shuffle`.
-- Comment: `/ci run native_shuffle`.
-
-Every container the test starts uses `image`, so the role images that a
-batch exports do not reach it.
+Known-defect reproducer with a bridge and a host-network variant, optional
+batch `native_shuffle` with a 60-minute budget; no automatic run includes it.
+Each variant prints its own result,
+`case=cephfs_mirror_daemon_redistribution/bridge` or `/host`. On its default
+image, Tentacle 20.2.4, both print `REPRODUCED` (357 s bridge, 351 s host),
+and they still do on 20.2.5 and 21.2.0. No release is fixed, so its
+`Experiments` dispatch has only the default run. The comment run is
+`/ci run native_shuffle`. The shared triggers, result checks and image
+injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 

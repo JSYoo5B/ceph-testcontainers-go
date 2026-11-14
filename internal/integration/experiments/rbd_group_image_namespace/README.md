@@ -6,9 +6,17 @@ One OSD and an administrative client. The pool contains a named namespace and sa
 
 On 19.2.0 explicit add changes only the default group and explicit remove clears only that group. On 19.2.1 and 19.2.5 both operations change only the named group. Membership comes from formatted listings of both groups after each operation. An unexpected membership, CLI refusal, or failed control fails the test.
 
+## Tier and triggers
+
+Known-defect reproducer, optional batch `rbd_group_image_namespace` with a 20-minute budget; no
+automatic run includes it. It is an `Experiments` case, and its fixed image
+there is `quay.io/ceph/ceph:v19.2.1`. The triggers, the result checks and the image
+injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Run and interpret the result
 
-This optional `native_regression` experiment uses one aggregate Ceph image for the cluster and client (essential and client roles). The default is `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all`. Both observed outcomes pass. The case emits a separate `EXPERIMENT_RESULT` for add and remove with `REPRODUCED` when the documented symptom occurs and `NOT_REPRODUCED` when it observes the corrected behavior. A missing prerequisite or an unclassified result fails the test.
+The cluster and client run one aggregate image (essential and client roles); the default is `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all`. The case prints a separate [result line](../../../../docs/contributing/testing.md#experiment-result-lines) for add and for remove: `REPRODUCED` when the operation changes the default namespace's group, `NOT_REPRODUCED` when it changes only the named group. 19.2.0 printed `REPRODUCED`, 19.2.1 `NOT_REPRODUCED`. A missing prerequisite or an unclassified result fails the test.
 
 ```sh
 pkg=github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_group_image_namespace

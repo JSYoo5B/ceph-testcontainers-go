@@ -41,20 +41,12 @@ Upstream reference: [tracker 81590](https://tracker.ceph.com/issues/81590).
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rbd_group_snap_late_complete result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
-
-- Manual: `gh workflow run "Experiments" -f case=rbd_group_snap_late_complete`,
-  or `gh workflow run "Native regressions" -f batch=rbd_group_snap_late_complete`
-  for its pass or failure only.
-- Comment: `/ci run rbd_group_snap_late_complete` or
-  `/ci run rbd_group_snap_late_complete on umbrella`.
+Known-defect reproducer, optional batch `rbd_group_snap_late_complete` with
+a 20-minute budget; no automatic run includes it. The default image is
+Tentacle 20.2.4. It is an `Experiments` case without a fixed image: no release
+fixes the defect yet. A comment run can name a release, for example
+`/ci run rbd_group_snap_late_complete on umbrella`. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -66,8 +58,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rbd_group_snap_late_complete
 ```
 
-On another image, injected into the package's `image` variable; a fixed
-image must print `result=NOT_REPRODUCED`. No release fixes the defect yet,
+On another image; a fixed image must print `result=NOT_REPRODUCED`. No release fixes the defect yet,
 so the example names Umbrella 21.2.0, which reproduces it too:
 
 ```sh
@@ -77,9 +68,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rbd_group_snap_late_complete
 ```
 
-The cluster and its client run `image`; the role image variables
-(`CEPH_TEST_IMAGE`, `CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The test
-logs the client's `ceph --version`.
+The test logs the client's `ceph --version`.
 
 ## Observations and controls
 
@@ -124,6 +113,10 @@ from before its removal and sends it again with
 7. `late` is judged by its listing and its header object.
 
 ## Reading the result
+
+The test prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rbd_group_snap_late_complete`.
 
 - **REPRODUCED:** the server accepted the late update, the header object of
   `late` has `snapshot_<victim id>` again without `snap_order_<victim id>`,

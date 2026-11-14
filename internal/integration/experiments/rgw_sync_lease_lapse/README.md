@@ -68,19 +68,16 @@ Every published image reproduces it in the test's last round.
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps (the
-realm, the seeds, both control rounds and the trigger's condition) fail the
-test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rgw_sync_lease_lapse result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_sync_lease_lapse`.
-- Comment: `/ci run rgw_sync_lease_lapse` or
-  `/ci run rgw_sync_lease_lapse on umbrella`.
+Known-defect reproducer, optional batch `rgw_sync_lease_lapse` with a
+40-minute budget; no automatic run includes it. Its default image is Tentacle
+20.2.4; it starts two clusters and pauses the gateways. Its given and when
+steps are the realm, the seeds, both control rounds and the trigger's
+condition. It is an `Experiments` case without a fixed image, since no
+release fixes the defect, so a dispatch has only the default run.
+`/ci run rgw_sync_lease_lapse` takes an `on <release>` such as `on umbrella`.
+The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its log reader and gateway state tests are Docker-free `code/pure`
+tests that Code checks runs on every change (under 1 s).
 
 ## Running it
 
@@ -92,8 +89,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
   ./internal/integration/experiments/rgw_sync_lease_lapse
 ```
 
-On another image, such as a patched build, injected into the package's
-`image` variable; a fixed image must print `result=NOT_REPRODUCED`. No
+On another image, such as a patched build; a fixed image must print `result=NOT_REPRODUCED`. No
 release fixes the defect yet.
 
 ```sh
@@ -102,9 +98,6 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
   -run '^TestMultiClusterRGWDataSyncAfterSyncLeaseLapse$' \
   ./internal/integration/experiments/rgw_sync_lease_lapse
 ```
-
-The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
-not select the case's images.
 
 ## Observations and controls
 
