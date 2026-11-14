@@ -37,7 +37,7 @@ ceph-testcontainers-images.
    [supported releases](ci.md#supported-releases) through a full Ceph
    periodic run or the release matrix), which no rule requires but the
    release does. Record the workflow/run and
-   attempt identities, chosen image references and actual image IDs. A
+   attempt identities and the image references that ran. A
    canceled, skipped or missing scenario is not a native pass. Record
    vulnerability-scan results from Code checks as well.
 5. Review failed attempts, not just their latest conclusion. Keep fixed
