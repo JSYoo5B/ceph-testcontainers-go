@@ -126,6 +126,30 @@ class PinnedGoCephTests(unittest.TestCase):
         self.assertEqual(self.pinned(module + "require (\n\tgithub.com/ceph/go-ceph v0.43.1\n\tgolang.org/x/sys v0.48.0 // indirect\n)\n"),
                          "v0.43.1")
 
+    def test_replacement_matches_the_original_module_path(self):
+        requirement = "module probe\nrequire github.com/ceph/go-ceph v0.42.0\n"
+        for replacement in ("replace github.com/ceph/go-ceph-extra => ../other",
+                            "replace example.org/other => github.com/ceph/go-ceph v0.42.0"):
+            self.assertEqual(self.pinned(requirement + replacement + "\n"), "v0.42.0")
+        with self.assertRaisesRegex(RuntimeError, "replaces go-ceph"):
+            self.pinned(requirement + "replace (\n github.com/ceph/go-ceph => ../go-ceph\n)\n")
+
+    def test_comments_inside_quoted_module_fields(self):
+        requirement = 'require "github.com/ceph/go-ceph" "v0.42.0"// pin'
+        other = 'example.org/other => "../dir//child" // "comment'
+        for replacement in ("replace " + other, "replace(\n" + other + "\n)"):
+            with self.subTest(replacement=replacement):
+                self.assertEqual(self.pinned(requirement + "\n" + replacement + "\n"), "v0.42.0")
+
+    def test_escaped_module_fields_refuse_the_receipt(self):
+        requirement = "require github.com/ceph/go-ceph v0.42.0\n"
+        for original in (r'"github.com/ceph/go\x2dceph"', r'"github.com/ceph/go\055ceph"',
+                         r'"github.com/ceph/go\u002dceph"'):
+            for replacement in ("replace " + original + " => ../local",
+                                "replace(\n" + original + " => ../local\n)"):
+                with self.subTest(replacement=replacement), self.assertRaisesRegex(RuntimeError, "unsupported"):
+                    self.pinned(requirement + replacement + "\n")
+
     def test_missing_replaced_or_unreleased_go_ceph_is_refused(self):
         module = "module probe\n\ngo 1.26.0\n\n"
         for text in (module,

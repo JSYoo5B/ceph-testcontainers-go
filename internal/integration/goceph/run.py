@@ -20,16 +20,58 @@ import uuid
 SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4"
 
 
-GO_CEPH = re.compile(r"^(?:require\s+|\s+)github\.com/ceph/go-ceph\s+(v[0-9]+\.[0-9]+\.[0-9]+)\s*$", re.M)
+GO_CEPH = "github.com/ceph/go-ceph"
+
+
+# Keep quotes on tokens so a quoted parenthesis cannot close a directive block.
+# The receipt reader accepts plain double-quoted fields. Escaped fields need
+# Go string decoding and are explicitly refused before reporting a release.
+MOD_TOKEN = re.compile(r"""[ \t\r]+|//.*|"[^"\\]*"|[()[\]{},]|(?:(?!//|/\*)[^\s()[\]{},"'`\\])+""")
+
+
+def module_tokens(line, go_mod, number):
+    tokens = []
+    pos = 0
+    while pos < len(line):
+        match = MOD_TOKEN.match(line, pos)
+        if not match:
+            raise RuntimeError(f"{go_mod}:{number}: unsupported go.mod token or quoted escape")
+        token = match[0]
+        if token.startswith("//"):
+            break
+        if not token.isspace():
+            tokens.append(token)
+        pos = match.end()
+    return tokens
 
 
 def pinned_go_ceph(go_mod):
-    """The go-ceph version that the probe module requires: the one place
-    that pins it. The test compares each probe receipt with it."""
-    text = go_mod.read_text()
-    if re.search(r"^\s*replace\b.*github\.com/ceph/go-ceph", text, re.M):
-        raise RuntimeError(str(go_mod) + " replaces go-ceph; a replaced module has no comparable version")
-    versions = GO_CEPH.findall(text)
+    """Read the released go-ceph requirement from the probe module."""
+    versions = []
+    block = None
+    for number, line in enumerate(go_mod.read_text().split("\n"), 1):
+        tokens = module_tokens(line, go_mod, number)
+        if not tokens:
+            continue
+        if tokens == [")"]:
+            block = None
+            continue
+        if block is None:
+            directive, *tokens = tokens
+            if tokens == ["("]:
+                block = directive
+                continue
+        else:
+            directive = block
+        tokens = [token.strip('"') for token in tokens]
+        if not tokens or tokens[0] != GO_CEPH:
+            continue
+        if directive == "replace":
+            raise RuntimeError(str(go_mod) + " replaces go-ceph; a replaced module has no comparable version")
+        if directive == "require":
+            if len(tokens) != 2 or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tokens[1]):
+                raise RuntimeError(str(go_mod) + " must require a released go-ceph version")
+            versions.append(tokens[1])
     if len(versions) != 1:
         raise RuntimeError(str(go_mod) + " must require go-ceph exactly once with a released version")
     return versions[0]
