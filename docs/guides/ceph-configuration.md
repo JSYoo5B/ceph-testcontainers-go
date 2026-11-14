@@ -291,7 +291,7 @@ a helper applies or restores it.
 ### Ceph releases
 
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
-- Umbrella 21.2.0 and Squid 19.2.5 are supported. A full Ceph periodic run
+- Umbrella 21.2.0 and Squid 19.2.5 are supported. A full Periodic run
   covers every runtime category on their role images, and the release matrix
   runs them on pull requests and `main` during a release phase; the
   per-change workflows use Tentacle only (see
