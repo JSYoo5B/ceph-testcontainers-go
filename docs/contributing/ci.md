@@ -1056,6 +1056,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `cephfs_snapshot_readdir_eviction` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_readdir_after_snapdiff` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
+| `rbd_group_snap_default_quiesce` callback controls (`code/pure`) | Docker-free Python verdict in normal and optimized modes | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rbd_group_snap_late_complete` judgement and report reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_mirror_blockdiff_empty_versions` judgement and reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `mgr_pg_merge_primary_override` OSDMap reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |

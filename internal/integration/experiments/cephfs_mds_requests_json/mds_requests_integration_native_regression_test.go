@@ -82,9 +82,11 @@ with TemporaryDirectory() as run, ExitStack() as stack:
     socket = Path(run, "actor.asok")
     holder = mount(stack, Path(run, "holder.asok"))
     actor = mount(stack, socket)
-    assert holder.get_instance_id() != actor.get_instance_id()
+    if holder.get_instance_id() == actor.get_instance_id():
+        raise RuntimeError("holder and actor share a client identity")
     baseline = dump(socket)
-    assert not list(requests(json.loads(baseline)))
+    if list(requests(json.loads(baseline))):
+        raise RuntimeError("actor has pre-existing lock requests: " + baseline)
     files = []
     for i in range(2):
         path = ("/mds-requests-%d" % i).encode()
@@ -110,17 +112,20 @@ with TemporaryDirectory() as run, ExitStack() as stack:
             waiters.append(pool.submit(actor.flock, fd, fcntl.LOCK_EX, 20 + i))
         raw, lossless = observe(socket, {f[2] for f in files})
         ordinary = set(requests(json.loads(raw)))
-        assert all(not future.done() for future in waiters)
+        if any(future.done() for future in waiters):
+            raise RuntimeError("a waiter finished before its lock was released")
         for i, (owner_fd, fd, inode) in enumerate(files):
             holder.flock(owner_fd, fcntl.LOCK_UN, 10 + i)
             waiters[i].result(timeout=15)
-            if i == 0:
-                assert not waiters[1].done()
+            if i == 0 and waiters[1].done():
+                raise RuntimeError("second waiter finished while its lock was held")
             actor.flock(fd, fcntl.LOCK_UN, 20 + i)
         locks.pop_all()
     after = dump(socket)
-    assert not list(requests(json.loads(after)))
-    assert ordinary <= lossless
+    if list(requests(json.loads(after))):
+        raise RuntimeError("actor still has lock requests after release: " + after)
+    if not ordinary <= lossless:
+        raise RuntimeError(("ordinary decode has an unexpected identity", ordinary, lossless))
     receipt = dict(raw=raw, ordinary=sorted(ordinary), lossless=sorted(lossless),
                    missing=sorted(lossless - ordinary), baseline=baseline, after=after)
 

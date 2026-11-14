@@ -36,7 +36,8 @@ func TestGroupSnapDefaultQuiesce(t *testing.T) {
 	t.Fatal("missing experiment observation")
 }
 
-const probe = `import ctypes as c
+const probe = quiesceVerdict + `
+import ctypes as c
 import subprocess
 from contextlib import ExitStack
 
@@ -97,7 +98,8 @@ def client(stack, mode):
         check(conf_set, cluster, key, mode)
         value = c.create_string_buffer(64)
         check(conf_get, cluster, key, value, len(value))
-        assert value.value == mode, value.value
+        if value.value != mode:
+            raise ValueError(("configured mode mismatch", mode, value.value))
     check(connect, cluster)
     check(io_create, cluster, pool.encode(), c.byref(io))
     stack.callback(io_destroy, io)
@@ -135,15 +137,11 @@ with ExitStack() as resources:
                 else:
                     check(snap, member, name.encode())
                     listing = run("rbd", "snap", "list", pool + "/member")
-                assert name in listing, listing
-                assert events in ([], ["quiesce", "unquiesce"]), (name, events)
+                if name not in listing:
+                    raise ValueError(("snapshot absent", name, listing))
+                if events not in ([], ["quiesce", "unquiesce"]):
+                    raise ValueError(("invalid callback sequence", name, events))
                 counts[name] = events.count("quiesce")
     print(counts)
-    assert (
-        counts["image-required"] == counts["group-required"] == 1 and counts["image-skip"] == 0
-    ), counts
-    if counts["group-skip"]:
-        print("REPRODUCED|[group-skip notified watcher]")
-    else:
-        print("NOT_REPRODUCED|[]")
+    print(quiesce_verdict(counts))
 `

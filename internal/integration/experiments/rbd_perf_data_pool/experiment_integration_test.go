@@ -60,7 +60,8 @@ run("ceph", "osd", "pool", "application", "enable", data, "rbd")
 run("rbd", "create", meta + "/striped", "--data-pool", data, "--size", "8M")
 run("rbd", "create", control + "/replicated", "--size", "8M")
 info = json.loads(run("rbd", "info", meta + "/striped", "--format", "json"))
-assert info["data_pool"] == data, info
+if info["data_pool"] != data:
+    raise RuntimeError(("image data pool mismatch", info))
 
 
 def sample(pool):
@@ -165,7 +166,8 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as workers:
                     "1",
                 )
             )
-            assert (meta, "striped") in {identity(r) for r in cli if active(r)}, cli
+            if (meta, "striped") not in {identity(r) for r in cli if active(r)}:
+                raise RuntimeError(("filtered CLI did not report the active EC image", cli))
         print(
             "NOT_REPRODUCED|[]"
             if seen[-1]

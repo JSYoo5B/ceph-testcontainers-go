@@ -67,6 +67,12 @@ def both(group):
     return members(selected, group), members(pool, group)
 
 
+def require_members(group, expected):
+    observed = both(group)
+    if observed != expected:
+        raise ValueError(("unexpected group membership", group, expected, observed))
+
+
 def spec(prefix, group, operation):
     run("rbd", "group", "image", operation, prefix + "/" + group, prefix + "/" + group + "-img")
 
@@ -99,12 +105,12 @@ for group in ("spec", "flags"):
     for prefix in (pool, selected):
         run("rbd", "group", "create", prefix + "/" + group)
         run("rbd", "create", prefix + "/" + group + "-img", "--size", "1M")
-    assert both(group) == ([], []), both(group)
+    require_members(group, ([], []))
 
 spec(selected, "spec", "add")
-assert both("spec") == ([(pool, namespace, "spec-img")], []), both("spec")
+require_members("spec", ([(pool, namespace, "spec-img")], []))
 spec(selected, "spec", "remove")
-assert both("spec") == ([], []), both("spec")
+require_members("spec", ([], []))
 
 named_member = [(pool, namespace, "flags-img")]
 default_member = [(pool, "", "flags-img")]
@@ -122,7 +128,7 @@ else:
 for prefix, existing in zip((selected, pool), after_add):
     if not existing:
         spec(prefix, "flags", "add")
-assert both("flags") == (named_member, default_member), both("flags")
+require_members("flags", (named_member, default_member))
 options("remove")
 after_remove = both("flags")
 print("after remove:", after_remove)
