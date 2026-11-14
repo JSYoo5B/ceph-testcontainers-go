@@ -15,6 +15,7 @@ on:
         options:
           - cephfs_authorization_isolation
           - cephfs_dangling_symlink_create
+          - cephfs_mds_requests_json
           - cephfs_mirror_blockdiff_empty_versions
           - cephfs_mirror_daemon_redistribution
           - cephfs_readdir_after_snapdiff
@@ -22,8 +23,11 @@ on:
           - cephfs_statfs_mixed_quota
           - mgr_pg_merge_primary_override
           - mon_log_ack_peon
+          - rbd_group_image_namespace
+          - rbd_group_snap_default_quiesce
           - rbd_group_snap_late_complete
           - rbd_mirror_demote_restart
+          - rbd_perf_data_pool
           - rbd_trash_purge_timezone
           - rgw_compressed_copy_accounting
           - rgw_empty_sse_header

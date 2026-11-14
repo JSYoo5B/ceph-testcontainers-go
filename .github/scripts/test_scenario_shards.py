@@ -919,13 +919,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("        type: choice\n        default: native_rgw_translation\n", workflow)
         choices = re.findall(r"(?m)^          - ([a-z0-9_]+)$", workflow)
         self.assertEqual(sorted(choices), ["cephfs_dangling_symlink_create",
+                                           "cephfs_mds_requests_json",
                                            "cephfs_mirror_blockdiff_empty",
                                            "cephfs_readdir_after_snapdiff",
                                            "cephfs_snapshot_readdir_eviction", "cephfs_statfs_mixed_quota",
                                            "failure_archive", "mgr_pg_merge_primary_override",
                                            "mon_log_ack", "native_rgw_translation",
                                            "native_shuffle", "rbd_demote_restart",
+                                           "rbd_group_image_namespace",
+                                           "rbd_group_snap_default_quiesce",
                                            "rbd_group_snap_late_complete",
+                                           "rbd_perf_data_pool",
                                            "rbd_trash_purge_timezone",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_expiration_header",
