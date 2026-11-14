@@ -100,32 +100,17 @@ func TestMultipartCompletionReplayETag(t *testing.T) {
 		t.Fatalf("first XML ETag=%q, want %q", first, expected)
 	}
 	replay, replayHeaders := complete()
-	switch {
-	case len(firstHeaders) == 0:
-		t.Log("HTTP ETag comparison unavailable: first completion had no ETag header")
-	case !slices.Equal(firstHeaders, []string{expected}):
-		t.Logf("HTTP ETag comparison unavailable: first header %q, expected %q", firstHeaders, expected)
-	case slices.Equal(replayHeaders, firstHeaders):
-		t.Log("HTTP ETag preserved on replay")
-	case len(replayHeaders) == 0 || slices.Equal(replayHeaders, []string{""}) || slices.Equal(replayHeaders, []string{`""`}):
-		t.Log("HTTP ETag lost on replay")
-	default:
-		t.Logf("HTTP ETag changed on replay: got %q, expected %q", replayHeaders, expected)
+	if !slices.Equal(firstHeaders, []string{expected}) {
+		t.Logf("HTTP ETag comparison unavailable: first headers=%q, expected one %q", firstHeaders, expected)
 	}
 	get := harness.RGWBackendSigned(t, ctx, client, "s3", "GET", path, nil, nil)
 	harness.RGWBackendRequire(t, get, 200)
 	if !bytes.Equal(get.Body, payload) || get.Headers.Get("ETag") != expected {
 		t.Fatal("stored object payload or ETag differs from completed upload")
 	}
-	verdict := "NOT_REPRODUCED"
-	var symptoms []string
-	switch replay {
-	case expected:
-	case "", `""`:
-		verdict = "REPRODUCED"
-		symptoms = append(symptoms, "empty replay XML ETag")
-	default:
-		t.Fatalf("unexpected replay XML ETag %q", replay)
+	verdict, symptoms, err := replayETagVerdict(expected, replay, firstHeaders, replayHeaders)
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Logf("EXPERIMENT_RESULT case=rgw_multipart_completion_replay_etag result=%s image=%s symptoms=%q", verdict, image, symptoms)
 }
