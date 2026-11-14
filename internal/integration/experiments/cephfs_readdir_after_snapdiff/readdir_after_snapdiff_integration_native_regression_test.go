@@ -24,7 +24,7 @@ import (
 //
 // No release is fixed: Squid 19.2.5, Tentacle 20.2.5 and Umbrella 21.2.0
 // reproduce it too.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // snapdiffRoot is the directory of the filesystem that holds the case.
 const snapdiffRoot = "/readdir-after-snapdiff"

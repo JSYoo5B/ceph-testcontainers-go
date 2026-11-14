@@ -42,7 +42,7 @@ const (
 // evaluated only on an image that resumes the copy, and every such image
 // qualified so far (19.2.4, 19.2.5, 20.2.4, 21.2.0) reproduces it; no image
 // reproduces both.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77cf1a45da918d090681744f610977c790f15cb8a6646f35fd8d44c"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.3-all"
 
 // rbdMirrorSnapshot is one entry of rbd snap ls --all with the mirror
 // snapshot namespace fields that tell a copied demotion snapshot apart.

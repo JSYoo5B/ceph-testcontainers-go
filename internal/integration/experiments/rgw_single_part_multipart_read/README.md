@@ -66,10 +66,10 @@ runs 19.1.0, whatever release the run selects.
 
 ## Running it
 
-The case runs on its own pinned image, the package variable `image`, and not
+The case runs on its own image, the package variable `image`, and not
 on the role images of the environment. The default is the official Squid release candidate 19.1.0, the only available
 build without the fix,
-(`quay.io/ceph/ceph:v19.1.0@sha256:56d1542f98c99516890898f79f1ba6010922be479a1432d7f380203a73405517`), which reproduces the defect:
+(`quay.io/ceph/ceph:v19.1.0`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -81,7 +81,7 @@ Another image, such as a fixed release, is injected at link time:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_single_part_multipart_read_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:dc4a21955b5c1babf0a22cf8e3b58b7763aacc8cacfa0fdcd72d894fc2cb7e55" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_single_part_multipart_read_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all" \
   -run '^TestRGWSinglePartMultipartNumberedRead$' \
   ./internal/integration/experiments/rgw_single_part_multipart_read
 ```
@@ -92,7 +92,7 @@ topology --batch rgw_single_part_read`) still runs the case and so runs
 which the case ignores: the cluster and its client container both run
 `image`.
 
-Record the image digests with the result; the log names the Ceph version
+The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as
 uploaded (`RGW_SP object=`), every numbered read, sent or not
 (`RGW_SP read`) and, after a read that did not end, the gateway process
@@ -163,7 +163,7 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| default, 19.1.0 official `sha256:56d1542f98c9…` | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
+| 19.1.0 official `sha256:56d1542f98c9…`, the default image when recorded | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
 | 19.2.0 aggregate `sha256:dc4a21955b5c…` | `NOT_REPRODUCED` | 61.4 s |
 
 ## Reading the result

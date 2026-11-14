@@ -101,7 +101,7 @@ so the example names Umbrella 21.2.0, which reproduces it too:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_slo_head_segment_reads_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623a5e6c9f7dc7dd13b356dcb1f71b0b4d74bf7cd2c175cd802735f" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_slo_head_segment_reads_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all" \
   -run '^TestRGWSLOHeadSegmentReads$' \
   ./internal/integration/experiments/rgw_slo_head_segment_reads
 ```
@@ -250,7 +250,7 @@ each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: the HEAD window holds `[call version.read in=11b, getxattrs, stat]` on the manifest and `[call version.read in=11b, getxattrs, stat, read 0~4194304]` on each segment; the OSD returned 9441229 bytes during the HEAD and during the full GET | 39 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: the HEAD window holds `[call version.read in=11b, getxattrs, stat]` on the manifest and `[call version.read in=11b, getxattrs, stat, read 0~4194304]` on each segment; the OSD returned 9441229 bytes during the HEAD and during the full GET | 39 s |
 | Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` | `REPRODUCED`, the same operations; 9441145 bytes for both | 43 s |
 | Tentacle 20.2.5, `quay.io/ceph/ceph@sha256:4337ac8ac81d…` | `REPRODUCED`, the same operations; 9441233 bytes for both | 40 s |
 | Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same operations; 9441223 bytes for both | 42 s |

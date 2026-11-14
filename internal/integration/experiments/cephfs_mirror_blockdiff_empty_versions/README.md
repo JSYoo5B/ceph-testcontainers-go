@@ -78,7 +78,7 @@ On another image, injected into the package's `image` variable. Tentacle
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all" \
   -run '^TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions$' \
   ./internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions
 ```
@@ -180,7 +180,7 @@ each unless noted):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` (default) | `REPRODUCED`: 4 blockdiff requests in the control; in step 4 the MDS container exited with code 1, its log has `interval_set.h: 493: FAILED ceph_assert(len > 0)` under `MDCache::aggregate_snap_sets`; the mirror stayed at `syncing` with `s2` last synchronized and `s3` absent on the destination | 148 s |
+| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` (the default image when recorded) | `REPRODUCED`: 4 blockdiff requests in the control; in step 4 the MDS container exited with code 1, its log has `interval_set.h: 493: FAILED ceph_assert(len > 0)` under `MDCache::aggregate_snap_sets`; the mirror stayed at `syncing` with `s2` last synchronized and `s3` absent on the destination | 148 s |
 | Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` | `NOT_REPRODUCED`: 4 blockdiff requests in the control and 2 more in step 4, the same MDS process and GID, `s3` last synchronized and equal on the destination | 131 s |
 | Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `NOT_REPRODUCED`: 4 blockdiff requests in the control and 2 more in step 4, the same MDS process and GID, `s3` last synchronized and equal on the destination; the threshold was set to 0 | 140 s |
 

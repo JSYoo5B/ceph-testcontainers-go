@@ -68,9 +68,9 @@ head with the comment below.
 
 ## Running it
 
-The case runs on its own pinned image, the package variable `image`, and not
+The case runs on its own image, the package variable `image`, and not
 on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
-(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -82,7 +82,7 @@ Another image, such as a fixed release, is injected at link time:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_ssec_multipart_completion_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_ssec_multipart_completion_test.image=quay.io/ceph/ceph:v21.2.0" \
   -run '^TestRGWSSECMultipartCompletion$' \
   ./internal/integration/experiments/rgw_ssec_multipart_completion
 ```
@@ -92,7 +92,7 @@ Native regressions workflow) still runs the case. It exports role images,
 which the case ignores: the cluster and its client container both run
 `image`.
 
-Record the image digests with the result; the log names the Ceph version
+The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_SSEC ceph=` and the daemon versions), every upload ID with its stored
 checksum algorithm, and each completion's HTTP status, whether a 200 carried
 an S3 error, and the error code and message.
@@ -143,7 +143,7 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: 400 `InvalidArgument` "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm." | 33.6 s |
+| 20.2.4 aggregate `sha256:2e57651a5aa7…`, the default image when recorded | `REPRODUCED`: 400 `InvalidArgument` "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm." | 33.6 s |
 | 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 32.3 s |
 
 ## Reading the result

@@ -28,7 +28,7 @@ import (
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_policy_translation_test.image=<image>"
 //
 // No release is known to fix either.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // testRGWSyncTranslationFiltering runs the two strict cases on one shared
 // realm, in the order the required supported cases use, each with its own

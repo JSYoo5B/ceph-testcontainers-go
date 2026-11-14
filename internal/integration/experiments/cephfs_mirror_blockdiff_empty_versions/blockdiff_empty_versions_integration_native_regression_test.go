@@ -117,7 +117,7 @@ const (
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions_test.image=<image>"
 //
 // Tentacle 20.2.4 and Umbrella 21.2.0 do not reproduce it.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a0bc6f5e6dfbf4973849a80cda16dda19336c66fa02d54b8cf38e"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all"
 
 // TestCephFSMirrorBlockdiffAcrossEmptyObjectVersions reports whether the
 // source MDS aborts when an incremental mirror synchronization asks for the

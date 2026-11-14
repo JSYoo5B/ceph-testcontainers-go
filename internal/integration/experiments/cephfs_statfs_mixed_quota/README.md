@@ -75,7 +75,7 @@ A fixed image, Tentacle 20.2.5 (or Umbrella 21.2.0), prints `NOT_REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_statfs_mixed_quota_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_statfs_mixed_quota_test.image=quay.io/ceph/ceph:v20.2.5" \
   -run '^TestCephFSStatfsWithNestedByteAndFileQuotas$' \
   ./internal/integration/experiments/cephfs_statfs_mixed_quota
 ```
@@ -126,7 +126,7 @@ the other releases 2 everywhere).
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 33 s; `parent/child` reported 236 blocks
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 33 s; `parent/child` reported 236 blocks
   with 236 free, as the directory without a byte quota does.
 - Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…`:
   `NOT_REPRODUCED` in 34 s.

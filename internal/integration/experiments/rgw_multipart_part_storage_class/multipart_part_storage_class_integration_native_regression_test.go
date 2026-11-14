@@ -40,7 +40,7 @@ const (
 //
 // No release is known to fix it: Squid 19.2.5, Tentacle 20.2.5 and Umbrella
 // 21.2.0 reproduce it too, so a run on them reports REPRODUCED.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 type mpCase struct {
 	ctx     context.Context

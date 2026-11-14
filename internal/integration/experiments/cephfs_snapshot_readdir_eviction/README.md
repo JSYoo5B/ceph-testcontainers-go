@@ -81,7 +81,7 @@ No release is fixed. Another image runs the same way, for example Umbrella 21.2.
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_snapshot_readdir_eviction_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_snapshot_readdir_eviction_test.image=quay.io/ceph/ceph:v21.2.0" \
   -run '^TestCephFSSnapshotListingAcrossCacheEviction$' \
   ./internal/integration/experiments/cephfs_snapshot_readdir_eviction
 ```
@@ -127,7 +127,7 @@ not name the snapshot in their path, and whether it dropped its dentry of
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 47 s; the trigger handle returned 2987
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 47 s; the trigger handle returned 2987
   entries, 372 snapshot names and 2615 live names, and 7 of its 8 readdir
   requests did not name the snapshot.
 

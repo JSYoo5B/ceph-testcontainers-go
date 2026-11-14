@@ -82,7 +82,7 @@ defect 2:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_mirror_demote_restart_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_mirror_demote_restart_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all" \
   -run '^TestRBDMirrorDemotionResumesAfterReceiverRestart$' \
   ./internal/integration/experiments/rbd_mirror_demote_restart
 ```
@@ -135,7 +135,7 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | `demotion-resume` | `resumed-bytes` | Time |
 | --- | --- | --- | --- |
-| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77c…` (default) | `REPRODUCED`: copy never completed (`up+unknown`, "remote image is not primary"); the `removed` replica stayed | not evaluated | 760 s |
+| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77c…` (the default image when recorded) | `REPRODUCED`: copy never completed (`up+unknown`, "remote image is not primary"); the `removed` replica stayed | not evaluated | 760 s |
 | Squid 19.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8…` | `NOT_REPRODUCED` | `REPRODUCED`: object 37 old, 63 new | 426 s |
 | Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` | `NOT_REPRODUCED` | `REPRODUCED`: object 44 old, 63 new | 430 s |
 
@@ -151,7 +151,7 @@ about defect 2:
 
 ```sh
 gh workflow run Experiments -f case=rbd_mirror_demote_restart \
-  -f image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0
+  -f image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all
 ```
 
 The table above is from separate `go test` runs. The scripted pair (19.2.3,

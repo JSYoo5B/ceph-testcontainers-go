@@ -61,14 +61,14 @@ On a fixed image, such as Tentacle 20.2.4, every line says `NOT_REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=30m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_authorization_isolation_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_authorization_isolation_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all" \
   -run '^TestCephFSAuthorizationIsolation$' \
   ./internal/integration/experiments/cephfs_authorization_isolation
 ```
 
 Squid 19.2.3 (fixed snapshot read) and 19.2.4 (also fixed subvolume
-namespaces) separate the three defects; their aggregates are pinned in
-`.github/ceph-discovery-images.json`. Every probe line
+namespaces) separate the three defects; their aggregates are the
+`official-19.2.3-all` and `official-19.2.4-all` tags. Every probe line
 (`native probe: {...}`) is logged.
 
 ## Observations and controls
@@ -102,8 +102,7 @@ namespaces) separate the three defects; their aggregates are pinned in
 
 Native results, Linux amd64 host, bridge networking, one run per image:
 
-- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…`
-  (default), 112 s: all three `REPRODUCED`. Caps: in all four clause
+- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…` (the default image when recorded), 112 s: all three `REPRODUCED`. Caps: in all four clause
   orders the create and the mkdir succeeded in the read-only filesystem.
   Snapshot: after the deletion the snapshot read and stat returned `EACCES`.
   Subvolumes: both got the namespace `fsvolumens_shared-name`, and each

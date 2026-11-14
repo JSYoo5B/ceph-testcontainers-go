@@ -71,7 +71,7 @@ which predates the introducing change, must print `result=NOT_REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/mon_log_ack_peon_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/mon_log_ack_peon_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all" \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
@@ -113,7 +113,7 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: osd.0 and osd.2 on peons never acknowledged; peons discarded 39 and 12 routed MLogAcks | 104 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: osd.0 and osd.2 on peons never acknowledged; peons discarded 39 and 12 routed MLogAcks | 104 s |
 | Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `REPRODUCED`: osd.2 on a peon never acknowledged | 104 s |
 | Squid 19.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…` | `NOT_REPRODUCED` | 46 s |
 
