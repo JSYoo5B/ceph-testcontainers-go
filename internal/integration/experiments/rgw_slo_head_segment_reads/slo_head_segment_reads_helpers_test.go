@@ -121,17 +121,19 @@ func parseOSDOp(description string) (osdOp, error) {
 	return op, nil
 }
 
-// extent is the byte range one read sub-operation asks for.
+// extent is the byte range one read sub-operation asks for. A length of
+// zero asks for everything from the offset to the end of the object.
 type extent struct{ Off, Len int64 }
 
 // within returns the bytes [start, end) of an object of size bytes that the
-// read returns: the OSD cuts a read off at the end of the object. A read
-// that starts at or beyond the end returns nothing.
+// read returns: the OSD reads to the end of the object for a length of
+// zero, and cuts a read off at the end of the object. A read that starts at
+// or beyond the end returns nothing.
 func (e extent) within(size int64) (start, end int64) {
 	if e.Off >= size {
 		return size, size
 	}
-	if e.Off+e.Len > size {
+	if e.Len == 0 || e.Off+e.Len > size {
 		return e.Off, size
 	}
 	return e.Off, e.Off + e.Len

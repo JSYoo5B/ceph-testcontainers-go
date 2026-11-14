@@ -93,6 +93,9 @@ func TestParseSubClassifiesReads(t *testing.T) {
 		"read 0~3145728":       {Off: 0, Len: 3145728},
 		"read 0~4194304":       {Off: 0, Len: 4194304},
 		"read 4194304~1048576": {Off: 4194304, Len: 1048576},
+		// A length of zero is kept: it asks for the rest of the object.
+		"read 0~0":       {Off: 0, Len: 0},
+		"read 1048576~0": {Off: 1048576, Len: 0},
 	} {
 		if got, other := parseSub(sub); other || got == nil || *got != want {
 			t.Errorf("%q = %v, other %t, want %v", sub, got, other, want)
@@ -134,6 +137,13 @@ func TestObjectOpsCovers(t *testing.T) {
 		{"a read beyond the end", []extent{{0, 4096}}, 100, true, 100},
 		{"adjacent reads in any order", []extent{{50, 50}, {0, 50}}, 100, true, 100},
 		{"overlapping reads", []extent{{0, 60}, {40, 60}}, 100, true, 120},
+		// A length of zero reads from the offset to the end of the object.
+		{"a read of the rest from the start", []extent{{0, 0}}, 100, true, 100},
+		{"a read of the rest from the middle", []extent{{40, 0}}, 100, false, 60},
+		{"the first bytes and a read of the rest", []extent{{0, 40}, {40, 0}}, 100, true, 100},
+		{"the first bytes and a read of the rest after a hole", []extent{{0, 40}, {41, 0}}, 100, false, 99},
+		{"a read of the rest from the end", []extent{{100, 0}}, 100, false, 0},
+		{"a read of the rest from beyond the end", []extent{{4096, 0}}, 100, false, 0},
 		{"no read", nil, 100, false, 0},
 		{"a read of the first bytes", []extent{{0, 99}}, 100, false, 99},
 		{"a read that starts late", []extent{{1, 99}}, 100, false, 99},
@@ -245,7 +255,7 @@ func TestRequireMetadataOnly(t *testing.T) {
 		"a tail object of the head":      {"b.1_single": head, "b.1__shadow_single_1": head},
 		"an operation on a PG":           {"b.1_single": head, "": {Requests: 1, Other: []string{"pgnls start_epoch 9"}}},
 		"a data read of the head":        {"b.1_single": {Requests: 1, Reads: []extent{{0, 4194304}}}},
-		"an empty read of the head":      {"b.1_single": {Requests: 1, Reads: []extent{{0, 0}}}},
+		"a read of the rest of the head": {"b.1_single": {Requests: 1, Reads: []extent{{0, 0}}}},
 		"an unclassified read":           {"b.1_single": {Requests: 1, Other: []string{"sparse-read 0~4096"}}},
 		"a call of an unknown method":    {"b.1_single": {Requests: 1, Other: []string{"call rgw.obj_store_pg_ver in=20b"}}},
 		"a write on the head object":     {"b.1_single": {Requests: 1, Other: []string{"writefull 0~10"}}},
@@ -263,7 +273,7 @@ func TestJudgeSLOHead(t *testing.T) {
 	segments := []segment{{"s.2_segment-0000", 100}, {"s.2_segment-0001", 100}, {"s.2_segment-0002", 50}}
 	stat := objectOps{Requests: 1}
 	full := func(size int64) objectOps { return objectOps{Requests: 1, Reads: []extent{{0, size}}} }
-	// rest is a read that starts at offset and has no length.
+	// rest is a read with a length of zero: from offset to the end.
 	rest := func(offset int64) objectOps { return objectOps{Requests: 1, Reads: []extent{{offset, 0}}} }
 	read := map[string]objectOps{manifest: stat, "s.2_segment-0000": full(100), "s.2_segment-0001": full(100), "s.2_segment-0002": full(50)}
 	get := sloWindow{Ops: read, OutBytes: 260}
@@ -284,8 +294,12 @@ func TestJudgeSLOHead(t *testing.T) {
 		{name: "the HEAD reads every segment", get: get, head: sloWindow{Ops: read, OutBytes: 255}, symptoms: 4},
 		{name: "the HEAD reads every segment in chunks", get: get,
 			head: sloWindow{Ops: with(read, "s.2_segment-0000", objectOps{Requests: 2, Reads: []extent{{0, 64}, {64, 36}}}), OutBytes: 250}, symptoms: 4},
+		{name: "the HEAD reads the rest of every segment from its start", get: get,
+			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(0), "s.2_segment-0001": rest(0), "s.2_segment-0002": rest(0)}, OutBytes: 255}, symptoms: 4},
 		{name: "the HEAD asks for more than every segment holds", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(4096), "s.2_segment-0001": full(4096), "s.2_segment-0002": full(4096)}, OutBytes: 255}, symptoms: 4},
+		{name: "the GET reads the rest of every segment from its start", head: sloWindow{Ops: map[string]objectOps{manifest: stat}},
+			get: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(0), "s.2_segment-0001": rest(0), "s.2_segment-0002": rest(0)}, OutBytes: 260}},
 		{name: "the HEAD reads only the manifest", get: get, head: sloWindow{Ops: map[string]objectOps{manifest: stat}, OutBytes: 0}},
 		{name: "the HEAD reads the attributes of the segments", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": stat, "s.2_segment-0001": stat, "s.2_segment-0002": stat}, OutBytes: 49}},
@@ -303,6 +317,10 @@ func TestJudgeSLOHead(t *testing.T) {
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(10), "s.2_segment-0001": full(10), "s.2_segment-0002": full(10)}, OutBytes: 30}, want: "another state"},
 		{name: "the HEAD reads one segment of three", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": full(100)}, OutBytes: 100}, want: "another state"},
+		{name: "the HEAD reads the rest of one segment of three", get: get,
+			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": {Requests: 1, Reads: []extent{{0, 0}}}}, OutBytes: 100}, want: "another state"},
+		{name: "the HEAD reads the rest of every segment from its middle", get: get,
+			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(40), "s.2_segment-0001": rest(40), "s.2_segment-0002": rest(40)}, OutBytes: 130}, want: "another state"},
 		{name: "the HEAD reads every segment from beyond its end", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(200), "s.2_segment-0001": rest(200), "s.2_segment-0002": rest(200)}}, want: "another state"},
 		// The operations and the byte counter disagree.
