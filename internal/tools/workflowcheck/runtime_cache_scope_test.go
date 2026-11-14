@@ -1,4 +1,4 @@
-package ci_test
+package workflowcheck_test
 
 import (
 	"os"
@@ -24,7 +24,7 @@ func TestTaggedRuntimeCachePolicyByCaller(t *testing.T) {
 		"ci-command.yml/runtime":           {"${{ needs.command.outputs.sha }}", false},
 	}
 
-	dir := filepath.Join("..", "..", ".github", "workflows")
+	dir := filepath.Join("..", "..", "..", ".github", "workflows")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
