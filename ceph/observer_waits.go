@@ -2,12 +2,17 @@ package ceph
 
 import "context"
 
-// WaitForClean waits until a manager is available, the native OSD count
-// equals the owned OSD count with every OSD up and in, at least one PG exists
+// WaitForClean waits until a manager is available, the cluster status counts
+// as many OSDs in total, up and in as the fixture owns, at least one PG exists
 // and every PG is exactly active+clean. HEALTH_WARN alone does not block it.
 // PG states with extra flags, such as active+clean+scrubbing, do not count. It
 // never succeeds while an owned OSD is intentionally stopped or out; use
 // WaitForPGClean then. The cluster's startup timeout also bounds the wait.
+//
+// The three OSD numbers are cluster-wide totals compared with the owned
+// count. The wait reads no OSD ID or UUID, so it says how many OSDs are up
+// and in, not which. To establish that one particular OSD has returned, read
+// OSDStates and compare its entry, for example with the expect package.
 //
 // Call it after creating pools and after topology changes, before client I/O.
 // OSDs registered outside the fixture make the count differ, a pool whose

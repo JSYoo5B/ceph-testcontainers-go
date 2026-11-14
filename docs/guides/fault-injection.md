@@ -62,7 +62,7 @@ kept.
 | --- | --- | --- |
 | MON | `cluster.Monitors(ctx)` | With one MON, the MON is also the control container, so every fixture call fails until it starts again. Use `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3))` or more. |
 | MGR | `cluster.Managers(ctx)` | Use `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2))` so a standby takes over; `ManagerStatus` reports the active one. |
-| OSD | `cluster.OSDs(ctx)` | A down OSD is marked out after `mon_osd_down_out_interval` (600 s). Hold `noout` to avoid data movement. `Start` does not wait for up and in: wait with `WaitForClean`, `OSDStates` or `HealthDetails`. |
+| OSD | `cluster.OSDs(ctx)` | A down OSD is marked out after `mon_osd_down_out_interval` (600 s). Hold `noout` to avoid data movement. `Start` does not wait for up and in: wait with `WaitForClean` for the whole cluster, or poll `OSDStates` for that OSD ([what each wait proves](#what-the-waits-prove-about-an-osd)). |
 | MDS | `fs.MDSs()` | Configure `StandbyMDS` so a standby takes the rank. `fs.WaitReady` also waits for standby capacity, so restart the stopped daemon first. |
 | RGW | `rgw.Gateways(ctx, cluster)` | In bridge mode Docker can map a new port on restart: call `S3Endpoint` again. |
 | RBD and CephFS mirror daemons | `mirror.Daemons()` | `rbdmirror.Daemon.Status` reports the leader election. |
@@ -925,8 +925,64 @@ issued, finish cleanup before calling `AddOSD`.
 
 [`OSDContainer.SetIn`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.SetIn)`(ctx, false)`
 marks an OSD out while it keeps running. During that time wait with
-`WaitForPGClean`; `WaitForClean` also requires every owned OSD up and in. For
+`WaitForPGClean`; `WaitForClean` cannot pass while an owned OSD is out. For
 an abrupt loss, `Stop` the OSD instead.
+
+### What the waits prove about an OSD
+
+Neither wait looks at an individual OSD:
+
+| Wait | OSD condition | PG condition |
+| --- | --- | --- |
+| [`WaitForClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForClean) | The cluster status counts as many OSDs in total, up and in as the fixture owns. These are three cluster-wide numbers; no OSD ID or UUID is read. | At least one PG, all exactly `active+clean`. |
+| [`WaitForPGClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForPGClean) | None. | At least one PG, all exactly `active+clean`. |
+
+Both also need an available MGR. Choose by what the test has to establish:
+
+- **The cluster is whole again.** After `Start`, `AddOSD` or `SetIn(ctx, true)`,
+  `WaitForClean` suffices when every owned OSD is meant to be up and in and
+  the test does not depend on which OSD came back. While the cluster holds
+  only the fixture's OSDs, equal counts mean that none of them is down or
+  out; an OSD registered outside the fixture changes the total and the wait
+  does not pass.
+- **Recovery finished while an OSD stays out or down.** `WaitForClean` cannot
+  pass, because the up or in count stays below the owned count. Use
+  `WaitForPGClean`: it waits for the PGs alone and says nothing about the OSD
+  topology, so it also passes when another OSD has dropped out and the PGs
+  have recovered without it.
+- **The OSD the test stopped is the one that returned.** Equal counts do not
+  identify an OSD. Read
+  [`OSDStates`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.OSDStates)
+  and compare the entry of that OSD. `expect.OSDs` selected from a baseline
+  taken before the fault pins the native UUID, so an ID that a replacement
+  re-registered does not pass:
+
+  ```golang
+  baseline, err := observer.OSDStates(ctx) // before the fault
+  if err != nil {
+  	t.Fatal(err)
+  }
+  // ... osd.Stop, the SUT runs, osd.Start ...
+  if err := observer.WaitForClean(ctx); err != nil { // counts and PGs
+  	t.Fatal(err)
+  }
+  states, err := observer.OSDStates(ctx)
+  if err != nil {
+  	t.Fatal(err)
+  }
+  result, err := expect.OSDs{Select: baseline, Up: true, In: true, Exact: true}.Evaluate(states)
+  if err != nil {
+  	t.Fatal(err)
+  }
+  if !result.Matched {
+  	t.Fatal(result)
+  }
+  ```
+
+  To check the stopped OSD alone, select only its baseline entry and leave
+  `Exact` unset. The evaluation is one observation and does not poll; see
+  [OSD membership](../../ceph/expect/README.md#osd-membership) in the `expect`
+  package.
 
 ## Making an MDS read-only
 
