@@ -27,8 +27,10 @@ on:
           - rgw_compressed_copy
           - rgw_multipart_part_class
           - rgw_object_lock_sync
+          - rgw_post_usage_bytes_received
           - rgw_slo_head_segment_reads
           - rgw_sync_lease_lapse
+          - rgw_zonegroup_redirect_endpoint
           - failure_archive
       rgw_image:
         description: Existing RGW role image for native_rgw_translation (empty uses published role; no build)
