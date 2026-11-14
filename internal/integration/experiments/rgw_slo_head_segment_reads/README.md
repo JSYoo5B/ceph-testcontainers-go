@@ -42,6 +42,16 @@ Upstream references:
   [`src/messages/MOSDOp.h`](https://github.com/ceph/ceph/blob/v20.2.4/src/messages/MOSDOp.h)
   and `operator<<(ostream&, const OSDOp&)` in
   [`src/osd/osd_types.cc`](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.cc).
+- When an entry is described: `TrackedOp::mark_event` and
+  `TrackedOp::get_desc` in
+  [`src/common/TrackedOp.cc`](https://github.com/ceph/ceph/blob/v20.2.4/src/common/TrackedOp.cc)
+  and
+  [`src/common/TrackedOp.h`](https://github.com/ceph/ceph/blob/v20.2.4/src/common/TrackedOp.h).
+- A read with a length of zero, and a read beyond the end of the object:
+  `PrimaryLogPG::do_read` in
+  [`src/osd/PrimaryLogPG.cc`](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc).
+- The class method of the metadata reads: `cls_version_read` in
+  [`src/cls/version/cls_version.cc`](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/version/cls_version.cc).
 
 ## Requirements
 
@@ -116,24 +126,51 @@ pool `default.rgw.buckets.data`:
 Before anything is measured, every object is read back exactly, the SLO
 answers `X-Static-Large-Object: True`, the DLO answers its
 `X-Object-Manifest`, and the data pool lists the manifest objects, the head
-objects and the three SLO segment objects under the names the test derives
-from the bucket markers (`radosgw-admin bucket stats`).
+objects and the segment objects of the SLO and of the DLO under the names
+the test derives from the bucket markers (`radosgw-admin bucket stats`).
 
 The observation is on the OSD, so it does not depend on the response or on
-timing. The OSD's op history is set to keep 20000 operations for an hour
-(`osd_op_history_size`, `osd_op_history_duration` through the admin socket),
-and every report must name that size and hold fewer entries than it. A
-**window** is everything the history gained since the window before it. The
-test sends at most one request, waits for its response, then creates a new
-empty object in the data pool with `rados create` and reads
-`dump_historic_ops` until the history holds that operation: the window is
-closed by an operation that was sent after the response. Operations of
-other pools are not looked at. Each client
-operation of the window is attributed by its pool and its object name; its
-sub-operations are data reads (`read <offset>~<length>`), metadata reads
-(`call`, `getxattrs`, `getxattr`, `stat`) or unclassified. The second
-observation is the growth of `op_r_out_bytes` in `perf dump osd` over the
-window, the bytes the OSD returned for reads to all its clients.
+timing. Through the OSD's admin socket the op history is set to keep 20000
+operations for an hour (`osd_op_history_size`, `osd_op_history_duration`)
+and the op tracker's messages are gathered in memory (`debug_optracker
+0/6`). Every report must name that size, hold fewer entries than it and
+still hold every operation an earlier report held. A **window** is
+everything the history gained since the window before it. The test sends at
+most one request, waits for its response, then creates a new empty object in
+the data pool with `rados create` and reads `dump_historic_ops` until the
+history holds that operation: the window is closed by an operation that was
+sent after the response. Operations of other pools are not looked at.
+
+The OSD writes the description of an operation the first time something
+asks for it and keeps that text. With the op tracker's messages gathered,
+that is when the operation arrives, before it runs: the description then
+names the method of a class call and the extent a read asks for
+(`call version.read in=11b`, `read 0~4194304`). Without the setting it is
+written when the history is dumped, after the operation ran, and shows a
+bare `call` and the extent the OSD had cut to the object's size
+(`read 0~3145728`, or `read 0~0` for the empty manifest object).
+
+Each client operation of the window is attributed by its pool and its object
+name, and each sub-operation is classified by its whole text:
+
+- `read <offset>~<length>`, with nothing after it, is a data read. The
+  bytes it returns are worked out with the segment's size: a length of zero
+  asks for everything from the offset to the end of the object, a read is
+  cut off at the end of the object, and a read that starts at or beyond the
+  end returns nothing.
+- `getxattrs`, `stat` and `call version.read`, the last with or without the
+  size of its input (`in=<n>b`), return no object data. `version.read`
+  reads the object's version from one attribute.
+- Everything else is unclassified and fails the window: a call of any other
+  method, or a bare `call`, because a class method can read the object's
+  data inside the OSD without returning it; a read with anything after its
+  extent or in another form (`sparse-read`, `sync_read`); `getxattr`; and
+  every write.
+
+The second observation is the growth of `op_r_out_bytes` in `perf dump osd`
+over the window, the bytes the OSD returned for reads to all its clients. A
+counter that is lower after the request than before it was reset, and fails
+the window.
 
 1. Idle control, three times (before the first request, between the full
    GET and the HEAD of the SLO, and after it): a window without a request
@@ -143,8 +180,8 @@ window, the bytes the OSD returned for reads to all its clients.
 2. HEAD of the S3 single PUT, of the S3 multipart upload (signed S3
    requests) and of the DLO (Swift): each must be answered 200 with
    `Content-Length` 9437184 and no body, and its window must hold at least
-   one operation on its head or manifest object, operations on objects of
-   its own buckets only, and no data read. A deviation fails the test:
+   one operation on its head or manifest object, no operation on any other
+   object, and no data read. A deviation fails the test:
    - The single PUT and the multipart upload show that the method tells a
      HEAD from a GET. If a HEAD of an ordinary object showed data reads,
      either the window had caught operations of another request or the
@@ -166,16 +203,17 @@ window, the bytes the OSD returned for reads to all its clients.
 ## Reading the result
 
 - **REPRODUCED:** the HEAD window holds an operation on the manifest object
-  and data reads that cover all 3145728 bytes of each of the three segment
+  and data reads that return all 3145728 bytes of each of the three segment
   objects, and the OSD returned at least the payload during it. The
   symptoms give the read extents of each segment and the returned bytes of
   the HEAD and of the GET.
 - **NOT_REPRODUCED:** the HEAD window holds an operation on the manifest
   object, so the request reached the OSD, and no data read on any segment
   object, and the OSD returned less than one segment (3145728 bytes) during
-  it, while the full GET of the same object showed the reads. Metadata
-  reads of the segments, or no operation on them at all, are both this
-  result.
+  it, while the full GET of the same object showed the reads. The three
+  classified metadata reads of the segments, or no operation on them at
+  all, are both this result; a segment that the window holds no operation
+  on was not touched, because the window is complete.
 - **Test failure (no result):**
   - `condition not established`: an object does not read back, is not the
     layout it is meant to be or has no object of the expected name in the
@@ -186,16 +224,17 @@ window, the bytes the OSD returned for reads to all its clients.
   - `control not established`: an idle window holds an operation in the
     data pool, a control HEAD read data, or the full GET does not show reads
     that cover every segment and return the payload.
-  - `window not observed`: the history is full, the closing operation of a
-    window does not appear in it within a minute, a window holds an
-    operation on an object that is not the request's or on a PG of the data
-    pool (an object listing), a sub-operation is neither a data read nor a
-    metadata read (a write, or a read in another form such as
-    `sparse-read`), or the history does not describe the object or the
+  - `window not observed`: the history is full or has lost an operation it
+    held before, the closing operation of a window does not appear in it
+    within a minute, the byte counter went down during the window, a window
+    holds an operation on an object that is not the request's or on a PG of
+    the data pool (an object listing), a sub-operation is unclassified (see
+    above), or the history does not describe the object or the
     sub-operations of a new operation of the data pool (such as one the OSD
     recorded undecoded).
-  - `another state:`: the HEAD read some segments but not all, or part of a
-    segment. That is neither the documented symptom nor its absence.
+  - `another state:`: the HEAD read some segments but not all, part of a
+    segment, or from an offset at or beyond a segment's end. That is neither
+    the documented symptom nor its absence.
   - `outcome not observed`: the operations and the byte counter disagree
     (reads that cover every segment with fewer returned bytes than the
     payload, or no segment read with a segment's worth of returned bytes).
@@ -211,19 +250,26 @@ each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: the HEAD window holds `[call, getxattrs, stat]` on the manifest and `[call, getxattrs, stat, read 0~3145728]` on each segment; the OSD returned 9441231 bytes during the HEAD and during the full GET | 38 s |
-| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` | `REPRODUCED`, the same operations; 9441145 bytes for both | 45 s |
-| Tentacle 20.2.5, `quay.io/ceph/ceph@sha256:4337ac8ac81d…` | `REPRODUCED`, the same operations; 9441231 bytes for both | 38 s |
-| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same operations; 9441229 bytes for both | 40 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: the HEAD window holds `[call version.read in=11b, getxattrs, stat]` on the manifest and `[call version.read in=11b, getxattrs, stat, read 0~4194304]` on each segment; the OSD returned 9441229 bytes during the HEAD and during the full GET | 39 s |
+| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` | `REPRODUCED`, the same operations; 9441145 bytes for both | 43 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph@sha256:4337ac8ac81d…` | `REPRODUCED`, the same operations; 9441233 bytes for both | 40 s |
+| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same operations; 9441223 bytes for both | 42 s |
 
-On every image the three idle windows held no operation and no returned
-byte, and the control HEADs held one `[call, getxattrs, stat]` on their head
-or manifest object: 912 to 1037 returned bytes for the single PUT, 956 to
-1110 for the multipart upload and 4672 to 4837 for the DLO. The full GET
-also holds a `read 0~0` on the manifest object, which the HEAD does not. A
-run with the HEAD of the SLO left out, so the trigger was never sent, failed
-with `condition not established` (no operation on the manifest) and printed
-no result.
+The gateway asks for 4194304 bytes of each 3145728-byte segment, and the
+OSD returns the segment. On every image the three idle windows held no
+operation and no returned byte, and the control HEADs held one
+`[call version.read in=11b, getxattrs, stat]` on their head or manifest
+object and nothing else: 912 to 1037 returned bytes for the single PUT, 956
+to 1110 for the multipart upload and 4670 to 4835 for the DLO. The full GET
+also asks for `read 0~4194304` of the empty manifest object, which the HEAD
+does not. No read asked for a length of zero.
+
+Two runs with a temporary change show the refusals. With the HEAD of the
+SLO left out, so the trigger was never sent, the test failed with
+`condition not established` (no operation on the manifest). Without
+`debug_optracker 0/6`, so every call read as a bare `call`, the first
+control HEAD failed with `window not observed: unclassified sub-operations
+["call"]`. Neither printed a result.
 
 No fixed image exists to run, so `NOT_REPRODUCED` has not been observed
 natively for the SLO. A HEAD window without data reads is observed in every
