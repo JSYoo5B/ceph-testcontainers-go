@@ -87,6 +87,8 @@ type secondFaultEvent struct {
 	Version uint64 `json:"version"`
 	Errno   int    `json:"errno"`
 	Error   string `json:"error"`
+	// StopFile is set on "stopped" when the stop file ended the run.
+	StopFile bool `json:"stop_file"`
 }
 
 // Outcomes of one submitted operation.

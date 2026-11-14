@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -19,9 +20,10 @@ import (
 // kept in a file, so the live writer's ledger and its oracle can be checked
 // without a cluster. FAKE_MODE injects one failure at operation FAKE_AT:
 // "before" raises a timeout without storing, "after" stores the object and then
-// raises (a lost reply), "refuse" raises ENOSPC without storing. It tests the
-// writer's bookkeeping, not librados or Ceph behavior.
-const secondFaultFakeRados = `import json, os
+// raises (a lost reply), "refuse" raises ENOSPC without storing. FAKE_CONNECT_DELAY
+// (seconds) delays connect, as a slow child start would. It tests the writer's
+// bookkeeping, not librados or Ceph behavior.
+const secondFaultFakeRados = `import json, os, time
 
 STORE = os.environ["FAKE_STORE"]
 MODE = os.environ.get("FAKE_MODE", "")
@@ -53,26 +55,49 @@ class Ioctx:
 
 class Rados:
     def __init__(self, **kw): pass
-    def connect(self): pass
+    def connect(self): time.sleep(float(os.environ.get("FAKE_CONNECT_DELAY", "0")))
     def get_instance_id(self): return 4177
     def open_ioctx(self, pool): return Ioctx()
     def shutdown(self): pass
 `
 
-func runSecondFaultActor(t *testing.T, dir string, env []string, stopAfter time.Duration, args ...string) {
+// secondFaultActorCommand is the actor on the fake rados module in dir.
+func secondFaultActorCommand(t *testing.T, ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "rados.py"), []byte(secondFaultFakeRados), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	argv := append([]string{"-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, secondFaultActor}, args...)
-	cmd := exec.Command("python3", argv...)
+	cmd := exec.CommandContext(ctx, "python3", argv...)
 	cmd.Env = append(os.Environ(), append([]string{"FAKE_STORE=" + filepath.Join(dir, "store.json")}, env...)...)
-	if stopAfter > 0 {
-		time.AfterFunc(stopAfter, func() { _ = os.WriteFile(filepath.Join(dir, "stop"), nil, 0o600) })
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
+}
+
+func runSecondFaultActor(t *testing.T, dir string, env []string, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if out, err := secondFaultActorCommand(t, ctx, dir, env, args...).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
+}
+
+// secondFaultLedgerHasAck reports whether the ledger at path records an
+// acknowledged operation. A missing file or a partly written last line is not
+// yet one.
+func secondFaultLedgerHasAck(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		var event secondFaultEvent
+		if json.Unmarshal([]byte(line), &event) == nil && event.Event == "ack" {
+			return true
+		}
+	}
+	return false
 }
 
 func readSecondFaultLedger(t *testing.T, path string) []secondFaultEvent {
@@ -109,7 +134,7 @@ func TestSecondFaultWriterLedgerAndOracle(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			ledger := filepath.Join(dir, "ledger.jsonl")
-			runSecondFaultActor(t, dir, tc.env, 0, "actor", "pool", ledger, filepath.Join(dir, "stop"), "0.01", "5")
+			runSecondFaultActor(t, dir, tc.env, "actor", "pool", ledger, filepath.Join(dir, "stop"), "0.01", "5")
 			events := readSecondFaultLedger(t, ledger)
 			ops, err := secondFaultOps(events, true)
 			if err != nil || len(ops) != 5 {
@@ -222,23 +247,79 @@ func TestSecondFaultWriterStopsOnItsStopFile(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("the writer's ledger check needs python3")
 	}
-	dir := t.TempDir()
-	ledger := filepath.Join(dir, "ledger.jsonl")
-	runSecondFaultActor(t, dir, nil, 300*time.Millisecond, "actor", "pool", ledger, filepath.Join(dir, "stop"), "0.05", "100000")
-	events := readSecondFaultLedger(t, ledger)
-	ops, err := secondFaultOps(events, true)
-	if err != nil || len(ops) == 0 || len(ops) > 1000 {
-		t.Fatalf("%d operations: %v", len(ops), err)
-	}
-	last := events[len(events)-1]
-	if last.Event != "stopped" || last.Seq != len(ops) {
-		t.Fatalf("last record %+v for %d operations", last, len(ops))
-	}
-	if events[0].Event != "start" || events[0].Client != "client.4177" {
-		t.Fatalf("first record %+v", events[0])
-	}
-	if mark := secondFaultCount(ops); mark.Acked != len(ops) {
-		t.Fatalf("watermark %+v of %d operations", mark, len(ops))
+	// The stop file is written only after the ledger records an acknowledged
+	// operation, so the run has at least one whatever the child's start-up
+	// time. The delayed connect is longer than any fixed stop timer this test
+	// could use, and must still yield an acknowledged operation.
+	for name, delay := range map[string]string{"prompt start": "0", "delayed start": "1.5"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			ledger, stop := filepath.Join(dir, "ledger.jsonl"), filepath.Join(dir, "stop")
+			const bound = 100000
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			cmd := secondFaultActorCommand(t, ctx, dir, []string{"FAKE_CONNECT_DELAY=" + delay},
+				"actor", "pool", ledger, stop, "0.05", strconv.Itoa(bound))
+			var out strings.Builder
+			cmd.Stdout, cmd.Stderr = &out, &out
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			// Every exit from this subtest, Fatal included, cancels and reaps
+			// the child before TempDir cleanup removes its ledger and stop
+			// file. exited records that a branch already received from done.
+			exited := false
+			defer func() {
+				if !exited {
+					cancel()
+					if err := <-done; err != nil {
+						t.Logf("the actor stopped by cancellation: %v", err)
+					}
+				}
+			}()
+			poll := time.NewTicker(10 * time.Millisecond)
+			defer poll.Stop()
+			startup := time.NewTimer(30 * time.Second)
+			defer startup.Stop()
+			for !secondFaultLedgerHasAck(ledger) {
+				select {
+				case err := <-done:
+					exited = true
+					t.Fatalf("the actor exited before its first acknowledgement: %v: %s", err, out.String())
+				case <-startup.C:
+					cancel()
+					err := <-done
+					exited = true
+					t.Fatalf("no acknowledged operation within 30 s: %v: %s", err, out.String())
+				case <-poll.C:
+				}
+			}
+			if err := os.WriteFile(stop, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := <-done
+			exited = true
+			if err != nil {
+				t.Fatalf("%v: %s", err, out.String())
+			}
+			events := readSecondFaultLedger(t, ledger)
+			ops, err := secondFaultOps(events, true)
+			if err != nil || len(ops) == 0 || len(ops) >= bound {
+				t.Fatalf("%d operations: %v", len(ops), err)
+			}
+			last := events[len(events)-1]
+			if last.Event != "stopped" || last.Seq != len(ops) || !last.StopFile {
+				t.Fatalf("last record %+v for %d operations", last, len(ops))
+			}
+			if events[0].Event != "start" || events[0].Client != "client.4177" {
+				t.Fatalf("first record %+v", events[0])
+			}
+			if mark := secondFaultCount(ops); mark.Acked != len(ops) {
+				t.Fatalf("watermark %+v of %d operations", mark, len(ops))
+			}
+		})
 	}
 }
 
