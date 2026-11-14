@@ -1,4 +1,4 @@
-name: Ceph short
+name: Short
 
 # Runtime batches never read documentation or the separately built go-ceph
 # probe module, so a change to those alone runs only Code checks.
@@ -55,7 +55,7 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: short
-      check_name: Ceph short
+      check_name: Short
       select_declarations: >-
         ${{ github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&

@@ -426,7 +426,7 @@ jobs:
             echo "- uploaded artifact: ${UPLOAD_URL:-none} (id ${UPLOAD_ID:-none})"
           } >> "$GITHUB_STEP_SUMMARY"
       # The classification of earlier attempts, from the scenario-history
-      # branch that Ceph periodic's History job writes. Read only on a
+      # branch that Periodic's History job writes. Read only on a
       # failure; a missing branch leaves the report without history.
       - name: Read the scenario history summary
         if: failure()

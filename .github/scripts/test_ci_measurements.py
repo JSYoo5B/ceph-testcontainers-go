@@ -147,10 +147,10 @@ class PhaseTests(unittest.TestCase):
         self.assertFalse(measure.is_runtime(plan_job(at(0), at(0), at(1))))
 
     def test_profile_key_reads_the_release_from_the_caller(self):
-        self.assertEqual(measure.profile_key("Ceph short", "Scenarios / sessions"), ("tentacle", "sessions"))
-        self.assertEqual(measure.profile_key("Ceph periodic", "Squid short / sessions (bridge)"),
+        self.assertEqual(measure.profile_key("Short", "Scenarios / sessions"), ("tentacle", "sessions"))
+        self.assertEqual(measure.profile_key("Periodic", "Squid short / sessions (bridge)"),
                          ("squid", "sessions (bridge)"))
-        self.assertEqual(measure.profile_key("Ceph periodic", "Representative / sessions #2"),
+        self.assertEqual(measure.profile_key("Periodic", "Representative / sessions #2"),
                          ("tentacle", "sessions"))
         self.assertEqual(measure.profile_key("Docker checks", "Scenarios / dockerbridge"), ("none", "dockerbridge"))
 
@@ -162,15 +162,15 @@ class PhaseTests(unittest.TestCase):
 
 class ExecutionTests(unittest.TestCase):
     def fixture(self):
-        runs = [run(1, "Ceph short", "h1", at(0)), run(2, "Code checks", "h1", at(0, 5)),
+        runs = [run(1, "Short", "h1", at(0)), run(2, "Code checks", "h1", at(0, 5)),
                 # A head whose run was cancelled is not a comparable execution.
-                run(3, "Ceph short", "h2", at(0), conclusion="cancelled"), run(4, "Code checks", "h2", at(0)),
+                run(3, "Short", "h2", at(0), conclusion="cancelled"), run(4, "Code checks", "h2", at(0)),
                 # A head that ran only Code checks has no runtime workflow.
                 run(5, "Code checks", "h3", at(0)),
                 # The periodic workflow is not part of an execution.
-                run(6, "Ceph periodic", "h1", at(0), event="schedule"),
+                run(6, "Periodic", "h1", at(0), event="schedule"),
                 # A second run of one workflow for the same head is ignored.
-                run(7, "Ceph short", "h1", at(30))]
+                run(7, "Short", "h1", at(30))]
         jobs = {"1": [plan_job(at(0), at(0, 30), at(1)),
                       runtime_job("Scenarios / a", at(1), at(2), 3),
                       runtime_job("Scenarios / b", at(1), at(4), 1),
@@ -187,7 +187,7 @@ class ExecutionTests(unittest.TestCase):
         found, skipped = measure.executions(runs, jobs, contains, MARKERS)
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["cohort"], "pr-scope")
-        self.assertEqual(found[0]["runs"], {"Ceph short": 1, "Code checks": 2})
+        self.assertEqual(found[0]["runs"], {"Short": 1, "Code checks": 2})
         self.assertEqual(skipped, {"cancelled run": 1, "no runtime workflow": 1})
 
     def test_execution_metrics_measure_runner_time_wall_and_acquisition(self):
@@ -230,7 +230,7 @@ class ExecutionTests(unittest.TestCase):
 
 class ProfileTests(unittest.TestCase):
     def test_profile_distributions_use_successful_first_attempts_of_uncancelled_runs(self):
-        runs = [run(1, "Ceph short", "h", at(0)), run(2, "Ceph short", "h", at(0), conclusion="cancelled")]
+        runs = [run(1, "Short", "h", at(0)), run(2, "Short", "h", at(0), conclusion="cancelled")]
         jobs = {"1": [runtime_job("Scenarios / a", at(0), at(1), 2),
                       runtime_job("Scenarios / a", at(0), at(1), 4),
                       runtime_job("Scenarios / a", at(0), at(1), 9, conclusion="failure")],
@@ -283,38 +283,38 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(measure.peak_concurrency([queued, queued])["peak"], 0)
 
     def test_executions_without_a_held_runner_are_left_out(self):
-        runs = [run(1, "Ceph short", "h", at(0), conclusion="failure")]
+        runs = [run(1, "Short", "h", at(0), conclusion="failure")]
         jobs = {"1": [{"name": "Scenarios / Plan", "run_attempt": 1, "conclusion": "cancelled",
                        "created_at": at(0), "started_at": at(0), "completed_at": at(1), "steps": []}]}
         found, skipped = measure.executions(runs, jobs, {"h": {}}, [])
         self.assertEqual((found, skipped), ([], {"no job held a runner": 1}))
 
     def test_contention_splits_executions_by_an_overlapping_periodic_run(self):
-        runs = [run(1, "Ceph short", "early", at(0)), run(2, "Ceph short", "late", at(30)),
-                run(3, "Ceph periodic", "main", at(25), event="schedule")]
+        runs = [run(1, "Short", "early", at(0)), run(2, "Short", "late", at(30)),
+                run(3, "Periodic", "main", at(25), event="schedule")]
         jobs = {"1": [timed("Scenarios / a", at(0), at(1), at(10))],
                 "2": [timed("Scenarios / a", at(30), at(40), at(50))],
                 "3": [timed("R / a", at(25), at(26), at(45)), timed("R / b", at(25), at(26), at(45))]}
         found, _ = measure.executions(runs, jobs, {"early": {}, "late": {}}, [])
         metrics = [measure.execution_metrics(execution) for execution in found]
-        intervals = measure.busy_intervals(runs, jobs, "Ceph periodic", 2)
+        intervals = measure.busy_intervals(runs, jobs, "Periodic", 2)
         by_key = {(execution["event"], execution["head_sha"]): execution for execution in found}
         overlapping, alone = measure.contention_summary(metrics, by_key, intervals, "baseline")
         self.assertEqual((overlapping["periodic_overlap"], overlapping["executions"]), (True, 1))
         self.assertEqual(overlapping["acquisition_seconds"]["median"], 600)
         self.assertEqual((alone["periodic_overlap"], alone["executions"]), (False, 1))
-        self.assertEqual(measure.busy_intervals(runs, jobs, "Ceph periodic", 3), [])
+        self.assertEqual(measure.busy_intervals(runs, jobs, "Periodic", 3), [])
 
     def test_matrix_runs_count_one_tag_set_per_batch_across_releases_and_network_modes(self):
-        runs = [run(1, "Ceph periodic", "main", at(0), event="schedule")]
+        runs = [run(1, "Periodic", "main", at(0), event="schedule")]
         jobs = {"1": [runtime_job("Tentacle short / a", at(0), at(1), 1),
                       runtime_job("Squid short / a", at(0), at(1), 1),
                       runtime_job("Squid short / a (bridge)", at(0), at(1), 1),
                       runtime_job("Squid short / b", at(0), at(1), 1)]}
-        [summary] = measure.matrix_runs(runs, jobs, "Ceph periodic", 2)
+        [summary] = measure.matrix_runs(runs, jobs, "Periodic", 2)
         self.assertEqual((summary["runtime_jobs"], summary["tag_sets"]), (4, 2))
         self.assertEqual(summary["compile_minutes"], 4.0)
-        self.assertEqual(measure.matrix_runs(runs, jobs, "Ceph periodic", 5), [])
+        self.assertEqual(measure.matrix_runs(runs, jobs, "Periodic", 5), [])
 
     def test_caller_groups_split_plans_from_runtime_jobs_in_matrix_order(self):
         jobs = [timed("Gate", at(0), at(0), at(1), 1), timed("Squid short / Plan", at(1), at(1), at(2), 2),
@@ -346,7 +346,7 @@ class SimulationTests(unittest.TestCase):
 
     def test_schedule_summary_compares_periodic_bounds_and_the_pull_request_reserve(self):
         periodic = [{"Tentacle short": (0, [60] * 4)}]
-        requests = [{"Ceph short/Scenarios": (0, [60] * 4)}]
+        requests = [{"Short/Scenarios": (0, [60] * 4)}]
         summary = measure.schedule_summary(periodic, requests, 4, {"short": 1}, 2)
         self.assertEqual(summary["periodic"][0]["unbounded"]["makespan_minutes"], 1.0)
         self.assertEqual(summary["periodic"][0]["bounded"]["makespan_minutes"], 4.0)
@@ -385,7 +385,7 @@ class CacheTests(unittest.TestCase):
             calls.append(path)
             if "/jobs?" in path:
                 return [runtime_job("Scenarios / a", at(0), at(1), 2)]
-            return [run(11, "Ceph short", "h", at(0)), run(12, "Ceph short", "h2", at(0), status="in_progress")]
+            return [run(11, "Short", "h", at(0)), run(12, "Short", "h2", at(0), status="in_progress")]
 
         def compare(repo, base, head):
             calls.append("compare " + base[:1] + " " + head)
@@ -410,7 +410,7 @@ class CacheTests(unittest.TestCase):
         def api(path, jq):
             if "/jobs?" in path:
                 raise ValueError("HTTP 502")
-            return [run(11, "Ceph short", "h", at(0))]
+            return [run(11, "Short", "h", at(0))]
 
         with tempfile.TemporaryDirectory() as directory:
             day = date(2026, 10, 16)
@@ -426,7 +426,7 @@ class CacheTests(unittest.TestCase):
                 return [runtime_job("Scenarios / a", at(0), at(1), 2, conclusion="cancelled")]
             if "/jobs?" in path:
                 return [runtime_job("Scenarios / a", at(0), at(1), 2)]
-            return [run(11, "Ceph short", "h", at(0)), run(13, "Ceph short", "h3", at(0), conclusion="cancelled")]
+            return [run(11, "Short", "h", at(0)), run(13, "Short", "h3", at(0), conclusion="cancelled")]
 
         with tempfile.TemporaryDirectory() as directory:
             day = date(2026, 10, 16)
@@ -480,7 +480,7 @@ class CohortTests(unittest.TestCase):
         """A measured runtime job and the history row that its artifacts give."""
         row = self.receipt(run_id, measured_id, result, attempt, **metadata)
         if not any(run["id"] == run_id for run in self.runs):
-            self.runs.append(run(run_id, "Ceph recovery", "a" * 40, at(0)))
+            self.runs.append(run(run_id, "Recovery", "a" * 40, at(0)))
         measured = runtime_job("Scenarios / rbd", at(0), at(1), native, attempt=int(attempt))
         measured["id"] = measured_id
         self.jobs.setdefault(str(run_id), []).append(measured)

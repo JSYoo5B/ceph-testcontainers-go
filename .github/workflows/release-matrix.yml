@@ -1,10 +1,10 @@
-name: Ceph release matrix
+name: Release matrix
 
 # In a release phase (repository variable CI_RELEASE_PHASE is "true"), every
 # pull request and push to main also runs every runtime category on each
 # supported release other than the current one (the rows of SUPPORTED_RELEASES
 # in .github/scripts/run_image_matrix.py). Outside it, this workflow skips its
-# jobs and Ceph periodic covers those releases on main.
+# jobs and Periodic covers those releases on main.
 on:
   push:
     branches: [main]
@@ -55,7 +55,7 @@ jobs:
       # release exactly once.
       - name: Expand supported releases and prove required coverage
         id: releases
-        run: python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Ceph release matrix' --github-output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT"
   runtime:
     name: ${{ matrix.title }}
     needs: releases

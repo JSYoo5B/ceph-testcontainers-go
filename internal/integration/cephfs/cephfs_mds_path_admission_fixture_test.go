@@ -17,7 +17,7 @@ import (
 )
 
 // The lookup records below are the values that TestCephFSClientMDSPathCut
-// logged in Ceph short run 40711075458 (attempt 1, job 122896383801): the
+// logged in short-category run 40711075458 (attempt 1, job 122896383801): the
 // client's pending request {TID:4 Op:lookup MDS:0} and the MDS's historic
 // record of client.4239 tid 4. The JSON around the logged values is rebuilt
 // from the field names the helpers parse; the shape of a real mds_requests

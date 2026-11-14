@@ -102,33 +102,33 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     # Workflow categories are public check types, never a list of Test names.
     ENTRY_POINTS = {
         "docker.yml": ("Docker checks", "environment"),
-        "ceph-short.yml": ("Ceph short", "short"),
-        "ceph-topology.yml": ("Ceph topology", "topology"),
-        "ceph-multicluster.yml": ("Ceph multicluster", "multicluster"),
-        "ceph-recovery.yml": ("Ceph recovery", "recovery"),
+        "short.yml": ("Short", "short"),
+        "topology.yml": ("Topology", "topology"),
+        "multicluster.yml": ("Multicluster", "multicluster"),
+        "recovery.yml": ("Recovery", "recovery"),
     }
     # Runtime batches never read these paths, so a change to them alone runs
     # only Code checks, on pull requests and on pushes to main alike.
     RUNTIME_PATHS_IGNORE = ("'docs/**'", "'*.md'", "'LICENSE'", "'internal/integration/goceph/**'")
     # These categories gate every merge on the current release.
-    GATING = {"docker.yml", "ceph-short.yml"}
+    GATING = {"docker.yml", "short.yml"}
     # The other categories run on a pull request only for the batches whose
     # own test files changed, unless labelled ci:full or in a release phase,
     # and on pushes to main only in a release phase.
-    SCOPED = {"ceph-topology.yml", "ceph-multicluster.yml", "ceph-recovery.yml"}
+    SCOPED = {"topology.yml", "multicluster.yml", "recovery.yml"}
     # A pull request of this gating category may opt in to declaration
     # selection with a label; pushes to main always run every batch.
-    OPT_IN = {"ceph-short.yml": "ci:selected-batches"}
+    OPT_IN = {"short.yml": "ci:selected-batches"}
     # The releases and check names that the per-release caller jobs had
     # before SUPPORTED_RELEASES generated them. They must stay covered.
     HISTORICAL_RELEASES = {"20.2.4": "tentacle", "19.2.5": "squid"}
-    PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
+    PERIODIC, RELEASE_MATRIX = "periodic.yml", "release-matrix.yml"
     # The pull request comment command: issue_comment only.
     COMMAND = "ci-command.yml"
     # The scratch-device research probe (#7): its own paths only, no scenarios.
     BLOCK_FAULT_PROBE = "block-fault-probe.yml"
     # The native ARM64 qualification of the source-owned arm64 cohort.
-    ARM64 = "ceph-arm64.yml"
+    ARM64 = "arm64.yml"
     PERIODIC_SCHEDULE = "41 4 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
 
@@ -178,7 +178,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def matrix_jobs(self, prefix):
         """The expected caller jobs of a matrix workflow: every runtime
-        category on each release, with Docker checks once in Ceph periodic."""
+        category on each release, with Docker checks once in Periodic."""
         jobs = {}
         for release, codename in self.HISTORICAL_RELEASES.items():
             for category in engine.RUNTIME_CATEGORIES:
@@ -220,17 +220,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         bound = [category for category in engine.RUNTIME_CATEGORIES if category != "environment"]
         before = engine.runtime_cells(self.plan, [(release, category) for release in self.HISTORICAL_RELEASES
                                                   for category in bound] + [(None, "environment")])
-        callers = [(entry["release"], entry["category"]) for entry in engine.release_matrix("all", "Ceph periodic")]
+        callers = [(entry["release"], entry["category"]) for entry in engine.release_matrix("all", "Periodic")]
         after = engine.runtime_cells(self.plan, callers + [(None, "environment")])
         self.assertEqual(engine.coverage_difference(before, after)["missing"], [])
         self.assertEqual(after, engine.required_cells(self.plan, runner.RELEASES))
         self.assertEqual(max(after.values()), 1)
         for scope in engine.RELEASE_SCOPES:
             with self.subTest(scope=scope):
-                report = engine.releases_report(self.plan, scope, "Ceph periodic")
+                report = engine.releases_report(self.plan, scope, "Periodic")
                 self.assertTrue(report["passed"], report)
                 self.assertEqual((report["missing"], report["extra"]), ([], []))
-        others = {entry["release"] for entry in engine.release_matrix("others", "Ceph release matrix")}
+        others = {entry["release"] for entry in engine.release_matrix("others", "Release matrix")}
         self.assertEqual(others, set(runner.RELEASES) - {runner.RELEASE})
         # The pull request entry points run the current release only, with
         # every category once.
@@ -243,7 +243,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(runner.RELEASE, "20.2.4")
         categories = set(engine.RUNTIME_CATEGORIES) - {"environment"}
         for scope in engine.RELEASE_SCOPES:
-            entries = [entry for entry in engine.release_matrix(scope, "Ceph periodic")
+            entries = [entry for entry in engine.release_matrix(scope, "Periodic")
                        if entry["release"] == "21.2.0"]
             self.assertEqual({entry["category"] for entry in entries}, categories)
             self.assertEqual(len(entries), len(categories))
@@ -251,7 +251,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_coverage_difference_names_missing_duplicate_and_unknown_release_cells(self):
         required = engine.required_cells(self.plan, runner.RELEASES)
-        callers = [(entry["release"], entry["category"]) for entry in engine.release_matrix("all", "Ceph periodic")]
+        callers = [(entry["release"], entry["category"]) for entry in engine.release_matrix("all", "Periodic")]
         environment = [(None, "environment")]
         short = [profile["id"] for profile in engine.select_required_plan(self.plan, "short")["include"]]
         dropped = engine.coverage_difference(required, engine.runtime_cells(
@@ -272,9 +272,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             with self.subTest(release=release), self.assertRaises(ValueError):
                 engine.runtime_cells(self.plan, [(release, "short")])
         with self.assertRaises(ValueError):
-            engine.release_matrix("all", "Ceph periodic", current="20.2.5")
+            engine.release_matrix("all", "Periodic", current="20.2.5")
         with self.assertRaises(ValueError):
-            engine.release_matrix("some", "Ceph periodic")
+            engine.release_matrix("some", "Periodic")
         self.assertEqual(set(runner.CODENAMES), set(runner.RELEASES))
         self.assertEqual(len(set(runner.CODENAMES.values())), len(runner.CODENAMES))
 
@@ -360,7 +360,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
         with self.subTest(workflow=self.PERIODIC):
             workflow = self.workflows[self.PERIODIC]
-            self.assertRegex(workflow, r"(?m)^name: Ceph periodic$")
+            self.assertRegex(workflow, r"(?m)^name: Periodic$")
             self.assertIn("\non:\n  schedule:\n    - cron: '" + self.PERIODIC_SCHEDULE + "'\n  workflow_dispatch:\n", workflow)
             self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request):")
             self.assertEqual(scalar(workflow, "group"),
@@ -431,7 +431,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                     name = scalar(body.split("    steps:", 1)[0], "name")
                     self.assertNotIn(periodic_gate.CALLED_JOB, name, job_id)
                     self.assertFalse(periodic_gate.runtime_job({"name": name}), job_id)
-            for caller in ["Environment", *(entry["title"] for entry in engine.release_matrix("all", "Ceph periodic"))]:
+            for caller in ["Environment", *(entry["title"] for entry in engine.release_matrix("all", "Periodic"))]:
                 self.assertTrue(periodic_gate.runtime_job({"name": caller + " / rbd_fixtures_locks"}), caller)
                 self.assertFalse(periodic_gate.runtime_job({"name": caller + " / Plan"}), caller)
             self.assertFalse(periodic_gate.runtime_job({"name": "Representative / pools #1"}))
@@ -441,15 +441,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(environment, "needs"), "gate")
             self.assertEqual(scalar(environment, "if"), "needs.gate.outputs.run == 'true'")
             self.assertEqual(scalar(environment, "category"), "environment")
-            self.assertEqual(scalar(environment, "check_name"), "Ceph periodic environment")
+            self.assertEqual(scalar(environment, "check_name"), "Periodic environment")
             self.assertNotRegex(environment, r"(?m)^      release:")
             self.assertEqual(scalar(jobs["releases"], "needs"), "gate")
             self.assertEqual(scalar(jobs["releases"], "if"), "needs.gate.outputs.run == 'true'")
-            self.assert_release_caller(jobs, "all", "Ceph periodic")
+            self.assert_release_caller(jobs, "all", "Periodic")
             self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
         with self.subTest(workflow=self.RELEASE_MATRIX):
             workflow = self.workflows[self.RELEASE_MATRIX]
-            self.assertRegex(workflow, r"(?m)^name: Ceph release matrix$")
+            self.assertRegex(workflow, r"(?m)^name: Release matrix$")
             self.assertIn("\non:\n  push:\n    branches: [main]\n    paths-ignore:\n" + ignored +
                           "  pull_request:\n    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
@@ -458,7 +458,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(jobs["releases"], "if"),
                              "vars.CI_RELEASE_PHASE == 'true' || github.event_name == 'workflow_dispatch'")
             self.assertEqual(scalar(jobs["runtime"], "if"), "needs.releases.outputs.count != '0'")
-            self.assert_release_caller(jobs, "others", "Ceph release matrix")
+            self.assert_release_caller(jobs, "others", "Release matrix")
         reusable = self.workflows["tagged-runtime.yml"]
         self.assertRegex(reusable, r"(?m)^  workflow_call:")
         self.assertNotRegex(reusable, r"(?m)^  (?:push|pull_request|workflow_dispatch):")
@@ -470,7 +470,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_arm64_cohort_runs_natively_outside_the_ordinary_matrix(self):
         workflow = self.workflows[self.ARM64]
-        self.assertRegex(workflow, r"(?m)^name: Ceph arm64$")
+        self.assertRegex(workflow, r"(?m)^name: ARM64$")
         triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
         self.assertEqual(re.findall(r"(?m)^  ([a-z_]+):", triggers), ["schedule", "pull_request", "workflow_dispatch"])
         self.assertNotIn("CI_RELEASE_PHASE", workflow)
@@ -481,7 +481,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         caller = callers[0]
         self.assertEqual(scalar(caller.split("    with:", 1)[0], "name"), "Scenarios")
         self.assertEqual((scalar(caller, "category"), scalar(caller, "goarch"), scalar(caller, "check_name")),
-                         ("architecture", "arm64", "Ceph arm64"))
+                         ("architecture", "arm64", "ARM64"))
         # Its cohort comes from the source, never from the workflow.
         for key in ("profiles", "optional_batch", "release", "storage_policy", "networks"):
             self.assertNotRegex(caller, r"(?m)^      " + key + ":")
@@ -532,7 +532,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                      "|| '' }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}"})
 
     def test_short_storage_control_only_changes_explicit_dispatches(self):
-        caller = self.jobs["ceph-short.yml"]["scenarios"]
+        caller = self.jobs["short.yml"]["scenarios"]
         for event in ("pull_request", "push", "workflow_dispatch"):
             context = {"github": {"event_name": event}, "inputs": {"storage_policy": "always", "ref": "a" * 40}}
             self.assertEqual(interpolate(scalar(caller, "storage_policy"), context), "always" if event == "workflow_dispatch" else "auto")
@@ -806,7 +806,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # literal copy of the release table is checked against it.
         supported = "[" + ", ".join("'" + release + "'" for release, _, _ in runner.SUPPORTED_RELEASES) + "]"
         default = "'" + runner.RELEASE + "'"
-        periodic = self.workflows["ceph-periodic.yml"]
+        periodic = self.workflows["periodic.yml"]
         release_input = periodic.split("      release:\n", 1)[1].split("\n      ref:\n", 1)[0]
         self.assertEqual(scalar(release_input, "options"), supported)
         self.assertEqual(scalar(release_input, "default"), default)
@@ -1041,16 +1041,16 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         runtime = self.jobs["tagged-runtime.yml"]["runtime"]
         self.assertEqual(scalar(runtime, "max-parallel"), "${{ inputs.max_parallel }}")
         self.assertIn("fail-fast: false", runtime)
-        for scope, prefix in (("all", "Ceph periodic"), ("others", "Ceph release matrix")):
+        for scope, prefix in (("all", "Periodic"), ("others", "Release matrix")):
             with self.subTest(scope=scope):
                 entries = engine.release_matrix(scope, prefix)
                 self.assertEqual({entry["category"]: entry["max_parallel"] for entry in entries},
                                  engine.RELEASE_MAX_PARALLEL)
                 report = engine.releases_report(self.plan, scope, prefix)
                 self.assertTrue(report["runner_budget"]["passed"], report["runner_budget"])
-        self.assertLessEqual(engine.runner_budget(engine.release_matrix("all", "Ceph periodic"))["runners"],
+        self.assertLessEqual(engine.runner_budget(engine.release_matrix("all", "Periodic"))["runners"],
                              engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
-        periodic_budget = engine.periodic_runner_budget(engine.release_matrix("all", "Ceph periodic"))
+        periodic_budget = engine.periodic_runner_budget(engine.release_matrix("all", "Periodic"))
         self.assertTrue(periodic_budget["passed"], periodic_budget)
         for workflow in (self.PERIODIC, self.RELEASE_MATRIX):
             self.assertEqual(scalar(self.jobs[workflow]["runtime"], "max_parallel"), "${{ matrix.max_parallel }}")
@@ -1064,22 +1064,22 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def periodic_group_keys(self):
         """The concurrency group key of a full and of a representative run of
-        Ceph periodic, from the workflow's group expression."""
+        Periodic, from the workflow's group expression."""
         expression = scalar(self.workflows[self.PERIODIC], "group")
         match = re.fullmatch(r"\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}"
                              r"\$\{\{ inputs\.mode == 'representative' && '([^']*)' \|\| '([^']*)' \}\}", expression)
         self.assertIsNotNone(match, expression)
-        return {"full": "Ceph periodic-refs/heads/main" + match[2],
-                "representative": "Ceph periodic-refs/heads/main" + match[1]}
+        return {"full": "Periodic-refs/heads/main" + match[2],
+                "representative": "Periodic-refs/heads/main" + match[1]}
 
     def test_full_and_campaign_runs_together_leave_pull_request_runners(self):
         """A full run and a campaign run in different concurrency groups can
         be in progress at once, so the periodic budget adds both up."""
         keys = self.periodic_group_keys()
-        self.assertEqual({mode: key.removeprefix("Ceph periodic-refs/heads/main") for mode, key in keys.items()},
+        self.assertEqual({mode: key.removeprefix("Periodic-refs/heads/main") for mode, key in keys.items()},
                          {mode: engine.PERIODIC_GROUP_SUFFIX[mode] for mode in keys})
         self.assertNotEqual(keys["full"], keys["representative"])
-        entries = engine.release_matrix("all", "Ceph periodic")
+        entries = engine.release_matrix("all", "Periodic")
         full = engine.runner_budget(entries)["runners"]
         campaign = int(scalar(self.jobs[self.PERIODIC]["representative"], "max_parallel"))
         budget = engine.periodic_runner_budget(entries, campaign)
@@ -1095,7 +1095,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertFalse(overlapping["passed"])
         with mock.patch.object(engine, "CAMPAIGN_MAX_PARALLEL",
                                engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS - full + 1):
-            report = engine.releases_report(self.plan, "all", "Ceph periodic")
+            report = engine.releases_report(self.plan, "all", "Periodic")
         self.assertFalse(report["passed"])
         self.assertEqual((report["missing"], report["extra"]), ([], []))
         # One shared group would let the runs wait for each other: the
@@ -1110,18 +1110,18 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         representative mode, so the group expression gives it the full
         matrix's key. A group of its own would take pull request runners."""
         self.assertEqual(engine.PERIODIC_GROUP_SUFFIX["storage"], engine.PERIODIC_GROUP_SUFFIX["full"])
-        entries = engine.release_matrix("all", "Ceph periodic")
+        entries = engine.release_matrix("all", "Periodic")
         self.assertTrue(engine.periodic_runner_budget(entries)["passed"])
         separate = engine.periodic_runner_budget(entries, groups=dict(engine.PERIODIC_GROUP_SUFFIX, storage="-storage"))
         self.assertEqual(separate["runners"], engine.periodic_runner_budget(entries)["runners"] + engine.STORAGE_MAX_PARALLEL)
         self.assertFalse(separate["passed"])
 
     def test_runner_budget_refuses_callers_that_take_pull_request_runners(self):
-        entries = engine.release_matrix("all", "Ceph periodic")
+        entries = engine.release_matrix("all", "Periodic")
         crowded = [dict(entry, max_parallel=entry["max_parallel"] + 1) for entry in entries]
         self.assertFalse(engine.runner_budget(crowded)["passed"])
         with mock.patch.dict(engine.RELEASE_MAX_PARALLEL, short=engine.RELEASE_MAX_PARALLEL["short"] + 1):
-            report = engine.releases_report(self.plan, "all", "Ceph periodic")
+            report = engine.releases_report(self.plan, "all", "Periodic")
         self.assertFalse(report["passed"])
         self.assertEqual((report["missing"], report["extra"]), ([], []))
 
@@ -1321,7 +1321,7 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
     def test_scoped_callers_pair_base_and_head_under_the_same_conditions(self):
         base, head = "1" * 40, "2" * 40
         for category in ("topology", "recovery", "multicluster"):
-            workflow = (ROOT / (".github/workflows/ceph-" + category + ".yml")).read_text()
+            workflow = (ROOT / (".github/workflows/" + category + ".yml")).read_text()
             caller = dict(blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["scenarios"]
             for event, labels, phase, selected in (
                 ("pull_request", [], "", True),
@@ -1338,21 +1338,21 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
                         "vars": {"CI_RELEASE_PHASE": phase}}
                     self.assertEqual(interpolate(folded(caller, "changed_since"), context), base if selected else "")
                     self.assertEqual(interpolate(folded(caller, "changed_head"), context), head if selected else "")
-        for filename in ("ceph-short.yml", "ceph-periodic.yml", "ceph-release-matrix.yml"):
+        for filename in ("short.yml", "periodic.yml", "release-matrix.yml"):
             self.assertNotIn("changed_head", (ROOT / (".github/workflows/" + filename)).read_text())
 
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
-    """Ceph short narrows a pull request to the declaration selection only
+    """Short narrows a pull request to the declaration selection only
     when the pull request carries the opt-in label outside a release phase.
     Every other event, and every push to main, runs every batch."""
 
-    LABEL = SourceDrivenWorkflowTests.OPT_IN["ceph-short.yml"]
+    LABEL = SourceDrivenWorkflowTests.OPT_IN["short.yml"]
     BASE = "0123456789abcdef0123456789abcdef01234567"
 
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / ".github/workflows/ceph-short.yml").read_text()
+        cls.workflow = (ROOT / ".github/workflows/short.yml").read_text()
         cls.caller = dict(blocks(cls.workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["scenarios"]
         reusable = (ROOT / ".github/workflows/tagged-runtime.yml").read_text()
         plan = dict(blocks(reusable.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["plan"]
@@ -1360,7 +1360,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         cls.reusable_inputs = reusable.split("\npermissions:", 1)[0]
 
     def context(self, event, action=None, labels=(), label=None, release_phase=""):
-        github = {"workflow": "Ceph short", "event_name": event, "run_id": 99,
+        github = {"workflow": "Short", "event_name": event, "run_id": 99,
                   "ref": "refs/heads/main" if event == "push" else "refs/pull/7/merge", "event": {}}
         if event == "pull_request":
             github["event"] = {"action": action, "pull_request": {
@@ -1377,26 +1377,26 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         return Expression.truthy(runs), selection, group
 
     def test_pushes_to_main_and_manual_runs_run_every_batch(self):
-        self.assertEqual(self.outcome(self.context("push")), (True, "", "Ceph short-push-refs/heads/main"))
-        self.assertEqual(self.outcome(self.context("workflow_dispatch")), (True, "", "Ceph short-workflow_dispatch-99"))
+        self.assertEqual(self.outcome(self.context("push")), (True, "", "Short-push-refs/heads/main"))
+        self.assertEqual(self.outcome(self.context("workflow_dispatch")), (True, "", "Short-workflow_dispatch-99"))
 
     def test_a_pull_request_without_the_label_runs_every_batch(self):
         for action in ("opened", "synchronize", "reopened"):
             with self.subTest(action=action):
                 self.assertEqual(self.outcome(self.context("pull_request", action, labels=("ci:full", "docs"))),
-                                 (True, "", "Ceph short-pull_request-7"))
+                                 (True, "", "Short-pull_request-7"))
 
     def test_a_labelled_pull_request_selects_from_its_base(self):
         for action in ("opened", "synchronize", "reopened"):
             with self.subTest(action=action):
                 self.assertEqual(self.outcome(self.context("pull_request", action, labels=(self.LABEL,))),
-                                 (True, self.BASE, "Ceph short-pull_request-7"))
+                                 (True, self.BASE, "Short-pull_request-7"))
         # Adding the label replaces the full run in progress with a selected
         # one; removing it replaces a selected run with a full one.
         self.assertEqual(self.outcome(self.context("pull_request", "labeled", labels=(self.LABEL,), label=self.LABEL)),
-                         (True, self.BASE, "Ceph short-pull_request-7"))
+                         (True, self.BASE, "Short-pull_request-7"))
         self.assertEqual(self.outcome(self.context("pull_request", "unlabeled", labels=(), label=self.LABEL)),
-                         (True, "", "Ceph short-pull_request-7"))
+                         (True, "", "Short-pull_request-7"))
 
     def test_a_release_phase_runs_every_batch_of_a_labelled_pull_request(self):
         for action in ("opened", "synchronize", "labeled"):
@@ -1404,14 +1404,14 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                 label = self.LABEL if action == "labeled" else None
                 self.assertEqual(self.outcome(self.context("pull_request", action, labels=(self.LABEL,), label=label,
                                                            release_phase="true")),
-                                 (True, "", "Ceph short-pull_request-7"))
+                                 (True, "", "Short-pull_request-7"))
 
     def test_another_label_starts_nothing_and_cancels_nothing(self):
         for action, labels in (("labeled", (self.LABEL, "docs")), ("unlabeled", (self.LABEL,)), ("labeled", ("docs",))):
             with self.subTest(action=action, labels=labels):
                 runs, _, group = self.outcome(self.context("pull_request", action, labels=labels, label="docs"))
                 self.assertFalse(runs)
-                self.assertEqual(group, "Ceph short-pull_request-7-99")
+                self.assertEqual(group, "Short-pull_request-7-99")
 
     def test_the_expression_subset_follows_github_semantics(self):
         context = {"a": {"list": [{"n": "X"}, {"n": "y"}]}, "e": ""}
@@ -1459,7 +1459,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
             self.assertNotIn(option, command)
         # The other workflows never pass the input, so they keep every batch.
         for path in (ROOT / ".github/workflows").glob("*.yml"):
-            if path.name not in ("ceph-short.yml", "tagged-runtime.yml"):
+            if path.name not in ("short.yml", "tagged-runtime.yml"):
                 self.assertNotIn("select_declarations", path.read_text(), path.name)
 
 

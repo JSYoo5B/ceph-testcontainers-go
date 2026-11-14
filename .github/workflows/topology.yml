@@ -1,4 +1,4 @@
-name: Ceph multicluster
+name: Topology
 
 # Runtime batches never read documentation or the separately built go-ceph
 # probe module, so a change to those alone runs only Code checks.
@@ -6,7 +6,7 @@ name: Ceph multicluster
 # This category does not gate every merge. A pull request runs only the
 # batches whose own test files it changes, or every batch when it has the
 # ci:full label or while the repository variable CI_RELEASE_PHASE is "true".
-# Pushes to main run it only in a release phase; otherwise Ceph periodic runs
+# Pushes to main run it only in a release phase; otherwise Periodic runs
 # every batch on main.
 on:
   push:
@@ -42,8 +42,8 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     uses: ./.github/workflows/tagged-runtime.yml
     with:
-      category: multicluster
-      check_name: Ceph multicluster
+      category: topology
+      check_name: Topology
       changed_since: >-
         ${{ github.event_name == 'pull_request' &&
         !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
