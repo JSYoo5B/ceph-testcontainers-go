@@ -49,16 +49,11 @@ Upstream references:
 
 ## Tier and triggers
 
-Known-defect reproducer: the test passes whether or not the defect occurs and
-prints the result; only a failure of its given or when steps fails it. It
-stays an optional batch, so no automatic run includes it.
-
-- Manual: `gh workflow run Experiments -f case=rgw_empty_sse_header`
-  requires `REPRODUCED`; adding
-  `-f image=quay.io/ceph/ceph:v20.2.5`
-  requires `NOT_REPRODUCED`.
-- Comment: `/ci run rgw_empty_sse_header` runs the batch and takes only its
-  pass or failure.
+Known-defect reproducer, optional batch `rgw_empty_sse_header` with a
+20-minute budget; no automatic run includes it. It is an `Experiments` case,
+and its fixed image there is `quay.io/ceph/ceph:v20.2.5`. The triggers, the
+result checks and the image injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -102,8 +97,9 @@ and what a fresh GET found.
 
 ## Reading the result
 
-The test ends with one line:
-`EXPERIMENT_RESULT case=rgw_empty_sse_header result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]`.
+The test ends with one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_empty_sse_header`.
 
 - **REPRODUCED:** an empty-header PUT is not refused with the control's 400
   `InvalidArgument`, or it changes what is stored: `empty-new-key` stores an

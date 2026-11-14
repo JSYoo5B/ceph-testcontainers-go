@@ -8,14 +8,22 @@ the last member with a given name. The correction places all request objects
 in an array. See [Ceph Tracker 73639](https://tracker.ceph.com/issues/73639)
 and the [client change](https://github.com/ceph/ceph/commit/69b8e4b238f).
 
+## Tier and triggers
+
+Known-defect reproducer, optional batch `cephfs_mds_requests_json` with a
+20-minute budget; no automatic run includes it. On its default image, Squid
+19.2.5, it prints `REPRODUCED`; Tentacle 20.2.4 prints `NOT_REPRODUCED` and is
+the fixed image of its `Experiments` dispatch. The comment run is
+`/ci run cephfs_mds_requests_json`. The shared triggers, result checks and
+image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Running it
 
-The optional native-regression batch is `cephfs_mds_requests_json`. It
-needs Linux, Docker, the essential, client and cephfs roles, and a client
-toolkit with the Ceph CLI and matching Python libcephfs. The selected
-aggregate image provides every role. Override the default Squid 19.2.5
-aggregate using the package's image variable, for example to compare with
-the correction-bearing Tentacle 20.2.4.
+The batch needs Linux, Docker, the essential, client and cephfs roles, and
+a client toolkit with the Ceph CLI and matching Python libcephfs. The selected
+aggregate image provides every role. The second command runs the
+correction-bearing Tentacle 20.2.4 instead of the default Squid 19.2.5
+aggregate.
 
 ```sh
 casepkg=github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mds_requests_json

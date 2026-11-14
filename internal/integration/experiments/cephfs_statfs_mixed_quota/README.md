@@ -46,20 +46,14 @@ The defect is reproduced on Tentacle 20.2.4 and not on Tentacle 20.2.5.
 
 ## Tier and triggers
 
-Standalone reproducer. The test fails only when its setup, a condition or a
-control does not hold; the documented symptom does not fail it. It prints
-one `EXPERIMENT_RESULT` line instead, `REPRODUCED` on its default image,
-Tentacle 20.2.4. No automatic run includes it (the default checks of a pull
-request, pushes to `main`, periodic samples), and it never gates anything. A
-maintainer can run it on demand, also on a pull request's head with the
-comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=cephfs_statfs_mixed_quota`.
-- Comment: `/ci run cephfs_statfs_mixed_quota` or
-  `/ci run cephfs_statfs_mixed_quota on umbrella`.
-
-Every container the test starts uses the package variable `image`, so the
-role images that a batch exports do not reach it.
+Known-defect reproducer, optional batch `cephfs_statfs_mixed_quota` with a
+20-minute budget; no automatic run includes it. On its default image,
+Tentacle 20.2.4, it prints `REPRODUCED` (33 s); Tentacle 20.2.5 and Umbrella
+21.2.0 are fixed and print `NOT_REPRODUCED` (34 s), so either is the fixed
+image of its `Experiments` dispatch. A comment run on the fixed release is
+`/ci run cephfs_statfs_mixed_quota on umbrella`. The judgement tests run in
+`code/pure` with every change (under 1 s). The shared triggers, result checks
+and image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 

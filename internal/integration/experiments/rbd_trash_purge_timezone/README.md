@@ -40,18 +40,16 @@ is not covered.
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rbd_trash_purge_timezone result=<REPRODUCED|NOT_REPRODUCED>`,
-for both subtests away from UTC together, and passes either way. No
-automatic run includes it (the default checks of a pull request, pushes to
-`main`, periodic samples), and it never gates anything. A maintainer can run
-it on demand, also on a pull request's head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rbd_trash_purge_timezone`.
-- Comment: `/ci run rbd_trash_purge_timezone` or
-  `/ci run rbd_trash_purge_timezone on squid`.
+Known-defect reproducer, optional batch `rbd_trash_purge_timezone` with a
+20-minute budget; no automatic run includes it. The default image is
+Tentacle 20.2.4. It prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rbd_trash_purge_timezone`, for both subtests away from UTC together. It
+is an `Experiments` case without a fixed image: no release fixes the defect
+yet. The judgement tests are the package's `code/pure` batch and run in Code
+checks for every change. A comment run can name a release, for example
+`/ci run rbd_trash_purge_timezone on squid`. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -63,8 +61,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rbd_trash_purge_timezone
 ```
 
-On another image, such as a patched build, injected into the package's
-`image` variable; a fixed image must print `result=NOT_REPRODUCED`. No
+On another image, such as a patched build; a fixed image must print `result=NOT_REPRODUCED`. No
 release fixes the defect yet.
 
 ```sh
@@ -74,8 +71,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rbd_trash_purge_timezone
 ```
 
-The cluster runs `image`; the role image variables (`CEPH_TEST_IMAGE`,
-`CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The test logs the client's
+The test logs the client's
 `ceph --version`.
 
 ## Observations and controls

@@ -42,12 +42,16 @@ Tentacle 20.2.4 and Umbrella 21.2.0.
 
 ## Tier and triggers
 
-Cheap and deterministic: one run takes about 75 seconds on 20.2.4.
+Cheap deterministic characterization, required `topology` batch
+`rbd_encrypted_clone_flatten` with a 30-minute budget; one run takes about 75
+seconds on 20.2.4. It is not an `Experiments` case. The shared triggers are
+in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label (a required `topology` batch).
 - Comment: `/ci run rbd_encrypted_clone_flatten [on squid|umbrella]`.
-- Periodic: `rotate` can draw it on the supported releases.
+- Periodic: `rotate` can draw it on the supported releases; `targeted` runs
+  it on demand.
 
 ## Running it
 
@@ -66,9 +70,6 @@ python3 .github/scripts/tag_scenarios.py run --category topology \
   --package ./internal/integration/experiments/rbd_encrypted_clone_flatten \
   --directory "artifacts/rbd-encrypted-clone-flatten-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
-
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
 
 ## Observations and controls
 

@@ -52,18 +52,17 @@ zones (`metadata-has-obj_lock`).
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rgw_multisite_object_lock_sync result=<REPRODUCED|NOT_REPRODUCED>`,
-for both steps, and passes either way. No automatic run includes it (the
-default checks of a pull request, pushes to `main`, periodic samples), and it
-never gates anything. A maintainer can run it on demand, also on a pull
-request's head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_object_lock_sync`.
-- Comment: `/ci run rgw_object_lock_sync` or
-  `/ci run rgw_object_lock_sync on umbrella`.
+Known-defect reproducer, optional batch `rgw_object_lock_sync` with a
+30-minute budget; two clusters. No automatic run includes it. It is an
+`Experiments` case; Tentacle 20.2.5 (`quay.io/ceph/ceph:v20.2.5`) and Umbrella
+21.2.0 are fixed images for it, and `/ci run rgw_object_lock_sync on umbrella`
+runs the batch there. It prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_multisite_object_lock_sync`, for both steps. Its Docker-free configuration
+reader and judgement tests (batch `code/pure`) run in Code checks on every
+change. The triggers, the result checks and the image injection are the
+shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -75,8 +74,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rgw_multisite_object_lock_sync
 ```
 
-On a fixed image, injected into the package's `image` variable, which must
-print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
+On a fixed image, which must print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
 `quay.io/ceph/ceph:v21.2.0`,
 is fixed too):
 
@@ -87,8 +85,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/rgw_multisite_object_lock_sync
 ```
 
-The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
-not select the case's images. The log names the image (`RGW_LOCK image=`),
+The log names the image (`RGW_LOCK image=`),
 the Ceph version of both clusters (`RGW_LOCK ceph=`), each zone's ID and
 gateway binary (`RGW_LOCK zone=`), the canary (`RGW_LOCK canary`), every
 configuration read (`RGW_LOCK read step=`) with the raw body of the reads

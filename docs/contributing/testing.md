@@ -28,15 +28,27 @@ fails instead of passing. An `Example...` that starts a cluster has no
 
 ## Prerequisites
 
-- Go 1.26 or later. `go.mod`'s `toolchain go1.26.10` line switches older 1.26
-  patches to 1.26.10, which `make vulncheck` needs.
+The checks without Docker need:
+
+- GNU make (or a compatible `make`).
+- Go 1.21 or newer. It downloads the `toolchain` that [go.mod](../../go.mod)
+  names (go1.26.10, which `make vulncheck` needs) when the installed one is
+  older, unless `GOTOOLCHAIN=local` is set.
+- A C toolchain that cgo can use (`gcc` or `clang` as `CC`) on a platform the
+  race detector supports, such as linux/amd64, linux/arm64, darwin/amd64 or
+  darwin/arm64. Only `make race`, which `make check` runs, needs it: it sets
+  `CGO_ENABLED=1`, and every other target builds with `CGO_ENABLED=0`.
+- Python 3.9 or later for `.github/scripts`.
+- [golangci-lint](https://golangci-lint.run/) v2, at the version that the
+  Code checks workflow pins (`.github/workflows/code.yml`, also named in the
+  Makefile's `lint` comment).
+
+Integration tests also need:
+
 - A Docker engine for Linux containers that testcontainers-go can reach, with
   pull access to `ghcr.io/jsyoo5b/ceph-testcontainers-images` (the default
   image and the role images), `quay.io/ceph/ceph` for official or Squid
   images, and the Ryuk image.
-- A C toolchain for `make race` only. Every other target builds with
-  `CGO_ENABLED=0`.
-- Python 3.9 or later for `.github/scripts`.
 - The suite is sized for a 4 GiB Docker VM. Tests run one at a time unless
   `CEPH_TEST_PARALLEL` is set (see
   [Running tests in parallel](#running-tests-in-parallel)).
@@ -74,17 +86,45 @@ setting. Building a module for the Desktop kernel needs matching kernel headers,
 which are not published for every Desktop release; it is not a supported
 setup.
 
-## Host checks: unit tests, race detector, vet
+## Local checks without Docker
+
+These start no container. Run them before pushing; together they cover the
+Docker-free jobs of [Code checks](ci.md#code-checks):
+
+```sh
+make check        # make test, make race, make vet and make tag-compile
+make lint         # golangci-lint with the build tags listed in .golangci.yml, as Code checks runs it
+golangci-lint run --build-tags all ./...   # lint of the plain all build alone
+python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+python3 -m unittest discover -s internal/integration/goceph -p test_run.py
+python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
+```
+
+The separate targets of `make check`:
 
 ```sh
 make test         # CGO_ENABLED=0 go test -mod=readonly ./...
 make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
 make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
 make tag-compile  # test-only-code and test-double checks, then compile the tag unions below
-make check        # all four of the above; never starts Docker
-make lint         # golangci-lint with the build tags listed in .golangci.yml
 make vulncheck    # govulncheck on every scanned platform and tag set
 ```
+
+Some changes need more:
+
+- A public API change: regenerate and approve its catalogue and run
+  `go run ./internal/tools/apinaming check` (see
+  [Package layout and the export inventory](#package-layout-and-the-export-inventory)).
+- A change under `.github/workflows`: run actionlint as Code checks does:
+
+  ```sh
+  go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+    -shellcheck= -pyflakes= -ignore 'property "check_run_id" is not defined'
+  ```
+
+- A change to what a fixture does to a cluster or observes: an integration
+  run of the affected tests (see
+  [Running integration tests](#running-integration-tests)).
 
 `make test`, `make race` and `make vet` see only untagged files.
 `make tag-compile` compiles (`-run '^$'`, nothing executes) the module with
@@ -94,17 +134,10 @@ Files gated on `integration && ... && ci_optional && ci_batch_<name>` (most
 optional batches, the role-image batches included) are not in these unions,
 because none of them sets `integration` together with a batch tag, and
 `make lint` does not see them either.
-`make tag-compile` cannot check every CI batch's helper dependencies; use
-[`plan --verify`](#verify-batch-profiles-before-pushing), which compiles every
-required and optional profile. See
+`make tag-compile` cannot check every CI batch's helper dependencies;
+[`plan --verify`](#verify-batch-profiles-before-pushing) compiles every
+required and optional profile, which takes several minutes. See
 [Vulnerability check](ci.md#vulnerability-check) for the `vulncheck` policy.
-
-The CI tooling tests:
-
-```sh
-python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
-python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
-```
 
 ## Build tags
 
@@ -305,10 +338,10 @@ CEPH_TEST_CLIENT_IMAGE=registry.example.com/ceph:client \
 ```
 
 Tentacle 20.2.x is the default. For Squid, set
-`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5`. Do not use 19.2.6: its master
-gateway rejects the secondary zone's `radosgw-admin realm pull` with HTTP 403,
-so RGW multisite scenarios cannot start. See
-[Releases and images](../guides/releases-and-images.md).
+`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5`, the patch CI runs; other patches
+are covered only as far as
+[Supported releases](../guides/releases-and-images.md#supported-releases)
+says (RGW multisite cannot start on 19.2.6).
 
 `scenario-default` and `scenario` default to `SCENARIO_IMAGE_LAYOUT=all`, which unsets
 the role variables and runs `ceph.DefaultImage` even if `CEPH_TEST_IMAGE` is
@@ -689,23 +722,19 @@ mixes fixture coverage with native characterization, split it by subtest:
 fixture parts, and `cephfs_authorization_isolation` and
 `rgw_kms_failure_modes` hold the native ones.
 
-- The case directory holds a `README.md` manual: use case, native contract
-  and trigger, upstream issue and fix links, topology and image roles,
-  resource and time bounds, the runnable command and image inputs, the
-  observations and controls, the meaning of pass, observed bug, not
-  reproduced, unavailable prerequisite and condition not established, and
-  cleanup and limits. It describes the current reproduction, not a diary;
-  logs and full reports stay in issues and artifacts. Upstream Ceph issue and
-  fix links go in this manual; code comments, test messages, commits and pull
-  requests describe the mechanism instead.
+Each case has a tier that decides where it runs (see
+[Experiment case tiers](ci.md#experiment-case-tiers)):
+
+| Tier | Build constraint | Runs |
+| --- | --- | --- |
+| Docker-free unit tests of a case (judgement, readers) | the `code` category, batch `pure` | Code checks, every change |
+| Cheap deterministic case, a characterization or a reproducer | a required batch of a non-`short` category | a pull request that changes a file of the case, `ci:full`, Periodic |
+| Known-defect reproducer that is expensive or fails on the published images | an optional `native_regression` batch | only on request |
+| Case with privileges or host prerequisites no required runner has | an optional batch with its own opt-in tag (`cephfs_fscrypt`) | only on request |
+
 - Its `_test.go` files keep the usual build constraints, `//ci:` lines and
-  batches, and its tier decides which: a cheap deterministic case is a
-  required batch of a non-`short` category, so a pull request runs it only
-  when the case's files change; a case that fails on the unpatched published
-  images is an optional `native_regression` batch that runs only on request
-  (see [Experiment case tiers](ci.md#experiment-case-tiers)). Give the
-  manual the tier and the exact command. A case directory does not make a
-  test manual-only, and moving a case changes its package path, so run
+  batches. A case directory does not make a test manual-only, and moving a
+  case changes its package path, so run
   [`plan --verify`](#verify-batch-profiles-before-pushing) and update every
   `--package` that names it.
 - A case that reproduces a known defect is a standalone test written at
@@ -715,9 +744,8 @@ fixture parts, and `cephfs_authorization_isolation` and
     the trigger) fails the test. That is a real problem with the case or the
     fixture.
   - The then step decides whether the documented symptom occurred and only
-    reports it, in one line per independently evaluated defect:
-    `EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]`.
-    The result never fails the test.
+    reports it, in one [result line](#experiment-result-lines) per
+    independently evaluated defect. The result never fails the test.
   - The image is the only input that changes the given step's premise. It is
     a package-level string variable, `image`, whose default is the release
     tag of an image that reproduces the defect: the published aggregate
@@ -725,35 +753,107 @@ fixture parts, and `cephfs_authorization_isolation` and
     or the upstream tag (`quay.io/ceph/ceph:v<release>`) of a release that
     has no published aggregate. The default never names a digest
     ([Image references](../../AGENTS.md#image-references)); the manual and
-    its examples name images by tag too. A run selects another
-    image with `-ldflags "-X <import path>_test.image=<image>"`, any
-    reference the caller chooses, and an image
-    that no longer reproduces it is one where the defect is resolved. The
-    result comes from the symptom and the prerequisites observed on the image
-    that ran, never from which build it is. Every
-    container the case starts from a Ceph image (cluster, admin client,
-    mirror daemon, gateway) runs that image: a case starts its cluster with
-    `harness.NewSingleImageCluster` or the package `Run` functions, never
-    with a helper that reads the batch's role images.
-  - Running that single test is enough to reproduce the defect:
-
-    ```sh
-    go test -tags=all,native_regression -count=1 -v ./internal/integration/experiments/rgw_empty_sse_header/
-    go test -tags=all,native_regression -count=1 -v \
-      -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5" \
-      ./internal/integration/experiments/rgw_empty_sse_header/
-    ```
-
-    The first prints `result=REPRODUCED`, the second `result=NOT_REPRODUCED`,
-    and both pass. The `Experiments` workflow runs the same command for one
-    case and requires every result line to be `REPRODUCED` on the default
-    image. When a fixed image is given it runs the second command afterwards
-    and requires each result the default run reproduced to be printed again
-    as `NOT_REPRODUCED`.
+    its examples name images by tag too. An image that no longer reproduces
+    the defect is one where the defect is resolved. The result comes from the
+    symptom and the prerequisites observed on the image that ran, never from
+    which build it is. Every container the case starts from a Ceph image
+    (cluster, admin client, mirror daemon, gateway) runs that image: a case
+    starts its cluster with `harness.NewSingleImageCluster` or the package
+    `Run` functions, never with a helper that reads the batch's role images.
 - Helpers the case alone uses stay in its `_test.go` files. A helper that the
   case shares with another package moves to `internal/integration/harness` as
   usual. A case does not get a bug tag, a weakened ordinary contract or a
   release-prefix branch because it exists.
+
+#### Experiment case manuals
+
+The case directory holds a `README.md` manual with what is specific to the
+case, and links to [Running an experiment case](#running-an-experiment-case)
+for the shared conventions instead of repeating them:
+
+- the use case, the native contract and the trigger, with the upstream issue
+  and fix links;
+- the topology, image roles and other prerequisites, and the resource and
+  time bounds;
+- the tier, the batch and its budget, the measured run times, and the
+  triggers that differ from the shared ones (for example the releases a
+  `/ci run` makes sense on, or no `Experiments` entry);
+- at least one directly runnable command, with the case's own `-run`,
+  timeout, environment and flags, and for a reproducer the fixed image to
+  inject, if any;
+- the observations and controls, what each result or failure means for this
+  case (observed bug, not reproduced, unavailable prerequisite, condition not
+  established), and the releases and images it ran on with their results;
+- cleanup and limits.
+
+It describes the current reproduction, not a diary; logs and full reports
+stay in issues and artifacts. Upstream Ceph issue and fix links go in this
+manual; code comments, test messages, commits and pull requests describe the
+mechanism instead.
+
+#### Running an experiment case
+
+Run a case from the module root. Its manual names the test, the batch and
+any prerequisite of its own.
+
+- **Build tags.** A case in a required batch needs `-tags=all`, one in an
+  optional `native_regression` batch `-tags=all,native_regression`, and an
+  opt-in case its own tag (`-tags=all,cephfs_fscrypt`). The Docker-free tests of a case
+  run with a plain `go test` of its package.
+- **Images.** A known-defect reproducer runs every Ceph container from its
+  package variable `image` and ignores the image variables of
+  [Choosing images](#choosing-images), including the role images that a CI
+  batch exports. Another image is injected at link time, with any reference
+  you choose:
+
+  ```sh
+  name=rgw_empty_sse_header   # the case directory
+  go test -tags=all,native_regression -count=1 -v -timeout=20m \
+    -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/${name}_test.image=quay.io/ceph/ceph:v20.2.5" \
+    "./internal/integration/experiments/${name}"
+  ```
+
+  A case without that variable reads the image variables like any other
+  integration test; its manual says so.
+- **The tag runner.** `tag_scenarios.py` runs a case's batch exactly as CI
+  does (see [One CI batch](#one-ci-batch-exactly-as-ci-runs-it)):
+  `optional --batch <batch>` for an optional batch, `run --category
+  <category> --batch <batch>` for a required one, each with
+  `--package ./internal/integration/experiments/<case>`. It refuses an
+  existing `--directory`, so give every run, such as each release of a
+  comparison, its own (for example with a timestamp).
+- **CI triggers.** A required case runs on a pull request only when a file of
+  its directory changes, or with `ci:full`, and Periodic `rotate` can draw
+  it. Any case's batch runs on a pull request's head with
+  `/ci run <batch> [on <release>]` (see
+  [Running chosen batches from a comment](ci.md#running-chosen-batches-from-a-comment)).
+  A known-defect reproducer that has an entry in `experiments.yml` runs
+  through `Experiments`, which checks its results:
+
+  ```sh
+  gh workflow run Experiments -f case=<case> [-f image=<fixed image>]
+  ```
+
+  Every result line must be `REPRODUCED` on the default image. With a fixed
+  image the case then runs again with it injected, and every result the
+  default run reproduced must be printed again as `NOT_REPRODUCED`.
+  `gh workflow run "Native regressions" -f batch=<batch>` and `/ci run` run
+  the batch and take only its pass or failure.
+
+##### Experiment result lines
+
+A known-defect reproducer that passes its given and when steps prints one
+line per independently evaluated defect, and passes whatever it found:
+
+```text
+EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]
+```
+
+`REPRODUCED` means the documented symptom occurred on the image that ran,
+`NOT_REPRODUCED` that it did not; `symptoms` names what was observed. A
+failure of a given or when step (a condition not established, an unavailable
+prerequisite, a failed control) fails the test, which then prints no result
+for that defect. The manual says what each result means for the case.
 
 ### Messenger coverage manifest
 

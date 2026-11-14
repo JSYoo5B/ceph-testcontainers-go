@@ -45,23 +45,15 @@ Upstream reference: [tracker 82726](https://tracker.ceph.com/issues/82726).
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Squid
-19.2.5 by default, which reproduces the defect. Its given and when steps
-fail the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=cephfs_mirror_blockdiff_empty_versions result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
-
-- Manual: `gh workflow run "Experiments" -f case=cephfs_mirror_blockdiff_empty_versions`,
-  with `-f image=<fixed image>` for the second run, or
-  `gh workflow run "Native regressions" -f batch=cephfs_mirror_blockdiff_empty`
-  for its pass or failure only.
-- Comment: `/ci run cephfs_mirror_blockdiff_empty`.
-
-Every container the test starts uses `image`, so the role images that a
-batch exports, and the release a comment names, do not reach it.
+Known-defect reproducer with two clusters that aborts the source MDS,
+optional batch `cephfs_mirror_blockdiff_empty` with a 30-minute budget; no
+automatic run includes it. On its default image, Squid 19.2.5, it prints
+`REPRODUCED` (148 s); Tentacle 20.2.4 (131 s) and Umbrella 21.2.0 (140 s) are
+fixed and print `NOT_REPRODUCED`, so either is the fixed image of its
+`Experiments` dispatch. The comment run is `/ci run cephfs_mirror_blockdiff_empty`;
+the release a comment names does not reach the case. The judgement and reader
+tests run in `code/pure` with every change (under 1 s). The shared triggers,
+result checks and image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -73,8 +65,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions
 ```
 
-On another image, injected into the package's `image` variable. Tentacle
-20.2.4 is fixed and must print `result=NOT_REPRODUCED`:
+On the fixed Tentacle 20.2.4, which must print `result=NOT_REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \

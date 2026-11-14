@@ -58,20 +58,18 @@ Upstream references:
 
 ## Tier and triggers
 
-Known-defect reproducer: on its default image the test passes and reports
-`REPRODUCED` (see [Result line](#result-line)). No automatic run includes it (the default
-checks of a pull request, pushes to `main`, periodic samples), and it never
-gates anything. A maintainer can run it on demand, also on a pull request's
-head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_expiration_header`.
-- Comment: `/ci run rgw_expiration_header` or
-  `/ci run rgw_expiration_header on umbrella`.
+Known-defect reproducer, optional batch `rgw_expiration_header` with a
+20-minute budget; no automatic run includes it. It is an `Experiments` case;
+Umbrella 21.2.0 (`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it, and
+`/ci run rgw_expiration_header on umbrella` runs the batch there. Its
+Docker-free header parsing tests (batch `code/pure`) run in Code checks on
+every change. The triggers, the result checks and the image injection are the
+shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
-The case runs on its own image, the package variable `image`, and not
-on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+On the default image, the Tentacle 20.2.4 aggregate
 (`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
@@ -80,7 +78,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_lifecycle_expiration_header
 ```
 
-Another image, such as a fixed release, is injected at link time:
+On a fixed image, for example Umbrella 21.2.0:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -88,11 +86,6 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWLifecycleExpirationHeader$' \
   ./internal/integration/experiments/rgw_lifecycle_expiration_header
 ```
-
-The batch `rgw_expiration_header` (`tag_scenarios.py optional --batch rgw_expiration_header`, or the
-Native regressions workflow) still runs the case. It exports role images,
-which the case ignores: the cluster and its client container both run
-`image`.
 
 The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_EXP ceph=` and the daemon versions), every version ID with its
@@ -116,14 +109,9 @@ request.
 
 ## Result line
 
-A failure of a given or when step (a condition not established, an
-unavailable prerequisite, a failed control) fails the test, and the test then
-prints no result. Otherwise the test passes whatever the gateway did and
-prints one line:
-
-```text
-EXPERIMENT_RESULT case=rgw_lifecycle_expiration_header result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
-```
+The test passes whatever the gateway did and prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_lifecycle_expiration_header`.
 
 `REPRODUCED`: a request that must carry no `x-amz-expiration` carries one
 (the plain and explicit-version requests of `noncurrent-only`, the

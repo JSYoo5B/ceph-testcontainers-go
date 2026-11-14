@@ -310,8 +310,8 @@ a helper applies or restores it.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
   [NetworkConfig.WithMessengerMode](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithMessengerMode)).
-- Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
-  (see [rgw](../../rgw/README.md)).
+- RGW multisite cannot start on Squid 19.2.6; see
+  [Known release issues](known-release-issues.md#a-secondary-zone-cannot-pull-the-realm-on-squid-1926).
 - `ClusterFacts.CephVersion` reflects only the first MON's image (essential). Mixing releases across role
   images is not supported.
 

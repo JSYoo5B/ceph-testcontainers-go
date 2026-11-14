@@ -51,21 +51,20 @@ answers every part.
 
 ## Tier and triggers
 
-Known-defect reproducer: the test passes and reports `REPRODUCED` (see
-[Result line](#result-line)) on its default image, on every published release
-image and on the Tentacle 20.2.5 official image. No automatic run includes it (the
-default checks of a pull request, pushes to `main`, periodic samples), and it
-never gates anything. A maintainer can run it on demand, also on a pull
-request's head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_multipart_part_class`.
-- Comment: `/ci run rgw_multipart_part_class` or
-  `/ci run rgw_multipart_part_class on umbrella`.
+Known-defect reproducer, optional batch `rgw_multipart_part_class` with a
+20-minute budget; it edits the zone and restarts the gateway. No automatic run
+includes it. It reports `REPRODUCED` on its default image, on every published
+release image and on the Tentacle 20.2.5 official image, so no fixed image is
+known: an `Experiments` dispatch has only the default run. On a pull
+request's head, `/ci run rgw_multipart_part_class [on <release>]` runs the
+batch. Its Docker-free part-read judgement tests (batch `code/pure`) run in
+Code checks on every change. The triggers, the result checks and the image
+injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
-The case runs on its own image, the package variable `image`, and not
-on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+On the default image, the Tentacle 20.2.4 aggregate
 (`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
@@ -74,7 +73,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_multipart_part_storage_class
 ```
 
-Another image, such as a fixed release, is injected at link time:
+On another image, such as a candidate fix:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -85,12 +84,6 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
 
 No fixed release is known, so no image is expected to answer
 `NOT_REPRODUCED` yet; a run on a candidate fix uses the second form.
-
-The batch `rgw_multipart_part_class` (`tag_scenarios.py optional --batch
-rgw_multipart_part_class`, or the Native regressions workflow) still runs the
-case. It exports role images,
-which the case ignores: the cluster and its client container both run
-`image`.
 
 The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_MP ceph=`), the zone placement read back (`RGW_MP zone=`), each
@@ -116,14 +109,9 @@ object's head and tail placement rules (`RGW_MP placement`), its whole read
 
 ## Result line
 
-A failure of a given or when step (a condition not established, an
-unavailable prerequisite, a failed control) fails the test, and the test then
-prints no result. Otherwise the test passes whatever the gateway did and
-prints one line:
-
-```text
-EXPERIMENT_RESULT case=rgw_multipart_part_storage_class result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
-```
+The test passes whatever the gateway did and prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_multipart_part_storage_class`.
 
 `REPRODUCED`: a GET or HEAD of part 1 or 2 of the `COLD` object
 (`cold-storage-class`) does not answer the part's length, a part count of 2

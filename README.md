@@ -109,7 +109,8 @@ Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
 Runtime CI uses these dependency roles directly. Umbrella 21.2.x and Squid
 19.2.x are supported too, with the differences listed in
-[the releases guide](docs/guides/releases-and-images.md).
+[the releases guide](docs/guides/releases-and-images.md) and the native
+defects listed in [Known release issues](docs/guides/known-release-issues.md).
 
 ## Installation
 
@@ -210,6 +211,9 @@ Guides for tasks that span packages:
   network between the zones.
 - [Releases and images](docs/guides/releases-and-images.md): supported Ceph
   releases, role images and image requirements.
+- [Known release issues](docs/guides/known-release-issues.md): native defects
+  of particular Ceph releases by service, with affected releases, consumer
+  impact, guidance and evidence.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything

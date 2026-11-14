@@ -55,22 +55,19 @@ user, bucket and category (`put_obj`, `post_obj`).
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rgw_post_usage_bytes_received result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
+Known-defect reproducer, optional batch `rgw_post_usage_bytes_received`
+with a 20-minute budget; no automatic run includes it. Its default image is
+Tentacle 20.2.4. It is an `Experiments` case, and its fixed image there is
+`quay.io/ceph/ceph:v20.2.5`. `/ci run rgw_post_usage_bytes_received` takes an
+`on <release>` such as `on umbrella`. The triggers, the result checks and the
+image injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its judgement
+and usage log reader tests are Docker-free `code/pure` tests that Code checks
+runs on every change (under 1 s).
 
-- Manual: `gh workflow run "Experiments" -f case=rgw_post_usage_bytes_received`
-  requires `REPRODUCED`; adding `-f image=quay.io/ceph/ceph:v20.2.5`
-  requires `NOT_REPRODUCED` on Tentacle 20.2.5 afterwards.
-  `gh workflow run "Native regressions" -f batch=rgw_post_usage_bytes_received`
-  reports its pass or failure only.
-- Comment: `/ci run rgw_post_usage_bytes_received` or
-  `/ci run rgw_post_usage_bytes_received on umbrella`.
+Measured on a Linux amd64 Docker Engine host with warm images: `REPRODUCED`
+in 33 s on 20.2.4 and in 39 s on 19.2.5; `NOT_REPRODUCED` in 33 s on 20.2.5
+and in 34 s on 21.2.0.
 
 ## Running it
 
@@ -82,8 +79,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_post_usage_bytes_received
 ```
 
-On a fixed image, injected into the package's `image` variable, which must
-print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
+On a fixed image, which must print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
 `quay.io/ceph/ceph:v21.2.0`, is fixed too):
 
 ```sh
@@ -93,8 +89,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_post_usage_bytes_received
 ```
 
-The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`, ...) do
-not select the case's image. The log names the image
+The log names the image
 (`RGW_POST_USAGE image=`), the gateway binary (`RGW_POST_USAGE gateway=`),
 the usage log of each bucket before the uploads
 (`RGW_POST_USAGE usage step=created`), the sizes of the payload and of the

@@ -63,20 +63,15 @@ Upstream references:
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps and
-its controls fail the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=mgr_pg_merge_primary_override result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it, and it never gates
-anything.
-
-- Manual: `gh workflow run "Experiments" -f case=mgr_pg_merge_primary_override`
-  requires `REPRODUCED`; adding
-  `-f image=quay.io/ceph/ceph:v20.2.5`
-  requires `NOT_REPRODUCED` on Tentacle 20.2.5 afterwards.
-  `gh workflow run "Native regressions" -f batch=mgr_pg_merge_primary_override`
-  takes its pass or failure only.
-- Comment: `/ci run mgr_pg_merge_primary_override`.
+Known-defect reproducer, optional batch `mgr_pg_merge_primary_override`
+with a 20-minute budget; no automatic run includes it. The default image is
+Tentacle 20.2.4. It is an `Experiments` case, and its fixed image there is
+`quay.io/ceph/ceph:v20.2.5`. A comment run can name a release:
+`/ci run mgr_pg_merge_primary_override [on <release>]`. Its controls fail the
+test like its given and when steps. The OSDMap reader and judgement tests are
+the package's `code/pure` batch and run in Code checks for every change. The
+triggers, the result checks and the image injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -88,8 +83,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/mgr_pg_merge_primary_override
 ```
 
-On another image, injected into the package's `image` variable, for example
-the fixed Tentacle 20.2.5, which must print `result=NOT_REPRODUCED`:
+On the fixed Tentacle 20.2.5, which must print `result=NOT_REPRODUCED`:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -98,9 +92,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/mgr_pg_merge_primary_override
 ```
 
-The cluster and its client run `image`; the role image variables
-(`CEPH_TEST_IMAGE`, `CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The test
-logs the client's `ceph --version` and the daemons' `ceph versions`.
+The test logs the client's `ceph --version` and the daemons' `ceph versions`.
 
 ## Observations and controls
 
@@ -169,6 +161,10 @@ member of the acting set, and it is only read from a served PG.
    back once more.
 
 ## Reading the result
+
+The test prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=mgr_pg_merge_primary_override`.
 
 - **REPRODUCED:** every sample of the last two minutes is blocked: the
   manager has the reports, the pool has `pg_num` 2 and `pg_num_pending` 2

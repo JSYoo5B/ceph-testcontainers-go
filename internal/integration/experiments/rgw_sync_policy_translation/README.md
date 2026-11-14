@@ -46,46 +46,42 @@ The case exists to verify a patched RGW image.
 
 ## Tier and triggers
 
-Standalone reproducer with a bridge and a host-network variant: each runs on
-the package-level `image`, Tentacle 20.2.4 by default, which reproduces both
-defects. Given and when steps (the realm, the placement, the policy import,
-the bucket checkpoints and the positive controls) fail the test; the then
-steps do not. Each subtest prints one line,
-`EXPERIMENT_RESULT case=rgw_sync_policy_translation/<bridge|host>/<subtest> result=<REPRODUCED|NOT_REPRODUCED>`,
-four in all, and the test passes either way. No automatic run includes it
-(the default checks of a pull request, pushes to `main`, periodic samples),
-and it never gates anything. A maintainer can run it on demand, also on a
-pull request's head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=native_rgw_translation`.
-  The workflow's `rgw_image` input selects role images and does not change
-  the case's `image`.
-- Comment: `/ci run native_rgw_translation`.
+Known-defect reproducer with a bridge and a host-network variant, optional
+batch `native_rgw_translation` with a 60-minute budget; no automatic run
+includes it. Its default image, Tentacle 20.2.4, reproduces both defects.
+Its given and when steps are the realm, the placement, the policy import, the
+bucket checkpoints and the positive controls. Each subtest prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_sync_policy_translation/<bridge|host>/<subtest>`, four in all. It
+is an `Experiments` case without a fixed image, since no release fixes
+either defect, so a dispatch has only the default run. `native_rgw_translation`
+is the default choice of `Native regressions`; that workflow's `rgw_image`
+input selects role images and does not change the case's `image`. The
+comment is `/ci run native_rgw_translation`. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
 On the default image, which must print `result=REPRODUCED` in every line:
 
 ```sh
-CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=75m \
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=60m \
   -run '^(TestMultiClusterRGWSyncTranslationFiltering|TestHostNetworkMultiClusterRGWSyncTranslationFiltering)$' \
   ./internal/integration/experiments/rgw_sync_policy_translation
 ```
 
-On a patched build, injected into the package's `image` variable; a fixed
-image must print `result=NOT_REPRODUCED` for the defect it fixes. No release
+On a patched build; a fixed image must print `result=NOT_REPRODUCED` for the defect it fixes. No release
 fixes either defect yet.
 
 ```sh
-CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=75m \
+CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=60m \
   -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_policy_translation_test.image=<image>" \
   -run '^TestMultiClusterRGWSyncTranslationFiltering$' \
   ./internal/integration/experiments/rgw_sync_policy_translation
 ```
 
 Host networking needs a Linux engine or Docker Desktop with host networking
-enabled. The role image variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`,
-...) do not select the case's images. The test logs the image and the
+enabled. The test logs the image and the
 clusters' Ceph versions.
 
 ## Observations and controls

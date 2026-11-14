@@ -18,7 +18,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Release matrix | `release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
-| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `cephfs_mds_requests_json`, `rbd_group_image_namespace`, `rbd_group_snap_default_quiesce`, `rbd_perf_data_pool`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_legacy_replication_destination`, `rgw_multipart_completion_replay_etag`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_post_usage_bytes_received`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`, `rgw_zonegroup_redirect_endpoint`), the `rgw_encrypted_multipart_transition` integrity check, or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
 | ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -160,6 +160,9 @@ Consequences:
   confirmed failure immediately.
 
 ## Code checks
+
+The local commands for these jobs are in
+[Local checks without Docker](testing.md#local-checks-without-docker).
 
 | Job | Timeout | Runs |
 | --- | --- | --- |
@@ -905,75 +908,30 @@ batches on the recorded release, images and runner.
 ## Native regressions
 
 Optional (`ci_optional`) batches are outside every required check. Run one
-with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
-for the upstream reproducers, through `Native regressions`, which runs the one
-batch its `batch` input names and takes only its pass or failure. The result
-of a reproducer is checked by `Experiments` (see
-[Experiment case tiers](#experiment-case-tiers)).
+with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or
+through `Native regressions`, which runs the one batch its `batch` input names
+and takes only its pass or failure. The result of a known-defect reproducer is
+checked by `Experiments` (see [Experiment case tiers](#experiment-case-tiers)).
 
-These optional batches are [experiment cases](testing.md#experiment-cases)
-that reproduce an upstream defect on their default image:
-`native_rgw_translation`
-([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
-`native_shuffle`
-([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
-`cephfs_dangling_symlink_create`
-([`cephfs_dangling_symlink_create`](../../internal/integration/experiments/cephfs_dangling_symlink_create/README.md)),
-`cephfs_statfs_mixed_quota`
-([`cephfs_statfs_mixed_quota`](../../internal/integration/experiments/cephfs_statfs_mixed_quota/README.md)),
-`cephfs_snapshot_readdir_eviction`
-([`cephfs_snapshot_readdir_eviction`](../../internal/integration/experiments/cephfs_snapshot_readdir_eviction/README.md)),
-`cephfs_readdir_after_snapdiff`
-([`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)),
-`cephfs_mirror_blockdiff_empty`
-([`cephfs_mirror_blockdiff_empty_versions`](../../internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions/README.md)),
-`mgr_pg_merge_primary_override`
-([`mgr_pg_merge_primary_override`](../../internal/integration/experiments/mgr_pg_merge_primary_override/README.md)),
-`mon_log_ack`
-([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
-`rbd_demote_restart`
-([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)),
-`rbd_trash_purge_timezone`
-([`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)),
-`cephfs_mds_requests_json`
-([`cephfs_mds_requests_json`](../../internal/integration/experiments/cephfs_mds_requests_json/README.md)),
-`rbd_group_image_namespace`
-([`rbd_group_image_namespace`](../../internal/integration/experiments/rbd_group_image_namespace/README.md)),
-`rbd_group_snap_default_quiesce`
-([`rbd_group_snap_default_quiesce`](../../internal/integration/experiments/rbd_group_snap_default_quiesce/README.md)),
-`rbd_perf_data_pool`
-([`rbd_perf_data_pool`](../../internal/integration/experiments/rbd_perf_data_pool/README.md)),
-`rbd_group_snap_late_complete`
-([`rbd_group_snap_late_complete`](../../internal/integration/experiments/rbd_group_snap_late_complete/README.md)),
-`rgw_conditional_writes`
-([`rgw_suspended_conditional_writes`](../../internal/integration/experiments/rgw_suspended_conditional_writes/README.md)),
-`rgw_ssec_completion`
-([`rgw_ssec_multipart_completion`](../../internal/integration/experiments/rgw_ssec_multipart_completion/README.md)),
-`rgw_empty_sse_header`
-([`rgw_empty_sse_header`](../../internal/integration/experiments/rgw_empty_sse_header/README.md)),
-`rgw_legacy_replication_destination`
-([`rgw_legacy_replication_destination`](../../internal/integration/experiments/rgw_legacy_replication_destination/README.md)),
-`rgw_multipart_completion_replay_etag`
-([`rgw_multipart_completion_replay_etag`](../../internal/integration/experiments/rgw_multipart_completion_replay_etag/README.md)),
-`rgw_expiration_header`
-([`rgw_lifecycle_expiration_header`](../../internal/integration/experiments/rgw_lifecycle_expiration_header/README.md)),
-`rgw_compressed_copy`
-([`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)),
-`rgw_multipart_part_class`
-([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)),
-`rgw_object_lock_sync`
-([`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)),
-`rgw_post_usage_bytes_received`
-([`rgw_post_usage_bytes_received`](../../internal/integration/experiments/rgw_post_usage_bytes_received/README.md)),
-`rgw_slo_head_segment_reads`
-([`rgw_slo_head_segment_reads`](../../internal/integration/experiments/rgw_slo_head_segment_reads/README.md)),
-`rgw_sync_lease_lapse`
-([`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md))
-and `rgw_zonegroup_redirect_endpoint`
-([`rgw_zonegroup_redirect_endpoint`](../../internal/integration/experiments/rgw_zonegroup_redirect_endpoint/README.md)).
-Each case's `README.md` gives its trigger, controls, command and the meaning
-of each outcome; [Experiment case tiers](#experiment-case-tiers) says when
-each one runs.
+The `options` of the workflow's `batch` input are the batches it accepts, and
+the source decides what each one runs. To list them, and to find the case
+manual of one:
+
+```sh
+# The choices of the dispatch, failure_archive included.
+sed -n '/^      batch:/,/^      rgw_image:/p' .github/workflows/native-regressions.yml
+# The test files, and with them the case directory and its README.md, of one batch.
+grep -lw ci_batch_rgw_empty_sse_header internal/integration/experiments/*/*_test.go
+# Dispatch one.
+gh workflow run "Native regressions" --ref main -f batch=rgw_empty_sse_header
+```
+
+Most choices are [experiment cases](testing.md#experiment-cases): each case's
+`README.md` gives its trigger, controls, command and the meaning of each
+outcome. A batch outside `internal/integration/experiments` is described with
+its feature below. A new optional batch joins the dispatch when it is added to
+the `batch` options; `test_scenario_shards.py` keeps the expected list and
+checks that every choice is an optional batch of the source.
 
 `native_rgw_translation` also tests a patched RGW image; an empty
 `rgw_image` uses the published role image, and the workflow never builds one:
@@ -1057,67 +1015,11 @@ with `batch=rgw_encrypted_multipart_transition`.
 ### Experiment case tiers
 
 An experiment case runs where its cost and determinism allow, through the
-existing triggers only. Durations are one native run of the parent test on a
-Linux amd64 Docker Engine host (12 cores) with warm images; a known-defect
-reproducer's row names its default image's release and its results there and
-on a fixed image. The batch budget is the `//ci:` timeout.
-
-| Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `rgw_multipart_completion_replay_etag` header and XML verdict tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_multisite_object_lock_sync` configuration reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `cephfs_dangling_symlink_create` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `cephfs_statfs_mixed_quota` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `cephfs_snapshot_readdir_eviction` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `cephfs_readdir_after_snapdiff` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rbd_trash_purge_timezone` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rbd_group_snap_default_quiesce` callback controls (`code/pure`) | Docker-free Python verdict in normal and optimized modes | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rbd_group_snap_late_complete` judgement and report reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `cephfs_mirror_blockdiff_empty_versions` judgement and reader tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `mgr_pg_merge_primary_override` OSDMap reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_slo_head_segment_reads` op history reader, window and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_post_usage_bytes_received` usage log reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_zonegroup_redirect_endpoint` period reader, redirect classification and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_single_part_multipart_read` judgement and process reading tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rgw_sync_lease_lapse` log reader and gateway state tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
-| `rbd_schedule_remove` (`topology/discovery_schedule`) | cheap, deterministic characterization | 18 s; 76 s on 19.2.2 with the pull | 7m | only when a file of the case changes, or `ci:full` | `/ci run discovery_schedule [on <release>]` | `rotate` may draw it on supported releases; `discovery` adds it on 19.2.2 and 19.2.3 | `targeted` |
-| `cephfs_authorization_isolation` (`topology/cephfs_authorization_isolation`) | known-defect reproducer, default 19.2.2; prints the result and passes | REPRODUCED in all three subtests 112 s; 20.2.4 NOT_REPRODUCED 105 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run cephfs_authorization_isolation [on <release>]` | `rotate` may draw it | `Experiments`, `case=cephfs_authorization_isolation`; `targeted` |
-| `rbd_encrypted_clone_flatten` (`topology/rbd_encrypted_clone_flatten`) | cheap, deterministic characterization | 75 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rbd_encrypted_clone_flatten [on <release>]` | `rotate` may draw it | `targeted` |
-| `rgw_kms_failure_modes` (`recovery/rgw_kms_failure_modes`) | deterministic fault characterization, bridge only | 63 s | 30m | only when a file of the case changes, or `ci:full` | `/ci run rgw_kms_failure_modes [on <release>]` | `rotate` may draw it | `targeted` |
-| `rgw_single_part_multipart_read` (`topology/rgw_single_part_read`) | known-defect reproducer, default 19.1.0; prints the result and passes | REPRODUCED 164 s; 19.2.0 NOT_REPRODUCED 61 s | 20m | only when a file of the case changes, or `ci:full` | `/ci run rgw_single_part_read [on <release>]` | `rotate` may draw it | `Experiments`, `case=rgw_single_part_multipart_read`; `targeted` |
-| `cephfs_fscrypt` (`optional/cephfs_fscrypt`) | privileged client containers and a host kernel module; passes on the published images | 46 s; 51 s on 19.2.5, 55 s on 21.2.0 | 30m | never | `/ci run cephfs_fscrypt [on <release>]` | never | no |
-| `mon_log_ack_peon` (`optional/mon_log_ack`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 104 s; still REPRODUCED on 21.2.0, no fixed release; 19.2.2 (before the defect) NOT_REPRODUCED 46 s | 20m | never | `/ci run mon_log_ack` | never | `Experiments`, `case=mon_log_ack_peon`; `Native regressions`, `batch=mon_log_ack` |
-| `cephfs_dangling_symlink_create` (`optional/cephfs_dangling_symlink_create`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 33 s; no fixed release, 19.2.2 (before the defect) NOT_REPRODUCED 39 s | 20m | never | `/ci run cephfs_dangling_symlink_create [on <release>]` | never | `Experiments`, `case=cephfs_dangling_symlink_create`; `batch=cephfs_dangling_symlink_create` |
-| `cephfs_statfs_mixed_quota` (`optional/cephfs_statfs_mixed_quota`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 33 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 34 s | 20m | never | `/ci run cephfs_statfs_mixed_quota [on umbrella]` | never | `Experiments`, `case=cephfs_statfs_mixed_quota`; `batch=cephfs_statfs_mixed_quota` |
-| `cephfs_snapshot_readdir_eviction` (`optional/cephfs_snapshot_readdir_eviction`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 47 s; no fixed release | 20m | never | `/ci run cephfs_snapshot_readdir_eviction [on <release>]` | never | `Experiments`, `case=cephfs_snapshot_readdir_eviction`; `batch=cephfs_snapshot_readdir_eviction` |
-| `cephfs_readdir_after_snapdiff` (`optional/cephfs_readdir_after_snapdiff`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; no fixed release | 20m | never | `/ci run cephfs_readdir_after_snapdiff [on <release>]` | never | `Experiments`, `case=cephfs_readdir_after_snapdiff`; `batch=cephfs_readdir_after_snapdiff` |
-| `rbd_mirror_demote_restart` (`optional/rbd_demote_restart`) | known-defect reproducer, default 19.2.3; prints the result and passes | `demotion-resume` REPRODUCED 760 s (fixed in 19.2.4); `resumed-bytes` REPRODUCED on 19.2.4 and 20.2.4, no fixed release | 30m | never | `/ci run rbd_demote_restart` | never | `Experiments`, `case=rbd_mirror_demote_restart`; `batch=rbd_demote_restart` |
-| `rbd_trash_purge_timezone` (`optional/rbd_trash_purge_timezone`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 38 s; no fixed release | 20m | never | `/ci run rbd_trash_purge_timezone [on <release>]` | never | `Experiments`, `case=rbd_trash_purge_timezone`; `batch=rbd_trash_purge_timezone` |
-| `cephfs_mds_requests_json` (`optional/cephfs_mds_requests_json`) | known-defect reproducer | 19.2.5 REPRODUCED, 20.2.4 NOT_REPRODUCED | 20m | never | `/ci run cephfs_mds_requests_json` | never | `Experiments`, `case=cephfs_mds_requests_json`; `batch=cephfs_mds_requests_json` |
-| `rbd_group_image_namespace` (`optional/rbd_group_image_namespace`) | known-defect reproducer | 19.2.0 REPRODUCED, 19.2.1 NOT_REPRODUCED | 20m | never | `/ci run rbd_group_image_namespace` | never | `Experiments`, `case=rbd_group_image_namespace`; `batch=rbd_group_image_namespace` |
-| `rbd_group_snap_default_quiesce` (`optional/rbd_group_snap_default_quiesce`) | known-defect reproducer | 19.2.2 REPRODUCED, 19.2.3 NOT_REPRODUCED | 20m | never | `/ci run rbd_group_snap_default_quiesce` | never | `Experiments`, `case=rbd_group_snap_default_quiesce`; `batch=rbd_group_snap_default_quiesce` |
-| `rbd_perf_data_pool` (`optional/rbd_perf_data_pool`) | known-defect reproducer | 19.2.5 REPRODUCED, 19.2.7 NOT_REPRODUCED | 20m | never | `/ci run rbd_perf_data_pool` | never | `Experiments`, `case=rbd_perf_data_pool`; `batch=rbd_perf_data_pool` |
-| `rbd_group_snap_late_complete` (`optional/rbd_group_snap_late_complete`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 29 s; still REPRODUCED on 21.2.0 (29 s), no fixed release | 20m | never | `/ci run rbd_group_snap_late_complete [on <release>]` | never | `Experiments`, `case=rbd_group_snap_late_complete`; `batch=rbd_group_snap_late_complete` |
-| `mgr_pg_merge_primary_override` (`optional/mgr_pg_merge_primary_override`) | known-defect reproducer, default 20.2.4; prints the result and passes; three OSDs, samples a blocked merge for two minutes | REPRODUCED 203 s; still REPRODUCED on 19.2.5 (210 s); 20.2.5 NOT_REPRODUCED 87 s, 21.2.0 80 s | 20m | never | `/ci run mgr_pg_merge_primary_override [on <release>]` | never | `Experiments`, `case=mgr_pg_merge_primary_override`; `batch=mgr_pg_merge_primary_override` |
-| `rgw_slo_head_segment_reads` (`optional/rgw_slo_head_segment_reads`) | known-defect reproducer, default 20.2.4; prints the result and passes; sets the OSD's op history and op tracker level | REPRODUCED 39 s; still REPRODUCED on 19.2.5 (43 s), 20.2.5 (40 s) and 21.2.0 (42 s), no fixed release | 20m | never | `/ci run rgw_slo_head_segment_reads [on <release>]` | never | `Experiments`, `case=rgw_slo_head_segment_reads`; `batch=rgw_slo_head_segment_reads` |
-| `rgw_post_usage_bytes_received` (`optional/rgw_post_usage_bytes_received`) | known-defect reproducer, default 20.2.4; prints the result and passes; enables the usage log | REPRODUCED 33 s; still REPRODUCED on 19.2.5 (39 s); 20.2.5 NOT_REPRODUCED 33 s, 21.2.0 34 s | 20m | never | `/ci run rgw_post_usage_bytes_received [on <release>]` | never | `Experiments`, `case=rgw_post_usage_bytes_received`; `batch=rgw_post_usage_bytes_received` |
-| `rgw_multipart_completion_replay_etag` (optional) | known-defect reproducer for replay ETags in the XML result and, when present on first completion, the HTTP header | 19.2.5 REPRODUCED, 20.2.4 NOT_REPRODUCED | 20m | never | `/ci run rgw_multipart_completion_replay_etag` | never | Experiments or Native regressions |
-| `rgw_legacy_replication_destination` (optional) | known-defect reproducer for reading a 19.2.5 policy | 20.2.2 reader REPRODUCED, 20.2.4 reader NOT_REPRODUCED | 20m | never | `/ci run rgw_legacy_replication_destination` | never | Experiments or Native regressions |
-| [`rgw_lifecycle_delete_marker`](../../internal/integration/experiments/rgw_lifecycle_delete_marker/README.md) (topology) | delete-marker removal and preservation controls | eligible marker removed on 20.2.2 and 20.2.4 | 15m | case changes or `ci:full` | `/ci run rgw_lifecycle_delete_marker [on <release>]` | eligible for rotation | targeted |
-| `rgw_encrypted_multipart_transition` (optional) | full and cross-part reads after an encrypted object transitions to COLD | 20.2.2 and 20.2.4 returned expected bytes after encrypted transition; 20.2.1 passed the separate encryption and transition controls | 20m | never | `/ci run rgw_encrypted_multipart_transition` | never | Native regressions |
-| `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 35 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 35 s | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `Experiments`, `case=rgw_suspended_conditional_writes`; `batch=rgw_conditional_writes` |
-| `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | known-defect reproducer, default 20.2.4; prints the result and passes; HTTPS | REPRODUCED 34 s; 21.2.0 NOT_REPRODUCED 32 s | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `Experiments`, `case=rgw_ssec_multipart_completion`; `batch=rgw_ssec_completion` |
-| `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 20.2.5 NOT_REPRODUCED 30 s | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `Experiments`, `case=rgw_empty_sse_header`; `batch=rgw_empty_sse_header` |
-| `rgw_lifecycle_expiration_header` (`optional/rgw_expiration_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 21.2.0 NOT_REPRODUCED 31 s | 20m | never | `/ci run rgw_expiration_header [on umbrella]` | never | `Experiments`, `case=rgw_lifecycle_expiration_header`; `batch=rgw_expiration_header` |
-| `rgw_compressed_copy_accounting` (`optional/rgw_compressed_copy`) | known-defect reproducer, default 20.2.4; prints the result and passes; edits the zone and restarts the gateway | REPRODUCED 41 s; 21.2.0 NOT_REPRODUCED 41 s | 20m | never | `/ci run rgw_compressed_copy [on umbrella]` | never | `Experiments`, `case=rgw_compressed_copy_accounting`; `batch=rgw_compressed_copy` |
-| `rgw_multipart_part_storage_class` (`optional/rgw_multipart_part_class`) | known-defect reproducer, default 20.2.4; prints the result and passes; edits the zone and restarts the gateway | REPRODUCED 39 s; still REPRODUCED on 21.2.0 (38 s), no fixed release | 20m | never | `/ci run rgw_multipart_part_class [on <release>]` | never | `Experiments`, `case=rgw_multipart_part_storage_class`; `batch=rgw_multipart_part_class` |
-| `rgw_sync_lease_lapse` (`optional/rgw_sync_lease_lapse`) | known-defect reproducer, default 20.2.4; prints the result and passes; two clusters, pauses the gateways | REPRODUCED 528 s; no fixed release | 40m | never | `/ci run rgw_sync_lease_lapse [on <release>]` | never | `Experiments`, `case=rgw_sync_lease_lapse`; `batch=rgw_sync_lease_lapse` |
-| `rgw_multisite_object_lock_sync` (`optional/rgw_object_lock_sync`) | known-defect reproducer, default 20.2.4; prints the result and passes; two clusters | REPRODUCED 216 s; 20.2.5 NOT_REPRODUCED 101 s, 21.2.0 79 s | 30m | never | `/ci run rgw_object_lock_sync [on <release>]` | never | `Experiments`, `case=rgw_multisite_object_lock_sync`; `batch=rgw_object_lock_sync` |
-| `rgw_zonegroup_redirect_endpoint` (`optional/rgw_zonegroup_redirect_endpoint`) | known-defect reproducer, default 20.2.4; prints the result and passes; two clusters, two zonegroups | REPRODUCED 129 s; still REPRODUCED on 19.2.5 (138 s); 20.2.5 NOT_REPRODUCED 130 s, 21.2.0 107 s | 30m | never | `/ci run rgw_zonegroup_redirect_endpoint [on <release>]` | never | `Experiments`, `case=rgw_zonegroup_redirect_endpoint`; `batch=rgw_zonegroup_redirect_endpoint` |
-| `rgw_sync_policy_translation` (`optional/native_rgw_translation`) | known-defect reproducer, default 20.2.4; prints the result and passes; two network modes | REPRODUCED 650 s bridge, 647 s host; no fixed release | 60m | never | `/ci run native_rgw_translation` | never | `Experiments`, `case=rgw_sync_policy_translation`; `batch=native_rgw_translation` (default), with `rgw_image` |
-| `cephfs_mirror_daemon_redistribution` (`optional/native_shuffle`) | known-defect reproducer, default 20.2.4; prints the result and passes; two network modes | REPRODUCED 357 s bridge, 351 s host; still REPRODUCED on 20.2.5 and 21.2.0, no fixed release | 60m | never | `/ci run native_shuffle` | never | `Experiments`, `case=cephfs_mirror_daemon_redistribution`; `batch=native_shuffle` |
-| `cephfs_mirror_blockdiff_empty_versions` (`optional/cephfs_mirror_blockdiff_empty`) | known-defect reproducer, default 19.2.5; prints the result and passes; two clusters, aborts the source MDS | REPRODUCED 148 s; 20.2.4 NOT_REPRODUCED 131 s, 21.2.0 140 s | 30m | never | `/ci run cephfs_mirror_blockdiff_empty` | never | `Experiments`, `case=cephfs_mirror_blockdiff_empty_versions`; `batch=cephfs_mirror_blockdiff_empty` |
+existing triggers only. The tiers are listed in
+[Experiment cases](testing.md#experiment-cases). Each case's `README.md`
+records its tier, its batch and budget (the `//ci:` timeout), its measured
+runs and the triggers that apply to it, so adding a case changes nothing
+here.
 
 - A cheap deterministic case is a required batch of a non-`short` category,
   so a pull request runs it only when it changes a file of the case's

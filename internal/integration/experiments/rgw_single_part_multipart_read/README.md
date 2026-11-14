@@ -54,43 +54,47 @@ covers numbered reads in a non-default storage class.
 
 ## Tier and triggers
 
-Known-defect reproducer: on its default image, 19.1.0, the test passes and
+Known-defect reproducer in the required batch `topology/rgw_single_part_read`
+with a 20-minute budget. On its default image, 19.1.0, the test passes and
 reports `REPRODUCED` (see [Result line](#result-line)) in about 165 seconds,
-since both unanswered reads wait out their deadline. Every run of the batch
-runs 19.1.0, whatever release the run selects.
+since both unanswered reads wait out their deadline. It runs its package
+variable `image`, so every run of the batch runs 19.1.0, whatever release the
+run selects. It is an `Experiments` case; the fixed image used below is the
+19.2.0 aggregate. The triggers, the result checks and the image injection are
+the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its judgement
+and process reading tests are Docker-free `code/pure` tests that Code checks
+runs on every change (under 1 s).
 
 - Pull request: only when a file of this directory changes, or with the
-  `ci:full` label (a required `topology` batch).
+  `ci:full` label.
 - Comment: `/ci run rgw_single_part_read [on squid|umbrella]`.
-- Periodic: `rotate` can draw it; it still runs 19.1.0.
+- Periodic: `rotate` can draw it; it still runs 19.1.0. `targeted` runs it
+  on request.
 
 ## Running it
 
-The case runs on its own image, the package variable `image`, and not
-on the role images of the environment. The default is the official Squid release candidate 19.1.0, the only available
-build without the fix,
-(`quay.io/ceph/ceph:v19.1.0`), which reproduces the defect:
+The default image is the official Squid release candidate 19.1.0
+(`quay.io/ceph/ceph:v19.1.0`), the only available build without the fix,
+which reproduces the defect:
 
 ```sh
-CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
   -run '^TestRGWSinglePartMultipartNumberedRead$' \
   ./internal/integration/experiments/rgw_single_part_multipart_read
 ```
 
-Another image, such as a fixed release, is injected at link time:
+On a fixed image, the 19.2.0 aggregate:
 
 ```sh
-CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
+CGO_ENABLED=0 go test -tags all -count=1 -v -timeout=20m \
   -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_single_part_multipart_read_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all" \
   -run '^TestRGWSinglePartMultipartNumberedRead$' \
   ./internal/integration/experiments/rgw_single_part_multipart_read
 ```
 
-The `topology/rgw_single_part_read` batch (`tag_scenarios.py run --category
-topology --batch rgw_single_part_read`) still runs the case and so runs
-19.1.0. It exports role images,
-which the case ignores: the cluster and its client container both run
-`image`.
+The batch runs the same test through the tag runner with
+`tag_scenarios.py run --category topology --batch rgw_single_part_read`.
 
 The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_SP ceph=`), the gateway binary (`RGW_SP gateway=`), each object as
@@ -139,14 +143,9 @@ uploaded (`RGW_SP object=`), every numbered read, sent or not
 
 ## Result line
 
-A failure of a given or when step (a condition not established, an
-unavailable prerequisite, a failed control) fails the test, and the test then
-prints no result. Otherwise the test passes whatever the gateway did and
-prints one line:
-
-```text
-EXPERIMENT_RESULT case=rgw_single_part_multipart_read result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
-```
+The test prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_single_part_multipart_read`.
 
 `REPRODUCED`: a read of part 1 of `single-small` or `single-large` gets
 the verdict `observed defect` of `judgeOnlyPart`: it is answered with

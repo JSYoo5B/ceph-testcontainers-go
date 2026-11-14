@@ -19,7 +19,8 @@ probes with a fresh libcephfs or librados client.
 | `snapshot of a deleted directory` | A principal restricted to `/dir1` that deletes a child still reads the child's bytes through an earlier `/dir1` snapshot, and is refused `/` and `/dir2`. | Squid before 19.2.3: the snapshot read is refused once the live directory is unlinked. | [tracker 66828](https://tracker.ceph.com/issues/66828), [ceph/ceph#58419](https://github.com/ceph/ceph/pull/58419), Squid [ceph/ceph#59518](https://github.com/ceph/ceph/pull/59518) |
 | `same-named subvolumes` | Namespace-isolated subvolumes with one name in two groups get two RADOS namespaces; each reader's OSD caps name only its own, and it is refused the other's object. | Squid before 19.2.4: both share one namespace, so each reader reads the other's data through librados. | [tracker 70668](https://tracker.ceph.com/issues/70668), [ceph/ceph#62668](https://github.com/ceph/ceph/pull/62668), Squid [ceph/ceph#64205](https://github.com/ceph/ceph/pull/64205) |
 
-Each subtest is one defect and prints its own `EXPERIMENT_RESULT` line,
+Each subtest is one defect and prints its own
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=cephfs_authorization_isolation/<defect>` with the defect
 `caps-per-filesystem`, `snapshot-of-a-deleted-directory` or
 `same-named-subvolumes`. The default image, Squid 19.2.2, is affected by all
@@ -35,17 +36,21 @@ three; Squid 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 by none.
 
 ## Tier and triggers
 
-Standalone reproducer. The test fails only when its setup or a control does
-not hold; a documented symptom does not fail it. On the default image every
-line says `REPRODUCED`.
+Known-defect reproducer of fixed defects in the required batch
+`topology/cephfs_authorization_isolation` with a 30-minute budget, so it
+builds with `-tags all` and needs no `native_regression`. On the default
+image, Squid 19.2.2, every line says `REPRODUCED` (112 s); Tentacle 20.2.4
+prints `NOT_REPRODUCED` (105 s).
 
 - Pull request: only when a file of this directory changes, or with the
-  `ci:full` label (a required `topology` batch).
+  `ci:full` label.
 - Comment: `/ci run cephfs_authorization_isolation [on squid|umbrella]`.
-- Periodic: `rotate` can draw it.
+- Periodic: `rotate` can draw it; `targeted` runs it on a chosen patch.
+- Manual: an `Experiments` case; Tentacle 20.2.4 is a fixed image for it.
 
-Every container the test starts uses `image`, so the role images that a
-batch exports do not reach it: a batch run reports on the default image.
+It runs every container from its `image`, so a batch run reports on the
+default image. The shared triggers, result checks and image injection are in
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 

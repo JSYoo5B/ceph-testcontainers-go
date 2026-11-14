@@ -34,13 +34,20 @@ consistent outcomes. No upstream issue is recorded for the Squid difference.
 
 ## Tier and triggers
 
-Deterministic; the cut is bounded by the lowered low-speed limit. One run
-takes about a minute on 20.2.4.
+Deterministic fault characterization in the required `recovery` batch
+`rgw_kms_failure_modes` with a 30-minute budget, bridge only; the cut is
+bounded by the lowered low-speed limit. One run takes 63 s on 20.2.4. Its
+Docker-free audit test (`TestTransitRetryAuditDetectsADispatchedDeleteWithoutAReply`,
+batch `code/pure`) runs in Code checks on every change.
 
 - Pull request: only when a file of this directory changes, or with the
-  `ci:full` label (a required `recovery` batch).
+  `ci:full` label.
 - Comment: `/ci run rgw_kms_failure_modes [on squid|umbrella]`.
-- Periodic: `rotate` can draw it on the supported releases.
+- Periodic: `rotate` can draw it on the supported releases; `targeted` runs
+  it on a chosen patch.
+
+The shared triggers and the tag runner are described in
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -58,9 +65,6 @@ python3 .github/scripts/tag_scenarios.py run --category recovery \
   --package ./internal/integration/experiments/rgw_kms_failure_modes \
   --directory "artifacts/rgw-kms-failure-modes-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
-
-The runner refuses an existing `--directory`, so the timestamp gives each
-run, such as each release of a comparison, its own.
 
 The log records the Vault image, the native status codes and the audited
 key outcomes.

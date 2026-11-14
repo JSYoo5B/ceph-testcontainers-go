@@ -156,7 +156,7 @@ a renewal, and it renews none while its reads of a source zone that does not
 answer wait. A zone link cut or a paused source gateway that lasts longer
 than about 15 seconds can therefore cost a zone's shards their leases, and
 with them reach the native defect described under
-[known release-specific issues](../../docs/guides/releases-and-images.md#known-release-specific-issues),
+[known release issues](../../docs/guides/known-release-issues.md#data-sync-after-a-source-that-did-not-answer-for-longer-than-the-sync-lease-period),
 which leaves the zone behind until its gateway restarts.
 
 A test that keeps a zone from answering for longer selects a period of more
@@ -207,8 +207,10 @@ period. `IncrementalSync` and `SyncLeasePeriod` are independent.
   reliable effect, and S3 `PutBucketReplication` rejects account-owned requests
   with `NotImplemented`. IAM non-root principals and cross-account or
   cross-tenant principal translation are refused by the helpers.
-- Releases: Tentacle 20.2.4 is the default. On Squid use 19.2.5 (19.2.6 cannot
-  set up multisite); Squid replicates nothing for a user-mode pipe with an
+- Releases: Tentacle 20.2.4 is the default. On Squid use 19.2.5; 19.2.6
+  cannot start a secondary zone (see
+  [Known release issues](../../docs/guides/known-release-issues.md#a-secondary-zone-cannot-pull-the-realm-on-squid-1926)).
+  Squid replicates nothing for a user-mode pipe with an
   account root user, which `CreatePipe` refuses with `ceph.ErrUnsupported`.
 - Out of scope: automatic failover, request routing between zones, recovery
   point guarantees and realistic WAN models. A zone link can still be delayed

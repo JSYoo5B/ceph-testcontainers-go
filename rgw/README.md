@@ -53,7 +53,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    disabled, because `radosgw-admin` cannot delete a policy; on Umbrella,
    where `ratelimit get` reports such a user as `ENOENT`, it then reports the
    default (see
-   [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
+   [Known release issues](../docs/guides/known-release-issues.md#user-without-a-rate-limit-policy)).
 5. **Replace the certificate** when the scenario tests how the SUT meets a
    renewed certificate or a changed CA: `Gateway.ReplaceTLS` installs a new
    `rgw.TLSConfig` and restarts the gateway; resolve `S3SecureEndpoint` again
@@ -105,8 +105,8 @@ recovery need the default two OSDs or more.
   contain `radosgw` and `radosgw-admin` (`Gateway.Admin` runs inside the
   gateway). Keep every role on the same Ceph
   release and architecture. `ceph.DefaultImage` is Tentacle 20.2.4; Squid
-  19.2.5 is supported (use 19.2.5, not 19.2.6, for multisite). See
-  [Releases and images](../docs/guides/releases-and-images.md).
+  19.2.5 is supported. See
+  [Releases and images](../docs/guides/releases-and-images.md#supported-releases).
 - Identities belong to the cluster and scope that created them, not to one
   gateway: user handles, and the account and placement handles of the feature
   packages, run through any running gateway of their scope, and a gateway can

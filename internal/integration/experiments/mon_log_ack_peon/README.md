@@ -42,19 +42,14 @@ Upstream references:
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps fail
-the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=mon_log_ack_peon result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it (the default checks of a
-pull request, pushes to `main`, periodic samples), and it never gates
-anything. A maintainer can run it on demand, also on a pull request's head
-with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=mon_log_ack`.
-- Comment: `/ci run mon_log_ack` (a non-gating run on a pull request's head).
-- The parser tests in `log_ack_fixture_test.go` are the `code/pure` batch of
-  this package and run in Code checks for every change.
+Known-defect reproducer, optional batch `mon_log_ack` with a 20-minute
+budget; no automatic run includes it. The default image is Tentacle 20.2.4.
+It is an `Experiments` case (`case=mon_log_ack_peon`) without a fixed image:
+no release fixes the defect yet. The parser tests in `log_ack_fixture_test.go`
+are the `code/pure` batch of this package and run in Code checks for every
+change. The triggers, the result checks and the image injection are the
+shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
@@ -65,8 +60,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-On another image, injected into the package's `image` variable. No release
-fixes the defect yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
+On another image. No release fixes the defect yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
 which predates the introducing change, must print `result=NOT_REPRODUCED`:
 
 ```sh
@@ -75,9 +69,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-Every container of the case runs `image`; the role image variables
-(`CEPH_TEST_IMAGE`, `CEPH_TEST_ESSENTIAL_IMAGE`) do not select it. The log
-line `MON_LOG_ACK ceph=...` records the version the cluster runs.
+The log line `MON_LOG_ACK ceph=...` records the version the cluster runs.
 
 ## Observations and controls
 
@@ -96,6 +88,9 @@ line `MON_LOG_ACK ceph=...` records the version the cluster runs.
   request" lines are the evidence of the loss.
 
 ## Reading the result
+
+The test prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=mon_log_ack_peon`.
 
 - **REPRODUCED:** the leader-connected control is acknowledged, a
   peon-connected OSD is not, and the symptom names the peons' discarded

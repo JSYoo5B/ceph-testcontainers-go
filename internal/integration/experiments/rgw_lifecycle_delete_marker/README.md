@@ -10,11 +10,21 @@ The gateway's background lifecycle worker is disabled. One debug day is two seco
 
 Both Tentacle 20.2.2 and 20.2.4 removed the eligible marker in this RADOS-backed setup. This result establishes healthy behavior for the measured layout. Other storage backends and historical marker encodings are outside the case.
 
+## Tier and triggers
+
+Healthy-behaviour characterization in the required `topology` batch
+`rgw_lifecycle_delete_marker` with a 15-minute budget. A pull request runs it
+only when a file of this directory changes, or with `ci:full`; Periodic
+`rotate` can draw it and `targeted` runs it on a chosen patch; on a pull
+request's head, `/ci run rgw_lifecycle_delete_marker [on <release>]`. It
+prints no result line. See [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
+
 ## Running
 
-Required topology batch `rgw_lifecycle_delete_marker` starts one cluster with one OSD, an admin client and an RGW. It accepts the usual aggregate image or essential, client and RGW role images. Each request has a 30-second deadline. The case bounds its operations to six minutes and purges the bucket before the fixture removes the cluster.
+The batch starts one cluster with one OSD, an admin client and an RGW. It accepts the usual aggregate image or essential, client and RGW role images. Each request has a 30-second deadline. The case bounds its operations to six minutes and purges the bucket before the fixture removes the cluster.
 
 ```sh
 go test -count=1 -tags=all -timeout=15m -v \
+  -run '^TestRGWLifecycleDeleteMarker$' \
   ./internal/integration/experiments/rgw_lifecycle_delete_marker
 ```

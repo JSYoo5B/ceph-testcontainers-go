@@ -72,18 +72,20 @@ Upstream references:
 
 ## Tier and triggers
 
-Standalone reproducer: the test runs on its package-level `image`, Tentacle
-20.2.4 by default, which reproduces the defect. Its given and when steps and
-its controls fail the test; the then step does not. It prints one line,
-`EXPERIMENT_RESULT case=rgw_slo_head_segment_reads result=<REPRODUCED|NOT_REPRODUCED>`,
-and passes either way. No automatic run includes it, and it never gates
-anything.
+Known-defect reproducer, optional batch `rgw_slo_head_segment_reads` with a
+20-minute budget; no automatic run includes it. Its default image is Tentacle
+20.2.4. Its controls fail the test like its given and when steps. It is an
+`Experiments` case without a fixed image, since no release fixes the defect,
+so a dispatch has only the default run. `/ci run rgw_slo_head_segment_reads`
+takes an `on <release>` such as `on umbrella`. It sets the OSD's op history
+and op tracker level. The triggers, the result checks and the image injection are the shared ones
+of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its op history reader, window and judgement
+tests are Docker-free `code/pure` tests that Code checks runs on every change
+(under 1 s).
 
-- Manual: `gh workflow run "Experiments" -f case=rgw_slo_head_segment_reads`,
-  or `gh workflow run "Native regressions" -f batch=rgw_slo_head_segment_reads`
-  for its pass or failure only.
-- Comment: `/ci run rgw_slo_head_segment_reads` or
-  `/ci run rgw_slo_head_segment_reads on umbrella`.
+Measured on a Linux amd64 Docker Engine host with warm images: `REPRODUCED`
+in 39 s on 20.2.4, and still `REPRODUCED` on 19.2.5 (43 s), 20.2.5 (40 s)
+and 21.2.0 (42 s).
 
 ## Running it
 
@@ -95,8 +97,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_slo_head_segment_reads
 ```
 
-On another image, injected into the package's `image` variable; a fixed
-image must print `result=NOT_REPRODUCED`. No release fixes the defect yet,
+On another image; a fixed image must print `result=NOT_REPRODUCED`. No release fixes the defect yet,
 so the example names Umbrella 21.2.0, which reproduces it too:
 
 ```sh
@@ -106,9 +107,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_slo_head_segment_reads
 ```
 
-The cluster, its gateway and its client run `image`; the role image
-variables (`CEPH_TEST_IMAGE`, `CEPH_TEST_RGW_IMAGE`) do not select it. The
-test logs the gateway's `radosgw --version`.
+The test logs the gateway's `radosgw --version`.
 
 ## Observations and controls
 

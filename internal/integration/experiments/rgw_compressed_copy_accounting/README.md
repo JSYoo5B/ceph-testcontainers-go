@@ -60,20 +60,19 @@ Upstream references:
 
 ## Tier and triggers
 
-Known-defect reproducer: on its default image the test passes and reports
-`REPRODUCED` (see [Result line](#result-line)). No automatic run includes it (the default
-checks of a pull request, pushes to `main`, periodic samples), and it never
-gates anything. A maintainer can run it on demand, also on a pull request's
-head with the comment below.
-
-- Manual: `gh workflow run "Native regressions" -f batch=rgw_compressed_copy`.
-- Comment: `/ci run rgw_compressed_copy` or
-  `/ci run rgw_compressed_copy on umbrella`.
+Known-defect reproducer, optional batch `rgw_compressed_copy` with a
+20-minute budget; it edits the zone and restarts the gateway. No automatic run
+includes it. It is an `Experiments` case; Umbrella 21.2.0
+(`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it, and
+`/ci run rgw_compressed_copy on umbrella` runs the batch there. Its
+Docker-free judgement and cleanup tests (batch `code/pure`) run in Code
+checks on every change. The triggers, the result checks and the image
+injection are the shared ones of
+[Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it
 
-The case runs on its own image, the package variable `image`, and not
-on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
+On the default image, the Tentacle 20.2.4 aggregate
 (`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
@@ -82,7 +81,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   ./internal/integration/experiments/rgw_compressed_copy_accounting
 ```
 
-Another image, such as a fixed release, is injected at link time:
+On a fixed image, for example Umbrella 21.2.0:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -90,11 +89,6 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestRGWCompressedCopyAccounting$' \
   ./internal/integration/experiments/rgw_compressed_copy_accounting
 ```
-
-The batch `rgw_compressed_copy` (`tag_scenarios.py optional --batch rgw_compressed_copy`, or the
-Native regressions workflow) still runs the case. It exports role images,
-which the case ignores: the cluster and its client container both run
-`image`.
 
 The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_CC ceph=` and the daemon versions), the zone placement read back, every
@@ -124,14 +118,9 @@ each copy resolved (`RGW_CC trace`).
 
 ## Result line
 
-A failure of a given or when step (a condition not established, an
-unavailable prerequisite, a failed control) fails the test, and the test then
-prints no result. Otherwise the test passes whatever the gateway did and
-prints one line:
-
-```text
-EXPERIMENT_RESULT case=rgw_compressed_copy_accounting result=<REPRODUCED|NOT_REPRODUCED> image=<image> symptoms=[...]
-```
+The test passes whatever the gateway did and prints one
+[result line](../../../../docs/contributing/testing.md#experiment-result-lines),
+`case=rgw_compressed_copy_accounting`.
 
 `REPRODUCED`: the COLD copy of the compressed source
 (`compressed-source-uncompressed-destination`) has an index
