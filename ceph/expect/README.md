@@ -46,8 +46,10 @@ if !result.Matched {
 }
 ```
 
-Unlike `ceph.Observer.WaitForClean`, which compares native OSD counts from
-the cluster status, an expectation checks individual identities.
+Unlike `ceph.Observer.WaitForClean`, which compares the cluster-wide total,
+up and in OSD counts of the cluster status with the number of owned OSDs, an
+expectation checks individual identities. When to use which is in
+[What the waits prove about an OSD](../../docs/guides/fault-injection.md#what-the-waits-prove-about-an-osd).
 
 ## Health checks and mutes
 
