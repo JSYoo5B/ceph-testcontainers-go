@@ -114,7 +114,11 @@ body (`RGW_REDIRECT answer`).
 1. Condition, period: `period get` of both zones must name the same period
    at the same epoch, and in it each of the two zonegroups exactly once with
    exactly one endpoint and an API name; the two endpoints and the two API
-   names must differ (`parsePeriod`, `advertisedSites`). A period without
+   names must differ (`parsePeriod`, `advertisedSites`). Endpoints differ
+   when they still do without one trailing slash, which is how a `Location`
+   starts (`redirectBase`): `http://rgw:80` and `http://rgw:80/` lead to
+   the same `Location` and are refused. An API name with surrounding space
+   is refused, because a bucket location is read without it. A period without
    its ID, epoch or zonegroup list, or a zonegroup without its endpoint
    list, is refused and not read as empty. Otherwise the test fails with
    `condition not established`.

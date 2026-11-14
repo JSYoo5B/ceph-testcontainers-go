@@ -73,6 +73,10 @@ func TestAdvertisedSites(t *testing.T) {
 	if err != nil || a != siteUS || b != siteEU {
 		t.Fatalf("sites = %+v, %+v, %v", a, b, err)
 	}
+	// Endpoints two slashes apart start different Locations and stay distinct.
+	if _, _, err := advertisedSites([]periodView{period("p1", 3, us, group("eu", siteUS.Endpoint+"//")), period("p1", 3, us, group("eu", siteUS.Endpoint+"//"))}, "us", "eu"); err != nil {
+		t.Errorf("endpoints two slashes apart: %v", err)
+	}
 	for name, periods := range map[string][]periodView{
 		"one zone's period":          {period("p1", 3, us, eu)},
 		"different periods":          {period("p1", 3, us, eu), period("p2", 3, us, eu)},
@@ -85,6 +89,10 @@ func TestAdvertisedSites(t *testing.T) {
 		"no API name":                {period("p1", 3, us, zonegroupView{Name: "eu", Endpoints: []string{siteEU.Endpoint}}), period("p1", 3, us, zonegroupView{Name: "eu", Endpoints: []string{siteEU.Endpoint}})},
 		"zones that disagree":        {period("p1", 3, us, eu), period("p1", 3, us, group("eu", "http://rgw-c:7480"))},
 		"the same endpoint":          {period("p1", 3, us, group("eu", siteUS.Endpoint)), period("p1", 3, us, group("eu", siteUS.Endpoint))},
+		"endpoints one slash apart":  {period("p1", 3, us, group("eu", siteUS.Endpoint+"/")), period("p1", 3, us, group("eu", siteUS.Endpoint+"/"))},
+		"both endpoints slashed":     {period("p1", 3, group("us", siteUS.Endpoint+"/"), group("eu", siteUS.Endpoint+"/")), period("p1", 3, group("us", siteUS.Endpoint+"/"), group("eu", siteUS.Endpoint+"/"))},
+		"an endpoint of one slash":   {period("p1", 3, us, group("eu", "/")), period("p1", 3, us, group("eu", "/"))},
+		"an API name with space":     {period("p1", 3, us, zonegroupView{Name: "eu", APIName: "us ", Endpoints: []string{siteEU.Endpoint}}), period("p1", 3, us, zonegroupView{Name: "eu", APIName: "us ", Endpoints: []string{siteEU.Endpoint}})},
 		"the same API name":          {period("p1", 3, us, zonegroupView{Name: "eu", APIName: "us", Endpoints: []string{siteEU.Endpoint}}), period("p1", 3, us, zonegroupView{Name: "eu", APIName: "us", Endpoints: []string{siteEU.Endpoint}})},
 	} {
 		if a, b, err := advertisedSites(periods, "us", "eu"); err == nil || !strings.HasPrefix(err.Error(), "condition not established") {
@@ -135,23 +143,26 @@ func TestClassifyRedirect(t *testing.T) {
 		owner, receiver site
 		uri, reason     string
 	}{
-		"the object itself":           {redirectAnswer{Status: http.StatusOK}, siteUS, siteEU, uri, "condition not established"},
-		"no such bucket":              {redirectAnswer{Status: http.StatusNotFound}, siteUS, siteEU, uri, "condition not established"},
-		"a temporary redirect":        {redirectAnswer{Status: http.StatusFound, Locations: []string{siteEU.Endpoint + uri}}, siteUS, siteEU, uri, "condition not established"},
-		"a 308":                       {redirectAnswer{Status: http.StatusPermanentRedirect, Locations: []string{siteEU.Endpoint + uri}}, siteUS, siteEU, uri, "condition not established"},
-		"no Location":                 {redirect(), siteUS, siteEU, uri, "another state"},
-		"two Locations":               {redirect(siteUS.Endpoint+uri, siteEU.Endpoint+uri), siteUS, siteEU, uri, "another state"},
-		"an empty Location":           {redirect(""), siteUS, siteEU, uri, "another state"},
-		"the endpoint alone":          {redirect(siteEU.Endpoint), siteUS, siteEU, uri, "another state"},
-		"another request":             {redirect(siteEU.Endpoint + "/tc-redirect-us/other"), siteUS, siteEU, uri, "another state"},
-		"the request without a query": {redirect(siteEU.Endpoint + "/tc-redirect-us"), siteUS, siteEU, listing, "another state"},
-		"a longer host":               {redirect("http://rgw-b:74801" + uri), siteUS, siteEU, uri, "another state"},
-		"a third endpoint":            {redirect("http://rgw-c:7480" + uri), siteUS, siteEU, uri, "another state"},
-		"another scheme":              {redirect("https://rgw-b:7480" + uri), siteUS, siteEU, uri, "another state"},
-		"the same endpoints":          {redirect(siteUS.Endpoint + uri), siteUS, siteUS, uri, "outcome not observed"},
-		"no owner endpoint":           {redirect(siteEU.Endpoint + uri), site{Name: "us"}, siteEU, uri, "outcome not observed"},
-		"no receiver endpoint":        {redirect(siteUS.Endpoint + uri), siteUS, site{Name: "eu"}, uri, "outcome not observed"},
-		"a request without a path":    {redirect(siteEU.Endpoint), siteUS, siteEU, "", "outcome not observed"},
+		"the object itself":            {redirectAnswer{Status: http.StatusOK}, siteUS, siteEU, uri, "condition not established"},
+		"no such bucket":               {redirectAnswer{Status: http.StatusNotFound}, siteUS, siteEU, uri, "condition not established"},
+		"a temporary redirect":         {redirectAnswer{Status: http.StatusFound, Locations: []string{siteEU.Endpoint + uri}}, siteUS, siteEU, uri, "condition not established"},
+		"a 308":                        {redirectAnswer{Status: http.StatusPermanentRedirect, Locations: []string{siteEU.Endpoint + uri}}, siteUS, siteEU, uri, "condition not established"},
+		"no Location":                  {redirect(), siteUS, siteEU, uri, "another state"},
+		"two Locations":                {redirect(siteUS.Endpoint+uri, siteEU.Endpoint+uri), siteUS, siteEU, uri, "another state"},
+		"an empty Location":            {redirect(""), siteUS, siteEU, uri, "another state"},
+		"the endpoint alone":           {redirect(siteEU.Endpoint), siteUS, siteEU, uri, "another state"},
+		"another request":              {redirect(siteEU.Endpoint + "/tc-redirect-us/other"), siteUS, siteEU, uri, "another state"},
+		"the request without a query":  {redirect(siteEU.Endpoint + "/tc-redirect-us"), siteUS, siteEU, listing, "another state"},
+		"a longer host":                {redirect("http://rgw-b:74801" + uri), siteUS, siteEU, uri, "another state"},
+		"a third endpoint":             {redirect("http://rgw-c:7480" + uri), siteUS, siteEU, uri, "another state"},
+		"another scheme":               {redirect("https://rgw-b:7480" + uri), siteUS, siteEU, uri, "another state"},
+		"the same endpoints":           {redirect(siteUS.Endpoint + uri), siteUS, siteUS, uri, "outcome not observed"},
+		"endpoints one slash apart":    {redirect(siteUS.Endpoint + uri), siteUS, site{Name: "eu", APIName: "eu", Endpoint: siteUS.Endpoint + "/"}, uri, "outcome not observed"},
+		"the receiver, a slash apart":  {redirect(siteUS.Endpoint + uri), site{Name: "us", APIName: "us", Endpoint: siteUS.Endpoint + "/"}, siteUS, uri, "outcome not observed"},
+		"an owner endpoint of a slash": {redirect(uri), site{Name: "us", Endpoint: "/"}, siteEU, uri, "outcome not observed"},
+		"no owner endpoint":            {redirect(siteEU.Endpoint + uri), site{Name: "us"}, siteEU, uri, "outcome not observed"},
+		"no receiver endpoint":         {redirect(siteUS.Endpoint + uri), siteUS, site{Name: "eu"}, uri, "outcome not observed"},
+		"a request without a path":     {redirect(siteEU.Endpoint), siteUS, siteEU, "", "outcome not observed"},
 	} {
 		got, err := classifyRedirect(test.answer, test.owner, test.receiver, test.uri)
 		if err == nil || !strings.HasPrefix(err.Error(), test.reason) {

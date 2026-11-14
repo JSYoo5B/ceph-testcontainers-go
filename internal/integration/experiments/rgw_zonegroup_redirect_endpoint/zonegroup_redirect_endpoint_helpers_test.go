@@ -68,7 +68,10 @@ type site struct {
 // and agree on the zonegroups, each of the two zonegroups must be in the
 // period exactly once with exactly one endpoint, which is what a redirect to
 // the zonegroup is built from, and the two endpoints and API names must
-// differ, so a redirect names one zonegroup and not the other.
+// differ, so a redirect names one zonegroup and not the other. They are
+// compared the way the case later reads them: the endpoints as the start of
+// a Location (redirectBase), the API names as a bucket location, which is
+// read without surrounding space.
 func advertisedSites(periods []periodView, first, second string) (a, b site, err error) {
 	if len(periods) < 2 {
 		return site{}, site{}, fmt.Errorf("condition not established: %d periods, want the period of every zone", len(periods))
@@ -95,7 +98,12 @@ func advertisedSites(periods []periodView, first, second string) (a, b site, err
 			sites[i] = got
 		}
 	}
-	if sites[0].Endpoint == sites[1].Endpoint || sites[0].APIName == sites[1].APIName {
+	for _, s := range sites {
+		if redirectBase(s.Endpoint) == "" || s.APIName != strings.TrimSpace(s.APIName) {
+			return site{}, site{}, fmt.Errorf("condition not established: the zonegroup %s advertises an endpoint that starts no Location or an API name with surrounding space: %+v", s.Name, s)
+		}
+	}
+	if redirectBase(sites[0].Endpoint) == redirectBase(sites[1].Endpoint) || sites[0].APIName == sites[1].APIName {
 		return site{}, site{}, fmt.Errorf("condition not established: the zonegroups %s and %s do not advertise distinct endpoints and API names: %+v", first, second, sites)
 	}
 	return sites[0], sites[1], nil
@@ -112,6 +120,13 @@ func parseLocationConstraint(body []byte) (string, error) {
 		return "", fmt.Errorf("bucket location: %w", err)
 	}
 	return strings.TrimSpace(raw.Name), nil
+}
+
+// redirectBase is what a Location to a zonegroup starts with: its endpoint
+// without one trailing slash. Two endpoints lead to the same Location when
+// their bases are equal, whatever they look like in the period.
+func redirectBase(endpoint string) string {
+	return strings.TrimSuffix(endpoint, "/")
 }
 
 // The targets a redirect can name.
@@ -137,9 +152,11 @@ type redirectAnswer struct {
 // owner when it is the owning zonegroup's endpoint followed by uri, and the
 // receiver when it is the receiving zonegroup's endpoint followed by uri.
 // Any other answer is an error: no redirect, a redirect without a Location,
-// or a Location that is neither.
+// or a Location that is neither. The two Locations the answer is compared
+// with must differ, or the answer could not tell the targets apart.
 func classifyRedirect(answer redirectAnswer, owner, receiver site, uri string) (string, error) {
-	if owner.Endpoint == "" || receiver.Endpoint == "" || owner.Endpoint == receiver.Endpoint || !strings.HasPrefix(uri, "/") {
+	toOwner, toReceiver := redirectBase(owner.Endpoint)+uri, redirectBase(receiver.Endpoint)+uri
+	if redirectBase(owner.Endpoint) == "" || redirectBase(receiver.Endpoint) == "" || toOwner == toReceiver || !strings.HasPrefix(uri, "/") {
 		return "", fmt.Errorf("outcome not observed: the endpoints %q and %q or the request %q cannot tell a redirect's target", owner.Endpoint, receiver.Endpoint, uri)
 	}
 	if answer.Status != http.StatusMovedPermanently {
@@ -149,9 +166,9 @@ func classifyRedirect(answer redirectAnswer, owner, receiver site, uri string) (
 		return "", fmt.Errorf("another state: the redirect of %s has %d Location headers, want one: %q", uri, len(answer.Locations), answer.Locations)
 	}
 	switch answer.Locations[0] {
-	case strings.TrimSuffix(owner.Endpoint, "/") + uri:
+	case toOwner:
 		return targetOwner, nil
-	case strings.TrimSuffix(receiver.Endpoint, "/") + uri:
+	case toReceiver:
 		return targetReceiver, nil
 	}
 	return "", fmt.Errorf("another state: the Location %q of %s is neither the endpoint of the owner %s nor of the receiver %s followed by the request", answer.Locations[0], uri, owner.Endpoint, receiver.Endpoint)
