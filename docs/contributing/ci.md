@@ -1042,7 +1042,9 @@ Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
 
 The optional [encrypted multipart transition check](../../internal/integration/experiments/rgw_encrypted_multipart_transition/README.md)
 compares full reads and reads across the part boundary against the original
-payload after a lifecycle storage-class change. Run it from Native regressions
+payload after a lifecycle storage-class change on 20.2.2 and 20.2.4. On
+20.2.1 it checks an unencrypted transition and an encrypted object retained
+in STANDARD. Run it from Native regressions
 with `batch=rgw_encrypted_multipart_transition`.
 
 `failure_archive` is described in
@@ -1058,6 +1060,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 
 | Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `rgw_multipart_completion_replay_etag` header and XML verdict tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_multisite_object_lock_sync` configuration reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_dangling_symlink_create` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
@@ -1095,10 +1098,10 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `mgr_pg_merge_primary_override` (`optional/mgr_pg_merge_primary_override`) | known-defect reproducer, default 20.2.4; prints the result and passes; three OSDs, samples a blocked merge for two minutes | REPRODUCED 203 s; still REPRODUCED on 19.2.5 (210 s); 20.2.5 NOT_REPRODUCED 87 s, 21.2.0 80 s | 20m | never | `/ci run mgr_pg_merge_primary_override [on <release>]` | never | `Experiments`, `case=mgr_pg_merge_primary_override`; `batch=mgr_pg_merge_primary_override` |
 | `rgw_slo_head_segment_reads` (`optional/rgw_slo_head_segment_reads`) | known-defect reproducer, default 20.2.4; prints the result and passes; sets the OSD's op history and op tracker level | REPRODUCED 39 s; still REPRODUCED on 19.2.5 (43 s), 20.2.5 (40 s) and 21.2.0 (42 s), no fixed release | 20m | never | `/ci run rgw_slo_head_segment_reads [on <release>]` | never | `Experiments`, `case=rgw_slo_head_segment_reads`; `batch=rgw_slo_head_segment_reads` |
 | `rgw_post_usage_bytes_received` (`optional/rgw_post_usage_bytes_received`) | known-defect reproducer, default 20.2.4; prints the result and passes; enables the usage log | REPRODUCED 33 s; still REPRODUCED on 19.2.5 (39 s); 20.2.5 NOT_REPRODUCED 33 s, 21.2.0 34 s | 20m | never | `/ci run rgw_post_usage_bytes_received [on <release>]` | never | `Experiments`, `case=rgw_post_usage_bytes_received`; `batch=rgw_post_usage_bytes_received` |
-| `rgw_multipart_completion_replay_etag` (optional) | known-defect reproducer for the replay XML ETag | 19.2.5 REPRODUCED, 20.2.4 NOT_REPRODUCED | 20m | never | `/ci run rgw_multipart_completion_replay_etag` | never | Experiments or Native regressions |
+| `rgw_multipart_completion_replay_etag` (optional) | known-defect reproducer for replay ETags in the XML result and, when present on first completion, the HTTP header | 19.2.5 REPRODUCED, 20.2.4 NOT_REPRODUCED | 20m | never | `/ci run rgw_multipart_completion_replay_etag` | never | Experiments or Native regressions |
 | `rgw_legacy_replication_destination` (optional) | known-defect reproducer for reading a 19.2.5 policy | 20.2.2 reader REPRODUCED, 20.2.4 reader NOT_REPRODUCED | 20m | never | `/ci run rgw_legacy_replication_destination` | never | Experiments or Native regressions |
 | [`rgw_lifecycle_delete_marker`](../../internal/integration/experiments/rgw_lifecycle_delete_marker/README.md) (topology) | delete-marker removal and preservation controls | eligible marker removed on 20.2.2 and 20.2.4 | 15m | case changes or `ci:full` | `/ci run rgw_lifecycle_delete_marker [on <release>]` | eligible for rotation | targeted |
-| `rgw_encrypted_multipart_transition` (optional) | full and cross-part reads after an encrypted object transitions to COLD | 20.2.2 and 20.2.4 returned expected bytes | 20m | never | `/ci run rgw_encrypted_multipart_transition` | never | Native regressions |
+| `rgw_encrypted_multipart_transition` (optional) | full and cross-part reads after an encrypted object transitions to COLD | 20.2.2 and 20.2.4 returned expected bytes after encrypted transition; 20.2.1 passed the separate encryption and transition controls | 20m | never | `/ci run rgw_encrypted_multipart_transition` | never | Native regressions |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 35 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 35 s | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `Experiments`, `case=rgw_suspended_conditional_writes`; `batch=rgw_conditional_writes` |
 | `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | known-defect reproducer, default 20.2.4; prints the result and passes; HTTPS | REPRODUCED 34 s; 21.2.0 NOT_REPRODUCED 32 s | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `Experiments`, `case=rgw_ssec_multipart_completion`; `batch=rgw_ssec_completion` |
 | `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 20.2.5 NOT_REPRODUCED 30 s | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `Experiments`, `case=rgw_empty_sse_header`; `batch=rgw_empty_sse_header` |
