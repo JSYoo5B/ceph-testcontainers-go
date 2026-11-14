@@ -56,6 +56,7 @@ func TestParseMergeMapRefusesMissingFields(t *testing.T) {
 		"override without an OSD":        `{"epoch":1,"pools":[],"pg_upmap_primaries":[{"pgid":"2.1"}]}`,
 		"override with a null OSD":       `{"epoch":1,"pools":[],"pg_upmap_primaries":[{"pgid":"2.1","primary_osd":null}]}`,
 		"override of no OSD":             `{"epoch":1,"pools":[],"pg_upmap_primaries":[{"pgid":"2.1","primary_osd":-1}]}`,
+		"override of the placeholder":    `{"epoch":1,"pools":[],"pg_upmap_primaries":[{"pgid":"2.1","primary_osd":2147483647}]}`,
 		"two overrides of one PG":        `{"epoch":1,"pools":[],"pg_upmap_primaries":[{"pgid":"2.1","primary_osd":1},{"pgid":"2.1","primary_osd":2}]}`,
 		"override list of another shape": `{"epoch":1,"pools":[],"pg_upmap_primaries":{"2.1":1}}`,
 	} {
@@ -69,15 +70,17 @@ func TestParseMergeMapRefusesMissingFields(t *testing.T) {
 // evidence of what a manager does with a primary override.
 func TestJudgeMerge(t *testing.T) {
 	plan := mergePlan{Source: "2.1", Parent: "2.0", ParentOSD: 1, Control: "3.0", ControlOSD: 0}
-	clean := func(acting ...int) pgReport { return pgReport{State: "active+clean", Acting: acting} }
+	clean := func(acting ...int) pgReport {
+		return pgReport{State: "active+clean", Primary: acting[0], Acting: acting}
+	}
 	both := map[string]int{"2.0": 1, "3.0": 0}
-	blocked := mergeSample{Counts: poolCounts{ID: 2, PGNum: 2, Target: 1, PGPNum: 1, Pending: 2}, Primaries: both,
+	blocked := mergeSample{Ready: true, Counts: poolCounts{ID: 2, PGNum: 2, Target: 1, PGPNum: 1, Pending: 2}, Primaries: both,
 		PGs: map[string]pgReport{"2.0": clean(1, 2, 0), "2.1": clean(0, 2, 1)}}
-	merged := mergeSample{Counts: poolCounts{ID: 2, PGNum: 1, Target: 1, PGPNum: 1, Pending: 1}, Primaries: map[string]int{"3.0": 0},
+	merged := mergeSample{Ready: true, Counts: poolCounts{ID: 2, PGNum: 1, Target: 1, PGPNum: 1, Pending: 1}, Primaries: map[string]int{"3.0": 0},
 		PGs: map[string]pgReport{"2.0": clean(0, 2, 1)}}
 	// change returns a copy of sample after edit.
 	change := func(sample mergeSample, edit func(*mergeSample)) mergeSample {
-		copied := mergeSample{Counts: sample.Counts, Primaries: map[string]int{}, PGs: map[string]pgReport{}}
+		copied := mergeSample{At: sample.At, Epoch: sample.Epoch, Ready: sample.Ready, Counts: sample.Counts, Primaries: map[string]int{}, PGs: map[string]pgReport{}}
 		for pg, osd := range sample.Primaries {
 			copied.Primaries[pg] = osd
 		}
@@ -125,13 +128,28 @@ func TestJudgeMerge(t *testing.T) {
 		{name: "the count is reached with the override in place", got: mergeOutcome{Held: every(mergeHold, stale, stale), AfterRemoval: &merged}, want: "outcome not observed"},
 		// Not blocked by the override at the end: the PGs are not ready for
 		// a merge, or the override does not separate their primaries.
-		{name: "the source is not clean", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = pgReport{State: "active+recovering", Acting: []int{0, 2, 1}} }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the source is not reported", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.PGs, "2.1") }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the placement count is not reduced", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.Counts.PGPNum = 2 }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the acting sets are equal", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = clean(1, 2, 0) }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the PGs are on different OSDs", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = clean(0, 2, 3) }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the override is gone and nothing merges", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.Primaries, "2.0") }), AfterRemoval: &merged}, want: "outcome not observed"},
-		{name: "the parent has no acting set", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.0"] = pgReport{State: "active+clean"} }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the source is not clean", got: mergeOutcome{Held: moving(func(s *mergeSample) {
+			s.PGs["2.1"] = pgReport{State: "active+recovering", Primary: 0, Acting: []int{0, 2, 1}}
+		}), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the source has no primary", got: mergeOutcome{Held: moving(func(s *mergeSample) {
+			s.PGs["2.1"] = pgReport{State: "active+clean", Primary: -1, Acting: []int{0, 2, 1}}
+		}), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the source has no acting set", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = pgReport{State: "active+clean", Primary: 0} }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the source's primary is not in its acting set", got: mergeOutcome{Held: moving(func(s *mergeSample) {
+			s.PGs["2.1"] = pgReport{State: "active+clean", Primary: 3, Acting: []int{0, 2, 1}}
+		}), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "an acting set with a missing OSD", got: mergeOutcome{Held: moving(func(s *mergeSample) {
+			s.PGs["2.1"], s.PGs["2.0"] = pgReport{State: "active+clean", Primary: 0, Acting: []int{0, 2, noOSD}}, pgReport{State: "active+clean", Primary: 1, Acting: []int{1, 2, noOSD}}
+		}), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the parent's reported primary is not the override's OSD", got: mergeOutcome{Held: moving(func(s *mergeSample) {
+			s.PGs["2.0"] = pgReport{State: "active+clean", Primary: 2, Acting: []int{1, 2, 0}}
+		}), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the manager does not have the reports while blocked", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.Ready = false }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the manager does not have the reports of a merged pool", got: mergeOutcome{Held: []mergeSample{change(merged, func(s *mergeSample) { s.Ready = false })}}, want: "outcome not observed"},
+		{name: "the merged PG has no primary", got: mergeOutcome{Held: []mergeSample{change(merged, func(s *mergeSample) {
+			s.PGs["2.0"] = pgReport{State: "active+clean", Primary: -1, Acting: []int{0, 2, 1}}
+		})}}, want: "outcome not observed"},
+		{name: "the merged PG has no acting set", got: mergeOutcome{Held: []mergeSample{change(merged, func(s *mergeSample) { s.PGs["2.0"] = pgReport{State: "active+clean", Primary: 0} })}}, want: "outcome not observed"},
 		// The control pool's override, and overrides the case did not make.
 		{name: "the control override is gone while blocked", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.Primaries, "3.0") }), AfterRemoval: &merged}, want: "control not established"},
 		{name: "the control override is gone before the pool is blocked", got: mergeOutcome{Held: every(half, change(merging, func(s *mergeSample) { delete(s.Primaries, "3.0") }), blocked, blocked, blocked), AfterRemoval: &merged}, want: "control not established"},
@@ -156,13 +174,15 @@ func ptr[T any](value T) *T { return &value }
 
 func TestHoldTellsMergedFromBlocked(t *testing.T) {
 	plan := mergePlan{Source: "2.1", Parent: "2.0", ParentOSD: 1, Control: "3.0", ControlOSD: 0}
-	clean := func(acting ...int) pgReport { return pgReport{State: "active+clean", Acting: acting} }
-	blocked := mergeSample{Counts: poolCounts{ID: 2, PGNum: 2, Target: 1, PGPNum: 1, Pending: 2}, Primaries: map[string]int{"2.0": 1, "3.0": 0},
+	clean := func(acting ...int) pgReport {
+		return pgReport{State: "active+clean", Primary: acting[0], Acting: acting}
+	}
+	blocked := mergeSample{Ready: true, Counts: poolCounts{ID: 2, PGNum: 2, Target: 1, PGPNum: 1, Pending: 2}, Primaries: map[string]int{"2.0": 1, "3.0": 0},
 		PGs: map[string]pgReport{"2.0": clean(1, 2, 0), "2.1": clean(0, 2, 1)}}
-	merged := mergeSample{Counts: poolCounts{ID: 2, PGNum: 1, Target: 1, PGPNum: 1, Pending: 1}, Primaries: map[string]int{"3.0": 0},
+	merged := mergeSample{Ready: true, Counts: poolCounts{ID: 2, PGNum: 1, Target: 1, PGPNum: 1, Pending: 1}, Primaries: map[string]int{"3.0": 0},
 		PGs: map[string]pgReport{"2.0": clean(0, 2, 1)}}
 	// A pool whose PG count was never reduced: the trigger was not sent.
-	untouched := mergeSample{Counts: poolCounts{ID: 2, PGNum: 2, Target: 2, PGPNum: 2, Pending: 2}, Primaries: map[string]int{"2.0": 1, "3.0": 0},
+	untouched := mergeSample{Ready: true, Counts: poolCounts{ID: 2, PGNum: 2, Target: 2, PGPNum: 2, Pending: 2}, Primaries: map[string]int{"2.0": 1, "3.0": 0},
 		PGs: map[string]pgReport{"2.0": clean(1, 2, 0), "2.1": clean(0, 1, 2)}}
 	at := func(sample mergeSample, at time.Duration) mergeSample {
 		sample.At = at
@@ -205,6 +225,44 @@ func TestPGReportActiveClean(t *testing.T) {
 	} {
 		if got := (pgReport{State: state}).activeClean(); got != want {
 			t.Errorf("%q: active and clean = %t, want %t", state, got, want)
+		}
+	}
+}
+
+func TestMergePrimariesNeedsBothPGsServed(t *testing.T) {
+	served := map[string]pgReport{
+		"2.0": {State: "active+clean", Primary: 0, Acting: []int{0, 2, 1}},
+		"2.1": {State: "active+clean", Primary: 1, Acting: []int{1, 0, 2}},
+	}
+	if source, parent, err := mergePrimaries(served, "2.1", "2.0"); err != nil || source != 1 || parent != 0 {
+		t.Fatalf("primaries = %d, %d, %v, want 1, 0", source, parent, err)
+	}
+	// The primary is the reported one, not the first member of the set.
+	reordered := map[string]pgReport{"2.0": {State: "active+clean", Primary: 2, Acting: []int{0, 2, 1}}, "2.1": served["2.1"]}
+	if _, parent, err := mergePrimaries(reordered, "2.1", "2.0"); err != nil || parent != 2 {
+		t.Fatalf("parent primary = %d, %v, want 2", parent, err)
+	}
+	for name, parent := range map[string]*pgReport{
+		"a PG that is not reported":     nil,
+		"a PG without a state":          {Primary: 0, Acting: []int{0, 2, 1}},
+		"a PG that is peering":          {State: "peering", Primary: 0, Acting: []int{0, 2, 1}},
+		"a PG without an acting set":    {State: "active+clean", Primary: 0},
+		"a PG with an empty acting set": {State: "active+clean", Primary: 0, Acting: []int{}},
+		"a PG without a primary":        {State: "active+clean", Primary: -1, Acting: []int{0, 2, 1}},
+		"a PG with a missing primary":   {State: "active+clean", Primary: noOSD, Acting: []int{noOSD, 2, 1}},
+		"a PG with a missing member":    {State: "active+clean", Primary: 0, Acting: []int{0, noOSD, 1}},
+		"a PG with a negative member":   {State: "active+clean", Primary: 0, Acting: []int{0, -1, 1}},
+		"a primary outside the set":     {State: "active+clean", Primary: 3, Acting: []int{0, 2, 1}},
+		"a zero report (primary osd.0)": {},
+	} {
+		pgs := map[string]pgReport{"2.1": served["2.1"]}
+		if parent != nil {
+			pgs["2.0"] = *parent
+		}
+		for _, order := range [][2]string{{"2.1", "2.0"}, {"2.0", "2.1"}} {
+			if a, b, err := mergePrimaries(pgs, order[0], order[1]); err == nil {
+				t.Errorf("%s: primaries read as %d and %d", name, a, b)
+			}
 		}
 	}
 }

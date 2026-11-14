@@ -96,8 +96,9 @@ func TestPGMergeWithPrimaryOverride(t *testing.T) {
 		}
 		return got
 	}
-	// reports returns the PGs the manager reports for pool.
-	reports := func(pool mergePool) map[string]pgReport {
+	// reports returns the PGs the manager reports for pool, and whether it
+	// says that it has their reports.
+	reports := func(pool mergePool) (map[string]pgReport, bool) {
 		t.Helper()
 		snapshot, err := pool.PGs(ctx)
 		if err != nil {
@@ -105,9 +106,9 @@ func TestPGMergeWithPrimaryOverride(t *testing.T) {
 		}
 		got := map[string]pgReport{}
 		for _, pg := range snapshot.PGs {
-			got[string(pg.PGID)] = pgReport{State: pg.State, Acting: pg.Acting}
+			got[string(pg.PGID)] = pgReport{State: pg.State, Primary: pg.ActingPrimary, Acting: pg.Acting}
 		}
-		return got
+		return got, snapshot.PGReady
 	}
 
 	// Given: the three pools, clean, with known bytes, and no primary
@@ -148,16 +149,17 @@ func TestPGMergeWithPrimaryOverride(t *testing.T) {
 	plan := mergePlan{}
 	handles := map[string]*ceph.PGPrimaryOverrideHandle{}
 	for _, name := range []string{mergeTargetPool, mergeControlPool} {
-		pool, pgs := pools[name], reports(pools[name])
-		source, parent := pgs[string(pool.Source)], pgs[string(pool.Parent)]
-		if len(pgs) != mergeFrom || !source.activeClean() || !parent.activeClean() || len(source.Acting) != 3 || len(parent.Acting) != 3 {
-			t.Fatalf("condition not established: pool %s does not report its two PGs active and clean on three OSDs: %+v", name, pgs)
+		pool := pools[name]
+		pgs, ready := reports(pool)
+		sourcePrimary, parentPrimary, err := mergePrimaries(pgs, string(pool.Source), string(pool.Parent))
+		if acting := pgs[string(pool.Parent)].Acting; err != nil || !ready || len(pgs) != mergeFrom || len(acting) != 3 {
+			t.Fatalf("condition not established: pool %s does not report its two PGs active and clean with a primary, the parent on three OSDs (reports ready: %t): %+v: %v", name, ready, pgs, err)
 		}
 		choice := slices.IndexFunc(osds, func(osd *ceph.OSDContainer) bool {
-			return slices.Contains(parent.Acting, osd.ID) && osd.ID != source.Acting[0] && osd.ID != parent.Acting[0]
+			return slices.Contains(pgs[string(pool.Parent)].Acting, osd.ID) && osd.ID != sourcePrimary && osd.ID != parentPrimary
 		})
 		if choice < 0 {
-			t.Fatalf("condition not established: no OSD of %v is the primary of neither %s nor %s (%v)", parent.Acting, pool.Parent, pool.Source, source.Acting)
+			t.Fatalf("condition not established: no OSD of %s is the primary of neither %s (osd.%d) nor %s (osd.%d): %+v", pool.Parent, pool.Parent, parentPrimary, pool.Source, sourcePrimary, pgs)
 		}
 		handle, err := pool.OverridePGPrimary(ctx, ceph.PGPrimary{PG: pool.Parent, OSD: osds[choice], RaiseMinCompatClient: true})
 		if handle != nil {
@@ -183,8 +185,9 @@ func TestPGMergeWithPrimaryOverride(t *testing.T) {
 	if want := map[string]int{plan.Parent: plan.ParentOSD, plan.Control: plan.ControlOSD}; !maps.Equal(overridden.Primaries, want) {
 		t.Fatalf("condition not established: the OSDMap has the primary overrides %v, want %v", overridden.Primaries, want)
 	}
-	if pgs := reports(pools[mergeTargetPool]); pgs[plan.Parent].Acting[0] != plan.ParentOSD || pgs[plan.Source].Acting[0] == plan.ParentOSD {
-		t.Fatalf("condition not established: the override does not make osd.%d the primary of %s only: %+v", plan.ParentOSD, plan.Parent, pgs)
+	pgs, ready := reports(pools[mergeTargetPool])
+	if sourcePrimary, parentPrimary, err := mergePrimaries(pgs, plan.Source, plan.Parent); err != nil || !ready || parentPrimary != plan.ParentOSD || sourcePrimary == plan.ParentOSD {
+		t.Fatalf("condition not established: the override does not make osd.%d the primary of %s only (reports ready: %t): %+v: %v", plan.ParentOSD, plan.Parent, ready, pgs, err)
 	}
 	t.Logf("PG_MERGE_PRIMARY plan=%+v epoch=%d", plan, overridden.Epoch)
 
@@ -215,8 +218,9 @@ func TestPGMergeWithPrimaryOverride(t *testing.T) {
 		if !ok {
 			t.Fatalf("the OSDMap has no pool %s", mergeTargetPool)
 		}
-		got := mergeSample{Counts: counts, Primaries: current.Primaries, PGs: reports(pools[mergeTargetPool])}
-		t.Logf("PG_MERGE_PRIMARY sample epoch=%d counts=%+v primaries=%v pgs=%+v", current.Epoch, got.Counts, got.Primaries, got.PGs)
+		got := mergeSample{Epoch: current.Epoch, Counts: counts, Primaries: current.Primaries}
+		got.PGs, got.Ready = reports(pools[mergeTargetPool])
+		t.Logf("PG_MERGE_PRIMARY sample epoch=%d counts=%+v primaries=%v ready=%t pgs=%+v", got.Epoch, got.Counts, got.Primaries, got.Ready, got.PGs)
 		return got
 	}
 	got := mergeOutcome{}

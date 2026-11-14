@@ -47,7 +47,8 @@ type mergeMap struct {
 // parseMergeMap reads an "osd dump" report. The report must carry its epoch,
 // its pool list and its list of primary overrides, which may be empty but
 // not absent or null, every count of every pool, and the PG and the OSD of
-// every override. OSD 0 is an OSD; a missing or null one is not.
+// every override. OSD 0 is an OSD; a missing or null one, a negative one and
+// the placeholder of a missing OSD are not.
 func parseMergeMap(dump []byte) (mergeMap, error) {
 	var raw struct {
 		Epoch *int `json:"epoch"`
@@ -81,7 +82,7 @@ func parseMergeMap(dump []byte) (mergeMap, error) {
 		got.Pools[*pool.Name] = poolCounts{ID: *pool.ID, PGNum: *pool.PGNum, Target: *pool.Target, PGPNum: *pool.PGPNum, Pending: *pool.Pending}
 	}
 	for _, entry := range *raw.Primaries {
-		if entry.PG == nil || *entry.PG == "" || entry.OSD == nil || *entry.OSD < 0 {
+		if entry.PG == nil || *entry.PG == "" || entry.OSD == nil || *entry.OSD < 0 || *entry.OSD >= noOSD {
 			return mergeMap{}, fmt.Errorf("osd dump: a primary override lacks its PG or its OSD")
 		}
 		if _, twice := got.Primaries[*entry.PG]; twice {
@@ -92,11 +93,17 @@ func parseMergeMap(dump []byte) (mergeMap, error) {
 	return got, nil
 }
 
-// pgReport is the state and the acting set, primary first, that the manager
-// reports for one PG.
+// noOSD is the placeholder Ceph reports in place of an OSD where a PG has
+// none (CRUSH_ITEM_NONE).
+const noOSD = 0x7fffffff
+
+// pgReport is the state, the acting primary and the acting set that the
+// manager reports for one PG. The primary is -1 for a PG without one, and
+// the acting set may be empty or hold noOSD while the PG is placed anew.
 type pgReport struct {
-	State  string
-	Acting []int
+	State   string
+	Primary int
+	Acting  []int
 }
 
 // activeClean reports whether the PG state names both active and clean,
@@ -106,12 +113,41 @@ func (r pgReport) activeClean() bool {
 	return slices.Contains(flags, "active") && slices.Contains(flags, "clean")
 }
 
+// served reports whether the PG is active and clean with a primary that is
+// a member of an acting set of OSDs only.
+func (r pgReport) served() bool {
+	return r.activeClean() && r.Primary >= 0 && r.Primary < noOSD && slices.Contains(r.Acting, r.Primary) &&
+		!slices.ContainsFunc(r.Acting, func(osd int) bool { return osd < 0 || osd >= noOSD })
+}
+
+// mergePrimaries returns the acting primaries the reports of a pool name for
+// its merge source and its parent. Both PGs must be in the reports and
+// served: a PG that is missing, not active and clean, or without a primary
+// in its acting set has no primary to compare.
+func mergePrimaries(pgs map[string]pgReport, source, parent string) (sourcePrimary, parentPrimary int, err error) {
+	primaries := [2]int{}
+	for i, pg := range []string{source, parent} {
+		report, reported := pgs[pg]
+		if !reported {
+			return 0, 0, fmt.Errorf("PG %s is not among the reported PGs: %+v", pg, pgs)
+		}
+		if !report.served() {
+			return 0, 0, fmt.Errorf("PG %s is not active and clean with a primary in its acting set: %+v", pg, report)
+		}
+		primaries[i] = report.Primary
+	}
+	return primaries[0], primaries[1], nil
+}
+
 // mergeSample is one observation of the pool whose PG count was reduced:
-// the time since the first sample, the pool's counts and the primary
-// overrides of the whole OSDMap, read from one map, and the PGs the manager
-// reports for the pool.
+// the time since the first sample, the epoch, the pool's counts and the
+// primary overrides of the whole OSDMap, read from one map, and the PGs the
+// manager reports for the pool, with its word that it has the PGs' reports
+// (Ready).
 type mergeSample struct {
 	At        time.Duration
+	Epoch     int
+	Ready     bool
 	Counts    poolCounts
 	Primaries map[string]int
 	PGs       map[string]pgReport
@@ -148,19 +184,21 @@ const (
 // state classifies one sample.
 //
 // It is merged when the pool has reached the reduced count in every count,
-// the manager reports exactly the parent PG, active and clean, and the
-// OSDMap has no override of the parent.
+// the manager reports exactly the parent PG, served, and the OSDMap has no
+// override of the parent.
 //
 // It is blocked when the pool still has both PGs and no merge under way
 // although its placement count is already reduced, the parent's override is
-// still in the OSDMap, and both PGs are active and clean on the same OSDs
-// with different primaries, the parent's being the OSD of its override:
+// still in the OSDMap, and both PGs are served on the same OSDs with
+// different reported primaries, the parent's being the OSD of its override:
 // the state in which the manager, which merges two PGs only when their
 // acting sets are equal, waits for an override it does not remove.
 //
-// Everything else is moving. In every state the control pool's override must
-// be exactly as the case made it, and the OSDMap may hold no override the
-// case did not make; a sample that breaks either is an error.
+// Everything else is moving, and so is every sample for which the manager
+// does not say that it has the PGs' reports. In every state the control
+// pool's override must be exactly as the case made it, and the OSDMap may
+// hold no override the case did not make; a sample that breaks either is an
+// error.
 func (plan mergePlan) state(sample mergeSample) (string, error) {
 	for pg, osd := range sample.Primaries {
 		if (pg != plan.Control || osd != plan.ControlOSD) && (pg != plan.Parent || osd != plan.ParentOSD) {
@@ -175,12 +213,13 @@ func (plan mergePlan) state(sample mergeSample) (string, error) {
 	parent, hasParent := sample.PGs[plan.Parent]
 	counts := sample.Counts
 	switch {
+	case !sample.Ready:
 	case counts.PGNum == mergeTo && counts.Target == mergeTo && counts.PGPNum == mergeTo && counts.Pending == mergeTo &&
-		!overridden && len(sample.PGs) == mergeTo && hasParent && parent.activeClean():
+		!overridden && len(sample.PGs) == mergeTo && hasParent && parent.served():
 		return mergeMerged, nil
 	case counts.PGNum == mergeFrom && counts.Pending == mergeFrom && counts.Target == mergeTo && counts.PGPNum == mergeTo &&
-		overridden && len(sample.PGs) == mergeFrom && hasSource && hasParent && source.activeClean() && parent.activeClean() &&
-		len(parent.Acting) > 1 && parent.Acting[0] == plan.ParentOSD && len(source.Acting) == len(parent.Acting) && source.Acting[0] != plan.ParentOSD &&
+		overridden && len(sample.PGs) == mergeFrom && hasSource && hasParent && source.served() && parent.served() &&
+		parent.Primary == plan.ParentOSD && source.Primary != plan.ParentOSD && len(source.Acting) == len(parent.Acting) &&
 		slices.Equal(slices.Sorted(slices.Values(source.Acting)), slices.Sorted(slices.Values(parent.Acting))):
 		return mergeBlocked, nil
 	}
