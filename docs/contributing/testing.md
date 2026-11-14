@@ -511,6 +511,24 @@ in [Pull request scope](ci.md#pull-request-scope) and
 [Periodic runs](ci.md#periodic-runs). A test must pass on every release in
 [Supported releases](ci.md#supported-releases).
 
+### Runtime cache writes
+
+GitHub scopes a cache write to the event ref. A checkout override selects
+the code that runs inside that scope. Plan may save the shared Go module and
+build caches on a miss when the selected revision belongs to that run:
+
+| Caller | Checkout and cache policy |
+| --- | --- |
+| Push, scheduled run or dispatch without an override | Plan uses the event commit and can populate the event ref's caches. A pull request uses its merge ref and can populate that PR's caches. |
+| Manual Ceph short, arm64 or periodic storage run | The dispatcher can select another checkout. An empty override or the exact event SHA permits a save. A different SHA or symbolic name is restore-only, even if the name currently points to the event commit. |
+| Periodic representative campaign | Pin resolves the selected ref once. Plan can save only when that resolved SHA equals the event SHA. |
+| Periodic sample plan and sequential sample | The scheduled event or a dispatch selects the source; the sample uses the SHA frozen by its plan. Both jobs only restore caches. |
+| CI command | An authorized command selects a PR head. Validation only restores caches and its tagged-runtime call explicitly disables saves. The manual dispatch in this workflow republishes a structural report without running tagged-runtime. |
+
+The reusable runtime jobs only restore. The switches above govern the workflow's
+explicit cache-save steps. Selecting a revision for a privileged manual run
+still requires trusting the code it will execute.
+
 ### Batches and the `//ci:` line
 
 - To join a batch, copy its constraint and `//ci:` line exactly. All files of

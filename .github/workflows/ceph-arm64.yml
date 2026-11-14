@@ -56,3 +56,4 @@ jobs:
       goarch: arm64
       check_name: Ceph arm64
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
+      save_caches: ${{ inputs.ref == '' || inputs.ref == github.sha }}
