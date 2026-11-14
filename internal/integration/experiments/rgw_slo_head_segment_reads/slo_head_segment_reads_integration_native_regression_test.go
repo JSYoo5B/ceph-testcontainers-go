@@ -332,7 +332,11 @@ func TestRGWSLOHeadSegmentReads(t *testing.T) {
 		if err != nil {
 			t.Fatalf("window %s: %v", name, err)
 		}
-		recorded := sloWindow{Ops: ops, OutBytes: outBytes() - before}
+		returned, err := readOutDelta(before, outBytes())
+		if err != nil {
+			t.Fatalf("window %s: %v", name, err)
+		}
+		recorded := sloWindow{Ops: ops, OutBytes: returned}
 		t.Logf("RGW_SLO_HEAD window=%s out-bytes=%d ops=%+v", name, recorded.OutBytes, recorded.Ops)
 		return recorded
 	}

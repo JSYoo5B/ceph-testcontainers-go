@@ -158,6 +158,19 @@ func TestObjectOpsCovers(t *testing.T) {
 	}
 }
 
+func TestReadOutDeltaRefusesACounterThatWentDown(t *testing.T) {
+	for _, tc := range []struct{ before, after, want int64 }{{0, 0, 0}, {900, 900, 0}, {900, 9441231, 9440331}} {
+		if got, err := readOutDelta(tc.before, tc.after); err != nil || got != tc.want {
+			t.Errorf("from %d to %d = %d, %v, want %d", tc.before, tc.after, got, err, tc.want)
+		}
+	}
+	for _, tc := range []struct{ before, after int64 }{{9441231, 900}, {1, 0}, {-1, 5}, {0, -1}} {
+		if got, err := readOutDelta(tc.before, tc.after); err == nil {
+			t.Errorf("from %d to %d read as %d", tc.before, tc.after, got)
+		}
+	}
+}
+
 func TestWindowOpsReturnsTheNewOperationsOfTheDataPool(t *testing.T) {
 	seen := map[string]bool{"client.4567.0:10": true}
 	history, err := parseOpHistory(historyReport("20000", opManifest, opSegment, opIndex, opMarker))
@@ -216,6 +229,44 @@ func TestWindowOpsReturnsTheNewOperationsOfTheDataPool(t *testing.T) {
 	head := sloWindow{Ops: map[string]objectOps{"m.1_slo": {Requests: 1}, "s.2_segment-0000": got["s.2_segment-0000"]}}
 	if symptoms, err := judgeSLOHead("m.1_slo", segments, full, head); err == nil || !strings.Contains(err.Error(), "window not observed") {
 		t.Fatalf("a call of an unknown method on a segment was judged as %q, %v", symptoms, err)
+	}
+}
+
+// A history that no longer holds an operation it held before was reset or
+// has dropped entries, so a window read from it may lack operations.
+func TestWindowOpsRefusesAHistoryThatLostOperations(t *testing.T) {
+	seen := map[string]bool{}
+	history, err := parseOpHistory(historyReport("20000", opManifest, opSegment, opMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := windowOps(history, seen, 7, "tc-slo-window-1"); err != nil {
+		t.Fatal(err)
+	}
+	next := strings.ReplaceAll(strings.ReplaceAll(opMarker, "window-1", "window-2"), "client.9000.0:1", "client.9001.0:1")
+	for name, descriptions := range map[string][]string{
+		"an emptied history":        {next},
+		"a dropped operation":       {opManifest, opMarker, next},
+		"another dropped operation": {opSegment, opMarker, next},
+	} {
+		history, err := parseOpHistory(historyReport("20000", descriptions...))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		copied := map[string]bool{}
+		for reqid := range seen {
+			copied[reqid] = true
+		}
+		if got, err := windowOps(history, copied, 7, "tc-slo-window-2"); err == nil || !strings.Contains(err.Error(), "window not observed") {
+			t.Errorf("%s: read as the window %+v, %v", name, got, err)
+		}
+	}
+	history, err = parseOpHistory(historyReport("20000", opManifest, opSegment, opMarker, next))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := windowOps(history, seen, 7, "tc-slo-window-2"); err != nil || len(got) != 0 {
+		t.Fatalf("a history that kept its operations = %+v, %v", got, err)
 	}
 }
 
@@ -323,6 +374,10 @@ func TestJudgeSLOHead(t *testing.T) {
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(40), "s.2_segment-0001": rest(40), "s.2_segment-0002": rest(40)}, OutBytes: 130}, want: "another state"},
 		{name: "the HEAD reads every segment from beyond its end", get: get,
 			head: sloWindow{Ops: map[string]objectOps{manifest: stat, "s.2_segment-0000": rest(200), "s.2_segment-0001": rest(200), "s.2_segment-0002": rest(200)}}, want: "another state"},
+		// The byte counter went down during a window: it was reset.
+		{name: "the counter went down during a HEAD without reads", get: get, head: sloWindow{Ops: map[string]objectOps{manifest: stat}, OutBytes: -9441231}, want: "window not observed"},
+		{name: "the counter went down during a HEAD with full reads", get: get, head: sloWindow{Ops: read, OutBytes: -1}, want: "window not observed"},
+		{name: "the counter went down during the GET", get: sloWindow{Ops: read, OutBytes: -1}, head: sloWindow{Ops: read, OutBytes: 255}, want: "window not observed"},
 		// The operations and the byte counter disagree.
 		{name: "full reads, but fewer bytes returned", get: get, head: sloWindow{Ops: read, OutBytes: 249}, want: "outcome not observed"},
 		{name: "no read, but a segment's worth of bytes returned", get: get, head: sloWindow{Ops: map[string]objectOps{manifest: stat}, OutBytes: 50}, want: "outcome not observed"},

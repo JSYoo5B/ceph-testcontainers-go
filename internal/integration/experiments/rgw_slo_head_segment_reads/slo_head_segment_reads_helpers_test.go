@@ -214,6 +214,16 @@ func (o objectOps) covers(size int64) bool {
 	return size > 0 && end >= size
 }
 
+// readOutDelta returns how many bytes the OSD returned for reads between
+// two samples of its counter. A counter that went down was reset between
+// them, so the samples say nothing about the window.
+func readOutDelta(before, after int64) (int64, error) {
+	if before < 0 || after < before {
+		return 0, fmt.Errorf("window not observed: the counter of bytes returned for reads went from %d to %d", before, after)
+	}
+	return after - before, nil
+}
+
 // windowOps returns, per object of the data pool, the client operations of
 // history that seen does not hold yet, and adds every operation of history
 // to seen. The window is closed by the marker: an operation on the object
@@ -223,10 +233,21 @@ func (o objectOps) covers(size int64) bool {
 // the empty object name. A history that holds as many entries as it keeps
 // may have dropped one, a window without its marker has not caught up with
 // the request, and a new operation of the data pool that was not read
-// could be anything, so all three are errors.
+// could be anything, so all three are errors. So is a history that no
+// longer holds an operation of seen: it was reset or has dropped entries,
+// and may have dropped one of the window too.
 func windowOps(history opHistory, seen map[string]bool, pool int64, marker string) (map[string]objectOps, error) {
 	if history.Total >= history.Size {
 		return nil, fmt.Errorf("window not observed: the op history holds %d entries of the %d it keeps, so it may have dropped one", history.Total, history.Size)
+	}
+	kept := map[string]bool{}
+	for _, op := range history.Ops {
+		if seen[op.ReqID] {
+			kept[op.ReqID] = true
+		}
+	}
+	if len(kept) != len(seen) {
+		return nil, fmt.Errorf("window not observed: the op history holds %d of the %d operations it held before, so it was reset or has dropped entries", len(kept), len(seen))
 	}
 	window, markers := map[string]objectOps{}, 0
 	for _, op := range history.Ops {
@@ -330,6 +351,9 @@ func judgeSLOHead(manifest string, segments []segment, get, head sloWindow) ([]s
 	}
 	for i, window := range []sloWindow{get, head} {
 		name := []string{"GET", "HEAD"}[i]
+		if window.OutBytes < 0 {
+			return nil, fmt.Errorf("window not observed: the counter of bytes returned for reads went down by %d during the %s", -window.OutBytes, name)
+		}
 		for object, ops := range window.Ops {
 			if object != manifest && !slices.ContainsFunc(segments, func(s segment) bool { return s.Object == object }) {
 				return nil, fmt.Errorf("window not observed: the %s window has an operation on %s, which is neither the manifest nor a segment: %v", name, object, window.Ops)
