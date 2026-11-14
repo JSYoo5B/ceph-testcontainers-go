@@ -1,176 +1,100 @@
 {
   "schema": 1,
   "scope": "patch_discovery_not_support",
-  "image_catalogue": "JSYoo5B/ceph-testcontainers-images@51c31e0",
   "releases": {
     "19.2.0": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:dc4a21955b5c1babf0a22cf8e3b58b7763aacc8cacfa0fdcd72d894fc2cb7e55",
-      "platforms": {
-        "linux/amd64": "sha256:ae89d56b2b5c2274469405ebf8ce9e9b77205be39a3d3d566ff132f54191c3ab",
-        "linux/arm64": "sha256:68dc13749c0a125a2ee7e93156ff3097ec8066cf1047a00c819d2edef3988b77"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.0@sha256:200087c35811bf28e8a8073b15fa86c07cce85c575f1ccd62d1d6ddbfdc6770a"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all",
+      "cpu_baseline": {}
     },
     "19.2.1": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:33a5b174f32a042f6406270271aa16bd76dc55f84c90c24c0c48fb8330e27984",
-      "platforms": {
-        "linux/amd64": "sha256:2807519b2b929b293237506bbf1680d98bf20267cb6ef2460717b0ad49901d74",
-        "linux/arm64": "sha256:f3f1332a434d98c54f0dd1ad413f92be9a04bc5675833cae907daf6e6e82d220"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.1@sha256:41d3f5e46ff7de28544cc8869fdea13fca824dcef83936cb3288ed9de935e4de"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.1-all",
+      "cpu_baseline": {}
     },
     "19.2.2": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23",
-      "platforms": {
-        "linux/amd64": "sha256:fdc9e0ed840812ff3cf37bde5700dbe33b19b5d6c70243ce7428fac606526547",
-        "linux/arm64": "sha256:83e7b326cb827f270f26bdeab9d9ba191113dccc78b5791d570aeb755eae52bc"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.2@sha256:8214ebff6133ac27d20659038df6962dbf9d77da21c9438a296b2e2059a56af6"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all",
+      "cpu_baseline": {}
     },
     "19.2.3": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77cf1a45da918d090681744f610977c790f15cb8a6646f35fd8d44c",
-      "platforms": {
-        "linux/amd64": "sha256:59bb19979557e911a7674e0cd960226306d3766b44686d2991ff78ed255fcefc",
-        "linux/arm64": "sha256:d88674cb643777abdcf69935727aea48976b6dbb4b7977a278de23aea981ef52"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.3@sha256:af0c5903e901e329adabe219dfc8d0c3efc1f05102a753902f33ee16c26b6cee"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.3-all",
+      "cpu_baseline": {}
     },
     "19.2.4": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8deb5fc287f8c5caeffd3af9b93d57bf7bced2482a0c201d5cac0",
-      "platforms": {
-        "linux/amd64": "sha256:331f6ea01d429942b3901f8e005adfd6b18c2bd8faf78b025f51afb7e86d49ae",
-        "linux/arm64": "sha256:fa0addee03b59fe9c9d9975923e57b1c9b98b651dfc8a1a6279b0b15c4e98cdf"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.4@sha256:4940f3e4da8077b68e577c2dcbf313c7c2f9c3b61654c52fcb28884a6ef96a7b"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all",
+      "cpu_baseline": {}
     },
     "19.2.5": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a0bc6f5e6dfbf4973849a80cda16dda19336c66fa02d54b8cf38e",
-      "platforms": {
-        "linux/amd64": "sha256:1e8e351aa6c379937e99152e3a8752781ab373cf0da1637d05259dd7c51eb65d",
-        "linux/arm64": "sha256:18516de3f18f947d277844d2fb4c0a7ffee489aa3bc44c090b2b75d9667c4087"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all",
+      "cpu_baseline": {}
     },
     "19.2.6": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d6e6222e6900a8fe3bf4896c52371ac6c975c528bb8847b3113f8714dfd6153f",
-      "platforms": {
-        "linux/amd64": "sha256:375ca5f3c30308ddfced0cd37c3851409915d5276ca361ecaf66fcdeeab158e3",
-        "linux/arm64": "sha256:82caf24403f51d6a4c8a7433038f9b7c36b61906f29c9b7e17b7f5d6205628e1"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.6@sha256:ff836bb28e7d0be0ec4dd22e79407174452a96e11ee62e9cdd1fa47f4bcc3bdc"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.6-all",
+      "cpu_baseline": {}
     },
     "19.2.7": {
       "codename": "squid",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:17bb5a8e830d2f3c7e0712d39b6190939ed7287158aae192a52839956c69d660",
-      "platforms": {
-        "linux/amd64": "sha256:01d506bfcb82222ed5927d9fc14eb5af9f9f9e06064aac27afb1fd3a92b06f9c",
-        "linux/arm64": "sha256:f88ff76258016d0e1a10393446cca90380c3d75aa8eac0d159c69af3779a000f"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v19.2.7@sha256:3fc0a79f1c671f0e75be24ba77a4ab32227e5ea080e16dfc0840a1dc6c30bf7e"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.7-all",
+      "cpu_baseline": {}
     },
     "20.2.0": {
       "codename": "tentacle",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2ca7d48354d2f94a54b70d7e87cc05fd72adc7be3961a8d01518a7393575011d",
-      "platforms": {
-        "linux/amd64": "sha256:18d44cce80633c688ec9dc1bec9f6c43c8703e2f16bf97e4c7dfbeae8c2238ff",
-        "linux/arm64": "sha256:41d4868289529651d08d6ad17ba1ebf8c13c92c1c389b1d80b0bc43304d0fb06"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.0@sha256:1228c3d05e45fbc068a8c33614e4409b6dac688bcc77369b06009b5830fa8d86"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.0-all",
+      "cpu_baseline": {}
     },
     "20.2.1": {
       "codename": "tentacle",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:95c4afd5c8f52c44dc5a4baa1d9dad7b0b4b266bc2f795298bdfb1410fc9ac0a",
-      "platforms": {
-        "linux/amd64": "sha256:b5edbd033b7eeb4a590cae089c75a264b1899f10bb7f6ace9392dab2266820cf",
-        "linux/arm64": "sha256:9b2251f340a54dd4a2e667c36dc976ad8c6888a60ffb5a55809d00e3a1e61614"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.1@sha256:0bae386bc859cd9a05b804d1ca16cca8853a64f90809044e2bf43095419dc337"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.1-all",
+      "cpu_baseline": {}
     },
     "20.2.2": {
       "codename": "tentacle",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:dd727dd6af4107e7a7ace8a849ba43cc9b09aea6a834acfc3963c3f0463d041f",
-      "platforms": {
-        "linux/amd64": "sha256:3f25e336cc903484d1bd4bac9a660d24ca219c3db13dbe18c0d85039bd7feb1a",
-        "linux/arm64": "sha256:631872185a852f7c6247386daeef8714d24e0a359e29ab6daf1e805f949cb16e"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.2@sha256:6b4b5ae33acd3d736eb26d2a19238bce71a22f9cfb99cca887ba6312d0957644"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.2-all",
+      "cpu_baseline": {}
     },
     "20.2.3": {
       "codename": "tentacle",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:33ba0a4a2b1e20807307ea4c5fb37e47fe547b98038967619bf03bbf3b82767a",
-      "platforms": {
-        "linux/amd64": "sha256:9be097a851fee0bdb4fa05af7c8b53ccc739aa661b7bf732417da1853f0dadb8",
-        "linux/arm64": "sha256:7b8f90e207d13a0b5b09425d7c58f30071a99482b5fbb694c52f7aaee7bf964e"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.3-all",
+      "cpu_baseline": {}
     },
     "20.2.4": {
       "codename": "tentacle",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b",
-      "platforms": {
-        "linux/amd64": "sha256:d17ea1cdf230fc4947a9e9848338f1156001c6d310bef241c2bceb6bb574e265",
-        "linux/arm64": "sha256:141995b4b65335a8832da558974a99a764a1735ed7452afd76cfc7f8cbee1393"
-      },
-      "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all",
+      "cpu_baseline": {}
     },
     "21.2.0": {
       "codename": "umbrella",
       "eligibility": "available",
-      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623a5e6c9f7dc7dd13b356dcb1f71b0b4d74bf7cd2c175cd802735f",
-      "platforms": {
-        "linux/amd64": "sha256:353f804b94234f94d510cff5e80235137f74aa96f5ea25027cfa0b0b921532e6",
-        "linux/arm64": "sha256:99798ab77d599621dec62f55f537cf2b2aa927d24b2b73cd65553b628878f1e2"
-      },
+      "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all",
       "cpu_baseline": {
         "amd64": "x86-64-v3"
-      },
-      "original": "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
+      }
     },
     "20.2.5": {
       "codename": "tentacle",
       "eligibility": "available",
       "variant": "upstream_aggregate",
-      "reference": "quay.io/ceph/ceph@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
-      "platforms": {
-        "linux/amd64": "sha256:b2f0255d0e2626473e72f2ded7e67dfaf546272f1c6fa699e1aaffce288b6e57",
-        "linux/arm64": "sha256:049acd51a7a9a6e10051ed60ae3ee2d8d4b3988a90b62487eeea2897b5d90f0d"
-      },
+      "reference": "quay.io/ceph/ceph:v20.2.5",
       "cpu_baseline": {},
-      "original": "quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c",
-      "publication": "The official-20.2.5-all role aggregate is not published; this is the separately pinned upstream aggregate.",
+      "publication": "The official-20.2.5-all role aggregate is not published; this is the upstream aggregate.",
       "release_notes": "https://docs.ceph.com/en/latest/releases/tentacle/#v20-2-5-tentacle"
     }
   }

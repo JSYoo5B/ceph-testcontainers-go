@@ -112,7 +112,7 @@ def role_environment(plan, prepared):
         roles = tuple(images.ROLE_ENV)
     else:
         roles = images.parse_roles(','.join(plan['images']['references']))
-    environment = {images.DECLARABLE_ROLE_ENV[role]: prepared.get(role, prepared.get('all'))['image_id'] for role in roles}
+    environment = {images.DECLARABLE_ROLE_ENV[role]: prepared.get(role, prepared.get('all'))['reference'] for role in roles}
     environment.update(SCENARIO_IMAGE_LAYOUT='roles', SCENARIO_IMAGE_ROLES=','.join(roles))
     return environment
 
@@ -139,17 +139,10 @@ def prepare_images(plan, directory, deadline=None):
             raise RuntimeError('artifact_unavailable: the historical aggregate supplies no '
                                + ','.join(plan['images']['unavailable_roles']) + ' role')
         raise RuntimeError('artifact_unavailable: catalogue has no usable image')
-    if plan.get('test_images_error'):
-        raise RuntimeError('artifact_resolution_failure: helper image identities were not resolved')
     if 'reference' in plan['images']:
         references = {'all': plan['images']['reference']}
     else:
         references = dict(plan['images']['references'])
-    helper_names = {}
-    for number, (reference, pinned) in enumerate(plan.get('test_images', {}).items()):
-        name = 'helper-' + str(number)
-        references[name] = pinned
-        helper_names[reference] = name
     prepared, pulls = {}, {}
     for role, reference in references.items():
         def attempt(number, reference=reference, role=role):
@@ -158,23 +151,11 @@ def prepare_images(plan, directory, deadline=None):
             return result['exit_code'] or (1 if result['timed_out'] else 0), path.read_text()
         prepared[role] = registry_pull.resolve(role, reference, platform,
                 lambda ref: read(['docker', 'image', 'inspect', ref]), attempt, pulls)
-    # Give source literals local aliases to their frozen manifests. Refuse to
-    # overwrite an existing conflicting alias, including on shared trial hosts.
-    for reference, role in helper_names.items():
-        inspected = read(['docker', 'image', 'inspect', reference])
-        if inspected.returncode == 0:
-            if json.loads(inspected.stdout)[0]['Id'] != prepared[role]['image_id']:
-                raise RuntimeError('environment_ineligible: a helper alias has another image identity')
-        elif registry_pull.ABSENT.search(inspected.stderr or '') and '@' not in reference:
-            if read(['docker', 'image', 'tag', prepared[role]['image_id'], reference]).returncode:
-                raise RuntimeError('cannot create the owned helper image alias')
-        else:
-            raise RuntimeError('helper image alias inspection failed')
     environment = role_environment(plan, prepared)
     result = {'schema': 1, 'release': plan['release'], 'platform': platform, 'images': prepared,
               'pulls': pulls, 'prepared_environment': environment, 'preparation_passed': True}
     selection.write(directory / 'summary.json', result)
-    # Record the actual native build string as well as the registry identities.
+    # Record the native build string that the selected image reports.
     name = 'ctg-periodic-version-' + uuid.uuid4().hex
     try:
         probe = ['ceph', '--version']
@@ -208,8 +189,6 @@ def prepare_images(plan, directory, deadline=None):
 def native(plan, item, directory, compiled):
     catalog = tags.load_catalog()
     selection.validate_plan(plan, catalog)
-    if 'test_images' not in plan:
-        raise ValueError('execution requires a plan with frozen helper images')
     inventory = tags.discover_optional(catalog) if item['profile']['category'] == 'optional' else tags.discover(catalog)
     p = item['profile']
     report = tags.run_profile(catalog, inventory, p['category'], p['batch'], p['package'], directory,
@@ -229,8 +208,6 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
     plan = json.loads(plan_path.read_text())
     catalog = tags.load_catalog()
     selection.validate_plan(plan, catalog)
-    if not trial and 'test_images' not in plan:
-        raise ValueError('execution requires a plan with frozen helper images')
     revision = read_command(['git', 'rev-parse', 'HEAD'])
     if not trial and (revision.returncode or revision.stdout.strip() != plan['source_sha']
                       or read_command(['git', 'diff', '--quiet', 'HEAD']).returncode):
@@ -331,10 +308,6 @@ def execute(plan_path, directory, trial=False, runner=command, deadline=None, bi
                             record['classification'] = 'contract_inapplicable'
                     receipt['advances'] = True
                     raise RuntimeError('test image preparation failed')
-                for reference, name in helper_names_from(plan).items():
-                    actual = read_command(['docker', 'image', 'inspect', reference])
-                    if actual.returncode or json.loads(actual.stdout)[0]['Id'] != prepared['images'][name]['image_id']:
-                        raise RuntimeError('helper image alias changed after plan preparation')
                 if deadline - time.monotonic() < item['native_seconds'] + CLEANUP_RESERVE:
                     record['classification'] = 'budget_not_started'
                     break
@@ -459,9 +432,6 @@ def execute_bundle(plan_path, directory, trial=False, runner=command):
         persist(result_path, receipt)
     return 0 if receipt['complete'] else 1
 
-
-def helper_names_from(plan):
-    return {reference: 'helper-' + str(number) for number, reference in enumerate(plan.get('test_images', {}))}
 
 
 def interrupted(signum, frame):

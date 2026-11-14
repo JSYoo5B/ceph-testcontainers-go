@@ -46,8 +46,10 @@ class SelectionTests(unittest.TestCase):
             return [role for role in order if role in roles]
 
         def environment(plan):
-            prepared = {role: {'image_id': 'sha256:' + str(number) * 64}
-                        for number, role in enumerate(plan['images']['references'], 1)}
+            # What the engine reported for a prepared tag is recorded, with
+            # no registry digest here, and the tests are given the tag.
+            prepared = {role: {'reference': reference, 'image_id': 'sha256:' + str(number) * 64, 'repo_digests': []}
+                        for number, (role, reference) in enumerate(plan['images']['references'].items(), 1)}
             return executor.role_environment(plan, prepared), prepared
 
         # A plan whose entries need no optional role references none: its
@@ -66,7 +68,8 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(list(plan['images']['references']), mgr['image_roles'].split(','))
         env, prepared = environment(plan)
         self.assertEqual(env['SCENARIO_IMAGE_ROLES'], mgr['image_roles'])
-        self.assertEqual(env['CEPH_TEST_MGR_MODULES_IMAGE'], prepared['mgr-modules']['image_id'])
+        self.assertEqual(env['CEPH_TEST_MGR_MODULES_IMAGE'], executor.images.role_tag('official', '20.2.4', 'mgr-modules'))
+        self.assertEqual(env['CEPH_TEST_ESSENTIAL_IMAGE'], prepared['essential']['reference'])
         sample.validate_plan(plan, self.catalog)
         # The references follow the entries: a plan edited to reference
         # another role set is refused.
@@ -78,9 +81,11 @@ class SelectionTests(unittest.TestCase):
         # A historical aggregate serves the five dependency roles and declares
         # no optional role, so a test that needs one fails instead of falling
         # back to the aggregate.
-        aggregate = {'images': {'reference': 'r@sha256:' + 'f' * 64}}
-        environment = executor.role_environment(aggregate, {'all': {'image_id': 'sha256:' + 'f' * 64}})
+        tag = executor.images.role_tag('official', '19.2.2', 'all')
+        aggregate = {'images': {'reference': tag}}
+        environment = executor.role_environment(aggregate, {'all': {'reference': tag, 'image_id': 'sha256:' + 'f' * 64}})
         self.assertEqual(environment['SCENARIO_IMAGE_ROLES'], 'essential,client,cephfs,rbd-aux,rgw')
+        self.assertEqual({environment[name] for name in executor.images.ROLE_ENV.values()}, {tag})
         self.assertNotIn('CEPH_TEST_MGR_MODULES_IMAGE', environment)
 
     def test_draw_is_small_distinct_and_reproducible(self):
@@ -186,18 +191,112 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sample.validate_plan(original, [])
 
-    def test_helper_resolution_failure_remains_a_frozen_preparation_failure(self):
-        import in_test_images
-        import role_image_pins
-        plan = self.plan()
-        with mock.patch.object(sample.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='{}')), \
-                mock.patch.object(in_test_images, 'reaper_reference', return_value='testcontainers/ryuk:v1'), \
-                mock.patch.object(in_test_images, 'validate_analysis', return_value=[]), \
-                mock.patch.object(in_test_images, 'plan_images', return_value=([], [])), \
-                mock.patch.object(role_image_pins, 'resolve', side_effect=RuntimeError('registry unavailable')):
-            frozen = sample.freeze_test_images(plan)
-        self.assertEqual(frozen['test_images_error'], 'helper_image_identity_unavailable')
-        sample.validate_plan(frozen, self.catalog)
+    def test_a_plan_names_images_by_tag_and_needs_no_registry_digest(self):
+        # Every mode: the plan holds tags only, validates as it is, and
+        # nothing in it waits for a digest that a registry would supply.
+        for mode in ('rotate', 'discovery'):
+            for plan in self.bundle(mode)['runs']:
+                with self.subTest(mode=mode, release=plan['release']):
+                    self.assertNotIn('test_images', plan)
+                    self.assertNotIn('test_images_error', plan)
+                    references = ([plan['images']['reference']] if 'reference' in plan['images']
+                                  else list(plan['images']['references'].values()))
+                    self.assertTrue(references)
+                    for reference in references:
+                        self.assertNotIn('@', reference)
+                        self.assertRegex(reference, r':(?:official-\d+\.\d+\.\d+-[a-z-]+|v\d+\.\d+\.\d+)\Z')
+                    self.assertNotIn('sha256:', json.dumps(plan['images']))
+                    sample.validate_plan(plan, self.catalog)
+
+    def test_images_without_a_registry_digest_are_prepared_and_run_by_tag(self):
+        # An engine that holds an image with no RepoDigests (a tag pulled
+        # from a mirror, a local build) prepares it like any other: the
+        # tests get the tags, the summary records what the engine reported.
+        cases = {'published roles': self.plan(), 'historical aggregate': self.plan('discovery')}
+        self.assertIn('references', cases['published roles']['images'])
+        self.assertIn('reference', cases['historical aggregate']['images'])
+        for name, plan in cases.items():
+            pulled, absent = [], set()
+            references = ({'all': plan['images']['reference']} if 'reference' in plan['images']
+                          else dict(plan['images']['references']))
+            absent.update(references.values())
+
+            def read(argv, seconds=60):
+                if argv[:2] == ['docker', 'info']:
+                    return mock.Mock(returncode=0, stdout=json.dumps({'OSType': 'linux', 'Architecture': 'x86_64'}), stderr='')
+                if argv[:3] == ['docker', 'image', 'inspect']:
+                    if argv[3] in absent:
+                        return mock.Mock(returncode=1, stdout='[]', stderr='Error response from daemon: No such image: ' + argv[3])
+                    return mock.Mock(returncode=0, stderr='', stdout=json.dumps(
+                        [{'Id': 'sha256:' + '%064x' % (len(argv[3]) + 1), 'Os': 'linux', 'Architecture': 'amd64'}]))
+                return mock.Mock(returncode=0, stdout='', stderr='')
+
+            def run(argv, log, seconds, env=None):
+                Path(log).parent.mkdir(parents=True, exist_ok=True)
+                if argv[:2] == ['docker', 'pull']:
+                    pulled.append(argv[-1])
+                    absent.discard(argv[-1])
+                    Path(log).write_text('pulled\n')
+                else:
+                    Path(log).write_text('ceph version ' + plan['release'] + ' (0000) test (stable)\n')
+                return {'exit_code': 0, 'timed_out': False, 'elapsed_seconds': 0.0, 'passed': True}
+
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(executor, 'read_command', side_effect=read), \
+                    mock.patch.object(executor, 'command', side_effect=run), \
+                    mock.patch.object(executor, 'cpu_eligible', return_value=True):
+                result = executor.prepare_images(plan, Path(directory) / 'images')
+                self.assertTrue(result['preparation_passed'])
+                self.assertEqual(sorted(pulled), sorted(references.values()))
+                self.assertEqual({role: image['reference'] for role, image in result['images'].items()}, references)
+                self.assertTrue(all(image['repo_digests'] == [] for image in result['images'].values()))
+                environment = result['prepared_environment']
+                images = {key: value for key, value in environment.items() if key.startswith('CEPH_TEST_')}
+                self.assertTrue(images)
+                self.assertTrue(set(images.values()) <= set(references.values()))
+                self.assertEqual(environment['CEPH_TEST_ESSENTIAL_IMAGE'], references.get('essential', references.get('all')))
+                self.assertEqual(result['native_build'], 'ceph version ' + plan['release'] + ' (0000) test (stable)')
+                self.assertEqual(json.loads((Path(directory) / 'images/summary.json').read_text()), result)
+
+    def test_the_discovery_inventory_holds_release_tags_only(self):
+        inventory = sample.patch_inventory()
+        for release, row in inventory.items():
+            with self.subTest(release=release):
+                self.assertEqual(set(row) - {'variant', 'publication', 'release_notes'},
+                                 {'codename', 'eligibility', 'reference', 'cpu_baseline'})
+                expected = ('quay.io/ceph/ceph:v' + release if row.get('variant') == 'upstream_aggregate'
+                            else sample.images.role_tag('official', release, 'all'))
+                self.assertEqual(row['reference'], expected)
+        document = json.loads((sample.ROOT / '.github/ceph-discovery-images.json').read_text())
+
+        def load(change):
+            changed = copy.deepcopy(document)
+            change(changed['releases'])
+            with tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / '.github').mkdir()
+                (Path(directory) / '.github/ceph-discovery-images.json').write_text(json.dumps(changed))
+                with mock.patch.object(sample, 'ROOT', Path(directory)):
+                    return sample.patch_inventory()
+
+        self.assertEqual(load(lambda rows: None), inventory)
+        digest = 'sha256:' + 'a' * 64
+        for name, change in {
+                'digest reference': lambda rows: rows['19.2.2'].update(reference=sample.images.REGISTRY + '@' + digest),
+                'tag with digest': lambda rows: rows['19.2.2'].update(reference=rows['19.2.2']['reference'] + '@' + digest),
+                'upstream digest': lambda rows: rows['20.2.5'].update(reference='quay.io/ceph/ceph@' + digest),
+                'tag of another patch': lambda rows: rows['19.2.2'].update(reference=rows['19.2.3']['reference']),
+                'role of the same patch': lambda rows: rows['19.2.2'].update(
+                    reference=sample.images.role_tag('official', '19.2.2', 'essential')),
+                'absent reference': lambda rows: rows['19.2.2'].pop('reference'),
+                'null reference': lambda rows: rows['19.2.2'].update(reference=None),
+                'absent eligibility': lambda rows: rows['19.2.2'].pop('eligibility'),
+        }.items():
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                load(change)
+        # A patch without an artifact needs no reference at all.
+        unavailable = load(lambda rows: rows.update({'19.2.2': {'codename': 'squid', 'eligibility': 'artifact_unavailable',
+                                                                'cpu_baseline': {}}}))
+        self.assertEqual(unavailable['19.2.2']['eligibility'], 'artifact_unavailable')
 
     def test_sample_selection_is_refused_before_native_on_unknown_tests_or_expanded_budget(self):
         item = self.plan()['entries'][0]

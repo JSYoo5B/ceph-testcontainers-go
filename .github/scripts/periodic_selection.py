@@ -8,8 +8,6 @@ import os
 from pathlib import Path
 import random
 import re
-import subprocess
-import time
 
 import run_image_matrix as images
 import tag_scenarios as tags
@@ -24,6 +22,7 @@ NATIVE_SECONDS = 20 * 60
 CORE = ('TestClusterLifecycle', 'TestRBDLifecycle', 'TestCephFSFilesystem',
         'TestRGWS3', 'TestClientIdentities', 'TestCephFSOSDRecovery')
 SHA = re.compile(r'[a-f0-9]{40}\Z')
+UPSTREAM = 'quay.io/ceph/ceph'
 
 
 def canonical(value):
@@ -46,17 +45,20 @@ def patch_inventory():
     for release, row in data['releases'].items():
         if not re.fullmatch(r'\d+\.\d+\.\d+', release):
             raise ValueError('invalid discovery release')
-        if row['eligibility'] == 'available':
-            if (not re.fullmatch('(?:' + re.escape(images.REGISTRY) + r'|quay\.io/ceph/ceph)@sha256:[a-f0-9]{64}', row['reference'])
-                    or set(row['platforms']) != {'linux/amd64', 'linux/arm64'}
-                    or any(images.DIGEST.fullmatch(d) is None for d in row['platforms'].values())):
-                raise ValueError('invalid discovery image identity')
-        elif row['eligibility'] != 'artifact_unavailable':
+        if row.get('eligibility') == 'available':
+            # The aggregate of a patch is named by its tag: the published
+            # official-<release>-all, or the upstream image of a release
+            # that has no published aggregate.
+            expected = (UPSTREAM + ':v' + release if row.get('variant') == 'upstream_aggregate'
+                        else images.role_tag('official', release, images.AGGREGATE))
+            if row.get('reference') != expected:
+                raise ValueError('a discovery image is not the release tag of its patch')
+        elif row.get('eligibility') != 'artifact_unavailable':
             raise ValueError('unknown image eligibility')
     return data['releases']
 
-def image_identity(release, discovery, entries=()):
-    """The image identity of a plan. A historical aggregate serves only the
+def image_selection(release, discovery, entries=()):
+    """The images of a plan, by tag. A historical aggregate serves only the
     five dependency roles: whether one ships the modules of an optional role
     is not established, so a plan whose entries declare one is not eligible
     on it rather than run on a guessed image. A published release supplies
@@ -105,7 +107,7 @@ def validate_plan(plan, catalog):
             or plan.get('maximum_runner_minutes') != sum(RUNNER_MINUTES.values())
             or plan.get('budget_seconds') != BUDGET_SECONDS or not plan.get('entries')):
         raise ValueError('invalid, stale or unbounded periodic plan')
-    expected_images = image_identity(plan['release'], 'reference' in plan['images'], plan['entries'])
+    expected_images = image_selection(plan['release'], 'reference' in plan['images'], plan['entries'])
     if plan['images'] != expected_images:
         raise ValueError('planned images differ from the source-declared references')
     profiles = {p['id']: p for p in tags.discover(catalog)['include'] + tags.discover_optional(catalog)['include']}
@@ -127,56 +129,6 @@ def validate_plan(plan, catalog):
                 or item['network'] and item['network'] != (profile.get('networks') or [''])[0]
                 and not set(item['tests']) <= modes):
             raise ValueError('planned selection changes the declared network scope')
-    for reference, pinned in plan.get('test_images', {}).items():
-        if (not reference or reference.startswith('-') or any(c.isspace() for c in reference)
-                or not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', pinned)):
-            raise ValueError('invalid planned helper image pin')
-
-def freeze_test_images(plan, resolved=None, deadline=None):
-    """Resolve Ryuk and source-proven additional images before native work.
-
-    A failed analysis/resolution stays an attributable preparation failure in
-    the plan, rather than disappearing or selecting a different cohort.
-    """
-    import in_test_images
-    import role_image_pins
-    deadline = time.monotonic() + 180 if deadline is None else deadline
-    resolved = {} if resolved is None else resolved
-    def run(argv, **kwargs):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError('image identity preparation deadline')
-        kwargs['timeout'] = min(kwargs.get('timeout', 60), remaining)
-        return subprocess.run(argv, **kwargs)
-    plan['test_images'] = {}
-    try:
-        listed = run(['go', 'list', '-m', '-f', '{{.Dir}}', in_test_images.TESTCONTAINERS],
-                     capture_output=True, text=True)
-        if listed.returncode:
-            raise ValueError('cannot locate the source-pinned reaper')
-        references = {in_test_images.reaper_reference(listed.stdout)}
-        for item in plan['entries']:
-            p = item['profile']
-            result = run(in_test_images.analysis_command(p['package'], p['tags'], item['tests'], plan['platform']),
-                         capture_output=True, text=True, timeout=60)
-            if result.returncode:
-                raise ValueError('test image analysis failed')
-            uses = in_test_images.validate_analysis(json.loads(result.stdout), p['package'], item['tests'])
-            planned, _ = in_test_images.plan_images(uses, plan['release'], True, 'reference' in plan['images'])
-            references.update(image['reference'] for image in planned)
-        for reference in sorted(references):
-            if reference not in resolved:
-                resolved[reference] = role_image_pins.resolve(reference, run)
-            manifest = resolved[reference]
-            if '@' in reference and reference.rsplit('@', 1)[1] != manifest:
-                raise ValueError('source-pinned helper resolved to another digest')
-            plan['test_images'][reference] = reference.split('@')[0] + '@' + manifest
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-        plan['test_images_error'] = 'helper_image_identity_unavailable'
-    plan.pop('plan_sha256', None)
-    plan['plan_sha256'] = digest(plan)
-    return plan
-
 
 def selected_entry(catalog, profile, chosen=None, network='', core=False):
     full = tags.selected_tests(catalog, profile['package'], profile['tags'])
@@ -250,7 +202,7 @@ def sample_plan(catalog, source_sha, mode, now, release='', profiles='', tests='
         plan = {'schema':SCHEMA,'mode':mode,'source_sha':source_sha,'selected_at':now.isoformat(),
                 'cell':version+'/'+digest([e['id'] for e in chosen])[:12],
                 'reason':'explicit_target' if mode == 'targeted' else 'random_sample',
-                'release':version,'images':image_identity(version,mode == 'discovery' or version not in images.RELEASES,chosen),
+                'release':version,'images':image_selection(version,mode == 'discovery' or version not in images.RELEASES,chosen),
                 'platform':'linux/amd64','entries':chosen,'catalogue_sha256':digest(catalog),
                 'budget_seconds':BUDGET_SECONDS,'maximum_runner_minutes':sum(RUNNER_MINUTES.values()),
                 'scope':'flaky_discovery_sample_not_support'}
@@ -269,15 +221,10 @@ def validate_bundle(bundle,catalog):
             or bundle.get('budget_seconds') != BUDGET_SECONDS or not 1 <= len(bundle.get('runs',[])) <= 3
             or len({p['release'] for p in bundle['runs']}) != len(bundle['runs'])):
         raise ValueError('invalid frozen periodic sample')
-    helpers = {}
     for plan in bundle['runs']:
         if plan['source_sha'] != bundle['source_sha'] or plan['mode'] != bundle['mode']:
             raise ValueError('sample source/mode differs between versions')
         validate_plan(plan,catalog)
-        for ref,pin in plan.get('test_images',{}).items():
-            if helpers.get(ref,pin) != pin:
-                raise ValueError('a helper image changed within this execution')
-            helpers[ref] = pin
 
 
 def validate_bundle_receipt(receipt):
@@ -289,15 +236,6 @@ def validate_bundle_receipt(receipt):
     return receipt
 
 
-def freeze_bundle(bundle):
-    cache,deadline = {},time.monotonic()+180
-    for plan in bundle['runs']:
-        freeze_test_images(plan,cache,deadline)
-    bundle.pop('plan_sha256',None)
-    bundle['plan_sha256'] = digest(bundle)
-    return bundle
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode',choices=('auto','rotate','discovery','targeted'),default='auto')
@@ -307,14 +245,11 @@ def main():
     parser.add_argument('--tests',default='')
     parser.add_argument('--network',choices=('','default','host','bridge'),default='')
     parser.add_argument('--seed',default='',help='Recorded reproducible random draw; normally derived from run identity')
-    parser.add_argument('--freeze-images',action='store_true')
     parser.add_argument('--output',required=True,type=Path)
     args = parser.parse_args()
     catalog = tags.load_catalog()
     bundle = sample_plan(catalog,args.source,args.mode,dt.datetime.now(dt.timezone.utc),args.release,
                          args.profiles,args.tests,'' if args.network == 'default' else args.network,args.seed)
-    if args.freeze_images:
-        freeze_bundle(bundle)
     validate_bundle(bundle,catalog)
     write(args.output,bundle)
     print(canonical({'mode':bundle['mode'],'versions':[p['release'] for p in bundle['runs']],'seed':bundle['seed']}))
