@@ -267,6 +267,18 @@ func TestSecondFaultWriterStopsOnItsStopFile(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
+			// Every exit from this subtest, Fatal included, cancels and reaps
+			// the child before TempDir cleanup removes its ledger and stop
+			// file. exited records that a branch already received from done.
+			exited := false
+			defer func() {
+				if !exited {
+					cancel()
+					if err := <-done; err != nil {
+						t.Logf("the actor stopped by cancellation: %v", err)
+					}
+				}
+			}()
 			poll := time.NewTicker(10 * time.Millisecond)
 			defer poll.Stop()
 			startup := time.NewTimer(30 * time.Second)
@@ -274,17 +286,22 @@ func TestSecondFaultWriterStopsOnItsStopFile(t *testing.T) {
 			for !secondFaultLedgerHasAck(ledger) {
 				select {
 				case err := <-done:
+					exited = true
 					t.Fatalf("the actor exited before its first acknowledgement: %v: %s", err, out.String())
 				case <-startup.C:
 					cancel()
-					t.Fatalf("no acknowledged operation within 30 s: %v: %s", <-done, out.String())
+					err := <-done
+					exited = true
+					t.Fatalf("no acknowledged operation within 30 s: %v: %s", err, out.String())
 				case <-poll.C:
 				}
 			}
 			if err := os.WriteFile(stop, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := <-done; err != nil {
+			err := <-done
+			exited = true
+			if err != nil {
 				t.Fatalf("%v: %s", err, out.String())
 			}
 			events := readSecondFaultLedger(t, ledger)
