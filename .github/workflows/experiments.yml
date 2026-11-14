@@ -30,12 +30,14 @@ on:
           - rgw_lifecycle_expiration_header
           - rgw_multipart_part_storage_class
           - rgw_multisite_object_lock_sync
+          - rgw_post_usage_bytes_received
           - rgw_single_part_multipart_read
           - rgw_slo_head_segment_reads
           - rgw_ssec_multipart_completion
           - rgw_suspended_conditional_writes
           - rgw_sync_lease_lapse
           - rgw_sync_policy_translation
+          - rgw_zonegroup_redirect_endpoint
       image:
         description: Fixed image for a second run that must not reproduce (the default image always runs first and must reproduce)
         type: string
