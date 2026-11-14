@@ -20,7 +20,6 @@ on:
       - '.github/scripts/tag_scenarios.py'
       - '.github/scripts/in_test_images.py'
       - '.github/scripts/registry_pull.py'
-      - '.github/scripts/role_image_pins.py'
       - '.github/scripts/run_image_matrix.py'
       - '.github/scripts/runner_storage.py'
       - '.github/scripts/runner_storage_layout.py'

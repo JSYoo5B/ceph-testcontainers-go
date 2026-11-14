@@ -51,10 +51,6 @@ on:
         description: Commit that every job checks out; empty checks out the caller's commit
         default: ''
         type: string
-      role_digests:
-        description: Comma-separated role=sha256:<digest> pins of the role image tags that the caller resolved, naming every role the plan declares; empty lets Plan resolve the declared roles once for this run
-        default: ''
-        type: string
       max_parallel:
         description: Runtime jobs that run at once; the default (the matrix size limit) leaves them unbounded
         default: 256
@@ -98,7 +94,6 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       count: ${{ steps.plan.outputs.count }}
-      role_digests: ${{ steps.role_images.outputs.digests }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -167,21 +162,6 @@ jobs:
           else
             python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
-      # The role images are published tags, and no file of this repository
-      # names a digest of one. The tag of each role that the plan's batches
-      # declare is resolved to its registry digest once per run, here, so
-      # that every runtime job and every later attempt of a failed one pulls
-      # the same manifests even when a tag is republished meanwhile. A role
-      # that no batch declares is not resolved, so its tag cannot fail the
-      # run, and a plan without a Ceph batch asks the registry nothing. A
-      # caller's own pins are kept as they are and must name every declared
-      # role.
-      - name: Pin the role image tags of this run
-        id: role_images
-        env:
-          SCENARIO_RELEASE: ${{ inputs.release }}
-          SCENARIO_ROLE_DIGESTS: ${{ inputs.role_digests }}
-        run: python3 .github/scripts/role_image_pins.py pin --release "$SCENARIO_RELEASE" --digests "$SCENARIO_ROLE_DIGESTS" --plan artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
         run: python3 .github/scripts/tag_scenarios.py modules --directory artifacts/modules
@@ -306,7 +286,6 @@ jobs:
           artifact_name: scenario-images-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
-          digests: ${{ needs.plan.outputs.role_digests }}
           platform: linux/${{ matrix.goarch }}
       # Every batch, Docker-only ones included: Ryuk and each image that the
       # compiled tests name besides their roles, found in the source and

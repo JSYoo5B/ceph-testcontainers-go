@@ -397,9 +397,11 @@ class ScenarioImageTests(unittest.TestCase):
         # environment. Without a roles input the action prepares all four.
         self.assertEqual(scalar(action_steps[0], "SCENARIO_RELEASE"), "${{ inputs.release }}")
         self.assertEqual(scalar(action_steps[0], "SCENARIO_ROLES"), "${{ inputs.roles }}")
-        self.assertEqual(scalar(action_steps[0], "SCENARIO_DIGESTS"), "${{ inputs.digests }}")
         self.assertEqual(scalar(action_steps[0], "SCENARIO_PLATFORM"), "${{ inputs.platform }}")
         inputs = dict(blocks(self.action.split("\nruns:\n", 1)[0], r"^  ([\w-]+):$"))
+        # The action takes a release and roles and pulls their tags; it has
+        # no input that replaces a tag by a digest.
+        self.assertEqual(set(inputs), {"artifact_name", "release", "roles", "platform"})
         self.assertEqual(scalar(inputs["release"], "default"), "'" + runner.RELEASE + "'")
         self.assertEqual(scalar(inputs["roles"], "default"), "'" + ",".join(runner.ROLE_ENV) + "'")
         # Callers other than an architecture cohort keep native amd64.
@@ -413,7 +415,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
              "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
-             "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS",
+             "--roles", "$SCENARIO_ROLES",
              "--platform", "$SCENARIO_PLATFORM", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
             ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES", ">>", "$GITHUB_ENV"],
@@ -421,13 +423,13 @@ class ScenarioImageTests(unittest.TestCase):
         upload = action_steps[1]
         self.assertEqual(scalar(upload, "if"), "always()")
         self.assertEqual(scalar(upload, "uses"), "actions/upload-artifact@v7")
-        self.assertTrue(upload.startswith("    - name: Save selected image identities\n"))
+        self.assertTrue(upload.startswith("    - name: Save the image preparation summary\n"))
         self.assertIn("name: ${{ inputs.artifact_name }}", upload)
         self.assertEqual(scalar(upload, "path"), "artifacts/scenario-images/")
         self.assertEqual(scalar(upload, "if-no-files-found"), "error")
         return script
 
-    def run_composite(self, code, roles="essential,client,cephfs,rbd-aux,rgw", digests="", platform="linux/amd64"):
+    def run_composite(self, code, roles="essential,client,cephfs,rbd-aux,rgw", platform="linux/amd64"):
         script = self.composite_script()
         with tempfile.TemporaryDirectory(prefix="scenario images ") as directory:
             root = Path(directory)
@@ -455,7 +457,7 @@ class ScenarioImageTests(unittest.TestCase):
                 "SCENARIO_TEST_EXIT": str(code),
                 "SCENARIO_TEST_IMAGES": json.dumps({runner.ROLE_ENV[role]: IMAGES[runner.ROLE_ENV[role]]
                                                     for role in roles.split(",")}),
-                "SCENARIO_RELEASE": "19.2.5", "SCENARIO_ROLES": roles, "SCENARIO_DIGESTS": digests,
+                "SCENARIO_RELEASE": "19.2.5", "SCENARIO_ROLES": roles,
                 "SCENARIO_PLATFORM": platform,
             })
             result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail",
@@ -465,7 +467,7 @@ class ScenarioImageTests(unittest.TestCase):
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
                 "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
-                "--roles", roles, "--digests", digests,
+                "--roles", roles,
                 "--platform", platform, "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
             ])
@@ -480,11 +482,6 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertEqual(actual, existing + role_lines + "SCENARIO_IMAGE_LAYOUT=roles\n"
                                  + "SCENARIO_IMAGE_ROLES=" + roles + "\n")
                 self.assertEqual(actual.count("SCENARIO_IMAGE_LAYOUT=roles\n"), 1)
-
-    def test_composite_passes_campaign_digest_pins_as_one_argument(self):
-        pins = "essential=sha256:" + "a" * 64 + ",client=sha256:" + "b" * 64
-        result, _, _ = self.run_composite(0, "essential,client", pins)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_composite_passes_the_planned_native_platform(self):
         result, _, _ = self.run_composite(0, "essential,client", platform="linux/arm64")

@@ -104,7 +104,7 @@ jobs:
         run: |
           sha=$(git rev-parse HEAD)
           python3 .github/scripts/tag_scenarios.py modules --directory artifacts/plan-modules
-          python3 .github/scripts/periodic_selection.py --mode "$SAMPLE_MODE" --source "$sha" --release "$SAMPLE_RELEASE" --profiles "$SAMPLE_PROFILES" --tests "$SAMPLE_TESTS" --network "$SAMPLE_NETWORK" --freeze-images --output artifacts/periodic-plan.json
+          python3 .github/scripts/periodic_selection.py --mode "$SAMPLE_MODE" --source "$sha" --release "$SAMPLE_RELEASE" --profiles "$SAMPLE_PROFILES" --tests "$SAMPLE_TESTS" --network "$SAMPLE_NETWORK" --output artifacts/periodic-plan.json
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Publish the plan before native work
         if: always()
@@ -227,9 +227,10 @@ jobs:
       # tag_scenarios.RELEASE_MAX_PARALLEL: every release caller together
       # leaves tag_scenarios.PULL_REQUEST_RUNNERS for pull requests.
       max_parallel: ${{ matrix.max_parallel }}
-  # The representative campaign. Pin fixes the commit and the role image
-  # digests once; every attempt of Representative then runs exactly those, on
-  # its own runner, with its repetition ID in its history row.
+  # The representative campaign. Pin fixes the commit once; every attempt of
+  # Representative then checks out exactly that commit and pulls the role
+  # image tags of the release, on its own runner, with its repetition ID in
+  # its history row.
   pin:
     name: Pin
     needs: gate
@@ -238,8 +239,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
-      release: ${{ steps.images.outputs.release }}
-      digests: ${{ steps.images.outputs.digests }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -257,11 +256,6 @@ jobs:
           fi
           echo "Campaign commit: $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-      - name: Pin the role images to registry digests
-        id: images
-        env:
-          CAMPAIGN_RELEASE: ${{ inputs.release || '20.2.4' }}
-        run: python3 .github/scripts/role_image_pins.py pin --release "$CAMPAIGN_RELEASE" --github-output "$GITHUB_OUTPUT"
   representative:
     name: Representative
     needs: pin
@@ -273,12 +267,11 @@ jobs:
       max_parallel: 3
       category: representative
       check_name: Ceph periodic representative
-      release: ${{ needs.pin.outputs.release }}
+      release: ${{ inputs.release || '20.2.4' }}
       # The dispatch input reaches the call as a string; the reusable
       # workflow's number input refuses it unless converted.
       repetitions: ${{ fromJSON(inputs.repetitions || 1) }}
       ref: ${{ needs.pin.outputs.sha }}
-      role_digests: ${{ needs.pin.outputs.digests }}
   # One bounded workload per explicitly requested run. Dispatch the same ref
   # repeatedly with auto/always/pressure for equivalent-source comparisons.
   storage:
