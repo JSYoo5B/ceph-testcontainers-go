@@ -421,13 +421,14 @@ the retained store and the returned handle are enough to continue.
 
 ## Mixed-release runs
 
-The module supports clusters whose roles all run one release. Two kinds of
-run have mixed releases, and each establishes only what it observed:
+The module supports clusters whose roles all run one release. Three runs
+have mixed releases, and each establishes only what it observed:
 
 | Run | Roles and releases | What it established |
 | --- | --- | --- |
 | [Rolling upgrade from Squid to Tentacle](#rolling-upgrade-from-squid-to-tentacle) (`TestRollingUpgradeSquidToTentacle`, `TestRollingUpgradeResumesAfterInterruptions`) | MONs, MGR and OSDs moved one at a time from 19.2.5 to 20.2.4; the fixture's CLI and client toolkit stay on 19.2.5 | Acknowledged writes read back and new writes are acknowledged after every step, and an interrupted upgrade resumes forward |
 | RGW incremental sync timing profile (`TestRGWTopologyStartupTimingEffectiveValues`, `TestRGWStartupPollTimingProfile`) | 19.2.5 essential and client role images with a 20.2.4 rgw image | `TimingProfile.IncrementalSync` is accepted because the gateway's `radosgw` is 20.2.4, although the cluster reports 19.2.5, and its effective values reach the gateways. In the same run the workload of `TestRGWStartupPollTimingProfile` failed afterwards: a second PUT of an object answered 403 `AccessDenied` on this pair |
+| [Legacy replication destination readback](../../internal/integration/experiments/rgw_legacy_replication_destination/README.md) (`TestLegacyReplicationDestination`, an experiment case) | A 19.2.5 cluster and writer RGW, with a second RGW reader on that same cluster from the selected image | Only the readback of a replication destination stored by the 19.2.5 writer: a 20.2.2 reader doubled the ARN prefix (`REPRODUCED`) and a 20.2.4 reader returned the original destination (`NOT_REPRODUCED`). It does not exercise inter-zone object transfer |
 
 The reverse pairing, a 20.2.4 cluster with a 19.2.5 rgw image, does not
 start: `multisite.Run` fails before any gateway starts, because the 19.2.5
@@ -437,7 +438,7 @@ reached natively. It is checked only by the Docker-free
 `TestPollTimingProfileOutcomeFollowsTheGatewayBinary`, which judges the
 outcome from the release the gateway's `radosgw` reports.
 
-Neither run makes another pairing, another role or a downgrade supported.
+None of these runs makes another pairing, another role or a downgrade supported.
 
 ## Related APIs
 
