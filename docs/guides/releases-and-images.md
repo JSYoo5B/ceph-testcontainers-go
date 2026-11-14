@@ -310,6 +310,9 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestRBDTrashPurgeCutoffAcrossClientTimezones` (batch
   `rbd_trash_purge_timezone`, experiment case
   [`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)).
+- **Squid 19.2.0, RBD group membership.** Explicit namespace options for group image add and remove can silently change membership in the default namespace. Positional group and image specifications select the intended namespace. Both forms selected it on 19.2.1. [Namespace experiment](../../internal/integration/experiments/rbd_group_image_namespace/README.md).
+- **Squid 19.2.2, RBD group snapshots.** The default-flags group snapshot call notifies quiesce watchers even when the configured mode is skip. The individual image snapshot honors skip on that release, and both calls honor skip on 19.2.3. [Quiesce experiment](../../internal/integration/experiments/rbd_group_snap_default_quiesce/README.md).
+- **Squid 19.2.5, RBD image I/O statistics.** Filtering by an erasure-coded data pool can omit an active image whose metadata resides in a separate pool. An unfiltered query identifies the same image. On 19.2.7 the filtered query also identifies it. [Image statistics experiment](../../internal/integration/experiments/rbd_perf_data_pool/README.md).
 - **Tentacle 20.2.4 and Umbrella 21.2.0, RBD group snapshot listed again
   after its removal.** The class method that stores a group snapshot's
   record accepts a COMPLETE update for a snapshot that was already removed
@@ -407,6 +410,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestCephFSListingAfterSnapdiff` (batch `cephfs_readdir_after_snapdiff`,
   experiment case
   [`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)).
+- **Squid 19.2.5, libcephfs client diagnostics.** When two metadata requests are waiting, ordinary JSON decoding of the admin socket’s `mds_requests` reply retains only the final request. Tentacle 20.2.4 reports both identities in an array. [Concurrent request experiment](../../internal/integration/experiments/cephfs_mds_requests_json/README.md).
 - **Tentacle 20.2.4, libcephfs statfs below a byte quota and a nearer file
   quota.** At a directory that has only `ceph.quota.max_files`, below a
   directory with `ceph.quota.max_bytes`, statfs reports the capacity and the
