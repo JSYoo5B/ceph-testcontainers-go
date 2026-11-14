@@ -137,7 +137,7 @@ func WithTopology(config TopologyConfig) Option {
 // name. The two-zone setup, and each further WithTopology zone, is bounded by
 // six minutes in addition to ctx. A secondary zone cannot start on Ceph
 // 19.2.6, whose master gateway refuses its realm pull; use 19.2.5 (see the
-// known release issues in docs/guides/known-release-issues.md).
+// repository's known release issues guide).
 //
 // Timing.IncrementalSync fixes qualified idle polling for each owned gateway
 // from startup, including subsequently added zones. It is qualified only for
