@@ -272,6 +272,7 @@ jobs:
       # workflow's number input refuses it unless converted.
       repetitions: ${{ fromJSON(inputs.repetitions || 1) }}
       ref: ${{ needs.pin.outputs.sha }}
+      save_caches: ${{ needs.pin.outputs.sha == github.sha }}
   # One bounded workload per explicitly requested run. Dispatch the same ref
   # repeatedly with auto/always/pressure for equivalent-source comparisons.
   storage:
@@ -286,6 +287,7 @@ jobs:
       networks: default
       release: ${{ inputs.release }}
       ref: ${{ inputs.ref || github.sha }}
+      save_caches: ${{ inputs.ref == '' || inputs.ref == github.sha }}
       storage_policy: ${{ inputs.storage_policy }}
   # Durable history: the rows of this run's jobs go to the scenario-history
   # branch, one append-only file per run attempt, and summary.json there is
