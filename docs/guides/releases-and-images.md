@@ -260,6 +260,30 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestMultiClusterRGWBucketObjectLockSync` (batch `rgw_object_lock_sync`,
   experiment case
   [`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)).
+- **Squid 19.2.5 and Tentacle 20.2.4, received bytes of a browser form
+  upload in the usage log.** A successful form upload (`POST` to a bucket
+  with a signed policy) is counted in the usage log as one successful
+  `post_obj` with `bytes_received` 0, while a `PUT` of the same payload is
+  counted with the payload. Tentacle 20.2.5 and Umbrella 21.2.0 count what
+  the gateway read of the form body, the payload and the form fields around
+  it. A test that checks a service's metering against the usage log must
+  not expect the received bytes of form uploads on the earlier releases. See
+  `TestRGWPostUploadUsageBytesReceived` (batch
+  `rgw_post_usage_bytes_received`, experiment case
+  [`rgw_post_usage_bytes_received`](../../internal/integration/experiments/rgw_post_usage_bytes_received/README.md)).
+- **Squid 19.2.5 and Tentacle 20.2.4, the redirect for a bucket of another
+  zonegroup.** A gateway that is asked for a bucket held by another
+  zonegroup of its realm answers `301` with a `Location` built from its own
+  zonegroup's endpoint, so the redirect names the gateway that was just
+  asked. Tentacle 20.2.5 and Umbrella 21.2.0 build it from the endpoint of
+  the zonegroup that holds the bucket. A test whose client follows
+  redirects across the zonegroups of an
+  [`rgw/multisite`](../../rgw/multisite/README.md) realm does not reach the
+  owning zonegroup on the earlier releases; send the request to that
+  zonegroup's gateway instead. See
+  `TestMultiClusterRGWZonegroupRedirectEndpoint` (batch
+  `rgw_zonegroup_redirect_endpoint`, experiment case
+  [`rgw_zonegroup_redirect_endpoint`](../../internal/integration/experiments/rgw_zonegroup_redirect_endpoint/README.md)).
 - **Every release, HEAD of a Swift static large object.** A plain HEAD of an
   SLO, without a range, makes the gateway read the whole payload of every
   segment from RADOS and discard it: the OSD returns as many bytes as for a
