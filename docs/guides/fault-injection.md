@@ -943,8 +943,11 @@ Both also need an available MGR. Choose by what the test has to establish:
   `WaitForClean` suffices when every owned OSD is meant to be up and in and
   the test does not depend on which OSD came back. While the cluster holds
   only the fixture's OSDs, equal counts mean that none of them is down or
-  out; an OSD registered outside the fixture changes the total and the wait
-  does not pass.
+  out. An OSD registered outside the fixture blocks the wait only while it
+  makes one of the three numbers differ from the owned count. If an owned
+  OSD's registration has disappeared and an outside OSD is up and in, the
+  numbers match again and the wait passes; the UUID comparison below
+  detects that case.
 - **Recovery finished while an OSD stays out or down.** `WaitForClean` cannot
   pass, because the up or in count stays below the owned count. Use
   `WaitForPGClean`: it waits for the PGs alone and says nothing about the OSD

@@ -15,8 +15,10 @@ import "context"
 // OSDStates and compare its entry, for example with the expect package.
 //
 // Call it after creating pools and after topology changes, before client I/O.
-// OSDs registered outside the fixture make the count differ, a pool whose
-// replica count exceeds the OSD count never becomes clean, and after
+// An OSD registered outside the fixture blocks the wait only while it makes
+// one of the three numbers differ from the owned count; one that stands in
+// for a missing owned registration does not. A pool whose replica count
+// exceeds the OSD count never becomes clean, and after
 // Pool.SetPGCount or Pool.SetPlacement it can pass before the new PG set is
 // reported (see Pool.WaitForPGCount and Pool.PGs).
 //
