@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -24,12 +23,34 @@ SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4"
 GO_CEPH = "github.com/ceph/go-ceph"
 
 
+# Keep quotes on tokens so a quoted parenthesis cannot close a directive block.
+# The receipt reader accepts plain double-quoted fields. Escaped fields need
+# Go string decoding and are explicitly refused before reporting a release.
+MOD_TOKEN = re.compile(r"""[ \t\r]+|//.*|"[^"\\]*"|[()[\]{},]|(?:(?!//|/\*)[^\s()[\]{},"'`\\])+""")
+
+
+def module_tokens(line, go_mod, number):
+    tokens = []
+    pos = 0
+    while pos < len(line):
+        match = MOD_TOKEN.match(line, pos)
+        if not match:
+            raise RuntimeError(f"{go_mod}:{number}: unsupported go.mod token or quoted escape")
+        token = match[0]
+        if token.startswith("//"):
+            break
+        if not token.isspace():
+            tokens.append(token)
+        pos = match.end()
+    return tokens
+
+
 def pinned_go_ceph(go_mod):
     """Read the released go-ceph requirement from the probe module."""
     versions = []
     block = None
-    for line in go_mod.read_text().splitlines():
-        tokens = shlex.split(line.split("//", 1)[0])
+    for number, line in enumerate(go_mod.read_text().split("\n"), 1):
+        tokens = module_tokens(line, go_mod, number)
         if not tokens:
             continue
         if tokens == [")"]:
@@ -42,6 +63,7 @@ def pinned_go_ceph(go_mod):
                 continue
         else:
             directive = block
+        tokens = [token.strip('"') for token in tokens]
         if not tokens or tokens[0] != GO_CEPH:
             continue
         if directive == "replace":
