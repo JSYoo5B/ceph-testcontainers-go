@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode"
 )
 
 // The repository names Ceph images by release or role tag and keeps no
@@ -26,10 +25,11 @@ import (
 // compatible rebuild under the same tag then needs no change here.
 //
 // A digest value is an image's when it is written as one: after the "@" of
-// a reference, or under a label that names an image (image, digest,
-// manifest, an ID, a platform such as linux/amd64). The same spelling under
-// another label is a checksum of something else (a payload, a tool download,
-// a source file), which the rule leaves alone. What also stays is a content
+// a reference, or in an image context, which is a label that names an image
+// (image, RepoDigests, a platform such as linux/amd64) on the value itself
+// or on something it is nested under. The same spelling anywhere else is a
+// hash of something else (a payload digest, a tool checksum, a source file),
+// which the rule leaves alone. What also stays is a content
 // hash written as bare hex, a stand-in that is no hash at all
 // ("sha256:helper"), a truncated ID in a recorded observation
 // ("sha256:2e57651a5aa7…"), a placeholder ("@sha256:...") and a synthetic
@@ -47,15 +47,12 @@ func TestRepositoryKeepsNoCephImageDigest(t *testing.T) {
 	}
 	scanned := 0
 	for _, rel := range files {
-		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // tracked, and deleted in this working tree
-		}
+		src, ok, err := readTrackedText(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bytes.IndexByte(src, 0) >= 0 {
-			continue // not text
+		if !ok {
+			continue
 		}
 		scanned++
 		for _, problem := range imageDigestProblems(rel, src) {
@@ -65,6 +62,31 @@ func TestRepositoryKeepsNoCephImageDigest(t *testing.T) {
 	if scanned < 1000 {
 		t.Fatalf("scanned %d files; the listing did not reach the repository", scanned)
 	}
+}
+
+// readTrackedText reads a tracked entry that is a text file. The listing
+// also holds entries that are none: one deleted in this working tree, a
+// symbolic link (its target is listed itself when it is tracked), the
+// directory of a submodule, and a file that is not text. Those are skipped.
+func readTrackedText(path string) (src []byte, ok bool, err error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, false, nil
+	}
+	src, err = os.ReadFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	if bytes.IndexByte(src, 0) >= 0 {
+		return nil, false, nil
+	}
+	return src, true, nil
 }
 
 // trackedFiles lists the files Git tracks under directory, as slash paths
@@ -133,14 +155,18 @@ func TestExperimentCaseDefaultsAreReleaseTags(t *testing.T) {
 // are matched in either case, and a longer run of digits is not a digest.
 var digestValue = regexp.MustCompile(`(?i)sha(?:256:[0-9a-f]{64}|512:[0-9a-f]{128})`)
 
-// imageLabel matches a label that names an image or a part of its identity.
-var imageLabel = regexp.MustCompile(`(?i)image|digest|manifest|\bids?\b|\b(?:linux|windows|darwin)/[a-z0-9]+`)
+// imageLabel matches a label that names an image by a word that means
+// nothing else here: image, the RepoDigests of an image, or a platform
+// (linux/amd64). Digest, manifest and ID are not among them: each also names
+// a hash of something else (payload_digest), so they say image only inside
+// an image context, which one of these words opens.
+var imageLabel = regexp.MustCompile(`(?i)image|repo[_-]?digests|\b(?:linux|windows|darwin)/[a-z0-9]+`)
 
 // digestValues returns the complete digest values of line that are an
-// image's and not a synthetic one of a single repeated digit. label is what
-// the line stands under when it carries no label of its own (the key of a
-// list whose entries are one per line); it may be empty.
-func digestValues(line, label string) []string {
+// image's and not a synthetic one of a single repeated digit. enclosing is
+// the labels the line is nested under (see enclosingLabels); it may be
+// empty.
+func digestValues(line, enclosing string) []string {
 	var found []string
 	for _, at := range digestValue.FindAllStringIndex(line, -1) {
 		if at[1] < len(line) && isHex(line[at[1]]) {
@@ -151,7 +177,7 @@ func digestValues(line, label string) []string {
 		if strings.Count(digits, digits[:1]) == len(digits) {
 			continue
 		}
-		if !namesImage(line[:at[0]], label) {
+		if !namesImage(line[:at[0]], enclosing) {
 			continue
 		}
 		found = append(found, value)
@@ -161,42 +187,43 @@ func digestValues(line, label string) []string {
 
 // namesImage reports whether a digest value that follows before on its line
 // is written as an image's. An "@" directly in front makes it the digest of
-// a reference. Otherwise its own label decides: the text between the value
-// and the separator in front of it (a comma, a brace or a semicolon). A
-// value with no label of its own, an entry of a list, takes the label the
-// line stands under.
-func namesImage(before, label string) bool {
+// a reference. Otherwise it is one in an image context: its own label (the
+// text between the value and the comma, brace or semicolon in front of it)
+// or a label the line is nested under names an image.
+func namesImage(before, enclosing string) bool {
 	if strings.HasSuffix(before, "@") {
 		return true
 	}
 	if cut := strings.LastIndexAny(before, ",{;"); cut >= 0 {
 		before = before[cut+1:]
 	}
-	if strings.ContainsFunc(before, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
-		return imageLabel.MatchString(before)
-	}
-	return imageLabel.MatchString(label)
+	return imageLabel.MatchString(before) || imageLabel.MatchString(enclosing)
 }
 
-// parentLabels returns, for each line, the nearest line above it that is
-// indented less and is not blank: the key a list entry or a nested value
-// stands under in YAML, JSON written one entry per line, or a composite
-// literal. A line with no such line above has an empty label.
-func parentLabels(lines []string) []string {
+// enclosingLabels returns, for each line, the lines it is nested under,
+// nearest first and joined by newlines: each is the nearest line above that
+// is indented less than the one below it and is not blank. They are the keys
+// a nested value or a list entry stands under in YAML, in JSON written one
+// entry per line and in a composite literal. A line at the left margin has
+// none.
+func enclosingLabels(lines []string) []string {
 	indent := func(line string) int { return len(line) - len(strings.TrimLeft(line, " \t")) }
-	labels := make([]string, len(lines))
+	enclosing := make([]string, len(lines))
 	for n, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		for up := n - 1; up >= 0; up-- {
 			if strings.TrimSpace(lines[up]) != "" && indent(lines[up]) < indent(line) {
-				labels[n] = lines[up]
+				enclosing[n] = lines[up]
+				if enclosing[up] != "" {
+					enclosing[n] += "\n" + enclosing[up]
+				}
 				break
 			}
 		}
 	}
-	return labels
+	return enclosing
 }
 
 func isHex(c byte) bool {
@@ -212,9 +239,9 @@ func imageDigestProblems(name string, src []byte) []string {
 	text := string(src)
 	seen := map[string]bool{}
 	lines := strings.Split(text, "\n")
-	labels := parentLabels(lines)
+	enclosing := enclosingLabels(lines)
 	for n, line := range lines {
-		for _, value := range digestValues(line, labels[n]) {
+		for _, value := range digestValues(line, enclosing[n]) {
 			seen[value] = true
 			problems = append(problems, name+":"+strconv.Itoa(n+1)+": holds the digest "+value+
 				"; name the image by its release or role tag (AGENTS.md, Image references)")
@@ -238,16 +265,21 @@ func imageDigestProblems(name string, src []byte) []string {
 			return true
 		}
 		// The constant's label is what stands in front of it on its line:
-		// the name it is assigned to, or the key of its entry.
-		at := fset.Position(expr.Pos())
-		label := ""
-		if at.Line >= 1 && at.Line <= len(lines) && at.Column >= 1 && at.Column-1 <= len(lines[at.Line-1]) {
-			label = lines[at.Line-1][:at.Column-1]
+		// the name it is assigned to, or the key of its entry. The line is
+		// the physical one: a //line directive renames positions (generated
+		// code), and the lines read above are those of this file.
+		at := fset.PositionFor(expr.Pos(), false)
+		label, under := "", ""
+		if at.Line >= 1 && at.Line <= len(lines) {
+			under = enclosing[at.Line-1]
+			if line := lines[at.Line-1]; at.Column >= 1 && at.Column-1 <= len(line) {
+				label = line[:at.Column-1]
+			}
 		}
-		for _, digest := range digestValues(label+value, labels[at.Line-1]) {
+		for _, digest := range digestValues(label+value, under) {
 			if !seen[digest] {
 				seen[digest] = true
-				problems = append(problems, name+":"+strconv.Itoa(fset.Position(expr.Pos()).Line)+": builds the digest "+digest+
+				problems = append(problems, name+":"+strconv.Itoa(at.Line)+": builds the digest "+digest+
 					"; name the image by its release or role tag (AGENTS.md, Image references)")
 			}
 		}
@@ -307,7 +339,7 @@ func imageDefaults(name string, src []byte) ([]imageDefault, error) {
 				if ident.Name != "image" {
 					continue
 				}
-				d := imageDefault{line: fset.Position(ident.Pos()).Line}
+				d := imageDefault{line: fset.PositionFor(ident.Pos(), false).Line}
 				// One value per name; a missing value, or one call that
 				// initializes several names, is no string constant.
 				if len(vs.Values) != len(vs.Names) {
@@ -366,7 +398,7 @@ func TestImageDigestProblems(t *testing.T) {
 		"pinned default":           {"case_test.go", "package p\n\nvar image = \"ghcr.io/o/r@sha256:" + real + "\"\n", 1},
 		"tag and digest":           {"README.md", "run `quay.io/ceph/ceph:v20.2.4@sha256:" + real + "` first", 1},
 		"digest list":              {"images.json", `{"linux/amd64": "sha256:` + real + `", "linux/arm64": "sha256:` + real[1:] + `0"}`, 2},
-		"image ID":                 {"x_test.go", "package p\n\nconst id = \"sha256:" + real + "\"\n", 1},
+		"image ID":                 {"x_test.go", "package p\n\nconst imageID = \"sha256:" + real + "\"\n", 1},
 		"upper case":               {"notes.md", "Image ID: SHA256:" + strings.ToUpper(real), 1},
 		"upper case reference":     {"notes.md", "ran R@SHA256:" + strings.ToUpper(real), 1},
 		"two on a line":            {"w.yml", "a: r@sha256:" + real + " b: r@sha256:" + real, 2},
@@ -374,12 +406,17 @@ func TestImageDigestProblems(t *testing.T) {
 		"sha512":                   {"w.yml", "image: r@sha512:" + long, 1},
 		"comment in Go":            {"x.go", "package p\n\n// ran on r@sha256:" + real + "\n", 1},
 		"concatenated literals":    {"x_test.go", "package p\n\nvar image = \"ghcr.io/o/r@\" + \"sha256:\" + \"" + real[:32] + "\" + (\"" + real[32:] + "\")\n", 1},
-		"split after the prefix":   {"x_test.go", "package p\n\nconst id = \"sha256:\" + `" + real + "`\n", 1},
+		"split after the prefix":   {"x_test.go", "package p\n\nconst imageID = \"sha256:\" + `" + real + "`\n", 1},
 		"script":                   {"run.py", `IMAGE = "quay.io/ceph/ceph:v20.2.4@sha256:` + real + `"`, 1},
 		"almost one repeated char": {"x.md", "r@sha256:" + strings.Repeat("a", 63) + "b", 1},
-		"entry of a digest list":   {"images.yml", "digests:\n  - sha256:" + real + "\n  - \"sha256:" + real + "\"\n", 2},
+		"entry of a digest list":   {"images.yml", "image:\n  digests:\n    - sha256:" + real + "\n    - \"sha256:" + real + "\"\n", 2},
+		"digest field of an image": {"images.yml", "images:\n  v20.2.4:\n    index_digest: sha256:" + real + "\n", 1},
+		"image beside a payload":   {"row.yml", "payload_digest: sha256:" + real + "\nimage_digest: sha256:" + real + "\n", 1},
+		"RepoDigests entry":        {"summary.json", "{\n  \"repo_digests\": [\n    \"sha256:" + real + "\"\n  ]\n}\n", 1},
+		"after a line directive":   {"gen.go", "package p\n\n//line generated.go:9000\nconst imageID = \"sha256:\" + \"" + real + "\"\n", 1},
+		"inline line directive":    {"gen.go", "package p\n\nvar imageIDs = []string{\n\t/*line generated.go:7000:1*/ \"sha256:\" + \"" + real + "\",\n}\n", 1},
 		"entry under a platform":   {"images.json", "{\n  \"linux/amd64\": [\n    \"sha256:" + real + "\"\n  ]\n}\n", 1},
-		"image ID in a log line":   {"notes.md", "docker inspect reported Id sha256:" + real, 1},
+		"image ID in a log line":   {"notes.md", "docker inspect reported image Id sha256:" + real, 1},
 		"image field after others": {"row.json", `{"payload_sha256": "sha256:` + real + `", "image_id": "sha256:` + real + `"}`, 1},
 		"list of image IDs in Go":  {"x_test.go", "package p\n\nvar imageIDs = []string{\n\t\"sha256:" + real + "\",\n}\n", 1},
 		"split ID under a label":   {"x_test.go", "package p\n\nvar images = map[string]string{\n\t\"linux/amd64\": \"sha256:\" + \"" + real + "\",\n}\n", 1},
@@ -393,6 +430,13 @@ func TestImageDigestProblems(t *testing.T) {
 		"entry of a checksum list": {"sums.yml", "checksums:\n  - sha256:" + real + "\n", 0},
 		"checksum after an image":  {"row.json", `{"image": "quay.io/ceph/ceph:v20.2.4", "payload": "sha256:` + real + `"}`, 0},
 		"unlabelled value":         {"notes.md", "sha256:" + real, 0},
+		"payload digest":           {"row.yml", "payload_digest: sha256:" + real, 0},
+		"digest list of payloads":  {"sums.yml", "digests:\n  - sha256:" + real + "\n", 0},
+		"manifest of sources":      {"sums.json", `{"manifest": "sha256:` + real + `", "id": "sha256:` + real + `"}`, 0},
+		"object ID constant":       {"x_test.go", "package p\n\nconst id = \"sha256:" + real + "\"\n", 0},
+		"checksum, line directive": {"gen.go", "package p\n\n//line generated.go:9000\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
+		"directive to a low line":  {"gen.go", "package p\n\nvar imageName = \"r:v1\"\n\n//line generated.go:3\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
+		"directive past the file":  {"gen.go", "package p\n\n//line generated.go:9000\nconst s = \"plain\"\n", 0},
 		"Git object ID":            {"w.yml", "ref: " + real[:40], 0},
 		"stand-in":                 {"x_test.go", "package p\n\nconst id = \"sha256:helper\"\n", 0},
 		"truncated observation":    {"README.md", "`ghcr.io/o/r@sha256:" + real[:12] + "…` (the default image when recorded)", 0},
@@ -457,9 +501,9 @@ func TestTrackedFilesAreTheRepositoryInputs(t *testing.T) {
 	}
 	problems := map[string]int{}
 	for _, rel := range files {
-		src, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
+		src, ok, err := readTrackedText(filepath.Join(directory, filepath.FromSlash(rel)))
+		if err != nil || !ok {
+			t.Fatalf("%s: read %v, %v", rel, ok, err)
 		}
 		problems[rel] = len(imageDigestProblems(rel, src))
 	}
@@ -467,10 +511,53 @@ func TestTrackedFilesAreTheRepositoryInputs(t *testing.T) {
 		t.Errorf("problems per tracked file = %v, want the pin and the list entry only", problems)
 	}
 
+	// A tracked entry that is no text file is skipped, not read and not an
+	// error: a link to a directory, a link to nothing, a deleted file and a
+	// file that is not text.
+	if err := os.Symlink("docs", filepath.Join(directory, "link-to-directory")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("nowhere", filepath.Join(directory, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	write("binary.bin", "image r@sha256:"+real+"\x00")
+	write("deleted.md", "image r@sha256:"+real+"\n")
+	git("add", "-A")
+	if err := os.Remove(filepath.Join(directory, "deleted.md")); err != nil {
+		t.Fatal(err)
+	}
+	files, err = trackedFiles(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"link-to-directory", "dangling", "binary.bin", "deleted.md"} {
+		if !slices.Contains(files, rel) {
+			t.Fatalf("%s is not in the listing %q", rel, files)
+		}
+		if src, ok, err := readTrackedText(filepath.Join(directory, rel)); err != nil || ok {
+			t.Errorf("%s: read %q, %v, %v, want it skipped", rel, src, ok, err)
+		}
+	}
+
 	// Outside a checkout there is nothing to list, and that is an error
 	// rather than an empty repository.
 	if files, err := trackedFiles(t.TempDir()); err == nil {
 		t.Errorf("a directory that is no checkout listed %q", files)
+	}
+}
+
+// A position is the physical one, in what is reported as in what is read: a
+// //line directive, as generated code carries, renames neither.
+func TestProblemsNameThePhysicalLine(t *testing.T) {
+	real := strings.Repeat("0123456789abcdef", 4)
+	src := "package p\n\n//line generated.go:9000\nvar image = \"ghcr.io/o/r@sha256:" + real[:32] + "\" + \"" + real[32:] + "\"\n"
+	got := imageDigestProblems("case_test.go", []byte(src))
+	if len(got) != 1 || !strings.HasPrefix(got[0], "case_test.go:4: builds the digest sha256:"+real) {
+		t.Errorf("problems = %q, want one on case_test.go:4", got)
+	}
+	defaults, err := imageDefaults("case_test.go", []byte(src))
+	if err != nil || len(defaults) != 1 || defaults[0].line != 4 || !strings.Contains(defaults[0].problem, "names the digest") {
+		t.Errorf("defaults = %+v, %v, want one refused default on line 4", defaults, err)
 	}
 }
 
