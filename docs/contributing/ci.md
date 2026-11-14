@@ -18,7 +18,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Release matrix | `release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
-| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `cephfs_mds_requests_json`, `rbd_group_image_namespace`, `rbd_group_snap_default_quiesce`, `rbd_perf_data_pool`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_legacy_replication_destination`, `rgw_multipart_completion_replay_etag`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_post_usage_bytes_received`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`, `rgw_zonegroup_redirect_endpoint`), the `rgw_encrypted_multipart_transition` integrity check, or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
 | ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -908,75 +908,30 @@ batches on the recorded release, images and runner.
 ## Native regressions
 
 Optional (`ci_optional`) batches are outside every required check. Run one
-with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or,
-for the upstream reproducers, through `Native regressions`, which runs the one
-batch its `batch` input names and takes only its pass or failure. The result
-of a reproducer is checked by `Experiments` (see
-[Experiment case tiers](#experiment-case-tiers)).
+with `tag_scenarios.py optional --batch <name>`, with `/ci run <name>`, or
+through `Native regressions`, which runs the one batch its `batch` input names
+and takes only its pass or failure. The result of a known-defect reproducer is
+checked by `Experiments` (see [Experiment case tiers](#experiment-case-tiers)).
 
-These optional batches are [experiment cases](testing.md#experiment-cases)
-that reproduce an upstream defect on their default image:
-`native_rgw_translation`
-([`rgw_sync_policy_translation`](../../internal/integration/experiments/rgw_sync_policy_translation/README.md)),
-`native_shuffle`
-([`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md)),
-`cephfs_dangling_symlink_create`
-([`cephfs_dangling_symlink_create`](../../internal/integration/experiments/cephfs_dangling_symlink_create/README.md)),
-`cephfs_statfs_mixed_quota`
-([`cephfs_statfs_mixed_quota`](../../internal/integration/experiments/cephfs_statfs_mixed_quota/README.md)),
-`cephfs_snapshot_readdir_eviction`
-([`cephfs_snapshot_readdir_eviction`](../../internal/integration/experiments/cephfs_snapshot_readdir_eviction/README.md)),
-`cephfs_readdir_after_snapdiff`
-([`cephfs_readdir_after_snapdiff`](../../internal/integration/experiments/cephfs_readdir_after_snapdiff/README.md)),
-`cephfs_mirror_blockdiff_empty`
-([`cephfs_mirror_blockdiff_empty_versions`](../../internal/integration/experiments/cephfs_mirror_blockdiff_empty_versions/README.md)),
-`mgr_pg_merge_primary_override`
-([`mgr_pg_merge_primary_override`](../../internal/integration/experiments/mgr_pg_merge_primary_override/README.md)),
-`mon_log_ack`
-([`mon_log_ack_peon`](../../internal/integration/experiments/mon_log_ack_peon/README.md)),
-`rbd_demote_restart`
-([`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)),
-`rbd_trash_purge_timezone`
-([`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md)),
-`cephfs_mds_requests_json`
-([`cephfs_mds_requests_json`](../../internal/integration/experiments/cephfs_mds_requests_json/README.md)),
-`rbd_group_image_namespace`
-([`rbd_group_image_namespace`](../../internal/integration/experiments/rbd_group_image_namespace/README.md)),
-`rbd_group_snap_default_quiesce`
-([`rbd_group_snap_default_quiesce`](../../internal/integration/experiments/rbd_group_snap_default_quiesce/README.md)),
-`rbd_perf_data_pool`
-([`rbd_perf_data_pool`](../../internal/integration/experiments/rbd_perf_data_pool/README.md)),
-`rbd_group_snap_late_complete`
-([`rbd_group_snap_late_complete`](../../internal/integration/experiments/rbd_group_snap_late_complete/README.md)),
-`rgw_conditional_writes`
-([`rgw_suspended_conditional_writes`](../../internal/integration/experiments/rgw_suspended_conditional_writes/README.md)),
-`rgw_ssec_completion`
-([`rgw_ssec_multipart_completion`](../../internal/integration/experiments/rgw_ssec_multipart_completion/README.md)),
-`rgw_empty_sse_header`
-([`rgw_empty_sse_header`](../../internal/integration/experiments/rgw_empty_sse_header/README.md)),
-`rgw_legacy_replication_destination`
-([`rgw_legacy_replication_destination`](../../internal/integration/experiments/rgw_legacy_replication_destination/README.md)),
-`rgw_multipart_completion_replay_etag`
-([`rgw_multipart_completion_replay_etag`](../../internal/integration/experiments/rgw_multipart_completion_replay_etag/README.md)),
-`rgw_expiration_header`
-([`rgw_lifecycle_expiration_header`](../../internal/integration/experiments/rgw_lifecycle_expiration_header/README.md)),
-`rgw_compressed_copy`
-([`rgw_compressed_copy_accounting`](../../internal/integration/experiments/rgw_compressed_copy_accounting/README.md)),
-`rgw_multipart_part_class`
-([`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md)),
-`rgw_object_lock_sync`
-([`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)),
-`rgw_post_usage_bytes_received`
-([`rgw_post_usage_bytes_received`](../../internal/integration/experiments/rgw_post_usage_bytes_received/README.md)),
-`rgw_slo_head_segment_reads`
-([`rgw_slo_head_segment_reads`](../../internal/integration/experiments/rgw_slo_head_segment_reads/README.md)),
-`rgw_sync_lease_lapse`
-([`rgw_sync_lease_lapse`](../../internal/integration/experiments/rgw_sync_lease_lapse/README.md))
-and `rgw_zonegroup_redirect_endpoint`
-([`rgw_zonegroup_redirect_endpoint`](../../internal/integration/experiments/rgw_zonegroup_redirect_endpoint/README.md)).
-Each case's `README.md` gives its trigger, controls, command and the meaning
-of each outcome; [Experiment case tiers](#experiment-case-tiers) says when
-each one runs.
+The `options` of the workflow's `batch` input are the batches it accepts, and
+the source decides what each one runs. To list them, and to find the case
+manual of one:
+
+```sh
+# The choices of the dispatch, failure_archive included.
+sed -n '/^      batch:/,/^      rgw_image:/p' .github/workflows/native-regressions.yml
+# The test files, and with them the case directory and its README.md, of one batch.
+grep -lw ci_batch_rgw_empty_sse_header internal/integration/experiments/*/*_test.go
+# Dispatch one.
+gh workflow run "Native regressions" --ref main -f batch=rgw_empty_sse_header
+```
+
+Most choices are [experiment cases](testing.md#experiment-cases): each case's
+`README.md` gives its trigger, controls, command and the meaning of each
+outcome. A batch outside `internal/integration/experiments` is described with
+its feature below. A new optional batch joins the dispatch when it is added to
+the `batch` options; `test_scenario_shards.py` keeps the expected list and
+checks that every choice is an optional batch of the source.
 
 `native_rgw_translation` also tests a patched RGW image; an empty
 `rgw_image` uses the published role image, and the workflow never builds one:
