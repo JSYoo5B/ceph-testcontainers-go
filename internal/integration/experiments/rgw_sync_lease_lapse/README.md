@@ -98,7 +98,7 @@ release fixes the defect yet.
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=40m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_lease_lapse_test.image=<image@sha256:...>" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_lease_lapse_test.image=<image>" \
   -run '^TestMultiClusterRGWDataSyncAfterSyncLeaseLapse$' \
   ./internal/integration/experiments/rgw_sync_lease_lapse
 ```
@@ -173,7 +173,7 @@ Native results (Linux amd64 host, Docker, aggregate image, one run):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: shards 2, 18, 34 and 66 passed a batch on a lost lease; four buckets' objects missing 3 minutes after zone a answered again; caught up 36 s after a restart of zone b's gateway | 528 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: shards 2, 18, 34 and 66 passed a batch on a lost lease; four buckets' objects missing 3 minutes after zone a answered again; caught up 36 s after a restart of zone b's gateway | 528 s |
 
 No fixed image exists to run.
 

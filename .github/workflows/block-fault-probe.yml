@@ -118,9 +118,9 @@ jobs:
           python3 helper-source/image/extension_check.py --extension blockio --image "$helper" \
             > artifacts/blockio/helper-check.log
           printf '%s\n' "$GITHUB_SHA" "$HELPER_REVISION" "$helper" > artifacts/blockio/sources.txt
-      # The published role tags of the release, resolved once to local image
-      # IDs for the tests; the summary under artifacts/blockio/role-images
-      # records the registry digests this run pulled.
+      # The published role tags of the release, pulled once and exported by
+      # tag for the tests; the summary under artifacts/blockio/role-images
+      # records what the engine reported for them.
       - name: Prepare the published Ceph role images
         run: >-
           python3 .github/scripts/run_image_matrix.py --variant official --layout roles

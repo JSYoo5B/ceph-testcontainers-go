@@ -79,7 +79,7 @@ No release is fixed. Squid 19.2.2, which predates the defect, shows what an unaf
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_dangling_symlink_create_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_dangling_symlink_create_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all" \
   -run '^TestCephFSCreateAtADanglingSymlink$' \
   ./internal/integration/experiments/cephfs_dangling_symlink_create
 ```
@@ -130,7 +130,7 @@ client, so what it reads is what the filesystem holds.
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 33 s; all eight operations succeeded at
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 33 s; all eight operations succeeded at
   the dangling symlink and made their entry at its target.
 - Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…`:
   `NOT_REPRODUCED` in 39 s.

@@ -68,7 +68,7 @@ No release is fixed. Another image runs the same way, for example Umbrella
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_daemon_redistribution_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_daemon_redistribution_test.image=quay.io/ceph/ceph:v21.2.0" \
   -run '^TestMultiClusterCephFSMirrorDaemonTopology$' \
   ./internal/integration/experiments/cephfs_mirror_daemon_redistribution
 ```
@@ -112,8 +112,7 @@ step 3.
 
 Native results, Linux amd64 host, one run per image and variant:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…`
-  (default): `REPRODUCED` on bridge (357 s) and host (351 s). The
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` on bridge (357 s) and host (351 s). The
   replacement registered, the distribution stayed at 4 directories on the
   survivor and 0 on the replacement, and the MGR logged the
   `DirectoryState` error.

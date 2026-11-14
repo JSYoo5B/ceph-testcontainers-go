@@ -13,12 +13,12 @@ which a unit test keeps in agreement with
 | --- | --- |
 | Identity | Exact tag, bug ID, authoritative tracker link and affected operation. Unassigned-ID, namespace and retirement decisions must be explicit. |
 | Defect evidence | Observed symptom, trigger and supporting evidence; distinguish confirmed observations from hypotheses. |
-| Image boundaries | Confirmed affected/fixed versions and actual builds, immutable image IDs and platform; list unverified boundaries separately. A release string alone is insufficient. |
+| Image boundaries | Confirmed affected/fixed versions with the image references that were run, the native build each reported (`ceph --version`) and the platform; list unverified boundaries separately. A release string alone is insufficient: the boundary is what the symptom and its prerequisites showed on the image that ran. |
 | Behavior | Ordinary versus tag-enabled operation, preserved final success criteria, and why the alternate path may fail on fixed/unaffected images. |
 | Selection | When to enable or omit it, including custom/partially patched images, valid build/test invocations and independently selected combinations. |
 | Conflicts and scope | Incompatible tags and their diagnostics, plus limitations when one binary must operate on differently patched targets. |
 | Verification | No-tag/tag/composition checks and evidence that the intended path was selected; compilation and native results reported separately. |
-| Execution provenance | Active compatibility selection, source/build, actual image identities, attempt and cleanup outcome. |
+| Execution provenance | Active compatibility selection, source/build, the image references that ran, attempt and cleanup outcome. |
 | Maintenance | Current support, unresolved limitations and any reviewed deprecation/retirement decision. |
 
 Add entries only with their implementation and scoped validation. Do not list
@@ -112,7 +112,7 @@ this policy or filled with placeholder IDs:
   compiled source behaves differently.
 - Which callers may set a selection, and for which image cohorts.
   `tagged-runtime.yml` takes it as one input, history rows record it and job
-  summaries show it beside image identities, but no caller sets it yet.
+  summaries show it beside the images the job ran, but no caller sets it yet.
   Every additional supported tag adds configurations to maintain.
 
 ## Identity binding and retirement
@@ -180,7 +180,9 @@ retired tag is never made supported again.
    where reproducible and a partial-patch combination where applicable. Keep
    unverified combinations and same-binary mixed-target limits explicit.
 5. Identify the selected paths alongside source SHA, actual release/build,
-   immutable image IDs, platform and attempt/cleanup results. Preserve failed
+   the image references that ran, platform and attempt/cleanup results. An
+   image needs no registry digest to count
+   ([Image references](../../AGENTS.md#image-references)). Preserve failed
    attempts; do not infer coverage from a later retry or an unrelated cohort.
 6. Review the catalogue, testing instructions, release implications and
    maintenance burden together. Published release tags remain immutable.

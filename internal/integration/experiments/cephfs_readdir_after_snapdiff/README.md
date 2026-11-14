@@ -82,7 +82,7 @@ No release is fixed. Another image runs the same way, for example Umbrella 21.2.
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_readdir_after_snapdiff_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_readdir_after_snapdiff_test.image=quay.io/ceph/ceph:v21.2.0" \
   -run '^TestCephFSListingAfterSnapdiff$' \
   ./internal/integration/experiments/cephfs_readdir_after_snapdiff
 ```
@@ -124,7 +124,7 @@ A third client, a fresh mount, lists both snapshots once.
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default): `REPRODUCED` in 38 s; the second listing of `trigger`
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 38 s; the second listing of `trigger`
   held `collision_2379` only, and `control` was listed in full.
 
 The release comparison ran on the pinned role images of 20.2.4 (essential

@@ -14,7 +14,7 @@ import run_image_matrix as matrix
 import tag_scenarios
 
 
-OLD = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+OLD = "quay.io/ceph/ceph:v20.2.3"
 REAPER = "testcontainers/ryuk:0.14.0"
 TIMEOUT = 'Error response from daemon: Get "https://registry-1.docker.io/v2/": net/http: TLS handshake timeout\n'
 

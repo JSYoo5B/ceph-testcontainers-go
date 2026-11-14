@@ -284,7 +284,7 @@ test sequential. Any other value fails the test. CI uses `2`.
 
 ## Choosing images
 
-CI supplies image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`,
+CI supplies the published role tags through `CEPH_TEST_ESSENTIAL_IMAGE`,
 `CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`,
 `CEPH_TEST_RGW_IMAGE` and `CEPH_TEST_MGR_MODULES_IMAGE`, only for the roles
 the batch declares. A missing selected role never falls back to essential.
@@ -292,9 +292,11 @@ the batch declares. A missing selected role never falls back to essential.
 Without role variables a local run uses `ceph.DefaultImage` for every role, or
 the aggregate image in `CEPH_TEST_IMAGE`. `ceph.DefaultImage` is a release
 tag: an engine that already has it keeps its local image, so run
-`docker pull` on it to pick up a republished build, or set `CEPH_TEST_IMAGE`
-to a digest reference to run one exact build. For split images, set essential and
-the roles the test needs:
+`docker pull` on it to pick up a republished build. Every image variable
+takes whatever reference you give it (a tag, a local image, a digest
+reference when you want one exact build) and passes it on unchanged; which
+build runs is your choice, and the repository keeps none. For split images,
+set essential and the roles the test needs:
 
 ```sh
 CEPH_TEST_ESSENTIAL_IMAGE=registry.example.com/ceph:essential \
@@ -316,9 +318,9 @@ exported. To use your own images, set all five role variables and
 ### Reproducing CI's role images
 
 CI uses the published `official-<release>-<role>` tags of
-`ghcr.io/jsyoo5b/ceph-testcontainers-images`; the repository records no
-digest of them (see [CI](ci.md#role-images-of-a-run)). Resolve them locally
-without running a test:
+`ghcr.io/jsyoo5b/ceph-testcontainers-images` and runs the tests by those
+tags (see [CI](ci.md#role-images-of-a-run)). Pull them locally without
+running a test:
 
 ```sh
 python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
@@ -326,14 +328,15 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 ```
 
 Use `--release 21.2.0` for Umbrella or `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
-resolve only some roles. The script pulls only missing images, never builds,
+prepare only some roles. The script pulls only missing images, never builds,
 and refuses an existing `--output-dir`. An engine that already has a role
 tag keeps that image: `docker pull` the tag first to run what the registry
-publishes now, or pass `--digests <role>=sha256:<digest>,...` to prepare the
-exact manifests of an earlier run, which its `scenario-images-*` artifact
-lists. `summary.json` lists the `CEPH_TEST_*` values under
-`prepared_environment`, with the image ID and registry digests each role
-resolved to under `images`; export the values for a test or the tag runner.
+publishes now. `summary.json` lists the `CEPH_TEST_*` values, which are the
+role tags, under `prepared_environment`; export them for a test or the tag
+runner. Under `images` it records what the engine reported for each tag
+(image ID, any registry digests, platform). That is a record of the
+preparation and no input: to run another build, set the variables to the
+references you choose.
 `make scenario` with `SCENARIO_IMAGE_LAYOUT=roles` needs all five role
 variables, so use it only after preparing every role; with a subset, run the
 batch with `tag_scenarios.py run` or `optional` instead.
@@ -342,7 +345,7 @@ batch with `tag_scenarios.py run` or `optional` instead.
 
 `make image-compatibility` runs nine representative lifecycle, service and
 multicluster tests (the `-run` list in the Makefile) with the selected images.
-`make image-matrix` pins one published combination and runs the same tests:
+`make image-matrix` selects one published combination and runs the same tests:
 
 ```sh
 make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles IMAGE_PLATFORM=linux/arm64
@@ -698,10 +701,18 @@ fixture parts, and `cephfs_authorization_isolation` and
     `EXPERIMENT_RESULT case=<case>[/<subtest>] result=REPRODUCED|NOT_REPRODUCED image=<image> symptoms=[...]`.
     The result never fails the test.
   - The image is the only input that changes the given step's premise. It is
-    a package-level string variable, `image`, whose default is a
-    digest-pinned image that reproduces the defect. A run selects another
-    image with `-ldflags "-X <import path>_test.image=<image>"`, and an image
-    that no longer reproduces it is one where the defect is resolved. Every
+    a package-level string variable, `image`, whose default is the release
+    tag of an image that reproduces the defect: the published aggregate
+    (`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-<release>-all`),
+    or the upstream tag (`quay.io/ceph/ceph:v<release>`) of a release that
+    has no published aggregate. The default never names a digest
+    ([Image references](../../AGENTS.md#image-references)); the manual and
+    its examples name images by tag too. A run selects another
+    image with `-ldflags "-X <import path>_test.image=<image>"`, any
+    reference the caller chooses, and an image
+    that no longer reproduces it is one where the defect is resolved. The
+    result comes from the symptom and the prerequisites observed on the image
+    that ran, never from which build it is. Every
     container the case starts from a Ceph image (cluster, admin client,
     mirror daemon, gateway) runs that image: a case starts its cluster with
     `harness.NewSingleImageCluster` or the package `Run` functions, never
@@ -711,7 +722,7 @@ fixture parts, and `cephfs_authorization_isolation` and
     ```sh
     go test -tags=all,native_regression -count=1 -v ./internal/integration/experiments/rgw_empty_sse_header/
     go test -tags=all,native_regression -count=1 -v \
-      -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+      -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5" \
       ./internal/integration/experiments/rgw_empty_sse_header/
     ```
 

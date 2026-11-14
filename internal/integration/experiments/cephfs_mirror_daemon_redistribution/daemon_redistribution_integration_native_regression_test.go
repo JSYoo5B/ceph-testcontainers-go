@@ -31,7 +31,7 @@ import (
 //
 // No fixed release is known: no upstream fix is recorded, and Tentacle
 // 20.2.5 and Umbrella 21.2.0 reproduce it too.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // Tentacle describes multiple mirror instances but still labels that deployment
 // untested. This PoC checks native MGR assignment and userspace CephFS snapshot

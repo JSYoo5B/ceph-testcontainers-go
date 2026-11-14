@@ -2,13 +2,13 @@
 """Run the nine supplied-image compatibility tests without building images.
 
 The images are the published <variant>-<release>-<role> tags of
-ceph-testcontainers-images; nothing here names a digest of one. An absent
+ceph-testcontainers-images, and the tests run them by those tags. An absent
 image is explicitly pulled for the Docker engine's native platform; an image
 that the engine already has under its tag is used as it is, so a persistent
 engine picks up a republished tag only after its own docker pull.
-Existing references are resolved once to local image IDs before invoking make,
-and the summary records each reference with the image ID and registry digests
-it resolved to.
+The summary records, for each reference, what the engine reported for it
+when it was prepared (the local image ID, any registry digests and the
+platform): an observation of this run, which nothing reads back as an input.
 This is module compatibility evidence, not the separate image contract checker.
 Preparation mode resolves those same images without executing compatibility tests,
 or, with --roles, only the role images that a batch declares. A pull that
@@ -44,11 +44,11 @@ ROOT = Path(__file__).resolve().parents[2]
 # tag, matches ceph.DefaultImage.
 SUPPORTED_RELEASES = (
     ("20.2.4", "tentacle",
-     "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"),
+     "quay.io/ceph/ceph:v20.2.4"),
     ("21.2.0", "umbrella",
-     "quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"),
+     "quay.io/ceph/ceph:v21.2.0"),
     ("19.2.5", "squid",
-     "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b"),
+     "quay.io/ceph/ceph:v19.2.5"),
 )
 RELEASES = {release: image for release, _, image in SUPPORTED_RELEASES}
 CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
@@ -95,8 +95,6 @@ EXPECTED_PACKAGES = (
     "internal/integration/rbd",
     "internal/integration/rgw",
 )
-IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
-DIGEST = IMAGE_ID
 RUN = re.compile(r"^=== RUN[ \t]+(Test[A-Za-z0-9_]+)(?:[ \t]*)$")
 RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0-9]+)?s\)[ \t]*$")
 
@@ -113,14 +111,11 @@ def parse_arguments(argv=None):
     parser.add_argument("--prepare-only", action="store_true",
                         help="Resolve supplied images without running Go or compatibility tests")
     parser.add_argument("--github-env", type=Path,
-                        help="Append the resolved role IDs to this file; requires --prepare-only")
+                        help="Append the role image variables to this file; requires --prepare-only")
     parser.add_argument("--roles",
                         help="Comma-separated roles to prepare, essential included; default all five dependency roles, "
                              "never an optional role. "
                              "Requires --prepare-only and --layout roles")
-    parser.add_argument("--digests", default="",
-                        help="Comma-separated role=sha256:<digest> pins of the role tags, which the caller "
-                             "resolved for this run; empty pulls the tags. Requires --layout roles")
     args = parser.parse_args(argv)
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
@@ -133,12 +128,6 @@ def parse_arguments(argv=None):
             args.roles = parse_roles(args.roles)
         except ValueError as error:
             parser.error(str(error))
-    try:
-        args.digests = parse_digests(args.digests)
-    except ValueError as error:
-        parser.error(str(error))
-    if args.digests and args.layout != "roles":
-        parser.error("--digests requires --layout roles")
     return args
 
 
@@ -156,35 +145,6 @@ def published_roles(variant):
     optional roles of that variant, in contract order."""
     return tuple(role for role in DECLARABLE_ROLE_ENV
                  if role in ROLE_ENV or variant in OPTIONAL_ROLE_VARIANTS[role])
-
-
-def parse_digests(text):
-    """role=sha256:<hex> pins, comma-separated; an empty text pins none."""
-    digests = {}
-    for item in filter(None, (text or "").split(",")):
-        role, _, digest = item.partition("=")
-        if role not in DECLARABLE_ROLE_ENV or role in digests or DIGEST.fullmatch(digest) is None:
-            raise ValueError("--digests takes distinct role=sha256:<64 hex> pins of " + ",".join(DECLARABLE_ROLE_ENV))
-        digests[role] = digest
-    return digests
-
-
-def pin_references(references, digests):
-    """Replace each role's tag by the registry digest that the caller
-    resolved it to, so that every job and attempt of one run pulls the same
-    manifest even when the tag moves meanwhile. Without pins the tags stay.
-    With pins every prepared role must be pinned: a run pins the roles its
-    batches declare, so a prepared role without a pin is a mismatch between
-    the run's pins and this job, and pulling its tag next to pinned roles
-    would mix identities unnoticed. A pinned role that this job does not
-    prepare is ignored."""
-    if not digests:
-        return dict(references)
-    missing = [role for role in references if role not in digests]
-    if missing:
-        raise ValueError("the pins of this run name no " + ",".join(missing)
-                         + " role; refusing to pull an unpinned tag next to pinned roles")
-    return {role: REGISTRY + "@" + digests[role] for role in references}
 
 
 def published_references():
@@ -291,9 +251,9 @@ def append_role_environment(path, environment, roles=None):
     names = image_names
     core = "essential"
     if (core not in roles or set(environment) != set(names)
-            or any(not isinstance(environment[name], str)
-                   or IMAGE_ID.fullmatch(environment[name]) is None for name in image_names)):
-        raise RuntimeError("prepared environment must contain exactly the immutable image IDs of the declared roles")
+            or any(not isinstance(environment[name], str) or not environment[name]
+                   or any(character.isspace() for character in environment[name]) for name in image_names)):
+        raise RuntimeError("prepared environment must contain exactly the image references of the declared roles")
     content = "".join(name + "=" + environment[name] + "\n" for name in names).encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0), 0o600)
     try:
@@ -386,10 +346,7 @@ def main(argv=None):
         summary["platform"] = platform
         if args.platform and args.platform != platform:
             raise RuntimeError("requested platform differs from Docker engine native platform; emulation is not validation")
-        references = pin_references(image_references(args.variant, args.layout, args.release, args.roles),
-                                    args.digests)
-        if args.digests:
-            summary["pinned_digests"] = args.digests
+        references = image_references(args.variant, args.layout, args.release, args.roles)
 
         for role, reference in references.items():
             def attempt(number, role=role, reference=reference):
@@ -410,7 +367,10 @@ def main(argv=None):
             del summary["pulls"]
         images = summary["images"]
         summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
-        selected = {role: images["all" if args.layout == "all" else role]["image_id"]
+        # The tests run the references that were prepared, as any consumer
+        # of the tags does; the image IDs stay in the summary as what this
+        # engine held for them.
+        selected = {role: images["all" if args.layout == "all" else role]["reference"]
                     for role in args.roles}
         environment = {DECLARABLE_ROLE_ENV[role]: image for role, image in selected.items()}
         if args.prepare_only:

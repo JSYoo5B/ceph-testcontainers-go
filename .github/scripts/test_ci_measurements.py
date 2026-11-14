@@ -90,7 +90,6 @@ class PhaseTests(unittest.TestCase):
             "Set up job": "setup", "Run actions/checkout": "setup", "Run actions/setup-go": "setup",
             "Restore the Go module cache": "setup", "Restore the Go build cache": "setup",
             "Discover only this workflow family from source tags": "reporting",
-            "Pin the role image tags of this run": "reporting",
             "Download every Go module": "plan_modules",
             "Save the Go module cache": "reporting",
             "Compile one profile of each package into the build cache": "plan_build_cache",

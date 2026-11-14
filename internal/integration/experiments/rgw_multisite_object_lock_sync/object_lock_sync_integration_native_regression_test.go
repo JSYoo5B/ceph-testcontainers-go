@@ -40,7 +40,7 @@ const (
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multisite_object_lock_sync_test.image=<image>"
 //
 // and a fixed one (Tentacle 20.2.5, Umbrella 21.2.0) does not reproduce it.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 type lockCase struct {
 	t       *testing.T

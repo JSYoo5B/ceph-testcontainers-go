@@ -55,7 +55,7 @@ stays an optional batch, so no automatic run includes it.
 
 - Manual: `gh workflow run Experiments -f case=rgw_empty_sse_header`
   requires `REPRODUCED`; adding
-  `-f image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c`
+  `-f image=quay.io/ceph/ceph:v20.2.5`
   requires `NOT_REPRODUCED`.
 - Comment: `/ci run rgw_empty_sse_header` runs the batch and takes only its
   pass or failure.
@@ -73,7 +73,7 @@ On another image, for example the fixed Tentacle 20.2.5:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_empty_sse_header_test.image=quay.io/ceph/ceph:v20.2.5" \
   ./internal/integration/experiments/rgw_empty_sse_header
 ```
 
@@ -114,7 +114,7 @@ Native results on a Linux amd64 host, one run each:
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a…` (default) | REPRODUCED: both PUTs answered 200, a new object and a new version | 31 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a…` (the default image when recorded) | REPRODUCED: both PUTs answered 200, a new object and a new version | 31 s |
 | Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8a…` | NOT_REPRODUCED | 30 s |
 
 Earlier runs on split role images recorded the same behaviour on 20.2.4, and

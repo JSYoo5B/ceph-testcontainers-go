@@ -69,7 +69,7 @@ release fixes the defect yet.
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_trash_purge_timezone_test.image=<image@sha256:...>" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_trash_purge_timezone_test.image=<image>" \
   -run '^TestRBDTrashPurgeCutoffAcrossClientTimezones$' \
   ./internal/integration/experiments/rbd_trash_purge_timezone
 ```
@@ -147,7 +147,7 @@ Native results (Linux amd64 host, Docker, aggregate image, one run):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: ahead-9h retains `due-6h` too; behind-9h retains only `due-30h` | 38 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: ahead-9h retains `due-6h` too; behind-9h retains only `due-30h` | 38 s |
 
 No fixed image exists to run. Earlier, failing-test runs on role images
 reproduced on Tentacle 20.2.4 (38 s), Umbrella 21.2.0 (37 s) and Squid

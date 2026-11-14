@@ -40,7 +40,7 @@ const (
 //
 // and a fixed one (Squid 19.2.0 and every later release) does not reproduce
 // it.
-var image = "quay.io/ceph/ceph:v19.1.0@sha256:56d1542f98c99516890898f79f1ba6010922be479a1432d7f380203a73405517"
+var image = "quay.io/ceph/ceph:v19.1.0"
 
 type spCase struct {
 	ctx     context.Context

@@ -255,7 +255,7 @@ func (f *fakeManager) GetContainerID() string { return f.id }
 func (f *fakeManager) Inspect(context.Context) (*container.InspectResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return &container.InspectResponse{Image: "sha256:6bb1c8a42fbc", State: &container.State{StartedAt: f.started, Running: f.running}}, nil
+	return &container.InspectResponse{Image: "sha256:essential", State: &container.State{StartedAt: f.started, Running: f.running}}, nil
 }
 
 // scriptedMgrSources answers every query from fixed samples, except "mgr

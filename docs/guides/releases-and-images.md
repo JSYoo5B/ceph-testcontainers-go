@@ -52,7 +52,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 | --- | --- | --- |
 | Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate that `ceph.DefaultImage` names, and the `official-20.2.4-<role>` role tags |
 | Umbrella 21.2.x | Periodic CI on 21.2.0, with the issues listed below; the default remains Tentacle | Published official role images, the `official-21.2.0-<role>` tags; official amd64 requires x86-64-v3 |
-| Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
+| Squid 19.2.x | Supported, with the differences listed below | Published official role images, the `official-19.2.5-<role>` tags; the upstream image is `quay.io/ceph/ceph:v19.2.5` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
 [Known release-specific issues](#known-release-specific-issues). Tentacle
@@ -65,8 +65,7 @@ daemon stranded without a MON session after its ticket expired, are listed in
 To run against Squid, pass a Squid image to `Run`:
 
 ```golang
-cluster, err := ceph.Run(ctx,
-	"quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b")
+cluster, err := ceph.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
 ```
 
 ## Detecting the release at run time

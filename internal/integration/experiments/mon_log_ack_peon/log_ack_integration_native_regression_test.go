@@ -28,7 +28,7 @@ import (
 //
 // No release fixes it yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
 // which predates the introducing change, does not reproduce it.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // TestMONLogAckThroughPeon reports whether a peon loses the MLogAck of a
 // cluster log entry that it forwarded to the leader (issue 389).

@@ -25,7 +25,7 @@ import (
 // Squid 19.2.3 fixes the snapshot defect, 19.2.4 the subvolume one and
 // 19.2.5 the caps one; 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 reproduce
 // none of them.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013ac78f1d9b5a774b366b0ed4ce7bda4acf8734bfadc14603d16b23"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all"
 
 func testCephFSAuthorizationIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)

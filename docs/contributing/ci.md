@@ -416,7 +416,7 @@ architecture, because it warms the build cache that the jobs restore.
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` first refuses a runner whose Go toolchain is not natively the matrix entry's `goarch` (host and target), then runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
 | Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload, on its qualified release, roles and platform, and the actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images`, each by the digest that `Plan` resolved its `official-<release>-<role>` tag to for this run (see [Role images of a run](#role-images-of-a-run)), for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, freezes local image IDs and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
+| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` by their `official-<release>-<role>` tags (see [Role images of a run](#role-images-of-a-run)), for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, records the image ID and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables, which name the tags. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
 | Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source, for the GOOS and GOARCH that the compile receipt records, and the step refuses a Docker engine of another platform: each image reference among the constants of the declarations that the tests reach (constants of other packages included), and a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag). A published role tag that a test names itself, such as both releases of the rolling upgrade, is one of those constants and is pulled by its tag. With prepared role images, the harness fallback to a published role tag (`ceph.DefaultImage`) is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Verify post-image runner headroom | Post-image runner headroom | Ceph batches only. `runner_storage.py ready` refuses the job before the tests when the pulled images left too little headroom for the workload. Writes `runner-storage/storage-ready.json`. |
@@ -603,9 +603,10 @@ not expand this daily sample. Ordinary PR/main checks keep their own triggers.
 
 ### Frozen plan and bounded execution
 
-`Sample plan` freezes the exact checkout SHA, Ceph index/platform identities,
-source-proven additional image and Ryuk digests, parent test names, tags,
-network modes and the random seed. The run identity seeds the draw, so later
+`Sample plan` freezes the exact checkout SHA, the Ceph image references (the
+tags of the selected release), parent test names, tags, network modes and the
+random seed. It resolves no image: the worker pulls the tags, and Ryuk and
+the images the tests name themselves, when it runs. The run identity seeds the draw, so later
 runs can select a different combination even at the same source SHA. The plan is uploaded before `Sequential
 sample` starts. Every native case consumes that plan and the compiled binary's
 existing source/inventory receipt; an unknown test, expanded timeout or changed
@@ -663,22 +664,25 @@ retry until green. Dirty cleanup stops the remaining versions too.
 
 Frozen plans and packed receipts live under `periodic/` on the existing
 `scenario-history` branch, keyed by run, attempt and release, with a separate
-bundle receipt retaining unstarted versions. They retain actual source/build/
-image/test identities and preparation/native/cleanup outcomes. They are not
+bundle receipt retaining unstarted versions. They retain the source and build
+identities, the image references with what the engine reported for them, the
+selected tests and the preparation/native/cleanup outcomes. They are not
 ingested as full-profile passes by the ordinary same-configuration classifier.
 Every execution uses its selected source; an old SHA is not held while waiting
 for coverage. A sample is never proof that current main passed every version.
 
 Historical discovery uses a separate inventory in
 `.github/ceph-discovery-images.json`: official aggregate images for Squid
-19.2.0–19.2.7, Tentacle 20.2.0–20.2.5 and Umbrella 21.2.0. The 20.2.5
-publication uses the separately pinned upstream aggregate until a role aggregate
-is published; other patches use the published official role aggregate. Each cell keeps one
-release for every role/client and pins index and native architecture children.
+19.2.0–19.2.7, Tentacle 20.2.0–20.2.5 and Umbrella 21.2.0, each named by its
+release tag. The 20.2.5 row is the upstream aggregate
+(`quay.io/ceph/ceph:v20.2.5`) until a role aggregate is published; other
+patches use the published `official-<release>-all` tag, and the inventory
+refuses a row whose reference is anything else. Each cell keeps one
+release for every role/client.
 Only linux/amd64 executes by default; arm64 manifest availability is not native
 arm64 validation. Umbrella's official amd64 images require x86-64-v3; a failed
 CPU/platform preflight is an environment result, not a Ceph failure. Missing
-artifacts, unresolved helpers and inapplicable extra-image contracts remain
+artifacts and inapplicable extra-image contracts remain
 preparation/eligibility outcomes rather than native passes.
 
 Discovery does not add historical patches to `SUPPORTED_RELEASES` or change
@@ -724,7 +728,7 @@ runner allocation and queue timing remain unknown in these receipts.
 ### Supported releases
 
 `SUPPORTED_RELEASES` in `.github/scripts/run_image_matrix.py` lists each
-supported release with its codename and pinned official image (Tentacle
+supported release with its codename and official image tag (Tentacle
 20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and release-phase `Releases` jobs generate the callers:
 
 ```sh
@@ -753,43 +757,39 @@ a row is refused. The default release (`RELEASE`, the `release` defaults of
 ### Role images of a run
 
 CI is a consumer of the published role images like any other: it selects
-them by tag and decides itself how exactly a run is replayed. No file of this
-repository names a digest of a role image, so a compatible rebuild that
-ceph-testcontainers-images publishes under the same tag needs no change
-here. The next run uses it.
+them by tag, and it keeps no digest of them
+([Image references](../../AGENTS.md#image-references)). A compatible rebuild
+that ceph-testcontainers-images publishes under the same tag needs no change
+here. The next job that pulls the tag uses it.
 
 - `image_references` in `.github/scripts/run_image_matrix.py` names the
   images: `ghcr.io/jsyoo5b/ceph-testcontainers-images:<variant>-<release>-<role>`,
   with `all` for the aggregate. `ceph.DefaultImage` is `official-20.2.4-all`.
-- One run uses one image per role. The `Plan` job of `tagged-runtime.yml`
-  resolves, once, the tag of each role that the plan's batches declare to
-  its registry digest (`role_image_pins.py pin --plan`, a registry read with
-  the bounded retry of transport failures) and hands the digests to the
-  runtime jobs, which pull `<repository>@<digest>`. A tag republished while
-  the run is in progress therefore reaches no job of that run, and a failed
-  job that is run again later reuses the digests of its run's `Plan`.
-- Only the declared roles are resolved: the union of the plan entries'
-  `image_roles`. A role that no selected batch uses, such as the optional
-  `mgr-modules` when its tag is unavailable, is never asked of the registry
-  and cannot stop the run, and a plan without a Ceph batch asks nothing. A
-  caller that pinned the images itself (the representative campaign, which
-  pins every published role before its plan exists) passes its digests
-  through the `role_digests` input; `Plan` refuses pins that do not name
-  every role the plan declares.
-- A runtime job never mixes pinned and unpinned roles. Given the run's pins,
-  `run_image_matrix.py` refuses to prepare a role they do not name, before
-  any pull, instead of pulling that role's tag.
+- Each runtime job pulls the tags of the roles that its batch declares
+  (`image_roles`) and runs the tests by those tags. A role that no selected
+  batch uses, such as the optional `mgr-modules` when its tag is
+  unavailable, is never asked of the registry and cannot stop the run, and a
+  Docker-only batch asks nothing.
+- Nothing resolves a tag to a digest before the jobs start, and no workflow
+  input carries one. A tag republished while a run is in progress therefore
+  reaches the jobs that pull it afterwards, a job that is run again later
+  included. The jobs of one run can so differ in what they ran, and each
+  says what that was.
 - Each job records what it ran: `scenario-images-*/summary.json` has, for
-  every role, the reference it prepared, the local image ID, the registry
-  digests and the platform child, and `pinned_digests` for the run's pins.
+  every role, the tag it prepared and what the engine reported for it (the
+  local image ID, any registry digests and the platform child).
   `test-images/summary.json` has the same for Ryuk and for every image a
-  test names itself. To replay a run on its exact images, pass those digests
-  to `run_image_matrix.py --digests` (see
-  [Reproducing CI's role images](testing.md#reproducing-cis-role-images)).
+  test names itself. These are observations of that job. A history row
+  takes the image IDs from them, so attempts on different builds of one tag
+  count as different configurations (see
+  [Durable history and classification](#durable-history-and-classification));
+  nothing else reads them, and an image without a registry digest (a tag
+  pulled through a mirror, a local build) is recorded with an empty list and
+  runs like any other.
 - A periodic sample (`rotate`, `targeted`) references the role tags that
-  its selected entries declare, with essential always among them, prepares
-  each once, in its single job, and records the same identities in its
-  `images/summary.json`; its helper images are frozen to digests in the plan.
+  its selected entries declare, with essential always among them, pulls
+  each once, in its single job, and records the same observations in its
+  `images/summary.json`.
 - The module takes no part in this: it resolves no tag, enforces no
   freshness and reports no identity.
 
@@ -806,8 +806,8 @@ release-bound profiles on Umbrella and Squid.
 
 ### Representative campaign
 
-The campaign repeats a source-owned set of batches on one pinned
-configuration to build same-configuration pass and fail records. The set is
+The campaign repeats a source-owned set of batches on one pinned commit to
+build same-configuration pass and fail records. The set is
 every batch whose `//ci:` line declares `representative=<theme>` (see
 [Testing](testing.md#batches-and-the-ci-line)); `plan --representative` fails
 if a theme (`topology`, `auth`, `mirroring`, `recovery`, `flaky`) has no
@@ -815,13 +815,14 @@ batch.
 
 It runs only through an explicit dispatch with mode `representative`:
 
-1. `Pin` resolves the commit (the `ref` input or the run's commit) and the
-   registry digest of every role image (`role_image_pins.py pin`).
+1. `Pin` resolves the commit (the `ref` input or the run's commit).
 2. `Representative` calls the template with `category: representative`. Each
    entry repeats `repetitions` times (default 1, at most 10) as separate jobs
    named `<batch> #<n>`, artifacts ending in `-r<n>`, each checking out the
-   pinned commit and pulling the pinned digests. History rows carry
-   `repetition_id` `<n>`.
+   pinned commit and pulling the role tags of the release. History rows
+   carry `repetition_id` `<n>` and the image IDs each attempt ran, so a tag
+   rebuilt during a campaign splits its attempts into two configurations
+   instead of mixing them.
 3. Every attempt keeps the normal completion, no-skip and cleanup proofs;
    nothing is retried.
 
@@ -872,7 +873,7 @@ The architectures are recorded separately, each by the phase that observes it:
 | Planned architecture | `tag-plan.json` (`goos`, `goarch`) and each matrix entry's `goarch` |
 | Go toolchain host and target | `compile-report.json` `platform` (`planned`, `host`, `target`) and the binary's build key |
 | Docker engine | `runtime-cleanup` engine identity and `scenario-images/summary.json` `docker` |
-| Selected image | each image's `selected_platform` (the child Docker chose) beside `repo_digests` (the pulled index) in `scenario-images/summary.json` and `test-images/summary.json` |
+| Selected image | each image's `selected_platform` (the child Docker chose) beside its `reference` and `image_id` in `scenario-images/summary.json` and `test-images/summary.json` |
 
 Compilation refuses a runner whose Go toolchain is not natively the planned
 architecture, host and target alike, so a cross-compiled binary is never
@@ -1136,7 +1137,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `tag-scenario-<id>-<release>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `test-images/` (the Ryuk and test image receipt: the analysis, each image with the tests and source positions that named it, skipped references, pull attempts); `runner-storage/` (see below); `phases.json`; `history-row.json` |
 | `runtime-cleanup-<id>-<release>` | `before.json` and `after.json`: engine identity and labelled resources before and after |
 | `runtime-cleanup-<id>-<release>-baseline` | Only when the baseline itself failed |
-| `scenario-images-<id>-<release>` | `summary.json` with resolved role image IDs, digests and platform, every pull attempt under `pulls`, and the `pull-<role>[-<attempt>].log` files |
+| `scenario-images-<id>-<release>` | `summary.json` with each role's tag and what the engine reported for it (image ID, any registry digests, platform), every pull attempt under `pulls`, and the `pull-<role>[-<attempt>].log` files |
 | `plan-<category>-<release>` | `tag-plan.json` (selected profiles) and `tag-dispatch.json` (the expanded matrix with network scope, repetitions, run, attempt, release and category) |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage and the `code` batch results |
 
@@ -1375,7 +1376,7 @@ python3 .github/scripts/failed_archive_proof.py \
 ```
 
 Exit 0 means `archive_verification: verified` with `native_outcome: failed`:
-both failed cases, matching binary and source hashes, image identities, both
+both failed cases, matching binary and source hashes, the prepared image's ID, both
 archives with their listed files, debug receipts, successful restoration and
 termination, no leaked resources, and the history row's identity. Do not mix
 artifacts of different attempts. The audit does not prove the upload itself;
@@ -1403,8 +1404,9 @@ A row holds:
 - `profile`: profile identity, tags and `bug_compatibility`. Receipts that
   disagree on tags, or whose selection differs from `--bug-compatibility`,
   write no row;
-- `runtime`: release, layout, platform and every role image ID and digest, or
-  `not_applicable`;
+- `runtime`: release, layout, platform and, for every role, the reference
+  and the image ID that the job's engine reported (and any registry digests
+  it listed, which may be none), or `not_applicable`;
 - `phases`: per phase the step outcome, the receipt and their join. A pass
   needs both; a missing receipt is `missing`, never `passed`;
 - `outcome.status` (`failed`, `cancelled`, `passed` or `incomplete`) and

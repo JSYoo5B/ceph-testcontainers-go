@@ -72,7 +72,7 @@ so the example names Umbrella 21.2.0, which reproduces it too:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_group_snap_late_complete_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623a5e6c9f7dc7dd13b356dcb1f71b0b4d74bf7cd2c175cd802735f" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_group_snap_late_complete_test.image=ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all" \
   -run '^TestRBDGroupSnapshotLateCompleteAfterRemoval$' \
   ./internal/integration/experiments/rbd_group_snap_late_complete
 ```
@@ -173,7 +173,7 @@ each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: update returned 0, `snapshot_<victim id>` back without `snap_order_<victim id>`, listing `[healthy victim]` | 29 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: update returned 0, `snapshot_<victim id>` back without `snap_order_<victim id>`, listing `[healthy victim]` | 29 s |
 | Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same | 29 s |
 
 No fixed image exists to run, so `NOT_REPRODUCED` has not been observed

@@ -4,8 +4,8 @@ package harness
 
 import "example.com/images/lib"
 
-// Old is a pinned official image of another release.
-const Old = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+// Old is the official image of another release.
+const Old = "quay.io/ceph/ceph:v20.2.3"
 
 // Official completes an image reference with the version at run time.
 func Official(version string) string { return "quay.io/ceph/ceph:v" + version }

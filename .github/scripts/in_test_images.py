@@ -132,7 +132,7 @@ def plan_images(uses, release, roles_prepared, discovery=False):
 
     for use in uses:
         if discovery and (use["kind"] != "image" or use.get("role_fallback") is not True):
-            raise ValueError("discovery contract needs an image outside its pinned single-release aggregate")
+            raise ValueError("discovery contract needs an image outside its single-release aggregate")
         reference = use.get("reference", "")
         if use["kind"] == "image":
             if roles_prepared and use.get("role_fallback") is True and reference in published:
@@ -144,13 +144,11 @@ def plan_images(uses, release, roles_prepared, discovery=False):
             add(reference, use)
         elif use["kind"] == "prefix":
             official = matrix.RELEASES[release]
-            tagged, _, digest = official.partition("@")
-            if reference + release != tagged:
+            if reference + release != official:
                 raise ValueError("a test completes the image prefix %r at run time (%s), which this preparation "
                                  "cannot name" % (reference, use.get("position")))
-            # The test names the tag, so the tag is pulled; the pin says
-            # which manifest that tag should resolve to.
-            add(tagged, use, "official image of " + release + " by tag; pinned " + digest)
+            # The test names the tag, so the tag is pulled.
+            add(official, use, "official image of " + release + " by tag")
     return list(planned.values()), skipped
 
 
@@ -245,7 +243,7 @@ def main(argv=None):
     parser.add_argument("--compile", type=Path, required=True, help="The compile directory with compile-report.json")
     parser.add_argument("--tests", default="", help="The matrix entry's comma-separated test selection")
     parser.add_argument("--release", required=True)
-    parser.add_argument("--discovery", action="store_true", help="Use the separate pinned patch inventory; no extra test images")
+    parser.add_argument("--discovery", action="store_true", help="Use the separate patch inventory; no extra test images")
     parser.add_argument("--directory", type=Path, required=True, help="New directory for the receipt and pull logs")
     return prepare(parser.parse_args(argv))
 

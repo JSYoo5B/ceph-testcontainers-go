@@ -125,7 +125,7 @@ func (f *reclaimFake) run(script string, env []string, args ...string) (string, 
 	return string(out), 0
 }
 
-const reclaimFakeImage = "sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
+const reclaimFakeImage = "sha256:" + "1111111111111111111111111111111111111111111111111111111111111111"
 
 func TestReclaimNativeABIProbeScript(t *testing.T) {
 	f := newReclaimFake(t)

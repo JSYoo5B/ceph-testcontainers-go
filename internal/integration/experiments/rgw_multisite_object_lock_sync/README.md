@@ -77,12 +77,12 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
 
 On a fixed image, injected into the package's `image` variable, which must
 print `result=NOT_REPRODUCED` (Tentacle 20.2.5 here; Umbrella 21.2.0,
-`quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d`,
+`quay.io/ceph/ceph:v21.2.0`,
 is fixed too):
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multisite_object_lock_sync_test.image=quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d40df136e5eac92ca53bb52360a5e039f3d1f7935e729eb5ef42c" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_multisite_object_lock_sync_test.image=quay.io/ceph/ceph:v20.2.5" \
   -run '^TestMultiClusterRGWBucketObjectLockSync$' \
   ./internal/integration/experiments/rgw_multisite_object_lock_sync
 ```
@@ -158,7 +158,7 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (default) | `REPRODUCED`: zone b answers `200` enabled without a rule after the `initial` checkpoint; `update` not run | 216 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: zone b answers `200` enabled without a rule after the `initial` checkpoint; `update` not run | 216 s |
 | Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 101 s |
 | Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 79 s |
 

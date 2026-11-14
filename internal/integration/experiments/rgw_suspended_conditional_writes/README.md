@@ -70,9 +70,9 @@ demand, also on a pull request's head with the comment below.
 
 ## Running it
 
-The case runs on its own pinned image, the package variable `image`, and not
+The case runs on its own image, the package variable `image`, and not
 on the role images of the environment. The default is the Tentacle 20.2.4 aggregate
-(`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b`), which reproduces the defect:
+(`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`), which reproduces the defect:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -84,7 +84,7 @@ Another image, such as a fixed release, is injected at link time:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_suspended_conditional_writes_test.image=quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_suspended_conditional_writes_test.image=quay.io/ceph/ceph:v21.2.0" \
   -run '^TestRGWSuspendedConditionalWrites$' \
   ./internal/integration/experiments/rgw_suspended_conditional_writes
 ```
@@ -95,7 +95,7 @@ case. It exports role images,
 which the case ignores: the cluster and its client container both run
 `image`.
 
-Record the image digests with the result; the log names the Ceph version
+The log names the image (`image=` in each result line) and the Ceph version
 (`RGW_COND ceph=`), every step's native status and error code, and the
 version listings.
 
@@ -143,7 +143,7 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| default, 20.2.4 aggregate `sha256:2e57651a5aa7…` | `REPRODUCED`: `existing-if-match` (412), `deleted-if-match` (412 instead of 404) and `deleted-if-none-match` (412) for both writers, six symptoms | 34.6 s |
+| 20.2.4 aggregate `sha256:2e57651a5aa7…`, the default image when recorded | `REPRODUCED`: `existing-if-match` (412), `deleted-if-match` (412 instead of 404) and `deleted-if-none-match` (412) for both writers, six symptoms | 34.6 s |
 | 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 35.3 s |
 | 20.2.5 official `sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 35.1 s |
 

@@ -391,16 +391,20 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(qualification, "storage_policy"), "${{ inputs.storage_policy }}")
             self.assertEqual(scalar(gate, "if"), "github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')")
             self.assertFalse(periodic_gate.runtime_job({"name": "Storage qualification / rados_fixtures_watchers"}))
-            # The campaign: one pinned commit and pinned digests for every
-            # attempt of the source-owned representative batches.
+            # The campaign: one pinned commit for every attempt of the
+            # source-owned representative batches, which pull the role
+            # tags of the release as any other run does.
             pin, representative, history = jobs.pop("pin"), jobs.pop("representative"), jobs.pop("history")
             self.assertEqual(scalar(pin, "if"), "needs.gate.outputs.campaign == 'true'")
-            self.assertIn("python3 .github/scripts/role_image_pins.py pin --release", pin)
+            self.assertEqual(scalar(pin.split("    outputs:\n", 1)[1].split("    steps:\n", 1)[0], "sha"),
+                             "${{ steps.commit.outputs.sha }}")
+            self.assertEqual(len(steps(pin)), 2)
+            self.assertNotRegex(pin, r"(?i)digest|imagetools|docker")
             self.assertEqual(scalar(representative, "needs"), "pin")
             self.assertEqual(scalar(representative, "category"), "representative")
             self.assertEqual(scalar(representative, "ref"), "${{ needs.pin.outputs.sha }}")
-            self.assertEqual(scalar(representative, "role_digests"), "${{ needs.pin.outputs.digests }}")
-            self.assertEqual(scalar(representative, "release"), "${{ needs.pin.outputs.release }}")
+            self.assertNotIn("role_digests", representative)
+            self.assertEqual(scalar(representative, "release"), "${{ inputs.release || '" + runner.RELEASE + "' }}")
             self.assertEqual(scalar(representative, "repetitions"), "${{ fromJSON(inputs.repetitions || 1) }}")
             self.assertEqual(scalar(representative.split("    with:", 1)[0], "name"), "Representative")
             # The gate tells campaign jobs from matrix batches by this name.
@@ -668,7 +672,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(command[command.index("--networks") + 1], "$SCENARIO_NETWORKS")
         self.assertNotRegex(runtime, r"(?m)^        (?:case|group|include|exclude):")
 
-    def test_campaign_attempts_are_separate_jobs_on_the_pinned_commit_and_images(self):
+    def test_campaign_attempts_are_separate_jobs_on_the_pinned_commit(self):
         reusable = self.workflows["tagged-runtime.yml"]
         plan, runtime = self.jobs["tagged-runtime.yml"]["plan"], self.jobs["tagged-runtime.yml"]["runtime"]
         command = engine_command(steps(plan), "plan", "--representative")
@@ -680,16 +684,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(reusable.count("          ref: ${{ inputs.ref }}\n"), 2)
         runtime_steps = steps(runtime)
         prepared = next(step for step in runtime_steps if "uses: ./.github/actions/scenario-images" in step)
-        # Plan pins the role tags once for the run, or keeps the caller's
-        # pins; every runtime job prepares exactly those.
-        pinning = next(step for step in steps(plan) if "role_image_pins.py pin" in run_command(step))
-        self.assertEqual(scalar(pinning, "id"), "role_images")
-        self.assertEqual(scalar(pinning, "SCENARIO_ROLE_DIGESTS"), "${{ inputs.role_digests }}")
-        self.assertIn('--digests "$SCENARIO_ROLE_DIGESTS" --plan artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"',
-                      run_command(pinning))
-        self.assertIn("      role_digests: ${{ steps.role_images.outputs.digests }}\n", plan)
-        self.assertEqual(scalar(prepared, "digests"), "${{ needs.plan.outputs.role_digests }}")
-        self.assertNotIn("inputs.role_digests", runtime)
+        # Every runtime job prepares the role tags of the release that its
+        # batch declares. Neither Plan nor a caller resolves a tag to a
+        # digest, and the template has no input or output that carries one.
+        self.assertEqual(set(re.findall(r"(?m)^          (\w+): ", prepared.split("        with:\n", 1)[1])),
+                         {"artifact_name", "release", "roles", "platform"})
+        self.assertEqual(scalar(prepared, "release"), "${{ inputs.release }}")
+        self.assertEqual(scalar(prepared, "roles"), "${{ matrix.image_roles }}")
+        self.assertNotRegex(reusable, r"(?i)digest|imagetools")
         # Each attempt has its own artifacts but keeps the profile ID.
         names = re.findall(r"(?:artifact_name|          name): ((?:runtime-cleanup|scenario-images|tag-scenario)-.*)$",
                            runtime, re.M)
@@ -808,7 +810,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         release_input = periodic.split("      release:\n", 1)[1].split("\n      ref:\n", 1)[0]
         self.assertEqual(scalar(release_input, "options"), supported)
         self.assertEqual(scalar(release_input, "default"), default)
-        self.assertIn("CAMPAIGN_RELEASE: ${{ inputs.release || " + default + " }}", periodic)
+        self.assertIn("      release: ${{ inputs.release || " + default + " }}\n", periodic)
         self.assertRegex(self.workflows["block-fault-probe.yml"], r"(?m)^        release: " + re.escape(supported) + "$")
         runtime_input = self.workflows["tagged-runtime.yml"].split("\n      release:\n", 1)[1].split("\n      changed_since:", 1)[0]
         self.assertEqual(scalar(runtime_input, "default"), default)

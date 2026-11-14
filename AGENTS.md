@@ -71,6 +71,35 @@ resulting state afterwards.
   `TestModuleRequiresNoClientLibrary` and
   `TestModuleImportsNoClientLibraryOrCgo` enforce it.
 
+## Image references
+
+The consumer chooses an image reference and owns exact-build selection and
+replay. This repository is one consumer of the Ceph images, and it names them
+by release or role tag (`quay.io/ceph/ceph:v20.2.4`,
+`ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`) or takes
+the reference its caller supplies. The rule covers the library, experiment
+case defaults and manuals, examples, ordinary and periodic CI, release
+tooling and every later addition to them.
+
+- Do not write a Ceph image digest (`@sha256:...`), a registry digest list or
+  a local image ID into source, fixtures, scripts, workflows or
+  documentation, and do not add a step that generates one for the repository
+  to keep. A compatible rebuild published under the same tag needs no change
+  here.
+- Do not make a digest a condition: nothing admits, selects an expectation
+  for, reconstructs or reports a run by one. A run whose image has no
+  registry digest (a tag pulled from a mirror, a local build) is as valid as
+  any other, and its verdict comes from the symptom and the prerequisites
+  observed on the image that ran.
+- A reference a caller supplies, a digest reference included, passes through
+  unchanged.
+- What a run observed (the image ID Docker reports for a container, the
+  digests of a pulled tag in a CI artifact) may be recorded as evidence of
+  that run. It is never an input to a later one.
+- Checksums of other things (test payloads, tool downloads, source files,
+  Git objects) are not image identities and are outside this rule.
+  `TestRepositoryKeepsNoCephImageDigest` enforces the first point.
+
 ## Pull requests (for agents)
 
 Implement a task as one pull request, even when it has many steps. Every pull

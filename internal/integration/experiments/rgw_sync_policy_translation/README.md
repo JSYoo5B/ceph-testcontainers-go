@@ -78,7 +78,7 @@ fixes either defect yet.
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=75m \
-  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_policy_translation_test.image=<image@sha256:...>" \
+  -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rgw_sync_policy_translation_test.image=<image>" \
   -run '^TestMultiClusterRGWSyncTranslationFiltering$' \
   ./internal/integration/experiments/rgw_sync_policy_translation
 ```
@@ -120,8 +120,7 @@ clusters' Ceph versions.
 
 Native results (Linux amd64 host, Docker, aggregate image, one run):
 
-Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…`
-(default):
+Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded):
 
 | Variant | `priority_tags_owner_class` | `ordinary_user_denial_grant` | Time |
 | --- | --- | --- | --- |

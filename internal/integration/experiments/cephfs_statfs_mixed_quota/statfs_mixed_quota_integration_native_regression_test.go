@@ -24,7 +24,7 @@ import (
 //
 // Tentacle 20.2.5 is fixed; neither it nor Squid 19.2.5 or Umbrella 21.2.0
 // reproduces it.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // statfsRoot is the directory of the filesystem that holds the layout.
 const statfsRoot = "/statfs-mixed-quota"

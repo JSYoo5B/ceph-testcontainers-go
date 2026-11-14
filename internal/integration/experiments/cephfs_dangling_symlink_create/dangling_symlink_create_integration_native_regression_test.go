@@ -25,7 +25,7 @@ import (
 // No release is fixed: Squid 19.2.3 and every later release that was run
 // (19.2.5, 20.2.5, 21.2.0) reproduce it. Squid 19.2.2, which predates the
 // defect, does not.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // createRoot is the directory of the filesystem that holds the cases.
 const createRoot = "/dangling-symlink-create"

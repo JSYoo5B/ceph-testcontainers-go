@@ -45,8 +45,7 @@ Cheap and deterministic: one native run takes about 20 seconds on 20.2.4
   beyond starting the cluster, so no other change selects it.
 - Comment: `/ci run discovery_schedule` or `/ci run discovery_schedule on squid`.
 - Periodic: `rotate` can draw it on the supported releases; `discovery` adds
-  it whenever it draws 19.2.2 or 19.2.3, freezes the image digests in its
-  plan, and `periodic_execute.py` copies every JSON case line into the durable
+  it whenever it draws 19.2.2 or 19.2.3, and `periodic_execute.py` copies every JSON case line into the durable
   receipt as `characterization`. `targeted` runs it on any catalogued patch.
 
 ## Running it
@@ -72,8 +71,8 @@ python3 .github/scripts/tag_scenarios.py run --category topology \
 The runner refuses an existing `--directory`, so the timestamp gives each
 run, such as each release of a comparison, its own.
 
-Use a pinned digest (`quay.io/ceph/ceph:v19.2.2@sha256:...`) or the published
-role aggregate when the result is evidence.
+Name the image you ran (`quay.io/ceph/ceph:v19.2.2` or the published role
+aggregate) with a result you report.
 
 ## Observations and controls
 

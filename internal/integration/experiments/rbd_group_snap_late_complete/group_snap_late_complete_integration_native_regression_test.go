@@ -70,7 +70,7 @@ const groupSnapPool = "tc-group-snap"
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/rbd_group_snap_late_complete_test.image=<image>"
 //
 // No release fixes it: Umbrella 21.2.0 accepts the late update too.
-var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b"
+var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // TestRBDGroupSnapshotLateCompleteAfterRemoval reports whether a COMPLETE
 // update that arrives for an already removed group snapshot brings the

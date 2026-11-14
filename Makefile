@@ -87,7 +87,7 @@ scenario-goceph-linux:
 image-compatibility:
 	CGO_ENABLED=0 go test -mod=readonly -p 1 -tags=integration,topology,multicluster -count=1 -v -timeout=$(IMAGE_COMPATIBILITY_TIMEOUT) -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle|MultiCluster(RBDBackup|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|RGWMultisite))$$' ./internal/integration/...
 
-# Select existing official/GHCR images, freeze their IDs, then run the same Go tests.
+# Select the published image tags of one combination, then run the same Go tests.
 image-matrix:
 	python3 .github/scripts/run_image_matrix.py --variant "$(IMAGE_VARIANT)" --layout "$(IMAGE_LAYOUT)" $(if $(IMAGE_PLATFORM),--platform "$(IMAGE_PLATFORM)",)
 

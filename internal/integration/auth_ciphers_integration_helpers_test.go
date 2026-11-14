@@ -28,7 +28,7 @@ import (
 // option, not this build: the reference is the last official Tentacle
 // release without it, and every test that uses it first checks, in the image
 // it actually runs, that the option is absent, and fails when it is not.
-const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3"
 
 // cephxKeyType decodes the type field of a Cephx secret: 1 is AES and 2 is
 // AES256KRB5.

@@ -127,16 +127,18 @@ class MatrixTests(unittest.TestCase):
         # The index digest and the platform child that Docker selected are
         # recorded apart.
         self.assertEqual(report["images"]["all"]["selected_platform"], {"os": "linux", "architecture": "arm64"})
-        image_id = report["images"]["all"]["image_id"]
+        # The tests run the tag that was prepared; the image ID stays an
+        # observation in the summary.
         for name in runner.ROLE_ENV.values():
-            self.assertEqual(self.runtime.make_environment[name], image_id)
+            self.assertEqual(self.runtime.make_environment[name], runner.DEFAULT_IMAGE)
+        self.assertRegex(report["images"]["all"]["image_id"], r"\Asha256:[a-f0-9]{64}\Z")
         self.assertEqual(report["image_builds"], 0)
         self.assertEqual(report["runtime_result"], "passed")
         self.assertEqual(report["test_exit_code"], 0)
         self.assertEqual(len(report["tests"]["results"]), 9)
         self.assertFalse(self.runtime.pulled)
 
-    def test_role_preparation_exports_only_selected_ids_and_contract(self):
+    def test_role_preparation_exports_only_selected_tags_and_contract(self):
         github_env = self.root / "github-env"
         self.assertEqual(self.invoke(["--layout", "roles", "--prepare-only",
                                       "--roles", "essential,client", "--github-env", str(github_env)]), 0)
@@ -148,12 +150,13 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(report["preparation_passed"])
         self.assertEqual(report["runtime_result"], "not_run")
         self.assertIsNone(self.runtime.make_environment)
-        # The role tags are prepared as tags; the resolved identity of each
-        # is what the summary records next to it.
-        self.assertEqual({role: item["reference"] for role, item in report["images"].items()},
-                         {role: runner.role_tag("official", "20.2.4", role) for role in ("essential", "client")})
-        self.assertTrue(all(runner.IMAGE_ID.fullmatch(item["image_id"]) and item["repo_digests"]
-                            for item in report["images"].values()))
+        # The role tags are prepared and exported as tags; what the engine
+        # reported for each is recorded next to it and is no input.
+        tags = {role: runner.role_tag("official", "20.2.4", role) for role in ("essential", "client")}
+        self.assertEqual({role: item["reference"] for role, item in report["images"].items()}, tags)
+        self.assertEqual(prepared, {"CEPH_TEST_ESSENTIAL_IMAGE": tags["essential"], "CEPH_TEST_CLIENT_IMAGE": tags["client"]})
+        self.assertTrue(all(item["image_id"] and item["repo_digests"] for item in report["images"].values()))
+        self.assertNotIn("pinned_digests", report)
 
     def test_all_six_reference_mappings(self):
         for variant in ("official", "debian", "ubuntu"):
@@ -168,7 +171,7 @@ class MatrixTests(unittest.TestCase):
                         for role, reference in refs.items():
                             self.assertEqual(reference, runner.REGISTRY + ":" + variant + "-20.2.4-" + role)
 
-    def test_roles_freeze_five_role_ids(self):
+    def test_roles_run_the_five_role_tags(self):
         self.assertEqual(self.invoke(["--variant", "official", "--layout", "roles", "--platform", "linux/arm64"],
                                      env={"MAKEFLAGS": "-n OTHER=wrong", "MFLAGS": "-s", "GNUMAKEFLAGS": "-n",
                                           "MAKEFILES": "/unrelated/makefile", "MAKEOVERRIDES": "CEPH_TEST_ESSENTIAL_IMAGE=other",
@@ -179,7 +182,8 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(report["images"]), 5)
         self.assertEqual(len([command for command in self.runtime.capture_commands if command[1:3] == ["image", "inspect"]]), 5)
         for role in tuple(runner.ROLE_ENV):
-            self.assertEqual(self.runtime.make_environment[runner.ROLE_ENV[role]], report["images"][role]["image_id"])
+            self.assertEqual(self.runtime.make_environment[runner.ROLE_ENV[role]], runner.role_tag("official", "20.2.4", role))
+            self.assertEqual(report["images"][role]["reference"], runner.role_tag("official", "20.2.4", role))
         self.assertEqual(self.runtime.make_environment["CGO_ENABLED"], "0")
         self.assertEqual(self.runtime.make_environment["GOWORK"], "off")
         self.assertEqual(self.runtime.make_environment["GOFLAGS"], "-mod=readonly")
@@ -190,7 +194,7 @@ class MatrixTests(unittest.TestCase):
             self.assertNotIn(name, self.runtime.make_environment)
         self.assertFalse(any(runner.DEFAULT_IMAGE in command for command in self.runtime.capture_commands))
 
-    def test_prepare_roles_exports_only_selected_ids_after_all_images_validate(self):
+    def test_prepare_roles_exports_only_selected_tags_after_all_images_validate(self):
         env_file = self.write("github-env", "EXISTING=keep\n")
         self.runtime.info["ID"] = "native-engine"
         self.runtime.go_code = 9
@@ -226,7 +230,7 @@ class MatrixTests(unittest.TestCase):
         self.assertFalse(self.runtime.stream_commands)
         self.assertIsNone(self.runtime.make_environment)
         self.assertFalse((self.output / "integration.log").exists())
-        expected = {runner.ROLE_ENV[role]: image["image_id"] for role, image in report["images"].items()}
+        expected = {runner.ROLE_ENV[role]: image["reference"] for role, image in report["images"].items()}
         lines = env_file.read_text().splitlines()
         self.assertEqual(lines[0], "EXISTING=keep")
         self.assertEqual(dict(line.split("=", 1) for line in lines[1:]), expected)
@@ -285,7 +289,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual([command[-1] for command in self.runtime.capture_commands
                           if command[1:3] == ["image", "inspect"]], [essential])
         self.assertFalse(self.runtime.stream_commands)
-        self.assertEqual(env_file.read_text(), "EXISTING=keep\nCEPH_TEST_ESSENTIAL_IMAGE=" + report["images"]["essential"]["image_id"] + "\n")
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\nCEPH_TEST_ESSENTIAL_IMAGE=" + runner.role_tag("official", "20.2.4", "essential") + "\n")
         self.assertEqual(report["github_env"]["appended_keys"], ["CEPH_TEST_ESSENTIAL_IMAGE"])
 
     def test_declared_roles_keep_their_order_and_fail_on_a_required_image(self):
@@ -314,8 +318,8 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(report["roles"], ["essential", "client", "mgr-modules"])
         self.assertEqual(list(report["prepared_environment"]),
                          ["CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_MGR_MODULES_IMAGE"])
-        self.assertEqual(report["prepared_environment"]["CEPH_TEST_MGR_MODULES_IMAGE"], report["images"]["mgr-modules"]["image_id"])
-        self.assertTrue(env_file.read_text().endswith("CEPH_TEST_MGR_MODULES_IMAGE=" + report["images"]["mgr-modules"]["image_id"] + "\n"))
+        self.assertEqual(report["prepared_environment"]["CEPH_TEST_MGR_MODULES_IMAGE"], runner.role_tag("official", "20.2.4", "mgr-modules"))
+        self.assertTrue(env_file.read_text().endswith("CEPH_TEST_MGR_MODULES_IMAGE=" + runner.role_tag("official", "20.2.4", "mgr-modules") + "\n"))
         # Only the official variant publishes it; another variant refuses the
         # declaration before it pulls anything.
         self.output = self.root / "artifacts" / "debian"
@@ -340,54 +344,18 @@ class MatrixTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.image_references("official", "all", "20.2.4", ("essential",))
 
-    def test_digest_pins_pull_the_pinned_manifest_of_each_role(self):
-        # A run resolves the role tags once, so that every job and attempt
-        # runs the same manifests even if a tag moves during the run.
-        essential, client = "sha256:" + "c" * 64, "sha256:" + "d" * 64
-        pinned = runner.REGISTRY + "@" + essential
-        self.runtime.missing.add(pinned)
-        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential",
-                                      "--digests", "essential=" + essential + ",client=" + client]), 0)
-        self.assertEqual(self.runtime.stream_commands, [["docker", "pull", "--platform", "linux/arm64", pinned]])
-        report = self.summary()
-        self.assertEqual(report["images"]["essential"]["reference"], pinned)
-        self.assertEqual(report["pinned_digests"], {"essential": essential, "client": client})
-        # Without pins the tags are pulled as before.
-        self.assertEqual(runner.pin_references({"essential": "r:t"}, {}), {"essential": "r:t"})
-
-    def test_a_prepared_role_without_a_pin_is_refused_before_any_pull(self):
-        # A run pins the roles its batches declare. A job that prepares a
-        # role outside those pins must not pull that role's tag next to the
-        # pinned ones: nothing is pulled and nothing is exported.
-        env_file = self.write("github-env", "")
-        pins = "essential=sha256:" + "c" * 64 + ",client=sha256:" + "d" * 64
-        self.runtime.missing |= {runner.role_tag("official", "20.2.4", "mgr-modules"),
-                                 runner.REGISTRY + "@sha256:" + "c" * 64, runner.REGISTRY + "@sha256:" + "d" * 64}
-        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "essential,client,mgr-modules",
-                                      "--digests", pins, "--github-env", str(env_file)]), 1)
-        report = self.summary()
-        self.assertIn("name no mgr-modules role", report["error"])
-        self.assertFalse(report["preparation_passed"])
-        self.assertEqual((self.runtime.stream_commands, report["images"], env_file.read_text()), ([], {}, ""))
-        with self.assertRaisesRegex(ValueError, "name no client,rgw role"):
-            runner.pin_references({"essential": "a", "client": "b", "rgw": "c"}, {"essential": "sha256:" + "c" * 64})
-
-    def test_digest_pins_are_validated_before_tools_or_output(self):
-        digest = "sha256:" + "e" * 64
-        for value in ("essential=" + digest[:-1], "unknown=" + digest, "essential=" + digest + ",essential=" + digest,
-                      "essential", "essential=sha512:" + "e" * 64):
-            with self.subTest(digests=value), self.assertRaises(SystemExit) as error:
-                self.invoke(["--prepare-only", "--layout", "roles", "--digests", value])
-            self.assertEqual(error.exception.code, 2)
-            self.assertFalse(self.output.exists())
-            self.assertFalse(self.runtime.capture_commands)
-        with self.assertRaises(SystemExit):
-            self.invoke(["--prepare-only", "--layout", "all", "--digests", "essential=" + digest])
-        self.assertEqual(runner.parse_digests(""), {})
+    def test_a_digest_option_is_not_accepted(self):
+        # The run prepares the role tags; there is no option that replaces
+        # them by digests, so a caller that still passes one is told at once.
+        with self.assertRaises(SystemExit) as error:
+            self.invoke(["--prepare-only", "--layout", "roles", "--digests", "essential=sha256:" + "e" * 64])
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.runtime.capture_commands)
 
     def test_export_requires_exactly_the_declared_roles(self):
         env_file = self.write("github-env", "EXISTING=keep\n")
-        image = "sha256:" + "a" * 64
+        image = runner.role_tag("official", "20.2.4", "essential")
         four = {name: image for name in runner.ROLE_ENV.values()}
         for environment, roles in ((four, ("essential",)), ({}, ("essential",)),
                                    ({"CEPH_TEST_CLIENT_IMAGE": image}, ("client",)),
@@ -424,12 +392,14 @@ class MatrixTests(unittest.TestCase):
         self.assertNotIn("github_env", self.summary())
         self.assertEqual(len(set(self.summary()["prepared_environment"].values())), 1)
 
-    def test_export_rejects_other_keys_or_nonimmutable_values_without_appending(self):
+    def test_export_rejects_other_keys_or_unusable_values_without_appending(self):
         env_file = self.write("github-env", "EXISTING=keep\n")
-        valid = {name: "sha256:" + "a" * 64 for name in runner.ROLE_ENV.values()}
+        valid = {name: runner.role_tag("official", "20.2.4", role) for role, name in runner.ROLE_ENV.items()}
         invalid = [valid | {"GOFLAGS": "-overlay=unrelated"},
                    {key: value for key, value in valid.items() if key != "CEPH_TEST_CEPHFS_IMAGE"},
-                   valid | {"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:" + "a" * 64 + "\nOTHER=bad"},
+                   valid | {"CEPH_TEST_ESSENTIAL_IMAGE": valid["CEPH_TEST_ESSENTIAL_IMAGE"] + "\nOTHER=bad"},
+                   valid | {"CEPH_TEST_ESSENTIAL_IMAGE": "a tag"},
+                   valid | {"CEPH_TEST_ESSENTIAL_IMAGE": ""},
                    valid | {"CEPH_TEST_ESSENTIAL_IMAGE": None}]
         for environment in invalid:
             with self.subTest(environment=environment), self.assertRaises(RuntimeError):
@@ -679,7 +649,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(runner.DEFAULT_IMAGE, runner.REGISTRY + ":official-" + runner.RELEASE + "-all")
         for release, official in runner.RELEASES.items():
             with self.subTest(release=release):
-                self.assertRegex(official, r"^quay\.io/ceph/ceph:v" + re.escape(release) + r"@sha256:[0-9a-f]{64}$")
+                self.assertEqual(official, "quay.io/ceph/ceph:v" + release)
                 self.assertEqual(runner.image_references("official", "all", release),
                                  {"all": runner.REGISTRY + ":official-" + release + "-all"})
                 self.assertEqual(runner.image_references("ubuntu", "roles", release)["essential"],
@@ -700,16 +670,12 @@ class RoleSelectionTests(unittest.TestCase):
                 self.assertEqual(runner.image_references(variant, "all", release),
                                  {"all": runner.role_tag(variant, release, "all")})
                 # No reference of the matrix names a digest: a rebuild under
-                # the tag needs no change here. Only a run's own pins do.
+                # the tag needs no change here.
                 for reference in list(refs.values()) + [runner.role_tag(variant, release, "all")]:
                     self.assertRegex(reference, tag)
                     self.assertIn(reference, runner.published_references())
-                override = "sha256:" + "f" * 64
-                pins = {role: override for role in refs} | {"mgr-modules": override}
-                self.assertEqual(runner.pin_references(refs, pins),
-                                 {role: runner.REGISTRY + "@" + override for role in refs})
-                with self.assertRaisesRegex(ValueError, "refusing to pull an unpinned tag"):
-                    runner.pin_references(refs, {"essential": override})
+            # The unmodified official image of a release is its upstream tag.
+            self.assertEqual(runner.RELEASES[release], "quay.io/ceph/ceph:v" + release)
 
     def test_no_script_or_workflow_reads_a_checked_in_role_digest_map(self):
         root = SCRIPT.parents[2]
@@ -744,13 +710,19 @@ class RoleSelectionTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 runner.parse_arguments(["--layout","roles","--prepare-only","--roles",roles])
 
-    def test_prepared_environment_has_exactly_selected_ids(self):
+    def test_prepared_environment_has_exactly_the_selected_roles(self):
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)/"github-env"
-            env={"CEPH_TEST_ESSENTIAL_IMAGE":"sha256:"+"1"*64,"CEPH_TEST_CLIENT_IMAGE":"sha256:"+"2"*64}
+            env={"CEPH_TEST_ESSENTIAL_IMAGE":runner.role_tag("official","20.2.4","essential"),"CEPH_TEST_CLIENT_IMAGE":runner.role_tag("official","20.2.4","client")}
             runner.append_role_environment(output,env,("essential","client"))
             before=output.read_bytes()
-            for change in ({"CEPH_TEST_CLIENT_IMAGE":"mutable:tag"},{"CEPH_TEST_CEPHFS_IMAGE":"sha256:"+"3"*64}):
+            # A reference a caller supplies passes as it is, a digest
+            # reference or a local image ID included; an absent value or
+            # an undeclared role does not.
+            for value in ("registry.example/ceph@sha256:"+"3"*64,"sha256:"+"3"*64,"local:build"):
+                runner.append_role_environment(Path(directory)/"other-env",env|{"CEPH_TEST_CLIENT_IMAGE":value},("essential","client"))
+                self.assertIn("CEPH_TEST_CLIENT_IMAGE="+value+"\n",(Path(directory)/"other-env").read_text())
+            for change in ({"CEPH_TEST_CLIENT_IMAGE":""},{"CEPH_TEST_CEPHFS_IMAGE":runner.role_tag("official","20.2.4","cephfs")}):
                 with self.assertRaises(RuntimeError):runner.append_role_environment(output,env|change,("essential","client"))
                 self.assertEqual(output.read_bytes(),before)
 
