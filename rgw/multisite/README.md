@@ -207,8 +207,10 @@ period. `IncrementalSync` and `SyncLeasePeriod` are independent.
   reliable effect, and S3 `PutBucketReplication` rejects account-owned requests
   with `NotImplemented`. IAM non-root principals and cross-account or
   cross-tenant principal translation are refused by the helpers.
-- Releases: Tentacle 20.2.4 is the default. On Squid use 19.2.5 (19.2.6 cannot
-  set up multisite); Squid replicates nothing for a user-mode pipe with an
+- Releases: Tentacle 20.2.4 is the default. On Squid use 19.2.5; 19.2.6
+  cannot start a secondary zone (see
+  [Known release issues](../../docs/guides/known-release-issues.md#a-secondary-zone-cannot-pull-the-realm-on-squid-1926)).
+  Squid replicates nothing for a user-mode pipe with an
   account root user, which `CreatePipe` refuses with `ceph.ErrUnsupported`.
 - Out of scope: automatic failover, request routing between zones, recovery
   point guarantees and realistic WAN models. A zone link can still be delayed

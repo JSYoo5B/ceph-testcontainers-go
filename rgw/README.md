@@ -105,8 +105,8 @@ recovery need the default two OSDs or more.
   contain `radosgw` and `radosgw-admin` (`Gateway.Admin` runs inside the
   gateway). Keep every role on the same Ceph
   release and architecture. `ceph.DefaultImage` is Tentacle 20.2.4; Squid
-  19.2.5 is supported (use 19.2.5, not 19.2.6, for multisite). See
-  [Releases and images](../docs/guides/releases-and-images.md).
+  19.2.5 is supported. See
+  [Releases and images](../docs/guides/releases-and-images.md#supported-releases).
 - Identities belong to the cluster and scope that created them, not to one
   gateway: user handles, and the account and placement handles of the feature
   packages, run through any running gateway of their scope, and a gateway can

@@ -135,10 +135,9 @@ func WithTopology(config TopologyConfig) Option {
 // WithConfig creates one ordinary S3 test user on the master; both gateways
 // expose its keys in AccessKey and SecretKey, and their Region is the zonegroup
 // name. The two-zone setup, and each further WithTopology zone, is bounded by
-// six minutes in addition to ctx. On Ceph 19, 19.2.6
-// cannot set up multisite: the master gateway rejects realm pull from a
-// secondary with HTTP 403 ("'x-amz-content-sha256' supplied, but not in
-// CanonicalHeaders"), and no setting disables the check; use 19.2.5.
+// six minutes in addition to ctx. A secondary zone cannot start on Ceph
+// 19.2.6, whose master gateway refuses its realm pull; use 19.2.5 (see the
+// known release issues in docs/guides/known-release-issues.md).
 //
 // Timing.IncrementalSync fixes qualified idle polling for each owned gateway
 // from startup, including subsequently added zones. It is qualified only for

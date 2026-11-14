@@ -51,18 +51,35 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 | Release | Status | Tested image |
 | --- | --- | --- |
 | Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate that `ceph.DefaultImage` names, and the `official-20.2.4-<role>` role tags |
-| Umbrella 21.2.x | Periodic CI on 21.2.0, with the issues listed below; the default remains Tentacle | Published official role images, the `official-21.2.0-<role>` tags; official amd64 requires x86-64-v3 |
-| Squid 19.2.x | Supported, with the differences listed below | Published official role images, the `official-19.2.5-<role>` tags; the upstream image is `quay.io/ceph/ceph:v19.2.5` |
+| Umbrella 21.2.x | Periodic CI on 21.2.0, with the [known issues](known-release-issues.md) of that release; the default remains Tentacle | Published official role images, the `official-21.2.0-<role>` tags; official amd64 requires x86-64-v3 |
+| Squid 19.2.x | Supported on 19.2.5, with the [differences](#behaviour-that-differs-on-squid) listed below | Published official role images, the `official-19.2.5-<role>` tags; the upstream image is `quay.io/ceph/ceph:v19.2.5` |
 
-Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
-[Known release issues](known-release-issues.md#a-secondary-zone-cannot-pull-the-realm-on-squid-1926).
-Tentacle releases before 20.2.4 have no `aes256k` Cephx keys; see
-[Known release issues](known-release-issues.md#cephx-key-types-before-tentacle-2024).
-The repository's continuous integration runs its test suites on all three
-releases; see [CI](../contributing/ci.md). Native defects of particular
-releases, and limits shared across releases such as a daemon stranded
-without a MON session after its ticket expired, are listed by service in
-[Known release issues](known-release-issues.md).
+Support is established on the patch each row names: the repository's
+continuous integration runs its test suites on 20.2.4, 21.2.0 and 19.2.5 (see
+[Supported releases](../contributing/ci.md#supported-releases) in the CI
+guide). Another patch of the same release is expected to behave the same, but
+only what has been run on it is known:
+
+- Squid 19.2.6: RGW multisite cannot start, because the master gateway
+  refuses a secondary zone's `realm pull`; see
+  [Known release issues](known-release-issues.md#a-secondary-zone-cannot-pull-the-realm-on-squid-1926),
+  which holds the guidance. When Periodic `discovery` draws 19.2.6, it runs
+  `TestMultiClusterRGWMultisite` there as a control next to its sampled core
+  tests. The CephFS entries of the known issues that name 19.2.6
+  were run on it and behaved as on 19.2.5. Nothing else of the fixture has
+  been run on 19.2.6, so its other behaviour is untested.
+- Tentacle 20.2.0 to 20.2.3 have no `aes256k` Cephx keys; see
+  [Known release issues](known-release-issues.md#cephx-key-types-before-tentacle-2024).
+  The key-type tests run the official 20.2.3 image.
+- Other patches, such as Tentacle 20.2.5 and Squid 19.2.7, appear as fixed or
+  affected releases in the known issues and the experiment cases, and
+  Periodic `discovery` can sample a few core tests on them (see
+  [Periodic runs](../contributing/ci.md#periodic-runs)). A sample is not
+  support.
+
+Native defects of particular releases, and limits shared across releases
+such as a daemon stranded without a MON session after its ticket expired, are
+listed by service in [Known release issues](known-release-issues.md).
 
 To run against Squid, pass a Squid image to `Run`:
 
@@ -93,9 +110,10 @@ that outcome instead of skipping on the version string; see
   `ceph version <major>.<minor>.<patch> ...`. The image requirements demand this
   output.
 - Combine only images of the same release in one cluster. Mixing releases is
-  not supported: the fixture chooses command forms from the essential image and the client toolkit
-  alone. The one exception that has been run is the forward
-  [rolling upgrade from Squid to Tentacle](#rolling-upgrade-from-squid-to-tentacle).
+  not supported: the fixture chooses command forms from the essential image
+  and the client toolkit alone. A run that mixes releases establishes only
+  what it observed for its roles and pairing; see
+  [Mixed-release runs](#mixed-release-runs).
 
 ## Behavioral bug compatibility policy
 
@@ -349,8 +367,9 @@ Read this scope before relying on it:
 - The release check of a separately started client container still compares
   with `CephVersion` and is unchanged.
 - Nothing checks that the image exists, has the daemon binary, or is
-  compatible with the running cluster. See the next section for the one
-  release transition that has been run.
+  compatible with the running cluster. See
+  [Mixed-release runs](#mixed-release-runs) for the pairings that have been
+  run.
 
 ## Rolling upgrade from Squid to Tentacle
 
@@ -380,7 +399,7 @@ What stays on the source release: `ClusterFacts.CephVersion`, the fixture's
 Ceph CLI in the control container and the client toolkit. Command forms are
 chosen from them, so the fixture keeps using Squid command forms against the
 upgraded daemons. Mixing releases is therefore still not a general contract:
-this is one pair, run forward only. Downgrade is not attempted.
+this upgrade is one pair, run forward only. Downgrade is not attempted.
 
 ### An interrupted upgrade, resumed
 
@@ -399,6 +418,26 @@ addresses (on the host network, their ports) are the ones the Squid cluster
 started with, and the layout is all Tentacle. The monmap epoch moves once, when
 the last MON runs Tentacle and the MONs commit `min_mon_release`. A stopped step never needs anything but the call that failed:
 the retained store and the returned handle are enough to continue.
+
+## Mixed-release runs
+
+The module supports clusters whose roles all run one release. Two kinds of
+run have mixed releases, and each establishes only what it observed:
+
+| Run | Roles and releases | What it established |
+| --- | --- | --- |
+| [Rolling upgrade from Squid to Tentacle](#rolling-upgrade-from-squid-to-tentacle) (`TestRollingUpgradeSquidToTentacle`, `TestRollingUpgradeResumesAfterInterruptions`) | MONs, MGR and OSDs moved one at a time from 19.2.5 to 20.2.4; the fixture's CLI and client toolkit stay on 19.2.5 | Acknowledged writes read back and new writes are acknowledged after every step, and an interrupted upgrade resumes forward |
+| RGW incremental sync timing profile (`TestRGWTopologyStartupTimingEffectiveValues`, `TestRGWStartupPollTimingProfile`) | 19.2.5 essential and client role images with a 20.2.4 rgw image | `TimingProfile.IncrementalSync` is accepted because the gateway's `radosgw` is 20.2.4, although the cluster reports 19.2.5, and its effective values reach the gateways. In the same run the workload of `TestRGWStartupPollTimingProfile` failed afterwards: a second PUT of an object answered 403 `AccessDenied` on this pair |
+
+The reverse pairing, a 20.2.4 cluster with a 19.2.5 rgw image, does not
+start: `multisite.Run` fails before any gateway starts, because the 19.2.5
+`radosgw-admin` cannot fetch the MON configuration of the 20.2.4 cluster. So
+the refusal of the timing profile for a gateway other than 20.2.4 was not
+reached natively. It is checked only by the Docker-free
+`TestPollTimingProfileOutcomeFollowsTheGatewayBinary`, which judges the
+outcome from the release the gateway's `radosgw` reports.
+
+Neither run makes another pairing, another role or a downgrade supported.
 
 ## Related APIs
 

@@ -305,10 +305,10 @@ CEPH_TEST_CLIENT_IMAGE=registry.example.com/ceph:client \
 ```
 
 Tentacle 20.2.x is the default. For Squid, set
-`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5`. Do not use 19.2.6: its master
-gateway rejects the secondary zone's `radosgw-admin realm pull` with HTTP 403,
-so RGW multisite scenarios cannot start. See
-[Releases and images](../guides/releases-and-images.md).
+`CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5`, the patch CI runs; other patches
+are covered only as far as
+[Supported releases](../guides/releases-and-images.md#supported-releases)
+says (RGW multisite cannot start on 19.2.6).
 
 `scenario-default` and `scenario` default to `SCENARIO_IMAGE_LAYOUT=all`, which unsets
 the role variables and runs `ceph.DefaultImage` even if `CEPH_TEST_IMAGE` is
