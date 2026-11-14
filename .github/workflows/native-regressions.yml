@@ -15,6 +15,7 @@ on:
           - cephfs_readdir_after_snapdiff
           - cephfs_statfs_mixed_quota
           - cephfs_snapshot_readdir_eviction
+          - mgr_pg_merge_primary_override
           - mon_log_ack
           - rbd_demote_restart
           - rbd_group_snap_late_complete
@@ -26,6 +27,7 @@ on:
           - rgw_compressed_copy
           - rgw_multipart_part_class
           - rgw_object_lock_sync
+          - rgw_slo_head_segment_reads
           - rgw_sync_lease_lapse
           - failure_archive
       rgw_image:

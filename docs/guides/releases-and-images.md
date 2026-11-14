@@ -261,6 +261,16 @@ These affect commands or client libraries you run yourself, not the typed API:
   `TestMultiClusterRGWBucketObjectLockSync` (batch `rgw_object_lock_sync`,
   experiment case
   [`rgw_multisite_object_lock_sync`](../../internal/integration/experiments/rgw_multisite_object_lock_sync/README.md)).
+- **Every release, HEAD of a Swift static large object.** A plain HEAD of an
+  SLO, without a range, makes the gateway read the whole payload of every
+  segment from RADOS and discard it: the OSD returns as many bytes as for a
+  full GET of the object. A HEAD of a dynamic large object, of an S3 single
+  PUT and of an S3 multipart upload reads only the attributes of the head
+  object. Squid 19.2.5, Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0 do
+  this. A test that counts OSD reads or bytes around a HEAD must not use an
+  SLO as its large object. See `TestRGWSLOHeadSegmentReads` (batch
+  `rgw_slo_head_segment_reads`, experiment case
+  [`rgw_slo_head_segment_reads`](../../internal/integration/experiments/rgw_slo_head_segment_reads/README.md)).
 - **Tentacle 20.2.4, `radosgw-admin role list` beyond 100 roles.** With more
   than 100 roles the command never ends: it repeats the same roles and its
   output grows without bound (more than 13 GB in 60 seconds with 105 roles).
@@ -315,6 +325,18 @@ These affect commands or client libraries you run yourself, not the typed API:
   group exists (`rbd group ls`) before listing its snapshots from Python on
   20.2.4, or run the listing in a child process. The module does not list the
   snapshots of a missing group.
+- **Squid 19.2.5 and Tentacle 20.2.4, PG merge with a primary override.** A reduction of a
+  pool's PG count (`Pool.SetPGCount`) never starts a merge while a merge
+  participant has a `pg-upmap-primary` entry (`Pool.OverridePGPrimary`, or
+  the read balancer) that gives it another primary than the other
+  participant has: the pool stays at its old `pg_num` with both PGs active
+  and clean, and `Pool.WaitForPGCount` runs into its deadline. The manager
+  clears the upmap entries of merge participants but not their primary
+  overrides. Tentacle 20.2.5 and Umbrella 21.2.0 remove every primary override of the pool and
+  merge; overrides of other pools stay. Restore the override before the
+  reduction. See `TestPGMergeWithPrimaryOverride` (batch
+  `mgr_pg_merge_primary_override`, experiment case
+  [`mgr_pg_merge_primary_override`](../../internal/integration/experiments/mgr_pg_merge_primary_override/README.md)).
 - **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
   releases generate only `aes` keys, as Squid does. `ceph.WithAuth` and

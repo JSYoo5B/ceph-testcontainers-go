@@ -920,14 +920,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "cephfs_mirror_blockdiff_empty",
                                            "cephfs_readdir_after_snapdiff",
                                            "cephfs_snapshot_readdir_eviction", "cephfs_statfs_mixed_quota",
-                                           "failure_archive", "mon_log_ack", "native_rgw_translation",
+                                           "failure_archive", "mgr_pg_merge_primary_override",
+                                           "mon_log_ack", "native_rgw_translation",
                                            "native_shuffle", "rbd_demote_restart",
                                            "rbd_group_snap_late_complete",
                                            "rbd_trash_purge_timezone",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_expiration_header",
                                            "rgw_multipart_part_class", "rgw_object_lock_sync",
-                                           "rgw_ssec_completion",
+                                           "rgw_slo_head_segment_reads", "rgw_ssec_completion",
                                            "rgw_sync_lease_lapse"])
         # Every choice is an optional profile that no required plan selects;
         # the reproducers among them compile only with native_regression.
