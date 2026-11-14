@@ -161,6 +161,9 @@ Consequences:
 
 ## Code checks
 
+The local commands for these jobs are in
+[Local checks without Docker](testing.md#local-checks-without-docker).
+
 | Job | Timeout | Runs |
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |

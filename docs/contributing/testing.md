@@ -28,15 +28,27 @@ fails instead of passing. An `Example...` that starts a cluster has no
 
 ## Prerequisites
 
-- Go 1.26 or later. `go.mod`'s `toolchain go1.26.10` line switches older 1.26
-  patches to 1.26.10, which `make vulncheck` needs.
+The checks without Docker need:
+
+- GNU make (or a compatible `make`).
+- Go 1.21 or newer. It downloads the `toolchain` that [go.mod](../../go.mod)
+  names (go1.26.10, which `make vulncheck` needs) when the installed one is
+  older, unless `GOTOOLCHAIN=local` is set.
+- A C toolchain that cgo can use (`gcc` or `clang` as `CC`) on a platform the
+  race detector supports, such as linux/amd64, linux/arm64, darwin/amd64 or
+  darwin/arm64. Only `make race`, which `make check` runs, needs it: it sets
+  `CGO_ENABLED=1`, and every other target builds with `CGO_ENABLED=0`.
+- Python 3.9 or later for `.github/scripts`.
+- [golangci-lint](https://golangci-lint.run/) v2, at the version that the
+  Code checks workflow pins (`.github/workflows/code.yml`, also named in the
+  Makefile's `lint` comment).
+
+Integration tests also need:
+
 - A Docker engine for Linux containers that testcontainers-go can reach, with
   pull access to `ghcr.io/jsyoo5b/ceph-testcontainers-images` (the default
   image and the role images), `quay.io/ceph/ceph` for official or Squid
   images, and the Ryuk image.
-- A C toolchain for `make race` only. Every other target builds with
-  `CGO_ENABLED=0`.
-- Python 3.9 or later for `.github/scripts`.
 - The suite is sized for a 4 GiB Docker VM. Tests run one at a time unless
   `CEPH_TEST_PARALLEL` is set (see
   [Running tests in parallel](#running-tests-in-parallel)).
@@ -74,17 +86,45 @@ setting. Building a module for the Desktop kernel needs matching kernel headers,
 which are not published for every Desktop release; it is not a supported
 setup.
 
-## Host checks: unit tests, race detector, vet
+## Local checks without Docker
+
+These start no container. Run them before pushing; together they cover the
+Docker-free jobs of [Code checks](ci.md#code-checks):
+
+```sh
+make check        # make test, make race, make vet and make tag-compile
+make lint         # golangci-lint with the build tags listed in .golangci.yml, as Code checks runs it
+golangci-lint run --build-tags all ./...   # lint of the plain all build alone
+python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+python3 -m unittest discover -s internal/integration/goceph -p test_run.py
+python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
+```
+
+The separate targets of `make check`:
 
 ```sh
 make test         # CGO_ENABLED=0 go test -mod=readonly ./...
 make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
 make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
 make tag-compile  # test-only-code and test-double checks, then compile the tag unions below
-make check        # all four of the above; never starts Docker
-make lint         # golangci-lint with the build tags listed in .golangci.yml
 make vulncheck    # govulncheck on every scanned platform and tag set
 ```
+
+Some changes need more:
+
+- A public API change: regenerate and approve its catalogue and run
+  `go run ./internal/tools/apinaming check` (see
+  [Package layout and the export inventory](#package-layout-and-the-export-inventory)).
+- A change under `.github/workflows`: run actionlint as Code checks does:
+
+  ```sh
+  go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+    -shellcheck= -pyflakes= -ignore 'property "check_run_id" is not defined'
+  ```
+
+- A change to what a fixture does to a cluster or observes: an integration
+  run of the affected tests (see
+  [Running integration tests](#running-integration-tests)).
 
 `make test`, `make race` and `make vet` see only untagged files.
 `make tag-compile` compiles (`-run '^$'`, nothing executes) the module with
@@ -94,17 +134,10 @@ Files gated on `integration && ... && ci_optional && ci_batch_<name>` (most
 optional batches, the role-image batches included) are not in these unions,
 because none of them sets `integration` together with a batch tag, and
 `make lint` does not see them either.
-`make tag-compile` cannot check every CI batch's helper dependencies; use
-[`plan --verify`](#verify-batch-profiles-before-pushing), which compiles every
-required and optional profile. See
+`make tag-compile` cannot check every CI batch's helper dependencies;
+[`plan --verify`](#verify-batch-profiles-before-pushing) compiles every
+required and optional profile, which takes several minutes. See
 [Vulnerability check](ci.md#vulnerability-check) for the `vulncheck` policy.
-
-The CI tooling tests:
-
-```sh
-python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
-python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
-```
 
 ## Build tags
 

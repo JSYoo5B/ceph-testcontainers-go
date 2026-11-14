@@ -24,8 +24,8 @@ ceph-testcontainers-images.
    the module pages and README links together, and state the Go minimum
    separately from this repository's toolchain and native clients' platform
    requirements.
-3. Run the Docker-free checks in [Testing](testing.md): `make check` and
-   `make lint`, plus the Python CI-tooling tests. Check local Markdown links
+3. Run the [local checks without Docker](testing.md#local-checks-without-docker)
+   of the testing guide. Check local Markdown links
    and compile new examples. Compilation is not a native run.
 4. Reuse independently verified CI at the candidate's exact SHA: the six
    required status contexts, which are the jobs of the Code checks workflow

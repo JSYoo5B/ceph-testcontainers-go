@@ -39,32 +39,18 @@ Before writing code, read:
 
 ## First checks, without Docker
 
-These start no container. They need:
-
-- GNU make (or a compatible `make`);
-- Go 1.21 or newer, which downloads the `toolchain` version that
-  [go.mod](go.mod) names when the installed one is older (unless
-  `GOTOOLCHAIN=local` is set);
-- a C toolchain that cgo can use (`gcc` or `clang` as `CC`) on a platform the
-  race detector supports, such as linux/amd64, linux/arm64, darwin/amd64 or
-  darwin/arm64: `make check` runs `make race`, which sets `CGO_ENABLED=1` and
-  fails to build `runtime/cgo` without it;
-- Python 3;
-- [golangci-lint](https://golangci-lint.run/) v2, at the version the Code
-  checks workflow pins (`.github/workflows/code.yml`).
+With Go, make, a C toolchain for the race detector and Python 3 installed:
 
 ```sh
 make check   # unit tests, race detector, vet and tagged compilation
-make lint
-golangci-lint run --build-tags all ./...
-python3 -m unittest discover -s .github/scripts -p 'test_*.py'
-python3 .github/scripts/tag_scenarios.py plan --verify
 ```
 
-A change to the public API also regenerates and approves its catalogue and
-passes `go run ./internal/tools/apinaming check`; see
-[Testing](docs/contributing/testing.md#package-layout-and-the-export-inventory).
-The exact list CI enforces is in [CI](docs/contributing/ci.md).
+This starts no container. Before pushing, run the complete list in
+[Local checks without Docker](docs/contributing/testing.md#local-checks-without-docker),
+which also names the prerequisites: lint (with the `.golangci.yml` tags and
+with `all` alone), the CI tooling tests and the batch profile verification.
+A public API change also regenerates and approves its catalogue, and a
+workflow change runs actionlint; the same section says how.
 
 These checks do not show that a fixture works against a real Ceph cluster.
 
