@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       batch:
-        description: 'Optional batch: an upstream reproducer (its pass or failure only; Experiments checks the result), or the failure-archive proof'
+        description: 'Optional batch: a native experiment or the failure-archive proof; Experiments checks known-defect results'
         type: choice
         default: native_rgw_translation
         options:
@@ -27,8 +27,11 @@ on:
           - rgw_conditional_writes
           - rgw_ssec_completion
           - rgw_empty_sse_header
+          - rgw_encrypted_multipart_transition
           - rgw_expiration_header
           - rgw_compressed_copy
+          - rgw_legacy_replication_destination
+          - rgw_multipart_completion_replay_etag
           - rgw_multipart_part_class
           - rgw_object_lock_sync
           - rgw_post_usage_bytes_received

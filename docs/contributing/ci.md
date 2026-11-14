@@ -18,7 +18,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
-| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `cephfs_mds_requests_json`, `rbd_group_image_namespace`, `rbd_group_snap_default_quiesce`, `rbd_perf_data_pool`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_post_usage_bytes_received`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`, `rgw_zonegroup_redirect_endpoint`) or the `failure_archive` proof |
+| Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `cephfs_mds_requests_json`, `rbd_group_image_namespace`, `rbd_group_snap_default_quiesce`, `rbd_perf_data_pool`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_legacy_replication_destination`, `rgw_multipart_completion_replay_etag`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_post_usage_bytes_received`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`, `rgw_zonegroup_redirect_endpoint`), the `rgw_encrypted_multipart_transition` integrity check, or the `failure_archive` proof |
 | Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
@@ -947,6 +947,10 @@ that reproduce an upstream defect on their default image:
 ([`rgw_ssec_multipart_completion`](../../internal/integration/experiments/rgw_ssec_multipart_completion/README.md)),
 `rgw_empty_sse_header`
 ([`rgw_empty_sse_header`](../../internal/integration/experiments/rgw_empty_sse_header/README.md)),
+`rgw_legacy_replication_destination`
+([`rgw_legacy_replication_destination`](../../internal/integration/experiments/rgw_legacy_replication_destination/README.md)),
+`rgw_multipart_completion_replay_etag`
+([`rgw_multipart_completion_replay_etag`](../../internal/integration/experiments/rgw_multipart_completion_replay_etag/README.md)),
 `rgw_expiration_header`
 ([`rgw_lifecycle_expiration_header`](../../internal/integration/experiments/rgw_lifecycle_expiration_header/README.md)),
 `rgw_compressed_copy`
@@ -1036,6 +1040,13 @@ fails naming it and never loads a module, except on a GitHub-hosted runner.
 Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
 (see [Testing](testing.md#one-ci-batch-exactly-as-ci-runs-it)).
 
+The optional [encrypted multipart transition check](../../internal/integration/experiments/rgw_encrypted_multipart_transition/README.md)
+compares full reads and reads across the part boundary against the original
+payload after a lifecycle storage-class change on 20.2.2 and 20.2.4. On
+20.2.1 it checks an unencrypted transition and an encrypted object retained
+in STANDARD. Run it from Native regressions
+with `batch=rgw_encrypted_multipart_transition`.
+
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
@@ -1049,6 +1060,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 
 | Case (batch) | Tier | Measured | Budget | Pull request | Comment | Periodic | Manual |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `rgw_multipart_completion_replay_etag` header and XML verdict tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `rgw_multisite_object_lock_sync` configuration reader and judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `mon_log_ack_peon` parser tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
 | `cephfs_dangling_symlink_create` judgement tests (`code/pure`) | Docker-free unit tests | under 1 s | 20m | Code checks, every change | no (code batch) | no | no |
@@ -1086,6 +1098,10 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 | `mgr_pg_merge_primary_override` (`optional/mgr_pg_merge_primary_override`) | known-defect reproducer, default 20.2.4; prints the result and passes; three OSDs, samples a blocked merge for two minutes | REPRODUCED 203 s; still REPRODUCED on 19.2.5 (210 s); 20.2.5 NOT_REPRODUCED 87 s, 21.2.0 80 s | 20m | never | `/ci run mgr_pg_merge_primary_override [on <release>]` | never | `Experiments`, `case=mgr_pg_merge_primary_override`; `batch=mgr_pg_merge_primary_override` |
 | `rgw_slo_head_segment_reads` (`optional/rgw_slo_head_segment_reads`) | known-defect reproducer, default 20.2.4; prints the result and passes; sets the OSD's op history and op tracker level | REPRODUCED 39 s; still REPRODUCED on 19.2.5 (43 s), 20.2.5 (40 s) and 21.2.0 (42 s), no fixed release | 20m | never | `/ci run rgw_slo_head_segment_reads [on <release>]` | never | `Experiments`, `case=rgw_slo_head_segment_reads`; `batch=rgw_slo_head_segment_reads` |
 | `rgw_post_usage_bytes_received` (`optional/rgw_post_usage_bytes_received`) | known-defect reproducer, default 20.2.4; prints the result and passes; enables the usage log | REPRODUCED 33 s; still REPRODUCED on 19.2.5 (39 s); 20.2.5 NOT_REPRODUCED 33 s, 21.2.0 34 s | 20m | never | `/ci run rgw_post_usage_bytes_received [on <release>]` | never | `Experiments`, `case=rgw_post_usage_bytes_received`; `batch=rgw_post_usage_bytes_received` |
+| `rgw_multipart_completion_replay_etag` (optional) | known-defect reproducer for replay ETags in the XML result and, when present on first completion, the HTTP header | 19.2.5 REPRODUCED, 20.2.4 NOT_REPRODUCED | 20m | never | `/ci run rgw_multipart_completion_replay_etag` | never | Experiments or Native regressions |
+| `rgw_legacy_replication_destination` (optional) | known-defect reproducer for reading a 19.2.5 policy | 20.2.2 reader REPRODUCED, 20.2.4 reader NOT_REPRODUCED | 20m | never | `/ci run rgw_legacy_replication_destination` | never | Experiments or Native regressions |
+| [`rgw_lifecycle_delete_marker`](../../internal/integration/experiments/rgw_lifecycle_delete_marker/README.md) (topology) | delete-marker removal and preservation controls | eligible marker removed on 20.2.2 and 20.2.4 | 15m | case changes or `ci:full` | `/ci run rgw_lifecycle_delete_marker [on <release>]` | eligible for rotation | targeted |
+| `rgw_encrypted_multipart_transition` (optional) | full and cross-part reads after an encrypted object transitions to COLD | 20.2.2 and 20.2.4 returned expected bytes after encrypted transition; 20.2.1 passed the separate encryption and transition controls | 20m | never | `/ci run rgw_encrypted_multipart_transition` | never | Native regressions |
 | `rgw_suspended_conditional_writes` (`optional/rgw_conditional_writes`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 35 s; 20.2.5 and 21.2.0 NOT_REPRODUCED 35 s | 20m | never | `/ci run rgw_conditional_writes [on umbrella]` | never | `Experiments`, `case=rgw_suspended_conditional_writes`; `batch=rgw_conditional_writes` |
 | `rgw_ssec_multipart_completion` (`optional/rgw_ssec_completion`) | known-defect reproducer, default 20.2.4; prints the result and passes; HTTPS | REPRODUCED 34 s; 21.2.0 NOT_REPRODUCED 32 s | 20m | never | `/ci run rgw_ssec_completion [on umbrella]` | never | `Experiments`, `case=rgw_ssec_multipart_completion`; `batch=rgw_ssec_completion` |
 | `rgw_empty_sse_header` (`optional/rgw_empty_sse_header`) | known-defect reproducer, default 20.2.4; prints the result and passes | REPRODUCED 31 s; 20.2.5 NOT_REPRODUCED 30 s | 20m | never | `/ci run rgw_empty_sse_header [on umbrella]` | never | `Experiments`, `case=rgw_empty_sse_header`; `batch=rgw_empty_sse_header` |
