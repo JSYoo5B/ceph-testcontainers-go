@@ -17,11 +17,11 @@ func TestTaggedRuntimeCachePolicyByCaller(t *testing.T) {
 		save any // Workflow inputs can be expressions or literal booleans.
 	}
 	expected := map[string]policy{
-		"ceph-short.yml/scenarios":         {directRef, directPolicy},
-		"ceph-arm64.yml/scenarios":         {directRef, directPolicy},
-		"ceph-periodic.yml/storage":        {"${{ inputs.ref || github.sha }}", directPolicy},
-		"ceph-periodic.yml/representative": {"${{ needs.pin.outputs.sha }}", "${{ needs.pin.outputs.sha == github.sha }}"},
-		"ci-command.yml/runtime":           {"${{ needs.command.outputs.sha }}", false},
+		"short.yml/scenarios":         {directRef, directPolicy},
+		"arm64.yml/scenarios":         {directRef, directPolicy},
+		"periodic.yml/storage":        {"${{ inputs.ref || github.sha }}", directPolicy},
+		"periodic.yml/representative": {"${{ needs.pin.outputs.sha }}", "${{ needs.pin.outputs.sha == github.sha }}"},
+		"ci-command.yml/runtime":      {"${{ needs.command.outputs.sha }}", false},
 	}
 
 	dir := filepath.Join("..", "..", "..", ".github", "workflows")

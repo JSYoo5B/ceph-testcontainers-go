@@ -759,7 +759,7 @@ RELEASE_SCOPES = ("all", "others")
 # Runner budgets, measured with ci_measurements.py (docs/contributing/ci.md,
 # "Runner budget"). A job that waited for a runner started when 39 of this
 # account's jobs ran, so 40 hosted jobs run at once. A pull request
-# execution keeps PULL_REQUEST_RUNNERS of them free, so Ceph periodic holds
+# execution keeps PULL_REQUEST_RUNNERS of them free, so Periodic holds
 # at most the rest: its release callers, its environment caller and its
 # representative campaign together. Each release caller's runtime matrix
 # runs at most its category's number of jobs at once. The split follows each
@@ -787,7 +787,7 @@ def release_matrix(scope, check_prefix, current=None):
     release and release-bound category.
 
     The supported releases are run_image_matrix.SUPPORTED_RELEASES, so a new
-    release is one row there. Scope all is Ceph periodic; scope others leaves
+    release is one row there. Scope all is Periodic; scope others leaves
     out the current release, which the pull request entry points already run.
     The environment category needs no Ceph release and stays a separate job.
     """
@@ -818,7 +818,7 @@ def runner_budget(entries):
 
 
 def periodic_runner_budget(entries, campaign=None, groups=None, storage=None):
-    """The runners that Ceph periodic holds at most at once, over all its
+    """The runners that Periodic holds at most at once, over all its
     concurrency groups, against those that pull requests leave.
 
     Each mode (the full matrix of release callers entries with the
@@ -842,7 +842,7 @@ def periodic_runner_budget(entries, campaign=None, groups=None, storage=None):
 
 def releases_report(plan, scope, check_prefix):
     """The release matrix of scope with proof that it keeps every required
-    cell: with the environment job of Ceph periodic, scope all must run each
+    cell: with the environment job of Periodic, scope all must run each
     required profile on every supported release exactly once."""
     entries = release_matrix(scope, check_prefix)
     releases = [release for release, _, _ in images.SUPPORTED_RELEASES

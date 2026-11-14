@@ -145,7 +145,7 @@ class GateTests(unittest.TestCase):
                            "GITHUB_SHA": HEAD, "GITHUB_OUTPUT": str(output), "PERIODIC_SCHEDULE": cron}
             with mock.patch.dict(os.environ, environment, clear=True), \
                     mock.patch.object(gate, "github") as calls, mock.patch("sys.stdout", new=io.StringIO()):
-                self.assertEqual(gate.main(["--workflow", "ceph-periodic.yml", "--campaign-schedule", cron]), 0)
+                self.assertEqual(gate.main(["--workflow", "periodic.yml", "--campaign-schedule", cron]), 0)
             calls.assert_not_called()
             self.assertEqual(output.read_text().splitlines(), ["run=false", "reason=campaign schedule", "campaign=true"])
 
@@ -153,7 +153,7 @@ class GateTests(unittest.TestCase):
         # An execution on the second page must still be found.
         first = [run(200 + i, HEAD, 1 + i) for i in range(100)]
         responses = {
-            "repos/o/r/actions/workflows/ceph-periodic.yml/runs?branch=main&per_page=100&created=%3E%3D2026-10-09T12:00:00Z":
+            "repos/o/r/actions/workflows/periodic.yml/runs?branch=main&per_page=100&created=%3E%3D2026-10-09T12:00:00Z":
                 [{"workflow_runs": [run(9, HEAD, 0, status="in_progress"), *first]},
                  {"workflow_runs": [run(3, HEAD, 120)]}],
             "repos/o/r/actions/runs/3/jobs?per_page=25&filter=latest": [{"jobs": PLANNED}, {"jobs": EXECUTED[2:]}],
@@ -174,7 +174,7 @@ class GateTests(unittest.TestCase):
                     mock.patch.object(gate.datetime, "datetime", wraps=datetime.datetime) as clock, \
                     mock.patch("sys.stdout", new=io.StringIO()):
                 clock.now.return_value = NOW
-                self.assertEqual(gate.main(["--workflow", "ceph-periodic.yml"]), 0)
+                self.assertEqual(gate.main(["--workflow", "periodic.yml"]), 0)
             self.assertEqual(output.read_text().splitlines()[0], "run=false")
             self.assertEqual(output.read_text().splitlines()[2], "campaign=false")
             self.assertNotIn("repos/o/r/actions/runs/9/jobs?per_page=25&filter=latest",
@@ -258,7 +258,7 @@ class ReaderTests(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True), \
                 mock.patch.object(gate, "github", side_effect=api), \
                 self.assertRaisesRegex(RuntimeError, "HTTP 502"):
-            gate.main(["--workflow", "ceph-periodic.yml"])
+            gate.main(["--workflow", "periodic.yml"])
 
 
 if __name__ == "__main__":

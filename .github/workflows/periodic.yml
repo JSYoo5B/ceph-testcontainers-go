@@ -1,4 +1,4 @@
-name: Ceph periodic
+name: Periodic
 
 # One daily allocation: random supported-release batches on
 # five days; historical/new patch discovery on Tuesday and Friday (UTC).
@@ -178,7 +178,7 @@ jobs:
           CI_RELEASE_PHASE: ${{ vars.CI_RELEASE_PHASE }}
           PERIODIC_SCHEDULE: ${{ github.event.schedule }}
           PERIODIC_MODE: ${{ inputs.mode }}
-        run: python3 .github/scripts/periodic_gate.py --workflow ceph-periodic.yml --campaign-schedule '23 4 * * *'
+        run: python3 .github/scripts/periodic_gate.py --workflow periodic.yml --campaign-schedule '23 4 * * *'
   environment:
     name: Environment
     needs: gate
@@ -187,7 +187,7 @@ jobs:
     with:
       networks: all
       category: environment
-      check_name: Ceph periodic environment
+      check_name: Periodic environment
       # tag_scenarios.ENVIRONMENT_MAX_PARALLEL
       max_parallel: 1
   releases:
@@ -211,7 +211,7 @@ jobs:
       # supported release exactly once.
       - name: Expand supported releases and prove required coverage
         id: releases
-        run: python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic' --github-output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic' --github-output "$GITHUB_OUTPUT"
   runtime:
     name: ${{ matrix.title }}
     needs: releases
@@ -266,7 +266,7 @@ jobs:
       # can run at the same time, leaves of the periodic runner budget.
       max_parallel: 3
       category: representative
-      check_name: Ceph periodic representative
+      check_name: Periodic representative
       release: ${{ inputs.release || '20.2.4' }}
       # The dispatch input reaches the call as a string; the reusable
       # workflow's number input refuses it unless converted.

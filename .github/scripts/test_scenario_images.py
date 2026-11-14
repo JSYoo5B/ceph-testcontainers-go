@@ -355,8 +355,8 @@ class ScenarioImageTests(unittest.TestCase):
         for workflow in (self.workflows["code.yml"], self.jobs["plan"]):
             self.assertNotIn("uses: " + PREP, workflow)
             self.assertNotIn("uses: " + CLEANUP, workflow)
-        for filename in ("docker.yml", "ceph-short.yml", "ceph-topology.yml",
-                         "ceph-multicluster.yml", "ceph-recovery.yml"):
+        for filename in ("docker.yml", "short.yml", "topology.yml",
+                         "multicluster.yml", "recovery.yml"):
             self.assertIn("uses: ./.github/workflows/tagged-runtime.yml", self.workflows[filename])
             self.assertNotIn("uses: " + PREP, self.workflows[filename])
 

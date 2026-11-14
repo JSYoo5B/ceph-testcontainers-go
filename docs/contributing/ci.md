@@ -10,16 +10,16 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | --- | --- | --- | --- |
 | Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, lint, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
 | Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
-| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
-| Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
-| Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
-| Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
-| Ceph periodic | `ceph-periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
-| Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
+| Short | `short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
+| Topology | `topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
+| Multicluster | `multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
+| Recovery | `recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
+| Periodic | `periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
+| Release matrix | `release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
 | Native regressions | `native-regressions.yml` | manual only | One chosen optional batch: an upstream reproducer (`native_rgw_translation`, `native_shuffle`, `cephfs_dangling_symlink_create`, `cephfs_mirror_blockdiff_empty`, `cephfs_readdir_after_snapdiff`, `cephfs_statfs_mixed_quota`, `cephfs_snapshot_readdir_eviction`, `mgr_pg_merge_primary_override`, `mon_log_ack`, `rbd_demote_restart`, `cephfs_mds_requests_json`, `rbd_group_image_namespace`, `rbd_group_snap_default_quiesce`, `rbd_perf_data_pool`, `rbd_group_snap_late_complete`, `rbd_trash_purge_timezone`, `rgw_conditional_writes`, `rgw_ssec_completion`, `rgw_empty_sse_header`, `rgw_expiration_header`, `rgw_compressed_copy`, `rgw_legacy_replication_destination`, `rgw_multipart_completion_replay_etag`, `rgw_multipart_part_class`, `rgw_object_lock_sync`, `rgw_post_usage_bytes_received`, `rgw_slo_head_segment_reads`, `rgw_sync_lease_lapse`, `rgw_zonegroup_redirect_endpoint`), the `rgw_encrypted_multipart_transition` integrity check, or the `failure_archive` proof |
-| Ceph arm64 | `ceph-arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
+| ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
 
@@ -28,8 +28,8 @@ The ordinary runtime workflows and explicit full periodic runs call the reusable
 another, and each can be re-run on its own.
 
 Displayed check names are layered as `<workflow> / <caller job> / <batch>`,
-for example `Ceph multicluster / Scenarios / mirror_initial_daemons` or
-`Ceph periodic / Squid topology / empty_bootstrap`. Each runtime workflow
+for example `Multicluster / Scenarios / mirror_initial_daemons` or
+`Periodic / Squid topology / empty_bootstrap`. Each runtime workflow
 also has a `Plan` job.
 
 ### Pull request scope
@@ -38,13 +38,13 @@ A pull request runs, on Tentacle 20.2.4 role images and in each batch's
 default [network mode](#network-modes):
 - Code checks, for every change;
 - Docker checks and every `short` batch. With the `ci:selected-batches`
-  label, Ceph short runs only the batches that declaration selection selects
+  label, Short runs only the batches that declaration selection selects
   (see [Opting in to declaration selection](#opting-in-to-declaration-selection));
 - of the `topology`, `multicluster` and `recovery` categories, only the
   batches whose own test files the pull request changes, and the batches of an
   [experiment case](testing.md#experiment-cases) any of whose files (helpers
   and manual included) it changes. A change to a shared helper or a public
-  package selects none of them; Ceph periodic runs them on `main`.
+  package selects none of them; Periodic runs them on `main`.
 
 The `ci:full` label (adding it starts a run) and a release phase run every
 batch of those categories instead. Each `Plan` job's `tag-plan.json` artifact
@@ -67,15 +67,15 @@ Without `--changed-head` the planner uses a plain merge-base comparison
 (recorded as `legacy-merge-base`). `--changed-files FILE` is a separate
 manual input.
 
-Pushes to `main` run Code checks, Docker checks and Ceph short, and the other
+Pushes to `main` run Code checks, Docker checks and Short, and the other
 categories only in a [release phase](#release-phase). No run is scheduled per
-commit for the other batches or releases: Ceph periodic draws a daily sample
+commit for the other batches or releases: Periodic draws a daily sample
 and runs every required release-bound runtime profile on every supported
 release only when dispatched in `full` mode. That dispatch includes separate
 environment checks and excludes optional and SDK batches (see
 [Periodic runs](#periodic-runs)). Pushes to other branches
-trigger nothing. Pull requests run on `opened`, `synchronize` and `reopened`; `labeled` (Ceph short
-and the scoped categories) and `unlabeled` (Ceph short) start real runs only
+trigger nothing. Pull requests run on `opened`, `synchronize` and `reopened`; `labeled` (Short
+and the scoped categories) and `unlabeled` (Short) start real runs only
 for `ci:full` and `ci:selected-batches`.
 
 To run any other batch on a pull request, such as one batch of another
@@ -140,14 +140,14 @@ lists renames as a deletion and an addition.
 
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
-| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run. Manual runs are never cancelled. |
-| Ceph periodic | workflow name and ref; explicit representative investigations add `-campaign` | Rotate, discovery, targeted, full and storage runs wait in one group. They never cancel an executing run. The representative group is separate and bounded; it has no schedule. GitHub retains only one waiting run per group, so a later queued request can replace an earlier queued request. |
-| Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
-| Ceph short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
+| Code checks, Docker checks, Short, Topology, Multicluster, Recovery, Release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run. Manual runs are never cancelled. |
+| Periodic | workflow name and ref; explicit representative investigations add `-campaign` | Rotate, discovery, targeted, full and storage runs wait in one group. They never cancel an executing run. The representative group is separate and bounded; it has no schedule. GitHub retains only one waiting run per group, so a later queued request can replace an earlier queued request. |
+| Topology, Multicluster, Recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
+| Short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
 | Structural review evidence | workflow name and PR number | A new commit on a PR cancels that PR's previous run. |
 | Native regressions | none | Runs are independent. |
-| Ceph arm64 | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous run. Scheduled and manual runs are never cancelled. |
+| ARM64 | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous run. Scheduled and manual runs are never cancelled. |
 | Block fault probe | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous probe. |
 
 Consequences:
@@ -330,7 +330,7 @@ tool failure selects every profile.
 
 #### Opting in to declaration selection
 
-Ceph short is the only workflow that narrows by declarations, and only for a
+Short is the only workflow that narrows by declarations, and only for a
 pull request with the `ci:selected-batches` label outside a
 [release phase](#release-phase). The caller then passes the
 base commit as the `select_declarations` input of `tagged-runtime.yml`, and
@@ -340,7 +340,7 @@ base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 
 Adding or removing the label replaces the run in progress; later commits run
 selected while the label stays. Every other trigger and workflow runs all its
-batches, and the `main` push after a merge runs every Ceph short batch, so a
+batches, and the `main` push after a merge runs every Short batch, so a
 selection miss fails there. Record a miss with its plan, failed job and
 selection evidence in a new issue. The label only helps for changes inside the
 integration test packages and the harness.
@@ -492,7 +492,7 @@ matrix entry sets `CEPH_TEST_NETWORK`:
 | Scope | Entries of a batch |
 | --- | --- |
 | Pull requests, `main` pushes, CI command (`networks: default`) | One, in the default mode, with all tests |
-| Ceph periodic and the release matrix (`networks: all`) | The default entry, plus one per other mode that runs only the mode-declaring tests (`--tests`), named `<batch> (<mode>)` |
+| Periodic and the release matrix (`networks: all`) | The default entry, plus one per other mode that runs only the mode-declaring tests (`--tests`), named `<batch> (<mode>)` |
 
 A test without `harness.NetworkModes` runs once and ignores `CEPH_TEST_NETWORK`. Run
 locally with an undeclared mode, a test skips; with the variable unset, it
@@ -540,8 +540,8 @@ The account runs at most 40 hosted jobs at once. The constants in
 | Constant | Value | Meaning |
 | --- | --- | --- |
 | `RUNNER_LIMIT` | 40 | The measured limit. |
-| `PULL_REQUEST_RUNNERS` | 16 | Runners that Ceph periodic leaves free for pull requests. |
-| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Ceph periodic and Ceph release matrix. |
+| `PULL_REQUEST_RUNNERS` | 16 | Runners that Periodic leaves free for pull requests. |
+| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Periodic and Release matrix. |
 | `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
 
@@ -556,7 +556,7 @@ not packed into shared jobs.
 The order of matrix entries is not a start order. GitHub creates a matrix's
 jobs in an order of its own, and while every runner of the account is busy,
 queued jobs start roughly in that creation order, so reordering the planner's
-entries does not move a long batch forward. Ceph periodic's release callers
+entries does not move a long batch forward. Periodic's release callers
 are bound by their summed runner time: replaying measured durations onto their
 four slots longest-first shortens the makespan by under 1% and delays the mean
 completion by several minutes. A pull request run ends with its longest batch,
@@ -574,6 +574,10 @@ python3 .github/scripts/ci_measurements.py cohorts --cache artifacts/ci-cache \
   --history <scenario-history checkout> --repo <owner/repo> --output cohorts.json
 python3 .github/scripts/ci_measurements.py caches --cache artifacts/ci-cache --repo <owner/repo> --output caches.json
 ```
+
+The runtime workflows were renamed (`Ceph short` became `Short`, and so on
+for the other six). `report` matches runs by the current names, so a run that
+started under an old name is not counted; choose `--since` after the rename.
 
 `report` groups executions into cohorts by the newest marker commit their
 head contains and gives job counts, runner minutes, wall time, runner
@@ -705,12 +709,12 @@ support-policy change or compatibility workaround follows a discovery result.
 
 ```sh
 # Profile IDs come from the plan or the source-owned vocabulary.
-gh workflow run "Ceph periodic" -f mode=targeted -f ref=<original-sha> \
+gh workflow run "Periodic" -f mode=targeted -f ref=<original-sha> \
   -f patch=19.2.2 -f profiles=<exact-profile-id> -f tests=<parent-test> -f network=host
-gh workflow run "Ceph periodic" -f mode=targeted -f ref=<same-original-sha> \
+gh workflow run "Periodic" -f mode=targeted -f ref=<same-original-sha> \
   -f patch=19.2.3 -f profiles=<same-profile-id> -f tests=<same-parent-test> -f network=host
 # Complete release work is explicit:
-gh workflow run "Ceph periodic" -f mode=full
+gh workflow run "Periodic" -f mode=full
 ```
 
 The requested source must contain these planning/execution tools. Local
@@ -732,8 +736,8 @@ supported release with its codename and official image tag (Tentacle
 20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and release-phase `Releases` jobs generate the callers:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic'
-python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Ceph release matrix'
+python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic'
+python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Release matrix'
 ```
 
 Each release and category becomes a `<Codename> <category>` call of
@@ -744,14 +748,14 @@ same offline.
 
 To add a release, add its row once ceph-testcontainers-images publishes its
 role images under the `<variant>-<release>-<role>` tags, add it to the
-`release` options of `ceph-periodic.yml` and the
+`release` options of `periodic.yml` and the
 `public-api` matrix of `block-fault-probe.yml`, which cannot read the table
 (`test_scenario_shards.py` fails until they match), run the CI tooling tests,
 and for a new major release add it to
 every release-limited row of the test expectation table (see
 [Release differences](testing.md#release-differences)). A release that is not
 a row is refused. The default release (`RELEASE`, the `release` defaults of
-`tagged-runtime.yml`, `ceph-periodic.yml` and the scenario-images action, and
+`tagged-runtime.yml`, `periodic.yml` and the scenario-images action, and
 `ceph.DefaultImage`) changes only with the current release.
 
 ### Role images of a run
@@ -801,7 +805,7 @@ gh variable delete CI_RELEASE_PHASE              # after the release
 ```
 
 While it is `true`, pull requests and pushes to `main` run all required
-runtime profiles on Tentacle. Ceph release matrix runs the required
+runtime profiles on Tentacle. Release matrix runs the required
 release-bound profiles on Umbrella and Squid.
 
 ### Representative campaign
@@ -831,8 +835,8 @@ not count as a matrix execution for the gate, and has its own concurrency
 group.
 
 ```sh
-gh workflow run "Ceph periodic" -f mode=representative -f repetitions=5 -f release=19.2.5
-gh workflow run "Ceph periodic" -f mode=representative -f ref=<commit>
+gh workflow run "Periodic" -f mode=representative -f repetitions=5 -f release=19.2.5
+gh workflow run "Periodic" -f mode=representative -f ref=<commit>
 ```
 
 `ref` must contain the campaign tooling, because every job runs the pinned
@@ -840,9 +844,9 @@ commit's scripts.
 
 ## Native ARM64 cohort
 
-Ceph arm64 runs a small source-owned cohort on a GitHub-hosted native ARM64
-runner (`ubuntu-24.04-arm`) with the `linux/arm64` children of the published
-role images. A batch joins it with `architecture=arm64` on its `//ci:` line
+The ARM64 workflow runs a small source-owned cohort on a GitHub-hosted native
+ARM64 runner (`ubuntu-24.04-arm`) with the `linux/arm64` children of the
+published role images. A batch joins it with `architecture=arm64` on its `//ci:` line
 (see [Testing](testing.md#batches-and-the-ci-line)). The cohort is
 `default` and `network_faults` of `./internal/integration`: cluster startup and
 bootstrap failure cleanup, the Ceph tools in the role containers, pool and
@@ -852,16 +856,16 @@ prerequisites are established on that runner.
 
 ```sh
 python3 .github/scripts/tag_scenarios.py plan --architecture-cohort --goarch arm64 --output plan.json
-gh workflow run "Ceph arm64" [-f ref=<commit>]
+gh workflow run "ARM64" [-f ref=<commit>]
 ```
 
 The workflow calls the template with `category: architecture` and
 `goarch: arm64`. The cohort plan claims only its batches (`coverage_scope`
 `architecture`); every category workflow still runs amd64, the default, and
-none of them depends on Ceph arm64, so amd64 acceptance stays attributable on
-its own. `plan --goarch arm64` without `--architecture-cohort` is refused, so
-no caller can run an ordinary category on ARM64 by accident. Ceph arm64 runs
-weekly, on a pull request that changes the planner, image or storage
+none of them depends on the ARM64 workflow, so amd64 acceptance stays
+attributable on its own. `plan --goarch arm64` without `--architecture-cohort`
+is refused, so no caller can run an ordinary category on ARM64 by accident.
+The ARM64 workflow runs weekly, on a pull request that changes the planner, image or storage
 preparation, the runtime template, the bootstrap scripts or the netem helper,
 and manually. It is not a required check, and its rows are not written to
 the scenario history.
@@ -1146,7 +1150,7 @@ on a fixed image. The batch budget is the `//ci:` timeout.
 ## Reading a failing batch
 
 1. **Find the batch.** The check name gives the category and batch, for
-   example `Ceph recovery / Scenarios / container_pause`.
+   example `Recovery / Scenarios / container_pause`.
 2. **Read the annotations.** A phase annotation names the failed step and the
    profile ID; `Go test result` annotations list each failed test as
    `<profile id>: TestName/subtest`, or say that none could be identified
@@ -1283,7 +1287,7 @@ and `docker system df` observations after pulls and tests. These endpoints
 separate image and run allocation from runner baseline; they do not establish
 a transient peak or reclaim historical preparation time.
 
-For a controlled hosted comparison, dispatch `Ceph periodic` with `mode=storage`
+For a controlled hosted comparison, dispatch `Periodic` with `mode=storage`
 and the same commit `ref`, release and `storage_policy=auto`, `always`,
 `pressure` or `pressure-supplemental`. The `storage_profiles` input selects comma-separated source-owned profile IDs,
 defaulting to the watcher profile. Up to five selected jobs run concurrently,
@@ -1305,14 +1309,14 @@ supplemental and pressure receipts remain separate. This mode is an explicit
 hosted qualification control; normal auto jobs never allocate pressure files or
 preclean before their admission decision.
 This qualification never fills a shared host or intentionally approaches ENOSPC.
-For an end-to-end comparison, dispatch `Ceph short` at one fixed commit with
+For an end-to-end comparison, dispatch `Short` at one fixed commit with
 `storage_policy=auto` or `always` and the same `ref`. It executes the complete
 short selection with the usual network modes and concurrency, including
 unqualified workloads. Use its measured start/end times and final job to assess
 workflow completion, rather than summing avoided preparation seconds. The
 manual control cannot change the policy or checkout of push/PR events.
 Normal schedules, workload coverage and runner concurrency limits are unchanged.
-A storage dispatch of `Ceph periodic` shares the matrix's concurrency group (see
+A storage dispatch of `Periodic` shares the matrix's concurrency group (see
 [Concurrency and cancellation](#concurrency-and-cancellation)).
 
 ### Typical causes by phase
@@ -1464,7 +1468,7 @@ durations; cancelled rows are left out of the failure rate.
 
 #### Durable history and classification
 
-The `History` job of every Ceph periodic run that executes the matrix or a
+The `History` job of every Periodic run that executes the matrix or a
 campaign runs `scenario_history.py collect` on a checkout of the
 `scenario-history` branch. It appends the run's rows to
 `rows/<run-id>-<run-attempt>.jsonl`, rewrites `summary.json` and pushes. A

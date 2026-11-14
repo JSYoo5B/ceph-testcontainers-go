@@ -3,7 +3,7 @@
 
 The daily bounded rotate/discovery planner is periodic_selection.py. This
 helper retains its history-based matrix decision for explicit callers; it
-is not the scheduled default of ceph-periodic.yml.
+is not the scheduled default of periodic.yml.
 """
 
 import argparse
@@ -17,7 +17,7 @@ import time
 
 # Actions names a job of a called workflow "<caller> / <job>". The matrix
 # batches are such jobs, of the runtime callers; every job that
-# ceph-periodic.yml defines itself (Gate, the Releases planner, the
+# periodic.yml defines itself (Gate, the Releases planner, the
 # campaign's Pin, History and any later planning or bookkeeping job) has a
 # plain name and is never a batch. The called workflow's own planner is its
 # Plan job, and the Representative caller's jobs are campaign attempts.
@@ -147,7 +147,7 @@ github = Reader()
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workflow", required=True, help="Workflow file name, such as ceph-periodic.yml")
+    parser.add_argument("--workflow", required=True, help="Workflow file name, such as periodic.yml")
     parser.add_argument("--campaign-schedule", default="",
                         help="Cron of the representative campaign; a firing of it runs the campaign")
     args = parser.parse_args(argv)

@@ -55,10 +55,12 @@ import tag_scenarios
 
 
 SCHEMA = "ceph-ci-measurements/v1"
-# The workflows that a pull request or a push to main starts. Ceph periodic
+# The workflows that a pull request or a push to main starts. Periodic
 # and the optional regressions are measured as jobs (peak concurrency) only.
-FAMILY = ("Code checks", "Docker checks", "Ceph short", "Ceph topology", "Ceph multicluster",
-          "Ceph recovery", "Ceph release matrix")
+# Runs are matched by these display names, so a run that started while the
+# workflows still carried their earlier names is not counted.
+FAMILY = ("Code checks", "Docker checks", "Short", "Topology", "Multicluster",
+          "Recovery", "Release matrix")
 EVENTS = ("pull_request", "push")
 # Step name prefixes of each phase of a tagged runtime job, in job order,
 # followed by the two cache preparation steps of the Plan job (module download
@@ -196,7 +198,7 @@ def executions(runs, jobs, contains, markers):
         for run in sorted(group, key=lambda run: (run["created_at"], run["id"])):
             first.setdefault(run["name"], run)
         group = list(first.values())
-        if not any(run["name"] == "Ceph short" for run in group):
+        if not any(run["name"] == "Short" for run in group):
             skipped["no runtime workflow"] += 1
             continue
         if any(run.get("status") != "completed" for run in group):
@@ -593,7 +595,7 @@ def report(cache, markers, limits=None, reserve=None, periodic_minimum=100):
     measured = runtime_jobs(runs, jobs, markers, contains)
     all_jobs = [job for run in runs for job in jobs.get(str(run["id"]), ())]
     limit = runner_limit(all_jobs)
-    intervals = busy_intervals(runs, jobs, "Ceph periodic", periodic_minimum)
+    intervals = busy_intervals(runs, jobs, "Periodic", periodic_minimum)
     by_key = {(execution["event"], execution["head_sha"]): execution for execution in found}
     result = {"schema": SCHEMA, "markers": markers, "runs": len(runs), "skipped_executions": skipped,
               "cohorts": cohort_summary(metrics), "executions": metrics,
@@ -602,7 +604,7 @@ def report(cache, markers, limits=None, reserve=None, periodic_minimum=100):
               "profiles": profile_distributions(measured, cohorts[-1]),
               "peak_concurrency": peak_concurrency(all_jobs), "runner_limit": limit,
               "contention": contention_summary(metrics, by_key, intervals, cohorts[-1]),
-              "periodic_runs": matrix_runs(runs, jobs, "Ceph periodic", periodic_minimum)}
+              "periodic_runs": matrix_runs(runs, jobs, "Periodic", periodic_minimum)}
     if limits is not None and limit["limit"]:
         periodic = [caller_groups(jobs[str(run["run_id"])]) for run in result["periodic_runs"]]
         requests = [execution_groups(execution, jobs) for execution in found

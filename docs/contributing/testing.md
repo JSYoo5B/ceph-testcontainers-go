@@ -506,7 +506,7 @@ to its own files.
 | `recovery` | Faults, partitions, removal and recovery |
 
 The tag is `ci_<category>`. `short` is a selection, not a time limit. Which
-batches a pull request, a push to `main` and Ceph periodic run is described
+batches a pull request, a push to `main` and Periodic run is described
 in [Pull request scope](ci.md#pull-request-scope) and
 [Periodic runs](ci.md#periodic-runs). A test must pass on every release in
 [Supported releases](ci.md#supported-releases).
@@ -520,7 +520,7 @@ build caches on a miss when the selected revision belongs to that run:
 | Caller | Checkout and cache policy |
 | --- | --- |
 | Push, scheduled run or dispatch without an override | Plan uses the event commit and can populate the event ref's caches. A pull request uses its merge ref and can populate that PR's caches. |
-| Manual Ceph short, arm64 or periodic storage run | The dispatcher can select another checkout. An empty override or the exact event SHA permits a save. A different SHA or symbolic name is restore-only, even if the name currently points to the event commit. |
+| Manual Short, ARM64 or Periodic storage run | The dispatcher can select another checkout. An empty override or the exact event SHA permits a save. A different SHA or symbolic name is restore-only, even if the name currently points to the event commit. |
 | Periodic representative campaign | Pin resolves the selected ref once. Plan can save only when that resolved SHA equals the event SHA. |
 | Periodic sample plan and sequential sample | The scheduled event or a dispatch selects the source; the sample uses the SHA frozen by its plan. Both jobs only restore caches. |
 | CI command | An authorized command selects a PR head. Validation only restores caches and its tagged-runtime call explicitly disables saves. The manual dispatch in this workflow republishes a structural report without running tagged-runtime. |
