@@ -35,7 +35,7 @@ const retainedAuthFailureBundle = `{
   "run": "archived first-failure evidence",
   "report": "archived first-failure evidence"},
  "release": "20.2.4 tentacle",
- "images": {"control": "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"},
+ "images": {"control": "quay.io/ceph/ceph:v20.2.4"},
  "expected_target": {"fsid": "3f991852-459f-46a3-bd7b-c55161b0bfab", "monitors": ["a", "b", "c"], "manager": "a", "gid": 4191, "container_id": "", "started_at": ""},
  "budget": "1m0s",
  "query_bound": "15s",

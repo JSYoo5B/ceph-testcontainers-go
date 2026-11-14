@@ -17,7 +17,7 @@ import time
 import uuid
 
 
-SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
+SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4"
 
 
 GO_CEPH = re.compile(r"^(?:require\s+|\s+)github\.com/ceph/go-ceph\s+(v[0-9]+\.[0-9]+\.[0-9]+)\s*$", re.M)

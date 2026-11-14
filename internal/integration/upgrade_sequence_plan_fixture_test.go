@@ -38,7 +38,7 @@ func goodFacts(t *testing.T) upgradeClusterFacts {
 		inv[r] = c
 	}
 	return upgradeClusterFacts{
-		SourceImage: "sha256:src", DestImage: "sha256:dst", Baseline: inv,
+		SourceImage: "quay.io/ceph/ceph:v19.2.5", DestImage: "quay.io/ceph/ceph:v20.2.4", Baseline: inv,
 		PoolSize: intFact(3), PoolMinSize: intFact(2),
 		AutoscaleOff: upgradeYes, NooutOwned: upgradeYes, HealthSettled: upgradeYes,
 	}
@@ -131,8 +131,8 @@ func TestUpgradeSequencePreflightJudgement(t *testing.T) {
 		reason string
 	}{
 		{"good", func(*upgradeClusterFacts) {}, upgradePreflightPassed, ""},
-		{"no source image", func(f *upgradeClusterFacts) { f.SourceImage = "" }, upgradePreflightUnknown, "image identity"},
-		{"no dest image", func(f *upgradeClusterFacts) { f.DestImage = "" }, upgradePreflightUnknown, "image identity"},
+		{"no source image", func(f *upgradeClusterFacts) { f.SourceImage = "" }, upgradePreflightUnknown, "image reference"},
+		{"no dest image", func(f *upgradeClusterFacts) { f.DestImage = "" }, upgradePreflightUnknown, "image reference"},
 		{"same image", func(f *upgradeClusterFacts) { f.DestImage = f.SourceImage }, upgradePreflightFailed, "same"},
 		{"no baseline", func(f *upgradeClusterFacts) { f.Baseline = nil }, upgradePreflightUnknown, "baseline inventory"},
 		{"baseline already mixed", func(f *upgradeClusterFacts) {

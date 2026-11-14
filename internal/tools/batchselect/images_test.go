@@ -30,7 +30,7 @@ func imagesOf(t *testing.T, tests ...string) map[string]imageUse {
 }
 
 func TestImagesFollowTheTestsDeclarations(t *testing.T) {
-	old := "image quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+	old := "image quay.io/ceph/ceph:v20.2.3"
 	for name, test := range map[string]struct {
 		tests []string
 		want  []string

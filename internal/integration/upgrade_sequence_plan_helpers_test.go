@@ -15,8 +15,8 @@ import (
 // on top of upgradeLedger (which owns the per-daemon step order and store
 // ownership) and add what the ledger deliberately does not know:
 //
-//   - the experiment preflight: approved pair, immutable image identities of
-//     both sides, and the baseline topology, pool and flag facts. A fact that
+//   - the experiment preflight: approved pair, the image reference of each
+//     side, and the baseline topology, pool and flag facts. A fact that
 //     was not observed is unknown, and unknown refuses like a failure;
 //   - the non-cephadm order MON -> MGR -> OSD, one daemon at a time;
 //   - the settled evidence required before the next daemon: the previous
@@ -60,7 +60,7 @@ func upgradeMajor(release string) (int, error) {
 // upgradeClusterFacts are the observations the preflight judges. Pointers and
 // tri-states distinguish "not observed" from a bad value.
 type upgradeClusterFacts struct {
-	SourceImage, DestImage string // immutable digests recorded for the receipt
+	SourceImage, DestImage string // the reference each side runs, as the run selected it
 	Baseline               upgradeInventory
 	PoolSize, PoolMinSize  *int
 	AutoscaleOff           upgradeTri
@@ -75,7 +75,7 @@ func intFact(n int) *int { return &n }
 func (f upgradeClusterFacts) judge(plan []upgradeDaemonID, pair upgradeReleasePair) (upgradePreflight, error) {
 	var unknown, failed []string
 	if f.SourceImage == "" || f.DestImage == "" {
-		unknown = append(unknown, "image identity")
+		unknown = append(unknown, "image reference")
 	} else if f.SourceImage == f.DestImage {
 		failed = append(failed, "source and destination images are the same")
 	}
