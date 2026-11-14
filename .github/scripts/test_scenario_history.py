@@ -396,6 +396,41 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(row["row_sha256"], history.row_hash(row))
         self.assertEqual(row, self.job.row(), "the same receipts must give the same row")
 
+    def test_a_tag_only_job_needs_no_registry_digest(self):
+        # The role summary of a job names each role by tag with the image ID
+        # the engine reported. Registry digests are an optional observation:
+        # a row without any (a tag from a mirror, a local build) is complete
+        # and comparable, and whether a job listed them changes neither its
+        # configuration nor its outcome.
+        def row(change):
+            job = Job(Path(self.directory.name) / change.__name__).passing()
+            summary = json.loads((job.images / "summary.json").read_text())
+            for image in summary["images"].values():
+                change(image)
+            write(job.images / "summary.json", summary)
+            return job.row()
+
+        def absent(image):
+            del image["repo_digests"]
+
+        def empty(image):
+            image["repo_digests"] = []
+
+        def listed(image):
+            image["repo_digests"] = ["ghcr.io/x/images@sha256:" + "c" * 64]
+
+        rows = {change.__name__: row(change) for change in (absent, empty, listed)}
+        for name, result in rows.items():
+            with self.subTest(name=name):
+                self.assertEqual(result["outcome"]["status"], "passed")
+                self.assertEqual(result["comparability"], {"status": "complete", "reasons": []})
+                self.assertEqual({role: image["reference"] for role, image in result["runtime"]["roles"].items()},
+                                 {role: "ghcr.io/x/images:official-20.2.4-" + role for role in ("essential", "client")})
+                self.assertIsNotNone(history.config_key(result))
+        self.assertEqual(rows["absent"]["runtime"]["roles"]["client"]["repo_digests"], [])
+        self.assertEqual(len({history.config_key(result) for result in rows.values()}), 1)
+        self.assertNotIn("repo_digests", json.dumps(history.config_identity(rows["listed"])))
+
     def test_native_failure_keeps_first_failure(self):
         job = self.job.passing()
         job.phases(native="failure")
