@@ -232,7 +232,9 @@ func (plan mergePlan) state(sample mergeSample) (string, error) {
 // any state: the PGs are placed anew when the placement count is reduced,
 // and are not clean while they peer. It returns the samples of the blocked
 // run with mergeBlocked. Everything else is an error: a pool that neither
-// finished nor stayed blocked that long observed neither outcome.
+// finished nor stayed blocked that long observed neither outcome, and
+// samples whose times do not increase or whose OSDMap epochs decrease are
+// not one series of observations.
 func (plan mergePlan) hold(held []mergeSample) (string, []mergeSample, error) {
 	if len(held) == 0 {
 		return "", nil, fmt.Errorf("outcome not observed: no sample of the reduced pool")
@@ -244,6 +246,10 @@ func (plan mergePlan) hold(held []mergeSample) (string, []mergeSample, error) {
 			return "", nil, fmt.Errorf("sample %d: %w", i, err)
 		}
 		states[i] = state
+		if i > 0 && (sample.At <= held[i-1].At || sample.Epoch < held[i-1].Epoch) {
+			return "", nil, fmt.Errorf("outcome not observed: sample %d, after %v at epoch %d, does not follow sample %d, after %v at epoch %d",
+				i, sample.At, sample.Epoch, i-1, held[i-1].At, held[i-1].Epoch)
+		}
 	}
 	if states[len(states)-1] == mergeMerged {
 		return mergeMerged, nil, nil

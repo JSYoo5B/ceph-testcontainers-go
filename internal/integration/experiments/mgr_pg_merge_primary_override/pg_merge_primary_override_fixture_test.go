@@ -150,6 +150,18 @@ func TestJudgeMerge(t *testing.T) {
 			s.PGs["2.0"] = pgReport{State: "active+clean", Primary: -1, Acting: []int{0, 2, 1}}
 		})}}, want: "outcome not observed"},
 		{name: "the merged PG has no acting set", got: mergeOutcome{Held: []mergeSample{change(merged, func(s *mergeSample) { s.PGs["2.0"] = pgReport{State: "active+clean", Primary: 0} })}}, want: "outcome not observed"},
+		// Samples that are not one series: the time does not increase, or
+		// the OSDMap epoch decreases.
+		{name: "two samples at one time", got: mergeOutcome{Held: every(0, blocked, merged)}, want: "outcome not observed"},
+		{name: "a sample before its predecessor", got: mergeOutcome{Held: []mergeSample{change(blocked, func(s *mergeSample) { s.At = mergeHold }), blocked, change(merged, func(s *mergeSample) { s.At = time.Second })}}, want: "outcome not observed"},
+		{name: "blocked over a time that runs backwards", got: mergeOutcome{Held: []mergeSample{change(blocked, func(s *mergeSample) { s.At = mergeHold }), blocked, change(blocked, func(s *mergeSample) { s.At = 3 * mergeHold })}, AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "an older OSDMap in a later sample", got: mergeOutcome{Held: every(time.Second, change(blocked, func(s *mergeSample) { s.Epoch = 44 }), change(merged, func(s *mergeSample) { s.Epoch = 43 }))}, want: "outcome not observed"},
+		{name: "the source is not reported", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.PGs, "2.1") }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the placement count is not reduced", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.Counts.PGPNum = 2 }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the acting sets are equal", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = clean(1, 2, 0) }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the PGs are on different OSDs", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.1"] = clean(0, 2, 3) }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the override is gone and nothing merges", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.Primaries, "2.0") }), AfterRemoval: &merged}, want: "outcome not observed"},
+		{name: "the parent has no acting set", got: mergeOutcome{Held: moving(func(s *mergeSample) { s.PGs["2.0"] = pgReport{State: "active+clean", Primary: 1} }), AfterRemoval: &merged}, want: "outcome not observed"},
 		// The control pool's override, and overrides the case did not make.
 		{name: "the control override is gone while blocked", got: mergeOutcome{Held: moving(func(s *mergeSample) { delete(s.Primaries, "3.0") }), AfterRemoval: &merged}, want: "control not established"},
 		{name: "the control override is gone before the pool is blocked", got: mergeOutcome{Held: every(half, change(merging, func(s *mergeSample) { delete(s.Primaries, "3.0") }), blocked, blocked, blocked), AfterRemoval: &merged}, want: "control not established"},
