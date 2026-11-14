@@ -1,0 +1,444 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 1047.149,
+  "execution": "43591304891-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "2cbe8290863947641143f05c9f21d0bc3070de7f43a2a4ae97b94a06d89ac49a",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "ec3c3102e783a8c60d765e96d8ab1fd66f1433be1fd70e42b195eba34e224796",
+        "cell": "20.2.4/68b6effdd7d4",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-layout_receipts-f9a9c17b-d72e3a7cb8",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "layout_receipts",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-layout_receipts-f9a9c17b",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/layout_receipts/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_layout_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_layout_receipts",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSLayoutReceipt"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_notifications-86874b7e-6c2d7c6f34",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_notifications",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_notifications-86874b7e",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 30,
+              "network_tests": [
+                "TestRGWBucketNotifications"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_notifications/internal-integration-rgw",
+              "representative": "flaky",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_notifications_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_notifications",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWBucketNotifications"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-container_pause-b288784c-973b3d81bb",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "container_pause",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-container_pause-b288784c",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestMessengerFaultInjection",
+                "TestPausedOSDFaults"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "recovery/container_pause/internal-integration",
+              "representative": "recovery",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/container_pause_integration_test.go",
+                "internal/integration/messenger_faults_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_container_pause",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestMessengerFaultInjection",
+              "TestPausedOSDFaults"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "016f08486c54e600fe40d2bc29b7c8e840688be574804f10721e5b35d0d72b6d",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-14T11:42:49.028695+00:00",
+        "source_sha": "72919e051140de03cbac12850f43744f6d49877f"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "ec3c3102e783a8c60d765e96d8ab1fd66f1433be1fd70e42b195eba34e224796",
+        "cell": "19.2.5/68b6effdd7d4",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-layout_receipts-f9a9c17b-d72e3a7cb8",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "layout_receipts",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-layout_receipts-f9a9c17b",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/layout_receipts/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_layout_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_layout_receipts",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSLayoutReceipt"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_notifications-86874b7e-6c2d7c6f34",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_notifications",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_notifications-86874b7e",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 30,
+              "network_tests": [
+                "TestRGWBucketNotifications"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_notifications/internal-integration-rgw",
+              "representative": "flaky",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_notifications_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_notifications",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWBucketNotifications"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-container_pause-b288784c-973b3d81bb",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "container_pause",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-container_pause-b288784c",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestMessengerFaultInjection",
+                "TestPausedOSDFaults"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "recovery/container_pause/internal-integration",
+              "representative": "recovery",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/container_pause_integration_test.go",
+                "internal/integration/messenger_faults_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_container_pause",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestMessengerFaultInjection",
+              "TestPausedOSDFaults"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "b6c64f74f46d09d39256deb5540d62c832af0a955969b35ec4f0a14fbd00d6d3",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-14T11:42:49.028695+00:00",
+        "source_sha": "72919e051140de03cbac12850f43744f6d49877f"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "ec3c3102e783a8c60d765e96d8ab1fd66f1433be1fd70e42b195eba34e224796",
+        "cell": "21.2.0/68b6effdd7d4",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-layout_receipts-f9a9c17b-d72e3a7cb8",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "layout_receipts",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-layout_receipts-f9a9c17b",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/layout_receipts/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs/cephfs_layout_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_layout_receipts",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSLayoutReceipt"
+            ]
+          },
+          {
+            "core": false,
+            "id": "short-rgw_notifications-86874b7e-6c2d7c6f34",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rgw_notifications",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rgw_notifications-86874b7e",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 30,
+              "network_tests": [
+                "TestRGWBucketNotifications"
+              ],
+              "networks": [
+                "bridge",
+                "host"
+              ],
+              "package": "./internal/integration/rgw",
+              "profile": "short/rgw_notifications/internal-integration-rgw",
+              "representative": "flaky",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_notifications_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_notifications",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWBucketNotifications"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-container_pause-b288784c-973b3d81bb",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "container_pause",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-container_pause-b288784c",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestMessengerFaultInjection",
+                "TestPausedOSDFaults"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "recovery/container_pause/internal-integration",
+              "representative": "recovery",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/container_pause_integration_test.go",
+                "internal/integration/messenger_faults_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_container_pause",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestMessengerFaultInjection",
+              "TestPausedOSDFaults"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "1fd7b80fffac48148e6ec578a2eb2456397b16a83b310dc7b09bb99e560b6707",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-14T11:42:49.028695+00:00",
+        "source_sha": "72919e051140de03cbac12850f43744f6d49877f"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "72919e051140de03cbac12850f43744f6d49877f:43591304891:1",
+    "selected_at": "2026-11-14T11:42:49.028695+00:00",
+    "source_sha": "72919e051140de03cbac12850f43744f6d49877f"
+  },
+  "receipt_sha256": "79486f4cf38ae8b40bce4d8fbac5db3a1c1561ea4b9a9d1f24e5a7d4b576575d",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "72919e051140de03cbac12850f43744f6d49877f",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    }
+  ]
+}
