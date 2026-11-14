@@ -205,6 +205,9 @@ Guides for tasks that span packages:
   full clusters and damaged replicas.
 - [Host network](docs/guides/host-network.md): bridge and host networking, and
   connecting native clients from the test process.
+- [Regional zones](docs/guides/regional-zones.md): one cluster with logical
+  availability zones on a single Docker engine, and delaying or cutting the
+  network between the zones.
 - [Releases and images](docs/guides/releases-and-images.md): supported Ceph
   releases, role images and image requirements.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
