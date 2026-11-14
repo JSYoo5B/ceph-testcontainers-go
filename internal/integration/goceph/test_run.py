@@ -126,6 +126,14 @@ class PinnedGoCephTests(unittest.TestCase):
         self.assertEqual(self.pinned(module + "require (\n\tgithub.com/ceph/go-ceph v0.43.1\n\tgolang.org/x/sys v0.48.0 // indirect\n)\n"),
                          "v0.43.1")
 
+    def test_replacement_matches_the_original_module_path(self):
+        requirement = "module probe\nrequire github.com/ceph/go-ceph v0.42.0\n"
+        for replacement in ("replace github.com/ceph/go-ceph-extra => ../other",
+                            "replace example.org/other => github.com/ceph/go-ceph v0.42.0"):
+            self.assertEqual(self.pinned(requirement + replacement + "\n"), "v0.42.0")
+        with self.assertRaisesRegex(RuntimeError, "replaces go-ceph"):
+            self.pinned(requirement + "replace (\n github.com/ceph/go-ceph => ../go-ceph\n)\n")
+
     def test_missing_replaced_or_unreleased_go_ceph_is_refused(self):
         module = "module probe\n\ngo 1.26.0\n\n"
         for text in (module,

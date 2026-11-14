@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -20,16 +21,35 @@ import uuid
 SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4"
 
 
-GO_CEPH = re.compile(r"^(?:require\s+|\s+)github\.com/ceph/go-ceph\s+(v[0-9]+\.[0-9]+\.[0-9]+)\s*$", re.M)
+GO_CEPH = "github.com/ceph/go-ceph"
 
 
 def pinned_go_ceph(go_mod):
-    """The go-ceph version that the probe module requires: the one place
-    that pins it. The test compares each probe receipt with it."""
-    text = go_mod.read_text()
-    if re.search(r"^\s*replace\b.*github\.com/ceph/go-ceph", text, re.M):
-        raise RuntimeError(str(go_mod) + " replaces go-ceph; a replaced module has no comparable version")
-    versions = GO_CEPH.findall(text)
+    """Read the released go-ceph requirement from the probe module."""
+    versions = []
+    block = None
+    for line in go_mod.read_text().splitlines():
+        tokens = shlex.split(line.split("//", 1)[0])
+        if not tokens:
+            continue
+        if tokens == [")"]:
+            block = None
+            continue
+        if block is None:
+            directive, *tokens = tokens
+            if tokens == ["("]:
+                block = directive
+                continue
+        else:
+            directive = block
+        if not tokens or tokens[0] != GO_CEPH:
+            continue
+        if directive == "replace":
+            raise RuntimeError(str(go_mod) + " replaces go-ceph; a replaced module has no comparable version")
+        if directive == "require":
+            if len(tokens) != 2 or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tokens[1]):
+                raise RuntimeError(str(go_mod) + " must require a released go-ceph version")
+            versions.append(tokens[1])
     if len(versions) != 1:
         raise RuntimeError(str(go_mod) + " must require go-ceph exactly once with a released version")
     return versions[0]
