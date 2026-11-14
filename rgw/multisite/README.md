@@ -156,7 +156,7 @@ a renewal, and it renews none while its reads of a source zone that does not
 answer wait. A zone link cut or a paused source gateway that lasts longer
 than about 15 seconds can therefore cost a zone's shards their leases, and
 with them reach the native defect described under
-[known release-specific issues](../../docs/guides/releases-and-images.md#known-release-specific-issues),
+[known release issues](../../docs/guides/known-release-issues.md#data-sync-after-a-source-that-did-not-answer-for-longer-than-the-sync-lease-period),
 which leaves the zone behind until its gateway restarts.
 
 A test that keeps a zone from answering for longer selects a period of more

@@ -53,7 +53,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    disabled, because `radosgw-admin` cannot delete a policy; on Umbrella,
    where `ratelimit get` reports such a user as `ENOENT`, it then reports the
    default (see
-   [Known release-specific issues](../docs/guides/releases-and-images.md#known-release-specific-issues)).
+   [Known release issues](../docs/guides/known-release-issues.md#user-without-a-rate-limit-policy)).
 5. **Replace the certificate** when the scenario tests how the SUT meets a
    renewed certificate or a changed CA: `Gateway.ReplaceTLS` installs a new
    `rgw.TLSConfig` and restarts the gateway; resolve `S3SecureEndpoint` again
