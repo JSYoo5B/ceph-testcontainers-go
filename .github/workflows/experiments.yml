@@ -19,6 +19,7 @@ on:
           - cephfs_mirror_blockdiff_empty_versions
           - cephfs_mirror_daemon_redistribution
           - cephfs_readdir_after_snapdiff
+          - cephfs_reclaim_closing_open
           - cephfs_snapshot_readdir_eviction
           - cephfs_statfs_mixed_quota
           - mgr_pg_merge_primary_override
