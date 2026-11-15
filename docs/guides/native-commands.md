@@ -638,7 +638,10 @@ _, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10)) // GID fr
   path and refuses custom metadata calls; snapshots and clones do not copy a
   subvolume's custom metadata, and Ceph lower-cases metadata keys. Recreating a
   retained name makes a new subvolume with a new UUID (`EAGAIN` while Ceph still
-  purges is safe to retry); typed handles do not adopt either state.
+  purges is safe to retry); typed handles do not adopt either state. On a full
+  cluster some releases leave the subvolume unusable after a failed removal
+  with retained snapshots; see
+  [Known release issues](known-release-issues.md#subvolume-removal-with-retained-snapshots-on-a-full-cluster).
 
 Raw commands on resources that typed handles own are outside the handles'
 contract: fence other writers and do not run fixture operations on the same
