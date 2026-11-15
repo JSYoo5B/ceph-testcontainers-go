@@ -48,7 +48,12 @@ The defect is reproduced on every release it ran on.
   100 MB per listing) and remove it after reading it.
 - The kernel client and `ceph-fuse` are not used: there the kernel's lookup
   references keep the dentries pinned, which hides this path.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and in cleanup
+  the removal of the snapshot and the files has its own three-minute deadline
+  and the cluster's termination its own two-minute one, so none of them counts
+  against it and a slow startup or cleanup can take the test past 15 minutes.
+  The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

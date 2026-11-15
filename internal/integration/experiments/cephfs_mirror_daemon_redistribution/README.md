@@ -33,8 +33,12 @@ workaround.
   variable `image`, an aggregate image.
 - The host variant needs a Linux engine or Docker Desktop with host
   networking.
-- The scenario bounds itself to 15 minutes; the batch timeout is 60 minutes
-  for both variants.
+- Each variant's steps, the start of both clusters included, share a 15-minute
+  deadline. The read of the MGR logs has its own 20-second deadline, and in
+  cleanup the mirror's termination has its own two-minute deadline and the
+  clusters and clients are terminated without one, so a slow log read or
+  cleanup can take a variant past 15 minutes. The outer bound is the batch's
+  60-minute `go test` timeout, which both variants share.
 
 ## Tier and triggers
 

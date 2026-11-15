@@ -49,7 +49,12 @@ file is written to between the snapshots.
   aggregate image (`CEPH_TEST_IMAGE`). Bridge networking.
 - The default directory hash (rjenkins) and unfragmented directories, as a
   new filesystem has them.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and in cleanup
+  the removal of the snapshots and the files has its own three-minute deadline
+  and the cluster's termination its own two-minute one, so none of them counts
+  against it and a slow startup or cleanup can take the test past 15 minutes.
+  The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

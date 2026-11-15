@@ -76,7 +76,12 @@ option or `client_fscrypt_dummy_encryption` is used.
   test never loads a module: it reads `/proc/filesystems` before any
   `mount(2)`, because a mount of an unregistered type would make the host
   kernel load it.
-- The test bounds itself to 25 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 25-minute deadline. Cluster startup
+  (`harness.NewServiceClusterRun`) runs on the test context and in cleanup the
+  emergency unmount has its own two-minute deadline, each ceph-fuse stop waits
+  up to a minute and the cluster's termination its own two-minute one, so none
+  of them counts against it and a slow startup or cleanup can take the test
+  past 25 minutes. The outer bound is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 

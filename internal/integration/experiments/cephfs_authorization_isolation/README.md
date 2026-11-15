@@ -32,7 +32,11 @@ three; Squid 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0 by none.
   MDS) and `iso-b` (an active and a standby-replay MDS). The cluster and
   every probe client run the package variable `image`, an aggregate image
   with Python libcephfs and librados; clients are fresh containers of it.
-- The test bounds itself to 25 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 25-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and the cluster's
+  termination in cleanup has its own two-minute deadline, so neither counts
+  against it and a slow startup or cleanup can take the test past 25 minutes.
+  The outer bound is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 

@@ -41,7 +41,12 @@ Upstream reference: [tracker 82726](https://tracker.ceph.com/issues/82726).
   directory. Both clusters, their client containers and the mirror daemon
   run the package variable `image`, an aggregate image whose `python3` has
   the `cephfs` module.
-- The test bounds itself to 20 minutes; the batch timeout is 30 minutes.
+- The case's steps, the start of both clusters included, share a 20-minute
+  deadline. The read of the MDS log has its own one-minute deadline, and in
+  cleanup the mirror's termination has its own two-minute deadline and the
+  clusters and clients are terminated without one, so a slow log read or
+  cleanup can take the test past 20 minutes. The outer bound is the batch's
+  30-minute `go test` timeout.
 
 ## Tier and triggers
 
