@@ -236,14 +236,28 @@ func enclosingLabels(lines []string) []string {
 // none, and optionally the ellipsis that marks the cut.
 var shortID = regexp.MustCompile(`(?i)^[0-9a-f]{7,64}…?$`)
 
-// shortIDAfterLabel is a short ID in backquotes right after a word that
-// names an image: "image ID" or one of the image roles, as in
-// "(essential ` + "`3c7a6d0ae445…`" + `, client ...)". A line break may stand between
-// the word and the value.
-var shortIDAfterLabel = regexp.MustCompile("(?i)\\b(?:image(?:[ _-]?id)?|essential|client|cephfs|rbd-aux|rgw|mgr-modules)\\s+`([0-9a-f]{7,64}…?)`")
+// idAfterLabel is a value in backquotes right after a word that names an
+// image: "image ID" or one of the image roles, as in
+// "(essential ` + "`3c7a6d0ae445…`" + `, client ...)", with or without its algorithm.
+// A line break may stand between the word and the value.
+var idAfterLabel = regexp.MustCompile("(?i)\\b(?:image(?:[ _-]?id)?|essential|client|cephfs|rbd-aux|rgw|mgr-modules)\\s+`((?:@?sha(?:256|512):)?[0-9a-f]+…?)`")
 
 // algorithm is the prefix of a digest value, with the "@" of a reference.
 var algorithm = regexp.MustCompile(`(?i)^@?sha(?:256|512):`)
+
+// imageIDs returns what token names of an image, given that its place (an
+// image column, a role word in front) says it is an image's. A token with
+// its algorithm is judged by digestValues, with its length boundaries and
+// its synthetic values; a bare one by isShortID.
+func imageIDs(token string) []string {
+	if algorithm.MatchString(token) {
+		return digestValues(token, "image")
+	}
+	if isShortID(token) {
+		return []string{token}
+	}
+	return nil
+}
 
 // isShortID reports whether value is an abbreviated image ID.
 func isShortID(value string) bool {
@@ -301,20 +315,18 @@ func shortIDProblems(name string, lines []string, reported func(line int, value 
 			if i >= len(row) {
 				continue
 			}
+			// A value with its algorithm counts here too: the column, not a
+			// label in front of the value, says it is an image's.
 			for _, word := range strings.FieldsFunc(row[i], func(r rune) bool { return r == ' ' || r == '`' || r == ',' || r == '(' || r == ')' }) {
-				// A value with its algorithm counts here too: the column,
-				// not a label in front of the value, says it is an image's.
-				if value := algorithm.ReplaceAllString(word, ""); value != word || isShortID(value) {
-					if isShortID(value) || len(value) == 64 && shortID.MatchString(value) {
-						report(n+1, word)
-					}
+				for _, value := range imageIDs(word) {
+					report(n+1, value)
 				}
 			}
 		}
 	}
 	text := strings.Join(lines, "\n")
-	for _, at := range shortIDAfterLabel.FindAllStringSubmatchIndex(text, -1) {
-		if value := text[at[2]:at[3]]; isShortID(value) {
+	for _, at := range idAfterLabel.FindAllStringSubmatchIndex(text, -1) {
+		for _, value := range imageIDs(text[at[2]:at[3]]) {
 			report(strings.Count(text[:at[2]], "\n")+1, value)
 		}
 	}
@@ -551,43 +563,49 @@ func TestImageDigestProblems(t *testing.T) {
 		"short IDs in an image column": {"README.md", "| Release | Image (`ghcr.io/o/r@sha256:…`) | Result |\n| --- | --- | --- |\n" +
 			"| Tentacle 20.2.2 (0fcffee2) | `" + real[:12] + "…` | `REPRODUCED` |\n| Squid 19.2.7 (9ec952b9) | `" + real[4:16] + "…` | `NOT_REPRODUCED` |\n", 2},
 		"short ID after its role":      {"README.md", "the 20.2.4 role images (essential `" + real[:12] + "…`, client\n`" + real[4:16] + "…`)", 2},
+		"sha512 in an image column":    {"README.md", "| Image | Result |\n| --- | --- |\n| `sha512:" + long + "` | ok |\n", 1},
+		"all-digit prefix in a cell":   {"README.md", "| Image | Result |\n| --- | --- |\n| `sha256:" + strings.Repeat("1234", 3) + "…` | ok |\n", 1},
+		"prefixed ID after a role":     {"README.md", "role images (essential `sha256:" + real[:12] + "…`, rgw\n`sha512:" + long + "`)", 2},
 		"digest in an image column":    {"README.md", "| Image | Result |\n| --- | --- |\n| 20.2.4 aggregate `sha256:" + real[:12] + "…`, the default | ok |\n| 21.2.0 official `@sha256:" + real[4:16] + "…` | ok |\n", 2},
 		"image ID without an ellipsis": {"README.md", "| Tentacle 20.2.4, `r:official-20.2.4-all`, image ID `" + real[:12] + "` | `REPRODUCED` |", 1},
 		// What stays.
-		"release tag":               {"case_test.go", "package p\n\nvar image = \"ghcr.io/o/r:official-20.2.4-all\"\n", 0},
-		"bare content hash":         {"runner-storage.json", `{"sources_sha256": "` + real + `"}`, 0},
-		"checksum input":            {"action.yml", "sha256: " + real, 0},
-		"payload checksum":          {"notes.md", "payload checksum: sha256:" + real, 0},
-		"tool checksum":             {"action.yml", "    tool-checksum: \"sha256:" + real + "\"", 0},
-		"checksum constant":         {"x_test.go", "package p\n\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
-		"entry of a checksum list":  {"sums.yml", "checksums:\n  - sha256:" + real + "\n", 0},
-		"checksum after an image":   {"row.json", `{"image": "quay.io/ceph/ceph:v20.2.4", "payload": "sha256:` + real + `"}`, 0},
-		"unlabelled value":          {"notes.md", "sha256:" + real, 0},
-		"payload digest":            {"row.yml", "payload_digest: sha256:" + real, 0},
-		"digest list of payloads":   {"sums.yml", "digests:\n  - sha256:" + real + "\n", 0},
-		"manifest of sources":       {"sums.json", `{"manifest": "sha256:` + real + `", "id": "sha256:` + real + `"}`, 0},
-		"object ID constant":        {"x_test.go", "package p\n\nconst id = \"sha256:" + real + "\"\n", 0},
-		"checksum, line directive":  {"gen.go", "package p\n\n//line generated.go:9000\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
-		"directive to a low line":   {"gen.go", "package p\n\nvar imageName = \"r:v1\"\n\n//line generated.go:3\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
-		"directive past the file":   {"gen.go", "package p\n\n//line generated.go:9000\nconst s = \"plain\"\n", 0},
-		"Git object ID":             {"w.yml", "ref: " + real[:40], 0},
-		"stand-in":                  {"x_test.go", "package p\n\nconst id = \"sha256:helper\"\n", 0},
-		"short payload checksum":    {"notes.md", "payload checksum: sha256:" + real[:12] + "…", 0},
-		"commit beside an image":    {"README.md", "| Release | Image | Result |\n| --- | --- | --- |\n| Tentacle 20.2.2 (0fcffee2) | `r:official-20.2.2-all` | 1048630 bytes |\n", 0},
-		"hex outside image columns": {"README.md", "| Commit | Result |\n| --- | --- |\n| `" + real[:12] + "` | ok |\n", 0},
-		"count in an image column":  {"README.md", "| Image | Size |\n| --- | --- |\n| 1048630 | 1 |\n", 0},
-		"commit in prose":           {"notes.md", "built from commit `" + real[:12] + "`", 0},
-		"short unlabelled value":    {"notes.md", "sha256:" + real[:12], 0},
-		"fewer than seven digits":   {"x.md", "r@sha256:" + real[:6], 0},
-		"placeholder":               {"guide.md", "pass `ghcr.io/o/r@sha256:...` to Run", 0},
-		"synthetic digest":          {"x_test.go", "package p\n\nconst ref = \"ghcr.io/example-org/ceph@sha256:" + strings.Repeat("a", 64) + "\"\n", 0},
-		"synthetic concatenation":   {"x_test.go", "package p\n\nconst id = \"sha256:\" + \"" + strings.Repeat("1", 64) + "\"\n", 0},
-		"built at run time":         {"x_test.go", "package p\n\nimport \"strings\"\n\nvar id = \"sha256:\" + strings.Repeat(\"1\", 64)\n", 0},
-		"unlabelled, one short":     {"x.md", "sha256:" + real[:63], 0},
-		"too long":                  {"x.md", "sha256:" + real + "0", 0},
-		"sha512 of sha256 length":   {"x.md", "sha512:" + real, 0},
-		"validating pattern":        {"x.py", `IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")`, 0},
-		"not Go after all":          {"broken.go", "package p\n\nfunc {", 0},
+		"release tag":                {"case_test.go", "package p\n\nvar image = \"ghcr.io/o/r:official-20.2.4-all\"\n", 0},
+		"bare content hash":          {"runner-storage.json", `{"sources_sha256": "` + real + `"}`, 0},
+		"checksum input":             {"action.yml", "sha256: " + real, 0},
+		"payload checksum":           {"notes.md", "payload checksum: sha256:" + real, 0},
+		"tool checksum":              {"action.yml", "    tool-checksum: \"sha256:" + real + "\"", 0},
+		"checksum constant":          {"x_test.go", "package p\n\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
+		"entry of a checksum list":   {"sums.yml", "checksums:\n  - sha256:" + real + "\n", 0},
+		"checksum after an image":    {"row.json", `{"image": "quay.io/ceph/ceph:v20.2.4", "payload": "sha256:` + real + `"}`, 0},
+		"unlabelled value":           {"notes.md", "sha256:" + real, 0},
+		"payload digest":             {"row.yml", "payload_digest: sha256:" + real, 0},
+		"digest list of payloads":    {"sums.yml", "digests:\n  - sha256:" + real + "\n", 0},
+		"manifest of sources":        {"sums.json", `{"manifest": "sha256:` + real + `", "id": "sha256:` + real + `"}`, 0},
+		"object ID constant":         {"x_test.go", "package p\n\nconst id = \"sha256:" + real + "\"\n", 0},
+		"checksum, line directive":   {"gen.go", "package p\n\n//line generated.go:9000\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
+		"directive to a low line":    {"gen.go", "package p\n\nvar imageName = \"r:v1\"\n\n//line generated.go:3\nconst payloadSum = \"sha256:\" + \"" + real + "\"\n", 0},
+		"directive past the file":    {"gen.go", "package p\n\n//line generated.go:9000\nconst s = \"plain\"\n", 0},
+		"Git object ID":              {"w.yml", "ref: " + real[:40], 0},
+		"stand-in":                   {"x_test.go", "package p\n\nconst id = \"sha256:helper\"\n", 0},
+		"short payload checksum":     {"notes.md", "payload checksum: sha256:" + real[:12] + "…", 0},
+		"commit beside an image":     {"README.md", "| Release | Image | Result |\n| --- | --- | --- |\n| Tentacle 20.2.2 (0fcffee2) | `r:official-20.2.2-all` | 1048630 bytes |\n", 0},
+		"hex outside image columns":  {"README.md", "| Commit | Result |\n| --- | --- |\n| `" + real[:12] + "` | ok |\n", 0},
+		"synthetic digest in a cell": {"README.md", "| Image | Result |\n| --- | --- |\n| `sha256:" + strings.Repeat("a", 64) + "` | ok |\n", 0},
+		"over-long value in a cell":  {"README.md", "| Image | Result |\n| --- | --- |\n| `sha256:" + real + "0` | ok |\n", 0},
+		"short prefix in a cell":     {"README.md", "| Image | Result |\n| --- | --- |\n| `sha256:" + real[:6] + "` | ok |\n", 0},
+		"count in an image column":   {"README.md", "| Image | Size |\n| --- | --- |\n| 1048630 | 1 |\n", 0},
+		"commit in prose":            {"notes.md", "built from commit `" + real[:12] + "`", 0},
+		"short unlabelled value":     {"notes.md", "sha256:" + real[:12], 0},
+		"fewer than seven digits":    {"x.md", "r@sha256:" + real[:6], 0},
+		"placeholder":                {"guide.md", "pass `ghcr.io/o/r@sha256:...` to Run", 0},
+		"synthetic digest":           {"x_test.go", "package p\n\nconst ref = \"ghcr.io/example-org/ceph@sha256:" + strings.Repeat("a", 64) + "\"\n", 0},
+		"synthetic concatenation":    {"x_test.go", "package p\n\nconst id = \"sha256:\" + \"" + strings.Repeat("1", 64) + "\"\n", 0},
+		"built at run time":          {"x_test.go", "package p\n\nimport \"strings\"\n\nvar id = \"sha256:\" + strings.Repeat(\"1\", 64)\n", 0},
+		"unlabelled, one short":      {"x.md", "sha256:" + real[:63], 0},
+		"too long":                   {"x.md", "sha256:" + real + "0", 0},
+		"sha512 of sha256 length":    {"x.md", "sha512:" + real, 0},
+		"validating pattern":         {"x.py", `IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")`, 0},
+		"not Go after all":           {"broken.go", "package p\n\nfunc {", 0},
 	} {
 		if got := imageDigestProblems(tc.file, []byte(tc.src)); len(got) != tc.want {
 			t.Errorf("%s: %d problems, want %d: %q", name, len(got), tc.want, got)
