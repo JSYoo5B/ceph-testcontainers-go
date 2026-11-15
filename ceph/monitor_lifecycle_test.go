@@ -416,8 +416,7 @@ type monitorLifecycleControl struct {
 
 type monitorLifecycleRead struct {
 	timeout bool
-	// block holds the read until its context ends, so the operation's own
-	// deadline expires at this read and not at an earlier, unscripted one.
+	// block waits for the context to end once the scripted read starts.
 	block           bool
 	members, quorum []string
 }
