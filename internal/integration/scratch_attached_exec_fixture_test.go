@@ -14,7 +14,8 @@ import (
 
 // A stalled exec stream ends at the deadline: the read is unblocked by
 // closing the stream, the goroutine is joined, and what arrived before the
-// stall is kept. A stream that ends on its own returns its bytes.
+// stall is kept; a stream held open in silence ends the same way. A stream
+// that ends on its own returns its bytes.
 func TestReadAttachedOutputEndsAStalledStream(t *testing.T) {
 	client, server := net.Pipe()
 	t.Cleanup(func() { _ = server.Close() })
@@ -31,6 +32,21 @@ func TestReadAttachedOutputEndsAStalledStream(t *testing.T) {
 	}
 	if _, err := client.Write([]byte("x")); err == nil {
 		t.Fatal("the stalled stream was not closed")
+	}
+
+	// A stream held open that never prints, like a silent keeper, ends at
+	// the deadline too.
+	client, server = net.Pipe()
+	t.Cleanup(func() { _ = server.Close() })
+	silent, cancelSilent := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancelSilent()
+	started = time.Now()
+	data, err = readAttachedOutput(silent, client)
+	if !errors.Is(err, context.DeadlineExceeded) || len(data) != 0 {
+		t.Fatalf("silent stream: %q, %v", data, err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the silent read returned after %v", elapsed)
 	}
 
 	client, server = net.Pipe()
