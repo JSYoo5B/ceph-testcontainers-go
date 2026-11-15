@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -150,7 +151,7 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 		return refuse(errors.New("always-on MGR modules cannot be disabled or temporarily re-enabled after force-disable"))
 	}
 	if enabled && (!module.Available || !module.CanRun) {
-		return refuse(errors.New("MGR module has unavailable or cannot-run dependency metadata"))
+		return refuse(mgrModuleCannotRun("MGR module has unavailable or cannot-run dependency metadata", module))
 	}
 	if !enabled {
 		if err := overridehook.ProtectMGRModule(ctx, c, name); err != nil {
@@ -261,7 +262,7 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	}
 	if h.state.previous {
 		if !module.Available || !module.CanRun {
-			return errors.New("MGR module cannot be re-enabled with unavailable or cannot-run dependency metadata")
+			return mgrModuleCannotRun("MGR module cannot be re-enabled with unavailable or cannot-run dependency metadata", module)
 		}
 	} else {
 		if module.AlwaysOn {
@@ -300,6 +301,17 @@ func (h *MGRModuleHandle) snapshot(ctx context.Context, c *ceph.Container) (ceph
 func (h *MGRModuleHandle) finish(c *ceph.Container) {
 	h.state.restored = true
 	overridehook.Release(c, h.state.token)
+}
+
+// mgrModuleCannotRun is a refusal of a module the active manager cannot run,
+// with the metadata it advertised and, when it reported one, its own reason
+// (a missing Python dependency, for example).
+func mgrModuleCannotRun(refusal string, module ceph.MGRModuleState) error {
+	reason := module.ErrorString
+	if reason == "" {
+		reason = "no reason reported"
+	}
+	return fmt.Errorf("%s (available=%t can_run=%t): %s", refusal, module.Available, module.CanRun, reason)
 }
 
 func findMGRModule(modules []ceph.MGRModuleState, name string) (ceph.MGRModuleState, bool) {

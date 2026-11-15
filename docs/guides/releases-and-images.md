@@ -247,7 +247,8 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   image with `override.SetMGRModule`, configure it with `override.SetConfig`
   (`mgr/<module>/<option>`), and read its state with `Observer.MGRModules`:
   a module whose dependency is missing is advertised with `CanRun` false and
-  its `ErrorString`, and `SetMGRModule` refuses to enable it. A membership
+  its `ErrorString`, and `SetMGRModule` refuses to enable it with an error that
+  carries that `ErrorString` (for example `influxdb python module not found`). A membership
   change respawns every manager; `SetMGRModule` and its `Restore` return once
   a respawned active manager is available, so `Observer.MGRModules` and other
   MGR commands work right after them.

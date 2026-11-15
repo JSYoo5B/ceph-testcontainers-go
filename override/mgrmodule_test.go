@@ -269,8 +269,12 @@ func TestOverrideMGRModuleRestorationRequiresRunnableMetadata(t *testing.T) {
 	}
 	ctr.canRun["mirroring"] = false
 	before := ctr.mutations
-	if err := change.Restore(t.Context()); err == nil || ctr.mutations != before {
+	err = change.Restore(t.Context())
+	if err == nil || ctr.mutations != before {
 		t.Fatal("cannot-run restoration forced enable")
+	}
+	if !strings.Contains(err.Error(), "can_run=false") || !strings.Contains(err.Error(), "missing native dependency") {
+		t.Fatalf("the restoration refusal dropped the native reason: %v", err)
 	}
 	ctr.canRun["mirroring"] = true
 	if err := change.Restore(t.Context()); err != nil {
@@ -437,11 +441,18 @@ func TestSetMGRModuleEarlyReturnsLeaveNoReservation(t *testing.T) {
 			c := mgrModuleCluster(ctr)
 			setStartupTimeout(c, 200*time.Millisecond)
 			tc.arrange(ctr)
-			if change, err := SetMGRModule(t.Context(), c, tc.module, tc.enabled); err == nil || !refusedMGR(change) || ctr.mutations != 0 {
+			change, err := SetMGRModule(t.Context(), c, tc.module, tc.enabled)
+			if err == nil || !refusedMGR(change) || ctr.mutations != 0 {
 				t.Fatalf("the attempt did not fail before mutation: %v %v", change, err)
 			}
 			if held := heldMGR(c); len(held) != 0 {
 				t.Fatalf("%s kept a registry entry: %v", tc.name, held)
+			}
+			if tc.name == "cannot run" {
+				// The refusal names the manager's own reason, not only the flags.
+				if !strings.Contains(err.Error(), "can_run=false") || !strings.Contains(err.Error(), "missing native dependency") {
+					t.Fatalf("the refusal dropped the native reason: %v", err)
+				}
 			}
 			if tc.module != "mirroring" {
 				return
@@ -449,7 +460,7 @@ func TestSetMGRModuleEarlyReturnsLeaveNoReservation(t *testing.T) {
 			// The key is free again for a retry.
 			ctr.failDumpFrom, ctr.mirrored = 0, false
 			ctr.canRun["mirroring"] = true
-			change, err := SetMGRModule(t.Context(), c, "mirroring", ctr.enabled["mirroring"])
+			change, err = SetMGRModule(t.Context(), c, "mirroring", ctr.enabled["mirroring"])
 			if err != nil || refusedMGR(change) || len(heldMGR(c)) != 1 {
 				t.Fatalf("a freed key stayed refused: %v", err)
 			}
