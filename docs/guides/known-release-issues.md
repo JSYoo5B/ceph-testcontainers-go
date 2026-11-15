@@ -173,18 +173,26 @@ replayer again; a later mirror snapshot then replicates.
 When an `rbd-mirror` daemon is killed while it copies a mirror snapshot and
 the same daemon is started again, it resumes the copy and marks the snapshot
 complete, but the object numbered `last_copied_object_number` at the kill
-keeps the previous snapshot's bytes. It happened in every demotion run
-(SIGKILL on all four releases below, `Stop` without a grace period on 19.2.4
-and 20.2.4), and for an ordinary mirror snapshot on 19.2.5 and 20.2.4; a
-graceful stop was not tried. Squid 19.2.3 does not resume an interrupted
-demotion copy at all (Tentacle 20.2.0 has the same code); the destination
-stays `up+unknown` ("remote image is not primary").
+keeps the previous snapshot's bytes. The receiver persists the number of
+contiguous objects copied, and the restart reads it as the index of the last
+copied one, so the copy resumes one object later. The object is lost only
+when its copy had not finished at the kill; a checkpoint of zero restarts
+from object 0. It happened for an ordinary mirror snapshot and for a
+demotion snapshot (SIGKILL on all releases below, `Stop` without a grace
+period on 19.2.4 and 20.2.4); a graceful stop was not tried. Squid 19.2.3
+does not resume an interrupted demotion copy at all (Tentacle 20.2.0 has the
+same code); the destination stays `up+unknown` ("remote image is not
+primary").
 
-- Affected: Squid 19.2.4 and 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0;
-  Squid 19.2.3 does not resume the demotion copy.
+- Affected: Squid 19.2.4 and 19.2.5, Tentacle 20.2.4 and Umbrella 21.2.0
+  (native); every 19.2, 20.2 and 21 release tag through 21.3.0 has the same
+  source. No release fixes it.
 - Guidance: a test that kills a receiver during a snapshot sync must compare
   the destination's data afterwards rather than trust the completed snapshot.
-- Evidence: [`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md).
+- Evidence: [`rbd_mirror_resume_checkpoint`](../../internal/integration/experiments/rbd_mirror_resume_checkpoint/README.md)
+  (the checkpoint and the lost object) and
+  [`rbd_mirror_demote_restart`](../../internal/integration/experiments/rbd_mirror_demote_restart/README.md)
+  (the demotion copy).
 
 ## CephFS
 

@@ -23,6 +23,7 @@ on:
           - rbd_group_snap_default_quiesce
           - rbd_group_snap_late_complete
           - rbd_perf_data_pool
+          - rbd_resume_checkpoint
           - rbd_trash_purge_timezone
           - rbd_unlink_trashed_snapshot
           - rgw_conditional_writes

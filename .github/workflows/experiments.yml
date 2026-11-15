@@ -27,6 +27,7 @@ on:
           - rbd_group_snap_default_quiesce
           - rbd_group_snap_late_complete
           - rbd_mirror_demote_restart
+          - rbd_mirror_resume_checkpoint
           - rbd_mirror_unlink_trashed_snapshot
           - rbd_perf_data_pool
           - rbd_trash_purge_timezone
