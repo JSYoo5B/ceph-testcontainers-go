@@ -109,8 +109,9 @@ stale:
   identity's current one.
 - Containers attached with the old descriptor keep the old keyring.
 - Copies of the old descriptor follow the same rules. The cluster records the
-  current key of each identity it created, and these operations also refuse a
-  descriptor of a deleted identity.
+  current key of each identity it created. `WithIdentity`, `Capabilities` and
+  `UpdateCaps` also refuse a descriptor of a deleted identity; `Delete` with
+  it again returns nil without another change.
 
 The old key behaves as follows on the official images:
 
