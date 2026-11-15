@@ -36,6 +36,11 @@ const (
 	// the gateway applies to requests the user's S3 keys sign. Ceph 19
 	// stores the policy and never applies it.
 	CapabilityRGWUserRateLimit capabilityID = "RGW user-scope rate limits"
+	// CapabilityAlertsRecipientList is a comma-separated
+	// mgr/alerts/smtp_destination delivered as one SMTP envelope recipient
+	// per address. Ceph 19 hands the whole value to smtplib as one
+	// recipient.
+	CapabilityAlertsRecipientList capabilityID = "mgr/alerts/smtp_destination recipient lists"
 )
 
 // releaseCapability is one row of the shared expectation table. A contract
@@ -83,6 +88,12 @@ var ReleaseCapabilities = map[capabilityID]releaseCapability{
 		// requests the user signs are still admitted.
 		Releases: map[int]bool{19: false, 20: true, 21: true},
 		refusal:  "RGW user-scope rate limits need Ceph 20 or later",
+	},
+	CapabilityAlertsRecipientList: {
+		ID: CapabilityAlertsRecipientList,
+		// No tool reveals it: the module accepts the list, writes it to the
+		// To header and sends one RCPT TO with the whole value.
+		Releases: map[int]bool{19: false, 20: true, 21: true},
 	},
 }
 

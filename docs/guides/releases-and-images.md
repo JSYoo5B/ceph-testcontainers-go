@@ -312,7 +312,11 @@ slot needs the `mgr-modules` role or another image that ships them.
   transport control that reports no change. The message carries no fsid;
   put an identity the SUT can match into `smtp_from_name` or
   `smtp_sender`. `smtp_ssl` is implicit TLS against the MGR image's system
-  trust store, with no STARTTLS.
+  trust store, with no STARTTLS. Ceph 20 and later split a comma-separated
+  `smtp_destination` into one envelope recipient per address. Ceph 19 sends
+  the whole value as one recipient, so a receiver gets a single address
+  that contains the commas; configure one destination there. Both write the
+  value unchanged to the `To` header.
 - telegraf (`TestManagerTelegrafDelivery`): the module reads `address` and
   `interval` once when it starts, so set them before enabling it and change
   the address only while it is disabled. Its first pass comes about ten
