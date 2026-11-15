@@ -16,13 +16,33 @@ layout := ceph.ClusterConfig{}.WithInitialOSDs(
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithZoneConfig(zones), ceph.WithClusterConfig(layout),
 	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 testcontainers.CleanupContainer(t, cluster)
-// ...
+if err != nil {
+	t.Fatal(err)
+}
 client, err := testcontainers.Run(ctx, ceph.DefaultImage, cluster.WithClient(), cluster.WithZone("a"), ceph.WithIdleEntrypoint())
 testcontainers.CleanupContainer(t, client)
+if err != nil {
+	t.Fatal(err)
+}
 pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "regional", Replicas: 2, MinSize: 1, FailureDomain: "zone"})
+if err != nil {
+	t.Fatal(err)
+}
 lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage, Plane: ceph.PublicNetworkPlane, Delay: 20 * time.Millisecond})
-defer lease.Restore(ctx)
+if lease != nil {
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := lease.Restore(cleanup); err != nil {
+			t.Errorf("restore zone profile: %v", err)
+		}
+	})
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Exercise the SUT against pool while the profile is held.
 ```
 
 ## Topology
