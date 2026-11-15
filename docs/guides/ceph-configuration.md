@@ -345,8 +345,11 @@ See [Releases and images](releases-and-images.md) for details.
   writes to the small file. Select `WithStartupBenchmark(OSDBenchmarkSkip)` for
   such functional fixtures (see
   [OSDStorage.WithBlockSize](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDStorage.WithBlockSize)).
-- A file setting overrides the MON database entry even after `override.SetConfig` succeeds;
-  `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
+- A daemon keeps a `WithConfigFile` value even after `override.SetConfig`
+  stores and reads back another entry. `Observer.Configuration` reports the
+  stored entry; `ceph config show <daemon> <key>` reports the daemon's
+  effective value. `mon_allow_pool_delete = false` in a config file blocks
+  `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
   `t.Cleanup` for `Restore`, `Pool.Remove` and `diagnostics.Collect`.
 - Terminate client containers before the cluster: register their cleanup after

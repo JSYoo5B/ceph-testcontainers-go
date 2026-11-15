@@ -41,9 +41,11 @@ type userConfigSection struct {
 
 // WithConfigFile reads a native ceph.conf on the test host during option
 // preparation. The first MON uses the merged file when creating its store;
-// each daemon and WithClient container receives it at startup. Later files replace
-// earlier entries for the same section and key. A local value takes precedence
-// over a stored MON database entry, even when override.SetConfig succeeds.
+// each daemon and WithClient container receives it at startup. Entries replace
+// the fixture's defaults for the same section and key, and later files replace
+// earlier entries. The file is fixed at bootstrap and does not change a running
+// cluster. A local value takes precedence over a stored MON database entry,
+// even when override.SetConfig succeeds.
 // Check a daemon's effective value with ceph config show.
 //
 // Run rejects fixture-owned keys, including daemon command-line options.
@@ -51,9 +53,9 @@ type userConfigSection struct {
 // section makes it advertise IPv6 first. RGW uses [client] or [client.admin].
 // The [configuration guide] lists reserved keys and their replacements.
 //
-// Spaces, hyphens and underscores are equivalent in key names. Outside quotes,
-// an unescaped # or ; starts a comment. Escape a literal marker as \# or \;.
-// Quoting alone does not protect the marker: the parser rejects ambiguous values.
+// Spaces, hyphens and underscores are equivalent in key names. An unescaped #
+// or ; starts a comment, even inside quotes, so a quoted value cut this way is
+// rejected as ambiguous. Escape a literal marker as \# or \;.
 // Validation rejects includes, continued lines, keys outside a section,
 // duplicate keys in a section of one file, NUL bytes, invalid UTF-8 and
 // individual files or merged results over 64 KiB.
