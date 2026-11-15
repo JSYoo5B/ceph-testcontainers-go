@@ -32,7 +32,10 @@ import (
 //     signal, and the next change arrives as a Cleared without its New;
 //   - an authentication refusal is the same error, and restoring the
 //     credentials through their handles stops the module from logging in;
-//   - after a failover the new active manager sends from its own address.
+//   - after a failover the new active manager sends from its own address;
+//   - a comma-separated smtp_destination is one envelope recipient per
+//     address where the release splits it, and one recipient carrying the
+//     whole list where it does not (CapabilityAlertsRecipientList).
 func testManagerAlertsDelivery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -164,6 +167,10 @@ func testManagerAlertsDelivery(t *testing.T) {
 	// The cluster's fsid is not in the module's message; the SUT gets it
 	// only from an identity the test chooses, here the From name.
 	fromName := "Ceph " + baseline.FSID
+	recipients := []string{"<sut-a@fixture.test>", "<sut-b@fixture.test>"}
+	if !harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityAlertsRecipientList) {
+		recipients = []string{"<sut-a@fixture.test,sut-b@fixture.test>"}
+	}
 	for _, setting := range [][2]string{
 		{"smtp_host", sink.Alias},
 		{"smtp_port", port},
@@ -195,8 +202,8 @@ func testManagerAlertsDelivery(t *testing.T) {
 		if !slices.Equal(parsed[first].Codes(alertsNew), baselineCodes) || parsed[first].Codes(alertsCleared) != nil || managers[records[first].Peer] != active {
 			t.Fatalf("enable-time message from %s: new %v cleared %v, want new %v from mgr.%s", records[first].Peer, parsed[first].Codes(alertsNew), parsed[first].Codes(alertsCleared), baselineCodes, active)
 		}
-		if records[first].From != "<ceph-alerts@fixture.test>" || !slices.Equal(records[first].To, []string{"<sut-a@fixture.test>", "<sut-b@fixture.test>"}) || parsed[first].Headers["From"] != fromName+" <ceph-alerts@fixture.test>" {
-			t.Fatalf("envelope %s -> %v, From %q", records[first].From, records[first].To, parsed[first].Headers["From"])
+		if records[first].From != "<ceph-alerts@fixture.test>" || !slices.Equal(records[first].To, recipients) || parsed[first].Headers["From"] != fromName+" <ceph-alerts@fixture.test>" {
+			t.Fatalf("envelope %s -> %v, From %q; want <ceph-alerts@fixture.test> -> %v", records[first].From, records[first].To, parsed[first].Headers["From"], recipients)
 		}
 		seen = first + 1
 		t.Logf("MGR_ALERTS enable-time message %v after enabling: new %v", time.Unix(0, int64(records[first].Time*1e9)).Sub(enabled).Round(time.Millisecond), baselineCodes)
@@ -205,10 +212,16 @@ func testManagerAlertsDelivery(t *testing.T) {
 	// Transport control: a forced send reports no change.
 	harness.MustCeph(t, ctx, cluster, "alerts", "send")
 	forced := awaitMessage("forced send", seen, 30*time.Second, func(_ smtpRecord, m alertMessage) bool { return true })
-	_, parsed := messages()
+	records, parsed := messages()
 	if parsed[forced].Change() || parsed[forced].Status != health().Status {
 		t.Fatalf("forced send %+v, want no change and status %s", parsed[forced], health().Status)
 	}
+	// The envelope is checked here too, since a cluster without baseline
+	// checks sends no enable-time message.
+	if !slices.Equal(records[forced].To, recipients) {
+		t.Fatalf("forced send envelope -> %v, want %v", records[forced].To, recipients)
+	}
+	t.Logf("MGR_ALERTS smtp_destination %q: envelope recipients %v, To header %q", "sut-a@fixture.test,sut-b@fixture.test", records[forced].To, parsed[forced].Headers["To"])
 	seen = forced + 1
 
 	// An independent health change and its clearance.
@@ -240,8 +253,14 @@ func testManagerAlertsDelivery(t *testing.T) {
 		t.Fatalf("ALERTS_SMTP_ERROR details %v, want a refused connection", failure.Details)
 	}
 	time.Sleep(12 * time.Second)
+	// The receiver reopens before SetAvailable reads the new state back, so
+	// a retry can arrive before quiet starts; count from the request.
+	_, beforeUp := messages()
 	sink.SetAvailable(t, ctx, true)
 	seen = quiet("receiver back, no retry", 15*time.Second)
+	if _, parsed := messages(); seen != len(beforeUp) {
+		t.Fatalf("receiver back: %d messages arrived while it reopened: %+v", seen-len(beforeUp), parsed[len(beforeUp):seen])
+	}
 	if err := lost.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +316,7 @@ func testManagerAlertsDelivery(t *testing.T) {
 	// Failover: the new active manager's first pass reports every current
 	// check as New again, from its own address. A change made right after
 	// the failover is in that pass or in a later one, not lost.
-	records, _ := messages()
+	records, _ = messages()
 	seen = len(records)
 	standby := ""
 	for _, name := range managers {

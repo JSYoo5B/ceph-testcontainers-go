@@ -295,7 +295,12 @@ slot needs the `mgr-modules` role or another image that ships them.
   unchanged body is also a 200. Identify a pool by its native `pool_id` and
   require a fresh increase of its `ceph_pool_wr` after a write the SUT made;
   the counter comes from PG statistics, so the deadline covers that report
-  as well as `scrape_interval`. Follow the active manager with
+  as well as `scrape_interval`. A promoted manager rebuilds its PG
+  statistics from the OSD reports it receives, so its first answers can
+  carry the pool with a lower `ceph_pool_wr` (0 on Ceph 19 a few seconds
+  after `ceph mgr fail`). The counter is cumulative and returns to the
+  previous value without a write, so wait for it before comparing a later
+  increase. Follow the active manager with
   `Observer.WatchManagers` or `Observer.ManagerServices`: after a failover
   the advertisement can take more than ten seconds, and a changed
   `mgr/prometheus/` option restarts the listener while the old URL stays
@@ -312,7 +317,11 @@ slot needs the `mgr-modules` role or another image that ships them.
   transport control that reports no change. The message carries no fsid;
   put an identity the SUT can match into `smtp_from_name` or
   `smtp_sender`. `smtp_ssl` is implicit TLS against the MGR image's system
-  trust store, with no STARTTLS.
+  trust store, with no STARTTLS. Ceph 20 and later split a comma-separated
+  `smtp_destination` into one envelope recipient per address. Ceph 19 sends
+  the whole value as one recipient, so a receiver gets a single address
+  that contains the commas; configure one destination there. Both write the
+  value unchanged to the `To` header.
 - telegraf (`TestManagerTelegrafDelivery`): the module reads `address` and
   `interval` once when it starts, so set them before enabling it and change
   the address only while it is disabled. Its first pass comes about ten

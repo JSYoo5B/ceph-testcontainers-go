@@ -413,9 +413,14 @@ func testManagerPrometheusScraper(t *testing.T) {
 
 	// Writes made after the SUT reached the endpoint.
 	const writes = 20
-	reference, appeared := waitScrape("pool series at the active endpoint", activeMetrics, 2*time.Minute, func(s prometheusScrape) error { return s.poolSeries(poolID, pool) })
+	oldTrace := &poolCounterTrace{start: time.Now()}
+	reference, appeared := waitScrape("pool series at the active endpoint", activeMetrics, 2*time.Minute, func(s prometheusScrape) error {
+		oldTrace.add(s, poolID, pool)
+		return s.poolSeries(poolID, pool)
+	})
 	writeObjects("before", writes)
 	fresh, delay := waitScrape("fresh writes at the active endpoint", activeMetrics, 2*time.Minute, func(s prometheusScrape) error {
+		oldTrace.add(s, poolID, pool)
 		return freshPoolWrites(reference, s, poolID, pool, writes)
 	})
 	if err := freshPoolWrites(reference, reference, poolID, pool, writes); err == nil {
@@ -430,8 +435,8 @@ func testManagerPrometheusScraper(t *testing.T) {
 	if idle.Bytes != 0 || freshPoolWrites(reference, idle, poolID, pool, writes) == nil {
 		t.Fatalf("standby mgr.%s answered %s, want an empty 200 that the check refuses", standby, idle)
 	}
-	t.Logf("MGR_PROMETHEUS_SCRAPER before failover: mgr.%s at %s; pool %s id %s visible after %v; %d writes fresh %v after writing (%v -> %v); standby mgr.%s %s",
-		active, activeMetrics, pool, poolID, appeared.Round(time.Millisecond), writes, delay.Round(time.Millisecond), reference.Writes[poolID], fresh.Writes[poolID], standby, idle)
+	t.Logf("MGR_PROMETHEUS_SCRAPER before failover: mgr.%s at %s; pool %s id %s visible after %v; %d writes fresh %v after writing (%v -> %v); standby mgr.%s %s; ceph_pool_wr at mgr.%s %s",
+		active, activeMetrics, pool, poolID, appeared.Round(time.Millisecond), writes, delay.Round(time.Millisecond), reference.Writes[poolID], fresh.Writes[poolID], standby, idle, active, oldTrace)
 
 	// Failover: the scraper follows the advertisement in the watch events,
 	// then writes again and requires the increase at the new endpoint.
@@ -445,10 +450,26 @@ func testManagerPrometheusScraper(t *testing.T) {
 	}
 	advertisedAfter := time.Since(failed)
 	promotedMetrics := mustURL(t, moved.Services["prometheus"]).JoinPath("metrics").String()
-	reference2, answered := waitScrape("pool series at the promoted endpoint", promotedMetrics, 2*time.Minute, func(s prometheusScrape) error { return s.poolSeries(poolID, pool) })
-	if reference2.Writes[poolID] < fresh.Writes[poolID] {
-		t.Fatalf("ceph_pool_wr went back across the failover: %v -> %v", fresh.Writes[poolID], reference2.Writes[poolID])
-	}
+	// The promoted manager rebuilds its PG statistics from the OSD reports it
+	// receives, so it can serve the pool series before the first report with
+	// a ceph_pool_wr below the old manager's (0 on Squid, observed a few
+	// seconds after mgr fail); the counter is cumulative and returns to the
+	// old value without a write. The scraper keeps scraping until the
+	// counter is back at exactly that value and takes that answer as the
+	// reference for the next writes, so a reset that never catches up, a
+	// value no write explains and a missing post-promotion write all fail.
+	promotedTrace := &poolCounterTrace{start: failed}
+	served := fresh.Writes[poolID]
+	reference2, answered := waitScrape("pool counter at the promoted endpoint back at the old manager's value", promotedMetrics, 2*time.Minute, func(s prometheusScrape) error {
+		promotedTrace.add(s, poolID, pool)
+		if err := s.poolSeries(poolID, pool); err != nil {
+			return err
+		}
+		if got := s.Writes[poolID]; got != served {
+			return fmt.Errorf("ceph_pool_wr{pool_id=%q} %v, want the %v mgr.%s served (sequence %s)", poolID, got, served, active, promotedTrace)
+		}
+		return nil
+	})
 	writeObjects("after", writes)
 	fresh2, delay2 := waitScrape("fresh writes at the promoted endpoint", promotedMetrics, 2*time.Minute, func(s prometheusScrape) error {
 		return freshPoolWrites(reference2, s, poolID, pool, writes)
@@ -466,8 +487,8 @@ func testManagerPrometheusScraper(t *testing.T) {
 	if demoted.Bytes != 0 || freshPoolWrites(reference2, demoted, poolID, pool, writes) == nil {
 		t.Fatalf("demoted mgr.%s answered %s, want an empty 200 that the check refuses", active, demoted)
 	}
-	t.Logf("MGR_PROMETHEUS_SCRAPER failover: advertised by mgr.%s at %s %v after mgr fail (watch event %d, %d gaps); pool series answered %v later; %d writes fresh %v after writing (%v -> %v); demoted mgr.%s %s %v after the pool series",
-		standby, promotedMetrics, advertisedAfter.Round(time.Millisecond), moved.Sequence, gaps, answered.Round(time.Millisecond), writes, delay2.Round(time.Millisecond), reference2.Writes[poolID], fresh2.Writes[poolID], active, demoted, back.Round(time.Millisecond))
+	t.Logf("MGR_PROMETHEUS_SCRAPER failover: advertised by mgr.%s at %s %v after mgr fail (watch event %d, %d gaps); counter back at %v %v later; %d writes fresh %v after writing (%v -> %v); demoted mgr.%s %s %v after the pool series; ceph_pool_wr at mgr.%s from mgr fail %s",
+		standby, promotedMetrics, advertisedAfter.Round(time.Millisecond), moved.Sequence, gaps, served, answered.Round(time.Millisecond), writes, delay2.Round(time.Millisecond), reference2.Writes[poolID], fresh2.Writes[poolID], active, demoted, back.Round(time.Millisecond), standby, promotedTrace)
 
 	// standby_behaviour=error changes the standby's index page only:
 	// /metrics stays a 200 with an empty body (StandbyModule in
