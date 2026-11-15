@@ -35,7 +35,11 @@ Upstream references:
 ## Requirements
 
 - One cluster: 3 MONs, 3 OSDs, one MGR, image role `essential` only.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and the cluster's
+  termination in cleanup has its own two-minute deadline, so neither counts
+  against it and a slow startup or cleanup can take the test past 15 minutes.
+  The outer bound is the batch's 20-minute `go test` timeout.
 - If the OSDs' sessions do not include one with the leader and one with a
   peon, the MON holding most of them is restarted before any measurement until
   they do.

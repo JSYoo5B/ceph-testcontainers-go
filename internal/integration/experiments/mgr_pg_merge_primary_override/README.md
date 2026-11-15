@@ -59,7 +59,12 @@ Upstream references:
   `RaiseMinCompatClient`: the case raises `require_min_compat_client` to
   the release the monitor names, and the restoration of the last override
   lowers it again.
-- The test bounds itself to 19 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 19-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and in cleanup
+  the restoration of each override has its own one-minute deadline and the
+  cluster's termination its own two-minute one, so none of them counts against
+  it and a slow startup or cleanup can take the test past 19 minutes. The
+  outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
