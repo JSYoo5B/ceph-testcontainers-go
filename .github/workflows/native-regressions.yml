@@ -15,6 +15,7 @@ on:
           - cephfs_mirror_blockdiff_empty
           - cephfs_readdir_after_snapdiff
           - cephfs_reclaim_closing_open
+          - cephfs_retained_snapshot_full_pool
           - cephfs_statfs_mixed_quota
           - cephfs_snapshot_readdir_eviction
           - mgr_pg_merge_primary_override
@@ -26,6 +27,7 @@ on:
           - rbd_perf_data_pool
           - rbd_resume_checkpoint
           - rbd_trash_purge_timezone
+          - rbd_unlink_trashed_snapshot
           - rgw_conditional_writes
           - rgw_ssec_completion
           - rgw_empty_sse_header

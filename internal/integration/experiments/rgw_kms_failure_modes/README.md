@@ -30,7 +30,15 @@ consistent outcomes. No upstream issue is recorded for the Squid difference.
   `hashicorp/vault:1.21.4`) on the cluster bridge. Image roles `essential`,
   `client` and `rgw`. Bridge networking only: Docker cannot disconnect a
   host-network endpoint.
-- The test bounds itself to 20 minutes; the batch timeout is 30 minutes.
+- The case's steps share a 20-minute deadline that starts before cluster
+  startup. Startup (`harness.NewRGWExternalKMS`, through
+  `harness.NewServiceCluster`) runs on the test context, so the deadline does
+  not cut it short, but the time it takes is spent from the 20 minutes and the
+  steps after it get what remains. In cleanup the restoration of each
+  configuration override and of the network cut has its own 30-second deadline
+  and the cluster's termination its own two-minute one, so cleanup is not
+  bounded by the deadline and can take the test past 20 minutes. The outer
+  bound is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 

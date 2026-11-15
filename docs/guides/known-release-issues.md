@@ -149,6 +149,25 @@ whose deferment ends five hours after it is removed.
   client's local time.
 - Evidence: [`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md).
 
+### Mirror receiver stopped by an unlink from a trashed snapshot
+
+After it copies a mirror snapshot, the `rbd-mirror` receiver unlinks itself
+from the previous one on the primary. When that previous snapshot is in the
+trash namespace, because its removal is in progress or a clone v2 child
+holds it, the unlink fails with `EINVAL` (`not mirror snapshot`) instead of
+skipping it. The image replayer stops with "failed to unlink local peer from
+remote image" and the image status is `up+error` until the daemon starts the
+replayer again; a later mirror snapshot then replicates.
+
+- Affected: Squid 19.2.3 and Tentacle 20.2.1.
+- Not affected: Squid 19.2.4 and Tentacle 20.2.2, which skip the trashed
+  snapshot.
+- Guidance: on the affected releases, a test that removes or clones mirror
+  snapshots of a mirrored primary must not read a transient `up+error` of
+  the destination as its own failure; wait for the next mirror snapshot to
+  replicate.
+- Evidence: [`rbd_mirror_unlink_trashed_snapshot`](../../internal/integration/experiments/rbd_mirror_unlink_trashed_snapshot/README.md).
+
 ### Snapshot copy resumed after a killed mirror receiver
 
 When an `rbd-mirror` daemon is killed while it copies a mirror snapshot and
@@ -380,6 +399,24 @@ writes fail with `ENOSPC` instead.
 - Evidence: native research in
   [#514](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/514); no
   case manual.
+
+### Subvolume removal with retained snapshots on a full cluster
+
+`ceph fs subvolume rm --retain-snapshots` on a full cluster moves the live
+incarnation to the subvolume's trash and then fails to write the retained
+state (`EINVAL` with the traceback of a `No space left on device` error).
+Once the cluster has space again, the subvolume's metadata still names the
+moved incarnation as complete, so `getpath`, `info`, `snapshot getpath` and a
+retried removal fail with `ENOENT` ("mount path missing"). The retained
+snapshot's bytes stay in its snapshot directory but are no longer reachable
+through the volumes interface.
+
+- Affected: Squid 19.2.6 and Tentacle 20.2.0.
+- Not affected: Squid 19.2.7 and Tentacle 20.2.1 fail with `ENOSPC` and
+  change nothing; a retry after the cluster has space retains the snapshot.
+- Guidance: on the affected releases, do not remove a subvolume with
+  retained snapshots while the cluster or its data pool is full.
+- Evidence: [`cephfs_retained_snapshot_full_pool`](../../internal/integration/experiments/cephfs_retained_snapshot_full_pool/README.md).
 
 ### CephFS authorization before Squid 19.2.5
 

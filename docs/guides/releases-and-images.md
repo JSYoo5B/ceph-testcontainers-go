@@ -247,7 +247,8 @@ cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.With
   image with `override.SetMGRModule`, configure it with `override.SetConfig`
   (`mgr/<module>/<option>`), and read its state with `Observer.MGRModules`:
   a module whose dependency is missing is advertised with `CanRun` false and
-  its `ErrorString`, and `SetMGRModule` refuses to enable it. A membership
+  its `ErrorString`, and `SetMGRModule` refuses to enable it with an error that
+  carries that `ErrorString` (for example `influxdb python module not found`). A membership
   change respawns every manager; `SetMGRModule` and its `Restore` return once
   a respawned active manager is available, so `Observer.MGRModules` and other
   MGR commands work right after them.
@@ -268,12 +269,59 @@ MGR slot, an essential image without `ceph-mgr`, and a consumer image built
 from the official image with one small module, including a module whose
 dependency is missing and a module option value that Ceph refuses. In the same
 batch, `TestManagerPrometheusExporter`, `TestManagerMetrics`,
-`TestManagerWatchReportsFailoverAndServiceAdvertisement` and
-`TestMGRRuntimeRestoration` run their managers from the `mgr-modules` role
-image. The batch declares
+`TestManagerWatchReportsFailoverAndServiceAdvertisement`,
+`TestMGRRuntimeRestoration` and the receiver recipes below run their managers
+from the `mgr-modules` role image. The batch declares
 `image-roles=essential,client,mgr-modules`, so CI supplies
 `CEPH_TEST_MGR_MODULES_IMAGE`; a role run without it fails before any cluster
 starts, rather than falling back to the essential or the official image.
+
+### Receivers of MGR modules
+
+A test whose SUT scrapes or receives what an MGR module sends composes the
+existing primitives; no helper wraps them. It holds one `override.SetConfig`
+handle per `mgr/<module>/<option>`, enables the module with
+`override.SetMGRModule`, and runs its scraper or receiver in a container it
+owns on `ClusterFacts.NetworkName`, which needs no Ceph configuration or
+keyring. It restores the module before the options and stops the receiver
+last. On 21.2.0 the essential role ships none of these modules, so the MGR
+slot needs the `mgr-modules` role or another image that ships them.
+
+- prometheus (`TestManagerPrometheusIndependentScraper`):
+  `Observer.ManagerMetrics` scrapes through the control container; a SUT that
+  scrapes on its own must check content, not the status code. A standby
+  answers `/metrics` with 200 and an empty body under either
+  `standby_behaviour` (`error` changes only the index page), and an
+  unchanged body is also a 200. Identify a pool by its native `pool_id` and
+  require a fresh increase of its `ceph_pool_wr` after a write the SUT made;
+  the counter comes from PG statistics, so the deadline covers that report
+  as well as `scrape_interval`. Follow the active manager with
+  `Observer.WatchManagers` or `Observer.ManagerServices`: after a failover
+  the advertisement can take more than ten seconds, and a changed
+  `mgr/prometheus/` option restarts the listener while the old URL stays
+  advertised. Daemon perf counters are excluded by default; they need
+  `mgr/prometheus/exclude_perf_counters` set to false or a separate
+  ceph-exporter, which the fixture does not run.
+- alerts (`TestManagerAlertsSMTPDelivery`): the module mails when the set of
+  health checks changes or a count grows, and never periodically. Its first
+  pass after an enable or a failover reports every current check as New,
+  and the new active manager sends from its own address. It has no retry: a
+  change made while the receiver is down is lost, `ALERTS_SMTP_ERROR` (read
+  with `Observer.HealthDetails`) is the only native signal, and the next
+  change can arrive as a Cleared without its New. `ceph alerts send` is a
+  transport control that reports no change. The message carries no fsid;
+  put an identity the SUT can match into `smtp_from_name` or
+  `smtp_sender`. `smtp_ssl` is implicit TLS against the MGR image's system
+  trust store, with no STARTTLS.
+- telegraf (`TestManagerTelegrafDelivery`): the module reads `address` and
+  `interval` once when it starts, so set them before enabling it and change
+  the address only while it is disabled. Its first pass comes about ten
+  seconds after the start. Over UDP every line is its own datagram, over TCP
+  every pass is one connection, and the lines of one pass share one
+  timestamp. Match the cluster by the `fsid` tag, never by the sender, which
+  changes on a failover. A send failure appears only in the active
+  manager's container log: health stays unchanged, `ceph telegraf send`
+  still reports success, and the passes of an outage are lost.
 
 `RunNativeCommand` requires Python in the actual target container, and keeps
 explicit capability checks. Selecting a toolkit does not add utilities to a

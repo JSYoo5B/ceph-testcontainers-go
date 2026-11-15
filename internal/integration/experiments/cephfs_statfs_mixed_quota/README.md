@@ -42,7 +42,14 @@ The defect is reproduced on Tentacle 20.2.4 and not on Tentacle 20.2.5.
   `client_quota_df` from the mounted client and needs both `true`.
 - The data pool must report more than 64 MiB of capacity, so that it can be
   told apart from the quota. A fixture cluster reported 944 MiB.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's steps share a 15-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`) runs on the test context,
+  so the deadline does not cut it short, but the time it takes is spent from
+  the 15 minutes and the steps after it get what remains. In cleanup the
+  removal of the layout has its own two-minute deadline and the cluster's
+  termination its own two-minute one, so cleanup is not bounded by the
+  deadline and can take the test past 15 minutes. The outer bound is the
+  batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
