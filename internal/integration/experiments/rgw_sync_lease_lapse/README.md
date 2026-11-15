@@ -64,13 +64,15 @@ Every published image reproduces it in the test's last round.
   `rgw_data_notify_interval_msec` to 0 on zone a's gateway at run time. With
   notifications zone b would sync a notified bucket shard apart from its
   data log position, which hides an entry that the position passed.
-- The case's own steps share a 30-minute deadline. Cluster startup
-  (`harness.NewSingleImageCluster`, once per cluster) runs on the test context
-  and in cleanup the resumption of paused gateways and the realm's termination
+- The case's steps share a 30-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`, once per cluster) runs on
+  the test context, so the deadline does not cut it short, but the time it
+  takes is spent from the 30 minutes and the steps after it get what remains.
+  In cleanup the resumption of paused gateways and the realm's termination
   share their own three-minute deadline and each cluster's termination its own
-  two-minute one, so none of them counts against it and a slow startup or
-  cleanup can take the test past 30 minutes. The outer bound is the batch's
-  40-minute `go test` timeout.
+  two-minute one, so cleanup is not bounded by the deadline and can take
+  the test past 30 minutes. The outer bound is the batch's 40-minute `go test`
+  timeout.
 
 ## Tier and triggers
 

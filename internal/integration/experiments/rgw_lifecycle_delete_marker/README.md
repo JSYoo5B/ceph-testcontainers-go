@@ -21,7 +21,7 @@ prints no result line. See [Running an experiment case](../../../../docs/contrib
 
 ## Running
 
-The batch starts one cluster with one OSD, an admin client and an RGW. It accepts the usual aggregate image or essential, client and RGW role images. Each request has a 30-second deadline. The case purges the bucket before the fixture removes the cluster. Its own steps share a six-minute deadline. Cluster startup (`harness.NewServiceCluster`) runs on the test context and in cleanup the purge of the bucket has its own 30-second deadline and the cluster's termination its own two-minute one, so none of them counts against it and a slow startup or cleanup can take the test past six minutes. The outer bound is the batch's 15-minute `go test` timeout.
+The batch starts one cluster with one OSD, an admin client and an RGW. It accepts the usual aggregate image or essential, client and RGW role images. Each request has a 30-second deadline. The case purges the bucket before the fixture removes the cluster. Its steps share a six-minute deadline that starts before cluster startup. Startup (`harness.NewServiceCluster`) runs on the test context, so the deadline does not cut it short, but the time it takes is spent from the six minutes and the steps after it get what remains. In cleanup the purge of the bucket has its own 30-second deadline and the cluster's termination its own two-minute one, so cleanup is not bounded by the deadline and can take the test past six minutes. The outer bound is the batch's 15-minute `go test` timeout.
 
 ```sh
 go test -count=1 -tags=all -timeout=15m -v \

@@ -48,13 +48,15 @@ only after the copy resumed, which an image with defect 1 never does.
   `fault.NetemHelperImage`) limits only the source OSD's packets to the
   forward receiver to 2 Mbit/s, so each 16 MiB image (256 KiB objects) takes
   about a minute to copy.
-- The case's own steps share a 25-minute deadline. Cluster startup
-  (`harness.NewSingleImageCluster`, once per cluster) runs on the test context
-  and in cleanup the restoration of the network limit has its own one-minute
+- The case's steps share a 25-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`, once per cluster) runs on
+  the test context, so the deadline does not cut it short, but the time it
+  takes is spent from the 25 minutes and the steps after it get what remains.
+  In cleanup the restoration of the network limit has its own one-minute
   deadline, the link's termination its own two-minute one and each cluster's
-  termination its own two-minute one, so none of them counts against it and a
-  slow startup or cleanup can take the test past 25 minutes. The outer bound
-  is the batch's 30-minute `go test` timeout.
+  termination its own two-minute one, so cleanup is not bounded by the
+  deadline and can take the test past 25 minutes. The outer bound is the
+  batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 
