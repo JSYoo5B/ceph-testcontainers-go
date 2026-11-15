@@ -119,7 +119,8 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 //   - Target-changed: the incarnation changed during the set. The handle
 //     reports the error and leaves the replacement alone.
 //
-// The readback after a set uses a fresh context capped by the startup timeout.
+// The readback after a set uses a fresh context capped by the startup timeout,
+// as does every call.
 //
 // [finalization guide]: https://github.com/JSYoo5B/ceph-testcontainers-go/blob/main/ceph/finalize/README.md
 //
