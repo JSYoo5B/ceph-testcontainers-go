@@ -60,19 +60,18 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 			if terminated {
 				return
 			}
-			cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer done()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
 				for _, osd := range clusteraccess.OSDs(t, cluster) {
 					if osd.Container == nil {
 						continue
 					}
-					osdMemoryFailureLogs(t, cleanup, osd.Container)
+					osdMemoryFailureLogs(t, ctx, osd.Container)
 				}
-			}
-			if err := cluster.Terminate(cleanup); err != nil {
-				t.Error("partial small-device cleanup failed", err)
-			}
+			}, func(ctx context.Context) {
+				if err := cluster.Terminate(ctx); err != nil {
+					t.Error("partial small-device cleanup failed", err)
+				}
+			})
 		})
 	}
 	if err != nil {

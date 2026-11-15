@@ -35,19 +35,18 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	}))
 	if link != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
 				for _, daemon := range link.Daemons() {
-					harness.MultiClusterLogContainer(t, cleanupCtx, daemon.Container)
-					if status, err := daemon.Status(cleanupCtx); err == nil {
+					harness.MultiClusterLogContainer(t, ctx, daemon.Container)
+					if status, err := daemon.Status(ctx); err == nil {
 						t.Logf("remaining daemon %s native status: %+v", daemon.DaemonName, status)
 					}
 				}
-			}
-			if err := link.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate RBD daemon topology: %v", err)
-			}
+			}, func(ctx context.Context) {
+				if err := link.Terminate(ctx); err != nil {
+					t.Errorf("terminate RBD daemon topology: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {
