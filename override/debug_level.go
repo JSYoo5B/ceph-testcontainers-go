@@ -119,8 +119,9 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 //   - Target-changed: the incarnation changed during the set. The handle
 //     reports the error and leaves the replacement alone.
 //
-// The readback after a set uses a fresh context capped by the startup timeout,
-// as does every call.
+// The steps up to the set share one context capped by the cluster's startup
+// timeout. The readback after a set starts a fresh context with the same cap,
+// so a call can take up to about twice the startup timeout.
 //
 //purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {
