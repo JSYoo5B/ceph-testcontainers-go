@@ -172,10 +172,14 @@ func TestMonitorRemovalWaitsForAbsentMemberAndWorkingQuorum(t *testing.T) {
 }
 
 func TestMonitorRemovalReadDeadlineRetainsOwnershipForRetry(t *testing.T) {
+	// The read after the removal blocks until the deadline, so the deadline
+	// expires there however long the preflight read takes on a loaded runner.
+	// A 20 ms deadline once also bounded the preflight read and expired
+	// "before removal" under the race run's load.
 	control := &monitorLifecycleControl{members: []string{"a", "b", "c", "replacement"}, quorum: []string{"a", "b", "c", "replacement"},
-		afterRemoval: []monitorLifecycleRead{{timeout: true}}}
+		afterRemoval: []monitorLifecycleRead{{block: true}}}
 	cluster := monitorLifecycleFixture(control)
-	cluster.settings.startupTimeout = 20 * time.Millisecond
+	cluster.settings.startupTimeout = 2 * time.Second
 	daemon := &monitorLifecycleDaemon{}
 	cluster.Container, cluster.controlPlane.handle = daemon, control
 	err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context())
@@ -404,16 +408,22 @@ type monitorLifecycleControl struct {
 }
 
 type monitorLifecycleRead struct {
-	timeout         bool
+	timeout bool
+	// block holds the read until its context ends, so the operation's own
+	// deadline expires at this read and not at an earlier, unscripted one.
+	block           bool
 	members, quorum []string
 }
+
+// errMonitorLifecycleBlock asks Exec to wait for the context outside the lock.
+var errMonitorLifecycleBlock = errors.New("block until the context ends")
 
 func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	control.mu.Lock()
 	code, reader, err := control.exec(ctx, args)
 	lost := err == nil && control.removalReplyLost && strings.Contains(strings.Join(args, " "), " mon remove ")
 	control.mu.Unlock()
-	if lost {
+	if lost || errors.Is(err, errMonitorLifecycleBlock) {
 		<-ctx.Done()
 		return 0, nil, ctx.Err()
 	}
@@ -443,6 +453,9 @@ func (control *monitorLifecycleControl) exec(ctx context.Context, args []string)
 			if read.timeout {
 				output, exitCode = []byte("timed out"), 1
 				break
+			}
+			if read.block {
+				return 0, nil, errMonitorLifecycleBlock
 			}
 			if read.members != nil {
 				nativeMembers = read.members
