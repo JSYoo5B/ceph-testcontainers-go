@@ -230,10 +230,8 @@ func condSequence(t *testing.T, c condCase, write condWriter, path string, initi
 	return current
 }
 
-// condFreshKey is the positive control: a key first written by a
-// conditional create, then refused as a duplicate. It passes on every
-// tested release, so a failure here means the gateway does not evaluate the
-// headers at all and the sequence's result says nothing.
+// condFreshKey checks that this writer can create a fresh key once and
+// rejects a duplicate conditional create. A failed control prevents a verdict.
 func condFreshKey(t *testing.T, c condCase, write condWriter, path string) {
 	t.Helper()
 	created := write(t, path, []byte("fresh"), "If-None-Match", "*")

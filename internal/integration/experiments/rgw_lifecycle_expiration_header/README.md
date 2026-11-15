@@ -67,8 +67,8 @@ Upstream references:
 
 Known-defect reproducer, optional batch `rgw_expiration_header` with a
 20-minute budget; no automatic run includes it. It is an `Experiments` case;
-Umbrella 21.2.0 (`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it, and
-`/ci run rgw_expiration_header on umbrella` runs the batch there. Its
+Umbrella 21.2.0 (`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it.
+`/ci run rgw_expiration_header` runs the default image. Its
 Docker-free header parsing tests (batch `code/pure`) run in Code checks on
 every change. The triggers, the result checks and the image injection are the
 shared ones of

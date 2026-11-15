@@ -70,8 +70,8 @@ Upstream references:
 Known-defect reproducer, optional batch `rgw_compressed_copy` with a
 20-minute budget; it edits the zone and restarts the gateway. No automatic run
 includes it. It is an `Experiments` case; Umbrella 21.2.0
-(`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it, and
-`/ci run rgw_compressed_copy on umbrella` runs the batch there. Its
+(`quay.io/ceph/ceph:v21.2.0`) is a fixed image for it.
+`/ci run rgw_compressed_copy` runs the default image. Its
 Docker-free judgement and cleanup tests (batch `code/pure`) run in Code
 checks on every change. The triggers, the result checks and the image
 injection are the shared ones of

@@ -61,8 +61,8 @@ Known-defect reproducer, optional batch `cephfs_dangling_symlink_create` with
 a 20-minute budget; no automatic run includes it. On its default image,
 Tentacle 20.2.4, it prints `REPRODUCED` (33 s). No release is fixed, so its
 `Experiments` dispatch has only the default run; Squid 19.2.2, before the
-defect, prints `NOT_REPRODUCED` (39 s). A comment run on another release is
-`/ci run cephfs_dangling_symlink_create on umbrella`. The judgement tests run
+defect, prints `NOT_REPRODUCED` (39 s). `/ci run cephfs_dangling_symlink_create`
+runs the default image. The judgement tests run
 in `code/pure` with every change (under 1 s). The shared triggers, result
 checks and image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 

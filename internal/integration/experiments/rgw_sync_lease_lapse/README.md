@@ -82,7 +82,7 @@ Known-defect reproducer, optional batch `rgw_sync_lease_lapse` with a
 steps are the realm, the seeds, both control rounds and the trigger's
 condition. It is an `Experiments` case without a fixed image, since no
 release fixes the defect, so a dispatch has only the default run.
-`/ci run rgw_sync_lease_lapse` takes an `on <release>` such as `on umbrella`.
+`/ci run rgw_sync_lease_lapse` runs the default image.
 The triggers, the result checks and the image injection are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its log reader and gateway state tests are Docker-free `code/pure`
 tests that Code checks runs on every change (under 1 s).

@@ -827,6 +827,9 @@ any prerequisite of its own.
   it. Any case's batch runs on a pull request's head with
   `/ci run <batch> [on <release>]` (see
   [Running chosen batches from a comment](ci.md#running-chosen-batches-from-a-comment)).
+  The release selector sets the batch environment. A reproducer with its own
+  `image` still runs its default image. The `image=` field in its result
+  line identifies the image used for the observation.
   A known-defect reproducer that has an entry in `experiments.yml` runs
   through `Experiments`, which checks its results:
 

@@ -73,8 +73,8 @@ with a 30-minute budget; no automatic run includes it. Its default image is
 Tentacle 20.2.4; it starts two clusters with two zonegroups and prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines) for all four redirects. It is an
 `Experiments` case, and its fixed image there is `quay.io/ceph/ceph:v20.2.5`.
-`/ci run rgw_zonegroup_redirect_endpoint` takes an `on <release>` such as
-`on umbrella`. The triggers, the result checks and the image injection are the shared ones
+`/ci run rgw_zonegroup_redirect_endpoint` runs the default image. The triggers,
+the result checks and the image injection are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its period reader, redirect classification and
 judgement tests are Docker-free `code/pure` tests that Code checks runs on
 every change (under 1 s).

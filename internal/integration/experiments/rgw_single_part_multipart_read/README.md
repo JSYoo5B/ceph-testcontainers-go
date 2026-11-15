@@ -75,7 +75,7 @@ runs on every change (under 1 s).
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label.
-- Comment: `/ci run rgw_single_part_read [on squid|umbrella]`.
+- Comment: `/ci run rgw_single_part_read` runs the default image.
 - Periodic: `rotate` can draw it; it still runs 19.1.0. `targeted` runs it
   on request.
 

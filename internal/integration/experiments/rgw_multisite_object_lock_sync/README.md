@@ -63,8 +63,8 @@ zones (`metadata-has-obj_lock`).
 Known-defect reproducer, optional batch `rgw_object_lock_sync` with a
 30-minute budget; two clusters. No automatic run includes it. It is an
 `Experiments` case; Tentacle 20.2.5 (`quay.io/ceph/ceph:v20.2.5`) and Umbrella
-21.2.0 are fixed images for it, and `/ci run rgw_object_lock_sync on umbrella`
-runs the batch there. It prints one
+21.2.0 are fixed images for it.
+`/ci run rgw_object_lock_sync` runs the default image. It prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_multisite_object_lock_sync`, for both steps. Its Docker-free configuration
 reader and judgement tests (batch `code/pure`) run in Code checks on every
