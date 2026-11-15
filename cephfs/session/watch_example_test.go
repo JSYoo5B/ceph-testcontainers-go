@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
@@ -35,15 +36,25 @@ func ExampleWatch() {
 		panic("no mounted session for sut")
 	}
 	client := sessions[i]
-	w, err := session.Watch(ctx, fs, ceph.WatchConfig{}, client.ID)
+	watchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	w, err := session.Watch(watchCtx, fs, ceph.WatchConfig{}, client.ID)
 	if err != nil {
 		panic(err)
 	}
 	defer func() { _ = w.Stop() }() // before the cluster's Terminate
-	<-w.Events()                    // the baseline
+	sameSession := func(s session.Session) bool {
+		return s.ID == client.ID && s.Rank == client.Rank && s.Address == client.Address
+	}
+	if !slices.ContainsFunc((<-w.Events()).Sessions, sameSession) {
+		panic("target session absent from baseline")
+	}
 	// ... freeze the SUT with fault.Pause ...
 	for event := range w.Events() {
-		if event.Kind == ceph.WatchGap || len(event.Removed) == 0 {
+		if slices.Contains(event.Rebaselined, client.Rank) {
+			panic("target rank changed holder before removal")
+		}
+		if !slices.ContainsFunc(event.Removed, sameSession) {
 			continue
 		}
 		observer, err := ceph.Observe(cluster.Container)
@@ -54,8 +65,9 @@ func ExampleWatch() {
 		if err != nil {
 			panic(err)
 		}
-		blocklisted := slices.ContainsFunc(entries, func(e ceph.BlocklistEntry) bool { return e.Address == event.Removed[0].Address })
+		blocklisted := slices.ContainsFunc(entries, func(e ceph.BlocklistEntry) bool { return e.Address == client.Address })
 		fmt.Println("session removed; address blocklisted:", blocklisted)
 		return
 	}
+	panic(fmt.Sprintf("watch ended before session removal: %v", w.Stop()))
 }

@@ -58,7 +58,9 @@ func ExampleLease_Watch() {
 	if err != nil {
 		panic(err)
 	}
-	watch, err := lease.Watch(ctx, ceph.WatchConfig{Interval: 10 * time.Second})
+	progressCtx, stopProgress := context.WithTimeout(ctx, 15*time.Minute)
+	defer stopProgress()
+	watch, err := lease.Watch(progressCtx, ceph.WatchConfig{Interval: 10 * time.Second})
 	if err != nil {
 		panic(err)
 	}
@@ -69,11 +71,12 @@ func ExampleLease_Watch() {
 		}
 		if !event.Status.Active {
 			fmt.Println("the module deactivated the schedule")
-			break
+			return
 		}
 		if event.Status.Created >= 3 && event.Status.Pruned >= 1 {
 			fmt.Printf("created %d, pruned %d, last at %s\n", event.Status.Created, event.Status.Pruned, event.Status.Last)
-			break
+			return
 		}
 	}
+	panic(fmt.Sprintf("watch ended before deactivation or expected progress: %v", watch.Stop()))
 }

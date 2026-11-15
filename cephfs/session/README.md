@@ -46,21 +46,37 @@ To follow one client through its eviction, watch its session from a
 baseline taken before the fault:
 
 ```golang
-w, err := session.Watch(ctx, fs, ceph.WatchConfig{}, holder.ID)
+watchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+defer cancel()
+w, err := session.Watch(watchCtx, fs, ceph.WatchConfig{}, holder.ID)
 if err != nil {
-	t.Fatal(err) // the first read failed or was incoherent; nothing runs
+	t.Fatal(err)
 }
-t.Cleanup(func() { _ = w.Stop() })
-<-w.Events() // the baseline, with holder's open session
+defer w.Stop()
+sameSession := func(s session.Session) bool {
+	return s.ID == holder.ID && s.Rank == holder.Rank && s.Address == holder.Address
+}
+if !slices.ContainsFunc((<-w.Events()).Sessions, sameSession) {
+	t.Fatal("target session absent from baseline")
+}
 // ... freeze the client with fault.Pause ...
+removed := false
 for event := range w.Events() {
-	if len(event.Removed) > 0 {
-		// The MDS that held the session no longer lists it; read the
-		// blocklist for the cause.
+	if slices.Contains(event.Rebaselined, holder.Rank) {
+		t.Fatal("target rank changed holder before removal")
+	}
+	if slices.ContainsFunc(event.Removed, sameSession) {
+		removed = true
 		break
 	}
 }
+if !removed {
+	t.Fatalf("watch ended before session removal: %v", w.Stop())
+}
 ```
+
+Removal means the same MDS no longer lists the session. To check blocklisting,
+read the blocklist for the session address separately.
 
 To refuse new sessions, call `session.OverrideRefusal(ctx, fs)`. It sets the
 filesystem's `refuse_client_session` flag: a client that mounts afterwards
