@@ -324,12 +324,16 @@ func rbdDemoteRestartLink(t *testing.T, ctx context.Context, source, destination
 	}))
 	if link != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
+			// The diagnostics get their own short deadline, so a stalled
+			// log read cannot leave the termination an expired context.
 			if t.Failed() && link.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, link.Container)
+				logCtx, cancelLog := context.WithTimeout(context.Background(), 5*time.Second)
+				harness.MultiClusterLogContainer(t, logCtx, link.Container)
+				cancelLog()
 			}
-			if err := link.Terminate(cleanupCtx); err != nil {
+			terminateCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := link.Terminate(terminateCtx); err != nil {
 				t.Errorf("terminate rbdmirror link: %v", err)
 			}
 		})
