@@ -32,6 +32,23 @@ For scenario-qualified opt-in daemon waits, see
 [Fixture daemon timing](daemon-timing.md). For OSD startup capacity
 calibration, see [OSD startup calibration](osd-startup-benchmark.md).
 
+### Reserved bootstrap keys
+
+`WithConfigFile` rejects these settings before starting Docker resources.
+
+| Keys | Fixture setting or constraint |
+| --- | --- |
+| `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | Generated MON topology. Select the count with `ClusterConfig.WithMonitorCount`. |
+| `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `public_bind_addr`, `cluster_bind_addr` | Select host mode with `WithHostNetwork`. Configure the address, cluster network or family with `NetworkConfig.WithHostAddress`, `NetworkConfig.WithSeparateClusterNetwork` or `NetworkConfig.WithAddressFamily`. |
+| `auth_*`, `keyring`, `key`, `keyfile` | Use `WithAuth` for fixture authentication. |
+| Messenger cluster, service and client mode keys (including MON variants), `ms_bind_*` | Use the network or client Messenger policy, Messenger mode or address family. Dual-stack permits [per-daemon address order](#dual-stack-clusters) with `ms_bind_prefer_ipv4`. |
+| `osd_pool_default_size`, `osd_pool_default_min_size`, `osd_pool_default_crush_rule` | Use `ClusterConfig.WithPoolDefaults` or `ClusterConfig.WithDefaultCRUSHRoot`. |
+| `bluestore_block_size`, `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | Use `OSDStorage.WithBlockSize` for size. The fixture owns the storage layout. |
+| `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_file`, `mon_cluster_log_to_stderr` | Daemon logs go to container output. |
+| `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data`, `crash_dir` | Fixed container paths. |
+| `mds_join_fs`, `mds_cache_memory_limit` | MDS command-line settings. |
+| `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify`, `rgw_sync_lease_period` | Gateway command-line settings. |
+
 ## Service packages
 
 The `rbd`, `cephfs` and `rgw` packages add service resources to the same cluster.
@@ -328,7 +345,7 @@ See [Releases and images](releases-and-images.md) for details.
   writes to the small file. Select `WithStartupBenchmark(OSDBenchmarkSkip)` for
   such functional fixtures (see
   [OSDStorage.WithBlockSize](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDStorage.WithBlockSize)).
-- A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
+- A file setting overrides the MON database entry even after `override.SetConfig` succeeds;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
   `t.Cleanup` for `Restore`, `Pool.Remove` and `diagnostics.Collect`.
