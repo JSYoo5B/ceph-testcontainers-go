@@ -108,14 +108,15 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					}))
 					if link != nil {
 						t.Cleanup(func() {
-							cleanupCtx, stop := context.WithTimeout(context.Background(), 2*time.Minute)
-							defer stop()
-							if t.Failed() && link.Container != nil {
-								harness.MultiClusterLogContainer(t, cleanupCtx, link.Container)
-							}
-							if err := link.Terminate(cleanupCtx); err != nil {
-								t.Errorf("terminate namespace RBD link: %v", err)
-							}
+							harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+								if link.Container != nil {
+									harness.MultiClusterLogContainer(t, ctx, link.Container)
+								}
+							}, func(ctx context.Context) {
+								if err := link.Terminate(ctx); err != nil {
+									t.Errorf("terminate namespace RBD link: %v", err)
+								}
+							})
 						})
 					}
 					if tc.sourceNamespace != tc.destinationNamespace && harness.RBDNamespaceMappingUnsupported(t, ctx, source) {
