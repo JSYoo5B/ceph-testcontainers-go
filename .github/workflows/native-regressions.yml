@@ -24,6 +24,7 @@ on:
           - rbd_group_snap_late_complete
           - rbd_perf_data_pool
           - rbd_trash_purge_timezone
+          - rbd_unlink_trashed_snapshot
           - rgw_conditional_writes
           - rgw_ssec_completion
           - rgw_empty_sse_header
