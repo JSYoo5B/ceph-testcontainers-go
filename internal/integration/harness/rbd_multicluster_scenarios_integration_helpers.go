@@ -89,14 +89,15 @@ func RBDScenarioRunLink(t *testing.T, ctx context.Context, source, destination *
 	}))
 	if link != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if t.Failed() && link.Container != nil {
-				MultiClusterLogContainer(t, cleanupCtx, link.Container)
-			}
-			if err := link.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate RBD scenario link: %v", err)
-			}
+			ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if link.Container != nil {
+					MultiClusterLogContainer(t, ctx, link.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := link.Terminate(ctx); err != nil {
+					t.Errorf("terminate RBD scenario link: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

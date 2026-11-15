@@ -97,9 +97,7 @@ finally:
 func HostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 	t.Helper()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		if t.Failed() {
+		ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
 			serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
 			services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
 			cancelServices()
@@ -123,9 +121,10 @@ func HostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 				}
 				t.Logf("container %s logs:\n%s", ctr.GetContainerID(), data)
 			}
-		}
-		if err := cluster.Terminate(ctx); err != nil {
-			t.Errorf("terminate host network cluster: %v", err)
-		}
+		}, func(ctx context.Context) {
+			if err := cluster.Terminate(ctx); err != nil {
+				t.Errorf("terminate host network cluster: %v", err)
+			}
+		})
 	})
 }
