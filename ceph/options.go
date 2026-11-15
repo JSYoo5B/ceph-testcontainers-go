@@ -165,9 +165,11 @@ const (
 // services, shares it. Each operation is also bounded by the caller's context.
 // Default: 3 minutes.
 //
-// It bounds Run's bootstrap and each later topology, readiness and wait
-// operation, such as AddOSD, WaitForClean, Pool.WaitForPGCount and
-// DeepScrubPG, so a wait never outlives the shorter of the two limits.
+// It caps the context of Run's bootstrap and of each later topology,
+// readiness and wait operation, such as AddOSD, WaitForClean,
+// Pool.WaitForPGCount and DeepScrubPG. Waiting for the topology lock before
+// the cap starts, and stopping an interrupted command, are outside it, so a
+// call can return after the cap has passed.
 // Increase it for slow engines, large pools or long recovery waits.
 //
 //purpose:construction
