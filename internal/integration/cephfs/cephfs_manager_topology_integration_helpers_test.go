@@ -110,14 +110,13 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	}))
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() {
-				harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate CephFS manager topology mirror: %v", err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate CephFS manager topology mirror: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

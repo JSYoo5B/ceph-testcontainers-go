@@ -78,14 +78,15 @@ func runCephFSMirrorDirectoryWatch(t *testing.T) {
 	}))
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if t.Failed() && mirror.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate CephFS mirror: %v", err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if mirror.Container != nil {
+					harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate CephFS mirror: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

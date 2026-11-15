@@ -69,8 +69,9 @@ print(json.dumps({'total_bytes':s.f_blocks*s.f_frsize,'available_bytes':s.f_bava
 		t.Logf("OSD_MEMORY_CAPACITY phase=%s unavailable=%v", phase, err)
 		return
 	}
-	defer attached.Close()
-	data, readErr := io.ReadAll(io.LimitReader(attached.Reader, 4096))
+	// The hijacked stream outlives the request's context, so a keeper that
+	// holds it open in silence is ended at the deadline by the reader.
+	data, readErr := readAttachedOutput(ctx, attachedStream{attached.HijackedResponse})
 	result, inspectErr := docker.ExecInspect(ctx, created.ID, mobycl.ExecInspectOptions{})
 	t.Logf("OSD_MEMORY_CAPACITY phase=%s keeper=%s exit=%d read_error=%v inspect_error=%v data=%s", phase, cid, result.ExitCode, readErr, inspectErr, data)
 }
