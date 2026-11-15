@@ -58,7 +58,12 @@ Tentacle 20.2.3 or Umbrella 21.2.0.
 - The case sets `debug_mds = 10` for the MDS and the OSD pause flags
   (`ceph osd pause`) for about 25 seconds of the overlap flow. No other
   client may use the cluster.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context, each MDS log
+  read has its own one-minute deadline and clearing the pause flags in
+  cleanup has another, so none of them counts against it and a slow
+  startup can take the test past 15 minutes. The outer bound is the
+  batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
