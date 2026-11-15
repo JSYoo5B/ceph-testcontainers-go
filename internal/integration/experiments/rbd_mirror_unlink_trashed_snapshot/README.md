@@ -52,7 +52,12 @@ unlink are tied to the snapshot's ID.
   peer user. The receiver's unlink request runs on its connection to the
   source as that user and takes that user's settings, so it logs the skip of
   a trashed snapshot. The refusal is logged at any level.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Startup of the two
+  clusters (`harness.NewSingleImageCluster`) runs on the test context and
+  the link's cleanup has its own deadlines (five seconds for diagnostics,
+  two minutes for termination), so none of them counts against it and a
+  slow startup can take the test past 15 minutes. The outer bound is the
+  batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
