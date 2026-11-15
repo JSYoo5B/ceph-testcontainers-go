@@ -24,6 +24,9 @@ Two native defects are involved:
    `last_copied_object_number` at the kill keeps the previous snapshot's
    bytes. An ordinary mirror snapshot copy shows the same loss, so it is not
    specific to demotion. No upstream issue records this one yet.
+   [`rbd_mirror_resume_checkpoint`](../rbd_mirror_resume_checkpoint/README.md)
+   reproduces it on an ordinary mirror snapshot with a verified positive
+   checkpoint and explains the mechanism.
 
 Upstream references for the first defect:
 

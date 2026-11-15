@@ -172,15 +172,26 @@ func TestMonitorRemovalWaitsForAbsentMemberAndWorkingQuorum(t *testing.T) {
 }
 
 func TestMonitorRemovalReadDeadlineRetainsOwnershipForRetry(t *testing.T) {
+	// The deadline still bounds the preflight read as well. The read after
+	// the removal blocks until the deadline, so once the removal is reached
+	// the deadline expires at that scripted read. 2 s leaves the preflight
+	// read room on a loaded runner, where a 20 ms deadline once expired
+	// "before removal" under the race run's load. It does not guarantee it.
 	control := &monitorLifecycleControl{members: []string{"a", "b", "c", "replacement"}, quorum: []string{"a", "b", "c", "replacement"},
-		afterRemoval: []monitorLifecycleRead{{timeout: true}}}
+		afterRemoval: []monitorLifecycleRead{{block: true}}}
 	cluster := monitorLifecycleFixture(control)
-	cluster.settings.startupTimeout = 20 * time.Millisecond
+	cluster.settings.startupTimeout = 2 * time.Second
 	daemon := &monitorLifecycleDaemon{}
 	cluster.Container, cluster.controlPlane.handle = daemon, control
 	err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context())
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "after removing monitor a") || cluster.members.monitorTerminated || control.removals != 1 || control.copies != 0 || daemon.terminations != 1 {
-		t.Fatalf("failed refresh lost retry ownership or its deadline: %v", err)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "after removing monitor a") {
+		t.Fatalf("removal did not fail at the deadline of the read after it: %v", err)
+	}
+	if cluster.members.monitorTerminated {
+		t.Fatal("a failed refresh released retry ownership of monitor a")
+	}
+	if control.removals != 1 || control.copies != 0 || daemon.terminations != 1 {
+		t.Fatalf("failed refresh made %d removals, %d config copies and %d terminations, want 1, 0 and 1", control.removals, control.copies, daemon.terminations)
 	}
 	cluster.settings.startupTimeout = time.Second
 	if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
@@ -404,16 +415,21 @@ type monitorLifecycleControl struct {
 }
 
 type monitorLifecycleRead struct {
-	timeout         bool
+	timeout bool
+	// block waits for the context to end once the scripted read starts.
+	block           bool
 	members, quorum []string
 }
+
+// errMonitorLifecycleBlock asks Exec to wait for the context outside the lock.
+var errMonitorLifecycleBlock = errors.New("block until the context ends")
 
 func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	control.mu.Lock()
 	code, reader, err := control.exec(ctx, args)
 	lost := err == nil && control.removalReplyLost && strings.Contains(strings.Join(args, " "), " mon remove ")
 	control.mu.Unlock()
-	if lost {
+	if lost || errors.Is(err, errMonitorLifecycleBlock) {
 		<-ctx.Done()
 		return 0, nil, ctx.Err()
 	}
@@ -443,6 +459,9 @@ func (control *monitorLifecycleControl) exec(ctx context.Context, args []string)
 			if read.timeout {
 				output, exitCode = []byte("timed out"), 1
 				break
+			}
+			if read.block {
+				return 0, nil, errMonitorLifecycleBlock
 			}
 			if read.members != nil {
 				nativeMembers = read.members
