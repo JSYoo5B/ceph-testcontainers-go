@@ -234,10 +234,11 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // img is the mirror daemon image and is required: it must meet the rbd-aux (or
 // all) role requirements, including rbd-mirror, the rbd and ceph CLIs and the
 // common utilities, and is refused when it is known to be another role of a
-// cluster (for example its essential image). The destination's
-// ceph.FactsOf(destination).Images.RBDAux is the usual choice, because the
-// daemons run for the destination. Setup clients are not started from it: each
-// cluster's ceph.FactsOf(cluster).Images.Client supplies them. The Config comes from exactly one WithConfig among opts. Enable each intended source
+// cluster (for example its essential image). Use the destination's RBDAux image
+// for the mirror daemons. Setup clients use their own cluster's Client image.
+// [ceph.FactsOf]
+// returns the snapshot containing each cluster's ImageSet. Pass the Config
+// through exactly one WithConfig among opts. Enable each intended source
 // image through EnableImage or the RBD CLI in image scope. Pool scope
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.

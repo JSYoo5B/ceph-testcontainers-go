@@ -21,8 +21,9 @@ break" does not apply to them.
 - **`img` is the image the package runs, and it is required.** It is never a
   placeholder: an empty `img` is not "derive it from somewhere else". A fixture
   whose containers need a role image (rbd-aux, cephfs, rgw) takes that image as
-  `img`. `ceph.Run` alone also accepts an image set through `ImageOptions`, with
-  `img` empty or equal to its essential image.
+  `img`. `ceph.Run` accepts an image set through `ImageOptions`, with `img`
+  empty or equal to its essential image. The cluster entry points in `rbd`,
+  `cephfs` and `rgw` forward both arguments to `ceph.Run`.
 - **All configuration travels through the variadic.** Docker and container
   execution policy is a testcontainers-style `WithX` function. Ceph, service and
   fixture settings are plain values with chainable methods or plain config
@@ -102,9 +103,9 @@ tooling and every later addition to them.
 
 ## Pull requests (for agents)
 
-Implement a task as one pull request, even when it has many steps. Every pull
-request runs the full CI, which is expensive, so a series of small pull
-requests only repeats CI without adding value. Review is done by an agent, so
+Implement a task as one pull request, even when it has many steps. CI selects checks according
+to the changed files and PR labels. Keep related changes together to avoid
+repeating the same checks across multiple PRs. Review is done by an agent, so
 the size of a pull request is not a review problem. Do not split work to avoid
 merge conflicts; resolve conflicts yourself.
 

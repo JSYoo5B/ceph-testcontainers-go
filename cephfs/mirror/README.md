@@ -22,7 +22,7 @@ import cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
    `cephfs.WithFilesystems`).
 2. **Start the mirror** with `cephfsmirror.Run(ctx, img,
    cephfsmirror.WithConfig(cfg))`. `img` is the daemon image (usually
-   `FactsOf(source).Images.CephFS`); `cfg` names the two clusters (the embedded
+   the source cluster's CephFS role image). `cfg` names the two clusters (the embedded
    `*ceph.Container`), the two filesystems and the `Directories` to mirror.
    Mirroring is one way with one peer per source filesystem. `Run` returns a
    `*cephfsmirror.Container`: it owns the daemon cohort (one by default, none

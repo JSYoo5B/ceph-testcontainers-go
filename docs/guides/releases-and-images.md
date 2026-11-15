@@ -90,9 +90,9 @@ cluster, err := ceph.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
 ## Detecting the release at run time
 
 Right after the first MON starts, `Run` executes `ceph --version` in the
-first MON's essential image and records the release. `FactsOf(cluster).CephVersion` returns it, for
-example `"20.2.4"`. The fixture uses this value to choose commands that differ
-between releases.
+first MON's essential image. The snapshot returned by `ceph.FactsOf(cluster)`
+includes that release in `CephVersion` (for example, `"20.2.4"`). The fixture
+uses it to choose commands that differ between releases.
 
 Where a tool reveals a feature, the fixture checks the tool instead of the
 release number, so that patched and stripped images behave as they are: the
@@ -219,7 +219,7 @@ consumer image built from either with additional modules:
 // mgrModulesRef is the mgr-modules role image of the same release.
 images := ceph.ImageSet{Essential: essentialRef, Client: clientRef, MGR: mgrModulesRef}
 cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)))
-// FactsOf(cluster).Images.MGR is the MGR image; every ManagerContainer.Image reports it.
+// Each manager started with the cluster's MGR image reports it through its Image method.
 ```
 
 - The precedence for one manager is `DaemonOptions.WithImage` of its
@@ -393,7 +393,10 @@ OSD, from an image other than the cluster's essential image. They are options of
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))
-// osd.Image() is "registry.example/ceph:other"; FactsOf(cluster).Images.Essential is unchanged.
+if err != nil {
+	t.Fatal(err)
+}
+// osd.Image() is "registry.example/ceph:other"; the cluster's default essential image is unchanged.
 release, err := osd.Version(ctx) // what the running daemon reports, such as "20.2.4"
 ```
 
