@@ -149,6 +149,25 @@ whose deferment ends five hours after it is removed.
   client's local time.
 - Evidence: [`rbd_trash_purge_timezone`](../../internal/integration/experiments/rbd_trash_purge_timezone/README.md).
 
+### Mirror receiver stopped by an unlink from a trashed snapshot
+
+After it copies a mirror snapshot, the `rbd-mirror` receiver unlinks itself
+from the previous one on the primary. When that previous snapshot is in the
+trash namespace, because its removal is in progress or a clone v2 child
+holds it, the unlink fails with `EINVAL` (`not mirror snapshot`) instead of
+skipping it. The image replayer stops with "failed to unlink local peer from
+remote image" and the image status is `up+error` until the daemon starts the
+replayer again; a later mirror snapshot then replicates.
+
+- Affected: Squid 19.2.3 and Tentacle 20.2.1.
+- Not affected: Squid 19.2.4 and Tentacle 20.2.2, which skip the trashed
+  snapshot.
+- Guidance: on the affected releases, a test that removes or clones mirror
+  snapshots of a mirrored primary must not read a transient `up+error` of
+  the destination as its own failure; wait for the next mirror snapshot to
+  replicate.
+- Evidence: [`rbd_mirror_unlink_trashed_snapshot`](../../internal/integration/experiments/rbd_mirror_unlink_trashed_snapshot/README.md).
+
 ### Snapshot copy resumed after a killed mirror receiver
 
 When an `rbd-mirror` daemon is killed while it copies a mirror snapshot and

@@ -933,6 +933,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "rbd_perf_data_pool",
                                            "rbd_resume_checkpoint",
                                            "rbd_trash_purge_timezone",
+                                           "rbd_unlink_trashed_snapshot",
                                            "rgw_compressed_copy", "rgw_conditional_writes",
                                            "rgw_empty_sse_header", "rgw_encrypted_multipart_transition",
                                            "rgw_expiration_header",
