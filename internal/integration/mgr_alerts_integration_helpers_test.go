@@ -103,12 +103,17 @@ func testManagerAlertsDelivery(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	// quiet requires that no message arrives for d.
+	// quiet requires that no message arrives for d. moduleReceiverRecords
+	// already fails on a history shorter than an earlier one; the check here
+	// still reports one without slicing past its end.
 	quiet := func(what string, d time.Duration) int {
 		t.Helper()
 		_, before := messages()
 		time.Sleep(d)
-		if _, after := messages(); len(after) != len(before) {
+		switch _, after := messages(); {
+		case len(after) < len(before):
+			t.Fatalf("%s: history shrank from %d messages to %d in %v", what, len(before), len(after), d)
+		case len(after) > len(before):
 			t.Fatalf("%s: %d messages arrived in %v: %+v", what, len(after)-len(before), d, after[len(before):])
 		}
 		return len(before)
