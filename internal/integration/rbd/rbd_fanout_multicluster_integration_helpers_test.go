@@ -88,14 +88,15 @@ func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Co
 	}))
 	if link != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() && link.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, link.Container)
-			}
-			if err := link.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate fanout link A -> %s: %v", destinationSite, err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if link.Container != nil {
+					harness.MultiClusterLogContainer(t, ctx, link.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := link.Terminate(ctx); err != nil {
+					t.Errorf("terminate fanout link A -> %s: %v", destinationSite, err)
+				}
+			})
 		})
 	}
 	if err != nil {

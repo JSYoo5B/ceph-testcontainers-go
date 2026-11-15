@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	mobycl "github.com/moby/moby/client"
 )
 
 // attachedOutputLimit bounds what one exec in the keeper may print.
@@ -37,3 +39,10 @@ func readAttachedOutput(ctx context.Context, stream io.ReadCloser) ([]byte, erro
 		return r.data, errors.Join(fmt.Errorf("exec output: %w", ctx.Err()), closeErr)
 	}
 }
+
+// attachedStream is a hijacked exec response as the reader that
+// readAttachedOutput closes.
+type attachedStream struct{ response mobycl.HijackedResponse }
+
+func (s attachedStream) Read(p []byte) (int, error) { return s.response.Reader.Read(p) }
+func (s attachedStream) Close() error               { s.response.Close(); return nil }
