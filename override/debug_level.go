@@ -85,7 +85,7 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 // Restore every returned handle with a fresh context, including on error.
 // When collecting diagnostics, register it immediately with
 // Finalization.TrackDebugLevel and arrange restoration with Finalization.Cleanup.
-// See the [finalization guide] for cleanup and archive order.
+// See ceph/finalize/README.md for the cleanup and archive order.
 //
 // Each set is admitted only while the daemon still runs the window's
 // incarnation, and the cluster's own topology operations, such as
@@ -121,8 +121,6 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 //
 // The readback after a set uses a fresh context capped by the startup timeout,
 // as does every call.
-//
-// [finalization guide]: https://github.com/JSYoo5B/ceph-testcontainers-go/blob/main/ceph/finalize/README.md
 //
 //purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {

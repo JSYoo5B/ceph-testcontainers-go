@@ -51,7 +51,8 @@ type userConfigSection struct {
 // Run rejects fixture-owned keys, including daemon command-line options.
 // With AddressDualStack, ms_bind_prefer_ipv4 is allowed: false in a daemon's
 // section makes it advertise IPv6 first. RGW uses [client] or [client.admin].
-// The [configuration guide] lists reserved keys and their replacements.
+// See docs/guides/ceph-configuration.md for the reserved keys and their
+// replacements.
 //
 // Spaces, hyphens and underscores are equivalent in key names. An unescaped #
 // or ; starts a comment, even inside quotes, so a quoted value cut this way is
@@ -59,8 +60,6 @@ type userConfigSection struct {
 // Validation rejects includes, continued lines, keys outside a section,
 // duplicate keys in a section of one file, NUL bytes, invalid UTF-8 and
 // individual files or merged results over 64 KiB.
-//
-// [configuration guide]: https://github.com/JSYoo5B/ceph-testcontainers-go/blob/main/docs/guides/ceph-configuration.md#reserved-bootstrap-keys
 //
 //purpose:construction
 func WithConfigFile(path string) Option {
