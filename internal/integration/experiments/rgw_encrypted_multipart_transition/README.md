@@ -38,8 +38,12 @@ lack it).
   `COLD` on it to `default-placement` in the zonegroup and the zone, and
   restarts the gateway so that it loads them. No realm or period is
   involved.
-- The test bounds its operations to six minutes; the batch timeout is 20
-  minutes.
+- The case's own steps share a six-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and in cleanup
+  the purge of the bucket has its own 30-second deadline and the cluster's
+  termination its own two-minute one, so none of them counts against it and a
+  slow startup or cleanup can take the test past six minutes. The outer bound
+  is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

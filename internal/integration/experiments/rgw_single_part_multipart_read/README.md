@@ -50,7 +50,12 @@ covers numbered reads in a non-default storage class.
   request.
 - The gateway container must have `getconf` and a readable `/proc/1/stat`;
   process 1 of the container is `radosgw`.
-- The test bounds itself to 10 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 10-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and in cleanup
+  the removal of the test's objects and buckets has its own two-minute
+  deadline and the cluster's termination its own two-minute one, so none of
+  them counts against it and a slow startup or cleanup can take the test past
+  10 minutes. The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

@@ -51,7 +51,11 @@ user, bucket and category (`put_obj`, `post_obj`).
   `PUT`, a signed policy for the `POST`) and sent without an `Authorization`
   header. The usage log is read with `Gateway.Admin`
   (`usage show --uid <user> --show-log-entries=true`).
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and the cluster's
+  termination in cleanup has its own two-minute deadline, so neither counts
+  against it and a slow startup or cleanup can take the test past 15 minutes.
+  The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

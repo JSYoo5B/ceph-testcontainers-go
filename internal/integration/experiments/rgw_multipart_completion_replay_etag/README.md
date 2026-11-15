@@ -34,4 +34,4 @@ go test -tags=all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMultipartCompletionReplayETag$' "$pkg"
 ```
 
-The case bounds operations to 12 minutes, purges its owned bucket and tears down the disposable cluster. The Squid 19.2.5 replay lost the XML ETag, while Tentacle 20.2.4 preserved it. Both releases omitted both completion HTTP ETag headers. The tagged correction is present in 20.2.3. The fixture passes through these native representations.
+The case purges its owned bucket and tears down the disposable cluster. Its own steps share a 12-minute deadline. Cluster startup (`harness.NewSingleImageCluster`) runs on the test context and in cleanup the purge of the bucket has its own 30-second deadline and the cluster's termination its own two-minute one, so none of them counts against it and a slow startup or cleanup can take the test past 12 minutes. The outer bound is the batch's 20-minute `go test` timeout. The Squid 19.2.5 replay lost the XML ETag, while Tentacle 20.2.4 preserved it. Both releases omitted both completion HTTP ETag headers. The tagged correction is present in 20.2.3. The fixture passes through these native representations.

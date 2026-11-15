@@ -67,8 +67,11 @@ Upstream references:
   are signed by the test's own SigV4 client. The client opens a connection
   per request, so the HTTP library never sends a request a second time over
   a connection the gateway closed.
-- 36 MiB of object data. The test bounds itself to 15 minutes; the batch
-  timeout is 20 minutes.
+- 36 MiB of object data. The case's own steps share a 15-minute deadline.
+  Cluster startup (`harness.NewSingleImageCluster`) runs on the test context
+  and the cluster's termination in cleanup has its own two-minute deadline, so
+  neither counts against it and a slow startup or cleanup can take the test
+  past 15 minutes. The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

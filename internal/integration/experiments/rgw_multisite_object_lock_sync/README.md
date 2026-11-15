@@ -48,7 +48,13 @@ zones (`metadata-has-obj_lock`).
   image. Bridge networking.
 - Requests are signed by the test's own SigV4 client with each gateway's
   generated user. The bucket record is read with `Fixture.ZoneAdmin`.
-- The test bounds itself to 20 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 20-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`, once per cluster) runs on the test context
+  and in cleanup the removal of the canary and the buckets has its own
+  two-minute deadline, the realm's termination its own three-minute one and
+  each cluster's termination its own two-minute one, so none of them counts
+  against it and a slow startup or cleanup can take the test past 20 minutes.
+  The outer bound is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 

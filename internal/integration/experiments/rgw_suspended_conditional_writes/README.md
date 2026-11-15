@@ -53,7 +53,11 @@ instead of 404 for a missing key; and it reads no precondition for
   user), all on the image `image` (see [Running it](#running-it)). Bridge
   networking; nothing depends on the network mode.
 - Requests are signed by the test's own SigV4 client (`harness.RGWBackendSigned`).
-- The test bounds itself to 10 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 10-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and the cluster's
+  termination in cleanup has its own two-minute deadline, so neither counts
+  against it and a slow startup or cleanup can take the test past 10 minutes.
+  The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

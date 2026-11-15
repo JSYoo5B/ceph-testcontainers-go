@@ -57,7 +57,12 @@ a listing with a query, as an ordinary user.
 - The advertised endpoints are names of the fixture's Docker network, which
   the test host does not resolve. The case compares the `Location` and
   never requests it.
-- The test bounds itself to 20 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 20-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`, once per cluster) runs on the test context
+  and in cleanup the realm's termination has its own three-minute deadline and
+  each cluster's termination its own two-minute one, so none of them counts
+  against it and a slow startup or cleanup can take the test past 20 minutes.
+  The outer bound is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 
