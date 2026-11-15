@@ -31,7 +31,11 @@ Upstream references:
 - One cluster: 1 MON, 1 MGR, 1 OSD, pool defaults 1/1. Image roles
   `essential` and `client`. One release for every role.
 - `python3` in the client role (the official image ships it).
-- The test bounds itself to 5 minutes; the batch timeout is 7 minutes.
+- The case's own steps share a 5-minute deadline. Cluster startup
+  (`harness.NewServiceCluster`) runs on the test context and the cluster's
+  termination in cleanup has its own two-minute deadline, so neither counts
+  against it and a slow startup or cleanup can take the test past 5 minutes.
+  The outer bound is the batch's 7-minute `go test` timeout.
 - The fixture exposes no schedule API. The test enables `rbd_support`
   explicitly and never waits for a schedule to fire.
 

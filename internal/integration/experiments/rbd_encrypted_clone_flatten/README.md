@@ -38,7 +38,12 @@ Tentacle 20.2.4 and Umbrella 21.2.0.
   (`harness.NewRBDClientFeatures`). Image roles `essential` and `client`;
   `CEPH_TEST_RBD_CLIENT_IMAGE` replaces the client image.
 - The default network mode only; the behaviour is in librbd.
-- The test bounds itself to 15 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewRBDClientFeatures`, through `harness.NewServiceCluster`) runs
+  on the test context and the cluster's termination in cleanup has its own
+  two-minute deadline, so neither counts against it and a slow startup or
+  cleanup can take the test past 15 minutes. The outer bound is the batch's
+  30-minute `go test` timeout.
 
 ## Tier and triggers
 

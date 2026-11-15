@@ -52,7 +52,13 @@ was found next to is tracked as
   `fault.NetemHelperImage`) limits only the source OSD's packets to the
   forward receiver to 2 Mbit/s, so a copy of the 16 MiB image (64 objects of
   256 KiB) takes about a minute.
-- The test bounds itself to 25 minutes; the batch timeout is 30 minutes.
+- The case's own steps share a 25-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`, once per cluster) runs on the test context
+  and in cleanup the restoration of each network limit has its own one-minute
+  deadline, the link's termination its own two-minute one and each cluster's
+  termination its own two-minute one, so none of them counts against it and a
+  slow startup or cleanup can take the test past 25 minutes. The outer bound
+  is the batch's 30-minute `go test` timeout.
 
 ## Tier and triggers
 
