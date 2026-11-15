@@ -53,22 +53,21 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 			if terminated {
 				return
 			}
-			cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer done()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
 				if keeperID != "" {
-					osdMemoryCapacity(t, cleanup, docker.Client, keeperID, "failure")
+					osdMemoryCapacity(t, ctx, docker.Client, keeperID, "failure")
 				}
 				for _, osd := range clusteraccess.OSDs(t, cluster) {
 					if osd.Container == nil {
 						continue
 					}
-					osdMemoryFailureLogs(t, cleanup, osd.Container)
+					osdMemoryFailureLogs(t, ctx, osd.Container)
 				}
-			}
-			if err := cluster.Terminate(cleanup); err != nil {
-				t.Error("partial memory-storage cluster cleanup failed", err)
-			}
+			}, func(ctx context.Context) {
+				if err := cluster.Terminate(ctx); err != nil {
+					t.Error("partial memory-storage cluster cleanup failed", err)
+				}
+			})
 		})
 	}
 	if err != nil {

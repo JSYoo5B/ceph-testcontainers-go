@@ -73,16 +73,15 @@ func osdBenchmarkTrial(t *testing.T, backend string, skip bool) {
 			if terminated {
 				return
 			}
-			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer stop()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
 				for _, o := range clusteraccess.OSDs(t, cluster) {
-					osdMemoryFailureLogs(t, cleanup, o.Container)
+					osdMemoryFailureLogs(t, ctx, o.Container)
 				}
-			}
-			if err := cluster.Terminate(cleanup); err != nil {
-				t.Error(err)
-			}
+			}, func(ctx context.Context) {
+				if err := cluster.Terminate(ctx); err != nil {
+					t.Error(err)
+				}
+			})
 		})
 	}
 	if err != nil {
