@@ -32,6 +32,7 @@ on:
           - rbd_trash_purge_timezone
           - rgw_compressed_copy_accounting
           - rgw_empty_sse_header
+          - rgw_encrypted_multipart_transition
           - rgw_legacy_replication_destination
           - rgw_lifecycle_expiration_header
           - rgw_multipart_completion_replay_etag

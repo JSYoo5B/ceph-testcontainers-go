@@ -554,6 +554,20 @@ byte; a `STANDARD` object answers each part.
 - Guidance: read such objects whole or by range, not by part number.
 - Evidence: [`rgw_multipart_part_storage_class`](../../internal/integration/experiments/rgw_multipart_part_storage_class/README.md).
 
+### SSE-C multipart objects after a lifecycle transition
+
+After a lifecycle rule moves an SSE-C multipart object to another storage
+class, a GET with the customer key answers 200 (206 for a range) with the
+right length but wrong plaintext from the end of the first part on. Reads
+before the transition, unencrypted objects and encrypted objects that were
+not moved are correct.
+
+- Affected: Squid 19.2.6 and Tentacle 20.2.1.
+- Not affected: Squid 19.2.7 and Tentacle 20.2.2 and 20.2.4.
+- Guidance: do not transition SSE-C multipart objects in a test on an
+  affected release, or expect their reads to differ from the payload.
+- Evidence: [`rgw_encrypted_multipart_transition`](../../internal/integration/experiments/rgw_encrypted_multipart_transition/README.md).
+
 ### Received bytes of a browser form upload in the usage log
 
 A successful form upload (`POST` to a bucket with a signed policy) is counted
