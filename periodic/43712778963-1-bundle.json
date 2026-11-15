@@ -1,0 +1,233 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 602.595,
+  "execution": "43712778963-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "54f21b929c3c34eb9cfc75fd40e75df95c34276700ca7d4706a5b9557d6ad01a",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "747b55fb012d3f2d2f2c2d005d7e6844408448f33c2715229e911bdf781b5ceb",
+        "cell": "21.2.0/e88efbcc9084",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-rbd_fixtures_basic-34624383-551c1209d3",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rbd_fixtures_basic",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rbd_fixtures_basic-34624383",
+              "image_roles": "essential,client",
+              "job_timeout": 130,
+              "network_tests": [
+                "TestRBDClientFeatures",
+                "TestRBDPausedLockOwner"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/rbd",
+              "profile": "short/rbd_fixtures_basic/internal-integration-rbd",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rbd/host_network_services_integration_ci_short_rbd_fixtures_client_setup_test.go",
+                "internal/integration/rbd/rbd_client_features_integration_test.go",
+                "internal/integration/rbd/rbd_lock_owner_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rbd_fixtures_basic",
+              "timeout": "120m"
+            },
+            "tests": [
+              "TestRBDClientFeatures",
+              "TestRBDPausedLockOwner"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-topology_extensions_rgw_initial_bridge-551664a1-0cf7ce2b7a",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "topology_extensions_rgw_initial_bridge",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-topology_extensions_rgw_initial_bridge-551664a1",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "topology/topology_extensions_rgw_initial_bridge/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_zonegroups_topology_multicluster_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_topology_extensions_rgw_initial_bridge",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterRGWInitialZonegroupsTopology"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "05fd70605398ea8187ebac1d58db12858d61c79b725357037ab917d89edc7736",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-15T12:14:19.851437+00:00",
+        "source_sha": "eb239cdf96a3ac6043c9e42da396533c253da9fd"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "747b55fb012d3f2d2f2c2d005d7e6844408448f33c2715229e911bdf781b5ceb",
+        "cell": "19.2.5/e88efbcc9084",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-rbd_fixtures_basic-34624383-551c1209d3",
+            "native_seconds": 1200,
+            "network": "bridge",
+            "profile": {
+              "architecture": "",
+              "batch": "rbd_fixtures_basic",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-rbd_fixtures_basic-34624383",
+              "image_roles": "essential,client",
+              "job_timeout": 130,
+              "network_tests": [
+                "TestRBDClientFeatures",
+                "TestRBDPausedLockOwner"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/rbd",
+              "profile": "short/rbd_fixtures_basic/internal-integration-rbd",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rbd/host_network_services_integration_ci_short_rbd_fixtures_client_setup_test.go",
+                "internal/integration/rbd/rbd_client_features_integration_test.go",
+                "internal/integration/rbd/rbd_lock_owner_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rbd_fixtures_basic",
+              "timeout": "120m"
+            },
+            "tests": [
+              "TestRBDClientFeatures",
+              "TestRBDPausedLockOwner"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-topology_extensions_rgw_initial_bridge-551664a1-0cf7ce2b7a",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "topology_extensions_rgw_initial_bridge",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-topology_extensions_rgw_initial_bridge-551664a1",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "topology/topology_extensions_rgw_initial_bridge/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_zonegroups_topology_multicluster_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_topology_extensions_rgw_initial_bridge",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterRGWInitialZonegroupsTopology"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "be928b689477aeac2814c564d352afe3ac0df5e051081e3340cacd7903e882d2",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-15T12:14:19.851437+00:00",
+        "source_sha": "eb239cdf96a3ac6043c9e42da396533c253da9fd"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "eb239cdf96a3ac6043c9e42da396533c253da9fd:43712778963:1",
+    "selected_at": "2026-11-15T12:14:19.851437+00:00",
+    "source_sha": "eb239cdf96a3ac6043c9e42da396533c253da9fd"
+  },
+  "receipt_sha256": "80a28ef6f819c181b627fdc79ec6f3aa010c407d1c3ab00620c6962565ab48a9",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "eb239cdf96a3ac6043c9e42da396533c253da9fd",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    }
+  ]
+}
