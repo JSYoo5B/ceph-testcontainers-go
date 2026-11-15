@@ -1002,13 +1002,6 @@ fails naming it and never loads a module, except on a GitHub-hosted runner.
 Outside the tag runner, build it with `go test -tags all,osd_encrypted_store`
 (see [Testing](testing.md#one-ci-batch-exactly-as-ci-runs-it)).
 
-The optional [encrypted multipart transition check](../../internal/integration/experiments/rgw_encrypted_multipart_transition/README.md)
-compares full reads and reads across the part boundary against the original
-payload after a lifecycle storage-class change on 20.2.2 and 20.2.4. On
-20.2.1 it checks an unencrypted transition and an encrypted object retained
-in STANDARD. Run it from Native regressions
-with `batch=rgw_encrypted_multipart_transition`.
-
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
 
