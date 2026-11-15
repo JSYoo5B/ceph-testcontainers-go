@@ -120,8 +120,9 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 //     reports the error and leaves the replacement alone.
 //
 // The steps up to the set share one context capped by the cluster's startup
-// timeout. The readback after a set starts a fresh context with the same cap,
-// so a call can take up to about twice the startup timeout.
+// timeout. The readback after a set starts a fresh context with the same cap.
+// Stopping an interrupted admin-socket command has its own bound of up to
+// 10 seconds outside both, so neither cap is a limit on the whole call.
 //
 //purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {
