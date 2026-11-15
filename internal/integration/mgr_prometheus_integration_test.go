@@ -26,3 +26,12 @@ func TestManagerPrometheusExporter(t *testing.T) {
 func TestManagerMetrics(t *testing.T) {
 	testManagerMetrics(t)
 }
+
+// An independent scraper in its own container follows the active manager
+// through ManagerWatch events and accepts a scrape only when a write it made
+// after reaching the endpoint shows up there as a fresh increase of the
+// pool's ceph_pool_wr, before and after a failover.
+func TestManagerPrometheusIndependentScraper(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
+	testManagerPrometheusScraper(t)
+}
