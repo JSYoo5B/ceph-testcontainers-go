@@ -161,9 +161,12 @@ func newServiceCluster(t *testing.T, run ClusterRun, image, clientImage string, 
 	cluster, err := run(t.Context(), image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
 			if t.Failed() {
+				// The diagnostics share one bounded context of their own,
+				// so a stalled state or log read cannot leave the
+				// termination an expired context.
+				ctx, cancelDiagnostics := context.WithTimeout(context.Background(), time.Minute)
+				defer cancelDiagnostics()
 				serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
 				services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
 				cancelServices()
@@ -209,6 +212,8 @@ func newServiceCluster(t *testing.T, run ClusterRun, image, clientImage string, 
 					t.Logf("container %s logs:\n%s", ctr.GetContainerID(), data)
 				}
 			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
 			if err := cluster.Terminate(ctx); err != nil {
 				t.Errorf("terminate service cluster: %v", err)
 			}
