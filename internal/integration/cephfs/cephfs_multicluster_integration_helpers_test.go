@@ -73,14 +73,15 @@ func runMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcont
 		// A partial setup may have an owned network attachment but no daemon.
 		// Federation cleanup closes both before the pair's cluster cleanup.
 		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if t.Failed() && mirror.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate CephFS multicluster runtime: %v", err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if mirror.Container != nil {
+					harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate CephFS multicluster runtime: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

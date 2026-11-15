@@ -122,13 +122,6 @@ func attachedDockerExec(t *testing.T, parent context.Context, docker *mobycl.Cli
 	return []byte(strings.ReplaceAll(string(data), "\r\n", "\n"))
 }
 
-// attachedStream is a hijacked exec response as the reader that
-// readAttachedOutput closes.
-type attachedStream struct{ response mobycl.HijackedResponse }
-
-func (s attachedStream) Read(p []byte) (int, error) { return s.response.Reader.Read(p) }
-func (s attachedStream) Close() error               { s.response.Close(); return nil }
-
 // attachedState is the container's inspection as JSON, for the judge's
 // State parser.
 func attachedState(t *testing.T, ctx context.Context, docker *mobycl.Client, cid string) []byte {

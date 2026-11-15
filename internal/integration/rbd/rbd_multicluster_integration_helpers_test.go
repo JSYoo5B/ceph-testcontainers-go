@@ -30,14 +30,15 @@ func runMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Conta
 	}))
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() && mirror.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate RBD multicluster runtime: %v", err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if mirror.Container != nil {
+					harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate RBD multicluster runtime: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

@@ -79,16 +79,15 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	}), customizer)
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
 				for _, daemon := range mirror.Daemons() {
-					harness.MultiClusterLogContainer(t, cleanupCtx, daemon)
+					harness.MultiClusterLogContainer(t, ctx, daemon)
 				}
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate original process fixture: %v", err)
-			}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate original process fixture: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

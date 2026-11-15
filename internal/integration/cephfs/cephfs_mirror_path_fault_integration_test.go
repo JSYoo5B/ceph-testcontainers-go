@@ -88,14 +88,15 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	}))
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if t.Failed() && mirror.Container != nil {
-				harness.MultiClusterLogContainer(t, cleanup, mirror.Container)
-			}
-			if err := mirror.Terminate(cleanup); err != nil {
-				t.Error(err)
-			}
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				if mirror.Container != nil {
+					harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+				}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Error(err)
+				}
+			})
 		})
 	}
 	if err != nil {
