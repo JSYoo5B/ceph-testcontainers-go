@@ -173,8 +173,8 @@ each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: update returned 0, `snapshot_<victim id>` back without `snap_order_<victim id>`, listing `[healthy victim]` | 29 s |
-| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same | 29 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: update returned 0, `snapshot_<victim id>` back without `snap_order_<victim id>`, listing `[healthy victim]` | 29 s |
+| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all` | `REPRODUCED`, the same | 29 s |
 
 No fixed image exists to run, so `NOT_REPRODUCED` has not been observed
 natively. A late update refused with `EINVAL`, a clean listing after it

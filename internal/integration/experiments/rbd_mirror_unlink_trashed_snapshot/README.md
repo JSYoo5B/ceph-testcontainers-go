@@ -162,10 +162,10 @@ each; the time includes fixture teardown):
 
 | Image | Result | Fourth write | Time |
 | --- | --- | --- | --- |
-| Tentacle 20.2.1, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:95c4afd5c8f5…` (the default image when recorded) | `REPRODUCED`: `not mirror snapshot (snap_id=4)`, replayer `(22) Invalid argument`, status `up+error` | 19 s | 82 s |
-| Tentacle 20.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:dd727dd6af41…` | `NOT_REPRODUCED`: `missing or trashed snapshot: snap_id=4`, status `up+replaying` | 2 s | 60 s |
-| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77c…` | `REPRODUCED`, the same as 20.2.1 | 19 s | 90 s |
-| Squid 19.2.4, `quay.io/ceph/ceph@sha256:4940f3e4da80…` | `NOT_REPRODUCED`, the same as 20.2.2 | 2 s | 76 s |
+| Tentacle 20.2.1, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.1-all` (the default image when recorded) | `REPRODUCED`: `not mirror snapshot (snap_id=4)`, replayer `(22) Invalid argument`, status `up+error` | 19 s | 82 s |
+| Tentacle 20.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.2-all` | `NOT_REPRODUCED`: `missing or trashed snapshot: snap_id=4`, status `up+replaying` | 2 s | 60 s |
+| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.3-all` | `REPRODUCED`, the same as 20.2.1 | 19 s | 90 s |
+| Squid 19.2.4, `quay.io/ceph/ceph:v19.2.4` | `NOT_REPRODUCED`, the same as 20.2.2 | 2 s | 76 s |
 
 In the 20.2.2 run the request's skip line came before the replayer's unlink
 line in the receiver log, which is why the judgement does not use their

@@ -141,12 +141,12 @@ the reclaim, calls `ceph_set_uuid` with the UUID and mounts.
 Standalone runs on a Linux amd64 host, Docker 29.9.1, bridge networking,
 one run per aggregate image, with the client of the same build:
 
-| Release | Image (`ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:…`) | Result | Test time |
+| Release | Image (`ghcr.io/jsyoo5b/ceph-testcontainers-images`) | Result | Test time |
 | --- | --- | --- | --- |
-| Tentacle 20.2.2 (0fcffee2) | `dd727dd6af41…` | `REPRODUCED` | 48 s |
-| Squid 19.2.7 (9ec952b9) | `17bb5a8e830d…` | `REPRODUCED` | 53 s |
-| Tentacle 20.2.3 (06c2f9c3) | `33ba0a4a2b1e…` | `NOT_REPRODUCED` | 64 s |
-| Umbrella 21.2.0 (b060042d) | `6e70e465e4a1…` | `NOT_REPRODUCED` | 66 s |
+| Tentacle 20.2.2 (0fcffee2) | `official-20.2.2-all` | `REPRODUCED` | 48 s |
+| Squid 19.2.7 (9ec952b9) | `official-19.2.7-all` | `REPRODUCED` | 53 s |
+| Tentacle 20.2.3 (06c2f9c3) | `official-20.2.3-all` | `NOT_REPRODUCED` | 64 s |
+| Umbrella 21.2.0 (b060042d) | `official-21.2.0-all` | `NOT_REPRODUCED` | 66 s |
 
 - **REPRODUCED:** the mount returned `-EPERM` during the hold, the client
   logged `rejected us (duplicated session uuid)`, and the MDS log has, after

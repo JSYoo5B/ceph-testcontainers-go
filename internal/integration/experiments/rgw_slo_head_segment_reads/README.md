@@ -255,10 +255,10 @@ each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: the HEAD window holds `[call version.read in=11b, getxattrs, stat]` on the manifest and `[call version.read in=11b, getxattrs, stat, read 0~4194304]` on each segment; the OSD returned 9441229 bytes during the HEAD and during the full GET | 39 s |
-| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` | `REPRODUCED`, the same operations; 9441145 bytes for both | 43 s |
-| Tentacle 20.2.5, `quay.io/ceph/ceph@sha256:4337ac8ac81d…` | `REPRODUCED`, the same operations; 9441233 bytes for both | 40 s |
-| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `REPRODUCED`, the same operations; 9441223 bytes for both | 42 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: the HEAD window holds `[call version.read in=11b, getxattrs, stat]` on the manifest and `[call version.read in=11b, getxattrs, stat, read 0~4194304]` on each segment; the OSD returned 9441229 bytes during the HEAD and during the full GET | 39 s |
+| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all` | `REPRODUCED`, the same operations; 9441145 bytes for both | 43 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5` | `REPRODUCED`, the same operations; 9441233 bytes for both | 40 s |
+| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all` | `REPRODUCED`, the same operations; 9441223 bytes for both | 42 s |
 
 The gateway asks for 4194304 bytes of each 3145728-byte segment, and the
 OSD returns the segment. On every image the three idle windows held no

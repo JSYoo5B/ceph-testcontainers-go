@@ -140,9 +140,9 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| 20.2.4 aggregate `sha256:2e57651a5aa7…`, the default image when recorded | `REPRODUCED`: `existing-if-match` (412), `deleted-if-match` (412 instead of 404) and `deleted-if-none-match` (412) for both writers, six symptoms | 34.6 s |
-| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 35.3 s |
-| 20.2.5 official `sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 35.1 s |
+| 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: `existing-if-match` (412), `deleted-if-match` (412 instead of 404) and `deleted-if-none-match` (412) for both writers, six symptoms | 34.6 s |
+| 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 35.3 s |
+| 20.2.5 official `quay.io/ceph/ceph:v20.2.5` | `NOT_REPRODUCED` | 35.1 s |
 
 ## Reading the result
 

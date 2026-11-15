@@ -114,9 +114,9 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: osd.0 and osd.2 on peons never acknowledged; peons discarded 39 and 12 routed MLogAcks | 104 s |
-| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `REPRODUCED`: osd.2 on a peon never acknowledged | 104 s |
-| Squid 19.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…` | `NOT_REPRODUCED` | 46 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: osd.0 and osd.2 on peons never acknowledged; peons discarded 39 and 12 routed MLogAcks | 104 s |
+| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0` | `REPRODUCED`: osd.2 on a peon never acknowledged | 104 s |
+| Squid 19.2.2, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all` | `NOT_REPRODUCED` | 46 s |
 
 ## Cleanup and limits
 

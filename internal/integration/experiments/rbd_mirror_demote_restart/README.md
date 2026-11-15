@@ -145,9 +145,9 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | `demotion-resume` | `resumed-bytes` | Time |
 | --- | --- | --- | --- |
-| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:20c0e5b9d77c…` (the default image when recorded) | `REPRODUCED`: copy never completed (`up+unknown`, "remote image is not primary"); the `removed` replica stayed | not evaluated | 760 s |
-| Squid 19.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:1f6b01ecd6d8…` | `NOT_REPRODUCED` | `REPRODUCED`: object 37 old, 63 new | 426 s |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` | `NOT_REPRODUCED` | `REPRODUCED`: object 44 old, 63 new | 430 s |
+| Squid 19.2.3, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.3-all` (the default image when recorded) | `REPRODUCED`: copy never completed (`up+unknown`, "remote image is not primary"); the `removed` replica stayed | not evaluated | 760 s |
+| Squid 19.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all` | `NOT_REPRODUCED` | `REPRODUCED`: object 37 old, 63 new | 426 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` | `NOT_REPRODUCED` | `REPRODUCED`: object 44 old, 63 new | 430 s |
 
 So the default image reproduces `demotion-resume` only, and a run on a
 release that fixes it still prints `resumed-bytes result=REPRODUCED`.

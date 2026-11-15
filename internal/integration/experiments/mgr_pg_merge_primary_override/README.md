@@ -211,10 +211,10 @@ Native results (Linux amd64 host, Docker 29.9.1, one run each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: 21 blocked samples over 2 m 4 s with `pg_num` 2, `pg_num_pending` 2, `pg_placement_num` 1, the entry `2.0 -> osd.1` in place, the primaries osd.1 and osd.0 and the acting sets `[1 2 0]` and `[0 2 1]`; merged after the test removed the entry | 203 s |
-| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:d0fcbea14a2a…` | `REPRODUCED`, the same | 210 s |
-| Tentacle 20.2.5, `quay.io/ceph/ceph@sha256:4337ac8ac81d…` | `NOT_REPRODUCED`: the first sample has two PGs with equal acting sets and no entry for the parent, the second, five seconds later, is merged; the control pool's entry is unchanged | 87 s |
-| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:7fce1d2de623…` | `NOT_REPRODUCED`, the same | 80 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: 21 blocked samples over 2 m 4 s with `pg_num` 2, `pg_num_pending` 2, `pg_placement_num` 1, the entry `2.0 -> osd.1` in place, the primaries osd.1 and osd.0 and the acting sets `[1 2 0]` and `[0 2 1]`; merged after the test removed the entry | 203 s |
+| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all` | `REPRODUCED`, the same | 210 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5` | `NOT_REPRODUCED`: the first sample has two PGs with equal acting sets and no entry for the parent, the second, five seconds later, is merged; the control pool's entry is unchanged | 87 s |
+| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all` | `NOT_REPRODUCED`, the same | 80 s |
 
 In every run the pool without an override finished its merge within five
 seconds of the reduction, the manager had the PGs' reports in every sample,

@@ -113,12 +113,12 @@ namespaces) separate the three defects; their aggregates are the
 
 Native results, Linux amd64 host, bridge networking, one run per image:
 
-- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:bc62130f013a…` (the default image when recorded), 112 s: all three `REPRODUCED`. Caps: in all four clause
+- Squid 19.2.2 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.2-all` (the default image when recorded), 112 s: all three `REPRODUCED`. Caps: in all four clause
   orders the create and the mkdir succeeded in the read-only filesystem.
   Snapshot: after the deletion the snapshot read and stat returned `EACCES`.
   Subvolumes: both got the namespace `fsvolumens_shared-name`, and each
   reader read the other's object.
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…`,
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`,
   105 s: all three `NOT_REPRODUCED`.
 
 ## Cleanup and limits

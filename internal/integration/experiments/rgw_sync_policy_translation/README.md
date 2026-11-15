@@ -123,7 +123,7 @@ clusters' Ceph versions.
 
 Native results (Linux amd64 host, Docker, aggregate image, one run):
 
-Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded):
+Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded):
 
 | Variant | `priority_tags_owner_class` | `ordinary_user_denial_grant` | Time |
 | --- | --- | --- | --- |

@@ -127,16 +127,16 @@ the other releases 2 everywhere).
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 33 s; `parent/child` reported 236 blocks
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded): `REPRODUCED` in 33 s; `parent/child` reported 236 blocks
   with 236 free, as the directory without a byte quota does.
-- Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…`:
+- Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5`:
   `NOT_REPRODUCED` in 34 s.
-- Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…`:
+- Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0`:
   `NOT_REPRODUCED` in 34 s.
 
-The release comparison ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
-19.2.5 role images (essential `43ee23624e7a…`, client `a69e1319ce88…`, cephfs `99f0ff6e827c…`), the 21.2.0 role images
-(essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the 20.2.5 aggregate `sha256:4337ac8ac81d…`, each with
+The release comparison ran on the 20.2.4 role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-cephfs`), the
+19.2.5 role images (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-cephfs`), the 21.2.0 role images
+(`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-cephfs`) and the 20.2.5 aggregate `quay.io/ceph/ceph:v20.2.5`, each with
 the client module of its own release.
 
 - **NOT_REPRODUCED:** every directory below a byte quota reported that

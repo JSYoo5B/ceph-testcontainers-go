@@ -124,14 +124,12 @@ A third client, a fresh mount, lists both snapshots once.
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 38 s; the second listing of `trigger`
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded): `REPRODUCED` in 38 s; the second listing of `trigger`
   held `collision_2379` only, and `control` was listed in full.
 
-The release comparison ran on the pinned role images of 20.2.4 (essential
-`3c7a6d0ae445…`), 21.2.0 (essential `119180026952…`) and 19.2.5 (essential
-`43ee23624e7a…`) with the `client` and `cephfs` roles of the same releases,
-and on the official images of 20.2.5 (`sha256:4337ac8ac81d…`) and 19.2.2
-(`sha256:8214ebff6133…`) as aggregates. Linux amd64, bridge, one run per
+The release comparison ran on the role images of 20.2.4 (`official-20.2.4-essential`), 21.2.0 (`official-21.2.0-essential`) and 19.2.5 (`official-19.2.5-essential`) with the `client` and `cephfs` roles of the same releases,
+and on the official images of 20.2.5 (`quay.io/ceph/ceph:v20.2.5`) and 19.2.2
+(`quay.io/ceph/ceph:v19.2.2`) as aggregates. Linux amd64, bridge, one run per
 release.
 
 - **REPRODUCED:** the symptom starts with `after a snapdiff that named

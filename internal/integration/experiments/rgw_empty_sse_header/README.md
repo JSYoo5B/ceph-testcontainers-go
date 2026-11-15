@@ -119,8 +119,8 @@ Native results on a Linux amd64 host, one run each:
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a…` (the default image when recorded) | REPRODUCED: both PUTs answered 200, a new object and a new version | 31 s |
-| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8a…` | NOT_REPRODUCED | 30 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | REPRODUCED: both PUTs answered 200, a new object and a new version | 31 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5` | NOT_REPRODUCED | 30 s |
 
 Earlier runs on split role images recorded the same behaviour on 20.2.4, and
 no reproduction on Umbrella 21.2.0.

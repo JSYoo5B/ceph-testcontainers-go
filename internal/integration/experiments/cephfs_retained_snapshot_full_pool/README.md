@@ -129,10 +129,10 @@ published aggregate images, one cluster per run:
 
 | Release | Aggregate image | Result | Runs and test times |
 | --- | --- | --- | --- |
-| Tentacle 20.2.0 (default) | `@sha256:2ca7d48354d2…` | `REPRODUCED` | 4 runs: 70 s, 64 s, 67 s, 67 s |
-| Tentacle 20.2.1 | `@sha256:95c4afd5c8f5…` | `NOT_REPRODUCED` | 3 runs: 72 s, 72 s, 73 s |
-| Squid 19.2.6 | `@sha256:d6e6222e6900…` | `REPRODUCED` | 1 run: 73 s |
-| Squid 19.2.7 | `@sha256:17bb5a8e830d…` | `NOT_REPRODUCED` | 1 run: 79 s |
+| Tentacle 20.2.0 (default) | `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.0-all` | `REPRODUCED` | 4 runs: 70 s, 64 s, 67 s, 67 s |
+| Tentacle 20.2.1 | `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.1-all` | `NOT_REPRODUCED` | 3 runs: 72 s, 72 s, 73 s |
+| Squid 19.2.6 | `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.6-all` | `REPRODUCED` | 1 run: 73 s |
+| Squid 19.2.7 | `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.7-all` | `NOT_REPRODUCED` | 1 run: 79 s |
 
 The images are `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-<release>-all`,
 with the digests they had when the runs were recorded. Every run cleaned up

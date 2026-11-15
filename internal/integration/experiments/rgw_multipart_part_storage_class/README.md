@@ -131,17 +131,15 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| 20.2.4 aggregate `sha256:2e57651a5aa7…`, the default image when recorded | `REPRODUCED`: GET and HEAD of both parts of the `COLD` object answer 400 (`InvalidPart` for GET) with the 238-byte error document | 39.3 s |
-| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `REPRODUCED`, the same four symptoms | 38.3 s |
+| 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: GET and HEAD of both parts of the `COLD` object answer 400 (`InvalidPart` for GET) with the 238-byte error document | 39.3 s |
+| 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `REPRODUCED`, the same four symptoms | 38.3 s |
 
 ## Reading the result
 
-The results below ran on the pinned role images of the shared recipe: 20.2.4
-(essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw `aac25fc48b53…`),
-21.2.0 (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and 19.2.5 (essential `43ee23624e7a…`, client
-`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`), and on the 20.2.5 official image
-`sha256:4337ac8ac81d…` as the aggregate. Linux amd64, bridge.
+The results below ran on the role images of the shared recipe: 20.2.4
+(`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`),
+21.2.0 (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and 19.2.5 (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-rgw`), and on the 20.2.5 official image
+`quay.io/ceph/ceph:v20.2.5` as the aggregate. Linux amd64, bridge.
 
 - **Observed bug:** `cold-storage-class` answers `400 InvalidPart` for GET of
   parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as

@@ -127,14 +127,14 @@ not name the snapshot in their path, and whether it dropped its dentry of
 
 Standalone runs, Linux amd64 host, bridge networking, one run per image:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` in 47 s; the trigger handle returned 2987
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded): `REPRODUCED` in 47 s; the trigger handle returned 2987
   entries, 372 snapshot names and 2615 live names, and 7 of its 8 readdir
   requests did not name the snapshot.
 
-The release comparison ran on the 20.2.4 role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, cephfs `9566841eba0a…`), the
-19.2.5 role images (essential `43ee23624e7a…`, client `a69e1319ce88…`, cephfs `99f0ff6e827c…`), the 21.2.0 role images
-(essential `119180026952…`, client `e5f7edab88b6…`, cephfs `7ae447d4d414…`) and the upstream aggregates of 20.2.5
-(`sha256:4337ac8ac81d…`) and 19.2.2 (`sha256:8214ebff6133…`), each with the client module of its own release.
+The release comparison ran on the 20.2.4 role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-cephfs`), the
+19.2.5 role images (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-cephfs`), the 21.2.0 role images
+(`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-cephfs`) and the upstream aggregates of 20.2.5
+(`quay.io/ceph/ceph:v20.2.5`) and 19.2.2 (`quay.io/ceph/ceph:v19.2.2`), each with the client module of its own release.
 
 All five showed the defect with the same numbers, after every
 condition and control held: Tentacle 20.2.4 (47 s), Tentacle 20.2.5 (47 s),

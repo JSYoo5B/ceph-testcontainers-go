@@ -169,18 +169,16 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| 19.1.0 official `sha256:56d1542f98c9…`, the default image when recorded | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
-| 19.2.0 aggregate `sha256:dc4a21955b5c…` | `NOT_REPRODUCED` | 61.4 s |
+| 19.1.0 official `quay.io/ceph/ceph:v19.1.0`, the default image when recorded | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
+| 19.2.0 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all` | `NOT_REPRODUCED` | 61.4 s |
 
 ## Reading the result
 
-The results below ran on the pinned role images of the shared recipe: 20.2.4
-(essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw `aac25fc48b53…`),
-21.2.0 (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and 19.2.5 (essential `43ee23624e7a…`, client
-`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`), and on the official images of 19.2.0
-(`sha256:200087c35811…`), 20.2.5 (`sha256:4337ac8ac81d…`), the release
-candidate 19.1.0 (`sha256:56d1542f98c9…`) and Reef 18.2.7
+The results below ran on the role images of the shared recipe: 20.2.4
+(`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`),
+21.2.0 (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and 19.2.5 (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-rgw`), and on the official images of 19.2.0
+(`quay.io/ceph/ceph:v19.2.0`), 20.2.5 (`quay.io/ceph/ceph:v20.2.5`), the release
+candidate 19.1.0 (`quay.io/ceph/ceph:v19.1.0`) and Reef 18.2.7
 (`quay.io/ceph/ceph:v18.2.7`) as aggregates. Neither 19.1.0 nor 18.2.7 is a
 supported release; they were run once each to see the answers of builds
 without the fix. Linux amd64, bridge, one run per build.
