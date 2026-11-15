@@ -355,6 +355,24 @@ writes fail with `ENOSPC` instead.
   [#514](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/514); no
   case manual.
 
+### Subvolume removal with retained snapshots on a full cluster
+
+`ceph fs subvolume rm --retain-snapshots` on a full cluster moves the live
+incarnation to the subvolume's trash and then fails to write the retained
+state (`EINVAL` with the traceback of a `No space left on device` error).
+Once the cluster has space again, the subvolume's metadata still names the
+moved incarnation as complete, so `getpath`, `info`, `snapshot getpath` and a
+retried removal fail with `ENOENT` ("mount path missing"). The retained
+snapshot's bytes stay in its snapshot directory but are no longer reachable
+through the volumes interface.
+
+- Affected: Squid 19.2.6 and Tentacle 20.2.0.
+- Not affected: Squid 19.2.7 and Tentacle 20.2.1 fail with `ENOSPC` and
+  change nothing; a retry after the cluster has space retains the snapshot.
+- Guidance: on the affected releases, do not remove a subvolume with
+  retained snapshots while the cluster or its data pool is full.
+- Evidence: [`cephfs_retained_snapshot_full_pool`](../../internal/integration/experiments/cephfs_retained_snapshot_full_pool/README.md).
+
 ### CephFS authorization before Squid 19.2.5
 
 These builds are not tested by the repository, and their authorization is
