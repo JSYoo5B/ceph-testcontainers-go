@@ -873,9 +873,6 @@ replica := mapping.Acting[0]
 if replica == mapping.ActingPrimary {
 	replica = mapping.Acting[1]
 }
-if replica < 0 || replica == mapping.ActingPrimary {
-	t.Fatalf("missing secondary for scrub/victim: %+v", mapping)
-}
 if err := fault.InjectObjectDataError(ctx, cluster, "scrub", "victim", replica); err != nil {
 	t.Fatal(err)
 }
