@@ -105,7 +105,8 @@ tooling and every later addition to them.
 
 Implement a task as one pull request, even when it has many steps. CI selects checks from the
 changed files (a documentation-only change skips the code and runtime jobs by
-policy), PR labels (`ci:full` runs every batch) and `/ci run` comments; see
+policy), PR labels (`ci:full` runs every topology, multicluster and recovery batch;
+optional batches are requested separately) and `/ci run` comments; see
 [docs/contributing/ci.md](docs/contributing/ci.md). Keep related changes together to avoid
 repeating the same checks across multiple PRs. Review is done by an agent, so
 the size of a pull request is not a review problem. Do not split work to avoid
