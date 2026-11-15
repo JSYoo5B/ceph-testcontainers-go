@@ -70,8 +70,9 @@ resumed, `case=rbd_mirror_demote_restart/resumed-bytes`. It is an
 `Experiments` case; with the fixed image
 `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.4-all` the dispatch
 requires `demotion-resume` to be `NOT_REPRODUCED` and prints `resumed-bytes`
-without judging it, since only that run reaches it. A comment run can name a
-release, for example `/ci run rbd_demote_restart on squid`. The triggers, the result checks and the image injection are the shared ones
+without judging it, since only that run reaches it. `/ci run rbd_demote_restart`
+runs the default image. The triggers, the result checks and the image injection
+are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it

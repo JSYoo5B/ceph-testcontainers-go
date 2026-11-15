@@ -57,8 +57,8 @@ Known-defect reproducer, optional batch `cephfs_statfs_mixed_quota` with a
 20-minute budget; no automatic run includes it. On its default image,
 Tentacle 20.2.4, it prints `REPRODUCED` (33 s); Tentacle 20.2.5 and Umbrella
 21.2.0 are fixed and print `NOT_REPRODUCED` (34 s), so either is the fixed
-image of its `Experiments` dispatch. A comment run on the fixed release is
-`/ci run cephfs_statfs_mixed_quota on umbrella`. The judgement tests run in
+image of its `Experiments` dispatch. `/ci run cephfs_statfs_mixed_quota` runs
+the default image. The judgement tests run in
 `code/pure` with every change (under 1 s). The shared triggers, result checks
 and image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 

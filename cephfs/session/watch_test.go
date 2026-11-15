@@ -434,3 +434,27 @@ func TestSessionWatchRefusesInvalidRequests(t *testing.T) {
 		t.Fatalf("incoherent baseline = %v, %v", w, err)
 	}
 }
+
+func TestSessionWatchStopEndingARunningWatchReturnsNil(t *testing.T) {
+	f := newWatchFake(t)
+	f.set(roster(1, "0:101"), map[int][]string{0: {row(10, 1, "open")}})
+	settings, err := watch.Validate(watch.MinInterval, time.Second, 0, watchDefaultInterval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := startWatch(t.Context(), settings, "watch CephFS sessions of app", newSampler(f.core, nil).read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base := receive(t, w); base.Kind != ceph.WatchBaseline || len(base.Sessions) != 1 {
+		t.Fatalf("baseline = %+v", base)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("Stop of a running watch = %v, want nil", err)
+	}
+	for range w.Events() {
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("repeated Stop = %v, want the same nil cause", err)
+	}
+}

@@ -73,8 +73,8 @@ Upstream references:
 Known-defect reproducer, optional batch `mgr_pg_merge_primary_override`
 with a 20-minute budget; no automatic run includes it. The default image is
 Tentacle 20.2.4. It is an `Experiments` case, and its fixed image there is
-`quay.io/ceph/ceph:v20.2.5`. A comment run can name a release:
-`/ci run mgr_pg_merge_primary_override [on <release>]`. Its controls fail the
+`quay.io/ceph/ceph:v20.2.5`. `/ci run mgr_pg_merge_primary_override` runs the
+default image. Its controls fail the
 test like its given and when steps. The OSDMap reader and judgement tests are
 the package's `code/pure` batch and run in Code checks for every change. The
 triggers, the result checks and the image injection are the shared ones of

@@ -109,13 +109,13 @@ func (w *LeaseWatch) Stop() error {
 // failed read produces a WatchGap and the watch continues; the next
 // successful read is WatchResumed. A deactivated schedule, which the module
 // can activate again, is a change, not the end of the watch. These end the
-// watch with an error instead: ctx ending, Stop, a terminated cluster, a
+// watch with an error instead: ctx ending, a terminated cluster, a
 // filesystem that is no longer the registered one or whose FSMap ID or
 // original pools changed, a restored lease, a schedule that the module no
 // longer lists (removed, even if added again with the same path and repeat),
 // another schedule of the directory with the lease's repeat, and a full buffer
 // (ceph.ErrWatchOverflow). The watch has no terminal sample: it runs until one
-// of these.
+// of these errors or until the caller invokes Stop, which returns nil in that case.
 //
 // The stream reports the module's aggregate progress, emitted only when it
 // changes; it is not a per-snapshot event history. A created counter that

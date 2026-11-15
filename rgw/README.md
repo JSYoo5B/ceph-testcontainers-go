@@ -197,21 +197,13 @@ bytes only, so TLS runs end to end and the SUT verifies the gateway's own
 certificate. The test switches the selection, stops the first gateway with
 `Stop`, and asserts with new requests of the SUT.
 
-```golang
-a, _ := rgw.Start(ctx, cluster, rgw.Config{Name: "a", TLS: material})
-b, _ := rgw.Start(ctx, cluster, rgw.Config{Name: "b", TLS: material})
-// forwarder is the test's own TCP forwarder to the host:port of
-// S3SecureEndpoint of a and of b.
-// The SUT is configured with https://<forwarder address> and the CA.
-forwarder.Select(1) // new connections go to b
-_ = a.Stop(ctx, nil)
-// The SUT's next requests reach b through the same URL.
-```
+Use the [stable endpoint integration test](../internal/integration/rgw/rgw_stable_endpoint_integration_helpers_test.go)
+as the working example. It checks both gateway starts and secure endpoint
+lookups before creating the forwarder. It confirms a write through A,
+selects B, checks that stopping A succeeds, then reads the object through
+the unchanged URL and checks the connections to B.
 
-`TestRGWStableEndpoint` in
-[`internal/integration/rgw`](../internal/integration/rgw/rgw_stable_endpoint_integration_helpers_test.go)
-runs this recipe with an AWS SDK process as the SUT and holds a complete
-forwarder. What it shows is limited: the forwarder chooses a backend when a
+The forwarder chooses a backend when a
 connection opens and never checks health, retries or replays a request, or
 moves an established connection, so a request in flight when a gateway stops
 has an unknown outcome and the SUT's own retry decides what happens next. In
@@ -228,6 +220,10 @@ has: `override.SetConfig` for the RGW options and
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+testcontainers.CleanupContainer(t, cluster)
+if err != nil {
+	t.Fatal(err)
+}
 // Vault runs on the cluster bridge with the alias "vault", which is also in
 // its certificate. kmsToken may read one KV-v2 key; sseS3Token manages keys of
 // one Transit mount.
@@ -244,13 +240,25 @@ for _, s := range []ceph.ConfigSetting{
 	// with the transit engine and its own token file.
 } {
 	change, err := override.SetConfig(ctx, cluster, s)
-	// defer change.Restore(...)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := change.Restore(cleanup); err != nil {
+			t.Errorf("restore %s: %v", s.Name, err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "s3", TLS: material},
 	testcontainers.WithFiles(
 		testcontainers.ContainerFile{Reader: bytes.NewReader(kmsToken), ContainerFilePath: "/tc/kms-token", FileMode: 0o600},
 		testcontainers.ContainerFile{Reader: bytes.NewReader(vaultCA), ContainerFilePath: "/tc/vault-ca.pem", FileMode: 0o600},
 	))
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 `TestRGWExternalKMS` in

@@ -39,56 +39,27 @@ type userConfigSection struct {
 	entries []userConfigEntry
 }
 
-// WithConfigFile merges a native ceph.conf file from the test host into the
-// bootstrap configuration of every daemon and WithClient container, like the
-// WithConfigFile options of testcontainers-go modules. Entries replace the
-// fixture's defaults for the same section and key, and later files override
-// earlier files key by key. Ceph gives local files precedence over the MON
-// configuration database, so override.SetConfig cannot change a key set here.
-// Keys that the fixture owns or passes on a daemon command line are rejected:
-// identity, addresses, networks, Cephx, Messenger modes, logging, data paths,
-// pool size defaults and BlueStore file layout. Use the dedicated options for
-// those. The exception is ms_bind_prefer_ipv4, which Run accepts with
-// AddressDualStack only: false in a daemon's section, such as [osd.1] or
-// [mgr.b], makes that daemon advertise its IPv6 address first, and native
-// clients then connect to it over IPv6. RGW runs as client.admin, so RGW
-// settings belong in [client] or [client.admin]. The merged file becomes
-// /etc/ceph/ceph.conf before the first MON creates its store, so
-// bootstrap-only settings work; it does not change a running cluster.
-// Spaces, '-' and '_' in key names are equivalent, as in Ceph.
+// WithConfigFile reads a native ceph.conf on the test host during option
+// preparation. The first MON uses the merged file when creating its store;
+// each daemon and WithClient container receives it at startup. Entries replace
+// the fixture's defaults for the same section and key, and later files replace
+// earlier entries. The file is fixed at bootstrap and does not change a running
+// cluster. A local value takes precedence over a stored MON database entry,
+// even when override.SetConfig succeeds.
+// Check a daemon's effective value with ceph config show.
 //
-// The file is validated before any container is created. Includes, lines
-// continued with a trailing backslash, keys outside a section, duplicate keys
-// within one section of one file, NUL bytes, invalid UTF-8 and files or merged
-// results larger than 64 KiB are rejected. Ceph treats '#' and ';' as comment
-// starts even inside quotes, so a value containing them is rejected unless
-// they are escaped as \# and \;. Ceph silently ignores some values (for
-// example an osd_memory_target below 896 MiB); check the effective value with
-// ceph config show.
+// Run rejects fixture-owned keys, including daemon command-line options.
+// With AddressDualStack, ms_bind_prefer_ipv4 is allowed: false in a daemon's
+// section makes it advertise IPv6 first. RGW uses [client] or [client.admin].
+// See docs/guides/ceph-configuration.md for the reserved keys and their
+// replacements.
 //
-// The rejected keys and their replacements: fsid, mon_host,
-// mon_initial_members and mon_addr (generated;
-// ClusterConfig.WithMonitorCount); public_network, cluster_network,
-// public_addr, cluster_addr, public_bind_addr and cluster_bind_addr (WithHostNetwork,
-// NetworkConfig.WithSeparateClusterNetwork, NetworkConfig.WithHostAddress);
-// auth_*, keyring, key and keyfile (WithAuth); ms_*_mode, ms_mon_*_mode and
-// ms_bind_* except ms_bind_prefer_ipv4 (NetworkConfig.WithMessengerMode,
-// NetworkConfig.WithMessengerPolicy,
-// ClientContainerOptions.WithMessengerPolicy, NetworkConfig.WithAddressFamily,
-// WithHostNetwork); osd_pool_default_size and osd_pool_default_min_size
-// (ClusterConfig.WithPoolDefaults); osd_pool_default_crush_rule
-// (ClusterConfig.WithDefaultCRUSHRoot); bluestore_block_size
-// (OSDStorage.WithBlockSize); osd_objectstore, bluestore_block_path and
-// bluestore_block_create (fixed storage layout); log_file, log_to_file,
-// log_to_stderr, err_to_stderr, mon_cluster_log_to_file and
-// mon_cluster_log_to_stderr (logs always go to container output);
-// admin_socket, run_dir, mon_data, osd_data, mgr_data and mds_data (fixed
-// paths); crash_dir (fixed at CrashDir); mds_join_fs and
-// mds_cache_memory_limit (MDS command line); rgw_frontends,
-// rgw_thread_pool_size, rgw_exit_timeout_secs, rgw_realm, rgw_zonegroup,
-// rgw_zone, rgw_sync_obj_etag_verify and rgw_sync_lease_period (RGW command
-// line). ms_bind_prefer_ipv4 with any family but AddressDualStack is refused
-// with ErrInvalidRequest.
+// Spaces, hyphens and underscores are equivalent in key names. An unescaped #
+// or ; starts a comment, even inside quotes, so a quoted value cut this way is
+// rejected as ambiguous. Escape a literal marker as \# or \;.
+// Validation rejects includes, continued lines, keys outside a section,
+// duplicate keys in a section of one file, NUL bytes, invalid UTF-8 and
+// individual files or merged results over 64 KiB.
 //
 //purpose:construction
 func WithConfigFile(path string) Option {

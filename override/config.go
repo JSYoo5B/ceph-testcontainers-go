@@ -74,7 +74,7 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 // after the entry was tracked, or whose write may have been applied, returns
 // the real handle with the error.
 //
-// Name can be any option, including MGR module keys such as
+// Name may identify a daemon option or an MGR module key such as
 // mgr/volumes/max_concurrent_clones. SetConfig verifies the stored value, not
 // its effect: local ceph.conf entries (including ceph.WithConfigFile),
 // command-line arguments and runtime overrides take precedence over the

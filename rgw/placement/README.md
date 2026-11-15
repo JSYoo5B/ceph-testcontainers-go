@@ -45,6 +45,9 @@ gateways, err := rgw.Gateways(ctx, cluster.Container)
 if err != nil {
 	t.Fatal(err)
 }
+if len(gateways) == 0 {
+	t.Fatal("no running gateway")
+}
 gateway := gateways[0]
 target, err := placement.Create(ctx, gateway, placement.Config{
 	Name: "tiered", IndexPool: "tiered-index", DataExtraPool: "tiered-extra",
@@ -57,6 +60,9 @@ if err := target.Apply(ctx, gateway); err != nil {
 	t.Fatal(err)
 }
 endpoint, err := gateway.S3Endpoint(ctx) // after the restart
+if err != nil {
+	t.Fatal(err)
+}
 // Create buckets with target.LocationConstraint and objects with STANDARD_IA.
 ```
 

@@ -50,8 +50,8 @@ prints `NOT_REPRODUCED` (105 s).
 
 - Pull request: only when a file of this directory changes, or with the
   `ci:full` label.
-- Comment: `/ci run cephfs_authorization_isolation [on squid|umbrella]`.
-- Periodic: `rotate` can draw it; `targeted` runs it on a chosen patch.
+- Comment: `/ci run cephfs_authorization_isolation` runs the default image.
+- Periodic: `rotate` can draw it; `targeted` can select its batch.
 - Manual: an `Experiments` case; Tentacle 20.2.4 is a fixed image for it.
 
 It runs every container from its `image`, so a batch run reports on the

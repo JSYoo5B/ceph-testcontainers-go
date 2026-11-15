@@ -82,23 +82,10 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 // The OSD and MGR sockets are reached from the control container through the
 // shared run directory, the MDS socket in the MDS container itself.
 //
-// The handle is non-nil for every outcome. A refusal returns a not-applied
-// handle whose Restore is a no-op (see DebugLevelHandle). A nil cluster is
-// refused with ceph.ErrInvalidRequest and Op "override.SetDebugLevel". When the
-// set or its readback fails, the returned handle keeps the prior level for
-// Restore, which reconciles first: a lost reply is not evidence that nothing
-// changed. The readback after a set uses a fresh context bounded by the
-// cluster's startup timeout, as does every call.
-//
-// Restore with a context of its own, not the workload's, so that an ended
-// workload still restores. With finalize.TerminateOnCleanup, register the
-// removal of clients first and then Finalization.Cleanup with Restore: the cleanups run
-// in reverse order after the failure archive, so a known failure is archived
-// while the level is still raised, the restoration runs before the clients
-// are removed, and a failed restoration triggers an after-cleanup archive and
-// still lets Terminate run. Register the handle with
-// Finalization.TrackDebugLevel right after this call returns, whatever it
-// returned.
+// Restore every returned handle with a fresh context, including on error.
+// When collecting diagnostics, register it immediately with
+// Finalization.TrackDebugLevel and arrange restoration with Finalization.Cleanup.
+// See ceph/finalize/README.md for the cleanup and archive order.
 //
 // Each set is admitted only while the daemon still runs the window's
 // incarnation, and the cluster's own topology operations, such as
@@ -121,31 +108,21 @@ func (h *DebugLevelHandle) Receipt() DebugLevelReceipt {
 // window right before it and restore right after it returns. Verbose logging
 // can change the CPU use and timing of the operation it observes.
 //
-// Outcomes, as the handle it returns and the error:
-//   - Window applied and read back: real handle (applied-verified); nil.
-//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
-//     override.SetDebugLevel.
-//   - Context already ended: not applied handle; the context error.
-//   - Option or level not supported: not applied handle;
-//     ceph.ErrInvalidRequest.
-//   - Daemon is not an OSD, MGR or MDS such as osd.0, mgr.a or mds.<name>,
-//     or the option is not one of its role: not applied handle;
-//     ceph.ErrInvalidRequest.
-//   - OSD unknown, purged, being purged or detaching, or MGR or MDS not
-//     owned: not applied handle; ceph.ErrInvalidRequest.
-//   - Terminated cluster: not applied handle; the error of an operation on a
-//     terminated cluster.
-//   - A window for this daemon and option is open: not applied handle;
-//     ceph.ErrInvalidRequest.
-//   - The daemon is not an owned running one, its incarnation cannot be read
-//     or the prior level cannot be read: not applied handle; the native or
-//     inspection error.
-//   - The incarnation changed before the set was issued: not applied handle;
-//     the refusal.
-//   - The set, its settling or its readback fails or differs: real handle
-//     (apply-uncertain); the joined errors.
-//   - The incarnation changed during the set: real handle (target-changed);
-//     the joined errors.
+// The handle is always non-nil. Its receipt distinguishes these outcomes:
+//   - Applied-verified: the effective value was verified; the error is nil.
+//   - Not-applied: no set was issued and Restore does nothing. Invalid inputs,
+//     an unowned target or an overlapping window return ceph.ErrInvalidRequest;
+//     a nil cluster reports Op "override.SetDebugLevel". Cancellation,
+//     termination, inspection and pre-set identity checks return their errors.
+//   - Apply-uncertain: the set, settling or readback failed. Keep the handle
+//     and error; Restore reconciles the effective value before restoring.
+//   - Target-changed: the incarnation changed during the set. The handle
+//     reports the error and leaves the replacement alone.
+//
+// The steps up to the set share one context capped by the cluster's startup
+// timeout. The readback after a set starts a fresh context with the same cap.
+// Stopping an interrupted admin-socket command has its own bound of up to
+// 10 seconds outside both, so neither cap is a limit on the whole call.
 //
 //purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting DebugLevelSetting) (*DebugLevelHandle, error) {

@@ -26,7 +26,8 @@ const (
 // a local startup-input read checks that the binary accepts the option/value
 // before store preparation. This is not a live calibration receipt. The flag
 // takes precedence over local files and central configuration. Later
-// override.SetConfig calls cannot change that pinned setting. Other settings,
+// override.SetConfig calls can change the stored entry while the command-line
+// value stays effective. Other settings,
 // including scheduler, force, IOPS capacity and sequential bandwidth, are
 // unchanged. Native permits the native decision and does not force calibration.
 //

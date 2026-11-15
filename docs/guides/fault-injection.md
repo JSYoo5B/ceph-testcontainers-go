@@ -697,8 +697,8 @@ instead.
 ### Ordered runtime settings on one daemon
 
 `override.SetConfig` stores an entry in the central configuration database
-and verifies the stored entry, which every daemon of the section applies and
-a restart keeps. A recipe that changes one daemon's running process instead,
+and verifies the stored entry. The entry survives daemon restarts; a
+higher-priority local setting can still determine the effective value. A recipe that changes one daemon's running process instead,
 in a fixed order and with each step's effective value journaled, composes
 `override.SetDebugLevel` for the debug levels with the daemon's
 `AdminSocket` for the settings that are not debug levels, such as
@@ -707,30 +707,19 @@ in a fixed order and with each step's effective value journaled, composes
 settings: each has its own values and its own effect to prove, and the
 composition below already keeps everything a primitive would.
 
-```golang
-// Debug first, so that the first dropped message is logged.
-debug, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "10/10"})
-journal(debug.Receipt())
-if err != nil {
-	t.Fatal(err)
-}
-state, err := osd.State(ctx) // pin the generation the step is applied to
-generation := osd.GetContainerID() + "@" + state.StartedAt
-prior := configGet(ctx, osd, "ms_blackhole_client") // effective, from the daemon
-journal(step{Option: "ms_blackhole_client", Prior: prior, Generation: generation, State: "intended"})
-_, err = osd.AdminSocket(ctx, "config", "set", "ms_blackhole_client", "true")
-applied := configGet(ctx, osd, "ms_blackhole_client")
-journal(step{Option: "ms_blackhole_client", Applied: applied, State: "applied"}) // or "uncertain"
-// ... the operation under the fault ...
-// Restore in reverse order: the blackhole, then debug.Restore(cleanupCtx).
-```
+The [runtime fault composition example](../../internal/integration/osd_runtime_fault_composition_integration_test.go)
+shows the complete apply and restore paths. For a blackhole fault, it enables
+debug logging first so the first dropped message is visible, then sets the
+option on the OSD. It stops before issuing the set if reading the container
+generation or the effective prior value fails.
 
 Each step of such a composition:
 
 - reads the daemon's effective prior value and pins the container generation
   (`ID@StartedAt` from `State`) before its mutation, and journals the intent;
-- treats a failed set or readback as uncertain, not as unapplied, and keeps
-  the step for restoration;
+- records the step as applied only after the set succeeds and its readback
+  matches the requested value. A failed set, failed readback or different
+  value leaves the step uncertain and retains the prior value for restoration;
 - restores in the reverse order, first comparing the generation (a restarted
   daemon lost the value: record it and set nothing), then observing the
   current value: the prior counts as restored, a third value is an outside
@@ -875,10 +864,17 @@ makes one replica of one object unreadable for scrub and recovery through
 Ceph's `injectdataerr`. No disk is touched and no OSD stops.
 
 ```golang
-// mapping comes from "ceph osd map <pool> <object> --format json" (see above).
+// Use a clean two-replica pool. Read mapping with
+// "ceph osd map scrub victim --format json" as above.
+if len(mapping.Acting) != 2 || !slices.Contains(mapping.Acting, mapping.ActingPrimary) {
+	t.Fatalf("expected a primary and a secondary for scrub/victim: %+v", mapping)
+}
 replica := mapping.Acting[0]
 if replica == mapping.ActingPrimary {
 	replica = mapping.Acting[1]
+}
+if replica < 0 || replica == mapping.ActingPrimary {
+	t.Fatalf("missing secondary for scrub/victim: %+v", mapping)
 }
 if err := fault.InjectObjectDataError(ctx, cluster, "scrub", "victim", replica); err != nil {
 	t.Fatal(err)
@@ -894,8 +890,11 @@ objects, err := observer.PGInconsistencies(ctx, mapping.PGID)
 if err != nil {
 	t.Fatal(err)
 }
-// objects[0].UnionShardErrors is []string{"read_error"}; HealthDetails reports
-// OSD_SCRUB_ERRORS and PG_DAMAGED.
+if !slices.ContainsFunc(objects, func(o ceph.InconsistentObject) bool {
+	return o.Namespace == "" && o.Name == "victim" && slices.Contains(o.UnionShardErrors, "read_error")
+}) {
+	t.Fatal("deep scrub did not report a read error for victim")
+}
 if err := cluster.RepairPG(ctx, mapping.PGID); err != nil {
 	t.Fatal(err)
 }

@@ -35,6 +35,9 @@ gateways, err := rgw.Gateways(ctx, cluster.Container)
 if err != nil {
 	t.Fatal(err)
 }
+if len(gateways) == 0 {
+	t.Fatal("no running gateway")
+}
 gateway := gateways[0]
 acct, err := account.Create(ctx, gateway, account.Config{Name: "tenant-a", Tenant: "tenant_a"})
 if err != nil {
@@ -48,6 +51,9 @@ if err != nil {
 	t.Fatal(err)
 }
 accessKey, secretKey, err := root.CreationKey().Credentials()
+if err != nil {
+	t.Fatal(err)
+}
 // Give the SUT the endpoint, gateway.Region and these keys.
 ```
 

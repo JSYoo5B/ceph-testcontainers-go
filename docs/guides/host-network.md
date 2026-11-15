@@ -133,13 +133,15 @@ if err != nil {
 _ = cfg
 ```
 
-| Option or method | Meaning |
+Read the network fields from the `ceph.ClusterFacts` returned by `ceph.FactsOf(cluster)`.
+
+| Option or field | Meaning |
 | --- | --- |
 | `ceph.WithHostNetwork()` | Selects host networking for the whole cluster. |
 | `NetworkConfig.WithHostAddress(address)` | IPv4 address to bind and advertise. Defaults to `127.0.0.1`. The address must be assigned on the Docker host and reachable from the test process. Requires `WithHostNetwork`. |
-| `FactsOf(cluster).UsesHostNetwork` | Reports the selected mode. |
-| `FactsOf(cluster).PublicAddress` | The advertised address; empty in bridge mode. |
-| `FactsOf(cluster).NetworkName` | Returns `"host"` in host mode. |
+| `ClusterFacts.UsesHostNetwork` | Reports the selected mode. |
+| `ClusterFacts.PublicAddress` | The advertised address; empty in bridge mode. |
+| `ClusterFacts.NetworkName` | Returns `"host"` in host mode. |
 
 The default `127.0.0.1` suits a test process on the same machine as the Docker
 engine (a local Linux engine, or Docker Desktop with host networking). With a

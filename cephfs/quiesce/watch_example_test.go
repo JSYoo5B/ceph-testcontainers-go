@@ -11,11 +11,8 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/subvolume"
 )
 
-// The baseline is buffered before Watch returns, so the checkpoint starts on
-// a known QUIESCED state. Any later event means the set changed: here the
-// checkpoint is abandoned once the set left QUIESCED, for example because its
-// expiration passed, and Release reports that it is not consistent. This
-// example is compiled, not run.
+// Check the baseline before copying and monitor the set between copy steps.
+// Release verifies consistency even when no change was observed.
 func ExampleSet_Watch() {
 	ctx := context.Background()
 	cluster, err := cephfs.Run(ctx, ceph.DefaultImage)
@@ -52,20 +49,27 @@ func ExampleSet_Watch() {
 		panic(err)
 	}
 	defer func() { _ = watch.Stop() }() // before the set's Release
-	<-watch.Events()                    // the QUIESCED baseline
-	lost := make(chan string, 1)
-	go func() {
-		for event := range watch.Events() {
-			if event.Kind != ceph.WatchGap && event.State.State != "QUIESCED" {
-				lost <- event.State.State
-				return
-			}
-		}
-	}()
-	// ... the SUT copies its checkpoint, checking lost between steps ...
+	baseline := <-watch.Events()
+	if baseline.State.State != "QUIESCED" {
+		fmt.Println("checkpoint abandoned: the set is", baseline.State.State)
+		return
+	}
+	// ... the SUT copies a checkpoint chunk ...
+	// Check for a change between chunks. Release verifies the final checkpoint.
 	select {
-	case state := <-lost:
-		fmt.Println("checkpoint abandoned: the set is", state)
+	case event, ok := <-watch.Events():
+		if !ok {
+			fmt.Println("checkpoint abandoned: watch ended", watch.Stop())
+			return
+		}
+		if event.Kind == ceph.WatchGap {
+			fmt.Println("checkpoint abandoned: observation lost", event.Err)
+			return
+		}
+		if event.State.State != "QUIESCED" {
+			fmt.Println("checkpoint abandoned: the set is", event.State.State)
+			return
+		}
 	default:
 	}
 }

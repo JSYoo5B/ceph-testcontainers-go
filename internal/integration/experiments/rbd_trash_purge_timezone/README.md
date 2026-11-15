@@ -53,8 +53,9 @@ Tentacle 20.2.4. It prints one
 `case=rbd_trash_purge_timezone`, for both subtests away from UTC together. It
 is an `Experiments` case without a fixed image: no release fixes the defect
 yet. The judgement tests are the package's `code/pure` batch and run in Code
-checks for every change. A comment run can name a release, for example
-`/ci run rbd_trash_purge_timezone on squid`. The triggers, the result checks and the image injection are the shared ones
+checks for every change. `/ci run rbd_trash_purge_timezone` runs the default
+image. The triggers, the result checks and the image injection are the shared
+ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it

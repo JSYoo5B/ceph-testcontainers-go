@@ -99,7 +99,7 @@ stale:
 
 - The old descriptor's `ConnectionConfig` still returns the old credentials,
   so a test can check that they are rejected.
-- Every other operation with the old descriptor fails:
+- These operations require the current descriptor:
   [ClientConfig.WithIdentity](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.WithIdentity),
   [ClientConfig.Capabilities](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Capabilities),
   [ClientConfig.UpdateCaps](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.UpdateCaps) and [ClientConfig.Delete](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.Delete).
@@ -108,9 +108,10 @@ stale:
   descriptor without another change, as long as that descriptor is still the
   identity's current one.
 - Containers attached with the old descriptor keep the old keyring.
-- Copies of the old descriptor go stale as well. The cluster records the
-  current key of each identity it created, and every operation refuses a
-  descriptor with another key or of a deleted identity.
+- Copies of the old descriptor follow the same rules. The cluster records the
+  current key of each identity it created. `WithIdentity`, `Capabilities` and
+  `UpdateCaps` also refuse a descriptor of a deleted identity; `Delete` with
+  it again returns nil without another change.
 
 The old key behaves as follows on the official images:
 

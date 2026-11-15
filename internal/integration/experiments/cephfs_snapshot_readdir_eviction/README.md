@@ -62,8 +62,8 @@ The defect is reproduced on every release it ran on.
 Known-defect reproducer, optional batch `cephfs_snapshot_readdir_eviction`
 with a 20-minute budget; no automatic run includes it. On its default image,
 Tentacle 20.2.4, it prints `REPRODUCED` (47 s). No release is fixed, so its
-`Experiments` dispatch has only the default run. A comment run on another
-release is `/ci run cephfs_snapshot_readdir_eviction on umbrella`. The
+`Experiments` dispatch has only the default run.
+`/ci run cephfs_snapshot_readdir_eviction` runs the default image. The
 judgement tests run in `code/pure` with every change (under 1 s). The shared
 triggers, result checks and image injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 

@@ -70,8 +70,8 @@ seconds and, on its default image, passes and reports `REPRODUCED` (see
 (`case=rgw_suspended_conditional_writes`); Tentacle 20.2.5
 (`quay.io/ceph/ceph:v20.2.5`) and Umbrella 21.2.0
 (`quay.io/ceph/ceph:v21.2.0`) are fixed images for it.
-`/ci run rgw_conditional_writes` takes an `on <release>` such as
-`on umbrella`. The triggers, the result checks and the image injection are the shared ones
+`/ci run rgw_conditional_writes` runs the default image. The triggers, the
+result checks and the image injection are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its validator tests are Docker-free `code/pure` tests
 that Code checks runs on every change.
 

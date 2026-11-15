@@ -68,7 +68,7 @@ Known-defect reproducer, optional batch `rgw_ssec_completion` with a
 passes and reports `REPRODUCED` (see [Result line](#result-line)). It runs
 over HTTPS. It is an `Experiments` case (`case=rgw_ssec_multipart_completion`),
 and its fixed image there is `quay.io/ceph/ceph:v21.2.0`.
-`/ci run rgw_ssec_completion` takes an `on <release>` such as `on umbrella`.
+`/ci run rgw_ssec_completion` runs the default image.
 The triggers, the result checks and the image injection are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its completion classification tests are Docker-free `code/pure`
 tests that Code checks runs on every change.

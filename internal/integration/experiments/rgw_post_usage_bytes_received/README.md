@@ -64,8 +64,8 @@ user, bucket and category (`put_obj`, `post_obj`).
 Known-defect reproducer, optional batch `rgw_post_usage_bytes_received`
 with a 20-minute budget; no automatic run includes it. Its default image is
 Tentacle 20.2.4. It is an `Experiments` case, and its fixed image there is
-`quay.io/ceph/ceph:v20.2.5`. `/ci run rgw_post_usage_bytes_received` takes an
-`on <release>` such as `on umbrella`. The triggers, the result checks and the
+`quay.io/ceph/ceph:v20.2.5`. `/ci run rgw_post_usage_bytes_received` runs the
+default image. The triggers, the result checks and the
 image injection are the shared ones of
 [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its judgement
 and usage log reader tests are Docker-free `code/pure` tests that Code checks

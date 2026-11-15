@@ -212,8 +212,9 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // container.
 // Images contain runtime tools; this module supplies cluster setup.
 //
-// Run builds the whole cluster before it returns, bounded by ctx and by
-// WithStartupTimeout: it validates every option together, creates the owned
+// Run resolves and validates the options, including local file reads, before
+// checking ctx and starting the WithStartupTimeout timer. Bootstrap is bounded
+// by both ctx and that timer. Run creates the owned
 // bridge network (two with NetworkConfig.WithSeparateClusterNetwork) or checks
 // the engine in host mode, starts MON a and records its configuration, admin
 // keyring and Ceph version, adds the remaining MONs (and, with more than one,

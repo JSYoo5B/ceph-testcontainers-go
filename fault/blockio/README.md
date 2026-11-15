@@ -10,18 +10,8 @@ Start the backend before the cluster and terminate the cluster before the
 backend. Register backend cleanup first so reverse-order cleanup preserves the
 keeper while its OSD consumes the device. Keep a non-nil backend returned with
 an error and retry its cleanup; do not remove its embedded container directly.
-See [the public example](example_test.go).
-
-```go
-backend, err := blockio.Run(ctx, helperImage,
-    blockio.WithConfig(blockio.Config{Size: 1 << 30}))
-// Register backend cleanup, including a partially started backend.
-// Start a ceph cluster with no initial OSDs, then register cluster cleanup.
-osd, err := backend.AttachOSD(ctx, cluster)
-err = backend.Apply(ctx, blockio.Profile{Delay: 250 * time.Millisecond})
-status, err := backend.Status(ctx)
-err = backend.Restore(ctx)
-```
+The [compiled example](example_test.go) shows the full sequence: attach an OSD,
+apply the delay, check its status and restore the device table before teardown.
 
 Choose exactly one positive whole-millisecond `Delay` (at most `MaxDelay`) or
 `EIO: true`. A successful `Apply` confirms the installed table; it does not

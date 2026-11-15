@@ -406,11 +406,11 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 | Need | Use |
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` |
-| Change any option for a test and restore it | [override.SetConfig](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetConfig) |
+| Change a stored central entry for a test and restore it | [override.SetConfig](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetConfig) |
 | Options that must exist at bootstrap | [WithConfigFile](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithConfigFile) |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", name)` |
 
-- `override.SetConfig` accepts any option, with a `Section` and optional
+- `override.SetConfig` writes a central entry with a `Section` and optional
   `Mask` (such as `class:ssd`), including MGR module options such as
   `mgr/volumes/max_concurrent_clones`.
 - A running MGR keeps a module option whose entry is removed with
@@ -421,8 +421,10 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 - Local files, command-line arguments and runtime overrides take precedence
   over the central database, and some options apply only after a restart.
   Check the effective value with `config show`.
-- A key set with `WithConfigFile` cannot be changed later through the central
-  database.
+- A local `WithConfigFile` value can remain effective after a successful
+  central write. The setter refuses the bootstrap protocol switches under
+  `MessengerV2Only` and `MessengerV2Secure`, and the six Messenger mode
+  settings under `MessengerV2Secure`.
 - `ceph tell <daemon> config set` changes one running daemon only, is lost on
   restart, and no handle restores it.
 
@@ -463,7 +465,7 @@ _, err = exec(ctx, restricted, "rados", "--id", reader.User(), "-p", "volumes", 
 - Established sessions may keep their tickets after
   `ClientConfig.UpdateCaps` or `Delete`, so check permission changes with a
   fresh connection.
-- With split role images the essential image is not a client image; use `FactsOf(cluster).Images.Client`
+- With split role images the essential image is not a client image; use `facts.Images.Client` from the checked lookup above
   or an image with your own client libraries. Neither option installs software.
 - You own these containers: terminate them before the cluster. After a MON
   replacement, `cluster.RefreshClientMonitorConfig(ctx, client)` updates their

@@ -50,8 +50,9 @@ Upstream reference: [tracker 81590](https://tracker.ceph.com/issues/81590).
 Known-defect reproducer, optional batch `rbd_group_snap_late_complete` with
 a 20-minute budget; no automatic run includes it. The default image is
 Tentacle 20.2.4. It is an `Experiments` case without a fixed image: no release
-fixes the defect yet. A comment run can name a release, for example
-`/ci run rbd_group_snap_late_complete on umbrella`. The triggers, the result checks and the image injection are the shared ones
+fixes the defect yet. `/ci run rbd_group_snap_late_complete` runs the default
+image. The triggers, the result checks and the image injection are the shared
+ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
 ## Running it

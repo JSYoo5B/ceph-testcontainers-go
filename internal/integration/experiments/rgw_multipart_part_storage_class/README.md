@@ -63,8 +63,8 @@ Known-defect reproducer, optional batch `rgw_multipart_part_class` with a
 includes it. It reports `REPRODUCED` on its default image, on every published
 release image and on the Tentacle 20.2.5 official image, so no fixed image is
 known: an `Experiments` dispatch has only the default run. On a pull
-request's head, `/ci run rgw_multipart_part_class [on <release>]` runs the
-batch. Its Docker-free part-read judgement tests (batch `code/pure`) run in
+request's head, `/ci run rgw_multipart_part_class` runs the default image. Its
+Docker-free part-read judgement tests (batch `code/pure`) run in
 Code checks on every change. The triggers, the result checks and the image
 injection are the shared ones of
 [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).

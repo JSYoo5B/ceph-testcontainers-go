@@ -83,7 +83,7 @@ Known-defect reproducer, optional batch `rgw_slo_head_segment_reads` with a
 20.2.4. Its controls fail the test like its given and when steps. It is an
 `Experiments` case without a fixed image, since no release fixes the defect,
 so a dispatch has only the default run. `/ci run rgw_slo_head_segment_reads`
-takes an `on <release>` such as `on umbrella`. It sets the OSD's op history
+runs the default image. It sets the OSD's op history
 and op tracker level. The triggers, the result checks and the image injection are the shared ones
 of [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case). Its op history reader, window and judgement
 tests are Docker-free `code/pure` tests that Code checks runs on every change

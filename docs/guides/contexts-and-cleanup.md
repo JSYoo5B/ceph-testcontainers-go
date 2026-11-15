@@ -29,7 +29,9 @@ guarantee.
 
 ### The startup timeout
 
-`Run`, readiness waits and topology operations are also bounded by the
+`Run` resolves options and reads local configuration files before checking
+its caller context and starting the bootstrap timeout. Bootstrap, readiness
+waits and topology operations are bounded by the
 cluster's startup timeout, 3 minutes by default. Change it with
 `ceph.WithStartupTimeout(d)`. The shorter of the startup timeout and your
 context deadline applies to each operation. This covers, for example,
@@ -535,9 +537,9 @@ They share these rules:
 Handle-specific details:
 
 - `override.SetConfig` records the value as Ceph normalized it, which can differ
-  from the string you passed. A key set by `ceph.WithConfigFile` cannot be changed
-  this way, because local files take precedence over the configuration
-  database. Ticket lifetimes written by `WithAuth` also take precedence over
+  from the string you passed. A daemon can still use a higher-priority local file setting.
+  Compare the MON entry in `Observer.Configuration` with the daemon’s
+  effective value from `ceph config show <daemon> <key>`. Ticket lifetimes written by `WithAuth` also take precedence over
   later central overrides. `MessengerV2Only` reserves `ms_bind_msgr1` and
   `ms_bind_msgr2`; `MessengerV2Secure` reserves those and its six mode
   settings. Refusals of these Messenger settings match `ErrInvalidRequest`.

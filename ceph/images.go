@@ -23,7 +23,8 @@ import (
 // of the image and fails, before the manager's identity, key or container
 // exists, when it reports another release than ClusterFacts.CephVersion.
 // DaemonOptions.WithImage of one AddManager call takes precedence over MGR.
-// FactsOf(c).Images.MGR reports the resolved image, never empty.
+// After successful startup, [FactsOf] returns the resolved MGR image
+// in the snapshot’s Images.MGR field.
 type ImageSet struct {
 	Essential string
 	Client    string
@@ -107,7 +108,7 @@ func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 // of the cluster, those started by Run with cephfs.WithFilesystems as well as
 // those started later. Without it MDS daemons use the CephFS role of the
 // cluster's images, which is the Run image unless WithImageSet selects another.
-// FactsOf(c).Images.CephFS reports it, the usual image argument of
+// The CephFS role in ClusterFacts.Images is the usual image argument of
 // cephfs/mirror.Run. With WithImageSet it replaces the set's CephFS role. Use matching
 // Ceph versions. A blank image is refused.
 //
@@ -121,8 +122,8 @@ func (o ImageOptions) WithCephFSImage(image string) ImageOptions {
 // those started by Run with rgw.WithGateways as well as those started later
 // with rgw.Start. Without it gateways use the RGW role of the cluster's images,
 // which is the Run image unless WithImageSet selects another.
-// FactsOf(c).Images.RGW reports it, so the multisite setup clients use it too; multisite gateways take their
-// image as an argument of multisite.Run instead. With
+// Multisite setup clients use the RGW role recorded in ClusterFacts.Images.
+// Multisite gateways use the image passed to multisite.Run. With
 // WithImageSet it replaces the set's RGW role. Use matching Ceph versions. A
 // blank image is refused.
 //

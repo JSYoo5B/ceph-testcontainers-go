@@ -141,7 +141,9 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 // the type of the old one unless ClientOptions.WithKeyType selects another. It
 // returns a new descriptor for the new key, and the old descriptor goes
 // stale: its ConnectionConfig still returns the old credentials, for tests
-// that check their rejection, while every other operation on it fails.
+// that check their rejection. Repeating ReplaceKey on it returns the same
+// successor while that successor is current. WithIdentity, Capabilities,
+// UpdateCaps and Delete refuse the stale descriptor; use the successor.
 // Containers that were attached with the old descriptor keep the old
 // keyring.
 //
