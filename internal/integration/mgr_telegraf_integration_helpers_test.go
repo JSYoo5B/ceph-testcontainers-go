@@ -211,8 +211,11 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	if codes := healthCodes(); !slices.Equal(codes, baselineCodes) {
 		t.Fatalf("health during the outage %v, want the baseline %v", codes, baselineCodes)
 	}
-	receiver.SetAvailable(t, ctx, true)
+	// The receiver reopens as soon as it sees the request, before
+	// SetAvailable reads the new state back, so the outage ends at the
+	// request: a pass can arrive in between and is not lost.
 	up := time.Now()
+	receiver.SetAvailable(t, ctx, true)
 	resumed := awaitBatch("batch after the outage", up, 30*time.Second, from(active, "udp"))
 	for _, batch := range batches() {
 		if received := time.Unix(0, int64(batch.Received*1e9)); received.After(down) && received.Before(up) {

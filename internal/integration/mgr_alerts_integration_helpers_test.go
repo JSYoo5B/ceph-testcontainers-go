@@ -253,8 +253,14 @@ func testManagerAlertsDelivery(t *testing.T) {
 		t.Fatalf("ALERTS_SMTP_ERROR details %v, want a refused connection", failure.Details)
 	}
 	time.Sleep(12 * time.Second)
+	// The receiver reopens before SetAvailable reads the new state back, so
+	// a retry can arrive before quiet starts; count from the request.
+	_, beforeUp := messages()
 	sink.SetAvailable(t, ctx, true)
 	seen = quiet("receiver back, no retry", 15*time.Second)
+	if _, parsed := messages(); seen != len(beforeUp) {
+		t.Fatalf("receiver back: %d messages arrived while it reopened: %+v", seen-len(beforeUp), parsed[len(beforeUp):seen])
+	}
 	if err := lost.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
