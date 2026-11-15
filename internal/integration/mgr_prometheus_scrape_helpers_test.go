@@ -4,6 +4,9 @@ package integration_test
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // prometheusScrapeScript plays a monitoring SUT that scrapes the prometheus
@@ -112,3 +115,26 @@ func freshPoolWrites(before, after prometheusScrape, poolID, name string, writes
 	}
 	return nil
 }
+
+// poolCounterTrace records each change of the ceph_pool_wr answer one
+// endpoint gives for a pool, with its time from start, so a log shows the
+// sequence a scraper saw and not only the sample it accepted.
+type poolCounterTrace struct {
+	start time.Time
+	last  string
+	steps []string
+}
+
+func (c *poolCounterTrace) add(s prometheusScrape, poolID, name string) {
+	value := "absent"
+	if s.poolSeries(poolID, name) == nil {
+		value = strconv.FormatFloat(s.Writes[poolID], 'f', -1, 64)
+	}
+	if value == c.last {
+		return
+	}
+	c.last = value
+	c.steps = append(c.steps, value+"@"+time.Since(c.start).Round(time.Millisecond).String())
+}
+
+func (c *poolCounterTrace) String() string { return strings.Join(c.steps, " ") }

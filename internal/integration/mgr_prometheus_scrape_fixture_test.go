@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // prometheusPoolBody is an exposition of the prometheus module with one pool
@@ -116,4 +117,24 @@ func mustParsePrometheus(t *testing.T, body string) prometheusScrape {
 		t.Fatal(err)
 	}
 	return scrape
+}
+
+// TestPoolCounterTraceRecordsChanges keeps one step per change of the
+// answer, so the failover log shows a promoted manager's 0 before its first
+// PG report and the return to the old value, and not every repeated scrape.
+func TestPoolCounterTraceRecordsChanges(t *testing.T) {
+	trace := &poolCounterTrace{start: time.Now()}
+	pool := func(wr float64) prometheusScrape {
+		return prometheusScrape{Status: 200, Bytes: 1, Pools: map[string]string{"2": "tc-scrape"}, Writes: map[string]float64{"2": wr}}
+	}
+	for _, s := range []prometheusScrape{{Status: 200}, {Status: 200}, pool(0), pool(0), pool(20), pool(20), {Error: "reset"}} {
+		trace.add(s, "2", "tc-scrape")
+	}
+	var values []string
+	for _, step := range trace.steps {
+		values = append(values, strings.SplitN(step, "@", 2)[0])
+	}
+	if got := strings.Join(values, " "); got != "absent 0 20 absent" {
+		t.Fatalf("trace values %q, want %q (trace %s)", got, "absent 0 20 absent", trace)
+	}
 }

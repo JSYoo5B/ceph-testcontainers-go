@@ -295,7 +295,12 @@ slot needs the `mgr-modules` role or another image that ships them.
   unchanged body is also a 200. Identify a pool by its native `pool_id` and
   require a fresh increase of its `ceph_pool_wr` after a write the SUT made;
   the counter comes from PG statistics, so the deadline covers that report
-  as well as `scrape_interval`. Follow the active manager with
+  as well as `scrape_interval`. A promoted manager rebuilds its PG
+  statistics from the OSD reports it receives, so its first answers can
+  carry the pool with a lower `ceph_pool_wr` (0 on Ceph 19 a few seconds
+  after `ceph mgr fail`). The counter is cumulative and returns to the
+  previous value without a write, so wait for it before comparing a later
+  increase. Follow the active manager with
   `Observer.WatchManagers` or `Observer.ManagerServices`: after a failover
   the advertisement can take more than ten seconds, and a changed
   `mgr/prometheus/` option restarts the listener while the old URL stays
