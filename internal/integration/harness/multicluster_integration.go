@@ -127,16 +127,13 @@ func NewMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 func CleanupMultiClusterContainer(t *testing.T, ctr testcontainers.Container) {
 	t.Helper()
 	t.Cleanup(func() {
-		if t.Failed() {
-			logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			MultiClusterLogContainer(t, logCtx, ctr)
-			logCancel()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if err := ctr.Terminate(ctx); err != nil {
-			t.Errorf("terminate multicluster client/daemon: %v", err)
-		}
+		ReleaseAfterDiagnostics(t, time.Minute, func(ctx context.Context) {
+			MultiClusterLogContainer(t, ctx, ctr)
+		}, func(ctx context.Context) {
+			if err := ctr.Terminate(ctx); err != nil {
+				t.Errorf("terminate multicluster client/daemon: %v", err)
+			}
+		})
 	})
 }
 

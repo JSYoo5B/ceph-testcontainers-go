@@ -66,16 +66,15 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	mirror, err := cephfsmirror.Run(ctx, harness.NativeMirrorImage(t, "cephfs", harness.StaticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, Directories: directories, DaemonCount: 2}))
 	if mirror != nil {
 		t.Cleanup(func() {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cleanupCancel()
-			if t.Failed() {
+			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
 				for _, daemon := range mirror.Daemons() {
-					harness.MultiClusterLogContainer(t, cleanupCtx, daemon)
+					harness.MultiClusterLogContainer(t, ctx, daemon)
 				}
-			}
-			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate retained peer drain fixture: %v", err)
-			}
+			}, func(ctx context.Context) {
+				if err := mirror.Terminate(ctx); err != nil {
+					t.Errorf("terminate retained peer drain fixture: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

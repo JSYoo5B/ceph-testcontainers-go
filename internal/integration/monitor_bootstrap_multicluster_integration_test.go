@@ -85,14 +85,15 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			}))
 			if mirror != nil {
 				t.Cleanup(func() {
-					cleanupCtx, stop := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer stop()
-					if t.Failed() && mirror.Container != nil {
-						harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
-					}
-					if err := mirror.Terminate(cleanupCtx); err != nil {
-						t.Errorf("terminate bootstrap CephFS link: %v", err)
-					}
+					harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+						if mirror.Container != nil {
+							harness.MultiClusterLogContainer(t, ctx, mirror.Container)
+						}
+					}, func(ctx context.Context) {
+						if err := mirror.Terminate(ctx); err != nil {
+							t.Errorf("terminate bootstrap CephFS link: %v", err)
+						}
+					})
 				})
 			}
 			if err != nil {
