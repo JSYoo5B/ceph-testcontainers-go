@@ -46,7 +46,11 @@ Tentacle 20.2.1 and Squid 19.2.7. In the release sources, Squid 19.2.0 to
   release.
 - The cluster is disposable: the case lowers its global full thresholds
   (`override.SetFullRatios`) and restores them.
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's own steps share a 15-minute deadline. Cluster startup
+  (`harness.NewSingleImageCluster`) runs on the test context and the
+  full-ratio restore in cleanup has its own two-minute deadline, so neither
+  counts against it and a slow startup or cleanup can take the test past 15
+  minutes. The outer bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
