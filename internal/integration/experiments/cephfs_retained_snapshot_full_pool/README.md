@@ -145,9 +145,12 @@ content.
 - **NOT_REPRODUCED:** the failed removal changed nothing that the volumes
   interface or a client sees, and the retry retained the snapshot.
 - **REPRODUCED:** the symptoms name what was lost: a metadata file that names
-  a gone incarnation, a failing `getpath` or `snapshot getpath`, unreadable
-  snapshot content, a failing retry, or a retry that does not leave a
-  `snapshot-retained` subvolume with the snapshot readable at its path.
+  a gone incarnation, a `getpath` or `snapshot getpath` that reports the path
+  missing (`ENOENT`), a gone or changed snapshot file, a retry that reports
+  the path missing, or a retry that does not leave a `snapshot-retained`
+  subvolume with the snapshot readable at its path. Only `ENOENT` counts as a
+  missing path, both for a symptom and for the live `getpath` that must fail
+  after the retry.
 - **Unavailable prerequisite:** the failure starts with
   `unavailable prerequisite`: the cluster, the filesystem, the subvolume or
   its snapshot does not start or cannot be made, or the client's `python3`
@@ -161,8 +164,11 @@ content.
   contents before the removal were not the ones written.
 - **Another fault:** the failure starts with `another fault:`: after the
   failed removal the metadata is unreadable or names another state or path,
-  the live file is unreadable for another reason or holds other bytes, or a
-  getpath answers another path. It is not the defect of this case.
+  the live file is unreadable for another reason or holds other bytes, a
+  getpath answers another path, or a volumes call or a file read fails with
+  another error than `ENOENT` (a denied lookup, a timeout, `ENOSPC` on the
+  retry). Such a failure decides neither result. It is not the defect of
+  this case.
 
 ## Cleanup and limits
 

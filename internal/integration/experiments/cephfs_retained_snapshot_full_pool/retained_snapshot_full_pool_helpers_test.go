@@ -97,6 +97,20 @@ type removalReport struct {
 	RetrySnapshot                      fileSeen
 }
 
+// missingErrno is the errno a volumes call reports for a subvolume path that
+// does not exist: the incarnation of a subvolume whose metadata names a gone
+// path, or the live path of a snapshot-retained subvolume. Every failure a
+// stage can turn into a verdict must be this errno; any other failure (a
+// denied lookup, a timeout, a busy MGR) establishes neither the symptom nor
+// its absence and fails the test.
+const missingErrno = "ENOENT"
+
+// unrelated returns the "another fault:" error of a command failure that is
+// not the stage's expected missingErrno.
+func unrelated(stage string, o cephOutcome) error {
+	return fmt.Errorf("another fault: %s failed with %s, which is neither the expected answer nor %s", stage, o, missingErrno)
+}
+
 // judgeRemoval decides whether the failed removal left the subvolume
 // inconsistent or unrecoverable. The contract is that a removal with
 // retained snapshots that fails to persist its descriptor changes nothing:
@@ -104,8 +118,10 @@ type removalReport struct {
 // incarnation and the snapshot keep their bytes and paths, and a retry
 // retains the snapshot. It returns the symptoms of the defect, none for the
 // contract, and an error starting with "another fault:" for a state that is
-// neither.
+// neither, including a command or read that fails with another errno than
+// the missing path that the stage expects.
 func judgeRemoval(r removalReport) ([]string, error) {
+	enoent := int(syscall.ENOENT)
 	if r.Meta.Errno != 0 {
 		return nil, fmt.Errorf("another fault: the persisted metadata is unreadable after the thresholds were restored: errno %d", r.Meta.Errno)
 	}
@@ -115,7 +131,7 @@ func judgeRemoval(r removalReport) ([]string, error) {
 	}
 	var symptoms []string
 	switch {
-	case r.Live.Errno == int(syscall.ENOENT):
+	case r.Live.Errno == enoent:
 		symptoms = append(symptoms, fmt.Sprintf("the persisted metadata names %s as the complete live incarnation, but it is gone", r.LivePath))
 	case r.Live.Errno != 0:
 		return nil, fmt.Errorf("another fault: the live file is unreadable: errno %d", r.Live.Errno)
@@ -123,36 +139,62 @@ func judgeRemoval(r removalReport) ([]string, error) {
 		return nil, fmt.Errorf("another fault: the live file holds %s, want %s", r.Live.SHA256, r.LiveSHA)
 	}
 	switch path := strings.TrimSpace(r.GetPath.Out); {
+	case !r.GetPath.OK && r.GetPath.Errno != missingErrno:
+		return nil, unrelated("getpath", r.GetPath)
 	case !r.GetPath.OK:
 		symptoms = append(symptoms, "getpath failed: "+r.GetPath.String())
 	case path != r.LivePath:
 		return nil, fmt.Errorf("another fault: getpath returned %q, want %s", path, r.LivePath)
 	}
-	if r.Snapshot.Errno != 0 || r.Snapshot.SHA256 != r.SnapshotSHA {
-		symptoms = append(symptoms, fmt.Sprintf("the snapshot file is unreadable or changed: errno %d, sha256 %s", r.Snapshot.Errno, r.Snapshot.SHA256))
+	switch {
+	case r.Snapshot.Errno == enoent:
+		symptoms = append(symptoms, "the snapshot file is gone: errno 2")
+	case r.Snapshot.Errno != 0:
+		return nil, fmt.Errorf("another fault: the snapshot file is unreadable: errno %d", r.Snapshot.Errno)
+	case r.Snapshot.SHA256 != r.SnapshotSHA:
+		symptoms = append(symptoms, "the snapshot file changed: sha256 "+r.Snapshot.SHA256)
 	}
 	switch path := strings.TrimSpace(r.SnapshotGetPath.Out); {
+	case !r.SnapshotGetPath.OK && r.SnapshotGetPath.Errno != missingErrno:
+		return nil, unrelated("snapshot getpath", r.SnapshotGetPath)
 	case !r.SnapshotGetPath.OK:
 		symptoms = append(symptoms, "snapshot getpath failed: "+r.SnapshotGetPath.String())
 	case path != r.SnapshotPath:
 		return nil, fmt.Errorf("another fault: snapshot getpath returned %q, want %s", path, r.SnapshotPath)
 	}
-	if !r.Retry.OK {
+	switch {
+	case !r.Retry.OK && r.Retry.Errno != missingErrno:
+		return nil, unrelated("the retried removal", r.Retry)
+	case !r.Retry.OK:
 		return append(symptoms, "the retried removal failed: "+r.Retry.String()), nil
 	}
-	if !r.RetryInfo.OK || r.RetryState != "snapshot-retained" {
-		symptoms = append(symptoms, fmt.Sprintf("after the retry the subvolume is not snapshot-retained: info %s, state %q", r.RetryInfo, r.RetryState))
+	switch {
+	case !r.RetryInfo.OK && r.RetryInfo.Errno != missingErrno:
+		return nil, unrelated("info after the retry", r.RetryInfo)
+	case !r.RetryInfo.OK:
+		symptoms = append(symptoms, "after the retry info failed: "+r.RetryInfo.String())
+	case r.RetryState != "snapshot-retained":
+		symptoms = append(symptoms, fmt.Sprintf("after the retry the subvolume is not snapshot-retained: state %q", r.RetryState))
 	}
-	if r.RetryGetPath.OK {
+	switch {
+	case r.RetryGetPath.OK:
 		symptoms = append(symptoms, "after the retry getpath still returns a live incarnation")
+	case r.RetryGetPath.Errno != missingErrno:
+		return nil, unrelated("getpath after the retry", r.RetryGetPath)
 	}
 	switch path := strings.TrimSpace(r.RetrySnapshotGetPath.Out); {
+	case !r.RetrySnapshotGetPath.OK && r.RetrySnapshotGetPath.Errno != missingErrno:
+		return nil, unrelated("snapshot getpath after the retry", r.RetrySnapshotGetPath)
 	case !r.RetrySnapshotGetPath.OK:
 		symptoms = append(symptoms, "after the retry snapshot getpath failed: "+r.RetrySnapshotGetPath.String())
 	case path != r.SnapshotPath:
 		symptoms = append(symptoms, fmt.Sprintf("after the retry snapshot getpath returned %q, want %s", path, r.SnapshotPath))
-	case r.RetrySnapshot.Errno != 0 || r.RetrySnapshot.SHA256 != r.SnapshotSHA:
-		symptoms = append(symptoms, fmt.Sprintf("after the retry the snapshot file is unreadable or changed: errno %d, sha256 %s", r.RetrySnapshot.Errno, r.RetrySnapshot.SHA256))
+	case r.RetrySnapshot.Errno == enoent:
+		symptoms = append(symptoms, "after the retry the snapshot file is gone: errno 2")
+	case r.RetrySnapshot.Errno != 0:
+		return nil, fmt.Errorf("another fault: after the retry the snapshot file is unreadable: errno %d", r.RetrySnapshot.Errno)
+	case r.RetrySnapshot.SHA256 != r.SnapshotSHA:
+		symptoms = append(symptoms, "after the retry the snapshot file changed: sha256 "+r.RetrySnapshot.SHA256)
 	}
 	return symptoms, nil
 }

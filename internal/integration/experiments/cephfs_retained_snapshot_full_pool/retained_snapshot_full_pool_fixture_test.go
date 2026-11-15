@@ -39,6 +39,7 @@ func contractReport() removalReport {
 // evidence of what a release does.
 func TestJudgeRemoval(t *testing.T) {
 	missing := cephOutcome{Errno: "ENOENT", Reason: "mount path missing for subvolume 'retained-full'"}
+	denied := cephOutcome{Errno: "EACCES", Reason: "permission denied"}
 	for _, tc := range []struct {
 		name   string
 		change func(r *removalReport)
@@ -55,17 +56,57 @@ func TestJudgeRemoval(t *testing.T) {
 			"snapshot getpath failed: ENOENT",
 			"the retried removal failed: ENOENT",
 		}},
-		{name: "retry fails on a consistent subvolume", change: func(r *removalReport) { r.Retry = cephOutcome{Errno: "EINVAL"} },
-			want: []string{"the retried removal failed: EINVAL"}},
-		{name: "snapshot bytes lost", change: func(r *removalReport) { r.Snapshot = fileSeen{Errno: int(syscall.ENOENT)} },
-			want: []string{"the snapshot file is unreadable or changed: errno 2"}},
+		{name: "retry reports the missing path on a consistent subvolume", change: func(r *removalReport) { r.Retry = missing },
+			want: []string{"the retried removal failed: ENOENT"}},
+		{name: "snapshot file gone", change: func(r *removalReport) { r.Snapshot = fileSeen{Errno: int(syscall.ENOENT)} },
+			want: []string{"the snapshot file is gone: errno 2"}},
+		{name: "snapshot file changed", change: func(r *removalReport) { r.Snapshot.SHA256 = r.LiveSHA },
+			want: []string{"the snapshot file changed"}},
 		{name: "retry leaves the subvolume complete", change: func(r *removalReport) {
 			r.RetryState, r.RetryGetPath = "complete", cephOutcome{OK: true, Out: testLivePath}
 		}, want: []string{"after the retry the subvolume is not snapshot-retained", "after the retry getpath still returns a live incarnation"}},
+		{name: "retry leaves the subvolume without a path", change: func(r *removalReport) { r.RetryInfo, r.RetryState = missing, "" },
+			want: []string{"after the retry info failed: ENOENT"}},
 		{name: "retry loses the snapshot", change: func(r *removalReport) { r.RetrySnapshotGetPath = missing },
 			want: []string{"after the retry snapshot getpath failed: ENOENT"}},
+		{name: "retry moves the snapshot", change: func(r *removalReport) { r.RetrySnapshotGetPath.Out = "/elsewhere" },
+			want: []string{"after the retry snapshot getpath returned \"/elsewhere\""}},
+		{name: "retry snapshot file gone", change: func(r *removalReport) { r.RetrySnapshot = fileSeen{Errno: int(syscall.ENOENT)} },
+			want: []string{"after the retry the snapshot file is gone"}},
 		{name: "retry snapshot bytes changed", change: func(r *removalReport) { r.RetrySnapshot.SHA256 = r.LiveSHA },
-			want: []string{"after the retry the snapshot file is unreadable or changed"}},
+			want: []string{"after the retry the snapshot file changed"}},
+		// A failure with another errno than the missing path the stage
+		// expects establishes neither the symptom nor its absence.
+		{name: "getpath denied", change: func(r *removalReport) { r.GetPath = denied },
+			fault: "another fault: getpath failed with EACCES"},
+		{name: "getpath without an errno", change: func(r *removalReport) { r.GetPath = cephOutcome{Reason: "timed out"} },
+			fault: "another fault: getpath failed with "},
+		{name: "snapshot getpath denied", change: func(r *removalReport) { r.SnapshotGetPath = denied },
+			fault: "another fault: snapshot getpath failed with EACCES"},
+		{name: "snapshot getpath denied on a gone incarnation", change: func(r *removalReport) {
+			r.Live, r.GetPath, r.SnapshotGetPath = fileSeen{Errno: int(syscall.ENOENT)}, missing, denied
+		}, fault: "another fault: snapshot getpath failed with EACCES"},
+		{name: "retry denied", change: func(r *removalReport) { r.Retry = denied },
+			fault: "another fault: the retried removal failed with EACCES"},
+		{name: "retry refused as invalid", change: func(r *removalReport) { r.Retry = cephOutcome{Errno: "EINVAL"} },
+			fault: "another fault: the retried removal failed with EINVAL"},
+		{name: "retry still full", change: func(r *removalReport) { r.Retry = cephOutcome{Errno: "ENOSPC"} },
+			fault: "another fault: the retried removal failed with ENOSPC"},
+		{name: "retry denied on a gone incarnation", change: func(r *removalReport) {
+			r.Live, r.GetPath, r.SnapshotGetPath, r.Retry = fileSeen{Errno: int(syscall.ENOENT)}, missing, missing, denied
+		}, fault: "another fault: the retried removal failed with EACCES"},
+		{name: "info after the retry denied", change: func(r *removalReport) { r.RetryInfo, r.RetryState = denied, "" },
+			fault: "another fault: info after the retry failed with EACCES"},
+		{name: "getpath after the retry denied", change: func(r *removalReport) { r.RetryGetPath = denied },
+			fault: "another fault: getpath after the retry failed with EACCES"},
+		{name: "getpath after the retry timed out", change: func(r *removalReport) { r.RetryGetPath = cephOutcome{Errno: "ETIMEDOUT"} },
+			fault: "another fault: getpath after the retry failed with ETIMEDOUT"},
+		{name: "snapshot getpath after the retry denied", change: func(r *removalReport) { r.RetrySnapshotGetPath = denied },
+			fault: "another fault: snapshot getpath after the retry failed with EACCES"},
+		{name: "snapshot file unreadable otherwise", change: func(r *removalReport) { r.Snapshot = fileSeen{Errno: int(syscall.EACCES)} },
+			fault: "another fault: the snapshot file is unreadable: errno 13"},
+		{name: "retry snapshot file unreadable otherwise", change: func(r *removalReport) { r.RetrySnapshot = fileSeen{Errno: int(syscall.EIO)} },
+			fault: "another fault: after the retry the snapshot file is unreadable: errno 5"},
 		{name: "unreadable metadata", change: func(r *removalReport) { r.Meta = metaSeen{Errno: int(syscall.EIO)} },
 			fault: "another fault: the persisted metadata is unreadable"},
 		{name: "removal persisted despite its error", change: func(r *removalReport) {
@@ -73,7 +114,7 @@ func TestJudgeRemoval(t *testing.T) {
 		}, fault: "another fault: the failed removal persisted state \"snapshot-retained\""},
 		{name: "live bytes changed", change: func(r *removalReport) { r.Live.SHA256 = r.SnapshotSHA },
 			fault: "another fault: the live file holds"},
-		{name: "live file unreadable otherwise", change: func(r *removalReport) { r.Live = fileSeen{Errno: int(syscall.EIO)} },
+		{name: "live file unreadable otherwise", change: func(r *removalReport) { r.Live = fileSeen{Errno: int(syscall.EACCES)} },
 			fault: "another fault: the live file is unreadable"},
 		{name: "getpath answers another path", change: func(r *removalReport) { r.GetPath.Out = "/elsewhere" },
 			fault: "another fault: getpath returned \"/elsewhere\""},
