@@ -365,6 +365,24 @@ live client reconnected after the replay keeps its name.
   [#513](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/513); no
   case manual.
 
+### Session open while the client's previous session is closing
+
+A libcephfs handle that adopts a UUID with `ceph_set_uuid` after a RESET
+closes its session first. When the MDS cannot journal that close within
+`client_shutdown_timeout` (a slow metadata pool, for example), the client
+drops the session and the next mount opens a new one on the same rank while
+the MDS still has the old one closing. The MDS refuses that open as a
+duplicated session uuid, and `ceph_mount` fails with `EPERM`. A corrected
+MDS waits until the close is journaled and accepts the open.
+
+- Affected: Squid 19.2.7, Tentacle 20.2.2.
+- Not affected: Tentacle 20.2.3 and Umbrella 21.2.0 accept the open after
+  the close.
+- Guidance: a test that reclaims a session and adopts its UUID under
+  metadata-pool latency should keep `client_shutdown_timeout` above that
+  latency, or expect `EPERM` from the mount on the affected releases.
+- Evidence: [`cephfs_reclaim_closing_open`](../../internal/integration/experiments/cephfs_reclaim_closing_open/README.md).
+
 ### Unbuffered nonblocking writes when a data pool becomes full
 
 A libcephfs client with `client_oc=false` that has

@@ -922,6 +922,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                            "cephfs_mds_requests_json",
                                            "cephfs_mirror_blockdiff_empty",
                                            "cephfs_readdir_after_snapdiff",
+                                           "cephfs_reclaim_closing_open",
                                            "cephfs_retained_snapshot_full_pool",
                                            "cephfs_snapshot_readdir_eviction", "cephfs_statfs_mixed_quota",
                                            "failure_archive", "mgr_pg_merge_primary_override",
