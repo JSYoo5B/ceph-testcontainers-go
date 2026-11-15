@@ -108,7 +108,9 @@ func (w *SetWatch) Stop() error {
 // continues; the next successful read is WatchResumed. A RELEASED, EXPIRED,
 // TIMEDOUT, CANCELED or FAILED state ends the watch after its event is
 // delivered, and Stop then returns nil; when the baseline is already
-// terminal, it is the only event. Calling Stop first also returns nil.
+// terminal, it is the only event. Calling Stop first also returns nil. A nil
+// Stop therefore does not show that the intended state was observed; check
+// the state of the last event.
 // These end the watch with an error:
 // ctx ending, a terminated cluster, a filesystem that is no longer the
 // active one created by this cluster or whose FSMap ID or original pools

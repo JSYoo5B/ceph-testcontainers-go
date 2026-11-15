@@ -110,8 +110,9 @@ type cloneStatusRead func(context.Context) (*CloneStatus, error)
 // successful read is WatchResumed. A complete, failed or canceled status ends
 // the watch after its event is delivered, and Stop then returns nil; when the
 // baseline is already terminal, it is the only event. Calling Stop first also
-// returns nil. These end the watch
-// with an error instead: ctx ending, a terminated cluster, a filesystem
+// returns nil. A nil Stop therefore does not show that the clone completed;
+// check the status of the last event. These end the watch with an error
+// instead: ctx ending, a terminated cluster, a filesystem
 // that is no longer the active one created by this cluster or whose FSMap ID
 // or original pools changed, a target removed by Clone.RemovePartial, a target
 // or source replaced outside this fixture, and a full buffer
