@@ -142,8 +142,8 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 // returns a new descriptor for the new key, and the old descriptor goes
 // stale: its ConnectionConfig still returns the old credentials, for tests
 // that check their rejection. Repeating ReplaceKey on it returns the same
-// successor while that successor is current. Use the successor to attach
-// clients, inspect or update capabilities, or delete the identity.
+// successor while that successor is current. WithIdentity, Capabilities,
+// UpdateCaps and Delete refuse the stale descriptor; use the successor.
 // Containers that were attached with the old descriptor keep the old
 // keyring.
 //

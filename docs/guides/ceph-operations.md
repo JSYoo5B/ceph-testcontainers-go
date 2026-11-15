@@ -108,7 +108,9 @@ stale:
   descriptor without another change, as long as that descriptor is still the
   identity's current one.
 - Containers attached with the old descriptor keep the old keyring.
-- Copies of the old descriptor follow the same rules.
+- Copies of the old descriptor follow the same rules. The cluster records the
+  current key of each identity it created, and these operations also refuse a
+  descriptor of a deleted identity.
 
 The old key behaves as follows on the official images:
 
