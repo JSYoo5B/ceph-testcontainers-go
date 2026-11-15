@@ -56,7 +56,14 @@ Upstream references:
   (`Gateway.Admin`), then restarts the gateway (`Stop` and `Start`) so that it
   loads them. No realm or period is involved.
 - Requests are signed by the test's own SigV4 client (`harness.RGWBackendSigned`).
-- The test bounds itself to 10 minutes; the batch timeout is 20 minutes.
+- The case's steps share a 10-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`) runs on the test context,
+  so the deadline does not cut it short, but the time it takes is spent from
+  the 10 minutes and the steps after it get what remains. In cleanup the
+  removal of the test's objects and buckets has its own two-minute deadline
+  and the cluster's termination its own two-minute one, so cleanup is not
+  bounded by the deadline and can take the test past 10 minutes. The outer
+  bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 

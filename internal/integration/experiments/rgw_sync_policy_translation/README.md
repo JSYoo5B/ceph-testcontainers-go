@@ -41,8 +41,15 @@ The case exists to verify a patched RGW image.
   package's `image`, one aggregate image.
 - Bridge and host network variants. Host networking needs a Linux engine or
   Docker Desktop with host networking enabled.
-- The test bounds itself to 30 minutes per variant; the batch timeout is 60
-  minutes.
+- Each variant's steps share a 30-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`, once per cluster) runs on
+  the test context, so the deadline does not cut it short, but the time it
+  takes is spent from the 30 minutes and the steps after it get what remains.
+  In cleanup the removal of each sync group has its own one-minute deadline,
+  the fixture's termination its own three-minute one and each cluster's
+  termination its own two-minute one, so cleanup is not bounded by the
+  deadline and can take a variant past 30 minutes. The outer bound is the
+  batch's 60-minute `go test` timeout, which the variants share.
 
 ## Tier and triggers
 

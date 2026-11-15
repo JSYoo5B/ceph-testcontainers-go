@@ -36,7 +36,13 @@ is not covered.
   `client`, of one release.
 - No zone database: the client timezones are POSIX strings in `TZ`
   (`UTC0`, `TST-9` for nine hours ahead of UTC, `TST9` for nine behind).
-- The test bounds itself to 15 minutes; the batch timeout is 20 minutes.
+- The case's steps share a 15-minute deadline that starts before cluster
+  startup. Startup (`harness.NewSingleImageCluster`) runs on the test context,
+  so the deadline does not cut it short, but the time it takes is spent from
+  the 15 minutes and the steps after it get what remains. The cluster's
+  termination in cleanup has its own two-minute deadline, so cleanup is not
+  bounded by the deadline and can take the test past 15 minutes. The outer
+  bound is the batch's 20-minute `go test` timeout.
 
 ## Tier and triggers
 
