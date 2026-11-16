@@ -58,7 +58,7 @@ type hooks interface {
 	PoolPlacementDomains(c *ceph.Container, config ceph.PoolConfig) int
 	PoolPolicyReady(c *ceph.Container) error
 	PoolStates(ctx context.Context, c *ceph.Container) ([]ceph.PoolState, error)
-	RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error
+	RemovePool(ctx context.Context, c *ceph.Container, pool *ceph.Pool) error
 	ReserveHostPorts(ctx context.Context, c *ceph.Container, count int) ([]int, func(context.Context) error, error)
 	ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig
 	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error)
@@ -200,11 +200,9 @@ func PoolStates(ctx context.Context, c *ceph.Container) ([]ceph.PoolState, error
 	return get().PoolStates(ctx, c)
 }
 
-// RemovePool removes a fixture-created pool and its rule and profile. With
-// skipForeign, a pool the fixture did not create is left alone. The caller
-// holds the cluster mutex.
-func RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error {
-	return get().RemovePool(ctx, c, name, skipForeign)
+// RemovePool removes the resources of a CreatePool result under the cluster mutex.
+func RemovePool(ctx context.Context, c *ceph.Container, pool *ceph.Pool) error {
+	return get().RemovePool(ctx, c, pool)
 }
 
 // ReserveHostPorts reserves count host ports that the cluster tracks until

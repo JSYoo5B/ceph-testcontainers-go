@@ -98,6 +98,9 @@ type Filesystem struct {
 	// afterwards, written by the fleet's scale with setupMu and the cluster
 	// mutex held.
 	config Config
+	// Setup and removal hold setupMu while updating these cleanup records.
+	createdPools   []*ceph.Pool
+	fsNewAttempted bool
 	// mds is the MDS state the fleet owns; see mdsState.
 	mds mdsState
 }
@@ -222,7 +225,16 @@ func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string
 // existing is the FSMap read before registration.
 func (fs *Filesystem) createNative(ctx context.Context, config Config, existing fsbase.FSMap) error {
 	for _, pool := range cephFSConfiguredPools(config) {
-		if _, err := fs.base().Cluster().CreatePool(ctx, pool); err != nil {
+		created, err := fs.base().Cluster().CreatePool(ctx, pool)
+		if created != nil {
+			fs.createdPools = append(fs.createdPools, created)
+			if err != nil {
+				// Bind a partially configured pool while this setup still owns
+				// the operation. A rule alone has no native pool ID to bind.
+				_, _ = created.Status(ctx)
+			}
+		}
+		if err != nil {
 			return fmt.Errorf("create cephfs pool: %w", err)
 		}
 	}
@@ -247,6 +259,7 @@ func (fs *Filesystem) createNative(ctx context.Context, config Config, existing 
 	} else {
 		create = append(create, "set", counts[0][0], counts[0][1], counts[1][0], counts[1][1])
 	}
+	fs.fsNewAttempted = true
 	if _, err := fs.base().Cluster().Ceph(ctx, create...); err != nil {
 		return fmt.Errorf("create cephfs: %w", err)
 	}

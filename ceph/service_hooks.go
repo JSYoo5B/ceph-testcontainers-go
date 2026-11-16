@@ -148,11 +148,9 @@ func (serviceHooks) PoolStates(ctx context.Context, c *Container) ([]PoolState, 
 	return poolCatalog{c.conn()}.states(ctx)
 }
 
-// RemovePool removes a fixture-created pool and its rule and profile. With
-// skipForeign, a pool the fixture did not create is left alone. The caller
-// holds the cluster mutex.
-func (serviceHooks) RemovePool(ctx context.Context, c *Container, name string, skipForeign bool) error {
-	return c.removePool(ctx, name, skipForeign, nil)
+// RemovePool removes the resources of a CreatePool result under the cluster mutex.
+func (serviceHooks) RemovePool(ctx context.Context, c *Container, pool *Pool) error {
+	return c.removePool(ctx, pool.Name, true, pool)
 }
 
 // ReserveHostPorts reserves count host ports that the cluster tracks until
