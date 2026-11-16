@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- After cutover, check the base: develop for features, the affected maintained line for fixes. What changes and why. Link the issue: "Closes #N" only when this pull request completes it, "Refs #N" otherwise. -->
+<!-- Check the base: develop for ordinary changes, the affected release or support line for backports, and main for production promotions. What changes and why. Link the issue: "Closes #N" only when this pull request completes it, "Refs #N" otherwise. -->
 
 ## Consumer-visible changes
 
