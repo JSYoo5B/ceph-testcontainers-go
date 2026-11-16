@@ -20,6 +20,7 @@ func TestParseRBDImageClients(t *testing.T) {
 		{"exclusive", "", "auto 92", false},
 		{"shared", "internal", "auto 92", false},
 		{"exclusive", "internal", "auto backup", false},
+		{"exclusive", "internal", "auto 0", false},
 	} {
 		status, err := parseImageClients([]byte(watcher), []byte(fmt.Sprintf(record, tc.mode, tc.tag, tc.cookie)))
 		if err != nil {

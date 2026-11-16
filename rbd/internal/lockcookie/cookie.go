@@ -10,5 +10,5 @@ import (
 func Valid(id string) bool {
 	suffix, ok := strings.CutPrefix(id, "auto ")
 	cookie, err := strconv.ParseUint(suffix, 10, 64)
-	return ok && err == nil && strconv.FormatUint(cookie, 10) == suffix
+	return ok && err == nil && cookie != 0 && strconv.FormatUint(cookie, 10) == suffix
 }
