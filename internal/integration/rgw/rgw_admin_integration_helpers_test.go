@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
@@ -92,7 +94,21 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	if err != nil || aliceInfo.UserQuota != userQuota || aliceInfo.BucketQuota != bucketQuota || aliceInfo.Admin || aliceInfo.System {
 		t.Fatal("RGW native quota policy did not persist with the expected byte/object limits")
 	}
-	t.Log("user and per-bucket quota byte/object limits read back from authoritative native user policy")
+	for name, set := range map[string]func(context.Context, rgw.Quota) error{
+		"user": alice.SetQuota, "bucket": alice.SetBucketQuota,
+	} {
+		err := set(ctx, rgw.Quota{MaxSizeBytes: 1025, MaxObjects: 1})
+		if !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("%s unaligned quota returned %v, want ErrInvalidRequest", name, err)
+		}
+		info, err := alice.Info(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.UserQuota != userQuota || info.BucketQuota != bucketQuota {
+			t.Fatalf("%s rejected quota changed native policies: user=%+v bucket=%+v", name, info.UserQuota, info.BucketQuota)
+		}
+	}
 	quotaUser, quotaS3 := create("tc-fixture-quota", "")
 	rgwFixtureUserAggregateQuota(t, ctx, gateway, quotaUser, quotaS3, bob, bobS3)
 
