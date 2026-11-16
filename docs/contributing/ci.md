@@ -8,14 +8,14 @@ run tests locally and how to add them is described in [Testing](testing.md).
 
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
-| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, lint, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
-| Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
-| Short | `short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
-| Topology | `topology.yml` | pull request, manual; push to `main` in a release phase | The `topology` category on Tentacle 20.2.4 |
-| Multicluster | `multicluster.yml` | pull request, manual; push to `main` in a release phase | The `multicluster` category on Tentacle 20.2.4 |
-| Recovery | `recovery.yml` | pull request, manual; push to `main` in a release phase | The `recovery` category on Tentacle 20.2.4 |
+| Code checks | `code.yml` | maintained branch push or PR, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, lint, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
+| Docker checks | `docker.yml` | development push or PR, manual | The `environment` category: Docker bridge behaviour without Ceph |
+| Short | `short.yml` | development push or PR, manual | The `short` category on Tentacle 20.2.4 |
+| Topology | `topology.yml` | development PR, manual | The `topology` category on Tentacle 20.2.4 |
+| Multicluster | `multicluster.yml` | development PR, manual | The `multicluster` category on Tentacle 20.2.4 |
+| Recovery | `recovery.yml` | development PR, manual | The `recovery` category on Tentacle 20.2.4 |
 | Periodic | `periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
-| Release matrix | `release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one |
+| Release matrix | `release-matrix.yml` | push or PR targeting `main`, `release/*` or `support/*`; manual | Environment and every required runtime category on every supported Ceph release |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
 | Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
@@ -34,7 +34,7 @@ also has a `Plan` job.
 
 ### Pull request scope
 
-A pull request runs, on Tentacle 20.2.4 role images and in each batch's
+A feature pull request to `develop` runs, on Tentacle 20.2.4 role images and in each batch's
 default [network mode](#network-modes):
 - Code checks, for every change;
 - Docker checks and every `short` batch. With the `ci:selected-batches`
@@ -46,7 +46,7 @@ default [network mode](#network-modes):
   and manual included) it changes. A change to a shared helper or a public
   package selects none of them; Periodic runs them on `main`.
 
-The `ci:full` label (adding it starts a run) and a release phase run every
+The `ci:full` label (adding it starts a run) selects every
 batch of those categories instead. Each `Plan` job's `tag-plan.json` artifact
 lists the changed files and the selected batches.
 
@@ -67,16 +67,10 @@ Without `--changed-head` the planner uses a plain merge-base comparison
 (recorded as `legacy-merge-base`). `--changed-files FILE` is a separate
 manual input.
 
-Pushes to `main` run Code checks, Docker checks and Short, and the other
-categories only in a [release phase](#release-phase). No run is scheduled per
-commit for the other batches or releases: Periodic draws a daily sample
-and runs every required release-bound runtime profile on every supported
-release only when dispatched in `full` mode. That dispatch includes separate
-environment checks and excludes optional and SDK batches (see
-[Periodic runs](#periodic-runs)). Pushes to other branches
-trigger nothing. Pull requests run on `opened`, `synchronize` and `reopened`; `labeled` (Short
-and the scoped categories) and `unlabeled` (Short) start real runs only
-for `ci:full` and `ci:selected-batches`.
+Pushes to `develop` run Code checks, Docker checks and Short. PRs targeting
+`main`, `release/*` or `support/*` and pushes to those branches receive
+[release candidate validation](#release-candidate-validation). Development
+continues under ordinary CI while a candidate is frozen.
 
 To run any other batch on a pull request, such as one batch of another
 category or a batch on Squid, use `/ci run <batch>`. The command adds a run
@@ -96,21 +90,21 @@ still compiles, records and verifies its own binary.
 
 ### Documentation-only changes
 
-Runtime workflows (Docker checks and the Ceph category workflows) use
+Ordinary development runtime workflows use
 `paths-ignore` for `docs/**`, top-level `*.md`, `LICENSE` and
 `internal/integration/goceph/**`, so a change to only those paths runs no
 runtime batch. A Markdown file anywhere else, for example under a package's
 `testdata/`, can be test input and runs the batches.
 
 Code checks always starts, because its checks are required status checks of
-the `main` ruleset. Its `Detect documentation-only changes` job runs
+the maintained branch rules. Its `Detect documentation-only changes` job runs
 `.github/scripts/docs_only.py`. When that reports `docs_only=true`, Unit
 tests, Race detector, `Vet, compile and CI tooling` and Compiled tag coverage
 and helpers are skipped as whole jobs (a skipped job reports success), and the
 Vulnerability check matrix jobs run with every step skipped so that each keeps
 its expanded check name. The skip is by policy, not a pass of those checks.
 
-A pull request is documentation-only when every changed file is on this
+A pull request to `develop` is documentation-only when every changed file is on this
 allowlist:
 - `README.md`, any other top-level `*.md` file and `LICENSE`;
 - Markdown files directly inside `docs/contributing/`, `docs/guides/` and
@@ -129,7 +123,7 @@ file. `test_docs_only.py` fails when a Go source or `tag_scenarios.py` names a
 documentation path that is on the allowlist. Add a newly read file to
 `READ_DOC_FILES` in `docs_only.py`.
 
-The detection fails open. Pushes to `main`, the weekly schedule, manual runs,
+The detection fails open. Release candidates, maintained branch pushes, the weekly schedule, manual runs,
 pull requests from forks, and any failure to determine the change set (no
 base, failed fetch or diff, empty list, script error) run every check. The
 dependent jobs use `!cancelled()`, so a failed detection job runs them. The
@@ -153,11 +147,12 @@ lists renames as a deletion and an addition.
 Consequences:
 - Different PRs never cancel each other. In a stack, base each PR on the head
   branch of the previous one.
-- Changing a PR's base branch starts no checks (`edited` is not a trigger).
-  Rebase and push the child after the parent moves.
-- A push to `main` discards the `main` run in progress. Push feature work when
-  `main` CI is idle (`gh run list --branch main --limit 10`); push a fix for a
-  confirmed failure immediately.
+- Retargeting a PR requires checks for the new target. Confirm that the run
+  identifies the intended base and commit before using its evidence. GitHub
+  also emits `edited` for title and body changes. Those edits rerun candidate
+  validation, so prepare the description before opening the promotion PR.
+- Push runs are scoped to their own branch. A change on `develop` cannot
+  cancel a release candidate on another branch.
 
 ## Code checks
 
@@ -207,7 +202,9 @@ a scan or retain the vulnerability database. Every `setup-go` step sets
 `check-latest: true`, and `go.mod` names a `toolchain` line, so an older
 patch release with known standard-library vulnerabilities is not used. The
 weekly scheduled run catches new advisories; the other Code checks jobs skip
-it. `.github/dependabot.yml` proposes Go module updates daily and GitHub
+it. Dependabot targets `develop` for version updates. Its security alerts on
+the default branch also need the [supported-line backport procedure](releasing.md#supported-lines-and-backports).
+`.github/dependabot.yml` proposes Go module updates daily and GitHub
 Actions updates weekly.
 
 ## How batches are planned
@@ -297,7 +294,7 @@ By default it is only reported:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py plan --category short \
-  --select-declarations origin/main --apply-declarations \
+  --select-declarations origin/develop --apply-declarations \
   --summary /dev/stdout --output artifacts/tag-plan.json
 ```
 
@@ -334,8 +331,7 @@ tool failure selects every profile.
 #### Opting in to declaration selection
 
 Short is the only workflow that narrows by declarations, and only for a
-pull request with the `ci:selected-batches` label outside a
-[release phase](#release-phase). The caller then passes the
+development pull request with the `ci:selected-batches` label. The caller then passes the
 base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 `Plan` runs `plan --select-declarations BASE --apply-declarations --summary
 "$GITHUB_STEP_SUMMARY"`. The `Plan` summary lists every batch with `yes` or
@@ -343,7 +339,7 @@ base commit as the `select_declarations` input of `tagged-runtime.yml`, and
 
 Adding or removing the label replaces the run in progress; later commits run
 selected while the label stays. Every other trigger and workflow runs all its
-batches, and the `main` push after a merge runs every Short batch, so a
+batches, and the `develop` push after a feature merge runs every Short batch, so a
 selection miss fails there. Record a miss with its plan, failed job and
 selection evidence in a new issue. The label only helps for changes inside the
 integration test packages and the harness.
@@ -494,7 +490,7 @@ matrix entry sets `CEPH_TEST_NETWORK`:
 
 | Scope | Entries of a batch |
 | --- | --- |
-| Pull requests, `main` pushes, CI command (`networks: default`) | One, in the default mode, with all tests |
+| Development PRs and pushes, CI command (`networks: default`) | One, in the default mode, with all tests |
 | Periodic and the release matrix (`networks: all`) | The default entry, plus one per other mode that runs only the mode-declaring tests (`--tests`), named `<batch> (<mode>)` |
 
 A test without `harness.NetworkModes` runs once and ignores `CEPH_TEST_NETWORK`. Run
@@ -596,8 +592,8 @@ read as a hit or a write, and a missing log is `unknown`.
 
 Periodic primarily searches for flaky tests and patch-dependent differences.
 The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
-Friday use `discovery`; the other five days use `rotate`. A release phase does
-not expand this daily sample. Ordinary PR/main checks keep their own triggers.
+Friday use `discovery`; the other five days use `rotate`. The scheduled run uses
+the default branch independently of candidate validation.
 
 | Mode | Selection | Invocation |
 | --- | --- | --- |
@@ -736,16 +732,16 @@ runner allocation and queue timing remain unknown in these receipts.
 
 `SUPPORTED_RELEASES` in `.github/scripts/run_image_matrix.py` lists each
 supported release with its codename and official image tag (Tentacle
-20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and release-phase `Releases` jobs generate the callers:
+20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and candidate `Releases` jobs generate the callers:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic'
-python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Release matrix'
+python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Release matrix'
 ```
 
 Each release and category becomes a `<Codename> <category>` call of
 `tagged-runtime.yml`; `environment` needs no release and stays a separate
-periodic job. The command fails unless every required profile runs on every
+job. The command fails unless every required profile runs on every
 release of the scope exactly once, and `test_scenario_shards.py` checks the
 same offline.
 
@@ -800,16 +796,21 @@ here. The next job that pulls the tag uses it.
 - The module takes no part in this: it resolves no tag, enforces no
   freshness and reports no identity.
 
-### Release phase
+### Release candidate validation
 
-```sh
-gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
-gh variable delete CI_RELEASE_PHASE              # after the release
-```
+The release matrix runs independently for each PR targeting `main`,
+`release/*` or `support/*` and for a push to one of those branches.
+It runs the environment profile and the required release-bound profiles on
+every supported Ceph release. Neither documentation-only selection nor an
+ordinary development PR changes this matrix. The target-specific check (for example,
+`Release candidate validated (release/1.2)`) gives each branch rule a single
+result for its own complete matrix. A manual dispatch emits a different
+check name. The six Code checks also apply to each candidate.
 
-While it is `true`, pull requests and pushes to `main` run all required
-runtime profiles on Tentacle. Release matrix runs the required
-release-bound profiles on Umbrella and Squid.
+For publication, verify the push event, protected branch, candidate SHA,
+workflow identity and successful required jobs. A PR test-merge run
+qualifies that proposed merge. Tag the protected commit only after its own
+validation succeeds. See the [cutover and branch rules](git-flow.md).
 
 ### Representative campaign
 

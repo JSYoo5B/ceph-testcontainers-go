@@ -108,16 +108,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         "recovery.yml": ("Recovery", "recovery"),
     }
     # Runtime batches never read these paths, so a change to them alone runs
-    # only Code checks, on pull requests and on pushes to main alike.
+    # only Code checks, on develop pull requests and pushes alike.
     RUNTIME_PATHS_IGNORE = ("'docs/**'", "'*.md'", "'LICENSE'", "'internal/integration/goceph/**'")
     # These categories gate every merge on the current release.
     GATING = {"docker.yml", "short.yml"}
     # The other categories run on a pull request only for the batches whose
-    # own test files changed, unless labelled ci:full or in a release phase,
-    # and on pushes to main only in a release phase.
+    # own test files changed, unless labelled ci:full.
     SCOPED = {"topology.yml", "multicluster.yml", "recovery.yml"}
     # A pull request of this gating category may opt in to declaration
-    # selection with a label; pushes to main always run every batch.
+    # selection with a label; pushes to develop always run every batch.
     OPT_IN = {"short.yml": "ci:selected-batches"}
     # The releases and check names that the per-release caller jobs had
     # before SUPPORTED_RELEASES generated them. They must stay covered.
@@ -313,11 +312,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=filename):
                 workflow = self.workflows[filename]
                 self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
-                types = ("    types: [opened, synchronize, reopened, labeled]\n" if filename in self.SCOPED
-                         else "    types: [opened, synchronize, reopened, labeled, unlabeled]\n" if filename in self.OPT_IN
-                         else "")
-                self.assertIn("\non:\n  push:\n    branches: [main]\n    paths-ignore:\n" + ignored +
-                              "  pull_request:\n" + types + "    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
+                types = ("    types: [opened, synchronize, reopened, edited, labeled]\n" if filename in self.SCOPED
+                         else "    types: [opened, synchronize, reopened, edited, labeled, unlabeled]\n" if filename in self.OPT_IN
+                         else "    types: [opened, synchronize, reopened, edited]\n")
+                self.assertIn("\non:\n  push:\n    branches: [develop]\n    paths-ignore:\n" + ignored +
+                              "  pull_request:\n    branches: [develop]\n" + types + "    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
                 group = "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}"
                 if filename in self.SCOPED:
                     group += "${{ github.event.action == 'labeled' && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}"
@@ -333,18 +332,16 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertEqual(scalar(callers[0].split("    with:", 1)[0], "name"), "Scenarios")
                 self.assertEqual(scalar(callers[0], "category"), category)
                 self.assertEqual(scalar(callers[0], "check_name"), name)
-                # Pull requests and pushes to main run the current release.
+                # Development pull requests and pushes run the current release.
                 self.assertNotRegex(callers[0], r"(?m)^      release:")
                 if filename in self.SCOPED:
-                    self.assertIn("    if: >-\n      (github.event_name != 'push' || vars.CI_RELEASE_PHASE == 'true') &&\n"
+                    self.assertIn("    if: >-\n      github.event_name != 'push' &&\n"
                                   "      (github.event.action != 'labeled' || github.event.label.name == 'ci:full')\n", callers[0])
                     self.assertIn("      changed_since: >-\n        ${{ github.event_name == 'pull_request' &&\n"
                                   "        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&\n"
-                                  "        vars.CI_RELEASE_PHASE != 'true' &&\n"
                                   "        github.event.pull_request.base.sha || '' }}\n", callers[0])
                     self.assertIn("      changed_head: >-\n        ${{ github.event_name == 'pull_request' &&\n"
                                   "        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&\n"
-                                  "        vars.CI_RELEASE_PHASE != 'true' &&\n"
                                   "        github.event.pull_request.head.sha || '' }}\n", callers[0])
                 elif filename in self.OPT_IN:
                     # Evaluated per event in OptInDeclarationSelectionTests.
@@ -377,7 +374,6 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             gate = jobs.pop("gate")
             self.assertIn("python3 .github/scripts/periodic_gate.py --workflow " + self.PERIODIC
                           + " --campaign-schedule '" + self.CAMPAIGN_SCHEDULE + "'", gate)
-            self.assertEqual(scalar(gate, "CI_RELEASE_PHASE"), "${{ vars.CI_RELEASE_PHASE }}")
             self.assertEqual(scalar(gate, "PERIODIC_SCHEDULE"), "${{ github.event.schedule }}")
             self.assertEqual(scalar(gate, "PERIODIC_MODE"), "${{ inputs.mode }}")
             qualification = jobs.pop("storage")
@@ -450,16 +446,41 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         with self.subTest(workflow=self.RELEASE_MATRIX):
             workflow = self.workflows[self.RELEASE_MATRIX]
             self.assertRegex(workflow, r"(?m)^name: Release matrix$")
-            self.assertIn("\non:\n  push:\n    branches: [main]\n    paths-ignore:\n" + ignored +
-                          "  pull_request:\n    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
+            branches = "    branches: [main, 'release/**', 'support/**']\n"
+            self.assertIn("\non:\n  push:\n" + branches + "  pull_request:\n" + branches +
+                          "    types: [opened, synchronize, reopened, edited]\n  workflow_dispatch:\n", workflow)
+            self.assertNotIn("paths", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
             jobs = self.jobs[self.RELEASE_MATRIX]
-            self.assertEqual(set(jobs), {"releases", "runtime"})
-            self.assertEqual(scalar(jobs["releases"], "if"),
-                             "vars.CI_RELEASE_PHASE == 'true' || github.event_name == 'workflow_dispatch'")
-            self.assertEqual(scalar(jobs["runtime"], "if"), "needs.releases.outputs.count != '0'")
-            self.assert_release_caller(jobs, "others", "Release matrix")
+            self.assertEqual(set(jobs), {"releases", "runtime", "environment", "validated"})
+            for caller in ("runtime", "environment"):
+                self.assertNotIn("      ref:", jobs[caller])
+                self.assertEqual(scalar(jobs[caller], "networks"), "all")
+                self.assertEqual(scalar(jobs[caller], "require_profiles"), "true")
+            self.assertEqual(scalar(jobs["environment"], "category"), "environment")
+            self.assertEqual(scalar(jobs["releases"], "ref"), "${{ github.sha }}")
+            self.assert_release_caller(jobs, "all", "Release matrix")
+            gate = jobs["validated"]
+            self.assertEqual(scalar(gate, "needs"), "[releases, runtime, environment]")
+            self.assertEqual(scalar(gate, "if"), "always()")
+            name = scalar(gate.split("    steps:", 1)[0], "name")
+            for event, base, ref, want in (
+                ("pull_request", "release/1.0", "7/merge", "Release candidate validated (release/1.0)"),
+                ("pull_request", "support/1.0", "7/merge", "Release candidate validated (support/1.0)"),
+                ("push", "", "main", "Release candidate validated (main)"),
+                ("workflow_dispatch", "", "main", "Manual release matrix (main)"),
+            ):
+                self.assertEqual(interpolate(name, {"github": {"event_name": event, "base_ref": base, "ref_name": ref}}), want)
+            check = run_command(steps(gate)[0])
+            success = dict(PLANNER="success", RUNTIME="success", ENVIRONMENT="success", COUNT="1")
+            for overrides in ({}, {"PLANNER": "failure"}, {"RUNTIME": "skipped"}, {"ENVIRONMENT": "cancelled"}, {"COUNT": "0"}):
+                result = subprocess.run(["bash", "-e", "-c", check], env={**success, **overrides})
+                self.assertEqual(result.returncode == 0, not overrides)
+        for source in self.workflows.values():
+            self.assertNotIn("vars.CI_RELEASE_PHASE", source)
         reusable = self.workflows["tagged-runtime.yml"]
+        self.assertEqual(reusable.count('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"'), 2)
+        self.assertIn('test "$COUNT" -gt 0', reusable)
         self.assertRegex(reusable, r"(?m)^  workflow_call:")
         self.assertNotRegex(reusable, r"(?m)^  (?:push|pull_request|workflow_dispatch):")
         self.assertNotIn("concurrency:", reusable)
@@ -473,7 +494,6 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertRegex(workflow, r"(?m)^name: ARM64$")
         triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
         self.assertEqual(re.findall(r"(?m)^  ([a-z_]+):", triggers), ["schedule", "pull_request", "workflow_dispatch"])
-        self.assertNotIn("CI_RELEASE_PHASE", workflow)
         self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
         callers = [job for job in self.jobs[self.ARM64].values() if "uses: ./.github/workflows/tagged-runtime.yml" in job]
         self.assertEqual(len(callers), 1)
@@ -839,7 +859,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                           "Compiled tag coverage and helpers", "Vulnerability check (Go ${{ matrix.go }})"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
-        self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
+        self.assertIn("  push:\n    branches: [develop, main, 'release/**', 'support/**']\n  pull_request:\n    branches: [develop, main, 'release/**', 'support/**']\n    types: [opened, synchronize, reopened, edited]\n  workflow_dispatch:", workflow)
         self.assertEqual(scalar(workflow, "group"),
                          "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}")
         self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
@@ -865,6 +885,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("make vet", jobs["static"])
         self.assertIn("make tag-compile", jobs["static"])
         self.assertIn("python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v", jobs["static"])
+        self.assertIn("python3 -m unittest discover -s scripts/release -p 'test_*.py' -v", jobs["static"])
         self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
         coverage_steps = steps(jobs["tag-coverage"])
         coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))
@@ -1327,19 +1348,16 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
         for category in ("topology", "recovery", "multicluster"):
             workflow = (ROOT / (".github/workflows/" + category + ".yml")).read_text()
             caller = dict(blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["scenarios"]
-            for event, labels, phase, selected in (
-                ("pull_request", [], "", True),
-                ("pull_request", ["ci:full"], "", False),
-                ("pull_request", [], "true", False),
-                ("push", [], "", False),
-                ("push", [], "true", False),
-                ("workflow_dispatch", [], "", False),
+            for event, labels, selected in (
+                ("pull_request", [], True),
+                ("pull_request", ["ci:full"], False),
+                ("push", [], False),
+                ("workflow_dispatch", [], False),
             ):
-                with self.subTest(category=category, event=event, labels=labels, phase=phase):
+                with self.subTest(category=category, event=event, labels=labels):
                     context = {"github": {"event_name": event, "event": {"pull_request": {
                         "base": {"sha": base}, "head": {"sha": head},
-                        "labels": [{"name": name} for name in labels]}}},
-                        "vars": {"CI_RELEASE_PHASE": phase}}
+                        "labels": [{"name": name} for name in labels]}}}}
                     self.assertEqual(interpolate(folded(caller, "changed_since"), context), base if selected else "")
                     self.assertEqual(interpolate(folded(caller, "changed_head"), context), head if selected else "")
         for filename in ("short.yml", "periodic.yml", "release-matrix.yml"):
@@ -1348,8 +1366,8 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
     """Short narrows a pull request to the declaration selection only
-    when the pull request carries the opt-in label outside a release phase.
-    Every other event, and every push to main, runs every batch."""
+    when the pull request to develop carries the opt-in label.
+    Every other event, and every push to develop, runs every batch."""
 
     LABEL = SourceDrivenWorkflowTests.OPT_IN["short.yml"]
     BASE = "0123456789abcdef0123456789abcdef01234567"
@@ -1363,15 +1381,15 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         cls.plan_step = engine_step(steps(plan), "plan")
         cls.reusable_inputs = reusable.split("\npermissions:", 1)[0]
 
-    def context(self, event, action=None, labels=(), label=None, release_phase=""):
+    def context(self, event, action=None, labels=(), label=None):
         github = {"workflow": "Short", "event_name": event, "run_id": 99,
-                  "ref": "refs/heads/main" if event == "push" else "refs/pull/7/merge", "event": {}}
+                  "ref": "refs/heads/develop" if event == "push" else "refs/pull/7/merge", "event": {}}
         if event == "pull_request":
             github["event"] = {"action": action, "pull_request": {
                 "number": 7, "base": {"sha": self.BASE}, "labels": [{"name": name} for name in labels]}}
             if label is not None:
                 github["event"]["label"] = {"name": label}
-        return {"github": github, "vars": {"CI_RELEASE_PHASE": release_phase}}
+        return {"github": github}
 
     def outcome(self, context):
         """(runs, select_declarations, concurrency group) for one event."""
@@ -1380,8 +1398,8 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         group = interpolate(scalar(self.workflow, "group"), context)
         return Expression.truthy(runs), selection, group
 
-    def test_pushes_to_main_and_manual_runs_run_every_batch(self):
-        self.assertEqual(self.outcome(self.context("push")), (True, "", "Short-push-refs/heads/main"))
+    def test_pushes_to_develop_and_manual_runs_run_every_batch(self):
+        self.assertEqual(self.outcome(self.context("push")), (True, "", "Short-push-refs/heads/develop"))
         self.assertEqual(self.outcome(self.context("workflow_dispatch")), (True, "", "Short-workflow_dispatch-99"))
 
     def test_a_pull_request_without_the_label_runs_every_batch(self):
@@ -1401,14 +1419,6 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
                          (True, self.BASE, "Short-pull_request-7"))
         self.assertEqual(self.outcome(self.context("pull_request", "unlabeled", labels=(), label=self.LABEL)),
                          (True, "", "Short-pull_request-7"))
-
-    def test_a_release_phase_runs_every_batch_of_a_labelled_pull_request(self):
-        for action in ("opened", "synchronize", "labeled"):
-            with self.subTest(action=action):
-                label = self.LABEL if action == "labeled" else None
-                self.assertEqual(self.outcome(self.context("pull_request", action, labels=(self.LABEL,), label=label,
-                                                           release_phase="true")),
-                                 (True, "", "Short-pull_request-7"))
 
     def test_another_label_starts_nothing_and_cancels_nothing(self):
         for action, labels in (("labeled", (self.LABEL, "docs")), ("unlabeled", (self.LABEL,)), ("labeled", ("docs",))):

@@ -342,7 +342,7 @@ class MainTests(unittest.TestCase):
                               "comment_id": COMMENT})
         selected, _ = self.run_main(["select", "--request", request, "--vocabulary", "DIR/missing.json"])
         self.assertEqual((selected["accepted"], selected["profiles"], selected["releases"]), ("false", "", "[]"))
-        self.assertIn("Rebase", json.loads(selected["reply"]))
+        self.assertIn("its target branch", json.loads(selected["reply"]))
 
 
 class ProfilePlanTests(unittest.TestCase):

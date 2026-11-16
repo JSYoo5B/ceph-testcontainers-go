@@ -4,8 +4,7 @@
 
 This repository is a set of Testcontainers for Go modules, and every package
 that runs containers keeps the testcontainers-go module conventions. A change
-that breaks them is not allowed, however convenient it looks, and "0.x may
-break" does not apply to them.
+that breaks them is not allowed.
 
 - **One entry point per package: `Run`.** Every package that starts containers,
   including the cross-cluster fixtures (`rbd/mirror`, `cephfs/mirror`,
@@ -129,8 +128,11 @@ maintained field list; do not copy their fields here.
 
 ## Release compatibility
 
-Keep published release tags immutable. Make corrections on `main` and publish
-a new version when needed. Use maintained source paths, test names and release
+Keep published release tags immutable. Preserve public import paths, signatures
+and documented behavior within a stable product. Retain the old entry point and
+its tests when introducing a replacement, and give it a Go `Deprecated:` notice.
+Follow the [stable version and backport policy](docs/contributing/releasing.md)
+and the [branch flow](docs/contributing/git-flow.md) for the target of each PR. Use maintained source paths, test names and release
 tags when explaining behavior.
 
 For changes to Ceph behavioral bug compatibility, follow the
@@ -142,8 +144,7 @@ The repository never contains a `CHANGELOG.md`. Do not create, update or
 review changelog entries. A pull request does not add release-note
 fragments, no-note declarations, compatibility ledgers, migration tables or
 upgrade guides. Record intent and validation in the pull request description.
-Before 1.0, a breaking change removes the old names without aliases. The
-maintainer writes concise final release notes at release time, from the previous
+The maintainer writes concise final release notes at release time, from the previous
 release and the final source, directly in the GitHub Release (see
 [Preparing a release](docs/contributing/releasing.md)).
 

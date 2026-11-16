@@ -1,0 +1,58 @@
+# Maintained branches and release cutover
+
+| Branch | Change path | Release responsibility |
+| --- | --- | --- |
+| `develop` | Base ordinary feature, fix and CI pull requests here. Keep topic branches short lived. | Next feature line, with ordinary CI. |
+| `release/X.Y` | Seed from a reviewed `develop` commit when the feature set freezes. Target only stabilization changes to this line. | Qualify the candidate with the full release matrix while development continues. |
+| `main` | Promote a reviewed release branch by pull request. | Production history for the latest line, and the trusted default for scheduled workflows and maintainer dispatch. |
+| `support/X.Y` | Seed from the latest published stable tag on the preceding supported line. Make patch fixes by PR. | Publish fixes for consumers who remain on that line. Keep its tags on that line. |
+
+A maintainer records a COMMENT review of the exact PR head, addresses findings and resolves review threads before merge. The repository has a single maintainer. GitHub requires a pull request and resolved conversations, with the minimum approval count set to zero. Checking that the COMMENT review exists and still applies is the maintainer's responsibility. Every maintained branch requires the six GitHub Actions Code check contexts. Main and each registered release and support branch also require an up-to-date candidate and a successful `Release candidate validated (<target branch>)` from GitHub Actions. Moving the base invalidates stale candidate CI. No ruleset grants a bypass.
+
+## Cut over after merging the policy
+
+At the v1.0.0 baseline, the published tag and `main` both pointed to `43a17659bbd60776f987b773d68fe24011cd7220`. Only `main` existed among the maintained branches. Its active repository ruleset required PRs, resolved threads, zero approvals and the six Actions Code checks (app ID 15368). All six succeeded at that SHA. Main and `scenario-history` already blocked non-fast-forward updates and deletion. There was no release tag ruleset. The GitHub release reported `immutable: false`. A tag update/deletion rule protects the Git ref independently of GitHub Release assets and notes.
+
+Run the commands from this repository with an authenticated `gh`. Planning reads GitHub and prints the proposed API payloads. Applying requires repository administration and permission to create refs. Run one cutover or line-registration operation at a time. Keep existing protections in place.
+
+1. Merge the reviewed policy PR to `main` under the previous rules. The default branch stays `main`. The policy merge is a bootstrap commit after v1.0.0. Leave the published tag at its original SHA.
+2. Wait for the Code and Release matrix **push** workflows on that merge commit to finish. Review their jobs, attempt IDs and native reports. The initial apply checks that the current main tip is that PR's merge, the merged PR delivered this tool, the v1.0.0 tag is intact, and the executable matches the merged file. If another commit lands first, stop and reconcile the cutover point.
+3. From the merged checkout, run the plan and then substitute the merged policy PR number in the apply command.
+
+   ```sh
+   python3 scripts/release/git_flow.py plan
+   python3 scripts/release/git_flow.py apply --policy-pr <number>
+   python3 scripts/release/git_flow.py verify
+   ```
+
+   The tool adds its own rulesets, leaves the existing history and main rulesets in place, prohibits creation of unregistered release/support lines, and seeds `develop` at the policy merge. The catch-all maintained-branch rule blocks force pushes and deletion. The tag rule blocks updates and deletion of `v*` tags. It permits creation of a new release tag. Verify reads back active repository rulesets and each maintained branch's effective rules, including the unregistered-line creation guard. GitHub exposes effective rules for branch names; tag protection is checked through the active tag ruleset's target, exact pattern, rules and empty bypass list.
+4. List in-flight PRs with `gh pr list --state open --base main`. Retarget development work individually with `gh pr edit <number> --base develop`. Keep only intentional production promotions on main. Recheck the diff, review and required runs at the new base. A base edit alone may not trigger every workflow. Reopen the PR or push its reviewed update to obtain the new target's checks before merging. New feature PRs explicitly select `gh pr create --base develop`.
+
+If an API write fails, rerun the same command after checking its plan and the live refs. Equal rulesets and matching branch seeds are reused. A registration retry checks the existing ref against the requested seed, including after the creation guard has been updated. Use `verify` for routine rules checks after a branch advances. A conflicting ruleset, existing ref at another SHA, or unexpected managed line requires reconciliation. The tool never resets a branch, rewrites the original main or history rulesets, publishes a tag, or retargets a PR.
+
+## Stabilization, hotfixes and propagation
+
+To freeze a feature line, use `plan` and `apply` with the same line and source, then run `verify`. The plan shows the current seed SHA. Pass this exact SHA to apply with `--at`. A changed source requires a new plan. A line's exact candidate rule is installed and inspected before its name is released from the wildcard creation guard. Unregistered names remain reserved.
+
+```sh
+python3 scripts/release/git_flow.py plan --line release/1.1 --from develop
+python3 scripts/release/git_flow.py apply --line release/1.1 --from develop --at <planned-seed-sha>
+python3 scripts/release/git_flow.py verify
+```
+
+For an urgent production patch, branch from the latest published tag on the production line or from its matching main tip. Target a PR at that line's existing release branch. If no such branch exists, register it with e.g. `--line release/1.1 --from v1.1.0`. Advance an existing release line through a reviewed synchronization PR from production if it lacks a production fix. Keep released branches protected after promotion, and reuse the line for later patches without resetting it. Promote the patch by a release-to-main PR. During stabilization on a newer release branch, propagate the fix there immediately and forward to develop. Propagate stabilization fixes to develop by PR as they land.
+
+When the next feature release becomes production, seed support for the preceding supported line with e.g. `--line support/1.0 --from v1.0.0`, substituting its actual last stable tag. Both plan and apply check the highest published stable patch number on that line. If a new patch ships between them, plan again from its tag. Publish that line's patch from its checked support merge. Open separate forward-port PRs to every affected newer support line, the current production release line, any active stabilization line, and develop. Record the original fix commit and destination PRs. Release older-line changes to current production via its own reviewed patch. When support ends, retain refs and protections for provenance and stop accepting updates. A newly seeded older line may predate these workflows. Its initial reviewed tooling/backport PR must bring in the candidate validation before it can pass the line's required checks.
+
+## Publish the checked commit
+
+Use merge commits for maintained-branch PRs so the promoted branch remains in history. A publication PR's test merge, its head, and the actual production or support merge can have different SHAs. Freeze the **post-merge** SHA on the publishing branch and qualify that exact SHA via its own push workflows. The read-only evidence command requires that it is still the branch tip, confirms the workflow path, push event, branch, commit, run and attempt, and checks the successful named jobs on that attempt. Review native artifacts and earlier failed attempts as described in [Preparing a release](releasing.md).
+
+```sh
+python3 scripts/release/git_flow.py evidence --branch main --sha <full-production-merge-sha>
+# For a preceding-line patch use --branch support/X.Y and its actual merge SHA.
+```
+
+Create the new tag on that literal full SHA and publish its GitHub Release following the release guide. Verify the peeled remote tag equals the qualified commit. If the candidate changes, repeat qualification. Preserve every previously published tag. Following a production merge, reconcile its history and fixes into develop and affected stabilization branches by PR.
+
+The administrative API semantics are described in [GitHub repository rulesets](https://docs.github.com/en/rest/repos/rules) and [workflow runs](https://docs.github.com/en/rest/actions/workflow-runs).

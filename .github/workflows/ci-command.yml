@@ -2,7 +2,7 @@ name: CI command
 
 # A pull request comment line "/ci run <batch|profile>... [on <release|all>]"
 # runs the named runtime batches on the pull request's head commit.
-# Default pull request CI, pushes to main and the ci:full and
+# Default pull request CI, pushes to develop and the ci:full and
 # ci:selected-batches labels are unchanged by it.
 #
 # issue_comment runs this file and its scripts from the default branch.
@@ -163,7 +163,7 @@ jobs:
       release: ${{ matrix.release }}
       ref: ${{ needs.command.outputs.sha }}
       # The run belongs to the default branch, so a cache saved here from
-      # the unmerged head would be restored by every later main and pull
+      # the unmerged head would be restored by every later default-branch and pull
       # request run.
       save_caches: false
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the runner cost and wall time of pull request and main executions.
+"""Measure the runner cost and wall time of pull request and maintained-branch executions.
 
 fetch reads workflow runs, their jobs with step timings and, for each head
 commit, which of the given marker commits it contains, from the GitHub API
@@ -55,7 +55,7 @@ import tag_scenarios
 
 
 SCHEMA = "ceph-ci-measurements/v1"
-# The workflows that a pull request or a push to main starts. Periodic
+# The workflows that pull requests and maintained-branch pushes start. Periodic
 # and the optional regressions are measured as jobs (peak concurrency) only.
 # Runs are matched by these display names, so a run that started while the
 # workflows still carried their earlier names is not counted.
@@ -70,7 +70,7 @@ EVENTS = ("pull_request", "push")
 # no prefix names stays in that fallback.
 PHASES = (
     ("setup", ("Set up job", "Run actions/checkout", "Run actions/setup-go", "Restore the Go module cache",
-               "Restore the Go build cache", "Prepare Go modules")),
+               "Restore the Go build cache", "Prepare Go modules", "Verify the release candidate checkout")),
     ("compile", ("Compile selected tagged suite",)),
     ("storage", ("Prepare runner storage", "Record runner storage", "Verify post-image runner headroom",
                  "Release the qualification pressure file")),

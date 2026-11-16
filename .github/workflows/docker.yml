@@ -1,16 +1,18 @@
 name: Docker checks
 
-# Runtime batches never read documentation or the separately built go-ceph
-# probe module, so a change to those alone runs only Code checks.
+# Development runs the environment category. Release candidates run the full Release matrix.
+
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths-ignore:
       - 'docs/**'
       - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, edited]
     paths-ignore:
       - 'docs/**'
       - '*.md'

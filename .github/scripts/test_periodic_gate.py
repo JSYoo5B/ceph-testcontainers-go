@@ -38,9 +38,9 @@ FAILED = [*PLANNED, job("Tentacle short / rbd_fixtures_locks", "failure")]
 
 
 class GateTests(unittest.TestCase):
-    def decide(self, runs, jobs, event="schedule", release_phase=False):
+    def decide(self, runs, jobs, event="schedule"):
         """jobs maps a run id to its jobs; any other run had only its gate."""
-        return gate.decide(event, release_phase, HEAD, NOW, runs, lambda r: jobs.get(r["id"], GATE_ONLY))
+        return gate.decide(event, HEAD, NOW, runs, lambda r: jobs.get(r["id"], GATE_ONLY))
 
     def test_storage_qualification_does_not_count_as_full_matrix_coverage(self):
         qualified = [job("Storage qualification / Plan", "success"),
@@ -48,7 +48,7 @@ class GateTests(unittest.TestCase):
         self.assertFalse(gate.executed(run(3, HEAD, 1), qualified))
         self.assertTrue(self.decide([run(3, HEAD, 1)], {3: qualified})[0])
 
-    def test_a_new_commit_on_main_runs_once(self):
+    def test_a_new_commit_on_the_branch_runs_once(self):
         self.assertTrue(self.decide([run(3, HEAD, 3), run(2, OLD, 6)], {2: EXECUTED})[0])
         # Once a run executed it, later firings on the same commit skip,
         # however many skipped gates came in between.
@@ -92,9 +92,8 @@ class GateTests(unittest.TestCase):
         self.assertFalse(executed)
         self.assertIn("already executed", reason)
 
-    def test_release_phase_and_dispatch_always_run(self):
+    def test_dispatch_always_runs(self):
         runs = [run(3, HEAD, 1)]
-        self.assertEqual(self.decide(runs, {3: EXECUTED}, release_phase=True), (True, "release phase"))
         self.assertEqual(self.decide(runs, {3: EXECUTED}, event="workflow_dispatch"), (True, "dispatched by hand"))
 
     def test_without_an_earlier_execution_it_runs(self):
@@ -153,7 +152,7 @@ class GateTests(unittest.TestCase):
         # An execution on the second page must still be found.
         first = [run(200 + i, HEAD, 1 + i) for i in range(100)]
         responses = {
-            "repos/o/r/actions/workflows/periodic.yml/runs?branch=main&per_page=100&created=%3E%3D2026-10-09T12:00:00Z":
+            "repos/o/r/actions/workflows/periodic.yml/runs?branch=support%2F1.0&per_page=100&created=%3E%3D2026-10-09T12:00:00Z":
                 [{"workflow_runs": [run(9, HEAD, 0, status="in_progress"), *first]},
                  {"workflow_runs": [run(3, HEAD, 120)]}],
             "repos/o/r/actions/runs/3/jobs?per_page=25&filter=latest": [{"jobs": PLANNED}, {"jobs": EXECUTED[2:]}],
@@ -168,7 +167,7 @@ class GateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "output"
             environment = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_EVENT_NAME": "schedule",
-                           "GITHUB_SHA": HEAD, "GITHUB_OUTPUT": str(output), "CI_RELEASE_PHASE": ""}
+                           "GITHUB_SHA": HEAD, "GITHUB_OUTPUT": str(output), "GITHUB_REF_NAME": "support/1.0"}
             with mock.patch.dict(os.environ, environment, clear=True), \
                     mock.patch.object(gate, "github", side_effect=api) as calls, \
                     mock.patch.object(gate.datetime, "datetime", wraps=datetime.datetime) as clock, \
@@ -254,7 +253,7 @@ class ReaderTests(unittest.TestCase):
             raise RuntimeError("gh api " + path + " failed: gh: Server Error (HTTP 502)")
 
         environment = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_EVENT_NAME": "schedule",
-                       "GITHUB_SHA": HEAD, "CI_RELEASE_PHASE": ""}
+                       "GITHUB_SHA": HEAD, "GITHUB_REF_NAME": "support/1.0"}
         with mock.patch.dict(os.environ, environment, clear=True), \
                 mock.patch.object(gate, "github", side_effect=api), \
                 self.assertRaisesRegex(RuntimeError, "HTTP 502"):

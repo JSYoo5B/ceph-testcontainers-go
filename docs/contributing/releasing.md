@@ -10,6 +10,63 @@ release notes are written once, at release time, as described below. Image
 production and the authoritative image contracts remain in
 ceph-testcontainers-images.
 
+## Stable versions and public APIs
+
+Project planning calls the three positions **product.major.minor**. In a Go
+tag such as `v1.3.2` they are the Go major (1), minor (3) and patch (2).
+A new stable feature release increments the middle number for new features
+or compatible public APIs. A patch increments the last number for bug or
+security fixes. Reserve a new product for a substantial redesign or accumulated
+compatibility costs that justify coordinating a breaking release with consumers.
+
+Throughout a product line, preserve import paths, public signatures and
+documented behavior. Move implementation behind the existing entry point
+when possible. To replace an API, ship the replacement alongside the old
+entry point, add a Go `Deprecated:` paragraph naming the replacement to the
+old API's documentation, and keep tests covering the old entry point.
+
+The grace period starts with the first stable release containing both the
+replacement and the deprecation notice. Before removal can ship, three
+calendar months must elapse **and** two subsequent stable feature releases
+in that product must ship. Patches and prereleases do not count. Meeting
+both conditions makes removal eligible for a later product release. It
+never schedules removal or permits it within the existing product.
+
+For example, an API deprecated in v1.1.0 remains usable in v1.2.x, v1.3.x
+and every later v1 release. Once v1.2.0 and v1.3.0 have shipped and three
+months have elapsed since v1.1.0, v2 may omit it. A routine package move
+alone does not justify v2. Published tags remain immutable.
+
+## Supported lines and backports
+
+Maintain the two most recently introduced stable product.feature lines.
+Support starts at the line's first stable release. At v1.0.0, 1.0.x is
+the sole stable product line. Order lines by when
+they were introduced. A later patch on an older line does not move it
+ahead of the newer line. Both receive applicable ordinary bug fixes and
+security fixes. New features go to ongoing development.
+
+| Newly released | Lines receiving fixes |
+| --- | --- |
+| v1.2.0 | 1.2.x and 1.1.x |
+| v2.0.0 | 2.0.x and the final 1.N.x |
+| v2.1.0 | 2.1.x and 2.0.x |
+
+For each fix, identify the affected supported lines from their shipped code
+and tests. Record the affected versions or the evidence that the defect is
+absent on a line. Apply the correction and regression coverage to each
+affected line, adapting the change to its API and dependencies. Verify
+each backport on its own candidate, including the original failing condition,
+the corrected result and applicable release checks. Publish a separate patch
+tag for each affected line. Carry the correction into newer affected lines,
+any release under stabilization and ongoing development. The
+[branch flow](git-flow.md) describes where these PRs go.
+
+A line retires when two newer stable lines have been introduced. Retirement
+ends new patch releases on that line. Its tags remain available, and later
+releases in the same product still owe consumers the public API compatibility
+described above.
+
 ## Candidate checklist
 
 1. Freeze the candidate's full commit SHA and confirm the worktree is clean.
@@ -27,29 +84,21 @@ ceph-testcontainers-images.
 3. Run the [local checks without Docker](testing.md#local-checks-without-docker)
    of the testing guide. Check local Markdown links
    and compile new examples. Compilation is not a native run.
-4. Reuse independently verified CI at the candidate's exact SHA: the six
-   required status contexts, which are the jobs of the Code checks workflow
-   (`Unit tests`, `Race detector`, `Vet, compile and CI tooling`,
-   `Compiled tag coverage and helpers`, `Vulnerability check (Go 1.26.x)`
-   and `Vulnerability check (Go 1.27.x)`; see
-   [Code checks](ci.md#code-checks)), and the runtime workflows (Docker,
-   short, topology, recovery and multicluster, and the other
-   [supported releases](ci.md#supported-releases) through a full Ceph
-   periodic run or the release matrix), which no rule requires but the
-   release does. Record the workflow/run and
-   attempt identities and the image references that ran. A
-   canceled, skipped or missing scenario is not a native pass. Record
-   vulnerability-scan results from Code checks as well.
+4. Verify Code checks and the complete release matrix for the exact
+   production or support branch push commit that will receive the tag.
+   Record the branch, full SHA, workflow runs, attempts, job conclusions and
+   image references. Check the six [Code checks](ci.md#code-checks) and
+   [release candidate validation](ci.md#release-candidate-validation),
+   including native execution on every supported Ceph release. A canceled,
+   skipped or missing required scenario cannot qualify a candidate.
 5. Review failed attempts, not just their latest conclusion. Keep fixed
    cases linked to their correction and regression. Unresolved cases need
    a disposition and live owner.
 6. Confirm native completion and cleanup for the claimed profiles. Strict
    upstream-defect tests under `native_regression` are opt-in, outside
    `all`; document their limits instead of counting them as required passes.
-7. If code or dependency behavior changes after those checks, validate the
-   affected paths again at the new SHA. For documentation-only changes,
-   retain the implementation's native evidence and record the new static
-   checks separately; do not describe old CI as CI of the new SHA.
+7. If the candidate changes, repeat candidate verification at the new SHA,
+   including for a documentation-only change.
 
 Do not dispatch duplicate native runs merely because a release is being
 prepared, and do not cancel existing main CI as part of documentation work.
@@ -64,7 +113,8 @@ release automatically.
 Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare the release notes, including
-  compatibility, support and unresolved native limits.
+  compatibility and unresolved native limits. Name the stable lines currently
+  receiving fixes and any line retiring with this release.
 - When publishing, check that the README does not tell release users to
   install an older tag.
 - Identify the release by its tag and keep the final SHA's validation evidence

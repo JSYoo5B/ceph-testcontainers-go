@@ -1,24 +1,18 @@
 name: Short
 
-# Runtime batches never read documentation or the separately built go-ceph
-# probe module, so a change to those alone runs only Code checks.
-#
-# Every batch runs on every push to main and on every pull request. A pull
-# request can opt in to running only the batches that reach a declaration it
-# changes, with the ci:selected-batches label, outside a release phase
-# (CI_RELEASE_PHASE "true"). The selection is
-# advisory: adding or removing the label starts a new run, and pushes to main
-# always run every batch, so a selection miss surfaces at the next merge.
+# Development runs the current release. A PR can opt into declaration selection. Release candidates run the full Release matrix.
+
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths-ignore:
       - 'docs/**'
       - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [develop]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
     paths-ignore:
       - 'docs/**'
       - '*.md'
@@ -59,7 +53,6 @@ jobs:
       select_declarations: >-
         ${{ github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&
-        vars.CI_RELEASE_PHASE != 'true' &&
         github.event.pull_request.base.sha || '' }}
       storage_policy: ${{ github.event_name == 'workflow_dispatch' && inputs.storage_policy || 'auto' }}
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}

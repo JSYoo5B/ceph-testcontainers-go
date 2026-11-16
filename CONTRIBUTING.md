@@ -26,6 +26,19 @@ the acceptance can be agreed before the work. A pull request follows the
 [pull request template](.github/pull_request_template.md): what changes for a
 consumer of the modules, how it was verified, and what was not.
 
+After the Git Flow cutover, target `develop` for new features. For release
+stabilization or a backport, choose the affected line as described in the
+[branch flow](docs/contributing/git-flow.md). Public API changes follow the
+[stable version and deprecation policy](docs/contributing/releasing.md#stable-versions-and-public-apis).
+When replacing an API, ship and test both entry points and name the replacement
+in the old entry point's Go `Deprecated:` notice.
+
+The maintainer works through pull requests too. With one maintainer, GitHub
+cannot count an approval from the author. Branch rules therefore require a
+PR and passing checks with zero required approvals. Record the review and
+its disposition against the current head in a PR review comment before
+merging. GitHub does not enforce that comment through the approval count.
+
 Before writing code, read:
 
 - [AGENTS.md](AGENTS.md): the module conventions every package keeps (one

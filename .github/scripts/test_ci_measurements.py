@@ -90,6 +90,7 @@ class PhaseTests(unittest.TestCase):
             "Set up job": "setup", "Run actions/checkout": "setup", "Run actions/setup-go": "setup",
             "Restore the Go module cache": "setup", "Restore the Go build cache": "setup",
             "Discover only this workflow family from source tags": "reporting",
+            "Require native profiles for release validation": "reporting",
             "Download every Go module": "plan_modules",
             "Save the Go module cache": "reporting",
             "Compile one profile of each package into the build cache": "plan_build_cache",
@@ -115,6 +116,7 @@ class PhaseTests(unittest.TestCase):
         expected = {
             "Set up job": "setup", "Run actions/checkout": "setup", "Run actions/setup-go": "setup",
             "Restore the Go module cache": "setup", "Restore the Go build cache": "setup",
+            "Verify the release candidate checkout": "setup",
             "Prepare Go modules": "setup", "Compile selected tagged suite": "compile",
             "Prepare runner storage": "storage", "Docker baseline and engine identity": "docker",
             "Resolve native published Ceph roles": "images", "Prepare Ryuk and the test images": "test_images",
