@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""Plan, apply and verify repository rules with the authenticated GitHub CLI."""
+
+import argparse
+import base64
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+from urllib.parse import quote
+
+REPO = "JSYoo5B/ceph-testcontainers-go"
+ACTIONS = 15368
+BASE_TAG = "v1.0.0"
+BASE_SHA = "43a17659bbd60776f987b773d68fe24011cd7220"
+CODE = ("Unit tests", "Race detector", "Vet, compile and CI tooling",
+        "Compiled tag coverage and helpers", "Vulnerability check (Go 1.26.x)",
+        "Vulnerability check (Go 1.27.x)")
+LINE = r"(release|support)/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+VERSION = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+PREFIX = "Git Flow / "
+GUARD = PREFIX + "reserve line names"
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def api(path, *, method="GET", body=None, pages=False):
+    args = ["gh", "api", "--method", method, "-H", "X-GitHub-Api-Version: 2022-11-28",
+            f"repos/{REPO}/{path}".rstrip("/")]
+    if pages:
+        args.extend(["--paginate", "--slurp"])
+    if body is not None:
+        args.extend(["--input", "-"])
+    result = subprocess.run(args, input=json.dumps(body) if body is not None else None,
+                            check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    if pages:
+        return [item for page in data for item in (page if pages is True else page[pages])]
+    return data
+
+
+def rule(kind, **params):
+    return {"type": kind, **({"parameters": params} if params else {})}
+
+
+def ruleset(name, target, refs, rules, excludes=()):
+    return {"name": name, "target": target, "enforcement": "active", "bypass_actors": [],
+            "conditions": {"ref_name": {"include": list(refs), "exclude": sorted(excludes)}},
+            "rules": rules}
+
+
+def gate(branch):
+    return f"Release candidate validated ({branch})"
+
+
+def checks(names, *, strict=False):
+    return rule("required_status_checks", required_status_checks=[
+        {"context": name, "integration_id": ACTIONS} for name in names],
+        strict_required_status_checks_policy=strict, do_not_enforce_on_create=True)
+
+
+def candidate(branch):
+    return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch], [checks([gate(branch)], strict=True)])
+
+
+def reserved(lines):
+    return ruleset(GUARD, "branch", ["refs/heads/release/**/*", "refs/heads/support/**/*"],
+                   [rule("creation")], ["refs/heads/" + name for name in lines])
+
+
+def baseline():
+    pr = rule("pull_request", required_approving_review_count=0, dismiss_stale_reviews_on_push=True,
+              require_last_push_approval=False, require_code_owner_review=False,
+              required_review_thread_resolution=True, allowed_merge_methods=["merge"])
+    return [
+        ruleset(PREFIX + "reviewed changes", "branch",
+                ["refs/heads/main", "refs/heads/develop", "refs/heads/release/**/*", "refs/heads/support/**/*"],
+                [rule("deletion"), rule("non_fast_forward"), pr, checks(CODE)]),
+        candidate("main"),
+        ruleset(PREFIX + "immutable version tags", "tag", ["refs/tags/v*"],
+                [rule("update"), rule("deletion")]),
+    ]
+
+
+def covers(actual, desired):
+    """Ignore service-supplied parameter defaults and unordered rule/check arrays."""
+    if isinstance(desired, dict):
+        return isinstance(actual, dict) and all(k in actual and covers(actual[k], v) for k, v in desired.items())
+    if isinstance(desired, list):
+        return isinstance(actual, list) and len(actual) == len(desired) and all(
+            any(covers(a, d) for a in actual) for d in desired)
+    return actual == desired
+
+
+def managed_rules():
+    listed = api("rulesets?includes_parents=true&per_page=100", pages=True)
+    result = {}
+    for row in listed:
+        if row["name"].startswith(PREFIX):
+            require(row["source"] == REPO and row["source_type"] == "Repository",
+                    f"managed name collides with an inherited rule: {row['name']}")
+            require(row["name"] not in result, f"duplicate ruleset {row['name']}")
+            result[row["name"]] = api(f"rulesets/{row['id']}")
+    return result
+
+
+def installed_lines(managed):
+    if GUARD not in managed:
+        return set()
+    refs = managed[GUARD]["conditions"]["ref_name"]["exclude"]
+    lines = {ref.removeprefix("refs/heads/") for ref in refs}
+    require(all(re.fullmatch(LINE, name) for name in lines), "unexpected reserved-line exclusion")
+    require(covers(managed[GUARD], reserved(lines)), "reserved-line rule drift")
+    return lines
+
+
+def ensure(managed, desired, mode):
+    name = desired["name"]
+    current = managed.get(name)
+    if current:
+        require(covers(current, desired), f"ruleset drift: {name}; inspect before proceeding")
+        return
+    require(mode != "verify", f"missing ruleset: {name}")
+    print("Create ruleset", json.dumps(desired, sort_keys=True))
+    if mode == "apply":
+        managed[name] = api("rulesets", method="POST", body=desired)
+        require(covers(managed[name], desired), f"unexpected installed ruleset: {name}")
+
+
+def effective(branch):
+    return api("rules/branches/" + quote(branch, safe="") + "?per_page=100", pages=True)
+
+
+def verify_branch(managed, branch, expected):
+    active = effective(branch)
+    contexts = set(CODE)
+    if any(policy["name"] == PREFIX + branch for policy in expected):
+        contexts.add(gate(branch))
+    for item in active:
+        params = item.get("parameters", {})
+        if item["type"] == "pull_request":
+            require(params.get("required_approving_review_count") == 0
+                    and not params.get("require_last_push_approval") and not params.get("require_code_owner_review"),
+                    f"{branch}: an effective rule requires a separate approver")
+        if item["type"] == "required_status_checks":
+            require(all(c["context"] in contexts and c.get("integration_id") == ACTIONS
+                        for c in params["required_status_checks"]), f"{branch}: unexpected effective status check")
+    for policy in expected:
+        rules = [r for r in active if r.get("ruleset_id") == managed[policy["name"]]["id"]]
+        for required in policy["rules"]:
+            require(any(covers(r, required) for r in rules),
+                    f"{branch}: missing effective {required['type']} from {policy['name']}")
+
+
+def verify(managed, lines):
+    core, main, tags = baseline()
+    desired = [core, main, tags, reserved(lines)] + [candidate(line) for line in sorted(lines)]
+    require(set(managed) == {p["name"] for p in desired}, "unexpected managed ruleset or incomplete line setup")
+    for policy in desired:
+        ensure(managed, policy, "verify")
+    verify_branch(managed, "main", [core, main])
+    verify_branch(managed, "develop", [core])
+    for line in lines:
+        verify_branch(managed, line, [core, candidate(line)])
+        require(not any(r.get("ruleset_id") == managed[GUARD]["id"] for r in effective(line)),
+                f"creation rule still applies to registered line {line}")
+    for branch in ["release/unregistered", "support/unregistered"]:
+        verify_branch(managed, branch, [core, reserved(lines)])
+
+
+def refs():
+    rows = api("branches?per_page=100", pages=True)
+    return {row["name"]: row["commit"]["sha"] for row in rows}
+
+
+def published_commit(tag):
+    release = api("releases/tags/" + tag)
+    require(not release["draft"] and not release["prerelease"], f"{tag} is not a published stable release")
+    obj = api("git/ref/tags/" + tag)["object"]
+    while obj["type"] == "tag":
+        obj = api("git/tags/" + obj["sha"])["object"]
+    require(obj["type"] == "commit", f"{tag} has no release commit")
+    return obj["sha"]
+
+
+def seed(name, sha, branches, apply):
+    if name in branches:
+        require(branches[name] == sha, f"{name} already exists at another SHA; its ref was preserved")
+        return
+    print(f"Create {name} at {sha}")
+    if apply:
+        created = api("git/refs", method="POST", body={"ref": "refs/heads/" + name, "sha": sha})
+        require(created["object"]["sha"] == sha, f"{name}: unexpected seed commit")
+
+
+def candidate_evidence(branch, sha):
+    workflows = {"code.yml": CODE, "release-matrix.yml": [gate(branch)]}
+    for filename, names in workflows.items():
+        query = f"event=push&branch={quote(branch, safe='')}&head_sha={sha}&per_page=100"
+        runs = api(f"actions/workflows/{filename}/runs?{query}", pages="workflow_runs")
+        runs = [run for run in runs if run["event"] == "push" and run["head_branch"] == branch
+                and run["head_sha"] == sha and run["path"] == f".github/workflows/{filename}"]
+        require(runs, f"no push run of {filename} at {branch}@{sha}")
+        run = max(runs, key=lambda r: r["run_number"])
+        require(run["status"] == "completed" and run["conclusion"] == "success",
+                f"{filename} run {run['id']} attempt {run['run_attempt']} has not passed")
+        attempt = f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+        jobs = api(f"{attempt}/jobs?per_page=100", pages="jobs")
+        for name in names:
+            observed = [job for job in jobs if job["name"] == name]
+            require(len(observed) == 1 and observed[0]["head_sha"] == sha
+                    and observed[0]["run_id"] == run["id"] and observed[0]["run_attempt"] == run["run_attempt"]
+                    and observed[0]["status"] == "completed" and observed[0]["conclusion"] == "success",
+                    f"{name}: missing or unsuccessful in run {run['id']} attempt {run['run_attempt']}")
+        print(f"{branch}@{sha}: {run['html_url']}/attempts/{run['run_attempt']} ({filename})")
+
+
+def cutover_ready(pr_number, branches):
+    require(pr_number is not None, "apply requires --policy-pr NUMBER after merge")
+    pr = api(f"pulls/{pr_number}")
+    sha = pr["merge_commit_sha"]
+    require(pr["merged"] and pr["base"]["ref"] == "main" and sha == branches["main"],
+            "cutover requires the merged policy PR at the current main tip")
+    script = "scripts/release/git_flow.py"
+    files = api(f"pulls/{pr_number}/files?per_page=100", pages=True)
+    require(any(f["filename"] == script for f in files), "the PR did not deliver the cutover tool")
+    merged = api(f"contents/{script}?ref={sha}")
+    require(base64.b64decode(merged["content"]) == Path(__file__).read_bytes(),
+            "run the tool delivered at the merged policy SHA")
+    require(api(f"compare/{BASE_SHA}...{sha}")["status"] == "ahead", "policy merge must descend from v1.0.0")
+    require(api("releases/latest")["tag_name"] == BASE_TAG, "latest stable release changed before cutover")
+    candidate_evidence("main", sha)
+    return sha
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=["plan", "apply", "verify", "evidence"])
+    parser.add_argument("--policy-pr", type=int, help="merged cutover PR, for the initial apply")
+    parser.add_argument("--line", help="prepare and seed release/X.Y or support/X.Y")
+    parser.add_argument("--from", dest="source", help="develop or a published stable tag, for --line")
+    parser.add_argument("--at", help="reviewed seed SHA from the line registration plan")
+    parser.add_argument("--branch", help="target branch for evidence")
+    parser.add_argument("--sha", help="full candidate commit for evidence")
+    args = parser.parse_args(argv)
+    require(not args.at or (args.mode == "apply" and args.line), "--at is for applying a line registration")
+    if args.mode == "evidence":
+        require(not (args.line or args.source or args.policy_pr), "evidence takes --branch and --sha")
+        require(args.branch == "main" or re.fullmatch(LINE, args.branch or ""), "expected a maintained candidate branch")
+        require(re.fullmatch("[a-f0-9]{40}", args.sha or ""), "expected a full commit SHA")
+        require(refs().get(args.branch) == args.sha, "candidate is not the current branch tip")
+        candidate_evidence(args.branch, args.sha)
+        return
+    require(not (args.branch or args.sha), "--branch and --sha apply only to evidence")
+    require(bool(args.line) == bool(args.source), "--line and --from must be supplied together")
+    require(not args.line or re.fullmatch(LINE, args.line), "invalid release/support line")
+    require(not (args.line and args.policy_pr), "separate cutover from opening a line")
+    require(args.mode != "verify" or not (args.line or args.policy_pr), "verify checks all managed lines")
+    repo = api("")
+    require(repo["default_branch"] == "main" and repo["allow_merge_commit"], "expected main default and merge commits enabled")
+    managed, branches = managed_rules(), refs()
+    lines = installed_lines(managed)
+    print(f"Default main, main at {branches['main']}, admin {repo['permissions']['admin']}")
+    require(published_commit(BASE_TAG) == BASE_SHA, "published v1.0.0 no longer points at its original commit")
+    if args.mode == "apply":
+        require(repo["permissions"]["admin"], "the actor needs repository administration permission")
+    unknown = {b for b in branches if b.startswith(("release/", "support/"))} - lines
+    require(not unknown, f"unregistered existing lines: {sorted(unknown)}")
+    if args.mode == "verify":
+        require("develop" in branches, "missing develop")
+        require(lines <= branches.keys(), "a registered line has not been seeded; resume its apply")
+        verify(managed, lines)
+        return
+    if args.line:
+        require("develop" in branches, "apply the cutover first")
+        require(args.line.split("/")[0] == "release" or args.source != "develop",
+                "support lines start from their published stable tag")
+        if args.source == "develop":
+            sha = branches["develop"]
+        else:
+            require(re.fullmatch(VERSION, args.source) and args.source[1:].rsplit(".", 1)[0] == args.line.split("/")[1],
+                    "a patch or support branch must start from a stable tag on that line")
+            sha = published_commit(args.source)
+        if args.mode == "apply":
+            require(args.at == sha, "supply the current reviewed seed SHA from the plan with --at")
+        # A previous interrupted attempt may already have installed the exact
+        # gate. Keep the wildcard creation guard until it has been verified.
+        own = candidate(args.line)
+        old = {k: v for k, v in managed.items() if k != own["name"] or args.line in lines}
+        verify(old, lines)
+        if args.line in branches:
+            require(args.line in lines, "unregistered line")
+            print(f"{args.line} already registered at {branches[args.line]}")
+            return
+        ensure(managed, own, args.mode)
+        if args.line not in lines:
+            lines.add(args.line)
+            guard = reserved(lines)
+            print("Allow creation after installing exact target gate", args.line)
+            if args.mode == "apply":
+                verify_branch(managed, args.line, [baseline()[0], own])
+                previous = api(f"rulesets/{managed[GUARD]['id']}")
+                require(covers(previous, reserved(lines - {args.line})), "creation guard changed; retry from a fresh plan")
+                managed[GUARD] = api(f"rulesets/{previous['id']}", method="PUT", body=guard)
+        seed(args.line, sha, branches, args.mode == "apply")
+    else:
+        if args.mode == "apply":
+            sha = cutover_ready(args.policy_pr, branches)
+            require(branches.get("develop", sha) == sha, "develop has diverged; use verify after adoption")
+        else:
+            sha = branches["main"]
+            print("Preview only. The merged policy SHA and its checks are required by apply.")
+        policies = [reserved(lines), *baseline()]
+        require(set(managed) <= {p["name"] for p in policies} | {candidate(line)["name"] for line in lines},
+                "unexpected managed ruleset")
+        for policy in policies:
+            if policy["name"] in managed:
+                ensure(managed, policy, "verify")
+        for policy in policies:
+            ensure(managed, policy, args.mode)
+        if args.mode == "apply":
+            require(refs()["main"] == sha, "main advanced during cutover")
+        seed("develop", sha, branches, args.mode == "apply")
+    if args.mode == "apply":
+        verify(managed_rules(), lines)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, subprocess.CalledProcessError) as exc:
+        sys.exit(getattr(exc, "stderr", None) or str(exc))
