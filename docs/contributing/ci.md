@@ -44,7 +44,7 @@ default [network mode](#network-modes):
   batches whose own test files the pull request changes, and the batches of an
   [experiment case](testing.md#experiment-cases) any of whose files (helpers
   and manual included) it changes. A change to a shared helper or a public
-  package selects none of them; Periodic runs them on `main`.
+  package selects none of them; Periodic runs them on the default branch.
 
 The `ci:full` label (adding it starts a run) selects every
 batch of those categories instead. Each `Plan` job's `tag-plan.json` artifact
@@ -374,12 +374,12 @@ batches on Squid 19.2.5 role images. The run is added beside the usual checks.
 
 The workflow records the pull request's head commit when it reads the pull
 request, and every job runs that commit. `issue_comment` runs use the
-workflow and scripts from `main`:
+workflow and scripts from the protected default branch:
 
 | Job | Permissions | What it does |
 | --- | --- | --- |
-| `Command` | `contents: read`, `pull-requests: read` | Runs `ci_command.py authorize` on `main`'s checkout. No pull request code runs. |
-| `Validate` | `contents: read` | Checks out `main` and the recorded head side by side without credentials; the head's planner lists batches and releases, `main`'s `ci_command.py select` resolves the names. |
+| `Command` | `contents: read`, `pull-requests: read` | Runs `ci_command.py authorize` on the default-branch checkout. No pull request code runs. |
+| `Validate` | `contents: read` | Checks out the default branch and the recorded head side by side without credentials; the head's planner lists batches and releases, the default branch's `ci_command.py select` resolves the names. |
 | `Acknowledge` | `statuses: write` | Sets a pending commit status on the head. |
 | `Scenarios <release>` | `contents: read` | Calls `tagged-runtime.yml` with category `selected` and the resolved profile IDs, once per release. |
 | `Report` | `contents: read`, `pull-requests: write`, `statuses: write` | Sets the final status and replies with the result, run link or refusal. |
@@ -1018,7 +1018,7 @@ here.
 - A cheap deterministic case is a required batch of a non-`short` category,
   so a pull request runs it only when it changes a file of the case's
   directory (see [Pull request scope](#pull-request-scope)), and periodic runs
-  keep it covered on `main`. A change to a public package or the harness
+  keep it covered on the default branch. A change to a public package or the harness
   selects none of these batches; the fixture behaviour they use is covered
   by the ordinary batches of its package (`rbd_schedule_remove` calls no
   fixture API beyond starting the cluster).

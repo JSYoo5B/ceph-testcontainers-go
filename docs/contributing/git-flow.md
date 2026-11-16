@@ -2,9 +2,9 @@
 
 | Branch | Change path | Release responsibility |
 | --- | --- | --- |
-| `develop` | Base ordinary feature, fix and CI pull requests here. Keep topic branches short lived. | Next feature line, with ordinary CI. |
+| `develop` | Repository default and base for ordinary feature, fix and CI pull requests. Keep topic branches short lived. | Next feature line, ordinary CI and trusted default-branch workflows. |
 | `release/X.Y` | Seed from a reviewed `develop` commit when the feature set freezes. Target only stabilization changes to this line. | Qualify the candidate with the full release matrix while development continues. |
-| `main` | Promote a reviewed release branch by pull request. | Production history for the latest line, and the trusted default for scheduled workflows and maintainer dispatch. |
+| `main` | Promote a reviewed release branch by pull request. | Production history and publication point for the latest stable line. |
 | `support/X.Y` | Seed from the latest published stable tag on the preceding supported line. Make patch fixes by PR. | Publish fixes for consumers who remain on that line. Keep its tags on that line. |
 
 A maintainer records a COMMENT review of the exact PR head, addresses findings and resolves review threads before merge. The repository has a single maintainer. GitHub requires a pull request and resolved conversations, with the minimum approval count set to zero. Checking that the COMMENT review exists and still applies is the maintainer's responsibility. Every maintained branch requires the six GitHub Actions Code check contexts. Main and each registered release and support branch also require an up-to-date candidate and a successful `Release candidate validated (<target branch>)` from GitHub Actions. Moving the base invalidates stale candidate CI. No ruleset grants a bypass.
@@ -15,7 +15,7 @@ At the v1.0.0 baseline, the published tag and `main` both pointed to `43a17659bb
 
 Run the commands from this repository with an authenticated `gh`. Planning reads GitHub and prints the proposed API payloads. Applying requires repository administration and permission to create refs. Run one cutover or line-registration operation at a time. Keep existing protections in place.
 
-1. Merge the reviewed policy PR to `main` under the previous rules. The default branch stays `main`. The policy merge is a bootstrap commit after v1.0.0. Leave the published tag at its original SHA.
+1. Merge the reviewed policy PR to `main` under the previous rules. Keep `main` as the default during initial bootstrap. The policy merge is a bootstrap commit after v1.0.0. Leave the published tag at its original SHA.
 2. Wait for the Code and Release matrix **push** workflows on that merge commit to finish. Review their jobs, attempt IDs and native reports. The initial apply checks that the current main tip is that PR's merge, the merged PR delivered this tool, the v1.0.0 tag is intact, and the executable matches the merged file. If another commit lands first, stop and reconcile the cutover point.
 3. From the merged checkout, run the plan and then substitute the merged policy PR number in the apply command.
 
@@ -26,7 +26,7 @@ Run the commands from this repository with an authenticated `gh`. Planning reads
    ```
 
    The tool adds its own rulesets, leaves the existing history and main rulesets in place, prohibits creation of unregistered release/support lines, and seeds `develop` at the policy merge. The catch-all maintained-branch rule blocks force pushes and deletion. The tag rule blocks updates and deletion of `v*` tags. It permits creation of a new release tag. Verify reads back active repository rulesets and each maintained branch's effective rules, including the unregistered-line creation guard. GitHub exposes effective rules for branch names; tag protection is checked through the active tag ruleset's target, exact pattern, rules and empty bypass list.
-4. List in-flight PRs with `gh pr list --state open --base main`. Retarget development work individually with `gh pr edit <number> --base develop`. Keep only intentional production promotions on main. Recheck the diff, review and required runs at the new base. A base edit alone may not trigger every workflow. Reopen the PR or push its reviewed update to obtain the new target's checks before merging. New feature PRs explicitly select `gh pr create --base develop`.
+4. List in-flight PRs with `gh pr list --state open --base main`. Retarget development work individually with `gh pr edit <number> --base develop`. Keep only intentional production promotions on main. Recheck the diff, review and required runs at the new base. A base edit alone may not trigger every workflow. Reopen the PR or push its reviewed update to obtain the new target's checks before merging. Verify the effective rules on both branches and the scheduled workflows, CI command and structural publisher on protected `develop`. Switch the GitHub default with `gh repo edit --default-branch develop` and confirm with `gh repo view --json defaultBranchRef` and `python3 scripts/release/git_flow.py verify`. New ordinary PRs then target `develop` by default. Release promotions explicitly select `--base main`. Existing clones can refresh their remote HEAD with `git remote set-head origin -a`.
 
 If an API write fails, rerun the same command after checking its plan and the live refs. Equal rulesets and matching branch seeds are reused. A registration retry checks the existing ref against the requested seed, including after the creation guard has been updated. Use `verify` for routine rules checks after a branch advances. A conflicting ruleset, existing ref at another SHA, or unexpected managed line requires reconciliation. The tool never resets a branch, rewrites the original main or history rulesets, publishes a tag, or retargets a PR.
 
@@ -39,6 +39,10 @@ python3 scripts/release/git_flow.py plan --line release/1.1 --from develop
 python3 scripts/release/git_flow.py apply --line release/1.1 --from develop --at <planned-seed-sha>
 python3 scripts/release/git_flow.py verify
 ```
+
+Ordinary fixes land on `develop` with their regression coverage. The backport maintainer checks each supported line and any active stabilization line against the original defect. For each affected target, branch from its tip, cherry-pick the fix and tests with `git cherry-pick -x <fix-commit>`, adapt them as needed, and open a PR against that target. Record the source PR, target PRs and the reason for skipping unaffected lines. Skip fixes already present. Features and API removals stay on the development path under the [compatibility policy](releasing.md#stable-versions-and-public-apis).
+
+For example, accumulate approved 1.0.x fixes on `release/1.0` while 1.1 development continues. When the maintainer chooses to ship, promote that branch to `main`, qualify the resulting commit and tag it `v1.0.1`. The branch is reused for later patches. Freeze `release/1.1` from `develop` when the 1.1 feature set is ready.
 
 For an urgent production patch, branch from the latest published tag on the production line or from its matching main tip. Target a PR at that line's existing release branch. If no such branch exists, register it with e.g. `--line release/1.1 --from v1.1.0`. Advance an existing release line through a reviewed synchronization PR from production if it lacks a production fix. Keep released branches protected after promotion, and reuse the line for later patches without resetting it. Promote the patch by a release-to-main PR. During stabilization on a newer release branch, propagate the fix there immediately and forward to develop. Propagate stabilization fixes to develop by PR as they land.
 

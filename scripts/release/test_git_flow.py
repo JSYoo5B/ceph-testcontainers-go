@@ -17,6 +17,7 @@ class Repository:
         self.policies = {}
         self.branches = {"main": "a" * 40}
         self.writes = []
+        self.default_branch = "main"
         self.admin = True
         self.extra = []
         self.releases = [{"tag_name": "v1.0.0", "draft": False, "prerelease": False}]
@@ -35,7 +36,7 @@ class Repository:
             self.policies[key] = dict(body, id=key, source=flow.REPO, source_type="Repository")
             return self.policies[key]
         if not path:
-            return {"default_branch": "main", "allow_merge_commit": True, "permissions": {"admin": self.admin}}
+            return {"default_branch": self.default_branch, "allow_merge_commit": True, "permissions": {"admin": self.admin}}
         if path == "rulesets":
             return list(self.policies.values())
         if path.startswith("rulesets/"):
@@ -88,6 +89,22 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(tags["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
         self.assertEqual(tags["rules"], [{"type": "update"}, {"type": "deletion"}])
         self.assertTrue(all(not p["bypass_actors"] for p in self.repo.policies.values()))
+
+    def test_develop_default_after_bootstrap(self):
+        self.cutover()
+        self.repo.default_branch = "develop"
+        self.repo.writes.clear()
+        flow.main(["verify"])
+        args = ["--line", "release/1.1", "--from", "develop"]
+        flow.main(["plan", *args])
+        with self.assertRaisesRegex(ValueError, "initial cutover"):
+            self.cutover()
+        self.assertFalse(self.repo.writes)
+        flow.main(["apply", *args, "--at", self.repo.branches["develop"]])
+        flow.main(["verify"])
+        self.repo.default_branch = "topic"
+        with self.assertRaisesRegex(ValueError, "default branch"):
+            flow.main(["verify"])
 
     def test_registration_installs_gate_before_releasing_name_and_seeding(self):
         self.cutover()

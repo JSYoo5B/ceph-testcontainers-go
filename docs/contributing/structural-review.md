@@ -141,10 +141,8 @@ When a Structural review evidence run completes,
 the comment is updated as soon as the evidence exists. The source workflow
 runs only for pull requests, and the publisher also requires a pull-request
 source event. GitHub can still
-show main as the publisher's branch because it executes trusted default-branch
-code. The filter also excludes PRs whose source branch is named `main`,
-including fork branches with that name; their reports remain in the evidence artifacts
-and can be published with the manual delivery inputs below.
+show the default branch as the publisher's branch because it executes trusted
+default-branch code. The evidence workflow records the source PR head.
 
 The publisher verifies GitHub's run/PR association,
 workflow identity, latest attempt, exact head/base, artifact digests and the
