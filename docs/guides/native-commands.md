@@ -584,7 +584,9 @@ Commands that RBD and RBD mirroring tests commonly need:
 rbd create --size 64M --image-feature layering,exclusive-lock volumes/disk
 rbd snap create volumes/disk@before
 rbd status volumes/disk --format json          # watchers
-rbd lock ls volumes/disk --format json
+rbd lock ls volumes/disk --format json        # locker identities and IDs
+rbd info volumes/disk --format json           # format and image ID
+rados -p volumes lock info "rbd_header.${image_id}" rbd_lock --format json  # includes type and tag
 rbd namespace list --pool volumes --format json
 rbd trash list --pool volumes --namespace tenant-a --format json
 

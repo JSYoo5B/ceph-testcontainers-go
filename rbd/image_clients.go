@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/lockcookie"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 )
 
@@ -33,7 +33,8 @@ type ImageLock struct {
 	// Address is the owner's IP:port/nonce, the form that
 	// override.AddBlocklist takes.
 	Address string
-	// Managed marks the lock that librbd takes for exclusive-lock.
+	// Managed reports an exclusive header lock with the librbd internal tag
+	// and an encoded watch cookie. Advisory IDs may use the same spelling.
 	Managed bool
 }
 
@@ -103,11 +104,42 @@ func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 	if err != nil {
 		return nil, fmt.Errorf("read watchers of RBD image %s: %w", name, err)
 	}
-	locks, err := servicehook.ClientCommand(ctx, c, append([]string{"rbd", "lock", "ls"}, spec...)...)
+	info, err := servicehook.ClientCommand(ctx, c, append([]string{"rbd", "info"}, spec...)...)
+	if err != nil {
+		return nil, fmt.Errorf("read header of RBD image %s: %w", name, err)
+	}
+	header, err := imageLockHeader(info, image)
+	if err != nil {
+		return nil, fmt.Errorf("identify header of RBD image %s: %w", name, err)
+	}
+	args := []string{"rados", "--pool", pool, "--format", "json"}
+	if namespace != "" {
+		args = append(args, "--namespace", namespace)
+	}
+	locks, err := servicehook.ClientCommand(ctx, c, append(args, "lock", "info", header, "rbd_lock")...)
 	if err != nil {
 		return nil, fmt.Errorf("read locks of RBD image %s: %w", name, err)
 	}
 	return parseImageClients(watchers, locks)
+}
+
+func imageLockHeader(data []byte, image string) (string, error) {
+	var info struct {
+		Format int    `json:"format"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &info); err != nil {
+		return "", err
+	}
+	switch info.Format {
+	case 1:
+		return image + ".rbd", nil
+	case 2:
+		if info.ID != "" {
+			return "rbd_header." + info.ID, nil
+		}
+	}
+	return "", errors.New("missing or unsupported RBD image header identity")
 }
 
 func imageSpec(pool, namespace, image string) string {
@@ -128,13 +160,31 @@ func parseImageClients(watcherData, lockData []byte) (*ImageClientStatus, error)
 	if err := json.Unmarshal(watcherData, &native); err != nil || native.Watchers == nil {
 		return nil, errors.New("decode RBD image watchers")
 	}
-	var locks []struct {
-		ID      string `json:"id"`
-		Locker  string `json:"locker"`
-		Address string `json:"address"`
+	var locks struct {
+		Name    string  `json:"name"`
+		Type    string  `json:"type"`
+		Tag     *string `json:"tag"`
+		Lockers []struct {
+			ID      string `json:"cookie"`
+			Locker  string `json:"name"`
+			Address string `json:"addr"`
+		} `json:"lockers"`
 	}
-	if err := json.Unmarshal(lockData, &locks); err != nil || locks == nil {
-		return nil, errors.New("decode RBD image locks")
+	if err := json.Unmarshal(lockData, &locks); err != nil || locks.Name != "rbd_lock" || locks.Tag == nil || locks.Lockers == nil {
+		return nil, errors.New("decode RBD header lock")
+	}
+	switch locks.Type {
+	case "exclusive", "exclusive-ephemeral":
+		if len(locks.Lockers) > 1 {
+			return nil, errors.New("exclusive RBD header lock has multiple owners")
+		}
+	case "none":
+		if len(locks.Lockers) != 0 {
+			return nil, errors.New("unlocked RBD header has lockers")
+		}
+	case "shared":
+	default:
+		return nil, fmt.Errorf("unknown RBD header lock type %q", locks.Type)
 	}
 	status := &ImageClientStatus{Watchers: []ImageWatcher{}, Locks: []ImageLock{}}
 	for _, watcher := range native.Watchers {
@@ -143,11 +193,11 @@ func parseImageClients(watcherData, lockData []byte) (*ImageClientStatus, error)
 		}
 		status.Watchers = append(status.Watchers, ImageWatcher{Address: watcher.Address, ClientID: watcher.Client, Cookie: watcher.Cookie})
 	}
-	for _, lock := range locks {
+	for _, lock := range locks.Lockers {
 		if lock.ID == "" || lock.Locker == "" || lock.Address == "" {
 			return nil, errors.New("RBD image lock lacks its owner identity")
 		}
-		status.Locks = append(status.Locks, ImageLock{ID: lock.ID, Locker: lock.Locker, Address: lock.Address, Managed: strings.HasPrefix(lock.ID, "auto ")})
+		status.Locks = append(status.Locks, ImageLock{ID: lock.ID, Locker: lock.Locker, Address: lock.Address, Managed: locks.Type == "exclusive" && *locks.Tag == "internal" && lockcookie.Valid(lock.ID)})
 	}
 	return status, nil
 }
