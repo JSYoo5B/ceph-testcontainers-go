@@ -39,6 +39,10 @@ on:
         description: Base commit of a pull request that opted in with the ci:selected-batches label; run only the batches that reach a declaration changed since it, and list every batch with its reason in the job summary. Empty runs every batch
         default: ''
         type: string
+      require_profiles:
+        description: Fail a required release validation if a category has no runnable profiles
+        default: false
+        type: boolean
       networks:
         description: Run each batch in its default Docker network mode (default) or in every mode its tests declare (all)
         default: default
@@ -162,6 +166,13 @@ jobs:
           else
             python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --goarch "$SCENARIO_GOARCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
+      - name: Require native profiles for release validation
+        if: inputs.require_profiles
+        env:
+          COUNT: ${{ steps.plan.outputs.count }}
+        run: |
+          test "$COUNT" -gt 0
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
         run: python3 .github/scripts/tag_scenarios.py modules --directory artifacts/modules
@@ -222,6 +233,9 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref }}
+      - name: Verify the release candidate checkout
+        if: inputs.require_profiles
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-go@v7
         id: go
         with:

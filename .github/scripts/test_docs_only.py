@@ -390,6 +390,11 @@ class WorkflowWiringTests(unittest.TestCase):
         header = self.job("vulncheck").split("    steps:", 1)[0]
         self.assertIn("    if: ${{ !cancelled() }}\n", header)
 
+    def test_only_develop_prs_supply_a_base_for_docs_only(self):
+        changes = self.job("changes")
+        self.assertIn("BASE: ${{ github.base_ref == 'develop' && github.event.pull_request.base.sha || '' }}", changes)
+        self.assertIn('docs_only.py --event "$EVENT" --base "$BASE"', changes)
+
     def test_required_check_names_are_unchanged(self):
         names = re.findall(r"(?m)^    name: (.*)$", self.text)
         for required in ("Unit tests", "Race detector", "Vet, compile and CI tooling",

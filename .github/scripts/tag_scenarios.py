@@ -787,8 +787,8 @@ def release_matrix(scope, check_prefix, current=None):
     release and release-bound category.
 
     The supported releases are run_image_matrix.SUPPORTED_RELEASES, so a new
-    release is one row there. Scope all is Periodic; scope others leaves
-    out the current release, which the pull request entry points already run.
+    release is one row there. Scope all covers both the release candidate and periodic matrices.
+    Scope others omits the current release.
     The environment category needs no Ceph release and stays a separate job.
     """
     if scope not in RELEASE_SCOPES:
@@ -1052,7 +1052,7 @@ def declaration_summary(selection, category):
              + " batches selected since " + cell(selection.get("merge_base") or selection["base"]) + "."]
     if not selection.get("advisory", True):
         lines += ["", "Only the selected batches run here, by opt-in. The selection is advisory: "
-                      "pushes to main run every batch."]
+                      "pushes to develop run every batch."]
     if selection.get("error"):
         lines += ["", "Every batch runs: the analysis failed: " + cell(selection["error"])]
     for reason in selection["fallback"]:

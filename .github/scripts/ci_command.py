@@ -269,7 +269,7 @@ def main(argv=None):
             decision = select(json.loads(args.request), json.loads(args.vocabulary.read_text()))
         else:
             decision = {"accepted": False, "reply": "Nothing runs: the planner of the head commit could not list "
-                        "its batches. Rebase the pull request onto `main` if it predates CI commands."}
+                        "its batches. Update the pull request from its target branch if it predates CI commands."}
         outputs = {"accepted": str(decision["accepted"]).lower(), "reply": json.dumps(decision.get("reply", "")),
                    **{key: decision.get(key, "" if key in ("profiles", "key", "context") else [])
                       for key in ("profiles", "releases", "batches", "key", "context")}}

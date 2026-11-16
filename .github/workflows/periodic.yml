@@ -175,7 +175,6 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          CI_RELEASE_PHASE: ${{ vars.CI_RELEASE_PHASE }}
           PERIODIC_SCHEDULE: ${{ github.event.schedule }}
           PERIODIC_MODE: ${{ inputs.mode }}
         run: python3 .github/scripts/periodic_gate.py --workflow periodic.yml --campaign-schedule '23 4 * * *'

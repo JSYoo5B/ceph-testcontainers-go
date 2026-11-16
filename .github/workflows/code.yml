@@ -2,8 +2,10 @@ name: Code checks
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main, 'release/**', 'support/**']
   pull_request:
+    branches: [develop, main, 'release/**', 'support/**']
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
   # A weekly scan catches new advisories without a source change.
   schedule:
@@ -44,7 +46,7 @@ jobs:
         id: classify
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.base_ref == 'develop' && github.event.pull_request.base.sha || '' }}
           FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           if [ "$EVENT" = pull_request ] && [ -n "$BASE" ]; then
@@ -137,7 +139,9 @@ jobs:
       - name: Compile all and explicit optional tags without Docker
         run: make tag-compile
       - name: Check CI selection, image, cleanup and completion tooling without Docker
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
       # Parses every workflow as YAML and resolves reusable-workflow calls,
       # which the regex-based tooling tests above cannot. actionlint does not
       # know job.check_run_id yet.

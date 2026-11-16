@@ -6,9 +6,6 @@ on:
   workflow_run:
     workflows: [Structural review evidence]
     types: [completed]
-    # The source workflow runs only for pull requests; this also leaves out a
-    # pull request whose source branch is named main, as it always has.
-    branches-ignore: [main]
 
 permissions: {}
 

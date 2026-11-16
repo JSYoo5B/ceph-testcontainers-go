@@ -1,23 +1,18 @@
 name: Recovery
 
-# Runtime batches never read documentation or the separately built go-ceph
-# probe module, so a change to those alone runs only Code checks.
-#
-# This category does not gate every merge. A pull request runs only the
-# batches whose own test files it changes, or every batch when it has the
-# ci:full label or while the repository variable CI_RELEASE_PHASE is "true".
-# Pushes to main run it only in a release phase; otherwise Periodic runs
-# every batch on main.
+# Development PRs run changed batches or the full category with ci:full. Release candidates run the full Release matrix.
+
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths-ignore:
       - 'docs/**'
       - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    branches: [develop]
+    types: [opened, synchronize, reopened, edited, labeled]
     paths-ignore:
       - 'docs/**'
       - '*.md'
@@ -38,7 +33,7 @@ jobs:
   scenarios:
     name: Scenarios
     if: >-
-      (github.event_name != 'push' || vars.CI_RELEASE_PHASE == 'true') &&
+      github.event_name != 'push' &&
       (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     uses: ./.github/workflows/tagged-runtime.yml
     with:
@@ -47,10 +42,8 @@ jobs:
       changed_since: >-
         ${{ github.event_name == 'pull_request' &&
         !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
-        vars.CI_RELEASE_PHASE != 'true' &&
         github.event.pull_request.base.sha || '' }}
       changed_head: >-
         ${{ github.event_name == 'pull_request' &&
         !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
-        vars.CI_RELEASE_PHASE != 'true' &&
         github.event.pull_request.head.sha || '' }}

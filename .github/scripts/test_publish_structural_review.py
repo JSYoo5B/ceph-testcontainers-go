@@ -432,7 +432,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("workflow_run:", workflow)
         self.assertIn("workflows: [Structural review evidence]", workflow)
         self.assertIn("    types: [completed]\n", workflow)
-        self.assertIn("    branches-ignore: [main]\n", workflow)
+        self.assertNotIn("branches-ignore:", workflow)
         self.assertIn("if: github.event.workflow_run.event == 'pull_request'", workflow)
         self.assertIn("pull-requests: write", workflow)
         self.assertNotIn("pull_request_target", workflow)
