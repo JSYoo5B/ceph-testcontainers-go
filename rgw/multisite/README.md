@@ -19,15 +19,20 @@ quotas) stays in [`rgw`](../README.md), accounts in
    both accept writes) or `multisite.WithTopology(topology)` for more zones and
    zonegroups. `img` is the gateway image. `AddZone`, `AddZonegroup` and
    `RemoveZone` change the topology later.
-3. **Hand the endpoints to the SUT**: each `Zone`'s `rgw.Gateway`
+3. **Wait for the test user's metadata on each secondary** before handing
+   its endpoint and credentials to a SUT that sends signed requests. `Run`
+   creates the user on the master and exposes its keys on the gateways. Call
+   `WaitSyncReady(ctx, secondaryZone)` with no source arguments to wait for
+   metadata to catch up.
+4. **Hand the endpoints to the SUT**: each `Zone`'s `rgw.Gateway`
    (`Source`, `Destination`, `Zones()`) gives `S3Endpoint`, `Region` and the
    test user's `AccessKey` / `SecretKey`. Create users through the master.
-4. **Shape replication** when the scenario needs it: `CreateSyncGroup`, then
+5. **Shape replication** when the scenario needs it: `CreateSyncGroup`, then
    `SyncGroup.CreateFlow` / `CreatePipe` / `SetStatus` and `SyncGroup.Apply`
    for zonegroup policy; `InterruptZoneLink` and `ApplyZoneLinkProfile` cut or
    slow the link between zones; `PullSourcePeriod` / `PullDestinationPeriod`
    carry a planned master change.
-5. **Observe and verify**: `WaitSyncReady` (metadata and data catch-up),
+6. **Observe and verify**: `WaitSyncReady` (metadata and data catch-up),
    `SyncGroup.WaitBucketPolicyReady`, `SyncGroup.WaitBucketSyncReady`, then read
    the objects through the other zone's endpoint. `WatchSync` and
    `SyncGroup.WatchBucketSync` report lag and catch-up while a fault runs;
@@ -35,7 +40,7 @@ quotas) stays in [`rgw`](../README.md), accounts in
    [`rgw/expect`](../expect/README.md) evaluates one zone's captured
    `SyncStatus` against a stated direction: caught up with, or behind, one
    source. `ZoneAdmin` runs `radosgw-admin` in any zone.
-6. **Clean up**: terminate the fixture before the clusters; a non-nil
+7. **Clean up**: terminate the fixture before the clusters; a non-nil
    `*Fixture` returned with an error must still be terminated.
 
 ```golang
@@ -55,13 +60,19 @@ if ms != nil {
 if err != nil {
 	t.Fatal(err)
 }
-eastEndpoint, err := ms.Source.S3Endpoint(ctx)
+if _, err := ms.WaitSyncReady(ctx, "west"); err != nil {
+	t.Fatal(err)
+}
+westEndpoint, err := ms.Destination.S3Endpoint(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-// Write through east, then wait for metadata in west before writing objects
-// into a new bucket, and poll west for the objects.
+// Configure the SUT with westEndpoint and ms.Destination's region and keys.
 ```
+
+After creating a bucket, wait for metadata again in every zone before writing
+objects into it. To verify object replication, read and compare the bytes
+through the destination endpoint.
 
 ## Watching sync
 
@@ -196,7 +207,10 @@ period. `IncrementalSync` and `SyncLeasePeriod` are independent.
   repeat requests, so writes through it fail; check the gateway's state before
   blaming the restarted zone.
 - The fixture owns its gateways, setup clients and the HTTP bridge between
-  zones; `Terminate` leaves realm, zone configuration and data in the clusters.
+  zones. In bridge mode, that peer network is internal to Docker. Gateways
+  serve host-published S3 ports through their cluster networks, including
+  while a peer link is interrupted. `Terminate` leaves realm, zone
+  configuration and data in the clusters.
   Do not edit periods or zones while topology changes or `SyncGroup.Apply` run.
   Serialize these period writers with `placement.Placement.Apply` in the same
   realm. If a placement update or commit is uncertain, retry the original
