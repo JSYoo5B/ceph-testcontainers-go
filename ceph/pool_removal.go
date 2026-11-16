@@ -28,6 +28,13 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 		return err
 	}
 	replicated, erasure := "tc-"+name+"-replicated", "tc-"+name+"-ec"
+	if skipForeign {
+		if handle.CRUSHRule == erasure {
+			replicated = ""
+		} else {
+			erasure = ""
+		}
+	}
 	ruleNames := slices.Collect(maps.Values(rules))
 	profiles, err := poolCatalog{c.conn()}.erasureCodeProfiles(ctx)
 	if err != nil {
@@ -39,11 +46,14 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 	}
 	if index >= 0 {
 		pool := pools[index]
+		if skipForeign && !handle.ident.bound {
+			return invalid(fmt.Errorf("pool %q has an unconfirmed native ID after partial creation; refusing removal", name))
+		}
 		if err := handle.matchLocked(name, pool.ID); err != nil {
 			return err
 		}
 		rule := rules[pool.CRUSHRule]
-		if rule != replicated && rule != erasure {
+		if rule == "" || (rule != replicated && rule != erasure) {
 			if skipForeign {
 				return nil
 			}
