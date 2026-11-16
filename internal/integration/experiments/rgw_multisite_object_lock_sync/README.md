@@ -163,15 +163,12 @@ Native results (Linux amd64 host, Docker, aggregate images, one run each):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: zone b answers `200` enabled without a rule after the `initial` checkpoint; `update` not run | 216 s |
-| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…` | `NOT_REPRODUCED` | 101 s |
-| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 79 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: zone b answers `200` enabled without a rule after the `initial` checkpoint; `update` not run | 216 s |
+| Tentacle 20.2.5, `quay.io/ceph/ceph:v20.2.5` | `NOT_REPRODUCED` | 101 s |
+| Umbrella 21.2.0, `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 79 s |
 
-Earlier, failing-test results on the pinned role images of the shared
-recipe agree: 20.2.4 (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
-`aac25fc48b53…`, 217 s) and 19.2.5 (essential `43ee23624e7a…`, client
-`a69e1319ce88…`, rgw `1fbe1bd4ecc0…`, 224 s) reproduced; 21.2.0 (essential
-`119180026952…`, client `e5f7edab88b6…`, rgw `9ef3fb34f7c4…`, 80 s) and the
+Earlier, failing-test results on the role images of the shared
+recipe agree: 20.2.4 (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`, 217 s) and 19.2.5 (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-rgw`, 224 s) reproduced; 21.2.0 (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`, 80 s) and the
 20.2.5 official image (100 s) did not.
 
 ## Cleanup and limits

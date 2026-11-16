@@ -134,17 +134,15 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 | Image | Result | Test time |
 | --- | --- | --- |
-| 20.2.4 aggregate `sha256:2e57651a5aa7…`, the default image when recorded | `REPRODUCED`: six symptoms, every `docs/` request carries the noncurrent days (30, or 90 instead of 7) | 30.9 s |
-| 21.2.0 official `sha256:c9e6ed4ac3fc…` | `NOT_REPRODUCED` | 30.8 s |
+| 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: six symptoms, every `docs/` request carries the noncurrent days (30, or 90 instead of 7) | 30.9 s |
+| 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 30.8 s |
 
 ## Reading the result
 
-The results below ran on the pinned images of the shared recipe: the 20.2.4
-role images (essential `3c7a6d0ae445…`, client `56b5c03d450c…`, rgw
-`aac25fc48b53…`), the 20.2.5 aggregate `sha256:4337ac8ac81d…`, the 21.2.0
-role images (essential `119180026952…`, client `e5f7edab88b6…`, rgw
-`9ef3fb34f7c4…`) and the 19.2.5 role images (essential `43ee23624e7a…`,
-client `a69e1319ce88…`, rgw `1fbe1bd4ecc0…`).
+The results below ran on the images of the shared recipe: the 20.2.4
+role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`), the 20.2.5 aggregate `quay.io/ceph/ceph:v20.2.5`, the 21.2.0
+role images (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and the 19.2.5 role images (`official-19.2.5-essential`,
+`official-19.2.5-client`, `official-19.2.5-rgw`).
 
 - **Pass:** every request followed the table. Tentacle 20.2.5 and Umbrella
   21.2.0 pass.

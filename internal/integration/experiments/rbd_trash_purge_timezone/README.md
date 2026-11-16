@@ -150,7 +150,7 @@ Native results (Linux amd64 host, Docker, aggregate image, one run):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: ahead-9h retains `due-6h` too; behind-9h retains only `due-30h` | 38 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: ahead-9h retains `due-6h` too; behind-9h retains only `due-30h` | 38 s |
 
 No fixed image exists to run. Earlier, failing-test runs on role images
 reproduced on Tentacle 20.2.4 (38 s), Umbrella 21.2.0 (37 s) and Squid

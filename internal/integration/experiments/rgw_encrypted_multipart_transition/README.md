@@ -128,16 +128,15 @@ A failed upload, unavailable placement, a transition that did not happen or
 a failed control fails the test and prints no result: that is a missing
 prerequisite, not `NOT_REPRODUCED`.
 
-Linux amd64 host, Docker 29.9.1, bridge, one standalone run per image; the
-image IDs are what Docker reported for the pulled tags.
+Linux amd64 host, Docker 29.9.1, bridge, one standalone run per image.
 
-| Image | Image ID | Result | Test time |
-| --- | --- | --- | --- |
-| `official-20.2.1-all`, the default | `sha256:95c4afd5c8f5…` | `REPRODUCED`: both reads answer 200 and 206 with the right length and Content-Range, wrong from offset 5,245,936 (15 bytes before the boundary) on | 49.0 s, 48.4 s |
-| `official-20.2.2-all`, the fixed image | `sha256:dd727dd6af41…` | `NOT_REPRODUCED` | 49.0 s, 47.9 s |
-| `official-20.2.4-all` | `sha256:7b12afea4c55…` | `NOT_REPRODUCED` | 47.6 s |
-| `official-19.2.6-all` | `sha256:d6e6222e6900…` | `REPRODUCED`, the same symptom at the same offset | 76.3 s |
-| `official-19.2.7-all` | `sha256:17bb5a8e830d…` | `NOT_REPRODUCED` | 74.4 s |
+| Image | Result | Test time |
+| --- | --- | --- |
+| `official-20.2.1-all`, the default | `REPRODUCED`: both reads answer 200 and 206 with the right length and Content-Range, wrong from offset 5,245,936 (15 bytes before the boundary) on | 49.0 s, 48.4 s |
+| `official-20.2.2-all`, the fixed image | `NOT_REPRODUCED` | 49.0 s, 47.9 s |
+| `official-20.2.4-all` | `NOT_REPRODUCED` | 47.6 s |
+| `official-19.2.6-all` | `REPRODUCED`, the same symptom at the same offset | 76.3 s |
+| `official-19.2.7-all` | `NOT_REPRODUCED` | 74.4 s |
 
 The 20.2.1 and 20.2.2 rows are also two runs through
 `run_experiment.py` with the fixed image, as `Experiments` runs them. On

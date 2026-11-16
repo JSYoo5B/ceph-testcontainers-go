@@ -148,13 +148,13 @@ Every attempt prints its persisted checkpoint and the snapshot listing.
   elsewhere than at the checkpoint object (`another fault`).
 
 Native results: Linux amd64 host, Docker 29.9.1, the published aggregate
-tags; the image ID is what the engine reported for the tag. One run each.
+tags. One run each.
 
 | Image | Result | Checkpoint at the kill | Attempts | Time |
 | --- | --- | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, image ID `7b12afea4c55` | `REPRODUCED`: object 20 old, 63 new | 20; checkpoints 8, 11, 13, 16 and 18 passed over as lagging | 1 | 152 s |
-| Squid 19.2.5, `…:official-19.2.5-all`, image ID `4d70c91e06d6` | `REPRODUCED`: object 11 old, 63 new | 11 | 1 | 149 s |
-| Umbrella 21.2.0, `…:official-21.2.0-all`, image ID `6e70e465e4a1` | `REPRODUCED`: object 13 old, 63 new | 13; checkpoint 11 passed over as lagging | 1 | 146 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` | `REPRODUCED`: object 20 old, 63 new | 20; checkpoints 8, 11, 13, 16 and 18 passed over as lagging | 1 | 152 s |
+| Squid 19.2.5, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all` | `REPRODUCED`: object 11 old, 63 new | 11 | 1 | 149 s |
+| Umbrella 21.2.0, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-all` | `REPRODUCED`: object 13 old, 63 new | 13; checkpoint 11 passed over as lagging | 1 | 146 s |
 
 An earlier revision of the test killed the receiver as soon as the
 checkpoint reached 8, without the read before the kill. On 20.2.4 its first

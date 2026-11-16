@@ -174,7 +174,7 @@ Native results (Linux amd64 host, Docker, aggregate image, one run):
 
 | Image | Result | Time |
 | --- | --- | --- |
-| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded) | `REPRODUCED`: shards 2, 18, 34 and 66 passed a batch on a lost lease; four buckets' objects missing 3 minutes after zone a answered again; caught up 36 s after a restart of zone b's gateway | 528 s |
+| Tentacle 20.2.4, `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded) | `REPRODUCED`: shards 2, 18, 34 and 66 passed a batch on a lost lease; four buckets' objects missing 3 minutes after zone a answered again; caught up 36 s after a restart of zone b's gateway | 528 s |
 
 No fixed image exists to run.
 

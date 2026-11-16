@@ -111,13 +111,13 @@ step 3.
 
 Native results, Linux amd64 host, one run per image and variant:
 
-- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7…` (the default image when recorded): `REPRODUCED` on bridge (357 s) and host (351 s). The
+- Tentacle 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all` (the default image when recorded): `REPRODUCED` on bridge (357 s) and host (351 s). The
   replacement registered, the distribution stayed at 4 directories on the
   survivor and 0 on the replacement, and the MGR logged the
   `DirectoryState` error.
-- Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5@sha256:4337ac8ac81d…`, bridge:
+- Tentacle 20.2.5 `quay.io/ceph/ceph:v20.2.5`, bridge:
   `REPRODUCED` (372 s), the same distribution and MGR error.
-- Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0@sha256:c9e6ed4ac3fc…`, bridge:
+- Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0`, bridge:
   `REPRODUCED` (379 s), the same distribution and MGR error.
 
 ## Cleanup and limits
