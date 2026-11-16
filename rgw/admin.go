@@ -84,7 +84,8 @@ func (u User) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, u.String())
 
 // Quota uses bytes, matching modern radosgw-admin output. For each limit,
 // -1 disables that limit; zero is an actual zero limit. Enabled controls whether
-// the configured limits are enforced. Native RGW quota caches and asynchronous
+// the configured limits are enforced. Positive byte limits must be multiples
+// of 1024, the native quota precision. Native RGW quota caches and asynchronous
 // accounting can delay enforcement; reading this policy does not flush caches.
 type Quota struct {
 	Enabled      bool
@@ -348,6 +349,9 @@ func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
 	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
 		return errors.New("RGW quota limits must be -1, zero or positive")
+	}
+	if quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
+		return servicehook.Invalid(errors.New("positive RGW quota byte limits must be multiples of 1024"))
 	}
 	return u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if native.Info.AccountID != "" {

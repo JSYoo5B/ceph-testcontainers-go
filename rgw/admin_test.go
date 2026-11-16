@@ -364,6 +364,21 @@ func TestRGWQuotaUsesByteLimitsAndVerifiesReadback(t *testing.T) {
 	}
 }
 
+func TestRGWQuotaRejectsUnalignedBytesBeforeNativeCommands(t *testing.T) {
+	gateway, ctr := newRGWAdminTestGateway(Config{})
+	user := rgwAdminOwnedTestUser(gateway)
+	for name, set := range map[string]func(context.Context, Quota) error{
+		"user": user.SetQuota, "bucket": user.SetBucketQuota,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := set(t.Context(), Quota{Enabled: true, MaxSizeBytes: 1025, MaxObjects: 8})
+			if !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 0 {
+				t.Fatalf("unaligned quota returned %v and issued %d native commands", err, len(ctr.calls))
+			}
+		})
+	}
+}
+
 func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	gateway, ctr := newRGWAdminTestGateway(Config{},
