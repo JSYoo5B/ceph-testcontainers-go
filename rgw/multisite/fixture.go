@@ -134,7 +134,11 @@ func WithTopology(config TopologyConfig) Option {
 // Use fresh clusters from ceph.Run, without gateways or RGW configuration.
 // WithConfig creates one ordinary S3 test user on the master; both gateways
 // expose its keys in AccessKey and SecretKey, and their Region is the zonegroup
-// name. The two-zone setup, and each further WithTopology zone, is bounded by
+// name. Run returns after issuing the keys on the master. Before a client uses
+// them on a secondary, call WaitSyncReady(ctx, secondaryZone) to wait for
+// user metadata to replicate there.
+//
+// The two-zone setup, and each further WithTopology zone, is bounded by
 // six minutes in addition to ctx. A secondary zone cannot start on Ceph
 // 19.2.6, whose master gateway refuses its realm pull; use 19.2.5 (see the
 // repository's known release issues guide).
