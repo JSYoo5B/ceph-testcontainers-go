@@ -91,6 +91,27 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
+			for _, advisory := range []struct{ name, features, id string }{
+				{"backup", "layering", "auto backup"},
+				{"numeric", "layering,exclusive-lock", "auto 42"},
+			} {
+				spec := pool + "/" + advisory.name
+				harness.ExecOutput(t, ctx, first, "rbd", "create", spec, "--size", "1M", "--image-feature", advisory.features)
+				harness.ExecOutput(t, ctx, first, "rbd", "lock", "add", spec, advisory.id)
+				status, err := rbd.ImageClients(ctx, cluster, pool, "", advisory.name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(status.Locks) != 1 || status.Locks[0].ID != advisory.id || status.Locks[0].Managed || status.ExclusiveOwner() != nil {
+					t.Fatalf("advisory %q: locks %+v, owner %+v", advisory.id, status.Locks, status.ExclusiveOwner())
+				}
+				for _, lock := range []expect.ExclusiveLock{expect.ExclusiveLockFree, expect.ExclusiveLockHeld} {
+					got, err := (expect.ImageClients{Lock: lock}).Evaluate(*status)
+					if err != nil || got.Matched != (lock == expect.ExclusiveLockFree) {
+						t.Fatalf("advisory %q against %s: %+v, %v", advisory.id, lock, got, err)
+					}
+				}
+			}
 			harness.ExecOutput(t, ctx, first, "rbd", "create", pool+"/"+imageName, "--size", "16M")
 			clients := func(want expect.ImageClients) *rbd.ImageClientStatus {
 				t.Helper()

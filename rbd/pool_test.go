@@ -325,8 +325,10 @@ func (control *rbdTestControl) Exec(_ context.Context, args []string, _ ...tcexe
 			}
 		case "rbd status --pool images --image disk --format json":
 			output = `{"watchers":[]}`
-		case "rbd lock ls --pool images --image disk --format json":
-			output = `[]`
+		case "rbd info --pool images --image disk --format json":
+			output = `{"format":2,"id":"abc"}`
+		case "rados --pool images --format json lock info rbd_header.abc rbd_lock":
+			output = `{"name":"rbd_lock","type":"none","tag":"","lockers":[]}`
 		default:
 			output, code = fmt.Sprintf("unexpected test command: %s", call), 1
 		}

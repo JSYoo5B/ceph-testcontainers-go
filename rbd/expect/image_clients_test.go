@@ -24,7 +24,7 @@ func lockedImage() rbd.ImageClientStatus {
 			{Address: ownerAddress, ClientID: 4102, Cookie: 92},
 		},
 		Locks: []rbd.ImageLock{
-			{ID: "advisory", Locker: "client.4103", Address: otherAddress},
+			{ID: "auto 93", Locker: "client.4103", Address: otherAddress},
 			{ID: "auto 92", Locker: "client.4102", Address: ownerAddress, Managed: true},
 		},
 	}
@@ -152,13 +152,13 @@ func TestImageClientsRefusesInvalidExpectations(t *testing.T) {
 func TestImageClientsRefusesMalformedObservations(t *testing.T) {
 	e := ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}
 	for name, mutate := range map[string]func(*rbd.ImageClientStatus){
-		"watcher without address": func(s *rbd.ImageClientStatus) { s.Watchers[0].Address = "" },
-		"watcher without client":  func(s *rbd.ImageClientStatus) { s.Watchers[0].ClientID = 0 },
-		"lock without ID":         func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "" },
-		"lock without locker":     func(s *rbd.ImageClientStatus) { s.Locks[1].Locker = "" },
-		"lock without address":    func(s *rbd.ImageClientStatus) { s.Locks[0].Address = "" },
-		"managed advisory lock":   func(s *rbd.ImageClientStatus) { s.Locks[0].Managed = true },
-		"unmanaged auto lock":     func(s *rbd.ImageClientStatus) { s.Locks[1].Managed = false },
+		"watcher without address":   func(s *rbd.ImageClientStatus) { s.Watchers[0].Address = "" },
+		"watcher without client":    func(s *rbd.ImageClientStatus) { s.Watchers[0].ClientID = 0 },
+		"lock without ID":           func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "" },
+		"lock without locker":       func(s *rbd.ImageClientStatus) { s.Locks[1].Locker = "" },
+		"lock without address":      func(s *rbd.ImageClientStatus) { s.Locks[0].Address = "" },
+		"managed advisory lock":     func(s *rbd.ImageClientStatus) { s.Locks[0].Managed = true },
+		"managed nonnumeric cookie": func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "auto backup" },
 		"two managed locks": func(s *rbd.ImageClientStatus) {
 			s.Locks = append(s.Locks, rbd.ImageLock{ID: "auto 91", Locker: "client.4101", Address: formerAddress, Managed: true})
 		},
