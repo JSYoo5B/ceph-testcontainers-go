@@ -8,6 +8,7 @@ updates:
       - "/"
       - "/internal/integration/goceph/probe"
       - "/internal/integration/awssdk/probe"
+    target-branch: develop
     schedule:
       interval: daily
     groups:
@@ -17,6 +18,7 @@ updates:
           - "github.com/testcontainers/testcontainers-go/modules/*"
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: develop
     schedule:
       interval: weekly
     groups:

@@ -310,8 +310,8 @@ a helper applies or restores it.
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
 - Umbrella 21.2.0 and Squid 19.2.5 are supported. A full Periodic run
   covers every runtime category on their role images, and the release matrix
-  runs them on pull requests and `main` during a release phase; the
-  per-change workflows use Tentacle only (see
+  runs them on PRs and pushes to production, release and support branches.
+  Ordinary development checks use Tentacle (see
   [Supported releases](../contributing/ci.md#supported-releases)).
 - Most release-specific behaviour is in the [rbd](../../rbd/README.md),
   [cephfs](../../cephfs/README.md) and [rgw](../../rgw/README.md) packages,

@@ -83,29 +83,21 @@ described above.
 3. Run the [local checks without Docker](testing.md#local-checks-without-docker)
    of the testing guide. Check local Markdown links
    and compile new examples. Compilation is not a native run.
-4. Reuse independently verified CI at the candidate's exact SHA: the six
-   required status contexts, which are the jobs of the Code checks workflow
-   (`Unit tests`, `Race detector`, `Vet, compile and CI tooling`,
-   `Compiled tag coverage and helpers`, `Vulnerability check (Go 1.26.x)`
-   and `Vulnerability check (Go 1.27.x)`; see
-   [Code checks](ci.md#code-checks)), and the runtime workflows (Docker,
-   short, topology, recovery and multicluster, and the other
-   [supported releases](ci.md#supported-releases) through a full Ceph
-   periodic run or the release matrix), which no rule requires but the
-   release does. Record the workflow/run and
-   attempt identities and the image references that ran. A
-   canceled, skipped or missing scenario is not a native pass. Record
-   vulnerability-scan results from Code checks as well.
+4. Verify Code checks and the complete release matrix for the exact
+   production or support branch push commit that will receive the tag.
+   Record the branch, full SHA, workflow runs, attempts, job conclusions and
+   image references. Check the six [Code checks](ci.md#code-checks) and
+   [release candidate validation](ci.md#release-candidate-validation),
+   including native execution on every supported Ceph release. A canceled,
+   skipped or missing required scenario cannot qualify a candidate.
 5. Review failed attempts, not just their latest conclusion. Keep fixed
    cases linked to their correction and regression. Unresolved cases need
    a disposition and live owner.
 6. Confirm native completion and cleanup for the claimed profiles. Strict
    upstream-defect tests under `native_regression` are opt-in, outside
    `all`; document their limits instead of counting them as required passes.
-7. If code or dependency behavior changes after those checks, validate the
-   affected paths again at the new SHA. For documentation-only changes,
-   retain the implementation's native evidence and record the new static
-   checks separately; do not describe old CI as CI of the new SHA.
+7. If the candidate changes, repeat candidate verification at the new SHA,
+   including for a documentation-only change.
 
 Do not dispatch duplicate native runs merely because a release is being
 prepared, and do not cancel existing main CI as part of documentation work.

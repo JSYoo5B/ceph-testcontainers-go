@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changes and why. Link the issue: "Closes #N" only when this pull request completes it, "Refs #N" otherwise. -->
+<!-- After cutover, check the base: develop for features, the affected maintained line for fixes. What changes and why. Link the issue: "Closes #N" only when this pull request completes it, "Refs #N" otherwise. -->
 
 ## Consumer-visible changes
 
