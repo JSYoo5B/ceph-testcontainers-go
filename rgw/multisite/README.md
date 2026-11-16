@@ -207,7 +207,10 @@ period. `IncrementalSync` and `SyncLeasePeriod` are independent.
   repeat requests, so writes through it fail; check the gateway's state before
   blaming the restarted zone.
 - The fixture owns its gateways, setup clients and the HTTP bridge between
-  zones; `Terminate` leaves realm, zone configuration and data in the clusters.
+  zones. In bridge mode, that peer network is internal to Docker. Gateways
+  serve host-published S3 ports through their cluster networks, including
+  while a peer link is interrupted. `Terminate` leaves realm, zone
+  configuration and data in the clusters.
   Do not edit periods or zones while topology changes or `SyncGroup.Apply` run.
   Serialize these period writers with `placement.Placement.Apply` in the same
   realm. If a placement update or commit is uncertain, retry the original

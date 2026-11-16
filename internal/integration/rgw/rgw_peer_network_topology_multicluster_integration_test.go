@@ -88,6 +88,15 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A published endpoint can reset while the gateway is healthy on its
+	// local bridge. Exercise both host clients immediately after the cut.
+	fromA, fromB := []byte("new source object while HTTP peer link is cut"), []byte("new secondary object while HTTP peer link is cut")
+	a.Request(t, ctx, http.MethodPut, bucket+"/from-a", fromA, http.StatusOK)
+	b.Request(t, ctx, http.MethodPut, bucket+"/from-b", fromB, http.StatusOK)
+	peerBridge, err := docker.NetworkInspect(ctx, cut.NetworkName, mobycl.NetworkInspectOptions{})
+	if err != nil || !peerBridge.Network.Internal {
+		t.Fatalf("multisite peer bridge must carry inter-zone traffic only: internal=%v err=%v", peerBridge.Network.Internal, err)
+	}
 	peer := before.Container.NetworkSettings.Networks[cut.NetworkName]
 	if peer == nil || peer.IPAddress != cut.OriginalAddress || len(peer.Aliases) == 0 || cut.NetworkName == harness.StaticFacts(clusters[1]).NetworkName {
 		t.Fatal("interruption did not identify the original peer-only endpoint")
@@ -106,9 +115,6 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	if got := b.Request(t, ctx, http.MethodGet, bucket+"/seed", nil, http.StatusOK); !bytes.Equal(got, seed) {
 		t.Fatal("isolated zone did not read its retained stored object")
 	}
-	fromA, fromB := []byte("new source object while HTTP peer link is cut"), []byte("new secondary object while HTTP peer link is cut")
-	a.Request(t, ctx, http.MethodPut, bucket+"/from-a", fromA, http.StatusOK)
-	b.Request(t, ctx, http.MethodPut, bucket+"/from-b", fromB, http.StatusOK)
 	if got := b.Request(t, ctx, http.MethodGet, bucket+"/from-b", nil, http.StatusOK); !bytes.Equal(got, fromB) {
 		t.Fatal("isolated zone did not accept a local object write")
 	}

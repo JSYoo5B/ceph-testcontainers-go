@@ -34,9 +34,9 @@ func TestRecoverableBridgePublishedPort(t *testing.T) {
 			t.Errorf("close published-port regression Docker client: %v", err)
 		}
 	})
-	newBridge := func() *testcontainers.DockerNetwork {
+	newBridge := func(create func(context.Context) (*testcontainers.DockerNetwork, error)) *testcontainers.DockerNetwork {
 		t.Helper()
-		bridge, err := dockerbridge.New(ctx)
+		bridge, err := create(ctx)
 		if bridge != nil {
 			t.Cleanup(func() {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
@@ -54,7 +54,7 @@ func TestRecoverableBridgePublishedPort(t *testing.T) {
 		}
 		return bridge
 	}
-	public, peer := newBridge(), newBridge()
+	public, peer := newBridge(dockerbridge.New), newBridge(dockerbridge.NewInternal)
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:          "busybox:1.37.0",

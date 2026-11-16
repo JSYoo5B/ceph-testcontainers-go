@@ -286,7 +286,9 @@ func (f *Fixture) startPairClients(ctx context.Context, setup pairSetup) (*testc
 	peerNetwork := ""
 	if !setup.sourceHostNetwork {
 		var err error
-		bridge, err = dockerbridge.New(ctx)
+		// Keep published S3 traffic on the cluster bridge. Docker Desktop may
+		// forward host ports to any externally routed gateway attachment.
+		bridge, err = dockerbridge.NewInternal(ctx)
 		if bridge != nil {
 			f.httpNetwork = bridge
 			f.owned.AddCleanup("remove RGW HTTP bridge", func(cleanupCtx context.Context) error {
