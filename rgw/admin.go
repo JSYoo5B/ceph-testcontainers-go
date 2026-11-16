@@ -152,9 +152,11 @@ type UserInfo struct {
 // request it already sent: the outcome of a stopped mutation is unknown and
 // Admin never repeats it.
 //
-// A failure keeps a *ceph.NativeFailure with the exit code and errno but no
-// reason, so errors.Is(err, fs.ErrNotExist) works; run the same command with
-// Exec to see the native text. When radosgw-admin reports a fatal signal, the
+// A native exit failure keeps a *ceph.NativeFailure with the exit code and no
+// reason. When native output identifies an errno, Errno records it and
+// errors.Is can match its standard error (for example ENOENT matches
+// fs.ErrNotExist). Exit code 2 alone leaves Errno empty. Run the same command
+// with Exec to see the native text. When radosgw-admin reports a fatal signal, the
 // error text also names the signal, its thread and the first backtrace
 // frames, and says how many bytes of standard output it wrote and whether
 // they are one complete JSON document, never what they say.

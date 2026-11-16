@@ -145,7 +145,9 @@ and control characters are removed.
 It can name resources of the request, such as a pool. Some operations hide
 native output entirely, such as Cephx identity changes, configuration
 overrides and RGW administration; their errors keep a `*NativeFailure`
-without `Reason`, so `ExitCode`, `Errno` and the category stay available.
+without `Reason`. For example, a missing RGW bucket can produce exit code 2
+with an empty `Errno`. A missing notification topic whose diagnostic identifies
+`ENOENT` produces an error that matches `fs.ErrNotExist`.
 
 `RunNativeCommand` is different: it returns a nonzero exit as
 `NativeCommandResult.ExitCode`, not as an error, so that your own oracle

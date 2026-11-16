@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -90,8 +90,9 @@ func TestAccountFreshQuotaAndNonpurgeLifecycle(t *testing.T) {
 		t.Fatal("disabled account size did not use native negative KiB")
 	}
 	f.FailRemove = true
-	if err := a.Remove(t.Context()); err == nil || strings.Contains(err.Error(), "PRIVATE") {
-		t.Fatal("nonempty account removal hidden or secret leaked")
+	var refusal *ceph.NativeFailure
+	if err := a.Remove(t.Context()); !errors.As(err, &refusal) || refusal.ExitCode != 13 || refusal.Reason != "" || err.Error() != "RGW admin command failed; native output is redacted" {
+		t.Fatalf("nonempty account removal returned %v, want a redacted admin command failure", err)
 	}
 	if _, err := ownedRoot(t, g, root); err != nil {
 		t.Fatal("failed account removal changed root")

@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -36,6 +37,30 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	if err != nil {
 		t.Fatal(err)
 	}
+	plain, err := rgw.Start(ctx, cluster, rgw.Config{Name: "plain-sibling", SkipUserCreation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAccounts := func(stage string) {
+		t.Helper()
+		for _, g := range []*rgw.Gateway{plain, gateway} {
+			name := g.GatewayName + "-" + stage
+			createCtx, stop := context.WithTimeout(ctx, 40*time.Second)
+			a, err := account.Create(createCtx, g, account.Config{Name: name})
+			stop()
+			if err != nil {
+				t.Fatalf("create account %s: %v", name, err)
+			}
+			info, err := a.Info(ctx)
+			if err != nil || info.Name != name || info.ID != a.ID() {
+				t.Fatalf("account %s readback ID=%q name=%q error=%v", name, info.ID, info.Name, err)
+			}
+			if err := a.Remove(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	checkAccounts("before")
 	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-tls-replace"})
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +134,7 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	successor := harness.NewRGWTestAuthority(t)
 	moved := successor.Issue(t)
 	endpoint = replace(moved, authority.Roots, successor.Roots)
+	checkAccounts("after")
 	var unknown x509.UnknownAuthorityError
 	if _, err := rgwDialTLS(t, endpoint, authority.Roots); !errors.As(err, &unknown) {
 		t.Fatalf("a client that trusts only the previous CA was not refused for its CA: %v", err)

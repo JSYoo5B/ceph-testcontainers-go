@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
@@ -202,8 +204,9 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 		t.Logf("RGW_USER_USAGE stage=account-after-write scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 	}
 	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, owned, rootClients[1], accountBucketB)
-	if err := owned.Remove(ctx); err == nil {
-		t.Fatal("nonempty account removed without purge")
+	var refusal *ceph.NativeFailure
+	if err := owned.Remove(ctx); !errors.As(err, &refusal) || refusal.ExitCode == 0 || refusal.Reason != "" || err.Error() != "RGW admin command failed; native output is redacted" {
+		t.Fatalf("nonempty account removal returned %v", err)
 	}
 	if actual := rootClients[0].Request(t, ctx, http.MethodGet, accountBucketA+"/one", nil, http.StatusOK); !bytes.Equal(actual, accountPayload) {
 		t.Fatal("failed account removal changed data/credentials")

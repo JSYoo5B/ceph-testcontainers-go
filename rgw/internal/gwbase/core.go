@@ -25,6 +25,7 @@ type Core struct {
 	name          string
 	scope         Scope
 	port          int
+	tlsPort       int
 	publicAddress string
 	// container is the address of the gateway's exported Container field,
 	// which callers may replace; operations read it when they run.
@@ -43,9 +44,9 @@ type Params struct {
 	Name string
 	// Scope is the configured realm, zonegroup and zone.
 	Scope Scope
-	// Port is the gateway's HTTP port and PublicAddress the address a host
-	// network gateway binds; both identify its listener in the service map.
-	Port          int
+	// Port and TLSPort (zero for HTTP only) identify the Beast listeners.
+	// PublicAddress is the bind address on a host network.
+	Port, TLSPort int
 	PublicAddress string
 	// Container is the address of the gateway's exported Container field.
 	Container *testcontainers.Container
@@ -56,7 +57,7 @@ type Params struct {
 
 // NewCore returns the Core of one gateway. It does not register it.
 func NewCore(p Params) *Core {
-	return &Core{cluster: p.Cluster, name: p.Name, scope: p.Scope, port: p.Port, publicAddress: p.PublicAddress,
+	return &Core{cluster: p.Cluster, name: p.Name, scope: p.Scope, port: p.Port, tlsPort: p.TLSPort, publicAddress: p.PublicAddress,
 		container: p.Container, gateways: p.Gateways}
 }
 
