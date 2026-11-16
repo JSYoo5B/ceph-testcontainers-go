@@ -53,3 +53,13 @@ func TestKeeperScriptsCompile(t *testing.T) {
 		})
 	}
 }
+
+func TestKeeperStepLaunchReceipts(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is required for keeper receipt validation")
+	}
+	if out, err := exec.CommandContext(t.Context(), python, "-I", "testdata/step_launch.py", Script, t.TempDir()).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+}

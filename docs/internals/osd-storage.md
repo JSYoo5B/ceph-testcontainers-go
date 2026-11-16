@@ -435,7 +435,8 @@ context leaves the step unsettled: its outcome stays unknown until its own
 status file says otherwise, and a load that finishes later is recorded with the
 table it was dispatched with. Each `dmsetup` step runs detached in the keeper
 with its exit status written to a file named by the step's id, and the control
-waits for it up to a bound. A step still running at
+waits for it up to a bound. If the keeper cannot launch the subprocess, it
+records the launch error under the same id. A step still running at
 the bound is left to the kernel, never killed. Before and after every step the
 control observes the node (UUID, device number, `ACTIVE` or `SUSPENDED`, live
 and inactive tables, open count, in-flight reads and writes) and classifies it

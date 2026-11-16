@@ -90,9 +90,19 @@ elif action == "step":
         argv = ["dmsetup", "remove", "--verifyudev"] + selector
     out["op"], out["id"] = op, sid
     # Claimed before launch: a stopped dispatch without this marker never ran.
-    os.close(os.open(rcfile("step-" + sid) + ".started", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-    detached("step-" + sid, argv)
-    out.update(settled("step-" + sid, wait))
+    tag = "step-" + sid
+    status = rcfile(tag)
+    os.close(os.open(status + ".started", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    try:
+        detached(tag, argv)
+    except OSError as exc:
+        # Launch failed before a child could publish its exit status.
+        with open(status + ".err", "w") as f:
+            f.write("cannot launch step: " + str(exc))
+        with open(status + ".tmp", "w") as f:
+            f.write("1\n")
+        os.replace(status + ".tmp", status)
+    out.update(settled(tag, wait))
 elif action == "settled":
     out["id"] = sys.argv[3]
     out["started"] = os.path.exists(rcfile("step-" + sys.argv[3]) + ".started")

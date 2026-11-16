@@ -293,6 +293,23 @@ func TestRefusedLoadStopsWithoutAnotherMutation(t *testing.T) {
 	}
 }
 
+func TestRestoreConsumesFailedStepAfterLostReply(t *testing.T) {
+	b, m := newControlFixture(t)
+	m.refuse, m.lose = "load", "load"
+	if err := b.Apply(t.Context(), Profile{EIO: true}); err == nil || b.record.Unsettled != "load" {
+		t.Fatalf("lost load reply: %v, record %+v", err, b.record)
+	}
+	if err := b.Restore(t.Context()); !errors.Is(err, ceph.ErrNativeFailure) || errors.Is(err, errPending) {
+		t.Fatalf("failed step completion: %v", err)
+	}
+	if err := b.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if b.record.Unsettled != "" || b.record.Loaded != "" || len(m.ids) != 1 || m.live != b.linear {
+		t.Fatalf("failed load recovery: %+v, dispatched %v, live %q", b.record, m.ids, m.live)
+	}
+}
+
 func TestLostStepReplyIsPolledBeforeOwnedInactiveTableIsCleared(t *testing.T) {
 	b, m := newControlFixture(t)
 	m.lose = "load"
