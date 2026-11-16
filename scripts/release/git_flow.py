@@ -187,6 +187,15 @@ def published_commit(tag):
     return obj["sha"]
 
 
+def latest_stable_patch(line):
+    prefix = "v" + line + "."
+    releases = api("releases?per_page=100", pages=True)
+    tags = [r["tag_name"] for r in releases if not r["draft"] and not r["prerelease"]
+            and r["tag_name"].startswith(prefix) and re.fullmatch(VERSION, r["tag_name"])]
+    require(tags, f"no published stable release on {line}")
+    return max(tags, key=lambda tag: int(tag.rsplit(".", 1)[1]))
+
+
 def seed(name, sha, branches, apply):
     if name in branches:
         require(branches[name] == sha, f"{name} already exists at another SHA; its ref was preserved")
@@ -284,6 +293,9 @@ def main(argv=None):
         else:
             require(re.fullmatch(VERSION, args.source) and args.source[1:].rsplit(".", 1)[0] == args.line.split("/")[1],
                     "a patch or support branch must start from a stable tag on that line")
+            if args.line.startswith("support/"):
+                latest = latest_stable_patch(args.line.split("/")[1])
+                require(args.source == latest, f"{args.line} must start from the latest stable patch {latest}")
             sha = published_commit(args.source)
         if args.mode == "apply":
             require(args.at == sha, "supply the current reviewed seed SHA from the plan with --at")
@@ -292,10 +304,6 @@ def main(argv=None):
         own = candidate(args.line)
         old = {k: v for k, v in managed.items() if k != own["name"] or args.line in lines}
         verify(old, lines)
-        if args.line in branches:
-            require(args.line in lines, "unregistered line")
-            print(f"{args.line} already registered at {branches[args.line]}")
-            return
         ensure(managed, own, args.mode)
         if args.line not in lines:
             lines.add(args.line)

@@ -19,6 +19,7 @@ class Repository:
         self.writes = []
         self.admin = True
         self.extra = []
+        self.releases = [{"tag_name": "v1.0.0", "draft": False, "prerelease": False}]
 
     def api(self, path, *, method="GET", body=None, pages=False):
         path = path.split("?")[0]
@@ -50,6 +51,8 @@ class Repository:
             return result
         if path == "branches":
             return [{"name": name, "commit": {"sha": sha}} for name, sha in self.branches.items()]
+        if path == "releases":
+            return self.releases
         if path.startswith("releases/tags/"):
             return {"draft": False, "prerelease": False}
         if path.startswith("git/ref/tags/"):
@@ -111,6 +114,43 @@ class CutoverTests(unittest.TestCase):
         self.repo.writes.clear()
         flow.main(["apply", "--line", "release/1.1", "--from", "develop", "--at", self.repo.branches["develop"]])
         self.assertEqual([op[1] for op in self.repo.writes], ["PUT", "POST"])
+
+    def test_retry_after_guard_update_preserves_a_conflicting_branch(self):
+        self.cutover()
+        line = "support/1.0"
+        args = ["apply", "--line", line, "--from", "v1.0.0", "--at", flow.BASE_SHA]
+        with patch.object(flow, "seed", side_effect=RuntimeError("interrupted")):
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                flow.main(args)
+        self.repo.writes.clear()
+        self.repo.branches[line] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "another SHA"):
+            flow.main(args)
+        self.assertEqual(self.repo.branches[line], "b" * 40)
+        self.assertFalse(self.repo.writes)
+        del self.repo.branches[line]
+        flow.main(args)
+        self.assertEqual(self.repo.branches[line], flow.BASE_SHA)
+        self.assertEqual([op[0] for op in self.repo.writes], ["git/refs"])
+
+    def test_support_seed_tracks_latest_stable_patch_on_its_own_line(self):
+        self.cutover()
+        line = ["--line", "support/1.0", "--from"]
+        self.repo.releases.extend([
+            {"tag_name": "v2.0.0", "draft": False, "prerelease": False},
+            {"tag_name": "v1.0.11", "draft": True, "prerelease": False},
+            {"tag_name": "v1.0.12", "draft": False, "prerelease": True},
+            {"tag_name": "v1.0.13-rc.1", "draft": False, "prerelease": False},
+        ])
+        self.repo.writes.clear()
+        flow.main(["plan", *line, "v1.0.0"])
+        for tag in ["v1.0.10", "v1.0.2"]:
+            self.repo.releases.append({"tag_name": tag, "draft": False, "prerelease": False})
+        for mode in ["plan", "apply"]:
+            with self.assertRaisesRegex(ValueError, "v1.0.10"):
+                flow.main([mode, *line, "v1.0.0"] + (["--at", flow.BASE_SHA] if mode == "apply" else []))
+        self.assertFalse(self.repo.writes)
+        flow.main(["plan", *line, "v1.0.10"])
 
     def test_guard_drift_and_conflicting_inherited_rules(self):
         self.cutover()
