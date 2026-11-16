@@ -40,7 +40,8 @@ alone does not justify v2. Published tags remain immutable.
 ## Supported lines and backports
 
 Maintain the two most recently introduced stable product.feature lines.
-Support starts at the line's first stable release. Order lines by when
+Support starts at the line's first stable release. At v1.0.0, 1.0.x is
+the sole stable product line. Order lines by when
 they were introduced. A later patch on an older line does not move it
 ahead of the newer line. Both receive applicable ordinary bug fixes and
 security fixes. New features go to ongoing development.
