@@ -148,7 +148,9 @@ Consequences:
 - Different PRs never cancel each other. In a stack, base each PR on the head
   branch of the previous one.
 - Retargeting a PR requires checks for the new target. Confirm that the run
-  identifies the intended base and commit before using its evidence.
+  identifies the intended base and commit before using its evidence. GitHub
+  also emits `edited` for title and body changes. Those edits rerun candidate
+  validation, so prepare the description before opening the promotion PR.
 - Push runs are scoped to their own branch. A change on `develop` cannot
   cancel a release candidate on another branch.
 
@@ -802,7 +804,8 @@ It runs the environment profile and the required release-bound profiles on
 every supported Ceph release. Neither documentation-only selection nor an
 ordinary development PR changes this matrix. The target-specific check (for example,
 `Release candidate validated (release/1.2)`) gives each branch rule a single
-result for its own complete matrix. The six Code checks also apply to each candidate.
+result for its own complete matrix. A manual dispatch emits a different
+check name. The six Code checks also apply to each candidate.
 
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
