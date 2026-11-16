@@ -32,7 +32,7 @@ func newGateway(c *ceph.Container, ctr testcontainers.Container, config Config, 
 		publicAddress: publicAddress, networkName: networkName, config: config}
 	g.gatewayHandle = gwbase.NewHandle(gwbase.NewCore(gwbase.Params{
 		Cluster: c, Name: config.Name, Scope: gwbase.Scope{Realm: config.Realm, Zonegroup: config.Zonegroup, Zone: config.Zone},
-		Port: port, PublicAddress: publicAddress, Container: &g.Container,
+		Port: port, TLSPort: tlsPort, PublicAddress: publicAddress, Container: &g.Container,
 		Gateways: func() []*gwbase.Core { return gateways(c).cores() },
 	}))
 	return g

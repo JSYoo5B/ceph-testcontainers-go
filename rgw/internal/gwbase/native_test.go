@@ -2,6 +2,8 @@ package gwbase
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -46,5 +48,33 @@ func TestRGWPlacementRuntimeScopeRejectsAmbiguity(t *testing.T) {
 	data, _ = json.Marshal(duplicate)
 	if _, err := decodeRuntimeScope(data, "fixture", "beast endpoint=127.0.0.1:42001"); err == nil {
 		t.Fatal("malformed native daemon accepted")
+	}
+}
+
+func TestRuntimeScopeIdentifiesTLSListeners(t *testing.T) {
+	for _, tc := range []struct {
+		name, registration string
+		host               bool
+	}{
+		{"bridge", "beast port=7480 ssl_port=7481 ssl_certificate=/tc/rgw-tls.pem", false},
+		{"host", "beast endpoint=127.0.0.1:7480 ssl_endpoint=127.0.0.1:7481 ssl_certificate=/tc/rgw-tls.pem", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(fmt.Sprintf(`{"services":{"rgw":{"daemons":{"1":{"metadata":{
+				"hostname":"fixture","pid":"1","frontend_config#0":%q,
+				"zonegroup_id":"group-id","zonegroup_name":"group","zone_id":"zone-id","zone_name":"zone"
+			}}}}}}`, tc.registration))
+			core := NewCore(Params{Port: 7480, TLSPort: 7481, PublicAddress: "127.0.0.1"})
+			scope, err := decodeRuntimeScope(data, "fixture", core.frontendConfig(tc.host))
+			if err != nil || scope.ZoneID != "zone-id" {
+				t.Fatalf("TLS listener scope = %+v, %v", scope, err)
+			}
+			for _, port := range []int{0, 7482} {
+				core := NewCore(Params{Port: 7480, TLSPort: port, PublicAddress: "127.0.0.1"})
+				if _, err := decodeRuntimeScope(data, "fixture", core.frontendConfig(tc.host)); !errors.Is(err, errScopePending) {
+					t.Fatalf("other TLS port %d matched: %v", port, err)
+				}
+			}
+		})
 	}
 }

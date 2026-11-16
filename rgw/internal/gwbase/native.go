@@ -45,14 +45,11 @@ func (c *Core) RuntimeScope(ctx context.Context) (NativeScope, error) {
 	if hostname == "" {
 		return NativeScope{}, errors.New("RGW container hostname is empty")
 	}
-	frontend := "beast port=" + strconv.Itoa(c.port)
 	facts, factsErr := ceph.FactsOf(c.cluster)
 	if factsErr != nil {
 		return NativeScope{}, factsErr
 	}
-	if facts.UsesHostNetwork {
-		frontend = "beast endpoint=" + net.JoinHostPort(c.publicAddress, strconv.Itoa(c.port))
-	}
+	frontend := c.frontendConfig(facts.UsesHostNetwork)
 	// Registering to the service map follows starting the HTTP frontend.
 	// A successful listener probe can therefore precede the first MON report.
 	for {
@@ -70,6 +67,21 @@ func (c *Core) RuntimeScope(ctx context.Context) (NativeScope, error) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// frontendConfig mirrors the Beast frontend passed to the gateway daemon.
+func (c *Core) frontendConfig(hostNetwork bool) string {
+	listener := func(port int) string {
+		if hostNetwork {
+			return "endpoint=" + net.JoinHostPort(c.publicAddress, strconv.Itoa(port))
+		}
+		return "port=" + strconv.Itoa(port)
+	}
+	frontend := "beast " + listener(c.port)
+	if c.tlsPort != 0 {
+		frontend += " ssl_" + listener(c.tlsPort) + " ssl_certificate=/tc/rgw-tls.pem"
+	}
+	return frontend
 }
 
 func decodeRuntimeScope(data []byte, hostname, frontend string) (NativeScope, error) {
@@ -146,9 +158,9 @@ func (c *Core) CommandIn(ctx context.Context, target testcontainers.Container, s
 	data, err := servicehook.Command(ctx, target, CommandArgs(scope, args...)...)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("RGW placement command: %w", ctx.Err())
+			return nil, fmt.Errorf("RGW admin command: %w", ctx.Err())
 		}
-		return nil, clusterutil.Quiet(errors.New("RGW placement command failed; native output is redacted"), err)
+		return nil, clusterutil.Quiet(errors.New("RGW admin command failed; native output is redacted"), err)
 	}
 	return data, nil
 }
@@ -160,10 +172,10 @@ func DecodeObject(data []byte) (map[string]any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&native); err != nil || native == nil {
-		return nil, errors.New("decode RGW native placement configuration")
+		return nil, errors.New("decode RGW native JSON object")
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return nil, errors.New("RGW native placement configuration contains trailing output")
+		return nil, errors.New("RGW native JSON object contains trailing output")
 	}
 	return native, nil
 }

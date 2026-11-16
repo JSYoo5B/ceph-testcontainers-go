@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 	"testing"
@@ -242,3 +243,16 @@ var summaryFrames = func() map[string]bool {
 	}
 	return frames
 }()
+
+func TestRedactedAdminErrnoRequiresNativeEvidence(t *testing.T) {
+	for _, tc := range []struct{ text, errno string }{
+		{"failed to read bucket info for PRIVATE-BUCKET", ""},
+		{"ERROR: could not get topic PRIVATE-TOPIC: (2) No such file or directory", "ENOENT"},
+	} {
+		err := RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", 2, nil, []byte(tc.text)))
+		var failure *ceph.NativeFailure
+		if !errors.As(err, &failure) || failure.ExitCode != 2 || failure.Errno != tc.errno || failure.Reason != "" || strings.Contains(err.Error(), "PRIVATE") || errors.Is(err, fs.ErrNotExist) != (tc.errno == "ENOENT") {
+			t.Fatalf("native evidence for errno %q returned %v", tc.errno, err)
+		}
+	}
+}
