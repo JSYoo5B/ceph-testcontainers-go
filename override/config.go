@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 )
 
@@ -28,6 +29,7 @@ type ConfigHandle struct {
 }
 
 type configState struct {
+	command  mutation.Fence
 	previous *ceph.ConfigEntry
 	applied  string
 	known    bool
@@ -166,12 +168,15 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 		change.state.applied, change.state.known = setting.Value, true
 		return change, nil
 	}
-	setErr := overridehook.ConfigSet(ctx, c, setting, setting.Value)
+	setErr := change.state.command.Record(overridehook.ConfigSet(ctx, c, setting, setting.Value))
 	// A lost reply or cancellation cannot prove config set did not persist.
 	// Record readback using a bounded fresh context, preserving the original
 	// error. External writes must not race this native mutation/readback pair.
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer readCancel()
+	if err := change.state.command.Wait(readCtx); err != nil {
+		return change, errors.Join(setErr, err)
+	}
 	entries, readErr := overridehook.ConfigEntries(readCtx, c)
 	if readErr == nil {
 		if current := findConfigEntry(entries, setting); current != nil {
@@ -189,8 +194,8 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 
 // Restore returns the exact entry to its prior value, or removes it if it was
 // absent. It refuses a different current value to preserve outside edits.
-// After an uncertain restore reply, retrying reconciles the native state
-// first. Same value outside writes cannot be distinguished; external edits
+// After cancellation, retrying waits for native completion before reconciling
+// the stored state. Same value outside writes cannot be distinguished; external edits
 // must not race. A handle of a call that was not applied returns nil without
 // taking a lock. A cluster that has been terminated refuses the restore. A
 // context that ends before the topology lock is free returns the context
@@ -208,6 +213,11 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // A retry after a lost reply accepts this override's intermediate empty value.
 // Once restoration has succeeded, retrying the handle is a no-op and does not
 // repair a manager that missed that update.
+//
+// A canceled call leaves its native write running under a separate bounded
+// wait. Restore waits for its terminal reply before reconciling state.
+// If transport failure or that bound loses completion evidence, Restore keeps
+// ownership and returns an error; terminate the disposable cluster in that case.
 //
 //purpose:condition,lifetime
 func (change *ConfigHandle) Restore(ctx context.Context) error {
@@ -236,6 +246,10 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 	}
 	ctx, cancel := configDeadline(ctx, c)
 	defer cancel()
+	if err := change.state.command.Wait(ctx); err != nil {
+		return err
+	}
+
 	entries, err := overridehook.ConfigEntries(ctx, c)
 	if err != nil {
 		return err
@@ -264,13 +278,13 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 	if change.state.previous == nil {
 		if mgrModuleOption(change.setting.Name) && current.Value != "" {
 			change.state.cleared = true
-			if err := overridehook.ConfigSetEmpty(ctx, c, change.setting); err != nil {
+			if err := change.state.command.Record(overridehook.ConfigSetEmpty(ctx, c, change.setting)); err != nil {
 				return err
 			}
 		}
-		restoreErr = overridehook.ConfigRemove(ctx, c, change.setting)
+		restoreErr = change.state.command.Record(overridehook.ConfigRemove(ctx, c, change.setting))
 	} else {
-		restoreErr = overridehook.ConfigSet(ctx, c, change.setting, change.state.previous.Value)
+		restoreErr = change.state.command.Record(overridehook.ConfigSet(ctx, c, change.setting, change.state.previous.Value))
 	}
 	if restoreErr != nil {
 		return restoreErr

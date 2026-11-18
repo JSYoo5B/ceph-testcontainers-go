@@ -392,8 +392,8 @@ func TestOverridePGPrimaryKeepsAUsableHandleAfterUncertainOrPartialChanges(t *te
 			t.Fatalf("an uncertain write = %v, %v", handle, err)
 		}
 		cli.intercept = nil
-		if err := handle.Restore(t.Context()); err != nil || len(cli.entries) != 0 {
-			t.Fatalf("Restore after a lost reply = %v, entries %v", err, cli.entries)
+		if err := handle.Restore(t.Context()); err == nil || len(cli.entries) != 1 {
+			t.Fatalf("Restore without completion proof = %v, entries %v", err, cli.entries)
 		}
 	})
 	t.Run("raised level, refused entry", func(t *testing.T) {
@@ -563,5 +563,97 @@ func TestOverridePGPrimaryRestoreOnATerminatedClusterKeepsTheOverride(t *testing
 	var missing *PGPrimaryOverrideHandle
 	if err := missing.Restore(t.Context()); err == nil {
 		t.Fatal("a nil handle restored")
+	}
+}
+
+// pgDelayedWrite holds the write before the fake MON applies it. The caller
+// can cancel and read the prior map while the command is still outstanding.
+type pgDelayedWrite struct {
+	testcontainers.Container
+	command          string
+	started, release chan struct{}
+}
+
+func (d *pgDelayedWrite) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if strings.Join(args[3:], " ") == d.command {
+		close(d.started)
+		select {
+		case <-d.release:
+		case <-ctx.Done():
+			return 0, nil, ctx.Err()
+		}
+	}
+	return d.Container.Exec(ctx, args, opts...)
+}
+func TestPGPrimaryWaitsForEntryAndCompatibilityMutations(t *testing.T) {
+	for _, which := range []string{"entry", "compatibility"} {
+		for _, restore := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/restore=%v", which, restore), func(t *testing.T) {
+				require := "reef"
+				if which == "compatibility" {
+					require = "luminous"
+				}
+				c, cli, _, osd := newPGPrimaryCLI(require)
+				pool := poolHandle(t, t.Context(), c, "fixture")
+				selected := PGPrimary{PG: "7.a", OSD: osd, RaiseMinCompatClient: true}
+				var h *PGPrimaryOverrideHandle
+				if restore {
+					var err error
+					h, err = pool.OverridePGPrimary(t.Context(), selected)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				command := "osd pg-upmap-primary 7.a 1"
+				if restore {
+					command = "osd rm-pg-upmap-primary 7.a"
+				}
+				if which == "compatibility" {
+					command = "osd set-require-min-compat-client reef"
+					if restore {
+						command = "osd set-require-min-compat-client luminous"
+					}
+				}
+				d := &pgDelayedWrite{Container: cli, command: command, started: make(chan struct{}), release: make(chan struct{})}
+				c.Container = d
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					if restore {
+						done <- h.Restore(ctx)
+					} else {
+						var err error
+						h, err = pool.OverridePGPrimary(ctx, selected)
+						done <- err
+					}
+				}()
+				<-d.started
+				cancel()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+				short, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
+				if err := h.Restore(short); err == nil {
+					t.Fatal("unfinished native write reported restored")
+				}
+				stop()
+				if _, err := pool.OverridePGPrimary(t.Context(), selected); err == nil {
+					t.Fatal("successor admitted before settlement")
+				}
+				close(d.release)
+				c.Container = cli
+				if err := h.Restore(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				next, err := pool.OverridePGPrimary(t.Context(), selected)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := next.Restore(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
 	}
 }

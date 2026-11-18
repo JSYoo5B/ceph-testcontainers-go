@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 )
 
@@ -25,6 +26,7 @@ type FullRatiosHandle struct {
 }
 
 type fullRatiosState struct {
+	command            mutation.Fence
 	previous, expected ceph.FullRatios
 	pending            *ceph.FullRatios
 	fsid               string
@@ -154,6 +156,11 @@ func setFullRatiosLocked(ctx context.Context, c *ceph.Container, requested ceph.
 // that was not applied returns nil without taking a lock. A cluster that has
 // been terminated refuses the restore, and the override stays registered.
 //
+// A canceled call leaves its native write running under a separate bounded
+// wait. Restore waits for its terminal reply before reconciling state.
+// If transport failure or that bound loses completion evidence, Restore keeps
+// ownership and returns an error; terminate the disposable cluster in that case.
+//
 //purpose:condition,lifetime
 func (change *FullRatiosHandle) Restore(ctx context.Context) error {
 	if change == nil {
@@ -177,6 +184,9 @@ func (change *FullRatiosHandle) Restore(ctx context.Context) error {
 func (change *FullRatiosHandle) restoreLocked(ctx context.Context, c *ceph.Container) error {
 	if change.state.restored {
 		return nil
+	}
+	if err := change.state.command.Wait(ctx); err != nil {
+		return err
 	}
 	if !overridehook.Tracks(c, change.state.token) {
 		return errors.New("full ratios override is not tracked by this cluster")
@@ -291,7 +301,7 @@ func (change *FullRatiosHandle) transition(ctx context.Context, session override
 		change.state.pending = &next
 		// Journal both possible outcomes before invocation. A command error,
 		// canceled context or lost readback cannot prove absence of a commit.
-		if err := session.SetRatio(ctx, step.name, step.value); err != nil {
+		if err := change.state.command.Record(session.SetRatio(ctx, step.name, step.value)); err != nil {
 			return err
 		}
 		snapshot, err = session.Read(ctx)

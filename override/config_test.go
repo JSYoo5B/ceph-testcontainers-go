@@ -110,7 +110,7 @@ func TestSetConfigRefusesOutsideEditsAndSanitizesValues(t *testing.T) {
 	}
 }
 
-func TestSetConfigLostApplyAndRestoreRepliesConverge(t *testing.T) {
+func TestSetConfigTerminalNativeFailuresConverge(t *testing.T) {
 	ctr := &configFixture{failAfter: "set"}
 	c := newConfigFixture(ctr)
 	change, err := SetConfig(t.Context(), c, ceph.ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"})

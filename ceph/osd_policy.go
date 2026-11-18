@@ -53,15 +53,6 @@ const (
 // String returns the native flag token.
 func (f OSDFlag) String() string { return string(f) }
 
-func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
-	op := "unset"
-	if enabled {
-		op = "set"
-	}
-	_, err := om.conn.ceph(ctx, "osd", op, string(flag))
-	return err
-}
-
 type osdPolicySnapshot struct {
 	// epoch is the native OSDMap epoch of the dump, 0 when the dump omits it.
 	epoch uint64

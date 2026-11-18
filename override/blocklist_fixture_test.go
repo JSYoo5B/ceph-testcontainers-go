@@ -68,12 +68,14 @@ func (f *blocklistFixture) Exec(ctx context.Context, argv []string, _ ...tcexec.
 		}
 		if f.loseAdd {
 			code = 1
+			output = "Error EINVAL: injected native failure"
 		}
 	case len(args) == 4 && slices.Equal(args[:3], []string{"osd", "blocklist", "rm"}):
 		delete(f.entries, args[3])
 		f.removals++
 		if f.loseRemove {
 			code = 1
+			output = "Error EINVAL: injected native failure"
 		}
 	default:
 		return 0, nil, fmt.Errorf("unexpected blocklist command %v", args)

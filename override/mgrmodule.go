@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 )
 
@@ -19,7 +20,7 @@ import (
 // SetMGRModule returns a non-nil handle for every outcome. A handle of a call
 // that was refused or never applied owns nothing: its Restore returns nil, takes
 // no lock and never reports a restoration. A handle returned together with an
-// error for an uncertain outcome is real and still restorable. The zero value
+// error for an uncertain outcome is real and keeps restoration ownership. The zero value
 // is unavailable, and its Restore returns an error.
 type MGRModuleHandle struct {
 	owner *ceph.Container
@@ -28,6 +29,7 @@ type MGRModuleHandle struct {
 }
 
 type mgrModuleState struct {
+	command                               mutation.Fence
 	previous, applied, alwaysOn, restored bool
 	// token is the entry in the owner's registry of held overrides.
 	token overridehook.Token
@@ -169,7 +171,7 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	// it for Restore, which must not act on the membership before the respawn
 	// that the change causes.
 	change.state.pending = &mgrModuleChange{enabled: enabled, replaced: activeGID}
-	setErr := overridehook.SetMGRModule(ctx, c, name, enabled)
+	setErr := change.state.command.Record(overridehook.SetMGRModule(ctx, c, name, enabled))
 	if setErr == nil {
 		// The change respawns the MGR. Wait, within the operation's bound, for
 		// the membership and an available respawned active MGR.
@@ -187,6 +189,9 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	}
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
 	defer readCancel()
+	if err := change.state.command.Wait(readCtx); err != nil {
+		return change, errors.Join(setErr, err)
+	}
 	readErr := overridehook.WaitMGRModuleMembership(readCtx, c, name, enabled, module.AlwaysOn, activeGID)
 	if readErr == nil {
 		change.state.pending = nil
@@ -199,7 +204,7 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 // available respawned active MGR. It is idempotent and reconciles an uncertain
 // apply or restoration before mutating again: when the membership shows a
 // change whose read back was not confirmed, it first waits for the respawn
-// that change causes, and when it does not, the change did not land. It checks dependency metadata before
+// that change causes, and otherwise it reconciles the completed command against the prior state. It checks dependency metadata before
 // enabling and current filesystem/mirror usage before disabling. No-op leases
 // refuse an outside change. Outside writes equal to the applied or previous
 // boolean state cannot be distinguished and must not race.
@@ -208,6 +213,11 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 // operation on a terminated cluster, and the module stays registered. A context
 // that ends before the topology lock is free returns the context error, and the
 // module stays registered.
+//
+// A canceled call leaves its native write running under a separate bounded
+// wait. Restore waits for its terminal reply before reconciling state.
+// If transport failure or that bound loses completion evidence, Restore keeps
+// ownership and returns an error; terminate the disposable cluster in that case.
 //
 //purpose:condition,lifetime
 func (h *MGRModuleHandle) Restore(ctx context.Context) error {
@@ -236,6 +246,10 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
 	defer cancel()
+	if err := h.state.command.Wait(ctx); err != nil {
+		return err
+	}
+
 	module, activeGID, err := h.snapshot(ctx, c)
 	if err != nil {
 		return err
@@ -273,7 +287,7 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 		}
 	}
 	h.state.pending = &mgrModuleChange{enabled: h.state.previous, replaced: activeGID}
-	if err := overridehook.SetMGRModule(ctx, c, h.name, h.state.previous); err != nil {
+	if err := h.state.command.Record(overridehook.SetMGRModule(ctx, c, h.name, h.state.previous)); err != nil {
 		return err
 	}
 	if err := overridehook.WaitMGRModuleMembership(ctx, c, h.name, h.state.previous, h.state.alwaysOn, activeGID); err != nil {
