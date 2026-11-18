@@ -190,6 +190,8 @@ type managerLifecycleDaemon struct {
 	control      *managerLifecycleControl
 }
 
+func (daemon *managerLifecycleDaemon) GetContainerID() string { return "manager-" + daemon.name }
+
 func (daemon *managerLifecycleDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
 	daemon.terminations++
 	daemon.control.events = append(daemon.control.events, "terminate:"+daemon.name)

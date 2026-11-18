@@ -130,8 +130,8 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
+	defer c.mu.Unlock()
 	closed, shared, owned := c.closed, c.runDir.shared(), handle.ownedBy(c)
-	c.mu.Unlock()
 	switch {
 	case closed:
 		return nil, errClusterTerminated
@@ -144,7 +144,33 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
-	return c.adminSocketCommand(ctx, control, daemon, args...)
+	runCtx, cancelCommand := context.WithCancelCause(ctx)
+	defer cancelCommand(nil)
+	inv := &nativeInvocation{owner: c, target: control, targetID: handle.GetContainerID(), label: "admin socket",
+		cancel: cancelCommand, stopCommand: supervised.Cancel, done: make(chan struct{})}
+	switch c.native.calls.admit(inv, nil) {
+	case nativeRefusedClosed:
+		return nil, errClusterTerminated
+	case nativeRefusedFenced:
+		return nil, invalidRequest("daemon %s is fenced for removal", daemon)
+	}
+	output, err := c.adminSocketCommand(runCtx, control, daemon, args...)
+	marker, unconfirmed := supervised.Unconfirmed(err)
+	var notStopped *supervised.NotStoppedError
+	if unconfirmed && !errors.As(err, &notStopped) {
+		inv.marker = marker
+		if stopErr := inv.stop(context.WithoutCancel(ctx)); stopErr != nil {
+			err = errors.Join(err, stopErr)
+		} else {
+			unconfirmed = false
+		}
+	}
+	c.native.calls.finish(inv, marker, unconfirmed)
+	close(inv.done)
+	if unconfirmed {
+		return output, &NativeCommandUnstoppedError{invocation: inv, err: safeNativeError(err)}
+	}
+	return output, err
 }
 
 // adminSocketCommand runs args on the admin socket of daemon, which the
