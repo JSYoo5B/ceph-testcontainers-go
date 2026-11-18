@@ -135,8 +135,9 @@ Every attempt prints its persisted checkpoint and the snapshot listing.
 ## Reading the result
 
 - **REPRODUCED:** the completed copy left the object at the checkpoint with
-  the previous snapshot's bytes; the symptom names the object, the
-  checkpoint and the classification of every object (`new=63 old=[20]`).
+  the previous snapshot's bytes and every other object holds the new
+  bytes. The symptom names the object, the checkpoint and the
+  classification of every object (`new=63 old=[20]`).
 - **NOT_REPRODUCED:** the destination holds exactly the snapshot's bytes,
   and the failover that follows succeeded.
 - **Test failure (no result):** the netem helper is missing, a cluster or
@@ -144,8 +145,8 @@ Every attempt prints its persisted checkpoint and the snapshot listing.
   the limit, no attempt interrupted the copy of the checkpoint object
   (`no attempt interrupted the copy of the checkpoint object`, with every
   attempt's reason), a missed attempt's copy did not read back exactly, the
-  restarted receiver did not complete the copy, or the destination differs
-  elsewhere than at the checkpoint object (`another fault`).
+  restarted receiver did not complete the copy, an object outside the checkpoint differs from the new snapshot, or the
+  checkpoint holds bytes from neither snapshot (`another fault`).
 
 Native results: Linux amd64 host, Docker 29.9.1, the published aggregate
 tags. One run each.
