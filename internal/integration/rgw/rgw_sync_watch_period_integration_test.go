@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
@@ -49,6 +50,10 @@ func TestMultiClusterRGWSyncWatchSamePeriodCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, group)
+	seed := []byte("watched policy checkpoint before unrelated commit")
+	source.Request(t, ctx, http.MethodPut, "/"+bucket+"/seed", seed, http.StatusOK)
+	waitMultisiteObject(t, ctx, destination, "/"+bucket+"/seed", http.StatusOK, seed)
+	harness.WaitOwnedBucketCheckpoint(t, ctx, link, group, "all")
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +87,14 @@ func TestMultiClusterRGWSyncWatchSamePeriodCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = bucketWatch.Stop() }()
-	<-zoneWatch.Events()
-	<-bucketWatch.Events()
+	baseline := waitSyncEvent(t, zoneWatch, "baseline", time.Second, func(e multisite.SyncWatchEvent) bool { return true })
+	if baseline.Kind != ceph.WatchBaseline || !baseline.Ready {
+		t.Fatalf("zone baseline %+v", baseline)
+	}
+	bucketBaseline := waitBucketEvent(t, bucketWatch, "baseline", time.Second, func(e multisite.BucketSyncWatchEvent) bool { return true })
+	if bucketBaseline.Kind != ceph.WatchBaseline || !bucketBaseline.Status.CaughtUp {
+		t.Fatalf("bucket baseline %+v", bucketBaseline)
+	}
 	other, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "unrelated", Status: multisite.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
