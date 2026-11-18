@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"slices"
 	"strconv"
@@ -451,7 +450,7 @@ for name in os.listdir("/proc"):
  if not name.isdigit() or int(name)==os.getpid(): continue
  try:
   with open("/proc/"+name+"/cmdline","rb") as f: argv=f.read().split(b"\0")
- except OSError: continue
+ except FileNotFoundError: continue
  if any(sys.argv[1].encode() in a for a in argv): print(name, b" ".join(argv[:2]+argv[-4:]).decode(errors="replace"))
 `
 
@@ -461,7 +460,7 @@ func diagnosticsProcesses(t *testing.T, ctx context.Context, control testcontain
 	if err != nil || code != 0 {
 		t.Fatalf("list control processes: exit %d, %v", code, err)
 	}
-	output, _ := io.ReadAll(reader)
+	output := readNativeEvidence(t, reader)
 	return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(output)), "\n", "|"))
 }
 

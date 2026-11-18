@@ -5,7 +5,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -251,7 +250,7 @@ for pid in os.listdir("/proc"):
  if not pid.isdigit() or int(pid)==os.getpid(): continue
  try:
   with open("/proc/"+pid+"/cmdline","rb") as f: argv=f.read().split(b"\0")
- except OSError: continue
+ except FileNotFoundError: continue
  seen+=1
  if b"rotate-key" in argv: print(pid,b" ".join(argv).decode(errors="replace"))
 sys.exit(0 if seen else 2)
@@ -265,7 +264,7 @@ func rotateKeyProcesses(t *testing.T, ctx context.Context, ctr testcontainers.Co
 	if err != nil || code != 0 {
 		t.Fatalf("list the control container's processes: exit %d, %v", code, err)
 	}
-	data, _ := io.ReadAll(reader)
+	data := readNativeEvidence(t, reader)
 	return strings.TrimSpace(string(data))
 }
 
@@ -296,7 +295,7 @@ func containerFile(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 	if err != nil || code != 0 {
 		t.Fatalf("read %s: exit %d, %v", path, code, err)
 	}
-	data, _ := io.ReadAll(reader)
+	data := readNativeEvidence(t, reader)
 	return string(data)
 }
 

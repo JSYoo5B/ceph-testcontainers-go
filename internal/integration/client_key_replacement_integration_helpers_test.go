@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"regexp"
 	"slices"
@@ -105,7 +104,10 @@ func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		t.Fatal(err)
 	}
 	if code, reader, err := control.Exec(ctx, []string{"rados", "-p", heldPool, "-N", heldNamespace, "put", heldObject, "/tmp/held-object"}, tcexec.Multiplexed()); err != nil || code != 0 {
-		out, _ := io.ReadAll(reader)
+		var out []byte
+		if reader != nil {
+			out = readNativeEvidence(t, reader)
+		}
 		t.Fatalf("write %s: exit %d, %v: %s", heldObject, code, err, out)
 	}
 	return payload
@@ -325,8 +327,7 @@ func clientKeyCiphers(t *testing.T, ctx context.Context, image string) ([]ceph.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, _ := io.ReadAll(reader)
-	if !strings.Contains(string(usage), "--key-type") {
+	if !keyTypesFromHelp(t, reader) {
 		return []ceph.CephxCipher{ceph.CipherAES}, auth
 	}
 	// The service cipher stays fixed whatever key type the clients have.
@@ -379,7 +380,7 @@ func clientCommand(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _ := io.ReadAll(reader)
+	out := readNativeEvidence(t, reader)
 	if code != 0 && code != 13 && !strings.Contains(string(out), "ermission denied") {
 		t.Fatalf("%s failed for another reason than authentication: exit %d: %s", strings.Join(argv, " "), code, out)
 	}
@@ -437,10 +438,13 @@ func heldSessionLog(t *testing.T, ctx context.Context, ctr testcontainers.Contai
 func containerTime(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
 	t.Helper()
 	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", "import time; print(time.time())"}, tcexec.Multiplexed())
-	out, _ := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("read the container clock", err)
+	}
+	out := readNativeEvidence(t, reader)
 	at, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	if err != nil || code != 0 || parseErr != nil {
-		t.Fatalf("read the container clock: %q %v", out, err)
+	if code != 0 || parseErr != nil {
+		t.Fatalf("read the container clock: exit %d, %q, %v", code, out, parseErr)
 	}
 	return at
 }

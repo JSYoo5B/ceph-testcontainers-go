@@ -188,7 +188,7 @@ func (client profileClient) ceph(t *testing.T, ctx context.Context, args ...stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output := readNativeEvidence(t, reader)
 	return code, string(output)
 }
 
