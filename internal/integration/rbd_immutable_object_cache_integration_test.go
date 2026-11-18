@@ -231,7 +231,7 @@ func TestImmutableObjectCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	keptAfterRestore := keptDaemon.assertExited(t, ctx, client, "Restore")
-	harness.ExecCommand(t, ctx, client, "sh", "-c", `test -d "$0" && test ! -L "$0" && test -z "$(ls -A "$0")"`, existing)
+	harness.ExecCommand(t, ctx, client, "python3", "-c", `import os,sys; p=sys.argv[1]; assert not os.path.islink(p) and os.path.isdir(p); assert not os.listdir(p)`, existing)
 	keptDaemon.assertLeaseFilesRemoved(t, ctx, client)
 	t.Logf("pid %d (start time %s) cached %d objects in the existing %s; after Restore its PID was %s, the cached objects, socket, admin socket and PID file were gone and the directory remained",
 		keptDaemon.pid, keptDaemon.start, keptCached.CachedObjects, existing, keptAfterRestore)
@@ -280,16 +280,6 @@ done | sort -u | while read -r proc; do
 done
 true`
 
-// cacheLeaseFiles lists the socket $0 and the immutable-object-cache-*
-// admin sockets and PID files in its directory; with $1 = pid it prints the
-// PID files' contents instead.
-const cacheLeaseFiles = `cd "$(dirname "$0")" 2>/dev/null || exit 0
-for f in "$(basename "$0")" immutable-object-cache-*.asok immutable-object-cache-*.pid; do
-    if test -e "$f" || test -L "$f"; then
-        if test "${1:-}" = pid; then case "$f" in *.pid) cat "$f"; echo ;; esac; else echo "$f"; fi
-    fi
-done`
-
 // immutableObjectCacheDaemon identifies the daemon of lease without the
 // lease's PID or its process checks: as the only process that holds the
 // lease's listening socket. It checks that the lease and the daemon's PID
@@ -315,10 +305,10 @@ func immutableObjectCacheDaemon(t *testing.T, ctx context.Context, client testco
 	if status.PID != pid {
 		t.Fatalf("the lease reports PID %d; the process holding %s is %d", status.PID, socket, pid)
 	}
-	if pidFile := harness.ExecOutput(t, ctx, client, "sh", "-c", cacheLeaseFiles, socket, "pid"); pidFile != pidText {
+	if pidFile := harness.ExecOutput(t, ctx, client, "python3", "-c", cacheLeaseFiles, socket, "pid"); pidFile != pidText {
 		t.Fatalf("the daemon's PID files hold %q; the process holding %s is %d", pidFile, socket, pid)
 	}
-	files := strings.Fields(harness.ExecOutput(t, ctx, client, "sh", "-c", cacheLeaseFiles, socket))
+	files := strings.Fields(harness.ExecOutput(t, ctx, client, "python3", "-c", cacheLeaseFiles, socket))
 	base := path.Base(socket)
 	if len(files) != 3 || files[0] != base || !strings.HasSuffix(files[1], ".asok") || !strings.HasSuffix(files[2], ".pid") {
 		t.Fatalf("files of the lease beside %s: %q", socket, files)
@@ -331,8 +321,8 @@ func immutableObjectCacheDaemon(t *testing.T, ctx context.Context, client testco
 // a zombie that the container's init has not reaped yet. It returns which.
 func (d cacheDaemonIdentity) assertExited(t *testing.T, ctx context.Context, client testcontainers.Container, after string) string {
 	t.Helper()
-	stat := harness.ExecOutput(t, ctx, client, "sh", "-c", `cat "/proc/$0/stat" 2>/dev/null; true`, strconv.Itoa(d.pid))
-	if stat == "" {
+	stat := harness.ExecOutput(t, ctx, client, "python3", "-c", readProcessStat, strconv.Itoa(d.pid))
+	if stat == "absent" {
 		return "gone"
 	}
 	state, start, ok := procStatState(stat)
@@ -352,7 +342,7 @@ func (d cacheDaemonIdentity) assertExited(t *testing.T, ctx context.Context, cli
 // that the daemon's lease created are gone.
 func (d cacheDaemonIdentity) assertLeaseFilesRemoved(t *testing.T, ctx context.Context, client testcontainers.Container) {
 	t.Helper()
-	left := strings.Fields(harness.ExecOutput(t, ctx, client, "sh", "-c", cacheLeaseFiles, d.socket))
+	left := strings.Fields(harness.ExecOutput(t, ctx, client, "python3", "-c", cacheLeaseFiles, d.socket))
 	for _, file := range d.files {
 		if slices.Contains(left, file) {
 			t.Fatalf("Restore left %s beside %s: %q", file, d.socket, left)

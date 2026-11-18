@@ -31,10 +31,15 @@ try:
             op.write_full(b'destroyed')
             op.set_xattr('tc-fixture',b'destroyed')
             io.operate_write_op(op,'compound',0,0)
-    except rados.Error:
+    except rados.Error as error:
+        if getattr(error,'errno',None)!=rados.MAX_ERRNO: raise
         rejected=True
     assert rejected and io.read('compound',len(payload),0)==payload
     assert io.get_xattr('compound','tc-fixture')==b'original'
+    with rados.WriteOpCtx() as op:
+        op.cmpext(payload,0)
+        op.write_full(payload)
+        io.operate_write_op(op,'compound',0,0)
     with rados.WriteOpCtx() as op:
         op.execute('hello','record_hello',b'fixture')
         io.operate_write_op(op,'hello-object',0,0)
