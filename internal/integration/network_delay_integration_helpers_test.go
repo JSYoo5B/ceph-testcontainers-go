@@ -515,7 +515,24 @@ func runNetworkDelay(t *testing.T) {
 		if err != nil || changed.Applied || changed.RootHandle != status.RootHandle {
 			t.Fatalf("status after changing the priority map: %+v, %v", changed, err)
 		}
-		if !slices.Equal(changed.Filters, status.Filters) || !strings.Contains(string(changed.Qdiscs), `"parent":"`+status.RootHandle+`3"`) {
+		type qdiscIdentity struct {
+			Kind, Handle, Parent string
+		}
+		unchangedChild := func(dump json.RawMessage) qdiscIdentity {
+			t.Helper()
+			var qdiscs []qdiscIdentity
+			if err := json.Unmarshal(dump, &qdiscs); err != nil {
+				t.Fatal(err)
+			}
+			for _, qdisc := range qdiscs {
+				if qdisc.Kind == "netem" && qdisc.Parent == status.RootHandle+"3" {
+					return qdisc
+				}
+			}
+			t.Fatalf("no netem child in the original band: %s", dump)
+			return qdiscIdentity{}
+		}
+		if !slices.Equal(changed.Filters, status.Filters) || unchangedChild(changed.Qdiscs) != unchangedChild(status.Qdiscs) {
 			t.Fatalf("priority-map edit changed the filters or child: %s %s", changed.Filters, changed.Qdiscs)
 		}
 		if misrouted := timedRead(t, ctx, other, slow); misrouted.Errno != 110 {
