@@ -104,7 +104,8 @@ func judgeLosslessReconnect(before, window []readySession, client uint64) reconn
 // daemons logged for client before and during a fault window whether its
 // lossy sessions were reset. A lossy session is never resumed: every READY in
 // the window must be a new session, with connect_seq 0, no server cookie, a
-// client cookie that no earlier session had, and in_seq and out_seq 0.
+// nonzero client cookie, and in_seq and out_seq 0. The client cookie may be
+// reused across resets.
 func judgeLossyResets(before, window []readySession, client uint64) reconnectOutcome {
 	base := clientSessions(before, client, true)
 	if len(base) == 0 {
@@ -122,7 +123,7 @@ func judgeLossyResets(before, window []readySession, client uint64) reconnectOut
 			return reconnectOutcome{Verdict: reconnectContradicted, Reason: fmt.Sprintf("reset %d resumed: cs=%d server_cookie=%s in_seq=%d out_seq=%d",
 				i, s.ConnectSeq, s.ServerCookie, s.InSeq, s.OutSeq), Sessions: []readySession{s}}
 		case s.ClientCookie == "0":
-			return reconnectOutcome{Reason: fmt.Sprintf("reset %d has no client cookie to tell it from another session", i), Sessions: []readySession{s}}
+			return reconnectOutcome{Reason: fmt.Sprintf("reset %d has no nonzero client cookie", i), Sessions: []readySession{s}}
 		}
 	}
 	// Each reset's fresh state (cs=0, server_cookie=0, seq 0/0) proves it is a

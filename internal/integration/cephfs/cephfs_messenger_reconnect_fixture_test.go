@@ -237,3 +237,29 @@ func TestDumpedReconnectJudge(t *testing.T) {
 		})
 	}
 }
+
+// These framing changes are synthetic refusals, not native Ceph output.
+func TestClientReadySessionsRefusesMalformedWindow(t *testing.T) {
+	line := tentacleMDSReady[1]
+	for name, malformed := range map[string]string{
+		"connection":              strings.Replace(line, "conn(", "conn?", 1),
+		"crypto":                  strings.Replace(line, " crypto rx=", " crypto missing=", 1),
+		"compression":             strings.Replace(line, " comp rx=", " comp missing=", 1),
+		"entity":                  strings.Replace(line, "entity=client.4229", "entity=", 1),
+		"invalid client identity": strings.Replace(strings.Replace(line, " comp rx=", " comp missing=", 1), "entity=client.4229", "entity=client.invalid", 1),
+		"truncated identity":      strings.Split(line, ").ready")[0],
+	} {
+		t.Run(name, func(t *testing.T) {
+			lines := append(append([]string{}, tentacleMDSReady...), malformed)
+			if _, err := clientReadySessions(lines, 4229); err == nil {
+				t.Fatal("malformed selected window accepted beside valid reconnects")
+			}
+		})
+	}
+	unrelated := strings.Replace(strings.Replace(line, " comp rx=", " comp missing=", 1), "entity=client.4229", "entity=client.42290", 1)
+	lines := append(append([]string{}, tentacleMDSReady...), unrelated, strings.Replace(line, "s=READY", "s=STANDBY", 1), "unrelated log message")
+	sessions, err := clientReadySessions(lines, 4229)
+	if err != nil || len(sessions) != len(tentacleMDSReady) {
+		t.Fatalf("unrelated records changed valid window: %v, %v", sessions, err)
+	}
+}

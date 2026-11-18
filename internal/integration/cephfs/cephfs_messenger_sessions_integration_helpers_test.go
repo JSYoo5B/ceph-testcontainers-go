@@ -449,13 +449,17 @@ func testCephFSMessengerReconnect(t *testing.T) {
 
 	split := func(ctr testcontainers.Container, mark int) (before, window []readySession) {
 		lines := harness.ContainerLogLines(t, ctx, ctr)
-		var unusable []string
-		before, unusable = parseReadySessions(lines[:mark])
-		window, more := parseReadySessions(lines[mark:])
-		for _, line := range append(unusable, more...) {
-			if strings.Contains(line, "entity=client."+strconv.FormatUint(client, 10)+" ") {
-				t.Fatalf("an unusable READY line of the client: %s", line)
-			}
+		if mark > len(lines) {
+			t.Fatal("READY capture lost its baseline lines")
+		}
+		var err error
+		before, err = clientReadySessions(lines[:mark], client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		window, err = clientReadySessions(lines[mark:], client)
+		if err != nil {
+			t.Fatal(err)
 		}
 		return before, window
 	}

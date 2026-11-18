@@ -103,3 +103,27 @@ func TestReadyRevisionRequiresBinding(t *testing.T) {
 		t.Error("non-READY lines selected")
 	}
 }
+
+func TestReadyRevisionRefusesMalformedFramingBesideValidLines(t *testing.T) {
+	line := readyLogSample[0]
+	for name, malformed := range map[string]string{
+		"connection":  strings.Replace(line, "conn(", "conn?", 1),
+		"crypto":      strings.Replace(line, " crypto rx=", " crypto missing=", 1),
+		"compression": strings.Replace(line, " comp rx=", " comp missing=", 1),
+		"entity":      strings.Split(line, ").ready")[0],
+	} {
+		t.Run(name, func(t *testing.T) {
+			lines := append(append([]string{}, readyLogSample...), malformed)
+			observations := harness.ParseReadyRevisionLines(readyRevisionBound, lines)
+			if len(observations) != len(harness.ParseReadyRevisionLines(readyRevisionBound, readyLogSample))+1 || observations[len(observations)-1].Revision != harness.ReadyRevisionUnavailable {
+				t.Fatalf("malformed READY vanished: %+v", observations)
+			}
+			if len(harness.ReadyRevision1Problems(observations)) == 0 {
+				t.Fatal("valid rows hid unavailable READY evidence")
+			}
+		})
+	}
+	if got := harness.ParseReadyRevisionLines(readyRevisionBound, []string{strings.Replace(line, "s=READY", "s=STANDBY", 1), "unrelated log"}); len(got) != 0 {
+		t.Fatalf("unrelated lines selected: %+v", got)
+	}
+}
