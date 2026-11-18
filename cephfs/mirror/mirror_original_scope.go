@@ -36,7 +36,7 @@ type cephFSOriginalScope struct {
 // after its native cluster identities are read and found distinct. operation
 // names the receipt in the refusals. Container.mu is held.
 func (mirror *Container) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
-	if mirror.metadataPoolID <= 0 || mirror.destinationMetadataPoolID <= 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
+	if !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
 		return nil, cephFSObserveGuard(operation + " original filesystem metadata identity is unavailable")
 	}
 	if readClusters == nil {
@@ -68,7 +68,7 @@ func (s *cephFSOriginalScope) usable() bool {
 func (s *cephFSOriginalScope) sameFixture(allowClearedPeer bool) bool {
 	m := s.mirror
 	peer := m.peerID == s.peerID || (allowClearedPeer && m.peerID == "")
-	return peer && m.source == s.source && m.destination == s.destination && m.SourceFilesystem == s.sourceFilesystem && m.DestinationFilesystem == s.destinationFilesystem && m.SourceClientEntity == s.sourceClient && m.filesystemID == s.sourceID && m.destinationFilesystemID == s.destinationID && m.metadataPoolID == s.sourceMetadata && m.destinationMetadataPoolID == s.destinationMetadata && m.metadataPool == s.metadataPool && m.DestinationClientEntity == s.peer.ClientName && m.destinationSite == s.peer.SiteName
+	return peer && m.filesystemIdentityConfirmed && m.source == s.source && m.destination == s.destination && m.SourceFilesystem == s.sourceFilesystem && m.DestinationFilesystem == s.destinationFilesystem && m.SourceClientEntity == s.sourceClient && m.filesystemID == s.sourceID && m.destinationFilesystemID == s.destinationID && m.metadataPoolID == s.sourceMetadata && m.destinationMetadataPoolID == s.destinationMetadata && m.metadataPool == s.metadataPool && m.DestinationClientEntity == s.peer.ClientName && m.destinationSite == s.peer.SiteName
 }
 
 // directoryPolicy reads the source filesystem's native directory policy with
