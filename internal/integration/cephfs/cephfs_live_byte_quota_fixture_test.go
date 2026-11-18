@@ -5,9 +5,13 @@
 package cephfs_test
 
 import (
+	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // These controls feed synthetic write series to judgeByteQuotaSeries. They
@@ -15,8 +19,8 @@ import (
 func TestLiveByteQuotaJudge(t *testing.T) {
 	const limit, chunk, overshoot = 4 << 20, 64 << 10, 32 << 20
 	series := func(acked int64, errno int, change func(*byteQuotaSeries)) byteQuotaSeries {
-		l, size := uint64(limit), acked
-		s := byteQuotaSeries{Limit: &l, Samples: 3, Acked: &acked, Attempts: uint64(acked/chunk) + 1, Errno: &errno, Size: &size}
+		l, size, observed, elapsed := uint64(limit), acked, int64(1), int64(10)
+		s := byteQuotaSeries{Limit: &l, Samples: 3, ObservedMS: &observed, ElapsedMS: &elapsed, Acked: &acked, Attempts: uint64(acked/chunk) + 1, Errno: &errno, Size: &size}
 		if change != nil {
 			change(&s)
 		}
@@ -40,8 +44,11 @@ func TestLiveByteQuotaJudge(t *testing.T) {
 			other := uint64(limit + 1)
 			s.Limit = &other
 		}), want: "observed limit"},
-		"no sample":     {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { s.Samples = 0 }), want: "incomplete"},
-		"missing errno": {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { s.Errno = nil }), want: "incomplete"},
+		"late observation": {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { *s.ObservedMS = 90_000 }), want: "deadline"},
+		"late write":       {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { *s.ElapsedMS = 120_000 }), want: "deadline"},
+		"missing timing":   {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { s.ElapsedMS = nil }), want: "incomplete"},
+		"no sample":        {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { s.Samples = 0 }), want: "incomplete"},
+		"missing errno":    {series: series(limit, int(syscall.EDQUOT), func(s *byteQuotaSeries) { s.Errno = nil }), want: "incomplete"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := judgeByteQuotaSeries(test.series, limit, chunk, overshoot)
@@ -62,5 +69,109 @@ func TestByteQuotaPattern(t *testing.T) {
 	}
 	if byteQuotaDigest(600) == byteQuotaDigest(599) {
 		t.Fatal("digests of different lengths agree")
+	}
+}
+
+// These controls execute the byte actor's actual observation and write helpers.
+// The synchronous calls are substitutes; they establish timing admission only.
+func TestLiveByteQuotaPhaseDeadlines(t *testing.T) {
+	const setup = `
+import types
+class NativeError(Exception):
+    def __init__(self, number): self.errno=number
+cephfs=types.SimpleNamespace(Error=NativeError)
+now=[0.0]
+class FS:
+    def write(self, fd, data, offset): return len(data)
+    def fsync(self, fd, data): pass
+fs=FS()
+`
+	for name, control := range map[string]string{
+		"late matching observation": `
+def sample():
+    now[0]=90.5
+    return 4096
+try:
+    observe_byte_quota(sample, 4096, clock=lambda:now[0])
+    raise AssertionError("late observation admitted")
+except TimeoutError: pass
+`,
+		"late write": `
+def write(fd,data,offset):
+    now[0]=120.5
+    return len(data)
+fs.write=write
+try:
+    byte_quota_series(fs,1,4096,1024,4096,clock=lambda:now[0])
+    raise AssertionError("late write admitted")
+except TimeoutError: pass
+`,
+		"late fsync success": `
+def fsync(fd,data):
+    now[0]=120.5
+fs.fsync=fsync
+try:
+    byte_quota_write(fs,1,0,1024,120,lambda:now[0])
+    raise AssertionError("late fsync admitted")
+except TimeoutError: pass
+`,
+		"late fsync denial": `
+def fsync(fd,data):
+    now[0]=120.5
+    raise NativeError(122)
+fs.fsync=fsync
+try:
+    byte_quota_series(fs,1,4096,1024,4096,clock=lambda:now[0])
+    raise AssertionError("late EDQUOT admitted")
+except TimeoutError: pass
+`,
+		"timely complete series": `
+observation=observe_byte_quota(lambda:4096,4096,clock=lambda:now[0])
+original=fs.write
+def write(fd,data,offset):
+    if offset==4096: raise NativeError(122)
+    return original(fd,data,offset)
+fs.write=write
+series=byte_quota_series(fs,1,4096,1024,4096,clock=lambda:now[0],sleep=lambda n:now.__setitem__(0,now[0]+n))
+assert observation["samples"]==1 and observation["observed_ms"]==0
+assert series["acked"]==4096 and series["attempts"]==5 and series["errno"]==122
+assert 0 <= series["elapsed_ms"] < 120000
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, "python3", "-c", cephFSByteQuotaOperations+setup+control).CombinedOutput()
+			if err != nil {
+				t.Fatalf("byte quota timing control: %v: %s", err, out)
+			}
+		})
+	}
+	for _, phase := range []string{"observation", "write", "fsync"} {
+		t.Run("blocked "+phase, func(t *testing.T) {
+			control := `
+import ctypes
+def blocked(*args):
+    print("blocked-call",flush=True)
+    ctypes.CDLL(None).sleep(10)
+    return 4096
+`
+			switch phase {
+			case "observation":
+				control += "observe_byte_quota(blocked,4096,timeout=0.1)\n"
+			case "write":
+				control += "fs.write=blocked\nbyte_quota_series(fs,1,4096,1024,4096,timeout=0.1)\n"
+			case "fsync":
+				control += "fs.fsync=blocked\nbyte_quota_series(fs,1,4096,1024,4096,timeout=0.1)\n"
+			}
+			control += "print('WORKLOAD_ADMITTED',flush=True)\n"
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, "python3", "-c", cephFSByteQuotaOperations+setup+control).CombinedOutput()
+			var exited *exec.ExitError
+			if !errors.As(err, &exited) || ctx.Err() != nil || !strings.Contains(exited.ProcessState.String(), "alarm clock") || string(out) != "blocked-call\n" {
+				t.Fatalf("phase watchdog: err=%v context=%v output=%q", err, ctx.Err(), out)
+			}
+		})
 	}
 }

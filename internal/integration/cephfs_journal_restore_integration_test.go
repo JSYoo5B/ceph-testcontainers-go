@@ -28,37 +28,6 @@ const (
 	journalFileCnt = 12
 )
 
-// journalFiles writes (seed) or reads back the known files through libcephfs
-// and prints {"name": sha256} for every file it could read. Arguments: mode,
-// filesystem, prefix, count.
-const journalFiles = `import cephfs, hashlib, json, sys
-mode, name, prefix, count = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
-fs.conf_set("client_mount_timeout", "30")
-fs.conf_set("client_fs", name)
-fs.mount()
-out = {}
-try:
-    for n in range(count):
-        path = "/%s-%d" % (prefix, n)
-        data = hashlib.sha256(path.encode()).digest() * 512
-        if mode == "seed":
-            fd = fs.open(path, "w", 0o600)
-            fs.write(fd, data, 0)
-            fs.fsync(fd, False)
-            fs.close(fd)
-        try:
-            fd = fs.open(path, "r")
-            got = fs.read(fd, 0, len(data) + 1)
-            fs.close(fd)
-            out[path] = hashlib.sha256(got).hexdigest()
-        except cephfs.Error:
-            out[path] = ""
-finally:
-    fs.unmount()
-    fs.shutdown()
-print(json.dumps(out))`
-
 // journalHeaderObject reads (read) or overwrites (damage) the rank-0 journal
 // header object in the metadata pool and prints its size and digest.
 // Arguments: mode, pool.
@@ -311,6 +280,9 @@ func TestCephFSJournalHeaderRestore(t *testing.T) {
 		}
 	}
 	receipt["readback"] = len(back)
-	out = harness.ExecOutput(t, ctx, client, "python3", "-c", journalFiles, "seed", journalFS, "after", "2")
-	receipt["after_restore_writes"] = strings.TrimSpace(harness.LastJSONLine(out)) != ""
+	out = harness.ExecOutput(t, ctx, client, "python3", "-c", journalFiles, "verify-seed", journalFS, "after", "2")
+	if err := validateJournalFreshFiles([]byte(harness.LastJSONLine(out)), "after", 2); err != nil {
+		t.Fatalf("after restore writes: %v", err)
+	}
+	receipt["after_restore_writes"] = true
 }
