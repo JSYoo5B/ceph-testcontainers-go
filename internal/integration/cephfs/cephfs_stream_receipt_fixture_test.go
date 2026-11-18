@@ -46,8 +46,10 @@ func TestParseMDSSubtrees(t *testing.T) {
 	if got := listed[2]; got.Dir.Path != "/stream" || !got.IsAuth || got.AuthFirst != 1 || got.AuthSecond != -2 || got.ExportPin != 1 {
 		t.Fatalf("subtree = %+v", got)
 	}
-	if _, err := parseMDSSubtrees([]byte(`{"subtrees": 1}`)); err == nil {
-		t.Fatal("a malformed list was accepted")
+	for _, body := range []string{`{"subtrees": 1}`, `null`, `{}`, `{"subtrees":null}`, `[{}]`, `[null]`} {
+		if _, err := parseMDSSubtrees([]byte(body)); err == nil {
+			t.Errorf("malformed subtree view accepted: %s", body)
+		}
 	}
 }
 

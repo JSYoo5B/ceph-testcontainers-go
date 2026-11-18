@@ -26,8 +26,11 @@ func reclaimRegisteredReceipt(t *testing.T, ctx context.Context, run *cephFSActo
 	path := run.workdir + "/receipt-" + strconv.Itoa(phase)
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		code, out, err := harness.SessionExec(ctx, run.client, "cat", path)
-		if err == nil && code == 0 {
+		out, present, _, err := run.readPublished(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if present {
 			seen := time.Now()
 			decoder := json.NewDecoder(strings.NewReader(out))
 			decoder.DisallowUnknownFields()
@@ -39,11 +42,6 @@ func reclaimRegisteredReceipt(t *testing.T, ctx context.Context, run *cephFSActo
 				t.Fatalf("receipt %d belongs to another run or phase: %+v", phase, receipt)
 			}
 			return receipt, seen
-		}
-		select {
-		case <-run.Done:
-			t.Fatalf("actor ended without receipt %d: %s", phase, run.exited(ctx))
-		default:
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("receipt %d did not appear", phase)
