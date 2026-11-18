@@ -7,13 +7,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // telegrafReceiverScript receives the telegraf module's line protocol, run
 // after moduleReceiverPrelude with a UDP port as argv[1] and a TCP port as
-// argv[2]. It records every newline-terminated line with its transport, the
-// sender's address, the datagram or connection it came in and that
-// datagram's size. It parses nothing.
+// argv[2]. It publishes one record per datagram or closed TCP connection,
+// with complete newline-terminated lines or a framing or transport error.
+// Publishing a whole unit at once prevents partial TCP evidence from being
+// visible while a connection is still active.
 const telegrafReceiverScript = `UDP_PORT, TCP_PORT = int(sys.argv[1]), int(sys.argv[2])
 sockets = {}
 counter = [0]
@@ -21,30 +23,38 @@ def next_id():
     with _lock:
         counter[0] += 1
         return counter[0]
+def record_unit(proto, peer, unit, data, error=''):
+    if not error and not data.endswith(b'\n'):
+        error = 'unterminated line'
+    lines = []
+    if not error:
+        try:
+            lines = data[:-1].decode('utf-8').split('\n')
+        except UnicodeDecodeError as exc:
+            error = str(exc)
+    record({'proto': proto, 'peer': peer, 'unit': unit, 'size': len(data),
+            'lines': lines, 'error': error})
 def receive_udp(sock):
     while True:
         try:
             data, peer = sock.recvfrom(65535)
         except OSError:
             return
-        unit = next_id()
-        for line in data.decode('utf-8', 'replace').split('\n'):
-            if line:
-                record({'proto': 'udp', 'peer': peer[0], 'unit': unit, 'size': len(data), 'line': line})
+        record_unit('udp', peer[0], next_id(), data)
 def read_tcp(conn, peer):
-    unit, data = next_id(), b''
+    unit, data, error = next_id(), bytearray(), ''
     with conn:
         while True:
             try:
                 chunk = conn.recv(65536)
-            except OSError:
+            except OSError as exc:
+                error = 'socket read: ' + str(exc)
                 break
             if not chunk:
                 break
-            data += chunk
-    for line in data.decode('utf-8', 'replace').split('\n'):
-        if line:
-            record({'proto': 'tcp', 'peer': peer, 'unit': unit, 'size': len(data), 'line': line})
+            data.extend(chunk)
+    if data or error:
+        record_unit('tcp', peer, unit, data, error)
 def accept_tcp(sock):
     while True:
         try:
@@ -72,12 +82,13 @@ serve_receiver()
 
 // telegrafRecord is one record of telegrafReceiverScript.
 type telegrafRecord struct {
-	Time  float64 `json:"time"`
-	Proto string  `json:"proto"`
-	Peer  string  `json:"peer"`
-	Unit  int     `json:"unit"`
-	Size  int     `json:"size"`
-	Line  string  `json:"line"`
+	Time  float64  `json:"time"`
+	Proto string   `json:"proto"`
+	Peer  string   `json:"peer"`
+	Unit  int      `json:"unit"`
+	Size  int      `json:"size"`
+	Lines []string `json:"lines"`
+	Error string   `json:"error"`
 }
 
 // influxPoint is one parsed line of the InfluxDB line protocol.
@@ -168,17 +179,18 @@ func parseInfluxLine(line string) (influxPoint, error) {
 	return point, nil
 }
 
-// telegrafBatch is one pass of the telegraf module: every line it sent with
-// one timestamp.
+// telegrafBatch groups the observed lines with one module timestamp.
+// UDP has no end-of-pass marker or count of emitted lines.
 type telegrafBatch struct {
 	Timestamp int64
 	// Peers and Units are the senders and the datagrams or connections the
 	// lines arrived in.
 	Peers, Units map[string]int
 	Proto        string
-	// Received is the receive time of the first line, in Unix seconds.
-	Received float64
-	Points   []influxPoint
+	// Receive times are in Unix seconds, one sample per transport unit.
+	Received     float64
+	LastReceived float64
+	Points       []influxPoint
 }
 
 // telegrafBatches parses every record and groups the lines by timestamp, in
@@ -189,26 +201,41 @@ func telegrafBatches(records []telegrafRecord) ([]telegrafBatch, error) {
 	byTimestamp := map[int64]*telegrafBatch{}
 	seen := map[string]bool{}
 	for _, record := range records {
-		point, err := parseInfluxLine(record.Line)
-		if err != nil {
-			return nil, err
+		if record.Error != "" {
+			return nil, fmt.Errorf("%s unit %d from %s (%d bytes): %s", record.Proto, record.Unit, record.Peer, record.Size, record.Error)
 		}
-		if seen[record.Line] {
-			return nil, fmt.Errorf("duplicate line %q", record.Line)
+		if len(record.Lines) == 0 {
+			return nil, fmt.Errorf("%s unit %d has no framed lines", record.Proto, record.Unit)
 		}
-		seen[record.Line] = true
-		batch := byTimestamp[point.Timestamp]
-		if batch == nil {
-			batch = &telegrafBatch{Timestamp: point.Timestamp, Peers: map[string]int{}, Units: map[string]int{}, Proto: record.Proto, Received: record.Time}
-			byTimestamp[point.Timestamp] = batch
+		var unitTimestamp int64
+		for _, line := range record.Lines {
+			point, err := parseInfluxLine(line)
+			if err != nil {
+				return nil, err
+			}
+			if seen[line] {
+				return nil, fmt.Errorf("duplicate line %q", line)
+			}
+			seen[line] = true
+			if unitTimestamp != 0 && point.Timestamp != unitTimestamp {
+				return nil, fmt.Errorf("%s unit %d mixes timestamps %d and %d", record.Proto, record.Unit, unitTimestamp, point.Timestamp)
+			}
+			unitTimestamp = point.Timestamp
+			batch := byTimestamp[point.Timestamp]
+			if batch == nil {
+				batch = &telegrafBatch{Timestamp: point.Timestamp, Peers: map[string]int{}, Units: map[string]int{}, Proto: record.Proto,
+					Received: record.Time, LastReceived: record.Time}
+				byTimestamp[point.Timestamp] = batch
+			}
+			if batch.Proto != record.Proto {
+				return nil, fmt.Errorf("batch %d arrived over %s and %s", point.Timestamp, batch.Proto, record.Proto)
+			}
+			batch.Peers[record.Peer]++
+			batch.Units[strconv.Itoa(record.Unit)]++
+			batch.Received = min(batch.Received, record.Time)
+			batch.LastReceived = max(batch.LastReceived, record.Time)
+			batch.Points = append(batch.Points, point)
 		}
-		if batch.Proto != record.Proto {
-			return nil, fmt.Errorf("batch %d arrived over %s and %s", point.Timestamp, batch.Proto, record.Proto)
-		}
-		batch.Peers[record.Peer]++
-		batch.Units[strconv.Itoa(record.Unit)]++
-		batch.Received = min(batch.Received, record.Time)
-		batch.Points = append(batch.Points, point)
 	}
 	batches := make([]telegrafBatch, 0, len(byTimestamp))
 	for _, batch := range byTimestamp {
@@ -216,6 +243,16 @@ func telegrafBatches(records []telegrafRecord) ([]telegrafBatch, error) {
 	}
 	sort.Slice(batches, func(i, j int) bool { return batches[i].Timestamp < batches[j].Timestamp })
 	return batches, nil
+}
+
+// ready waits for a quiet interval after the latest UDP arrival. A clean
+// TCP connection is published only after EOF and needs no quiet interval.
+func (b telegrafBatch) ready(now time.Time) bool {
+	return b.Proto == "tcp" || now.Sub(telegrafReceiveTime(b.LastReceived)) >= 2*time.Second
+}
+
+func telegrafReceiveTime(seconds float64) time.Time {
+	return time.Unix(0, int64(seconds*1e9))
 }
 
 // Peer returns the batch's only sender, or an error when several sent it.
@@ -261,10 +298,21 @@ func (b telegrafBatch) Value(measurement string, tags map[string]string) (int64,
 	return value, nil
 }
 
-// checkTelegrafBatch reports why a batch is not one pass of the cluster
-// with fsid: every point must carry that fsid, and the cluster and pool
-// measurements must be present.
+// checkTelegrafBatch checks the observed framing, cluster identity and
+// measurement kinds. These checks do not prove how many lines a pass sent.
 func checkTelegrafBatch(b telegrafBatch, fsid string) error {
+	switch b.Proto {
+	case "udp":
+		if len(b.Units) != len(b.Points) {
+			return fmt.Errorf("UDP batch %d: %d lines in %d datagrams, want one line per datagram", b.Timestamp, len(b.Points), len(b.Units))
+		}
+	case "tcp":
+		if len(b.Units) != 1 {
+			return fmt.Errorf("TCP batch %d arrived over %d connections, want one", b.Timestamp, len(b.Units))
+		}
+	default:
+		return fmt.Errorf("batch %d has unknown transport %q", b.Timestamp, b.Proto)
+	}
 	for _, point := range b.Points {
 		if point.Tags["fsid"] != fsid {
 			return fmt.Errorf("batch %d: %s with fsid %q, want %q", b.Timestamp, point.Measurement, point.Tags["fsid"], fsid)
