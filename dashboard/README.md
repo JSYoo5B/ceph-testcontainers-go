@@ -93,7 +93,8 @@ username, password := d.Credentials()
   retains ownership, and does not overwrite this uncertainty with a later
   successful login. Restore cannot clear missing server-completion evidence;
   terminate the disposable cluster in that case. A normal completed probe
-  permits ordinary cleanup.
+  permits ordinary cleanup. Stop SUT authentication traffic before restoration;
+  fixture methods do not join server handlers started by outside clients.
 - **Endpoints.** In bridge mode the listener is the manager's address on the
   cluster network, port 8443, which `Endpoint` returns: containers on that
   network reach it. A process on the Docker host reaches it only through a
