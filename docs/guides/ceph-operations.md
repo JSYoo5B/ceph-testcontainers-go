@@ -599,3 +599,12 @@ Limits:
   evidence.
 - Scrub results, fresh scrubs and fault recovery waits are not verified, and
   the bug compatibility selection is not known to the report.
+
+
+A bridge MON preserves its recorded address when restarted. If its restart
+hook disconnects the dynamic endpoint and Docker fails to reconnect it,
+retry `Start` with a fresh context. The handle retains that reconnect until
+the original explicit address is observed or the reconnect succeeds.
+An intentionally interrupted endpoint still requires its interruption
+handle's `Restore` before `Start`. An endpoint explicitly assigned a
+different address ends the restart hook's recovery authority.
