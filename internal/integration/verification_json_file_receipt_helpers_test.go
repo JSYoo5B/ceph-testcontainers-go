@@ -26,9 +26,9 @@ import (
 //     count at both ends, every received event emitted there, none from
 //     another source;
 //   - the limits ledger: the check's own counts cover its findings and its
-//     omission count, the retained text stays within its bound, a truncated
-//     finding is flagged, and an absence claim needs no gap, no omission and
-//     no truncation.
+//     omission count, every retained finding stays within its text bound and
+//     is untruncated, and diagnostic-tail absence needs a successful, complete
+//     tail read. The requested tail length still limits which lines it covers.
 //
 // The judge accepts only a complete receipt. A missing, empty or wrongly
 // typed piece of evidence is an error, never a pass, and a refused log source
@@ -178,6 +178,11 @@ func jsonFileReceived(report *finalize.VerificationReport, id string) []finalize
 // window; the quoting INF entry and the noise made no event; the early
 // sentinel, which the timestamp window holds, is absent from a diagnostic
 // tail that the noise overflowed; and nothing was omitted or truncated.
+// Each finding's Time is the Docker engine timestamp that the verifier reads
+// from ContainerLogs, parsed as RFC3339Nano and inside the inclusive report
+// window. The daemon timestamp embedded in Text uses the daemon's clock and
+// has no equality constraint here. This judge checks window membership;
+// per-record timestamp equality with the independent raw log is not claimed.
 // Every piece of evidence is checked for presence and shape first.
 func judgeJSONFileReceipt(r jsonFileReceipt) error {
 	var problems []string
@@ -252,6 +257,15 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 			report.Logs.Permitted, report.Logs.Unexpected, len(report.Logs.Findings), report.Logs.OmittedFindings)
 	}
 	for _, finding := range report.Logs.Findings {
+		stamp, err := time.Parse(time.RFC3339Nano, finding.Time)
+		if err != nil {
+			bad("finding has an invalid engine timestamp %q: %v", finding.Time, err)
+		} else if stamp.Before(w.StartedAt) || stamp.After(w.EndedAt) {
+			bad("finding engine timestamp %q lies outside the window", finding.Time)
+		}
+		if finding.Truncated {
+			bad("a retained log finding is truncated: source=%s event=%s", finding.Source, finding.Event)
+		}
 		if len(finding.Text) > jsonFileFindingText {
 			bad("a finding keeps %d bytes of text, more than %d", len(finding.Text), jsonFileFindingText)
 		}
@@ -412,6 +426,8 @@ func judgeJSONFileReceipt(r jsonFileReceipt) error {
 		bad("no diagnostic tail was requested")
 	case t.Error != "":
 		bad("the diagnostic tail failed: %s", t.Error)
+	case t.Truncated:
+		bad("the diagnostic tail was truncated; sentinel absence is unverified")
 	case t.Lines < 1 || t.Lines > t.Requested:
 		bad("the diagnostic tail holds %d lines for a request of %d", t.Lines, t.Requested)
 	}

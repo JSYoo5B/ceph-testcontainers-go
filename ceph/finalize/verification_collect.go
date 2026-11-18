@@ -175,6 +175,10 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 		if target.generation == nil {
 			continue
 		}
+		if err := confirmVerificationGeneration(ctx, docker, *target, config.OperationTimeout); err != nil {
+			both(target.source, "crash baseline: "+err.Error())
+			continue
+		}
 		if reason := crashResultGap(result); reason != "" {
 			b.crashGaps = append(b.crashGaps, VerificationGap{Source: target.source, Reason: "at activation: " + verificationReason(reason, redact)})
 			continue
@@ -240,7 +244,7 @@ func verificationReason(reason string, redact func(string) string) string {
 
 // observeVerification observes the window from the baseline until now.
 func observeVerification(ctx context.Context, config VerificationConfig, b *verificationBaseline, docker verificationDocker, o *verificationObservation) {
-	w := verificationWindow{config: config, baseline: b, docker: docker, o: o, redact: evidence.Redactor(b.secrets)}
+	w := verificationWindow{config: config, baseline: b, docker: docker, o: o, redact: evidence.Redactor(o.secrets), secrets: o.secrets}
 	w.close(ctx)
 	w.checkCoverage()
 	current := make([]*verificationGeneration, len(b.targets))
@@ -254,6 +258,7 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 // records into o what the baseline's targets did between the activation and
 // now. It reads the baseline and changes nothing in the cluster.
 type verificationWindow struct {
+	secrets  []string
 	config   VerificationConfig
 	baseline *verificationBaseline
 	docker   verificationDocker
@@ -338,7 +343,7 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 				w.o.lines = append(w.o.lines, line)
 			}
 		}
-		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, verificationLineRedaction{redact: w.redact, secrets: w.baseline.secrets}, func(e verificationEvent) {
+		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, verificationLineRedaction{redact: w.redact, secrets: w.secrets}, func(e verificationEvent) {
 			w.o.logs = append(w.o.logs, e)
 		}, keep)
 		source.LogBytes, source.LogLines = read, lines
@@ -346,7 +351,26 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 			w.logGap(target.source, err.Error())
 		}
 	}
+	if err := confirmVerificationGeneration(ctx, w.docker, target, w.config.OperationTimeout); err != nil {
+		w.logGap(target.source, "after log collection: "+err.Error())
+		w.crashGap(target.source, "after log collection: "+err.Error())
+		return nil
+	}
 	return generation
+}
+
+// confirmVerificationGeneration brackets evidence reads with the activation
+// generation. A later successful read cannot establish the earlier generation's
+// coverage; already observed events remain useful alongside the resulting gap.
+func confirmVerificationGeneration(ctx context.Context, docker verificationDocker, target verificationTarget, timeout time.Duration) error {
+	generation, err := inspectGeneration(ctx, docker, target.id, timeout)
+	if err != nil {
+		return err
+	}
+	if !generation.same(target.generation) {
+		return fmt.Errorf("container generation changed during evidence collection (started %s, %d restarts; at activation %s, %d restarts)", generation.startedAt, generation.restartCount, target.generation.startedAt, target.generation.restartCount)
+	}
+	return nil
 }
 
 // sourceOf is target's redacted source entry with its activation generation
@@ -369,7 +393,7 @@ func (w verificationWindow) sourceOf(target verificationTarget) VerificationSour
 // absent at activation; current holds each target's still-covered generation.
 func (w verificationWindow) observeCrashes(ctx context.Context, current []*verificationGeneration) {
 	b := w.baseline
-	crashes, err := readVerificationCrashes(ctx, w.config, b.targets, b.secrets, w.docker)
+	crashes, err := readVerificationCrashes(ctx, w.config, b.targets, w.secrets, w.docker)
 	if err != nil && len(crashes.Containers) != len(b.targets) {
 		w.crashGap("", err.Error())
 	}
@@ -377,6 +401,11 @@ func (w verificationWindow) observeCrashes(ctx context.Context, current []*verif
 		target := b.targets[i]
 		if target.generation == nil {
 			continue
+		}
+		if current[i] != nil {
+			if err := confirmVerificationGeneration(ctx, w.docker, target, w.config.OperationTimeout); err != nil {
+				w.crashGap(target.source, "after crash collection: "+err.Error())
+			}
 		}
 		if reason := crashResultGap(result); reason != "" && current[i] != nil {
 			w.crashGap(target.source, reason)

@@ -290,9 +290,9 @@ func gapReasons(check VerificationCheck) string {
 	return strings.Join(reasons, "\n")
 }
 
-// An ordinary run is clean: the bootstrap's warning before the activation
-// and the pre-existing crash are outside the window, the control container
-// and the toolkit are not sources, and the window is the engine's.
+// An ordinary run is clean: the bootstrap warning is outside the log window
+// and the pre-existing crash identity is in the baseline. The control
+// container and toolkit are not sources; log bounds use the engine's clock.
 func TestVerificationOrdinaryRunIsClean(t *testing.T) {
 	fx := newVerifyFixture()
 	v := fx.activate(t)

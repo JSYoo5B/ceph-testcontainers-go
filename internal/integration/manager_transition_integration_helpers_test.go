@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/monsession"
 )
 
 // The receipt of one MGR transition: a baseline with an active and a standby,
@@ -191,11 +192,11 @@ type mgrMonSessions struct {
 // decodeMgrSessions decodes a MON's "sessions" output and keeps its MGR
 // sessions.
 func decodeMgrSessions(monitor string, data []byte) (mgrMonSessions, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return mgrMonSessions{}, errMgrMissing
 	}
-	var list []monSession
-	if err := json.Unmarshal(data, &list); err != nil {
+	list, err := monsession.Decode(data)
+	if err != nil {
 		return mgrMonSessions{}, err
 	}
 	if list == nil {

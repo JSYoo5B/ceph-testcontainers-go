@@ -60,7 +60,7 @@ func TestAuthFirstExcerptProducer(t *testing.T) {
 	}
 	// Attached to the bundle, the refusal and the final error are unchanged
 	// and the rest of the verdict does not move.
-	bundle := retainedBundle(t)
+	bundle := modeledRetainedBundle(t)
 	bundle.Rejection = producerRejection()
 	bundle.Controls = nil
 	before := bundle.Rejection
@@ -256,7 +256,7 @@ func TestAuthFirstExcerptAssociation(t *testing.T) {
 			b.Controls = []authControl{{Target: "mgr.a", Operation: "run/cycle-1/attempt-1", Command: "version", Complete: true}}
 		}, "reuses the rejected attempt"},
 	} {
-		bundle := retainedBundle(t)
+		bundle := modeledRetainedBundle(t)
 		bundle.Rejection = producerRejection()
 		record := valid
 		test.edit(&bundle, &record)
@@ -277,12 +277,12 @@ func TestAuthFirstExcerptAssociation(t *testing.T) {
 		}
 	}
 	// A retained bundle without any excerpt stays complete and reports it absent.
-	if v := classifyAuthBundle(retainedBundle(t)); !v.Complete || v.ExcerptStatus != "absent" {
+	if v := classifyAuthBundle(modeledRetainedBundle(t)); !v.Complete || v.ExcerptStatus != "absent" {
 		t.Fatalf("no excerpt: %+v", v)
 	}
 	// A clipped or empty excerpt is visible and is not a problem of the bundle.
 	for _, status := range []string{"clipped", "no-lines", "redaction-unavailable", "unavailable"} {
-		bundle := retainedBundle(t)
+		bundle := modeledRetainedBundle(t)
 		record := authFirstExcerptRecord{Operation: authRejectionOperation(bundle.Rejection), Status: status, Stage: string(authStageUnknown)}
 		if status == "clipped" {
 			record.Text, record.RetainedBytes, record.Daemon = "x", 1, "client.admin"
@@ -347,7 +347,7 @@ func (controlSources) RedactSecrets(_ context.Context, data []byte, _ ...string)
 // The collector gives each control its own attempt identity, and the
 // rejection it was given is unchanged.
 func TestAuthCollectorControlsHaveOwnAttempt(t *testing.T) {
-	retained := retainedBundle(t)
+	retained := modeledRetainedBundle(t)
 	rejection := producerRejection()
 	bundle := collectAuthFirstFailureBundle(t.Context(), controlSources{}, nil, retained.Provenance, retained.Images, retained.Expected,
 		rejection, nil, nil, time.Second, time.Second, 4096)

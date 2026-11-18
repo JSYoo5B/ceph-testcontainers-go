@@ -74,7 +74,11 @@ func osdBenchmarkTrial(t *testing.T, backend string, skip bool) {
 				return
 			}
 			harness.ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
-				for _, o := range clusteraccess.OSDs(t, cluster) {
+				osds, inventoryErr := cluster.OSDs(ctx)
+				if inventoryErr != nil {
+					t.Logf("diagnostic OSD inventory unavailable: %v", inventoryErr)
+				}
+				for _, o := range osds {
 					osdMemoryFailureLogs(t, ctx, o.Container)
 				}
 			}, func(ctx context.Context) {

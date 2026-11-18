@@ -143,8 +143,9 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 // like Collect; it skips crash logs and every other file, and
 // rejects links, unexpected paths and files that are not JSON objects. Each
 // container's outcome, rejected files and errors stay in the report, which is
-// returned also with an error for failed or incomplete reads. Crash metadata
-// can still hold host names and paths; review a report before sharing it.
+// returned also with an error for Docker, archive, or cancellation failures.
+// Crash metadata can still hold host names and paths; review a report before
+// sharing it.
 //
 // Ceph writes a report directory (a meta JSON file, a log file and a done
 // marker) into [ceph.CrashDir] when a daemon dies on a fatal signal or a failed
@@ -153,9 +154,13 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 // their reason. A record keeps the known crash fields (crash_id, timestamp,
 // process_name, entity_name, ceph_version, utsname_*, os_*, backtrace,
 // assert_*, io_error*, archived, stack_sig) and names other fields in
-// OmittedFields without values. A failed or incomplete container makes the
-// call return an error with the report and the other containers' records. A
-// container's exit code alone does not tell a crash: a daemon that is PID 1,
+// OmittedFields without values. A nil error does not imply Complete: unavailable
+// containers, rejected metadata (including rejection of every record), and
+// omitted records can leave an incomplete report without an aggregate error.
+// Inspect Complete, each container's Outcome, and Omitted to assess coverage.
+// Transport or archive failures and cancellation return an error with the
+// partial report and the other containers' records. A container's exit code
+// alone does not tell a crash: a daemon that is PID 1,
 // as here, exits 1 after writing its report. It is not called automatically
 // outside the failure archive of finalize.TerminateOnCleanup.
 //

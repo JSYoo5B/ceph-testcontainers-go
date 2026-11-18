@@ -286,16 +286,11 @@ func runClientKeyReplacement(t *testing.T) {
 			if resolveErr != nil {
 				t.Fatalf("after a call canceled after %v (%v), the next call returned %v", delay, err, resolveErr)
 			}
-			switch {
-			case err == nil && resolved != attempted:
-				t.Fatalf("a call that finished within %v returned another descriptor than the next call", delay)
-			case err == nil:
-				t.Logf("a call with %v finished in time", delay)
-			case attempted == resolved:
-				t.Logf("a call canceled after %v applied, which the next call confirmed: %v", delay, err)
-			default:
-				t.Logf("a call canceled after %v did not apply, and the next call replaced the key: %v", delay, err)
+			evidence, evidenceErr := replacementAttemptEvidence(attempted, resolved, err)
+			if evidenceErr != nil {
+				t.Fatal(evidenceErr)
 			}
+			t.Logf("replacement with %v: %s", delay, evidence)
 			if authEntry(t, ctx, cluster, client.Name()).Key != keyOf(t, resolved) {
 				t.Fatalf("after a call canceled after %v, the MONs hold another key than the resolved descriptor", delay)
 			}
@@ -606,4 +601,19 @@ func authenticatedMonitorOverrides(t *testing.T, ctx context.Context, cluster *c
 		overrides = append(overrides, endpoint)
 	}
 	return overrides
+}
+
+// Unusable attempted descriptors do not expose whether an uncertain import
+// applied. Only a confirmed call has an identity-preserving descriptor check.
+func replacementAttemptEvidence(attempted, resolved *ceph.ClientConfig, callErr error) (string, error) {
+	if resolved == nil {
+		return "", fmt.Errorf("replacement has no resolved descriptor")
+	}
+	if callErr != nil {
+		return "resolved/current; initial import application unverified", nil
+	}
+	if attempted != resolved {
+		return "", fmt.Errorf("confirmed replacement changed descriptor")
+	}
+	return "confirmed replacement", nil
 }

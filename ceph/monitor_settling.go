@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/monsession"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 )
@@ -146,22 +146,17 @@ func (m monitorSettling) clientNonces(ctx context.Context, clients []string) (ma
 	return nonces, nil
 }
 
-var sessionNonce = regexp.MustCompile(`"nonce":\s*(\d+)`)
-
 // waitSessionsClosed returns once mon lists no session of a client
 // with one of nonces.
 func (m monitorSettling) waitSessionsClosed(ctx context.Context, mon monitorRoute, nonces map[uint64]bool) error {
 	for {
 		out, err := m.command(ctx, "ceph", "--connect-timeout", "5", "tell", "mon."+mon.name, "sessions", "--format", "json")
-		var sessions []json.RawMessage
+		var sessions []uint64
 		if err == nil {
-			if err = json.Unmarshal(out, &sessions); err == nil {
+			if sessions, err = monsession.Nonces(out); err == nil {
 				open := false
-				for _, session := range sessions {
-					for _, match := range sessionNonce.FindAllSubmatch(session, -1) {
-						nonce, _ := strconv.ParseUint(string(match[1]), 10, 64)
-						open = open || nonces[nonce]
-					}
+				for _, nonce := range sessions {
+					open = open || nonces[nonce]
 				}
 				if !open {
 					return nil
