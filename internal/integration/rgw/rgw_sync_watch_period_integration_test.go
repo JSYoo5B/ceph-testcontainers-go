@@ -120,4 +120,5 @@ func TestMultiClusterRGWSyncWatchSamePeriodCommit(t *testing.T) {
 	refreshSyncWatchEndpoints(t, ctx, link, &source, &destination)
 	source.Request(t, ctx, http.MethodHead, "/"+bucket, nil, http.StatusOK)
 	t.Logf("same-master period %s epoch %d -> %d ended both watches", before.ID, before.Epoch, after.Epoch)
+	checkNativeReloadRecovery(t, ctx, link, other)
 }
