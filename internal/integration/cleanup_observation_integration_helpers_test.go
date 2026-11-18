@@ -57,7 +57,9 @@ try:
  names=os.listdir(parent)
 except FileNotFoundError:
  names=[]
-selected=([base] if base in names else [])+sorted(name for name in names if name.startswith('immutable-object-cache-') and name.endswith(('.asok','.pid')))
+selected=[base] if base in names else []
+for suffix in ('.asok','.pid'):
+ selected.extend(sorted(name for name in names if name.startswith('immutable-object-cache-') and name.endswith(suffix)))
 for name in selected:
  if len(sys.argv)>2 and sys.argv[2]=='pid':
   if name.endswith('.pid'):

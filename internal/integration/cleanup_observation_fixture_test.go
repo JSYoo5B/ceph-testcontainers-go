@@ -42,6 +42,7 @@ func TestCleanupObservationRequiresCompleteReads(t *testing.T) {
 		{"lease empty", cacheLeaseFiles, "os.listdir=lambda p: []", []string{"/lease/socket"}, true, ""},
 		{"lease unrelated", cacheLeaseFiles, "os.listdir=lambda p: ['other-file']", []string{"/lease/socket"}, true, ""},
 		{"lease retained", cacheLeaseFiles, "os.listdir=lambda p: ['socket','immutable-object-cache-7.pid']", []string{"/lease/socket"}, true, "socket\nimmutable-object-cache-7.pid"},
+		{"lease file order", cacheLeaseFiles, "os.listdir=lambda p: ['immutable-object-cache-1.pid','immutable-object-cache-2.asok','socket']", []string{"/lease/socket"}, true, "socket\nimmutable-object-cache-2.asok\nimmutable-object-cache-1.pid"},
 		{"lease unreadable", cacheLeaseFiles, "os.listdir=lambda p: fail(PermissionError())", []string{"/lease/socket"}, false, ""},
 		{"lease I/O", cacheLeaseFiles, "os.listdir=lambda p: fail(OSError('I/O'))", []string{"/lease/socket"}, false, ""},
 		{"lease pid unreadable", cacheLeaseFiles, "os.listdir=lambda p: ['immutable-object-cache-7.pid']; builtins.open=lambda p: fail(PermissionError())", []string{"/lease/socket", "pid"}, false, ""},
