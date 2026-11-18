@@ -174,7 +174,8 @@ func TestFinalizationWaitsForSlowSettlementAndSettlesTheOthers(t *testing.T) {
 		indexOf(e, "settle-start-last") > indexOf(e, "settle-start-boom") && indexOf(e, "settle-end-last") < indexOf(e, "remove-target")) {
 		t.Fatalf("order = %v", e)
 	}
-	if len(fx.tb.errors) != 1 || !strings.Contains(fx.tb.errors[0], "capture boom: panic: settle exploded") {
+	if len(fx.tb.errors) != 2 || !strings.Contains(fx.tb.errors[0], "capture slow: context deadline exceeded") ||
+		!strings.Contains(fx.tb.errors[1], "capture boom: panic: settle exploded") {
 		t.Errorf("errors = %q", fx.tb.errors)
 	}
 	archives := fx.archives(t)

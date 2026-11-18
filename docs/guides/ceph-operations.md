@@ -323,11 +323,15 @@ archive layout and the verification model.
 
 A passing test collects and writes nothing. In a failed test, the archive
 runs `diagnostics.Collect` and `diagnostics.CollectCrashMetadata` at the same time, within
-`ArchiveTimeout`, and writes each report it gets even when the collector
+the cooperative `ArchiveTimeout` budget, and writes each report it gets even when the collector
 returned an error, so a failed query or container leaves the rest. It writes
 into a new directory `ceph-<cluster>-<execution ID>`, where the execution ID
 is random, so parallel tests, repeated executions and several clusters of one
-test never share one:
+test never share one. Preparation and snapshot writes share that budget.
+Callbacks and filesystem operations are joined, so a non-returning operation
+can delay cleanup; expiry records an incomplete archive instead of abandoning
+an active writer. The final manifest rewrite after termination is outside the
+archive budget.
 
 | File | Contents |
 | --- | --- |

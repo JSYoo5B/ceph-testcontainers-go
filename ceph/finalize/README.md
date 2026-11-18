@@ -55,12 +55,17 @@ finalization.Check("pool still clean", observer.WaitForClean)
 - Test cleanups registered after `TerminateOnCleanup` run before all of this,
   as Go runs cleanups last-in first-out. Route the removal of clients the
   archive should see through `Cleanup`.
-- Every phase uses a fresh context bounded by its own timeout in `Config`
+- Every phase uses a fresh context with its own cooperative timeout in `Config`
   (`CheckTimeout`, `ArchiveTimeout`, `CleanupTimeout`), because the test's
   context has ended. Check, collection and storage errors never skip the
   cleanups or `Terminate`. A check's error and `Terminate`'s error fail the
   test; collection and storage errors are logged and recorded in the
-  manifest.
+  manifest. Callbacks and local filesystem calls must return before the next
+  phase starts; they are never abandoned to overlap cleanup. A callback that
+  ignores cancellation can delay finalization indefinitely. Late completion
+  records a step failure or an incomplete archive even if it returns nil.
+  The archive budget includes preparation, collection and snapshot writes;
+  the final manifest rewrite after termination is outside that budget.
 - The archive holds a manifest and the reports of `diagnostics.Collect` and
   `diagnostics.CollectCrashMetadata`, configured through `Config.Diagnostics`
   and `Config.CrashMetadata`, plus verification and capture reports. A
