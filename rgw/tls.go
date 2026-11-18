@@ -168,6 +168,12 @@ func (l *tlsListener) fingerprint() string {
 	return hex.EncodeToString(digest[:])
 }
 
+const rgwTLSInstall = `mv -f "$1" "$2"
+result=$?
+printf '%s\n' "$result" > "$3" || exit 1
+exit "$result"
+`
+
 // ReplaceTLS replaces the certificate chain and private key that this
 // gateway's native HTTPS listener serves, for a test of how the SUT meets a
 // renewed certificate or a changed CA. Beast loads them only when the gateway
@@ -180,12 +186,6 @@ func (l *tlsListener) fingerprint() string {
 // container expects it too.
 //
 // In bridge mode the restarted gateway can get new mapped host ports: call
-const rgwTLSInstall = `mv -f "$1" "$2"
-result=$?
-printf '%s\n' "$result" > "$3" || exit 1
-exit "$result"
-`
-
 // S3SecureEndpoint and S3Endpoint again afterwards. In host mode it keeps its
 // selected ports. The gateway must be running, and config must hold a valid
 // PEM chain and its unencrypted private key; the bytes are copied. Trust is
