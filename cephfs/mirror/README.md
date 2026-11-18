@@ -83,7 +83,9 @@ shares (baseline, gaps, overflow and `Stop`) is in
 
 - The mirror owns only its daemon containers and the network attachments it
   adds. `Terminate` leaves the Ceph principals, the peer, directory policies and
-  all data in the clusters.
+  all data in the clusters. Once cleanup starts, the fixture refuses policy
+  and daemon mutations, including after a cleanup error; cleanup itself remains
+  retryable. A live fixture with zero daemons still accepts policy changes.
 - One way, one peer per source filesystem: several daemons share one peer and
   do not fan out. Active-active writes and automatic site failover are not
   provided. Both clusters must use the same network mode;

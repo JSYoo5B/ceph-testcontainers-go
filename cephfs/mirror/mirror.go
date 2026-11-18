@@ -128,6 +128,7 @@ type Container struct {
 	filesystemID                              int
 	metadataPool                              string
 	metadataPoolID, destinationMetadataPoolID int64
+	filesystemIdentityConfirmed               bool
 	destinationFilesystemID                   int
 	pendingPeerImport                         *cephFSPeerIdentity
 	// ops is the explicit peer and directory operations in flight. It
@@ -366,6 +367,7 @@ func cephFSMirrorOwnedInstanceIDs(data []byte, sourceID string) (map[string]bool
 }
 
 func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
+	mirror.filesystemIdentityConfirmed = false
 	data, err := mirror.source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
 	if err != nil {
 		return fmt.Errorf("inspect mirrored filesystem identity: %w", err)
@@ -376,7 +378,7 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 			MetadataPool *int64 `json:"metadata_pool"`
 		} `json:"mdsmap"`
 	}
-	if err := json.Unmarshal(data, &filesystem); err != nil || filesystem.ID <= 0 || filesystem.MDSMap.MetadataPool == nil {
+	if err := json.Unmarshal(data, &filesystem); err != nil || filesystem.ID <= 0 || filesystem.MDSMap.MetadataPool == nil || *filesystem.MDSMap.MetadataPool < 0 {
 		return errors.New("source did not return mirrored filesystem ID and metadata pool")
 	}
 	data, err = mirror.source.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
@@ -384,14 +386,14 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 		return fmt.Errorf("inspect mirrored filesystem metadata pool: %w", err)
 	}
 	var pools []struct {
-		ID   int64  `json:"pool_id"`
+		ID   *int64 `json:"pool_id"`
 		Name string `json:"pool_name"`
 	}
 	if err := json.Unmarshal(data, &pools); err != nil {
 		return fmt.Errorf("decode mirrored filesystem metadata pools: %w", err)
 	}
 	for _, pool := range pools {
-		if pool.ID == *filesystem.MDSMap.MetadataPool && pool.Name != "" {
+		if pool.ID != nil && *pool.ID == *filesystem.MDSMap.MetadataPool && pool.Name != "" {
 			mirror.filesystemID, mirror.metadataPool = filesystem.ID, pool.Name
 			mirror.metadataPoolID = *filesystem.MDSMap.MetadataPool
 			if mirror.destination != nil {
@@ -405,10 +407,11 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 						MetadataPool *int64 `json:"metadata_pool"`
 					} `json:"mdsmap"`
 				}
-				if json.Unmarshal(data, &remote) != nil || remote.ID <= 0 || remote.MDSMap.MetadataPool == nil {
+				if json.Unmarshal(data, &remote) != nil || remote.ID <= 0 || remote.MDSMap.MetadataPool == nil || *remote.MDSMap.MetadataPool < 0 {
 					return errors.New("destination did not return mirrored filesystem ID and metadata pool")
 				}
 				mirror.destinationFilesystemID, mirror.destinationMetadataPoolID = remote.ID, *remote.MDSMap.MetadataPool
+				mirror.filesystemIdentityConfirmed = true
 			}
 			return nil
 		}
@@ -653,7 +656,8 @@ func (daemon *Daemon) Remove(ctx context.Context, opts ...testcontainers.Termina
 
 // Terminate removes owned containers and MGR network attachments. It leaves
 // caller-owned clusters, auth entities, peer policies and snapshots intact.
-// It may be retried after a cleanup error.
+// It may be retried after a cleanup error. Once cleanup starts, policy and
+// daemon mutations are refused, even when cleanup needs a retry.
 //
 //purpose:lifetime
 func (mirror *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
@@ -899,6 +903,9 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if mirror.closed {
+		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
+	}
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
@@ -953,6 +960,9 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if mirror.closed {
+		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
+	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
@@ -1299,6 +1309,9 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if mirror.closed {
+		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
+	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
