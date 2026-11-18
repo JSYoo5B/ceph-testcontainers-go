@@ -519,10 +519,12 @@ the peer address and entity, the policy (`l=1` lossy, `l=0` lossless),
 the session's `client_cookie`, `server_cookie`, `in_seq` and `out_seq`.
 Squid prints fewer fields inside `conn(...)` than Tentacle; both print these.
 `parseReadySessions` in `internal/integration/cephfs` reads them and returns
-recognizable READY lines with missing fields or unsupported framing as unusable
+recognizable session-ready event lines with missing fields or unsupported framing as unusable
 instead of dropping them. A malformed record without an attributable peer
 also makes the selected client window unavailable. This cannot detect records
-that were lost entirely before capture.
+that were lost entirely before capture. Other explicit connection events, such
+as `.stop`, can include `s=READY` without being session-ready observations
+and are ignored.
 
 | Recipe | What the test observes | Proven by |
 | --- | --- | --- |

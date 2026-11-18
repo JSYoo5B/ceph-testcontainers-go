@@ -263,3 +263,16 @@ func TestClientReadySessionsRefusesMalformedWindow(t *testing.T) {
 		t.Fatalf("unrelated records changed valid window: %v, %v", sessions, err)
 	}
 }
+
+func TestClientReadySessionsIgnoresOtherConnectionEvents(t *testing.T) {
+	// Synthetic counterparts of the normal stop/read-error events seen natively.
+	prefix := strings.Split(tentacleMDSReady[1], ").ready")[0]
+	lines := append(append([]string{}, tentacleMDSReady...), prefix+").stop", prefix+").handle_read_frame_preamble_main read frame preamble failed r=-1")
+	sessions, err := clientReadySessions(lines, 4229)
+	if err != nil || len(sessions) != 3 {
+		t.Fatalf("normal connection events changed window: %v %v", sessions, err)
+	}
+	if got := judgeLosslessReconnect(sessions[:1], sessions[1:], 4229); got.Verdict != reconnectObserved {
+		t.Fatalf("valid reconnect lost: %+v", got)
+	}
+}

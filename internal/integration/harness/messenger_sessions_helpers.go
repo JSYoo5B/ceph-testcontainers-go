@@ -227,10 +227,15 @@ var readyRevisionLinePattern = regexp.MustCompile(`conn\(\S+ \S+ (\w+) :\S+ s=RE
 var readyRevisionFieldPattern = regexp.MustCompile(`(?:^|\s)rev1=(\S*)`)
 
 var readyStatePattern = regexp.MustCompile(`\bs=(\w+)`)
+var connectionEventPattern = regexp.MustCompile(`\)\.([a-zA-Z_][a-zA-Z_0-9]*)`)
 
 // IsReadySessionLine identifies a READY record independently of its detailed
-// connection framing. Explicit other states and unrelated text are ignored.
+// connection framing. Other events can log the READY state too; an explicit
+// non-ready event or another state is not a session-ready observation.
 func IsReadySessionLine(line string) bool {
+	if event := connectionEventPattern.FindStringSubmatch(line); event != nil && event[1] != "ready" {
+		return false
+	}
 	if state := readyStatePattern.FindStringSubmatch(line); state != nil {
 		return state[1] == "READY"
 	}
