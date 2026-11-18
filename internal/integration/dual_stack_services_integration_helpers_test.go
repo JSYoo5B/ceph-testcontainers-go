@@ -168,6 +168,27 @@ type heldResult struct {
 	err    error
 }
 
+// cleanupHeldActor joins the Exec reader and reports a transport/read failure
+// as unconfirmed command completion, even when readiness already saw it.
+func cleanupHeldActor(t *testing.T, actor *integrationActor[heldResult], client testcontainers.Container, tag string) {
+	t.Helper()
+	actor.cleanup(t, func(ctx context.Context) error {
+		code, _, err := client.Exec(ctx, []string{"touch", "/tmp/" + tag + ".release"})
+		if err != nil || code != 0 {
+			return fmt.Errorf("release %s: exit %d: %v", tag, code, err)
+		}
+		return nil
+	})
+	select {
+	case <-actor.done:
+		if actor.result.err != nil {
+			t.Errorf("%s actor command completion unconfirmed: %v", tag, actor.result.err)
+		}
+	default:
+		// The bounded cleanup already reported the unjoined reader.
+	}
+}
+
 // StartHeldSession runs script in client and waits until it has listed its
 // established connections.
 func startDualStackSession(t *testing.T, ctx context.Context, client testcontainers.Container, script, tag string, args ...string) *dualStackSession {
@@ -181,15 +202,7 @@ func startDualStackSession(t *testing.T, ctx context.Context, client testcontain
 		}
 		return heldResult{code, output, err}
 	})
-	t.Cleanup(func() {
-		session.actor.cleanup(t, func(ctx context.Context) error {
-			code, _, err := client.Exec(ctx, []string{"touch", "/tmp/" + tag + ".release"})
-			if err != nil || code != 0 {
-				return fmt.Errorf("release %s: exit %d: %v", tag, code, err)
-			}
-			return nil
-		})
-	})
+	t.Cleanup(func() { cleanupHeldActor(t, session.actor, client, tag) })
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		select {

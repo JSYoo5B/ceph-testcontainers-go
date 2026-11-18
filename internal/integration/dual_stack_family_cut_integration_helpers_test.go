@@ -221,15 +221,7 @@ func startFamilyActor(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 		}
 		return heldResult{code, output, err}
 	})
-	t.Cleanup(func() {
-		actor.actor.cleanup(t, func(ctx context.Context) error {
-			code, _, err := ctr.Exec(ctx, []string{"touch", "/tmp/" + tag + ".release"})
-			if err != nil || code != 0 {
-				return fmt.Errorf("release %s: exit %d: %v", tag, code, err)
-			}
-			return nil
-		})
-	})
+	t.Cleanup(func() { cleanupHeldActor(t, actor.actor, ctr, tag) })
 	return actor
 }
 
