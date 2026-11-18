@@ -246,9 +246,17 @@ func TestZoneTwoSubnetGatewayModeAndRecord(t *testing.T) {
 	if !strings.Contains(unavailable, "unavailable") || !strings.Contains(unavailable, "not executed") || strings.Contains(unavailable, "dropped") {
 		t.Fatalf("unavailable record: %s", unavailable)
 	}
-	executed := zoneTwoSubnetOutcome{Mode: "nat", ZoneAddressed: zoneRTT{Requested: 5}, SharedAddressed: zoneRTT{Requested: 5}}.String()
-	if !strings.Contains(executed, "probes executed") || !strings.Contains(executed, "dropped (0/5)") || strings.Contains(executed, "not executed") {
+	executed := zoneTwoSubnetOutcome{
+		Mode:            "nat",
+		ZoneAddressed:   zoneRTT{Requested: 5},
+		SharedAddressed: zoneRTT{Requested: 5, Errors: slices.Repeat([]string{"TimeoutError: timed out"}, 5)},
+	}.String()
+	if !strings.Contains(executed, "probes executed") || strings.Contains(executed, "not executed") {
 		t.Fatalf("executed record: %s", executed)
+	}
+	if !strings.Contains(executed, "zone-addressed through the router connect failed (0/5 [])") ||
+		!strings.Contains(executed, "shared-addressed through the router timed out (0/5 [TimeoutError: timed out") {
+		t.Fatalf("record must distinguish missing evidence from timeouts: %s", executed)
 	}
 }
 
