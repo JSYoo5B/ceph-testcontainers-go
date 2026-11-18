@@ -33,7 +33,6 @@ type Bootstrap = interface {
 type hooks interface {
 	AuthCommand(ctx context.Context, c *ceph.Container, operation string, args ...string) ([]byte, error)
 	CLI(c *ceph.Container) testcontainers.Container
-	NativeInputClaimed(input *ceph.NativeInput) bool
 	CephBefore(c *ceph.Container, major int) bool
 	ClassifyExec(ctx context.Context, err error) error
 	ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
@@ -53,6 +52,7 @@ type hooks interface {
 	LockTopology(ctx context.Context, c *ceph.Container) error
 	MonitorAddresses(status ceph.QuorumStatus) (string, error)
 	NativeFailure(program string, code int, stdout, stderr []byte) error
+	NativeInputClaimed(input *ceph.NativeInput) bool
 	NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error)
 	OnlyMissingHostResource(err error) bool
 	PoolMissing(err error) bool
@@ -90,10 +90,6 @@ func AuthCommand(ctx context.Context, c *ceph.Container, operation string, args 
 
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
-
-// NativeInputClaimed reports whether command admission took a fresh input.
-// A claim allows dispatch but does not establish that the command ran.
-func NativeInputClaimed(input *ceph.NativeInput) bool { return get().NativeInputClaimed(input) }
 
 // CephBefore reports whether the recorded Ceph release is older than major.
 func CephBefore(c *ceph.Container, major int) bool { return get().CephBefore(c, major) }
@@ -177,6 +173,10 @@ func MonitorAddresses(status ceph.QuorumStatus) (string, error) {
 func NativeFailure(program string, code int, stdout, stderr []byte) error {
 	return get().NativeFailure(program, code, stdout, stderr)
 }
+
+// NativeInputClaimed reports whether command admission took a fresh input.
+// A claim allows dispatch but does not establish that the command ran.
+func NativeInputClaimed(input *ceph.NativeInput) bool { return get().NativeInputClaimed(input) }
 
 // NormalizePool validates a pool configuration and fills its defaults.
 func NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error) {

@@ -33,8 +33,6 @@ func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation str
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
-func (serviceHooks) NativeInputClaimed(input *NativeInput) bool { return input.claimed.Load() }
-
 // CephBefore reports whether the recorded Ceph release is older than major.
 func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
 
@@ -122,6 +120,8 @@ func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
 func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byte) error {
 	return nativeFailure(program, code, stdout, stderr)
 }
+
+func (serviceHooks) NativeInputClaimed(input *NativeInput) bool { return input.claimed.Load() }
 
 // NormalizePool validates a pool configuration and fills its defaults.
 func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
