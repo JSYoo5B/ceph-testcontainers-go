@@ -42,7 +42,7 @@ func TestPoolPlacementExcludesFailedOSDBringUp(t *testing.T) {
 			if osd.placementReady {
 				t.Fatal("failed bring-up published eligible placement")
 			}
-			if pool, err := c.CreatePool(t.Context(), PoolConfig{Name: "unavailable", Replicas: 1, DeviceClass: "fast"}); pool != nil || err == nil {
+			if pool, err := c.CreatePool(t.Context(), PoolConfig{Name: "unavailable", Replicas: 1, DeviceClass: "fast"}); pool != nil || err == nil || !strings.Contains(err.Error(), "cluster owns 0") {
 				t.Fatalf("cleanup descriptor admitted a pool: %v, %v", pool, err)
 			}
 		})
@@ -65,7 +65,7 @@ func TestPoolPlacementExcludesInterruptedRemoval(t *testing.T) {
 	if err := osd.Remove(ctx); !errors.Is(err, context.Canceled) || c.fleet.osdHandles.get(3) != osd {
 		t.Fatalf("interrupted reweight did not retain ownership: %v", err)
 	}
-	if pool, err := c.CreatePool(t.Context(), PoolConfig{Name: "retiring", Replicas: 2}); pool != nil || err == nil {
+	if pool, err := c.CreatePool(t.Context(), PoolConfig{Name: "retiring", Replicas: 2}); pool != nil || err == nil || !strings.Contains(err.Error(), "cluster owns 1") {
 		t.Fatalf("retiring descriptor admitted a pool: %v, %v", pool, err)
 	}
 }

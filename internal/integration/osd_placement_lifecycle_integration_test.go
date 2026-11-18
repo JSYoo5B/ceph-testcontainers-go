@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"maps"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,7 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sharedIdentity := osdMemoryIdentities(t, ctx, cluster)[shared.ID]
 	reopened, err := detached.Reopen(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +91,7 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 		t.Fatal("same-parent sharing or reopen changed the native hierarchy")
 	}
 	after := osdMemoryIdentities(t, ctx, cluster)
-	if after[original.ID] != identities[original.ID] || after[neighbor.ID] != identities[neighbor.ID] || after[shared.ID] == "" {
+	if after[original.ID] != identities[original.ID] || after[neighbor.ID] != identities[neighbor.ID] || sharedIdentity == "" || after[shared.ID] != sharedIdentity {
 		t.Fatal("retained or neighboring native identity changed")
 	}
 	// The fixture's shared volume makes this an ordinary fresh-store refusal,
@@ -100,7 +102,7 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 	if err == nil || partial == nil || partial.ID != next || partial.Container != nil {
 		t.Fatalf("fresh-store failure did not retain the partial registration: %v, %v", partial, err)
 	}
-	if pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "incomplete-placement", Replicas: 4}); pool != nil || err == nil {
+	if pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "incomplete-placement", Replicas: 4}); pool != nil || err == nil || !strings.Contains(err.Error(), "cluster owns 3") {
 		t.Fatalf("incomplete placement admitted a pool: %v, %v", pool, err)
 	}
 	pools, err := cluster.Ceph(ctx, "osd", "pool", "ls", "--format", "json")
