@@ -90,7 +90,10 @@ func TestAdminSocketRetainsUnconfirmedCleanup(t *testing.T) {
 				handle := c.fleet.osdHandles.get(0)
 				handle.owner = c
 				handle.Container = &adminLifetimeModel{}
-				_, err := handle.AdminSocket(t.Context(), "status")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				control.during = cancel
+				_, err := handle.AdminSocket(ctx, "status")
 				var unstopped *NativeCommandUnstoppedError
 				if errors.As(err, &unstopped) != refused || control.cancels != 1 {
 					t.Fatalf("cleanup outcome %v cancels %d", err, control.cancels)
