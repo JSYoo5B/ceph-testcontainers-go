@@ -98,8 +98,10 @@ type Report struct {
 // its own short context. When some queries fail, the report and an aggregate error are
 // both returned, so save the report first; truncation alone is not an error. A
 // ceph artifact holds the query's stdout followed by its stderr. When ctx
-// ends, every running query is stopped in the control container before the
-// call returns. Known admin and RGW secrets and every client key the cluster
+// ends, collection attempts bounded cancellation in the control container.
+// If settlement cannot be confirmed, the query may still run; its artifact
+// and the aggregate error report that uncertainty. Keep the report before
+// terminating the fixture. Known admin and RGW secrets and every client key the cluster
 // generated (also replaced or attempted ones) are masked with RedactValues and
 // named secret patterns. A log window that starts or ends inside a PEM
 // private key masks the visible key material up to its END delimiter or
@@ -494,8 +496,9 @@ var diagnosticCephQueries = []struct {
 // which bounds its output inside the container (Testcontainers Exec buffers
 // the whole stream) and kills only its process group at 75% of ctx's time.
 // Stdout precedes stderr in the output, which is clipped to limit. A timed-out
-// or failed query keeps the output it produced. A canceled query leaves no
-// process behind.
+// or failed query keeps the output it produced. If the supervisor cannot
+// confirm settlement, the error explicitly preserves that uncertainty through
+// the report's text redaction and aggregation.
 func diagnosticCephCommand(ctx context.Context, control testcontainers.Container, args []string, limit int) (string, bool, error) {
 	if control == nil {
 		return "", false, errors.New("the Ceph control container was not created")
@@ -511,6 +514,9 @@ func diagnosticCephCommand(ctx context.Context, control testcontainers.Container
 	report, err := supervised.Run(ctx, control, "diagnostic", budget, limit, limit,
 		append([]string{"ceph", "--connect-timeout", "2"}, args...)...)
 	if err != nil {
+		if _, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
+			return "", false, fmt.Errorf("diagnostic query settlement unconfirmed; query may still run: %w", err)
+		}
 		return "", false, err
 	}
 	output := append(report.Stdout, report.Stderr...)
