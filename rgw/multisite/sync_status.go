@@ -36,6 +36,7 @@ type DataSyncStatus struct {
 // SyncStatus is the metadata and data sync state of one attached zone, as
 // Fixture.SyncStatus reads it.
 type SyncStatus struct {
+	periodEpoch                                  uint64
 	RealmID, PeriodID, Zone, ZoneID, ZonegroupID string
 	RealmEpoch                                   uint64
 	MetadataMaster                               bool
@@ -163,6 +164,10 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 		return SyncStatus{}, err
 	}
 	result := SyncStatus{RealmID: f.RealmID, PeriodID: id, RealmEpoch: epoch, Zone: zone.Name, ZoneID: zone.ID, ZonegroupID: f.topology.groupIDs[zone.Zonegroup], MetadataMaster: master.ID == zone.ID}
+	result.periodEpoch, err = syncCommittedPeriodEpoch(current)
+	if err != nil {
+		return result, err
+	}
 	data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
 	if err != nil {
 		return result, err
@@ -208,6 +213,17 @@ func syncCommittedPeriodIdentity(current map[string]any) (string, uint64, error)
 		return "", 0, errors.New("RGW committed period identity is malformed")
 	}
 	return id, epoch, nil
+}
+
+// syncCommittedPeriodEpoch identifies a version within one period and realm
+// epoch. A same-master commit increments this value without changing either
+// identity returned by syncCommittedPeriodIdentity.
+func syncCommittedPeriodEpoch(current map[string]any) (uint64, error) {
+	epoch, err := strconv.ParseUint(fmt.Sprint(current["epoch"]), 10, 64)
+	if err != nil || epoch == 0 {
+		return 0, errors.New("RGW committed period epoch is malformed")
+	}
+	return epoch, nil
 }
 
 func syncStatusReady(status SyncStatus, sources []string) bool {
