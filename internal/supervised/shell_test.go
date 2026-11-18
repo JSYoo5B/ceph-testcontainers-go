@@ -277,7 +277,7 @@ func (c localShellContainer) Exec(ctx context.Context, args []string, _ ...tcexe
 		args[2] = args[2][:start] + ":" + args[2][end:]
 	}
 	if args[2] == ShellCancelScript {
-		defer os.Remove(args[4])
+		defer func() { _ = os.Remove(args[4]) }()
 	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stdout, stderr bytes.Buffer
