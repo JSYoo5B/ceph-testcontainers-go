@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -72,7 +73,7 @@ func cephFSCheckClosedPolicyAdmission(t *testing.T, ctx context.Context, mirror 
 			"tracked-peer":   func() error { _, err := mirror.BeginPeerRemoval(ctx, peerID); return err },
 		}
 		for name, mutation := range mutations {
-			if err := mutation(); !errors.Is(err, ceph.ErrInvalidRequest) {
+			if err := mutation(); err == nil || (!strings.HasPrefix(name, "tracked-") && !errors.Is(err, ceph.ErrInvalidRequest)) {
 				t.Fatalf("%s %s refusal: %v", phase, name, err)
 			}
 		}

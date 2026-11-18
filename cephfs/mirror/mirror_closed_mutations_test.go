@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -45,8 +46,12 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 					"tracked-peer":   func() error { _, err := m.BeginPeerRemoval(t.Context(), cephFSObserverDraftPeer); return err },
 				}
 				for name, operation := range operations {
-					if err := operation(); err == nil {
+					err := operation()
+					if err == nil {
 						t.Errorf("closed owner admitted %s", name)
+					}
+					if strings.HasPrefix(name, "tracked-") && !errors.Is(err, errCephFSObservationGuard) {
+						t.Errorf("tracked %s did not return its permanent ownership guard: %v", name, err)
 					}
 				}
 				if len(s.calls) != calls || s.adds != adds || s.removals != removes || s.peerRemovalControlFake.removals != peers {
