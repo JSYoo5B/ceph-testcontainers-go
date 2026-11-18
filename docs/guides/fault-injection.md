@@ -300,7 +300,11 @@ What to expect:
 With `Peer`, only packets to that address are shaped, and with `PeerPort`
 only TCP packets to that destination port. `Peers` lists up to
 `fault.MaxNetworkPeers` `fault.NetworkPeer` entries of either family in one
-lease. Every other packet leaves unshaped.
+lease. The installed priority map sends every other packet to an unshaped
+band. `Status` reports `Applied: false` if that priority map changes or cannot
+be confirmed. An in-place priority-map edit leaves the lease's root ownership
+intact, so `Restore` can still remove the hierarchy if it contains only the
+lease's qdiscs and filters.
 
 ```golang
 // The MDS loses both OSDs; clients and the MON still reach it.
