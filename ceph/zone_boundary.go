@@ -531,9 +531,12 @@ func zoneRouteCommand(op zoneRouteOp) string {
 	if op.remove {
 		return "ip route del " + owned + " 2>/dev/null || true; routes=$(ip -o -4 route show exact " + owned + ") || exit $?; test -z \"$routes\""
 	}
+	// A filtered ip route show can omit fields from its output (for example,
+	// proto). Compare counts after both lookups have succeeded.
 	return "routes=$(ip -o -4 route show exact " + dest + ") || exit $?; own=$(ip -o -4 route show exact " + owned + ") || exit $?; " +
 		"if [ -z \"$routes\" ]; then ip route add " + owned + "; " +
-		"elif [ \"$routes\" != \"$own\" ]; then echo \"a route to " + dest + " that the zone boundary does not own is in place: $routes\" >&2; exit 1; fi"
+		"elif [ -z \"$own\" ] || [ \"$(printf '%s\\n' \"$routes\" | wc -l)\" -ne \"$(printf '%s\\n' \"$own\" | wc -l)\" ]; then " +
+		"echo \"a route to " + dest + " that the zone boundary does not own is in place: $routes\" >&2; exit 1; fi"
 }
 
 // planZoneEnrollment returns the routes that enrolling joining needs: in its
