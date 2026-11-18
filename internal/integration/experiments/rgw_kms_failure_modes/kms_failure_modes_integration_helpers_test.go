@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -131,7 +132,11 @@ func rgwKMSFailureModes(t *testing.T) {
 		removed := rgwSSES3Bucket(t, ctx, f.Trusted, f.Gateways[0], f.Vault, "tc-sse-s3-removed")
 		deleteBucket("tc-sse-s3-removed")
 		first := rgwSSES3KeyAudit(t, f.Vault.Audit(t, ctx), "tctransit/keys/"+removed)
-		retained := f.Vault.Do(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+removed, nil).Code == http.StatusOK
+		keyState := f.Vault.Do(t, ctx, http.MethodGet, "/v1/tctransit/keys/"+removed, nil)
+		retained, err := transitKeyRetained(keyState.Code)
+		if err != nil {
+			t.Fatal(err)
+		}
 		switch {
 		case first.configured == 0:
 			t.Fatal("bucket deletion did not mark its Transit key deletable")
@@ -263,4 +268,17 @@ func rgwSSES3KeyAudit(t *testing.T, audit []byte, path string) rgwSSES3KeyOutcom
 		}
 	}
 	return outcome
+}
+
+// transitKeyRetained distinguishes the key reader's explicit absence response
+// from a failed observation, independently of the delete audit.
+func transitKeyRetained(status int) (bool, error) {
+	switch status {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("Transit key lookup returned HTTP %d", status)
+	}
 }

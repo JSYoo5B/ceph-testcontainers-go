@@ -15,9 +15,10 @@ import (
 )
 
 // ReadNotificationEvents returns the events that the receiver in client has
-// logged so far, one per line.
+// logged so far, one per line. The receiver must have created the log;
+// a missing or unreadable log cannot establish an empty event history.
 func ReadNotificationEvents(ctx context.Context, client testcontainers.Container) ([]string, error) {
-	code, reader, err := client.Exec(ctx, []string{"sh", "-c", "cat /tmp/tc-events.log 2>/dev/null || true"}, tcexec.Multiplexed())
+	code, reader, err := client.Exec(ctx, []string{"cat", "/tmp/tc-events.log"}, tcexec.Multiplexed())
 	if err != nil {
 		return nil, fmt.Errorf("read notification events: %w", err)
 	}

@@ -104,11 +104,13 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 		}
 	}
 
+	var directEvents []string
 	t.Run("direct", func(t *testing.T) {
 		harness.S3FeatureRequest(t, ctx, s3, http.MethodPut, bucket+"/in/a", []byte("notified"), nil, http.StatusOK)
 		harness.S3FeatureRequest(t, ctx, s3, http.MethodPut, bucket+"/out/b", []byte("filtered"), nil, http.StatusOK)
 		harness.S3FeatureRequest(t, ctx, s3, http.MethodDelete, bucket+"/in/a", nil, nil, http.StatusNoContent)
 		events := waitNotificationEvents(t, ctx, client, []string{"ObjectCreated:Put in/a", "ObjectRemoved:Delete in/a"})
+		directEvents = events
 		for _, event := range events {
 			if strings.HasSuffix(event, " out/b") {
 				t.Fatal("object outside the prefix filter was notified")
@@ -150,8 +152,8 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 		}
 		if events, err := harness.ReadNotificationEvents(ctx, client); err != nil {
 			t.Fatal(err)
-		} else if len(harness.MissingNotificationEvents(received, events)) != len(received) {
-			t.Fatalf("event was recorded while the receiver was stopped: %v", events)
+		} else if err := notificationLogWhileStopped(directEvents, events, received); err != nil {
+			t.Fatal(err)
 		}
 		// Observing neither drains nor delivers: the entries stay pending.
 		again := observeQueue(t, ctx, gateway, selected, sample)
@@ -315,6 +317,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 events.write(record['eventName']+' '+record['s3']['object']['key']+'\n')
         self.send_response(200); self.end_headers()
     def log_message(self,*args): pass
+open('/tmp/tc-events.log','a').close()
 server=http.server.HTTPServer(('0.0.0.0',int(sys.argv[1])),Handler)
 open('/tmp/tc-receiver.port','w').write(str(server.server_address[1]))
 server.serve_forever()

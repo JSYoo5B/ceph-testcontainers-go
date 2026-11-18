@@ -19,3 +19,18 @@ func TestTransitRetryAuditDetectsADispatchedDeleteWithoutAReply(t *testing.T) {
 		t.Fatal("missed the new in-flight deletion")
 	}
 }
+
+func TestTransitKeyAbsenceRequiresNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		status          int
+		retained, valid bool
+	}{
+		{200, true, true}, {404, false, true},
+		{403, false, false}, {500, false, false}, {204, false, false},
+	} {
+		retained, err := transitKeyRetained(tc.status)
+		if retained != tc.retained || (err == nil) != tc.valid {
+			t.Errorf("HTTP %d: retained=%t error=%v", tc.status, retained, err)
+		}
+	}
+}

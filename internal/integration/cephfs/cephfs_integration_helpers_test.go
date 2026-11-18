@@ -83,11 +83,10 @@ func checkCephFSRemoval(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		}
 	}
 	for _, daemon := range daemons {
-		if daemon.IsRunning() {
-			t.Fatalf("mds.%s of the removed filesystem is still running", daemon.ID)
-		}
-		if _, err := cluster.Ceph(ctx, "auth", "get", "mds."+daemon.ID); err == nil {
-			t.Fatalf("key of mds.%s remains", daemon.ID)
+		_, stateErr := daemon.State(ctx)
+		_, authErr := cluster.Ceph(ctx, "auth", "get", "mds."+daemon.ID)
+		if err := cephFSRemovedMDSEvidence(stateErr, authErr); err != nil {
+			t.Fatalf("removed mds.%s: %v", daemon.ID, err)
 		}
 	}
 	assertCephFSActive(t, ctx, cluster, kept)

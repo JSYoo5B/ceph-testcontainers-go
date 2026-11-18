@@ -788,8 +788,9 @@ func testCephFSFuseMount(t *testing.T) {
 		if err := testcontainers.TerminateContainer(ctr); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ctr.State(ctx); err == nil {
-			t.Fatalf("client container %s still exists", ctr.GetContainerID()[:12])
+		_, stateErr := ctr.State(ctx)
+		if err := cephFSRemovedContainerEvidence(stateErr); err != nil {
+			t.Fatalf("client container %s removal: %v", ctr.GetContainerID()[:12], err)
 		}
 	}
 
