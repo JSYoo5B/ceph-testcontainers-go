@@ -36,6 +36,27 @@ func TestMultiClusterRGWMetadataReadinessDuringDataPeerCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	zones := fixture.Zones()
+	// Topology bootstrap restarts gateways. Their previous five-minute
+	// leases can outlive WaitSyncReady's four-minute bound, so establish
+	// initial metadata convergence before testing a newly created bucket.
+	t.Log("waiting for initial metadata convergence after topology bootstrap")
+	initialCtx, initialCancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer initialCancel()
+	for _, zone := range zones {
+		for {
+			status, err := fixture.SyncStatus(initialCtx, zone.Name)
+			if err == nil && status.Metadata.CaughtUp {
+				t.Logf("initial metadata ready in zone %s", zone.Name)
+				break
+			}
+			select {
+			case <-initialCtx.Done():
+				t.Fatalf("initial metadata convergence in %s: %+v, %v: %v", zone.Name, status, err, initialCtx.Err())
+			case <-time.After(time.Second):
+			}
+		}
+	}
+	initialCancel()
 	find := func(name string) multisite.Zone {
 		t.Helper()
 		i := slices.IndexFunc(zones, func(z multisite.Zone) bool { return z.Name == name })
@@ -48,11 +69,13 @@ func TestMultiClusterRGWMetadataReadinessDuringDataPeerCut(t *testing.T) {
 	target := rgwTopologyS3(t, ctx, find("b"))
 	source := rgwTopologyS3(t, ctx, find("c"))
 	const bucket = "/tc-rgw-metadata-scope"
+	t.Log("creating the bucket and waiting for its metadata in all zones")
 	createMultisiteBucket(t, ctx, fixture, master, bucket, nil)
 	before, err := fixture.WaitSyncReady(ctx, "b", "c")
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("baseline ready; interrupting only zone c's peer link")
 	cut, err := fixture.InterruptZoneLink(ctx, "c")
 	if cut != nil {
 		t.Cleanup(func() {
@@ -70,6 +93,7 @@ func TestMultiClusterRGWMetadataReadinessDuringDataPeerCut(t *testing.T) {
 	source.Request(t, ctx, http.MethodPut, bucket+"/isolated", payload, http.StatusOK)
 	target.Request(t, ctx, http.MethodGet, bucket+"/isolated", nil, http.StatusNotFound)
 
+	t.Log("checking metadata-only readiness while zone c is isolated")
 	metadataCtx, metadataCancel := context.WithTimeout(ctx, 75*time.Second)
 	during, err := fixture.WaitSyncReady(metadataCtx, "b")
 	metadataCancel()
@@ -81,12 +105,14 @@ func TestMultiClusterRGWMetadataReadinessDuringDataPeerCut(t *testing.T) {
 		t.Fatalf("isolated data source comparison was accepted: %+v", during.DataSources)
 	}
 	t.Logf("metadata remained ready while source c comparison was unavailable: %+v", during.DataSources[index])
+	t.Log("checking selected-source readiness while zone c is isolated")
 	dataCtx, dataCancel := context.WithTimeout(ctx, 15*time.Second)
 	_, err = fixture.WaitSyncReady(dataCtx, "b", "c")
 	dataCancel()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("selected isolated source satisfied readiness: %v", err)
 	}
+	t.Log("restoring zone c and waiting for selected-source convergence")
 	if err := cut.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
