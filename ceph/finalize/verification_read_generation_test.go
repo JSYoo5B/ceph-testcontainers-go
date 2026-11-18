@@ -109,7 +109,7 @@ func TestVerificationGenerationReadBoundaries(t *testing.T) {
 			if report.Outcome == VerificationClean || len(report.Crashes.Gaps) == 0 {
 				t.Fatalf("generation transition reported complete crash coverage: %+v", report)
 			}
-			if boundary != "after-log-before-confirmation" && len(report.Logs.Gaps) == 0 {
+			if len(report.Logs.Gaps) == 0 {
 				t.Fatalf("generation transition reported complete log coverage: %+v", report)
 			}
 			if boundary == "baseline-crash" && v.baseline.targets[0].crashes != nil {
