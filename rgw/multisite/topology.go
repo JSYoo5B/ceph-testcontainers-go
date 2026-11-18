@@ -347,7 +347,8 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 // every registered zone's identity and endpoint, and refreshes the period in
 // all sites. Existing running gateways restart to load the final period,
 // retaining their listener ports and storage; fenced gateways stay stopped
-// unless an earlier reload of theirs was interrupted.
+// unless the fixture owes a start to that same container and process generation
+// after an interrupted reload. An unconfirmed stop must settle before retry.
 // The new gateway starts with its committed endpoint and skips this reload.
 // Running secondaries finish initial metadata full sync before reload. Complete
 // any external master transition first, or keep the previous master fenced.
@@ -573,38 +574,86 @@ func (r *rgwRealmAccess) committedPeriod(ctx context.Context, zone *rgwZoneState
 	return decodeRGWTopologyPeriod(data)
 }
 
+// zoneReload identifies the process whose stop belongs to this fixture.
+type zoneReload struct {
+	containerID, originalStart string
+	startConfirmed             bool
+}
+
 func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
 	for _, zone := range states {
-		// A new zone's gateway first starts after its endpoint was
-		// committed, so it already loaded the final period.
-		// Avoid interrupting its initial metadata full sync just to reload
-		// the same configuration.
+		// A newly added zone already loaded its committed endpoint.
 		if skip != nil && skip(zone) {
 			continue
 		}
-		status, err := zone.Gateway.State(ctx)
-		if err != nil || status == nil {
-			return fmt.Errorf("inspect zone %s before period reload: %v", zone.Name, err)
+		if err := t.reloadZoneGateway(ctx, zone); err != nil {
+			return err
 		}
-		if !status.Running {
-			if !t.reloadNeeded[zone.Name] {
-				continue
-			}
-		} else {
-			if t.reloadNeeded == nil {
-				t.reloadNeeded = make(map[string]bool)
-			}
-			t.reloadNeeded[zone.Name] = true
-			stop := 3 * time.Second
-			if err := zone.Gateway.Stop(ctx, &stop); err != nil {
-				return fmt.Errorf("stop zone %s before period reload: %w", zone.Name, err)
-			}
-		}
-		if err := zone.Gateway.Start(ctx); err != nil {
-			return fmt.Errorf("restart zone %s after period reload: %w", zone.Name, err)
-		}
-		delete(t.reloadNeeded, zone.Name)
 	}
+	return nil
+}
+
+func (t *rgwZoneTopology) reloadZoneGateway(ctx context.Context, zone *rgwZoneState) error {
+	gateway := zone.Gateway
+	id := gateway.GetContainerID()
+	status, err := gateway.State(ctx)
+	if err != nil || status == nil || status.Paused || status.Restarting || id == "" || status.StartedAt == "" {
+		return fmt.Errorf("inspect zone %s before period reload: unusable gateway state: %v", zone.Name, err)
+	}
+	record := t.reloadNeeded[zone.Name]
+	if record != nil {
+		if id != record.containerID {
+			delete(t.reloadNeeded, zone.Name)
+			return fmt.Errorf("zone %s gateway was replaced during reload; leaving its current state intact", zone.Name)
+		}
+		if !status.Running && (status.StartedAt != record.originalStart || record.startConfirmed) {
+			delete(t.reloadNeeded, zone.Name)
+			return fmt.Errorf("zone %s was stopped outside the pending reload; leaving it stopped", zone.Name)
+		}
+		if status.Running {
+			if status.StartedAt == record.originalStart {
+				return fmt.Errorf("zone %s original generation still runs after an unconfirmed stop; retry after it settles", zone.Name)
+			}
+			// A new running generation has loaded the committed period.
+			delete(t.reloadNeeded, zone.Name)
+			return nil
+		}
+	} else {
+		if !status.Running {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if t.reloadNeeded == nil {
+			t.reloadNeeded = make(map[string]*zoneReload)
+		}
+		record = &zoneReload{containerID: id, originalStart: status.StartedAt}
+		t.reloadNeeded[zone.Name] = record
+		stop := 3 * time.Second
+		if err := gateway.Stop(ctx, &stop); err != nil {
+			return fmt.Errorf("stop zone %s before period reload: %w", zone.Name, err)
+		}
+	}
+	// Start targets a container ID. Recheck the stopped generation before
+	// dispatch, including after a successful Stop reply.
+	status, err = gateway.State(ctx)
+	if err != nil || status == nil || status.Running || status.Paused || status.Restarting {
+		return fmt.Errorf("confirm stopped zone %s before reload Start: %v", zone.Name, err)
+	}
+	if gateway.GetContainerID() != record.containerID || status.StartedAt != record.originalStart {
+		delete(t.reloadNeeded, zone.Name)
+		return fmt.Errorf("zone %s generation changed before reload Start; leaving it stopped", zone.Name)
+	}
+	if err := gateway.Start(ctx); err != nil {
+		return fmt.Errorf("restart zone %s after period reload: %w", zone.Name, err)
+	}
+	record.startConfirmed = true
+	status, err = gateway.State(ctx)
+	if err != nil || status == nil || !status.Running || status.Paused || status.Restarting || status.StartedAt == record.originalStart {
+		return fmt.Errorf("confirm restarted zone %s after period reload: %v", zone.Name, err)
+	}
+	delete(t.reloadNeeded, zone.Name)
 	return nil
 }
 

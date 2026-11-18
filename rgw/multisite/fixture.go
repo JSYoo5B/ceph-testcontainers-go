@@ -84,7 +84,7 @@ type rgwZoneTopology struct {
 	removed                 map[string]*rgwZoneRemoval
 	groupIDs                map[string]string
 	groupMasters            map[string]string
-	reloadNeeded            map[string]bool
+	reloadNeeded            map[string]*zoneReload
 	bootstrapStagingPending bool
 }
 
