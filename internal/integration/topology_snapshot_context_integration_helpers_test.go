@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
@@ -104,12 +105,8 @@ func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ce
 				t.Error("owner cleanup incomplete; rejecting wrappers retained")
 				return
 			}
-			if pending.Load() != 0 {
-				t.Error("queued consumer cleanup incomplete; rejecting wrappers retained")
-				return
-			}
-			for i, cluster := range clusters {
-				cluster.Container = originals[i]
+			if err := restoreTopologySnapshotHandles(clusters, originals, pending); err != nil {
+				t.Error(err)
 			}
 		})
 	}
@@ -178,4 +175,17 @@ func topologySnapshotQueue(t *testing.T, releaseOwner func(), pending *atomic.In
 		}
 		t.Fatal("consumer remained queued past the caller deadline")
 	}
+}
+
+// restoreTopologySnapshotHandles changes the exported handles only after every
+// admitted actor has stopped accessing them. An unresolved actor retains the
+// rejecting wrappers, even if it later exceeds the test's drainage budget.
+func restoreTopologySnapshotHandles(clusters []*ceph.Container, originals []testcontainers.Container, pending *atomic.Int32) error {
+	if pending.Load() != 0 {
+		return fmt.Errorf("queued consumer cleanup incomplete; rejecting wrappers retained")
+	}
+	for i, cluster := range clusters {
+		cluster.Container = originals[i]
+	}
+	return nil
 }

@@ -78,7 +78,7 @@ func startFixtureProcess(t *testing.T, cmd *exec.Cmd) *integrationActor[error] {
 			return
 		default:
 		}
-		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, exec.ErrNotFound) {
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			// Wait below establishes completion even if the process just exited.
 			t.Logf("kill fixture child: %v", err)
 		}

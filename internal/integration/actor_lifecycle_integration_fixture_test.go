@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -136,6 +137,44 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 			output, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(output), "ACTOR_READER_JOINED") || strings.Contains(string(output), "cleanup incomplete") {
 				t.Fatalf("failure-path cleanup: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestFixtureProcessFailureCleanup(t *testing.T) {
+	if mode := os.Getenv("CTG_PROCESS_FAILURE_CONTROL"); mode != "" {
+		cmd := exec.Command("python3", "-c", "import time; time.sleep(600)")
+		t.Cleanup(func() {
+			if cmd.ProcessState == nil {
+				t.Error("fixture child was not reaped")
+			} else {
+				t.Log("CHILD_REAPED")
+			}
+		})
+		a := startFixtureProcess(t, cmd)
+		switch mode {
+		case "second start":
+			startFixtureProcess(t, exec.Command(filepath.Join(t.TempDir(), "absent-executable")))
+		case "readiness":
+			waitFixtureReady(t, a, filepath.Join(t.TempDir(), "never-ready"))
+		case "intermediate":
+			t.Fatal("injected wait failure in another actor")
+		}
+		return
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("needs python3")
+	}
+	for _, mode := range []string{"second start", "readiness", "intermediate"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFixtureProcessFailureCleanup$", "-test.v")
+			cmd.Env = append(os.Environ(), "CTG_PROCESS_FAILURE_CONTROL="+mode)
+			output, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "CHILD_REAPED") || strings.Contains(string(output), "cleanup incomplete") {
+				t.Fatalf("fixture failure cleanup: %v\n%s", err, output)
 			}
 		})
 	}
