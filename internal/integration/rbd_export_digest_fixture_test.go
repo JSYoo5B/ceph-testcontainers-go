@@ -122,8 +122,11 @@ func TestRBDParentReadHistoryRejectsCacheBypass(t *testing.T) {
 	if err := immutableCacheReadDelta(after, before, 0); err == nil {
 		t.Fatal("accepted truncated history")
 	}
-	if _, err := harness.RBDDataReadsInHistory([]byte(`{}`), objects); err == nil {
-		t.Fatal("accepted missing ops")
+	for _, report := range []string{`{}`, `{"ops":[{}]}`, `{"ops":[{"description":null}]}`,
+		`{"ops":[{"description":"osd_op(client.1 ::rbd_data.12.0000:head [sparse-read 0~1])","initiated_at":"3"},{}]}`} {
+		if _, err := harness.RBDDataReadsInHistory([]byte(report), objects); err == nil {
+			t.Fatalf("accepted incomplete cache-hit evidence %s", report)
+		}
 	}
 }
 
