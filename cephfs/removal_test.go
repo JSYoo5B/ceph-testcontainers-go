@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
@@ -45,6 +46,7 @@ func cephFSRemovalClusterWithControl(t *testing.T, present bool, wrap func(*ceph
 	}
 	fs := newFilesystem(cluster, config, nil)
 	fs.fsNewAttempted = true
+	fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 41, MetadataPool: 4, DefaultPool: 5, Attachments: make(map[string]*fsbase.PoolAttachment)})
 	for _, name := range []string{"app-metadata", "app-data"} {
 		pool, err := cluster.Pool(t.Context(), name)
 		if err != nil {
@@ -330,5 +332,57 @@ func TestRemoveRefusesUnconfirmedPartialPoolIdentity(t *testing.T) {
 	}
 	if f.Snapshot() != before {
 		t.Fatalf("Remove changed the unconfirmed pool: %s", f)
+	}
+}
+
+func TestRemovalRefusesUnconfirmedFilesystemBeforeShutdown(t *testing.T) {
+	cluster, model := cephFSRemovalCluster(t, true)
+	fs := ownedFilesystem(t, cluster, "app")
+	fs.base().ReplaceNative(nil)
+	before := model.Snapshot()
+	if err := fs.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "unconfirmed") {
+		t.Fatalf("Remove = %v", err)
+	}
+	if model.Snapshot() != before {
+		t.Fatal("uncertain cleanup mutated native state")
+	}
+	for _, call := range model.Calls {
+		if len(call) > 1 && call[0] == "fs" && (call[1] == "set" || call[1] == "rm") {
+			t.Fatalf("dispatched %v", call)
+		}
+	}
+}
+
+// filesystemSetupModel publishes an FSMap and pool IDs when fs new applies.
+type filesystemSetupModel struct{ poolSetupModel }
+
+func (m filesystemSetupModel) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := m.poolSetupModel.Exec(ctx, args, opts...)
+	words := clustertest.ModuleArgs(args)
+	if code == 0 && err == nil && len(words) > 4 && words[0] == "fs" && words[1] == "new" {
+		m.Filesystems = []clustertest.FakeFilesystem{{Name: words[2], Metadata: words[3], Data: []string{words[4]}}}
+		ids := map[string]int{}
+		for _, pool := range m.Pools {
+			ids[pool.Name] = pool.ID
+		}
+		m.Output["fs dump --format json"] = fmt.Sprintf(`{"filesystems":[{"id":41,"mdsmap":{"fs_name":"%s","metadata_pool":%d,"data_pools":[%d]}}]}`, words[2], ids[words[3]], ids[words[4]])
+		m.Output["fs get app --format json"] = shutdownMap(41, 0, `{}`)
+	}
+	return code, out, err
+}
+func TestPartialStartWithCapturedFilesystemCanBeRemoved(t *testing.T) {
+	model := newCephStateFake()
+	model.Output["fs dump --format json"] = `{"filesystems":[]}`
+	model.FailNext("fs set app allow_standby_replay false", 1)
+	cluster := poolFixtureCluster(filesystemSetupModel{poolSetupModel{model}}, 3)
+	fs, err := Start(t.Context(), cluster, Config{Name: "app"})
+	if err == nil || fs == nil || fs.base().Native() == nil {
+		t.Fatalf("partial Start=%v, %v", fs, err)
+	}
+	if err := fs.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Filesystems) != 0 || model.HasPool("app-metadata") || model.HasPool("app-data") || model.HasRule("tc-app-metadata-replicated") || model.HasRule("tc-app-data-replicated") {
+		t.Fatal("original partial resources remain", model)
 	}
 }

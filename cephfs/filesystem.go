@@ -263,13 +263,13 @@ func (fs *Filesystem) createNative(ctx context.Context, config Config, existing 
 	if _, err := fs.base().Cluster().Ceph(ctx, create...); err != nil {
 		return fmt.Errorf("create cephfs: %w", err)
 	}
+	if err := fs.base().CaptureNativePools(ctx); err != nil {
+		return fmt.Errorf("capture created cephfs identity: %w", err)
+	}
 	for _, setting := range settings {
 		if _, err := fs.base().Cluster().Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
 			return fmt.Errorf("set cephfs %s: %w", setting[0], err)
 		}
-	}
-	if err := fs.base().CaptureNativePools(ctx); err != nil {
-		return fmt.Errorf("capture created cephfs identity: %w", err)
 	}
 	for _, pool := range fs.AdditionalDataPools {
 		if _, err := fs.base().Cluster().Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
@@ -323,8 +323,9 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 }
 
 // MDSStatus reads one native FSMap, so rank ownership and standby state come
-// from the same epoch. Active ranks include external daemons with Owned=false;
-// standby lists contain only this fixture's daemons with matching affinity.
+// from the same epoch. The registered handle and its captured filesystem and
+// original pool IDs must still match. Active ranks include external daemons
+// with Owned=false; standby lists contain only this fixture's daemons with matching affinity.
 //
 //purpose:observation
 func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) {
@@ -875,7 +876,11 @@ func (f mdsFleet) status(ctx context.Context) (*FilesystemStatus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
 	}
-	return parseCephFSMDSStatus(data, f.core.Name(), owner.daemons)
+	sample, err := resolveWatchedMDSs(f.core.Name(), owner, data)
+	if err != nil {
+		return nil, err
+	}
+	return &sample.status, nil
 }
 
 // mdsOwnerSample is the owner side of one MDS status read, captured in one

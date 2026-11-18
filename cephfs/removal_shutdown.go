@@ -48,6 +48,9 @@ func parseRemovalShutdownState(data []byte, name string) (removalShutdownState, 
 // A failed or cancelled drain leaves ownership intact. It neither forces an
 // unhealthy daemon to fail nor changes the filesystem back to up on error.
 func drainFilesystemForRemoval(ctx context.Context, c *ceph.Container, fs *Filesystem) error {
+	if fs.base().Native() == nil {
+		return errors.New("filesystem creation identity is unconfirmed; refusing removal")
+	}
 	read := func() (removalShutdownState, error) {
 		data, err := c.Ceph(ctx, "fs", "get", fs.base().Name(), "--format", "json")
 		if err != nil {
