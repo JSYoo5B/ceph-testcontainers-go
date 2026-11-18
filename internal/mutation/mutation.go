@@ -58,10 +58,11 @@ func Run(ctx context.Context, bound time.Duration, fn func(context.Context) (boo
 		if p.complete {
 			return p.err
 		}
-		p.cause = p.err
 	case <-ctx.Done():
-		p.cause = ctx.Err()
 	}
+	// An incomplete reply and cancellation can both be ready. Keep the
+	// caller's cancellation regardless of which case was selected.
+	p.cause = ctx.Err()
 	return p
 }
 
