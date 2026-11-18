@@ -144,12 +144,9 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 // has arrived at a secondary and never enter returned errors.
 func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, states []*rgwZoneState, current map[string]any) error {
 	for _, zone := range states {
-		if zone.ID != master.ID {
-			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
-				return err
-			}
-		}
+		// An earlier attempt may have imported this exact period before failing
+		// its gateway reload. Do not require the stopped master's HTTP endpoint
+		// merely to repeat an import already confirmed in the local store.
 		data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
 		if err != nil {
 			return err
@@ -158,10 +155,28 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 		if err != nil {
 			return err
 		}
+		if reflect.DeepEqual(actual, current) {
+			continue
+		}
+		if zone.ID != master.ID {
+			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
+				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				return err
+			}
+			data, err = f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
+			if err != nil {
+				return err
+			}
+			actual, err = syncJSON(data)
+			if err != nil {
+				return err
+			}
+		}
 		if !reflect.DeepEqual(actual, current) {
 			return errors.New("RGW owned zone has not imported the exact committed policy period")
 		}
 	}
+
 	return nil
 }
 
