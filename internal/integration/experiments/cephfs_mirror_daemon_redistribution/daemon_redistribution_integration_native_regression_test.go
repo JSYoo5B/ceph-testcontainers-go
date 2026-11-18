@@ -49,8 +49,10 @@ func TestMultiClusterCephFSMirrorDaemonTopology(t *testing.T) {
 // stops, its directories move to the survivor and new snapshots arrive),
 // when the stopped daemon is removed and a replacement joins, which the MGR
 // sees registered with the peer, then the defect is REPRODUCED if the MGR
-// does not spread the directories over both daemons within three minutes,
-// and NOT_REPRODUCED if it does and the next snapshots arrive. The case never
+// keeps all directories on the survivor three minutes after registration,
+// and NOT_REPRODUCED if it assigns directories to both and the next
+// snapshots arrive. Each distribution read requires both registered IDs
+// and a count for every directory. The case never
 // calls RebalanceDirectories. Tentacle 20.2.4 reproduces it.
 //
 // A failure of the given or when steps fails the test, and so does a
@@ -226,7 +228,11 @@ func testDaemonRedistribution(t *testing.T, network string, host bool) {
 	t.Logf("native CephFS mirror owner %s stopped: four directories reassigned to the surviving instance; new snapshots and exact bytes arrived", stoppedID)
 
 	// When: the stopped daemon is removed and a replacement joins.
+	survivor := owners[directories[0]]
 	registeredBefore := registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID)
+	if !registeredBefore[survivor] {
+		t.Fatalf("condition not established: survivor %s was not registered with peer %s", survivor, peerID)
+	}
 	if err := daemons[0].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -241,39 +247,62 @@ func testDaemonRedistribution(t *testing.T, network string, host bool) {
 		t.Fatal("replacement reused the removed process or reassigned the legacy handle")
 	}
 
-	// Then: within the wait that the fixture gives an assignment, the MGR
-	// spreads the four directories over both daemons, or it keeps them on
-	// the survivor although the replacement registered with the peer.
-	joined, spread, distribution := false, false, ""
-	deadline := time.Now().Add(3 * time.Minute)
-	for !spread && time.Now().Before(deadline) {
-		if !joined {
-			for id := range registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID) {
-				joined = joined || !registeredBefore[id]
-			}
-		}
-		spread, distribution = spreadOverTwo(t, ctx, source, sourceFS.FilesystemName)
-		if !spread {
-			select {
-			case <-ctx.Done():
-				t.Fatalf("wait for the redistribution: %v", ctx.Err())
-			case <-time.After(time.Second):
-			}
+	// Establish a stable replacement ID before starting the observation
+	// window. The replacement is the only new process started by this case.
+	waitSample := func() {
+		t.Helper()
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for the redistribution: %v", ctx.Err())
+		case <-time.After(time.Second):
 		}
 	}
-	t.Logf("CEPHFS_MIRROR_DAEMON_REDISTRIBUTION_RECEIPT replacement registered: %t; directories spread over two instances: %t; distribution: %s", joined, spread, distribution)
+	var replacementID string
+	joinDeadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(joinDeadline) {
+		current := registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID)
+		replacementID = redistributionCandidate(registeredBefore, current, survivor)
+		if replacementID != "" {
+			break
+		}
+		waitSample()
+	}
+	if replacementID == "" {
+		t.Fatalf("condition not established: no replacement registered alongside survivor %s with peer %s (registered before: %v)", survivor, peerID, registeredBefore)
+	}
+
+	deadline := time.Now().Add(3 * time.Minute)
+	var spread bool
+	var distribution []byte
+	for {
+		sampled := time.Now()
+		before := registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID)
+		distribution, err = source.Ceph(ctx, "fs", "snapshot", "mirror", "show", "distribution", sourceFS.FilesystemName)
+		if err != nil {
+			t.Fatalf("mirror distribution: %v", err)
+		}
+		after := registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID)
+		spread, err = judgeRedistribution(distribution, before, after, survivor, replacementID, len(directories))
+		if err != nil {
+			t.Fatalf("redistribution evidence unavailable: %v; distribution: %s", err, distribution)
+		}
+		if spread || !sampled.Before(deadline) {
+			break
+		}
+		waitSample()
+	}
+	t.Logf("CEPHFS_MIRROR_DAEMON_REDISTRIBUTION_RECEIPT survivor=%s replacement=%s distributed=%t distribution=%s", survivor, replacementID, spread, distribution)
 	var symptoms []string
-	switch {
-	case spread:
+	if spread {
 		owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
 		replacementSnapshots := checkpoint("replacement")
 		waitCheckpoints(replacementSnapshots, owners, "")
 		harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "replacement")
-	case !joined:
-		t.Fatalf("condition not established: the replacement daemon did not register with peer %s within three minutes (registered before: %v)", peerID, registeredBefore)
-	default:
-		symptoms = append(symptoms, "after the replacement joined, the MGR kept the directories as "+distribution)
-		symptoms = append(symptoms, managerErrors(t, source)...)
+	} else {
+		symptoms = append(symptoms, fmt.Sprintf("the MGR kept all directories on the survivor after the replacement joined: %s", distribution))
+		for _, message := range managerErrors(t, source) {
+			t.Log(message)
+		}
 	}
 	if t.Failed() {
 		return
@@ -316,31 +345,6 @@ func registeredServices(t *testing.T, ctx context.Context, source *ceph.Containe
 		}
 	}
 	return registered
-}
-
-// spreadOverTwo reports whether the MGR's directory distribution names two
-// instances with at least one directory each, and returns the distribution.
-func spreadOverTwo(t *testing.T, ctx context.Context, source *ceph.Container, filesystem string) (bool, string) {
-	t.Helper()
-	data, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "show", "distribution", filesystem)
-	if err != nil {
-		t.Fatalf("mirror distribution: %v", err)
-	}
-	var distribution struct {
-		Mapping map[string]string `json:"mapping"`
-	}
-	if err := json.Unmarshal(data, &distribution); err != nil {
-		t.Fatalf("mirror distribution %s: %v", data, err)
-	}
-	if len(distribution.Mapping) != 2 {
-		return false, string(data)
-	}
-	for _, summary := range distribution.Mapping {
-		if count, err := strconv.Atoi(strings.TrimSuffix(summary, " directories")); err != nil || count <= 0 {
-			return false, string(data)
-		}
-	}
-	return true, string(data)
 }
 
 // managerErrors returns the lines of the source MGR logs that name the
