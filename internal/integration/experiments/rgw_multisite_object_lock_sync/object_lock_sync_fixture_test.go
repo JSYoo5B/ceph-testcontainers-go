@@ -121,19 +121,49 @@ func TestJudgeVersioning(t *testing.T) {
 	}
 }
 
-// The body kept as evidence is bounded and tells apart bodies that parse to
-// the same configuration.
+func TestLockReadJudgementDistinguishesAbsentRuleFromUnreadableLayout(t *testing.T) {
+	want := lockConfig{Enabled: true, Mode: "GOVERNANCE", Days: 1}
+	const prefix = "<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled>"
+	const suffix = "</ObjectLockConfiguration>"
+	const rule = "<Rule><DefaultRetention><Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule>"
+	for _, tc := range []struct {
+		name    string
+		body    string
+		verdict string
+	}{
+		{"recognized rule", string(want.document()), ""},
+		{"recognized absent rule", prefix + suffix, "observed defect:"},
+		{"unknown rule layout", prefix + "<Rules><Retention><Mode>GOVERNANCE</Mode></Retention></Rules>" + suffix, "another fault:"},
+		{"unknown retention layout", prefix + "<Rule><Retention/></Rule>" + suffix, "another fault:"},
+		{"duplicate configuration", prefix + suffix + prefix + suffix, "another fault:"},
+		{"duplicate enabled flag", prefix + "<ObjectLockEnabled>Enabled</ObjectLockEnabled>" + suffix, "another fault:"},
+		{"duplicate rule", prefix + rule + rule + suffix, "another fault:"},
+		{"duplicate retention", prefix + "<Rule><DefaultRetention/><DefaultRetention/></Rule>" + suffix, "another fault:"},
+		{"duplicate mode", prefix + strings.Replace(rule, "<Mode>", "<Mode>COMPLIANCE</Mode><Mode>", 1) + suffix, "another fault:"},
+		{"both periods", prefix + strings.Replace(rule, "<Days>", "<Years>1</Years><Days>", 1) + suffix, "another fault:"},
+		{"negative duration", prefix + strings.Replace(rule, ">1<", ">-1<", 1) + suffix, "another fault:"},
+		{"zero duration", prefix + strings.Replace(rule, ">1<", ">0<", 1) + suffix, "another fault:"},
+		{"noninteger duration", prefix + strings.Replace(rule, ">1<", ">two<", 1) + suffix, "another fault:"},
+		{"absent duration", prefix + strings.Replace(rule, "<Days>1</Days>", "", 1) + suffix, "another fault:"},
+		{"unknown mode", prefix + strings.Replace(rule, "GOVERNANCE", "UNKNOWN", 1) + suffix, "another fault:"},
+		{"nested mode", prefix + strings.Replace(rule, "<Mode>", "<Mode><Unexpected/>", 1) + suffix, "another fault:"},
+		{"foreign namespace", prefix + strings.Replace(rule, "<Rule>", "<Rule xmlns=\"urn:other\">", 1) + suffix, "another fault:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			read := observeLockRead("b", "tc-lock", http.StatusOK, []byte(tc.body), nil)
+			got := judgeDestination(read, want)
+			if tc.verdict == "" && got != "" || tc.verdict != "" && !strings.HasPrefix(got, tc.verdict) {
+				t.Fatalf("verdict=%q, want %q; read=%+v", got, tc.verdict, read)
+			}
+			if read.Raw != rawBody([]byte(tc.body)) {
+				t.Fatalf("raw evidence not retained: %q", read.Raw)
+			}
+		})
+	}
+}
+
+// The body kept as evidence is bounded and stays on one line.
 func TestRawBody(t *testing.T) {
-	enabledOnly := []byte("<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>")
-	otherLayout := []byte("<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rules><Retention><Mode>GOVERNANCE</Mode></Retention></Rules></ObjectLockConfiguration>")
-	a, errA := parseLockConfig(enabledOnly)
-	b, errB := parseLockConfig(otherLayout)
-	if errA != nil || errB != nil || a != b {
-		t.Fatalf("the two bodies should parse alike: %+v %v, %+v %v", a, errA, b, errB)
-	}
-	if rawBody(enabledOnly) == rawBody(otherLayout) || !strings.Contains(rawBody(otherLayout), "<Rules>") {
-		t.Fatalf("raw bodies do not tell the layouts apart: %s", rawBody(otherLayout))
-	}
 	long := []byte(strings.Repeat("x", 3*lockRawBound))
 	if got := rawBody(long); len(got) > lockRawBound+64 || !strings.HasSuffix(got, "(cut, 3072 bytes in all)") {
 		t.Fatalf("long body kept as %d characters: …%s", len(got), got[len(got)-40:])

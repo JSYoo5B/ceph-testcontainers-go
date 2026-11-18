@@ -3,9 +3,16 @@
 package rgw_multisite_object_lock_sync_test
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // lockConfig is the meaning of a bucket's object lock configuration: whether
@@ -32,28 +39,126 @@ func (c lockConfig) document() []byte {
 		`<Rule><DefaultRetention><Mode>` + c.Mode + `</Mode>` + period + `</DefaultRetention></Rule></ObjectLockConfiguration>`)
 }
 
-// parseLockConfig reads the body of a successful GET ?object-lock.
-func parseLockConfig(body []byte) (lockConfig, error) {
-	var doc struct {
-		XMLName xml.Name `xml:"ObjectLockConfiguration"`
-		Enabled string   `xml:"ObjectLockEnabled"`
-		Rule    *struct {
-			Retention *struct {
-				Mode  string `xml:"Mode"`
-				Days  int    `xml:"Days"`
-				Years int    `xml:"Years"`
-			} `xml:"DefaultRetention"`
-		} `xml:"Rule"`
+type lockElement struct {
+	XMLName  xml.Name
+	Text     string        `xml:",chardata"`
+	Children []lockElement `xml:",any"`
+}
+
+func (e lockElement) fields(allowed ...string) (map[string]lockElement, error) {
+	if strings.TrimSpace(e.Text) != "" {
+		return nil, fmt.Errorf("unexpected text in %s", e.XMLName.Local)
 	}
-	if err := xml.Unmarshal(body, &doc); err != nil {
+	fields := make(map[string]lockElement, len(e.Children))
+	for _, child := range e.Children {
+		name := child.XMLName.Local
+		if child.XMLName.Space != e.XMLName.Space || !slices.Contains(allowed, name) {
+			return nil, fmt.Errorf("unexpected element %v in %s", child.XMLName, e.XMLName.Local)
+		}
+		if _, duplicate := fields[name]; duplicate {
+			return nil, fmt.Errorf("duplicate %s in %s", name, e.XMLName.Local)
+		}
+		fields[name] = child
+	}
+	return fields, nil
+}
+
+func (e lockElement) value() (string, error) {
+	if len(e.Children) != 0 {
+		return "", fmt.Errorf("%s contains nested elements", e.XMLName.Local)
+	}
+	return strings.TrimSpace(e.Text), nil
+}
+
+// parseLockConfig reads the native S3 layout of a successful GET ?object-lock.
+// Unknown or ambiguous layouts cannot establish a missing retention rule.
+func parseLockConfig(body []byte) (lockConfig, error) {
+	const s3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	var root lockElement
+	if err := decoder.Decode(&root); err != nil {
 		return lockConfig{}, err
 	}
-	config := lockConfig{Enabled: doc.Enabled == "Enabled"}
-	if doc.Enabled != "" && doc.Enabled != "Enabled" {
-		return lockConfig{}, fmt.Errorf("ObjectLockEnabled is %q", doc.Enabled)
+	if root.XMLName.Local != "ObjectLockConfiguration" || root.XMLName.Space != "" && root.XMLName.Space != s3Namespace {
+		return lockConfig{}, fmt.Errorf("unexpected configuration root %v", root.XMLName)
 	}
-	if doc.Rule != nil && doc.Rule.Retention != nil {
-		config.Mode, config.Days, config.Years = doc.Rule.Retention.Mode, doc.Rule.Retention.Days, doc.Rule.Retention.Years
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return lockConfig{}, err
+		}
+		if _, comment := token.(xml.Comment); comment {
+			continue
+		}
+		if raw, characterData := token.(xml.CharData); !characterData || strings.TrimSpace(string(raw)) != "" {
+			return lockConfig{}, fmt.Errorf("unexpected content after ObjectLockConfiguration")
+		}
+	}
+	fields, err := root.fields("ObjectLockEnabled", "Rule")
+	if err != nil {
+		return lockConfig{}, err
+	}
+	var config lockConfig
+	if enabled, found := fields["ObjectLockEnabled"]; found {
+		value, err := enabled.value()
+		if err != nil {
+			return lockConfig{}, err
+		}
+		if value != "Enabled" {
+			return lockConfig{}, fmt.Errorf("ObjectLockEnabled is %q", value)
+		}
+		config.Enabled = true
+	}
+	rule, found := fields["Rule"]
+	if !found {
+		return config, nil
+	}
+	ruleFields, err := rule.fields("DefaultRetention")
+	if err != nil {
+		return lockConfig{}, err
+	}
+	retention, found := ruleFields["DefaultRetention"]
+	if !found {
+		return config, nil
+	}
+	if !config.Enabled {
+		return lockConfig{}, fmt.Errorf("DefaultRetention requires ObjectLockEnabled")
+	}
+	fields, err = retention.fields("Mode", "Days", "Years")
+	if err != nil {
+		return lockConfig{}, err
+	}
+	config.Mode, err = fields["Mode"].value()
+	if err != nil {
+		return lockConfig{}, err
+	}
+	if config.Mode != "GOVERNANCE" && config.Mode != "COMPLIANCE" {
+		return lockConfig{}, fmt.Errorf("DefaultRetention Mode is %q", config.Mode)
+	}
+	days, hasDays := fields["Days"]
+	years, hasYears := fields["Years"]
+	if hasDays == hasYears {
+		return lockConfig{}, fmt.Errorf("DefaultRetention requires exactly one of Days or Years")
+	}
+	period := years
+	if hasDays {
+		period = days
+	}
+	value, err := period.value()
+	if err != nil {
+		return lockConfig{}, err
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil || count <= 0 {
+		return lockConfig{}, fmt.Errorf("DefaultRetention %s is %q, want positive integer", period.XMLName.Local, value)
+	}
+	if hasDays {
+		config.Days = count
+	} else {
+		config.Years = count
 	}
 	return config, nil
 }
@@ -72,10 +177,23 @@ type lockRead struct {
 	// Config is the parsed body of a 200; Unparsed is why it is not.
 	Config   lockConfig
 	Unparsed string
-	// Raw is the response body as received, cut to lockRawBound bytes. The
-	// parsed fields cannot tell every body apart: a rule in a layout the
-	// reader does not know parses like no rule at all.
+	// Raw is the response body as received, cut to lockRawBound bytes.
 	Raw string
+}
+
+func observeLockRead(zone, bucket string, status int, body []byte, err error) lockRead {
+	read := lockRead{Zone: zone, Bucket: bucket}
+	if err != nil {
+		read.Err = err.Error()
+		return read
+	}
+	read.Status, read.Code, read.Raw = status, harness.RGWBackendErrorCode(body), rawBody(body)
+	if status == http.StatusOK {
+		if read.Config, err = parseLockConfig(body); err != nil {
+			read.Unparsed = err.Error()
+		}
+	}
+	return read
 }
 
 // lockRawBound bounds the response body kept as evidence. A configuration
