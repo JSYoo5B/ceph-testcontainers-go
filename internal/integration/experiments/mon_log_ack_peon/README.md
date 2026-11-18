@@ -50,8 +50,8 @@ Upstream references:
 
 Known-defect reproducer, optional batch `mon_log_ack` with a 20-minute
 budget; no automatic run includes it. The default image is Tentacle 20.2.4.
-It is an `Experiments` case (`case=mon_log_ack_peon`) without a fixed image:
-no release fixes the defect yet. The parser tests in `log_ack_fixture_test.go`
+The case identifier is `mon_log_ack_peon`. The recorded runs cover affected
+images and a Squid image that predates the defect. The parser tests in `log_ack_fixture_test.go`
 are the `code/pure` batch of this package and run in Code checks for every
 change. The triggers, the result checks and the image injection are the
 shared ones of
@@ -59,15 +59,14 @@ shared ones of
 
 ## Running it
 
-On the default image, which must print `result=REPRODUCED`:
+Run the default Tentacle image to check for the discarded-route symptom:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-On another image. No release fixes the defect yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
-which predates the introducing change, must print `result=NOT_REPRODUCED`:
+Use Squid 19.2.2, which predates the introducing change, as a comparison:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -112,7 +111,8 @@ The test prints one
   A timeout without an attributed discarded acknowledgement leaves the
   outcome inconclusive.
 
-Recorded results using the original oracle (Linux amd64, Docker, aggregate images, one run each). Its discarded-route counts were diagnostic:
+Historical results with the original oracle (Linux amd64, Docker, aggregate
+images, one run each). The discarded-route counts served as diagnostics:
 
 | Image | Result | Time |
 | --- | --- | --- |

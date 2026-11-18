@@ -110,7 +110,7 @@ func (e *collectEnv) collect(daemon string) upgradeSettled {
 }
 
 // requireOnlyError asserts the all-or-nothing contract: an observation error
-// and no evidence field, and no inventory kept by the phase.
+// and no evidence field, and no inventory published to this fresh phase.
 func requireOnlyError(t *testing.T, label string, ev upgradeSettled, phase *upgradePhase, target error) {
 	t.Helper()
 	if ev.ObservationErr == nil {
@@ -824,7 +824,7 @@ func TestUpgradeCollectorEvidenceKeepsItsOwnershipUntilConsumed(t *testing.T) {
 		if got := env.col.collect(t.Context(), env.phase, "mon.a", env.want); got.ObservationErr != nil {
 			t.Fatal(got.ObservationErr)
 		}
-		before, err := env.phase.satisfied()
+		before, err := parseUpgradeInventory(obsOutputsFor(t, 1).Versions)
 		if err != nil {
 			t.Fatal(err)
 		}
