@@ -818,6 +818,30 @@ func TestUpgradeCollectorEvidenceKeepsItsOwnershipUntilConsumed(t *testing.T) {
 			t.Fatal("admitted after a failed collection")
 		}
 	})
+	t.Run("a failed refresh keeps the accepted inventory without settling", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		if got := env.col.collect(t.Context(), env.phase, "mon.a", env.want); got.ObservationErr != nil {
+			t.Fatal(got.ObservationErr)
+		}
+		before, err := env.phase.satisfied()
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.runner.hook = func(int, upgradeCommandRequest, *upgradeCommandResult) error {
+			return errors.New("refresh unavailable")
+		}
+		if err := env.col.collectAndSettle(t.Context(), env.phase, "mon.a", env.want, s); !errors.Is(err, errUpgradeCollectProbe) {
+			t.Fatalf("collectAndSettle = %v", err)
+		}
+		after, err := env.phase.satisfied()
+		if err != nil || !reflect.DeepEqual(after, before) {
+			t.Fatalf("retained inventory = %v, %v; want %v", after, err, before)
+		}
+		if _, _, err := s.admit(); err == nil {
+			t.Fatal("admitted after a failed refresh")
+		}
+	})
 	t.Run("no sequence", func(t *testing.T) {
 		env := newCollectEnv(t, 1)
 		if err := env.col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, nil); err == nil {

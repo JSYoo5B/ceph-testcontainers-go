@@ -31,9 +31,8 @@ type twoDomainPlan struct {
 // manifest. The primary MON is pinned to its bridge address and Docker hands a
 // released address to whichever container starts first, so it must be stopped
 // last, which makes it start first when the plan is restored. The selection is
-// refused unless it loses a strict majority of the MONs and leaves at least one
-// MON outside it, because a plan that keeps a quorum is the one-host scenario
-// and a plan that removes every MON leaves nothing to observe.
+// accepted when the remaining MONs fall short of a quorum and at least one
+// MON survives to observe.
 func newTwoDomainPlan(manifest outageManifest, lost []string, primaryMON string) (twoDomainPlan, error) {
 	seen := map[string]bool{}
 	for _, host := range lost {

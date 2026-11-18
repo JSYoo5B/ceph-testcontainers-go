@@ -21,9 +21,9 @@ import (
 // string, a nil receipt or a nil map as "not observed", so decoding a defect
 // into one would hide it.
 //
-// The producers are Docker-free and have been exercised on synthetic output
-// only. Nothing here starts a cluster, so no claim about native output formats
-// beyond the pinned source is made.
+// The producers parse supplied output. Fixture tests supply synthetic output,
+// and TestScratchTmpfsAttachedOSD supplies observations from the running
+// cluster, keeper and client.
 
 // exactObject decodes one JSON object and looks fields up by exact name.
 // encoding/json would otherwise match "Full_Ratio" to "full_ratio".

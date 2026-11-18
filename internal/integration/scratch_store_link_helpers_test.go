@@ -194,8 +194,8 @@ func tmpfsSuperSizeBytes(options string) (int64, error) {
 // that holds.
 //
 // Device numbers are comparable because both views come from containers on one
-// kernel. That expectation is unconfirmed until a native run joins an OSD view
-// to a keeper view. The join identifies the mounted filesystem only: it does
+// kernel. TestScratchTmpfsAttachedOSD supplies both views for the join.
+// The join identifies the mounted filesystem only: it does
 // not show that the OSD's block file or any daemon store entry is on it, and it
 // says nothing about allocation, writes or recovery.
 func classifyStoreLink(keeper, osd *storeViewReceipt, token string, wantBytes int64) (string, error) {
