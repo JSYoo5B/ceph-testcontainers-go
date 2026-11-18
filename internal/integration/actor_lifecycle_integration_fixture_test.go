@@ -7,8 +7,6 @@ package integration_test
 import (
 	"context"
 	"fmt"
-	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"io"
 	"os"
 	"os/exec"
@@ -18,6 +16,9 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // actorCleanupReport collects cleanup failures for controlled blocked actors.
