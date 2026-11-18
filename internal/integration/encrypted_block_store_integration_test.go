@@ -690,7 +690,7 @@ func TestEncryptedBlockDeviceOSD(t *testing.T) {
 	}{{"missing", nil}, {"wrong", wrong}} {
 		e.rec.Crypt = encDMRecord{UUID: encCryptDMUUID(header.UUID, e.crypt)}
 		r := e.do(t, ctx, attempt.input, "open", e.loop, e.crypt)
-		// A mapping that this open created is the test's, whatever the verdict.
+		// Retain a possible mapping for cleanup even if inspection failed.
 		e.rec.Crypt, _ = encCryptAcquired(r, header.UUID, e.crypt, e.rec.Loop)
 		v, d := judgeEncRefusal(r, header)
 		refusals[attempt.name] = map[string]any{"verdict": v, "detail": d}
