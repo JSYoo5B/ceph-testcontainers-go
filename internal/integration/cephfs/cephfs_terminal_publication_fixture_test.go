@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -96,7 +97,9 @@ func TestCephFSTerminalPublicationRejectsInvalid(t *testing.T) {
 	for _, consumer := range []string{"receipt", "progress", "reclaim"} {
 		for _, fault := range []string{"malformed", "foreign", "failed"} {
 			t.Run(consumer+"/"+fault, func(t *testing.T) {
-				cmd := exec.Command(os.Args[0], "-test.run=^TestCephFSTerminalPublicationRejectsInvalid$")
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCephFSTerminalPublicationRejectsInvalid$")
 				cmd.Env = append(os.Environ(), "CTG_TERMINAL_PUBLICATION_CASE="+consumer+"/"+fault)
 				output, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(output), "--- FAIL: TestCephFSTerminalPublicationRejectsInvalid") {
