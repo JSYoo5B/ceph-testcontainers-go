@@ -66,7 +66,10 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 
 // WaitSyncReady waits up to four minutes, bounded by the caller's context, for
 // metadata and the explicitly requested source-zone data streams to catch up.
-// No sources means metadata-only readiness. When the wait ends unready it
+// No sources means metadata-only readiness criteria. The observation still
+// reads native combined sync status, so an unavailable data peer can delay the
+// command itself and prevent a metadata-only wait from completing.
+// When the wait ends unready it
 // returns the latest complete observation, and its error reports that
 // observation and the latest attempt's error. Native sync leases survive abrupt
 // gateway restarts until expiration, so this method does not change lease TTLs,
