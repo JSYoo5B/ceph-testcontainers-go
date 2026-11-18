@@ -235,6 +235,9 @@ func (s *roleState) create(ctx context.Context, g *gwbase.Core) error {
 	}
 	s.unstopped = nil
 	if !s.created(native) {
+		// Remember the observed ID without confirming ownership or exposing
+		// its ARN. Later reconciliation cannot adopt a replacement role.
+		s.id = native.id
 		return errors.Join(cmdErr, errors.New("RGW role creation readback differs from the request; ownership is unconfirmed and Remove refuses mismatching state"))
 	}
 	s.bind(native)
@@ -392,7 +395,7 @@ func (r *Role) Remove(ctx context.Context) error {
 		return nil
 	}
 	if !s.confirmed {
-		if !s.created(native) {
+		if !s.created(native) || (s.id != "" && s.id != native.id) {
 			return servicehook.Invalid(errors.New("RGW role of this name is not the role the fixture requested; refusing to remove it"))
 		}
 		s.bind(native)

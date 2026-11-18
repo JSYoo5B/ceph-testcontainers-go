@@ -637,6 +637,21 @@ func TestRoleMismatchingInitialReadbackRefusesOwnership(t *testing.T) {
 			if ctr.mutations() != before || len(ctr.roles) != 1 {
 				t.Fatal("mismatching native state was changed")
 			}
+			if mismatch != "policy" {
+				if !strings.Contains(err.Error(), "ownership is unconfirmed") {
+					t.Fatalf("misleading recovery promise: %v", err)
+				}
+				ctr.mutate = nil
+				cfg := testRoleConfig()
+				ctr.add(cfg.Name, cfg.Path, cfg.TrustPolicy)
+				if err := role.Remove(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Fatalf("adopted replacement after initial mismatch: %v", err)
+				}
+				if ctr.mutations() != before {
+					t.Fatal("removed a replacement role")
+				}
+			}
+
 		})
 	}
 }
