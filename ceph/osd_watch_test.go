@@ -579,6 +579,42 @@ func TestOSDWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	requireClosed(t, w)
 }
 
+func TestOSDWatchResumesAfterUnreadableNativeUUID(t *testing.T) {
+	cluster, ctr := newWatchCluster()
+	observer, err := Observe(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := observer.WatchOSDs(t.Context(), WatchConfig{Interval: 100 * time.Millisecond, Buffer: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Stop() })
+	if baseline := nextEvent(t, w); baseline.Kind != WatchBaseline {
+		t.Fatalf("baseline = %+v", baseline)
+	}
+
+	ctr.set(observerOSDDumpKey, strings.Replace(watchDump(2, 1), osdUUID1, "invalid", 1))
+	if gap := nextEvent(t, w); gap.Kind != WatchGap || gap.Err == nil {
+		t.Fatalf("gap = %+v", gap)
+	}
+	ctr.set(observerOSDDumpKey, watchDump(3, 0))
+	for {
+		event := nextEvent(t, w)
+		if event.Kind == WatchResumed && event.Epoch == 3 && len(event.States) == 2 && !event.States[1].Up {
+			break
+		}
+		if event.Kind != WatchGap {
+			t.Fatalf("event after valid read = %+v", event)
+		}
+	}
+	ctr.set(observerOSDDumpKey, strings.Replace(watchDump(4, 0), osdUUID1, osdUUID2, 1))
+	awaitDone(t, w)
+	if err := w.Stop(); err == nil || !strings.Contains(err.Error(), "no longer matches") {
+		t.Fatalf("confirmed replacement must end the watch, got %v", err)
+	}
+}
+
 func TestOSDWatchEndsWhenTheClusterTerminates(t *testing.T) {
 	cluster, ctr := newWatchCluster()
 	observer, _ := Observe(cluster)

@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -33,6 +34,8 @@ func registrationOf(osd *OSDContainer) *osdRegistration {
 	return &osdRegistration{purged: osd.purged, nativeUUID: osd.nativeUUID}
 }
 
+var errUnreadableOSDUUID = errors.New("unreadable native OSD UUID")
+
 // resolveOwnedOSDState returns the native state of one owned OSD. A missing or
 // purged registration, an unusable registered UUID, an absent map entry and a
 // replaced native UUID are all errors; none is decoded into an empty state.
@@ -49,7 +52,10 @@ func resolveOwnedOSDState(dump osdPolicySnapshot, id int, reg *osdRegistration) 
 		return OSDState{}, fmt.Errorf("owned osd.%d is missing from native OSDMap", id)
 	}
 	actual, err := uuid.Parse(state.UUID)
-	if err != nil || actual != expected {
+	if err != nil || actual == uuid.Nil {
+		return OSDState{}, fmt.Errorf("native osd.%d: %w", id, errUnreadableOSDUUID)
+	}
+	if actual != expected {
 		return OSDState{}, fmt.Errorf("native osd.%d UUID no longer matches its owned registration", id)
 	}
 	return state, nil
