@@ -294,8 +294,9 @@ func ssecCompositeSHA256(t *testing.T, parts ...string) string {
 // key is refused by the key MD5 check; with the SHA256 checksum algorithm,
 // the completion needs the key and answers the composite checksum), when an
 // SSE-C upload without a checksum is completed without the key, then the
-// defect is REPRODUCED if the completion is refused, and NOT_REPRODUCED if
-// it completes and the object reads back encrypted with the key. Tentacle
+// defect is REPRODUCED if the missing-algorithm check refuses completion
+// and the object is absent. It is NOT_REPRODUCED if completion succeeds
+// and the object reads back encrypted with the key. Tentacle
 // 20.2.4 decrypts the upload's metadata while it parses every completion, so
 // it answers 400 InvalidArgument and reproduces; Tentacle 20.2.5 and Umbrella
 // 21.2.0 do not.
@@ -375,7 +376,11 @@ func TestRGWSSECMultipartCompletion(t *testing.T) {
 		data := payload("omitted key")
 		u := c.start(t, "no-checksum-omitted-key", data, owner.headers(), owner.headers(), false)
 		done := c.complete(t, u, nil)
-		if !done.completed() {
+		reproduced, err := judgeOmittedKey(done)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reproduced {
 			c.requireAbsent(t, "no-checksum-omitted-key", owner)
 			symptoms = append(symptoms, fmt.Sprintf("completion without a checksum and without the customer key: status %d embedded-error %t %s %q, S3 wants a completed 200", done.Status, done.Embedded, done.Failure.Code, done.Failure.Message))
 			return

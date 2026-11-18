@@ -116,17 +116,21 @@ and those 161 bytes (`exact`).
 
 ## Result line
 
-The test passes whatever the subject returned and prints one
+With the prerequisites and both subject reads established, the test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_encrypted_multipart_transition`.
 
-`REPRODUCED`: a read of the transitioned SSE-C object is not exact;
+`REPRODUCED`: at least one complete subject response contains different
+plaintext from the upload. Both responses must have the expected HTTP
+status, body length and, for the ranged read, `Content-Range`;
 `symptoms` lists each such read with its status, Content-Range, length and
 the object offset of the first wrong byte (or a transport failure).
 `NOT_REPRODUCED`: both reads of the transitioned SSE-C object are exact.
 A failed upload, unavailable placement, a transition that did not happen or
 a failed control fails the test and prints no result: that is a missing
-prerequisite, not `NOT_REPRODUCED`.
+prerequisite. A transport failure, an unexpected status or range, or a short
+response also fails the test without a result. An interrupted body would
+need native evidence binding a decryption failure to that request.
 
 Linux amd64 host, Docker 29.9.1, bridge, one standalone run per image.
 

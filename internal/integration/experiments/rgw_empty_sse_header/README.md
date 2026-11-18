@@ -110,10 +110,14 @@ The test ends with one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_empty_sse_header`.
 
-- **REPRODUCED:** an empty-header PUT is not refused with the control's 400
-  `InvalidArgument`, or it changes what is stored: `empty-new-key` stores an
-  unencrypted object, `empty-overwrite` adds a version.
-- **NOT_REPRODUCED:** both PUTs get the control's refusal and nothing changes.
+- **REPRODUCED:** an empty-header PUT answers 200 without SSE and the bytes
+  read back without SSE. The overwrite must also create the observed current
+  version and preserve the seed version.
+- **NOT_REPRODUCED:** both PUTs answer 400 `InvalidArgument` and both stored
+  states are unchanged. The message may differ from the invalid algorithm
+  control.
+- **Test failure (no result):** an unrelated HTTP/S3 error, an unreadable
+  response or stored state inconsistent with the response.
 
 Native results on a Linux amd64 host, one run each:
 

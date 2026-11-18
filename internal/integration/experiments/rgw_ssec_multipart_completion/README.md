@@ -130,12 +130,14 @@ The test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=rgw_ssec_multipart_completion`.
 
 `REPRODUCED`: the completion of the SSE-C upload without a checksum and
-without the customer key (`no-checksum-omitted-key`) is refused, and no
-object is left; `symptoms` names its status, code and message.
+without the customer key (`no-checksum-omitted-key`) answers 400
+`InvalidArgument` with the missing encryption algorithm message, and no
+object is left. `symptoms` names its status, code and message.
 `NOT_REPRODUCED`: it completes and the object reads back encrypted with the
 key. A completion that succeeds and stores something else, or a refused one
-that leaves an object, fails the test. The other subtests are controls and
-must pass for any result to print.
+that leaves an object, fails the test. Other refusals, including an
+embedded `Error` after HTTP 200, fail the test without a result. The controls
+must hold for any result to print.
 
 Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
