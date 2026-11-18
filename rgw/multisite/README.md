@@ -216,7 +216,12 @@ period. `IncrementalSync` and `SyncLeasePeriod` are independent.
   realm. If a placement update or commit is uncertain, retry the original
   placement handle successfully before publishing through this fixture.
 - Sync policy: the fixture creates fresh groups only and checks every mutation
-  against the native policy. On Ceph 20.2.4 pipe `Priority` between overlapping
+  against the native policy. After caller cancellation, retries await the
+  dispatched writer's terminal response before readback or another mutation.
+  A lost transport response leaves completion unconfirmed and blocks policy
+  and topology publication, even if readback would match. Dispose of the
+  fixture and its Ceph clusters in that case; stopping a CLI does not establish
+  that its server-side write finished. On Ceph 20.2.4 pipe `Priority` between overlapping
   pipes and source-side denial in user mode with an ordinary user have no
   reliable effect, and S3 `PutBucketReplication` rejects account-owned requests
   with `NotImplemented`. IAM non-root principals and cross-account or

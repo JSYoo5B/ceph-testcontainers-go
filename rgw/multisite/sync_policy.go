@@ -113,11 +113,13 @@ type SyncPipeConfig struct {
 //
 // A group is stored on the zonegroup or on one existing bucket. Every mutation
 // compares the native policy before and after the change and refuses unrelated
-// or external changes; if the reply of a confirmed mutation is lost, the next
-// call first awaits the terminal writer response, then reconciles the pending change.
-// A lost transport response blocks policy operations until the disposable fixture
-// is terminated: readback alone cannot prove that the writer has finished. Group mutations
-// are bounded by two minutes.
+// or external changes. If the caller ends while a dispatched write still runs,
+// the next call awaits its terminal response before reconciling the pending
+// change. Losing the transport response blocks policy and topology operations:
+// readback alone cannot prove that the writer has finished. Dispose of the
+// fixture and its clusters when completion evidence cannot be recovered.
+// Calls have a two-minute budget; an admitted native write retains its own
+// two-minute completion budget after caller cancellation.
 type SyncGroup struct {
 	owner                      *Fixture
 	scope                      SyncPolicyScope
