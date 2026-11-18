@@ -21,9 +21,11 @@ func (f *Fixture) syncPolicyWrite(ctx context.Context, zone *rgwZoneState, group
 		return nil, err
 	}
 	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
+	argv = append(argv, args...)
+	target := zone.client
 	var output []byte
 	err := mutation.Run(ctx, 2*time.Minute, func(runCtx context.Context) (bool, error) {
-		code, reader, err := zone.client.Exec(runCtx, append(argv, args...))
+		code, reader, err := target.Exec(runCtx, argv)
 		if err != nil {
 			return false, errors.New("RGW sync policy transport response was lost; output is redacted")
 		}
