@@ -213,7 +213,7 @@ type familyActor struct {
 
 func startFamilyActor(t *testing.T, ctx context.Context, ctr testcontainers.Container, tag, monHost, pool string) *familyActor {
 	actor := &familyActor{ctr: ctr, tag: tag, started: actorRequests{}}
-	actor.actor = launchIntegrationActor(ctx, func(ctx context.Context) heldResult {
+	actor.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := ctr.Exec(ctx, []string{"timeout", "1100", "python3", "-c", dualStackActor, tag, monHost, pool}, tcexec.Multiplexed())
 		var output []byte
 		if err == nil {

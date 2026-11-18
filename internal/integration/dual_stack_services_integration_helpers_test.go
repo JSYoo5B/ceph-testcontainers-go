@@ -173,7 +173,7 @@ type heldResult struct {
 func startDualStackSession(t *testing.T, ctx context.Context, client testcontainers.Container, script, tag string, args ...string) *dualStackSession {
 	t.Helper()
 	session := &dualStackSession{client: client, tag: tag}
-	session.actor = launchIntegrationActor(ctx, func(ctx context.Context) heldResult {
+	session.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := client.Exec(ctx, append([]string{"timeout", "150", "python3", "-c", script, tag}, args...), tcexec.Multiplexed())
 		var output []byte
 		if err == nil {

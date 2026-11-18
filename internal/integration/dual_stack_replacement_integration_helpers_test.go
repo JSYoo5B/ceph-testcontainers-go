@@ -127,7 +127,7 @@ type retainedClient struct {
 
 func startRetainedClient(t *testing.T, ctx context.Context, ctr testcontainers.Container, tag, pool, filesystem string) *retainedClient {
 	client := &retainedClient{ctr: ctr, tag: tag}
-	client.actor = launchIntegrationActor(ctx, func(ctx context.Context) heldResult {
+	client.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := ctr.Exec(ctx, []string{"timeout", "1500", "python3", "-c", dualStackRetained, tag, pool, filesystem}, tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
