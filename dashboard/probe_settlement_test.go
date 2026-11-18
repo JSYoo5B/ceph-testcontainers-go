@@ -13,6 +13,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"github.com/moby/moby/api/types/container"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -22,12 +23,19 @@ import (
 type probeSettlementCLI struct {
 	*lateWriteCLI
 	definitive   bool
+	inspectErr   error
+	attachCalls  int
 	serverWrite  func()
 	stopCalls    int
 	cleanupCalls int
 }
 
+func (f *probeSettlementCLI) State(context.Context) (*container.State, error) {
+	return &container.State{Running: true}, f.inspectErr
+}
+
 func (f *probeSettlementCLI) AttachExec(_ context.Context, args, _ []string) (supervised.Attachment, error) {
+	f.attachCalls++
 	if !slices.Contains(args, probeScript) {
 		return supervised.Attachment{}, errors.New("expected readiness probe")
 	}
@@ -156,5 +164,31 @@ func TestRestoreAfterDefinitiveProbeCompletion(t *testing.T) {
 	}
 	if err := s.restore(t.Context()); err != nil {
 		t.Fatalf("idempotent restore: %v", err)
+	}
+}
+
+func TestProbeInspectionRefusalKeepsReadinessAndRestoreRetryable(t *testing.T) {
+	refusal := errors.New("transient target inspection refused")
+	f := &probeSettlementCLI{lateWriteCLI: &lateWriteCLI{restoreCLI: &restoreCLI{}}, definitive: true, inspectErr: refusal}
+	s := probeSettlementState(f)
+	probe := func() (probeReport, error) {
+		return runProbe(t.Context(), s.cluster, "https://dashboard.invalid:8443", "fixture-fingerprint", s.username, s.password, summaryPath)
+	}
+	report, err := probe()
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || !errors.Is(err, refusal) || f.attachCalls != 0 {
+		t.Fatalf("inspection refusal: %+v %v, attach calls %d", report, err, f.attachCalls)
+	}
+	s.trackProbe(report, err)
+	if report.LoginPending || s.loginUncertain {
+		t.Fatal("a refused inspection retained a server login that never started")
+	}
+	f.inspectErr = nil
+	report, err = probe()
+	if err != nil || !report.Finished || report.LoginPending || f.attachCalls != 1 {
+		t.Fatalf("probe retry: %+v %v, attach calls %d", report, err, f.attachCalls)
+	}
+	s.trackProbe(report, err)
+	if err := s.restore(t.Context()); err != nil || !s.restored || s.registry.active != nil {
+		t.Fatalf("restore after probe retry: %v", err)
 	}
 }

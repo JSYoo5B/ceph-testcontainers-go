@@ -155,9 +155,9 @@ func runProbe(ctx context.Context, c *ceph.Container, url, want, username, passw
 	if err := ctx.Err(); err != nil {
 		return probeReport{}, err
 	}
-	result, err := runInputCommand(ctx, c, command, request)
+	result, admitted, err := runInputCommand(ctx, c, command, request)
 	if err != nil {
-		return probeReport{LoginPending: !errors.Is(err, ceph.ErrInvalidRequest) && !errors.Is(err, ceph.ErrImageCapability)}, err
+		return probeReport{LoginPending: admitted && !errors.Is(err, ceph.ErrInvalidRequest) && !errors.Is(err, ceph.ErrImageCapability)}, err
 	}
 	if result.ExitCode != 0 {
 		return probeReport{LoginPending: true}, fmt.Errorf("dashboard readiness probe exited %d", result.ExitCode)

@@ -433,7 +433,7 @@ func (p *pendingMutation) settle(ctx context.Context) error {
 // runWithInput runs a ceph CLI command in the control container with input as
 // its standard input, so that secrets stay out of its arguments.
 func runWithInput(ctx context.Context, c *ceph.Container, label string, input []byte, args ...string) error {
-	result, err := runInputCommand(ctx, c, ceph.NativeCommand{
+	result, _, err := runInputCommand(ctx, c, ceph.NativeCommand{
 		Argv: append([]string{"ceph", "--connect-timeout", "10"}, args...), Timeout: time.Minute,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: label,
 	}, input)

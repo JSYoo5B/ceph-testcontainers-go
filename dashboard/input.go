@@ -9,8 +9,9 @@ import (
 
 // runInputCommand owns its writer even when command admission fails before
 // RunNativeCommand takes the input. Returning never leaves that writer waiting
-// for the caller's longer-lived context.
-func runInputCommand(ctx context.Context, c *ceph.Container, command ceph.NativeCommand, data []byte) (ceph.NativeCommandResult, error) {
+// for the caller's longer-lived context. The admission result distinguishes a
+// confirmed refusal from a command that might already have run.
+func runInputCommand(ctx context.Context, c *ceph.Container, command ceph.NativeCommand, data []byte) (result ceph.NativeCommandResult, admitted bool, err error) {
 	input := ceph.NewNativeInput()
 	command.Input, command.MaxInput = input, len(data)
 	writerCtx, cancel := context.WithCancel(ctx)
@@ -24,5 +25,6 @@ func runInputCommand(ctx context.Context, c *ceph.Container, command ceph.Native
 		cancel()
 		<-done
 	}()
-	return c.RunNativeCommand(ctx, servicehook.CLI(c), command)
+	result, err = c.RunNativeCommand(ctx, servicehook.CLI(c), command)
+	return result, servicehook.NativeInputClaimed(input), err
 }

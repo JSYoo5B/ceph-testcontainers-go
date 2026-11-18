@@ -33,6 +33,8 @@ func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation str
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
+func (serviceHooks) NativeInputClaimed(input *NativeInput) bool { return input.claimed.Load() }
+
 // CephBefore reports whether the recorded Ceph release is older than major.
 func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
 
