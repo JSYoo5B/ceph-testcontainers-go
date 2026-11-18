@@ -471,6 +471,28 @@ func TestRadosMutationCheckpointCaptureBoundaries(t *testing.T) {
 	})
 }
 
+func TestRadosContractAbsenceRequiresReadback(t *testing.T) {
+	for name, data := range map[string]string{
+		"missing entry":   `{}`,
+		"null entry":      `{"late-remove":null}`,
+		"empty entry":     `{"late-remove":{}}`,
+		"null field":      `{"late-remove":{"exists":null}}`,
+		"observed absent": `{"late-remove":{"exists":false}}`,
+		"still present":   `{"late-remove":{"exists":true}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var after map[string]contractObject
+			if err := json.Unmarshal([]byte(data), &after); err != nil {
+				t.Fatal(err)
+			}
+			err := requireContractAbsence(after, "late-remove")
+			if (err == nil) != (name == "observed absent") {
+				t.Errorf("absence check: %v", err)
+			}
+		})
+	}
+}
+
 // Extract the maintained definitions, not a second implementation of view.
 // The driver only supplies one stub ioctx so optional absence can be tested
 // independently of the late convergence predicate's requirement for xattr v2.

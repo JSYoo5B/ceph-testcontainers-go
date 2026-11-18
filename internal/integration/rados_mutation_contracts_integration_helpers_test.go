@@ -2,6 +2,31 @@
 
 package integration_test
 
+import "fmt"
+
+// contractObject is an object as the reading client saw it. Nil Exists means
+// the readback did not say whether the object exists.
+type contractObject struct {
+	Exists  *bool   `json:"exists"`
+	Size    int     `json:"size"`
+	Data    string  `json:"data"`
+	XAttr   *string `json:"xattr"`
+	Version uint64  `json:"version"`
+}
+
+func (o contractObject) exists() bool { return o.Exists != nil && *o.Exists }
+
+func requireContractAbsence(read map[string]contractObject, name string) error {
+	object, listed := read[name]
+	if !listed || object.Exists == nil {
+		return fmt.Errorf("%s readback did not observe presence or absence", name)
+	}
+	if object.exists() {
+		return fmt.Errorf("%s is still present: %+v", name, object)
+	}
+	return nil
+}
+
 // radosMutationContractScript runs one phase of the mutation contracts
 // against pool and namespace and prints a JSON receipt. Every result is read
 // back by a second client.

@@ -167,8 +167,8 @@ func TestSecondFaultWriterLedgerAndOracle(t *testing.T) {
 			if err := secondFaultVerify(ops, read); err != nil {
 				t.Fatal(err)
 			}
-			if _, stored := read[ops[2].Name]; !stored || read[ops[2].Name].Present != tc.present {
-				t.Fatalf("operation 2 stored %t, want %t", read[ops[2].Name].Present, tc.present)
+			if got := read[ops[2].Name]; got.Present == nil || *got.Present != tc.present {
+				t.Fatalf("operation 2: readback %+v, want presence %t", got, tc.present)
 			}
 			mark := secondFaultCount(ops)
 			wantAcked := 5
@@ -208,7 +208,7 @@ func TestSecondFaultWriterLedgerAndOracle(t *testing.T) {
 				for k, v := range read {
 					torn[k] = v
 				}
-				torn[ops[2].Name] = secondFaultObject{Present: true, Size: ops[2].Bytes, DataLen: ops[2].Bytes, SHA256: "0000"}
+				torn[ops[2].Name] = secondFaultObject{Present: new(true), Size: ops[2].Bytes, DataLen: ops[2].Bytes, SHA256: "0000"}
 				if secondFaultVerify(ops, torn) == nil {
 					t.Error("an unknown outcome that reads back torn was accepted")
 				}
@@ -218,9 +218,32 @@ func TestSecondFaultWriterLedgerAndOracle(t *testing.T) {
 				for k, v := range read {
 					present[k] = v
 				}
-				present[ops[2].Name] = secondFaultObject{Present: true, Size: ops[2].Bytes, DataLen: ops[2].Bytes, SHA256: ops[2].SHA256}
+				present[ops[2].Name] = secondFaultObject{Present: new(true), Size: ops[2].Bytes, DataLen: ops[2].Bytes, SHA256: ops[2].SHA256}
 				if secondFaultVerify(ops, present) == nil {
 					t.Error("a refused write that is present was accepted")
+				}
+			}
+		})
+	}
+}
+
+func TestSecondFaultReadbackRequiresObservedPresence(t *testing.T) {
+	for name, data := range map[string]string{
+		"missing entry":   `{}`,
+		"null entry":      `{"object":null}`,
+		"empty entry":     `{"object":{}}`,
+		"null field":      `{"object":{"present":null}}`,
+		"observed absent": `{"object":{"present":false}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var read map[string]secondFaultObject
+			if err := json.Unmarshal([]byte(data), &read); err != nil {
+				t.Fatal(err)
+			}
+			for _, outcome := range []string{opUnknown, opRefused} {
+				err := secondFaultVerify([]secondFaultOp{{Name: "object", Outcome: outcome}}, read)
+				if (err == nil) != (name == "observed absent") {
+					t.Errorf("%s: %v", outcome, err)
 				}
 			}
 		})

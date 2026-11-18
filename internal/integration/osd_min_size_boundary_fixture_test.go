@@ -192,8 +192,8 @@ func TestMinSizeLateOutcomes(t *testing.T) {
 		event secondFaultEvent
 		read  secondFaultObject
 	}{
-		opAcked:   {secondFaultEvent{Event: "ack", Object: name}, secondFaultObject{Present: true, Size: 10, DataLen: 10, SHA256: "x"}},
-		opUnknown: {secondFaultEvent{Event: "error", Object: name, Errno: 110}, secondFaultObject{Present: true, Size: 10, DataLen: 10, SHA256: "x"}},
+		opAcked:   {secondFaultEvent{Event: "ack", Object: name}, secondFaultObject{Present: new(true), Size: 10, DataLen: 10, SHA256: "x"}},
+		opUnknown: {secondFaultEvent{Event: "error", Object: name, Errno: 110}, secondFaultObject{Present: new(true), Size: 10, DataLen: 10, SHA256: "x"}},
 	} {
 		events := append(append([]secondFaultEvent(nil), waiting...), tc.event, secondFaultEvent{Event: "stopped"})
 		ops, err := secondFaultOps(events, true)
@@ -213,8 +213,8 @@ func TestMinSizeLateOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	whole := secondFaultObject{Present: true, Size: 10, DataLen: 10, SHA256: "x"}
-	if err := secondFaultVerify(ops, map[string]secondFaultObject{"live-0000": whole, "live-0001": whole, name: {}}); err == nil {
+	whole := secondFaultObject{Present: new(true), Size: 10, DataLen: 10, SHA256: "x"}
+	if err := secondFaultVerify(ops, map[string]secondFaultObject{"live-0000": whole, "live-0001": whole, name: {Present: new(false)}}); err == nil {
 		t.Fatal("an acknowledged submission read back absent")
 	}
 	// A replayed submission is refused, and a writer stopped with the submission

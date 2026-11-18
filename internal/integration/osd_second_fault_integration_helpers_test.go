@@ -207,7 +207,7 @@ func secondFaultCount(ops []secondFaultOp) secondFaultMark {
 
 // secondFaultObject is an object as a fresh connection reads it back.
 type secondFaultObject struct {
-	Present bool   `json:"present"`
+	Present *bool  `json:"present"`
 	Size    int    `json:"size"`
 	SHA256  string `json:"sha256"`
 	DataLen int    `json:"data_len"`
@@ -221,18 +221,23 @@ type secondFaultObject struct {
 func secondFaultVerify(ops []secondFaultOp, read map[string]secondFaultObject) error {
 	for _, op := range ops {
 		got, listed := read[op.Name]
-		whole := got.Present && got.Size == op.Bytes && got.DataLen == op.Bytes && got.SHA256 == op.SHA256
 		switch {
-		case !listed:
-			return fmt.Errorf("%s was not read back", op.Name)
-		case op.Outcome == opAcked && !whole:
-			return fmt.Errorf("acknowledged %s reads back as %+v, submitted %d bytes %s", op.Name, got, op.Bytes, op.SHA256)
-		case op.Outcome == opUnknown && got.Present && !whole:
-			return fmt.Errorf("%s with an unknown outcome reads back torn: %+v", op.Name, got)
-		case op.Outcome == opRefused && got.Present:
-			return fmt.Errorf("refused %s is present: %+v", op.Name, got)
 		case op.Outcome == opOutstanding:
 			return fmt.Errorf("%s is still outstanding at readback", op.Name)
+		case !listed:
+			return fmt.Errorf("%s was not read back", op.Name)
+		case got.Present == nil:
+			return fmt.Errorf("%s readback did not observe presence or absence", op.Name)
+		}
+		present := *got.Present
+		whole := present && got.Size == op.Bytes && got.DataLen == op.Bytes && got.SHA256 == op.SHA256
+		switch {
+		case op.Outcome == opAcked && !whole:
+			return fmt.Errorf("acknowledged %s reads back as %+v, submitted %d bytes %s", op.Name, got, op.Bytes, op.SHA256)
+		case op.Outcome == opUnknown && present && !whole:
+			return fmt.Errorf("%s with an unknown outcome reads back torn: %+v", op.Name, got)
+		case op.Outcome == opRefused && present:
+			return fmt.Errorf("refused %s is present: %+v", op.Name, got)
 		}
 	}
 	return nil
