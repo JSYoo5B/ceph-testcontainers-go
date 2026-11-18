@@ -172,12 +172,16 @@ func ClassifyAuthBundle(bundle AuthBundle) AuthVerdict {
 		}
 		return managers[index], true
 	}
-	mapComplete := func(phase string) bool {
-		return slices.ContainsFunc(bundle.Queries, func(q AuthQuery) bool { return q.Name == "mgr dump "+phase && q.Status == StatusComplete })
+	queryComplete := func(name string) bool {
+		return slices.ContainsFunc(bundle.Queries, func(q AuthQuery) bool { return q.Name == name && q.Status == StatusComplete })
+	}
+	instanceObserved := func(m AuthManager, phase string) bool {
+		return m.ContainerID != "" && m.StartedAt != "" && queryComplete("container of mgr."+m.Name+" "+phase)
 	}
 	before, okBefore := find(bundle.Managers)
 	after, okAfter := find(bundle.ManagersAfter)
-	if mapComplete("before") && mapComplete("after") && okBefore && okAfter {
+	if queryComplete("mgr dump before") && queryComplete("mgr dump after") && okBefore && okAfter &&
+		instanceObserved(before, "before") && instanceObserved(after, "after") {
 		switch {
 		case after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt:
 			verdict.Target = TargetChanged
@@ -277,7 +281,7 @@ func (c *authCollector) observeManagers(phase string, sessions []MonitorSessions
 			BeaconGlobalIDs: []uint64{}, ModuleGlobalIDs: []uint64{}}
 		c.query("container of mgr."+manager.DaemonName+" "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 			state, err := manager.State(ctx)
-			if err == nil && state == nil {
+			if err == nil && (state == nil || state.StartedAt == "" || entry.ContainerID == "") {
 				err = errMissing
 			}
 			if err == nil {

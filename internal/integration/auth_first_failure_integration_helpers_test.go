@@ -293,13 +293,24 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 			problem("mon.%s reports FSID %q, not %q", name, bundle.Monitors[index].FSID, expected.FSID)
 		}
 	}
+	queryComplete := func(name string) bool {
+		return slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Name == name && q.Status == authQueryComplete })
+	}
+	mapComplete := func(phase string) bool { return queryComplete("mgr dump " + phase) }
+	instanceObserved := func(m authManagerObservation, phase string) bool {
+		return m.ContainerID != "" && m.StartedAt != "" && queryComplete("container of mgr."+m.Name+" "+phase)
+	}
 	for _, before := range bundle.Managers {
 		index := slices.IndexFunc(bundle.ManagersAfter, func(after authManagerObservation) bool { return after.Name == before.Name })
 		if index < 0 {
 			problem("mgr.%s unavailable after the collection", before.Name)
 			continue
 		}
-		if after := bundle.ManagersAfter[index]; after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt {
+		after := bundle.ManagersAfter[index]
+		if !mapComplete("before") || !mapComplete("after") || !instanceObserved(before, "before") || !instanceObserved(after, "after") {
+			continue
+		}
+		if after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt {
 			problem("mgr.%s changed during the collection: GID %d -> %d, container %s/%s -> %s/%s",
 				before.Name, before.GID, after.GID, before.ContainerID, before.StartedAt, after.ContainerID, after.StartedAt)
 		}
@@ -313,12 +324,10 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 		}
 		return rows[i], true
 	}
-	mapComplete := func(phase string) bool {
-		return slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Name == "mgr dump "+phase && q.Status == authQueryComplete })
-	}
 	before, haveBefore := findTarget(bundle.Managers)
 	after, haveAfter := findTarget(bundle.ManagersAfter)
-	if mapComplete("before") && mapComplete("after") && haveBefore && haveAfter {
+	if mapComplete("before") && mapComplete("after") && haveBefore && haveAfter &&
+		instanceObserved(before, "before") && instanceObserved(after, "after") {
 		switch {
 		case before.GID != after.GID || before.ContainerID != after.ContainerID || before.StartedAt != after.StartedAt:
 			verdict.Target = "changed"
@@ -543,8 +552,8 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 			ContainerID: manager.GetContainerID()}
 		c.query("container of mgr."+manager.DaemonName+" "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 			state, err := manager.State(ctx)
-			if err == nil && state == nil {
-				err = errors.New("container state unavailable")
+			if err == nil && (state == nil || state.StartedAt == "" || entry.ContainerID == "") {
+				err = errors.New("container identity unavailable")
 			}
 			if err == nil {
 				entry.StartedAt = state.StartedAt

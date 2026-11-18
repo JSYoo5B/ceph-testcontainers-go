@@ -270,13 +270,18 @@ func TestEvaluateGate(t *testing.T) {
 func authCase() AuthBundle {
 	manager := AuthManager{Name: "a", GID: 4161, Active: true, ContainerID: "ca", StartedAt: "t0"}
 	return AuthBundle{
-		Expected:           Expected{FSID: "f", Monitors: []string{"b", "a"}, Manager: "a", GID: 4161},
-		Rejection:          Rejection{Target: "mgr.a", TargetGID: 4161, Result: -13},
-		Monitors:           []MonitorStatus{{Name: "a", FSID: "f"}, {Name: "b", FSID: "f"}},
-		Managers:           []AuthManager{manager},
-		ManagersAfter:      []AuthManager{manager},
-		Controls:           []Control{{Target: "mgr.a", ExitCode: 0, Complete: true}},
-		Queries:            []AuthQuery{{Query: Query{Name: "mgr dump before", Status: StatusComplete}}, {Query: Query{Name: "mgr dump after", Status: StatusComplete}}},
+		Expected:      Expected{FSID: "f", Monitors: []string{"b", "a"}, Manager: "a", GID: 4161},
+		Rejection:     Rejection{Target: "mgr.a", TargetGID: 4161, Result: -13},
+		Monitors:      []MonitorStatus{{Name: "a", FSID: "f"}, {Name: "b", FSID: "f"}},
+		Managers:      []AuthManager{manager},
+		ManagersAfter: []AuthManager{manager},
+		Controls:      []Control{{Target: "mgr.a", ExitCode: 0, Complete: true}},
+		Queries: []AuthQuery{
+			{Query: Query{Name: "mgr dump before", Status: StatusComplete}},
+			{Query: Query{Name: "mgr dump after", Status: StatusComplete}},
+			{Query: Query{Name: "container of mgr.a before", Status: StatusComplete}},
+			{Query: Query{Name: "container of mgr.a after", Status: StatusComplete}},
+		},
 		CollectionComplete: true,
 		GenerationEquality: GenerationUnavailable,
 	}
@@ -305,6 +310,23 @@ func TestClassifyAuthBundle(t *testing.T) {
 			b.Queries[1].Status = StatusFailed
 			b.ManagersAfter[0].GID = 0
 		}, TargetUnavailable, false},
+		"after container query fails": {func(b *AuthBundle) {
+			b.Queries[3].Status = StatusFailed
+			b.ManagersAfter[0].StartedAt = ""
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"both container queries fail": {func(b *AuthBundle) {
+			b.Queries[2].Status, b.Queries[3].Status = StatusFailed, StatusFailed
+			b.Managers[0].StartedAt, b.ManagersAfter[0].StartedAt = "", ""
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"missing container query with populated identity": {func(b *AuthBundle) {
+			b.Queries = b.Queries[:3]
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"successful container query missing identity": {func(b *AuthBundle) {
+			b.ManagersAfter[0].ContainerID = ""
+		}, TargetUnavailable, true},
 		"not observed":      {func(b *AuthBundle) { b.ManagersAfter = nil; b.CollectionComplete = false }, TargetUnavailable, false},
 		"other FSID":        {func(b *AuthBundle) { b.Monitors[1].FSID = "g" }, TargetRegistered, false},
 		"a MON missing":     {func(b *AuthBundle) { b.Monitors = b.Monitors[:1] }, TargetRegistered, false},

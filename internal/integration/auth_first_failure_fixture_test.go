@@ -74,11 +74,18 @@ func modeledRetainedBundle(t *testing.T) authFirstFailureBundle {
 	}
 	// Complete phase records are synthetic inputs for classifier controls;
 	// they are not added to the retained historical document above.
-	bundle.Queries = append(bundle.Queries, authQuery{Name: "mgr dump before", Status: authQueryComplete}, authQuery{Name: "mgr dump after", Status: authQueryComplete})
+	for _, phase := range []string{"before", "after"} {
+		bundle.Queries = append(bundle.Queries,
+			authQuery{Name: "mgr dump " + phase, Status: authQueryComplete},
+			authQuery{Name: "container of mgr.a " + phase, Status: authQueryComplete},
+		)
+	}
+	bundle.Managers[0].ContainerID, bundle.Managers[0].StartedAt = "c1", "start-1"
+	bundle.ManagersAfter[0] = bundle.Managers[0]
 	return bundle
 }
 
-// The retained rejection with synthetic complete map-phase records classifies
+// The retained rejection with synthetic complete map and instance records classifies
 // as the preserved -13 with its target registered and successful controls,
 // and leaves generation equality and the
 // cause unverified: the classification draws no conclusion from the controls
@@ -114,6 +121,12 @@ func TestAuthBundleClassification(t *testing.T) {
 		"target GID replaced": {func(b *authFirstFailureBundle) {
 			b.Managers[0].GID, b.ManagersAfter[0].GID = 4300, 4300
 		}, func(v authBundleVerdict) bool { return v.Target == "changed" }, "target mgr.a is changed"},
+		"failed container query with populated identity": {func(b *authFirstFailureBundle) {
+			b.Queries[len(b.Queries)-1].Status = authQueryFailed
+		}, func(v authBundleVerdict) bool { return v.Target == "unavailable" }, "target mgr.a is unavailable"},
+		"successful container query missing identity": {func(b *authFirstFailureBundle) {
+			b.ManagersAfter[0].ContainerID = ""
+		}, func(v authBundleVerdict) bool { return v.Target == "unavailable" }, "target mgr.a is unavailable"},
 		"target process generation replaced": {func(b *authFirstFailureBundle) {
 			b.Expected.ContainerID, b.Expected.StartedAt = "c1", "start-1"
 			for _, list := range [][]authManagerObservation{b.Managers, b.ManagersAfter} {
