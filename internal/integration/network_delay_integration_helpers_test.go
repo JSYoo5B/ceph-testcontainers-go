@@ -506,6 +506,39 @@ func runNetworkDelay(t *testing.T) {
 		if err != nil || !counted.Applied || counted.Drops == 0 {
 			t.Fatalf("netem dropped %d selected packets: %+v, %v", counted.Drops, counted, err)
 		}
+		// Edit only the priority map in place: unmatched traffic now goes
+		// to the existing netem child even though the peer filters remain.
+		owner := startNetemObserver(t, ctx, image, delayed.Container, true)
+		change := []string{"tc", "qdisc", "change", "dev", lease.Interface, "root", "handle", status.RootHandle, "prio", "bands", "3", "priomap"}
+		delayExec(t, ctx, owner, append(change, slices.Repeat([]string{"2"}, 16)...)...)
+		changed, err := lease.Status(ctx)
+		if err != nil || changed.Applied || changed.RootHandle != status.RootHandle {
+			t.Fatalf("status after changing the priority map: %+v, %v", changed, err)
+		}
+		type qdiscIdentity struct {
+			Kind, Handle, Parent string
+		}
+		unchangedChild := func(dump json.RawMessage) qdiscIdentity {
+			t.Helper()
+			var qdiscs []qdiscIdentity
+			if err := json.Unmarshal(dump, &qdiscs); err != nil {
+				t.Fatal(err)
+			}
+			for _, qdisc := range qdiscs {
+				if qdisc.Kind == "netem" && qdisc.Parent == status.RootHandle+"3" {
+					return qdisc
+				}
+			}
+			t.Fatalf("no netem child in the original band: %s", dump)
+			return qdiscIdentity{}
+		}
+		if !slices.Equal(changed.Filters, status.Filters) || unchangedChild(changed.Qdiscs) != unchangedChild(status.Qdiscs) {
+			t.Fatalf("priority-map edit changed the filters or child: %s %s", changed.Filters, changed.Qdiscs)
+		}
+		if misrouted := timedRead(t, ctx, other, slow); misrouted.Errno != 110 {
+			t.Fatalf("unselected client after changing the priority map: %+v", misrouted)
+		}
+		t.Logf("same-handle priority-map edit kept the child and filters, cut an unselected path and returned Applied=false: %s", changed.Qdiscs)
 		if err := lease.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}

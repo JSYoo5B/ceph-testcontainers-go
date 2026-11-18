@@ -17,15 +17,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
-// contractObject is an object as the reading client saw it.
-type contractObject struct {
-	Exists  bool    `json:"exists"`
-	Size    int     `json:"size"`
-	Data    string  `json:"data"`
-	XAttr   *string `json:"xattr"`
-	Version uint64  `json:"version"`
-}
-
 // The mutation contracts that a client implementation must reproduce, on the
 // topology of a Messenger client suite: Messenger v2 only with CRC, AES256K
 // keys where the image can make them, and a MemStore OSD with the legacy CRUSH
@@ -118,14 +109,14 @@ func TestRADOSMutationContracts(t *testing.T) {
 	// as part of a compound write, which then changes nothing; an idempotent
 	// create succeeds.
 	if contracts.CreateExclusive != 0 || contracts.CreateExclusiveAgain != 17 || contracts.CreateIdempotent != 0 ||
-		contracts.CreateExclusiveWrite != 17 || !contracts.Created.Exists || contracts.Created.Size != 0 {
+		contracts.CreateExclusiveWrite != 17 || !contracts.Created.exists() || contracts.Created.Size != 0 {
 		t.Fatalf("create: %+v", contracts)
 	}
 	// A failed guard refuses the whole compound operation. cmpext reports
 	// MAX_ERRNO plus the offset of the first differing byte (3); omap_cmp and
 	// cmpxattr report ECANCELED.
 	for name, got := range map[string]contractObject{"cmpext": contracts.AfterCmpext, "omap_cmp": contracts.AfterOmap, "cmpxattr": contracts.AfterCmpxattr} {
-		if !got.Exists || got.Size != 8 || got.Data != "6162636465666768" || got.XAttr == nil || *got.XAttr != "v1" {
+		if !got.exists() || got.Size != 8 || got.Data != "6162636465666768" || got.XAttr == nil || *got.XAttr != "v1" {
 			t.Fatalf("a refused %s guard changed the object: %+v", name, got)
 		}
 	}
@@ -195,14 +186,14 @@ func TestRADOSMutationContracts(t *testing.T) {
 	// operations therefore take the next three versions, in order, if each
 	// ran exactly once.
 	last := before["late-compound"].Version
-	truncated, removed, compound := after["late-truncate"], after["late-remove"], after["late-compound"]
-	if truncated.Size != 10 || truncated.Data != "30313233343536373839" || truncated.Version != last+1 {
+	truncated, compound := after["late-truncate"], after["late-compound"]
+	if !truncated.exists() || truncated.Size != 10 || truncated.Data != "30313233343536373839" || truncated.Version != last+1 {
 		t.Fatalf("the late truncate was not applied once at version %d: %+v", last+1, truncated)
 	}
-	if removed.Exists {
-		t.Fatalf("the late remove was not applied: %+v", removed)
+	if err := requireContractAbsence(after, "late-remove"); err != nil {
+		t.Fatal(err)
 	}
-	if compound.Data != "636f6d706f756e64" || compound.XAttr == nil || *compound.XAttr != "v2" || compound.Version != last+3 {
+	if !compound.exists() || compound.Data != "636f6d706f756e64" || compound.XAttr == nil || *compound.XAttr != "v2" || compound.Version != last+3 {
 		t.Fatalf("the late compound write was not applied once and whole at version %d: %+v", last+3, compound)
 	}
 	t.Logf("contracts: zero, create, guarded compound refusals (cmpext %d, omap_cmp %d, cmpxattr %d); osd.0 started the late truncate, remove and compound of %s after its ETIMEDOUT and applied each once",

@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -69,36 +69,31 @@ func TestMessengerFaultInjection(t *testing.T) {
 			if counts[osds[0].ID] < 2 || counts[target.ID] < 2 {
 				t.Fatalf("objects do not cover both primaries: %v", counts)
 			}
-			probe := func(t *testing.T, generation, timeout string) []messengerFaultResult {
+			probe := func(t *testing.T, generation, timeout string) messengerFaultRun {
 				t.Helper()
 				encoded, err := json.Marshal(names)
 				if err != nil {
 					t.Fatal(err)
 				}
 				out := harness.ExecOutput(t, ctx, client, "python3", "-c", messengerFaultProbe, pool, generation, timeout, string(encoded))
-				var results []messengerFaultResult
-				if err := json.Unmarshal([]byte(harness.LastLine(out)), &results); err != nil || len(results) != len(names) {
+				var run messengerFaultRun
+				if err := json.Unmarshal([]byte(harness.LastLine(out)), &run); err != nil || run.ClientID == 0 || len(run.Results) != len(names) {
 					t.Fatalf("messenger fault probe output: %s %v", out, err)
 				}
 				t.Logf("MESSENGER_FAULT_CLIENT generation=%s results=%s", generation, harness.LastLine(out))
-				return results
+				return run
 			}
-			allWritten := func(t *testing.T, generation string, limit float64) []float64 {
+			allWritten := func(t *testing.T, generation string) {
 				t.Helper()
-				var seconds []float64
-				for _, result := range probe(t, generation, "60") {
-					if result.Errno != 0 || !result.Verified || result.Seconds > limit {
-						t.Fatalf("%s write of %s: %+v", generation, result.Name, result)
-					}
-					seconds = append(seconds, result.Seconds)
+				if err := probe(t, generation, "60").checkWrites(); err != nil {
+					t.Fatalf("%s: %v", generation, err)
 				}
-				return seconds
 			}
-			allWritten(t, "seed", 10)
+			allWritten(t, "seed")
 
 			t.Run("client-blackhole", func(t *testing.T) {
 				hold := messengerFaultConfig(t, ctx, cluster, ceph.ConfigSetting{Section: fmt.Sprintf("osd.%d", target.ID), Name: "ms_blackhole_client", Value: "true"})
-				for _, result := range probe(t, "blocked", "5") {
+				for _, result := range probe(t, "blocked", "5").Results {
 					blocked := primaries[result.Name] == target.ID
 					if blocked && result.Errno != 110 || !blocked && (result.Errno != 0 || !result.Verified) {
 						t.Fatalf("object %s with primary osd.%d: %+v", result.Name, primaries[result.Name], result)
@@ -106,23 +101,63 @@ func TestMessengerFaultInjection(t *testing.T) {
 				}
 				requireOSDs(t, ctx, cluster, "OSDs stay in the map while dropping client messages", expect.OSDs{Select: osdSelection(osds), Up: true, In: true, Exact: true})
 				hold()
-				allWritten(t, "after-blackhole", 10)
+				allWritten(t, "after-blackhole")
 			})
 
 			t.Run("client-delay", func(t *testing.T) {
-				hold := messengerFaultConfig(t, ctx, cluster,
-					ceph.ConfigSetting{Section: "osd", Name: "ms_inject_delay_type", Value: "client"},
-					ceph.ConfigSetting{Section: "osd", Name: "ms_inject_delay_probability", Value: "1"},
-					ceph.ConfigSetting{Section: "osd", Name: "ms_inject_delay_max", Value: "2"})
-				// Each delay is uniform up to the maximum, so a write slower
-				// than 0.3 s among four or more is certain in practice.
-				if delayed := allWritten(t, "delayed", 5); slices.Max(delayed) < 0.3 {
-					t.Fatalf("no client message was delayed: %v", delayed)
+				settings := []ceph.ConfigSetting{
+					{Section: "osd", Name: "ms_inject_delay_type", Value: "client"},
+					{Section: "osd", Name: "ms_inject_delay_probability", Value: "1"},
+					{Section: "osd", Name: "ms_inject_delay_max", Value: "2"},
 				}
+				previous := make(map[int][]ceph.ConfigSetting)
+				for _, osd := range osds {
+					for _, setting := range settings {
+						value, err := messengerFaultEffective(ctx, osd, setting.Name)
+						if err != nil {
+							t.Fatal(err)
+						}
+						previous[osd.ID] = append(previous[osd.ID], ceph.ConfigSetting{Name: setting.Name, Value: value})
+					}
+					debug, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{
+						Daemon: fmt.Sprintf("osd.%d", osd.ID), Name: "debug_ms", Level: "1",
+					})
+					t.Cleanup(func() {
+						cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+						defer cancel()
+						if err := debug.Restore(cleanup); err != nil {
+							t.Errorf("restore osd.%d messenger debug level: %v", osd.ID, err)
+						}
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				check := func(phase string, run messengerFaultRun, wantDelay bool) {
+					t.Helper()
+					for _, osd := range osds {
+						n, err := run.checkDelay(harness.ContainerLogLines(t, ctx, osd), wantDelay)
+						if err != nil {
+							t.Fatalf("%s osd.%d: %v", phase, osd.ID, err)
+						}
+						t.Logf("%s osd.%d queued %d delayed OSD operations from client.%d", phase, osd.ID, n, run.ClientID)
+					}
+				}
+				hold := messengerFaultConfig(t, ctx, cluster, settings...)
+				for _, osd := range osds {
+					waitMessengerFaultEffective(t, ctx, osd, settings)
+				}
+				delayed := probe(t, "delayed", "60")
+				check("delayed", delayed, true)
 				hold()
-				if fast := allWritten(t, "after-delay", 1); slices.Max(fast) >= 1 {
-					t.Fatalf("delay remained after restore: %v", fast)
+				for _, osd := range osds {
+					waitMessengerFaultEffective(t, ctx, osd, previous[osd.ID])
 				}
+				restored := probe(t, "after-delay", "60")
+				if restored.ClientID == delayed.ClientID {
+					t.Fatalf("restored phase reused delayed client.%d", restored.ClientID)
+				}
+				check("restored", restored, false)
 			})
 
 			t.Run("mds-client-blackhole", func(t *testing.T) {
@@ -171,11 +206,48 @@ func TestMessengerFaultInjection(t *testing.T) {
 	}
 }
 
-type messengerFaultResult struct {
-	Name     string  `json:"name"`
-	Errno    int     `json:"errno"`
-	Seconds  float64 `json:"seconds"`
-	Verified bool    `json:"verified"`
+func messengerFaultEffective(ctx context.Context, osd *ceph.OSDContainer, name string) (string, error) {
+	out, err := osd.AdminSocket(ctx, "config", "get", name)
+	if err != nil {
+		return "", err
+	}
+	var config map[string]string
+	if err := json.Unmarshal(out, &config); err != nil {
+		return "", fmt.Errorf("osd.%d config get %s: %w", osd.ID, name, err)
+	}
+	value, found := config[name]
+	if !found {
+		return "", fmt.Errorf("osd.%d config get %s omitted the value", osd.ID, name)
+	}
+	return value, nil
+}
+
+func waitMessengerFaultEffective(t *testing.T, ctx context.Context, osd *ceph.OSDContainer, settings []ceph.ConfigSetting) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	for _, setting := range settings {
+		for {
+			got, err := messengerFaultEffective(ctx, osd, setting.Name)
+			if err == nil && equalMessengerFaultSetting(got, setting.Value) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("osd.%d %s = %q, want %q: last read error %v", osd.ID, setting.Name, got, setting.Value, err)
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+}
+
+func equalMessengerFaultSetting(got, want string) bool {
+	if got == want {
+		return true
+	}
+	x, xErr := strconv.ParseFloat(got, 64)
+	y, yErr := strconv.ParseFloat(want, 64)
+	return xErr == nil && yErr == nil && x == y
 }
 
 type messengerFaultMount struct {
@@ -217,22 +289,23 @@ const messengerFaultProbe = `import rados,sys,json,time,hashlib
 pool,generation,timeout,names=sys.argv[1],sys.argv[2],sys.argv[3],json.loads(sys.argv[4])
 client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_osd_op_timeout':timeout,'rados_mon_op_timeout':'30'})
 client.connect()
+client_id=client.get_instance_id()
 try:
     io=client.open_ioctx(pool); results=[]
     for name in names:
         payload=hashlib.sha256((name+':'+generation).encode()).digest()*256
-        started=time.time(); result={'name':name,'errno':0,'verified':False}
+        started=time.monotonic(); result={'name':name,'errno':0,'verified':False}
         try:
             io.write_full(name,payload)
             result['verified']=io.read(name,len(payload)+1,0)==payload
         except rados.Error as error:
             result['errno']=error.errno
-        result['seconds']=round(time.time()-started,2)
+        result['seconds']=round(time.monotonic()-started,6)
         results.append(result)
     io.close()
 finally:
     client.shutdown()
-print(json.dumps(results))
+print(json.dumps({"client_id":client_id,"results":results}))
 `
 
 // The mount runs in a child so a mount stuck past client_mount_timeout is

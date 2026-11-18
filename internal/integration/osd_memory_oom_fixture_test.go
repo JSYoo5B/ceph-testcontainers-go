@@ -707,7 +707,11 @@ func oomTree(t *testing.T, events, procs string) (string, *os.File) {
 func TestOSDOOMRecorderKeepsLastReadableCountersAndEffectiveCeiling(t *testing.T) {
 	dir, handle := oomTree(t, "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n", "7\n")
 	ctx, cancel := context.WithCancel(t.Context())
-	out := recordOSDOOM(ctx, dir, handle, 2<<30, 7, time.Millisecond, time.Now)
+	identity, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := recordOSDOOM(ctx, oomMembershipTarget{group: dir, identity: identity, pid: 7}, handle, 2<<30, time.Millisecond, time.Now)
 	time.Sleep(20 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(dir, "memory.events.local"), []byte("low 0\nhigh 0\nmax 9\noom 1\noom_kill 1\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -742,7 +746,11 @@ func TestOSDOOMRecorderNeverInventsEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	out := recordOSDOOM(ctx, dir, handle, 64<<20, 7, time.Millisecond, time.Now)
+	identity, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := recordOSDOOM(ctx, oomMembershipTarget{group: dir, identity: identity, pid: 7}, handle, 64<<20, time.Millisecond, time.Now)
 	time.Sleep(15 * time.Millisecond)
 	cancel()
 	obs := <-out
@@ -751,6 +759,66 @@ func TestOSDOOMRecorderNeverInventsEvidence(t *testing.T) {
 	}
 	if len(obs.Errors) > 2 {
 		t.Fatalf("one message per tick instead of per distinct failure: %q", obs.Errors)
+	}
+}
+
+func TestOSDOOMRecorderMembershipLossReachesVictimVerdict(t *testing.T) {
+	for _, failure := range []string{"missing", "malformed"} {
+		t.Run(failure, func(t *testing.T) {
+			dir, handle := oomTree(t, "low 0\nhigh 0\nmax 44\noom 1\noom_kill 1\n", "7\n")
+			identity, err := os.Stat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			members := filepath.Join(dir, "cgroup.procs")
+			if failure == "missing" {
+				err = os.Remove(members)
+			} else {
+				err = os.WriteFile(members, []byte("7"), 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			step := goodOOMStep()
+			stat := filepath.Join(t.TempDir(), "stat")
+			target := oomMembershipTarget{group: dir, identity: identity, pid: oomPID, processStat: stat, processStart: oomProcess}
+			for _, test := range []struct {
+				name  string
+				at    time.Time
+				flags string
+				want  osdOOMVerdict
+			}{
+				{"before exit", oomAt(5), "4194560", osdOOMIncomplete},
+				{"after engine exit", oomAt(5.2), "4194560", osdOOMKilled},
+				{"kernel exit precedes engine timestamp", oomAt(5), "4194564", osdOOMKilled},
+			} {
+				raw := strings.Replace(procStat(oomProcess), "4194560", test.flags, 1)
+				if err := os.WriteFile(stat, []byte(raw), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				obs := <-recordOSDOOM(ctx, target, handle, 2<<30, time.Millisecond, func() time.Time { return test.at })
+				teardown := failure == "missing" && test.flags == "4194564"
+				wantGap, want := test.at, test.want
+				if teardown {
+					wantGap = time.Time{}
+				} else if test.flags == "4194564" {
+					// A malformed observation is still a gap when the
+					// earlier drop of the member cannot be established.
+					want = osdOOMIncomplete
+				}
+				if obs.MembershipGapAt != wantGap || obs.OtherProc || obs.TeardownObserved != teardown {
+					t.Fatalf("%s: observer did not distinguish unknown membership: %+v", test.name, obs)
+				}
+				// Keep the earlier valid ceiling sample and combine the
+				// actual counter and membership reads with the engine exit.
+				step.MembershipGapAt, step.Final = obs.MembershipGapAt, obs.final(step.ExecEnd)
+				if got, err := classifyOSDOOMStep(step, osdOOMStepChecks{}); got != want {
+					t.Fatalf("%s: got %s (%v), want %s", test.name, got, err, want)
+				}
+			}
+		})
 	}
 }
 

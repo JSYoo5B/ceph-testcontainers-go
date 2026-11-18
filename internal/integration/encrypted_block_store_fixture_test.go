@@ -579,6 +579,13 @@ next() {
 }
 case "$(basename "$0")" in
 dmsetup) ;;
+cryptsetup)
+  case "$1" in
+  luksUUID) echo aa;;
+  luksDump) echo "offset: 512 [bytes]";;
+  open) echo "No key available with this passphrase." >&2; exit 2;;
+  esac
+  exit 0;;
 blockdev) echo 1048576; exit 0;;
 *) exit 0;;
 esac
@@ -734,14 +741,6 @@ func TestEncKeeperKeepsAMappingWhoseLookupFailed(t *testing.T) {
 			t.Fatalf("a create whose node could not be inspected: %+v", r)
 		}
 	})
-	t.Run("open lookup", func(t *testing.T) {
-		f := newEncFakeDM(t)
-		f.script("info", "denied", "denied")
-		r := f.run("open", "/dev/loop3", "n-crypt")
-		if r.LookupError == "" {
-			t.Fatalf("an open whose mapping could not be inspected: %+v", r)
-		}
-	})
 	t.Run("collision control mapping", func(t *testing.T) {
 		f := newEncFakeDM(t)
 		f.script("info", "denied")
@@ -750,6 +749,38 @@ func TestEncKeeperKeepsAMappingWhoseLookupFailed(t *testing.T) {
 			t.Fatalf("a colliding mapping that could not be inspected: %+v", r)
 		}
 	})
+}
+
+func TestEncKeeperRefusalRequiresBothMappingObservations(t *testing.T) {
+	for _, test := range []struct {
+		name, before, after, want string
+	}{
+		{"confirmed absent", "absent", "absent", encRefused},
+		{"before failed", "denied", "absent", encUnobserved},
+		{"after failed", "absent", "denied", encUnobserved},
+		{"both failed", "denied", "denied", encUnobserved},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newEncFakeDM(t)
+			backing := filepath.Join(f.dir, "backing")
+			if err := os.WriteFile(backing, make([]byte, 512), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			recorded := encHeaderOf(f.run("header", backing))
+			f.script("info", test.before, test.after)
+			reply := f.run("open", backing, "n-crypt")
+			if reply.RC == nil || *reply.RC != 2 || !recorded.known() || encHeaderOf(reply) != recorded {
+				t.Fatalf("wrong key receipt has no failed exit or stable header: %+v", reply)
+			}
+			if got, detail := judgeEncRefusal(reply, recorded); got != test.want {
+				t.Fatalf("refusal verdict = %s, want %s: %s", got, test.want, detail)
+			}
+			acquired, why := encCryptAcquired(reply, recorded.UUID, "n-crypt", encLoopRecord{})
+			if test.want == encUnobserved && (acquired.UUID != encCryptDMUUID(recorded.UUID, "n-crypt") || why == "") {
+				t.Fatalf("uncertain mapping not tracked for cleanup: %+v %q", acquired, why)
+			}
+		})
+	}
 }
 
 func TestEncAcquisitionKeepsTheUUIDOfAnUninspectedStep(t *testing.T) {

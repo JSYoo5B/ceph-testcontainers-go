@@ -6,8 +6,6 @@ package integration_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,11 +28,17 @@ import (
 
 const (
 	blockDeviceBytes = int64(512 << 20)
-	blockKeeperDir   = "/tc-blk"
 	blockPool        = "block-device-fault"
 	blockDelayMS     = 200
 	blockObjectSize  = int64(64 << 10)
 )
+
+// blockChainState keeps the release records of both acquisition steps.
+type blockChainState struct {
+	Name    string
+	backing *dmBacking
+	control *dmControl
+}
 
 // blockEnv is one cluster whose only OSD runs on the keeper's mapping, and an
 // unused control mapping of the same kind. control changes the mapping's
@@ -114,46 +118,52 @@ func (b *blockEnv) timed(t *testing.T, ctx context.Context, prefix string, count
 	return l
 }
 
-// createChain makes one backing file, loop and linear mapping in the keeper.
-// The returned state names whatever was created, also on failure, so cleanup
-// releases exactly that.
-func (b *blockEnv) createChain(t *testing.T, ctx context.Context, name string) (blockChainState, blockKeeperReply) {
-	t.Helper()
-	raw, err := blockKeeperExec(ctx, b.keeper, "create", name, blockKeeperDir+"/"+name, strconv.FormatInt(blockDeviceBytes, 10))
-	r, perr := parseBlockKeeperReply(raw, "create")
-	if err != nil || perr != nil {
-		// Nothing tells what was made: keep the name so that the receipt
-		// names the chain that may be left.
-		t.Errorf("create chain %s: %v %v: %s", name, err, perr, raw)
+// createChain records ownership in the shared controlled fixture before each
+// mutation. The caller retains a partial chain as well as the error.
+func (b *blockEnv) createChain(ctx context.Context, name string) (blockChainState, error) {
+	f := dmFixture{keeper: dmKeeper{ctr: b.keeper}}
+	chain := blockChainState{Name: name}
+	var err error
+	chain.backing, err = f.createLoop(ctx, name, blockDeviceBytes)
+	if err != nil {
+		return chain, err
 	}
-	return blockChainState{Name: name, File: r.File, Loop: r.Loop, Mapped: r.Mapped}, r
+	chain.control, err = f.createNode(ctx, name, "TC-BLK-"+name, chain.backing.Dev, b.sectors)
+	return chain, err
 }
 
 // releaseChain removes one chain the test created. The OSD's chain is released
 // only when the cluster's claim table and the keeper's evidence both raise no
 // objection; otherwise the whole chain is kept and reported.
-func (b *blockEnv) releaseChain(t *testing.T, ctx context.Context, chain blockChainState, cluster *ceph.Container, osdID string) map[string]any {
+func (b *blockEnv) releaseChain(ctx context.Context, chain blockChainState, cluster *ceph.Container, osdID string) (map[string]any, error) {
 	out := map[string]any{"name": chain.Name}
-	if chain.Mapped && cluster != nil && chain == b.chain {
+	if chain.Name == "" {
+		return out, nil
+	}
+	if chain.control != nil && cluster != nil && chain.control == b.control {
 		outcome, detail := faulthook.JudgeDeviceChain(ctx, cluster, b.device, chain.Name, func(ctx context.Context) (faulthook.ChainEvidence, error) {
 			return b.chainEvidence(ctx, chain, osdID)
 		})
 		out["verdict"], out["detail"] = outcome, detail
 		if outcome != faulthook.ChainClear {
-			t.Errorf("the OSD's device chain %s is retained: %s: %s", chain.Name, outcome, detail)
-			return out
+			return out, fmt.Errorf("OSD device chain retained: %s: %s", outcome, detail)
 		}
 	}
-	if chain.Loop == "" {
-		return out
+	if chain.control != nil {
+		verdict, why := chain.control.releaseOwned(ctx)
+		out["mapping_verdict"], out["mapping_reason"] = verdict, why
+		if verdict != dmReleasable {
+			return out, fmt.Errorf("mapping retained: %s", why)
+		}
 	}
-	raw, err := blockKeeperExec(ctx, b.keeper, "remove", chain.Name, chain.Loop, chain.File)
-	reply, perr := parseBlockKeeperReply(raw, "remove")
-	if err != nil || perr != nil || !reply.MappingGone || !reply.LoopReleased || !reply.FileRemoved {
-		t.Errorf("release of chain %s: %v %v %s", chain.Name, err, perr, raw)
+	if chain.backing != nil {
+		r, err := chain.backing.release(ctx, dmKeeper{ctr: b.keeper}, nil)
+		out["backing"] = r
+		if err != nil {
+			return out, err
+		}
 	}
-	out["removed"] = reply
-	return out
+	return out, nil
 }
 
 // chainEvidence is the keeper's side of the release gate: the OSD container
@@ -200,12 +210,6 @@ func blockKeeperExec(ctx context.Context, keeper testcontainers.Container, actio
 		err = fmt.Errorf("keeper %s exited %d", action, code)
 	}
 	return data, err
-}
-
-func randomName(prefix string) string {
-	raw := make([]byte, 4)
-	_, _ = rand.Read(raw)
-	return prefix + hex.EncodeToString(raw)
 }
 
 // TestBlockDeviceFault runs one BlueStore OSD on a device-mapper node that a
@@ -262,25 +266,36 @@ func TestBlockDeviceFault(t *testing.T) {
 		defer done()
 		// The test's receipt is logged before cleanup runs; the release has
 		// its own.
-		data, _ := json.Marshal([]any{b.releaseChain(t, cleanup, b.chain, cluster, osdID), b.releaseChain(t, cleanup, b.idle, cluster, osdID)})
+		var releases []map[string]any
+		for _, chain := range []blockChainState{b.chain, b.idle} {
+			release, err := b.releaseChain(cleanup, chain, cluster, osdID)
+			if err != nil {
+				release["error"] = err.Error()
+				t.Errorf("release of chain %s: %v", chain.Name, err)
+			}
+			releases = append(releases, release)
+		}
+		data, _ := json.Marshal(releases)
 		t.Logf("BLOCK_DEVICE_RELEASE_RECEIPT %s", data)
 	})
-	var created, idle blockKeeperReply
-	b.chain, created = b.createChain(t, ctx, randomName("tcblk-"))
-	b.idle, idle = b.createChain(t, ctx, b.chain.Name+"-idle")
+	b.chain, err = b.createChain(ctx, randomName("tcblk-"))
+	if err != nil {
+		t.Fatalf("create OSD device chain: %v", err)
+	}
+	b.idle, err = b.createChain(ctx, b.chain.Name+"-idle")
+	if err != nil {
+		t.Fatalf("create idle device chain: %v", err)
+	}
+	created := b.keeperDo(t, ctx, "identity", b.chain.Name)
+	idle := b.keeperDo(t, ctx, "identity", b.idle.Name)
 	receipt["chain"], receipt["control"] = created, idle
-	if t.Failed() || created.Error != "" || idle.Error != "" || created.Bytes == nil || *created.Bytes != blockDeviceBytes {
+	if created.Error != "" || idle.Error != "" || created.Bytes == nil || *created.Bytes != blockDeviceBytes {
 		t.Fatalf("device chain: %+v control: %+v", created, idle)
 	}
 	b.device = faulthook.BlockDevice{HostPath: created.Path, Major: created.Major, Minor: created.Minor, SizeBytes: *created.Bytes}
-	b.control = &dmControl{keeper: dmKeeper{ctr: keeper}, rec: dmRecord{Name: b.chain.Name, UUID: "TC-BLK-" + b.chain.Name}}
-	if v := b.control.observe(t, ctx); !v.Exists || v.UUID != b.control.rec.UUID || v.Major != created.Major || v.Minor != created.Minor || v.Live == nil {
-		t.Fatalf("the OSD's mapping as the control sees it: %+v", v)
-	} else {
-		b.control.rec.Major, b.control.rec.Minor, b.control.rec.Live, b.linear = v.Major, v.Minor, *v.Live, *v.Live
-	}
+	b.control, b.linear = b.chain.control, b.chain.control.rec.Live
 	defer func() { receipt["control"] = b.control.log }()
-	number := strconv.FormatUint(uint64(created.Major), 10) + ":" + strconv.FormatUint(uint64(created.Minor), 10)
+	number := b.control.dev()
 
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)))

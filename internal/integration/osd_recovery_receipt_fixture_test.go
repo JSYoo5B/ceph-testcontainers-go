@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,39 @@ func TestExpectedRecoveryDigest(t *testing.T) {
 	// before seed-2.
 	if expectedRecoveryDigest("seed:11") == expectedRecoveryDigest("seed:10") || expectedRecoveryDigest("a:1", "b:1") != expectedRecoveryDigest("b:1", "a:1") {
 		t.Fatal("digest does not follow the object set in name order")
+	}
+}
+
+func TestPGRecoveryPathNeedsBackfillTargetObservation(t *testing.T) {
+	for name, state := range map[string]string{
+		"omitted recovery state": "",
+		"null recovery state":    `null`,
+		"no progress":            `[{"name":"Started/Primary/Active"}]`,
+		"null progress":          `[{"name":"Started/Primary/Active","recovery_progress":null}]`,
+		"omitted targets":        `[{"name":"Started/Primary/Active","recovery_progress":{}}]`,
+		"null targets":           `[{"name":"Started/Primary/Active","recovery_progress":{"backfill_targets":null}}]`,
+		"target present":         `[{"name":"Started/Primary/Active","recovery_progress":{"backfill_targets":["0"]}}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(logRecoveryQuerySample), &fields); err != nil {
+				t.Fatal(err)
+			}
+			delete(fields, "recovery_state")
+			if state != "" {
+				fields["recovery_state"] = json.RawMessage(state)
+			}
+			encoded, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query, err := parsePGQuery(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path, err := pgRecoveryPath(query, 0, eversion{16, 20}); err == nil {
+				t.Fatalf("classified as %q without observed empty targets", path)
+			}
+		})
 	}
 }

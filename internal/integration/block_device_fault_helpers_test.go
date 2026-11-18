@@ -21,9 +21,8 @@ import (
 // host's /dev. It prints one JSON object per action and exits 0 unless its own
 // arguments are wrong, so a refused kernel step is a receipt, not a crash.
 //
-//	create NAME FILE BYTES       backing file, loop, linear mapping with a UUID
+//	identity NAME                the mapping's path, device number and size
 //	stat NAME                    the mapping's I/O counters, open count and table
-//	remove NAME LOOP FILE        remove the mapping, detach the loop, delete the file
 //	targets -                    the device-mapper targets the kernel has registered
 const blockDeviceKeeperScript = `import json, os, subprocess, sys
 
@@ -38,33 +37,13 @@ def number(path):
 action, name = sys.argv[1], sys.argv[2]
 out = {"action": action, "name": name}
 node = "/dev/mapper/" + name
-if action == "create":
-    path, size = sys.argv[3], int(sys.argv[4])
-    with open(path, "xb") as f:
-        f.truncate(size)
-    out["file"] = path
-    rc, loop, err = run("losetup", "--find", "--show", path)
+if action == "identity":
+    major, minor = number(node)
+    out.update(major=major, minor=minor, path=node)
+    rc, size_out, err = run("blockdev", "--getsize64", node)
+    out["bytes"] = int(size_out) if rc == 0 else None
     if rc != 0:
-        out["error"] = "losetup: " + err
-    else:
-        out["loop"] = loop
-        # Without udev in the keeper, --verifyudev makes dmsetup create the
-        # node itself; with udev on the engine host it keeps udev's node.
-        # The UUID is the mapping's identity for the supervised control
-        # (blockControlScript): a name created again gets another UUID,
-        # even when the kernel gives it the same device number.
-        rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--uuid", "TC-BLK-" + name, "--table", "0 %d linear %s 0" % (size // 512, loop))
-        if rc != 0:
-            out["error"] = "dmsetup create: " + err
-        else:
-            out["mapped"] = True
-            try:
-                out["major"], out["minor"] = number(node)
-                out["path"] = node
-                rc, size_out, err = run("blockdev", "--getsize64", node)
-                out["bytes"] = int(size_out) if rc == 0 else None
-            except OSError as e:
-                out["error"] = "node: %s" % e
+        out["error"] = "blockdev getsize64: " + err
 elif action == "stat":
     major, minor = number(node)
     with open("/sys/dev/block/%d:%d/stat" % (major, minor)) as f:
@@ -73,22 +52,6 @@ elif action == "stat":
     rc, opened, err = run("dmsetup", "info", "-c", "--noheadings", "-o", "open", name)
     out["open"] = int(opened) if rc == 0 else None
     out["table"] = run("dmsetup", "table", name)[1]
-elif action == "remove":
-    loop, path = sys.argv[3], sys.argv[4]
-    rc, _, err = run("dmsetup", "remove", "--verifyudev", name)
-    out["removed"] = rc == 0
-    if rc != 0:
-        out["error"] = "dmsetup remove: " + err
-    out["mapping_gone"] = run("dmsetup", "info", name)[0] != 0
-    if out["mapping_gone"]:
-        rc, _, err = run("losetup", "-d", loop)
-        if rc != 0:
-            out["error"] = "losetup -d: " + err
-        rc, listed, _ = run("losetup", "-j", path)
-        out["loop_released"] = rc == 0 and listed == ""
-        if out["loop_released"]:
-            os.unlink(path)
-            out["file_removed"] = True
 elif action == "targets":
     rc, listed, err = run("dmsetup", "targets")
     out["targets"] = [line.split()[0] for line in listed.splitlines() if line.strip()] if rc == 0 else None
@@ -168,10 +131,7 @@ const blockDeviceContainerPath = "/dev/tc-osd-block"
 type blockKeeperReply struct {
 	Action       string   `json:"action"`
 	Name         string   `json:"name"`
-	File         string   `json:"file"`
-	Loop         string   `json:"loop"`
 	Path         string   `json:"path"`
-	Mapped       bool     `json:"mapped"`
 	Major        uint32   `json:"major"`
 	Minor        uint32   `json:"minor"`
 	Bytes        *int64   `json:"bytes"`
@@ -185,10 +145,6 @@ type blockKeeperReply struct {
 	WriteSectors int64    `json:"write_sectors"`
 	InFlight     int64    `json:"in_flight"`
 	Open         *int     `json:"open"`
-	Removed      bool     `json:"removed"`
-	MappingGone  bool     `json:"mapping_gone"`
-	LoopReleased bool     `json:"loop_released"`
-	FileRemoved  bool     `json:"file_removed"`
 	Targets      []string `json:"targets"`
 }
 
@@ -392,10 +348,4 @@ func judgeBlockError(p blockErrorPhase) string {
 		}
 	}
 	return blockNoEvidence
-}
-
-// blockChainState is what the test knows about its own chain, for cleanup.
-type blockChainState struct {
-	Name, File, Loop string
-	Mapped           bool
 }

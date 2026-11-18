@@ -111,6 +111,30 @@ func TestClockProbeInterceptSyscallBuild(t *testing.T) {
 	wantProbe(t, "wrapper silently absent", r, clockProbeRejected, "libc_syscall stayed at baseline but the pinned source predicts a shift")
 }
 
+func TestClockProbeInterceptSyscallNeedsCompleteShiftAndRestore(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		during clockOffsetInterval
+		after  int64
+	}{
+		{"wrong nonzero shift", probeSeq(0, probeD/6, 0)[clockPhaseDuring].Offset, 0},
+		{"interval spans baseline and shift", clockOffsetInterval{Lo: 0, Hi: probeD, Known: true}, 0},
+		{"remains shifted after restore", probeSeq(0, probeD, 0)[clockPhaseDuring].Offset, probeD},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := probeBase()
+			r.Facts.InterceptSyscall = boolPtr(true)
+			phases := probeSeq(0, probeD, tc.after)
+			phases[clockPhaseDuring] = clockRouteSample{Status: clockRouteOK, Offset: tc.during}
+			r.Samples[clockPathLibcSys] = phases
+			j := wantProbe(t, tc.name, r, clockProbeInconclusive, "libc_syscall")
+			if refs := clockReferencePaths(j); len(refs) != 0 {
+				t.Errorf("references from an inconclusive probe: %v", refs)
+			}
+		})
+	}
+}
+
 // A vdso or raw route that shifts contradicts the bypass hypothesis and is
 // rejected rather than being quietly accepted as a second faked route.
 func TestClockProbeBypassRoutesContradicted(t *testing.T) {

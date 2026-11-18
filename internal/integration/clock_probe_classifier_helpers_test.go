@@ -417,8 +417,11 @@ func judgeClockPath(j *clockProbeJudgement, r clockProbeRecord, p clockProbePath
 		}
 	}
 	if rep.Expectation == clockExpectShift && p != clockPathPublic {
-		if rep.During == clockAtBaseline {
+		switch {
+		case rep.During == clockAtBaseline:
 			j.add(clockProbeRejected, "%s stayed at baseline but the pinned source predicts a shift; the recorded build or environment facts are wrong", p)
+		case rep.During != clockAtShifted || rep.After != clockAtBaseline:
+			j.add(clockProbeInconclusive, "%s phases are not a clean baseline/shifted/baseline sequence", p)
 		}
 	}
 	rep.UsableReference = rep.ControllerAgrees && rep.Expectation == clockExpectBypass &&

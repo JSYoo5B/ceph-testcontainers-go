@@ -23,13 +23,23 @@ const (
 	// of 30 s would make every refusal and every recovery after the policy is
 	// lifted wait that long.
 	fullnessRetry = "5"
-	// fullnessSpan is how long backfill_toofull must be observed without a
-	// break: four retry intervals, so that refused reservation retries are
-	// covered and not just the first refusal.
+	// fullnessSpan spans four configured retry intervals. Samples describe
+	// the PG's state across the window; they don't identify individual retries.
 	fullnessSpan = 20 * time.Second
 	// fullnessWindow is how long the barrier is sampled after its first sign.
 	fullnessWindow = 25 * time.Second
 )
+
+func readBarrierProgress(now func() time.Time, query func() ([]byte, error)) (pgProgress, []byte, barrierSample, error) {
+	start := now()
+	raw, err := query()
+	read := barrierSample{Start: start, End: now()}
+	if err != nil {
+		return pgProgress{}, raw, read, err
+	}
+	progress, err := parsePGProgress(raw)
+	return progress, raw, read, err
+}
 
 // fullnessPhase is the receipt of one barrier case.
 type fullnessPhase struct {
@@ -341,19 +351,15 @@ func testOSDFullnessBarrier(t *testing.T) {
 			if now.Sub(start) > 4*time.Minute {
 				t.Fatalf("no backfill_toofull window within 4 minutes; %d samples %v, %d errors; last pg query: %.16384s", len(samples), out.Samples, out.SampleErrors, lastRaw)
 			}
-			if !firstHold.IsZero() && now.Sub(firstHold) >= fullnessWindow {
+			if !firstHold.IsZero() && samples[len(samples)-1].Start.Sub(firstHold) >= fullnessWindow {
 				break
 			}
-			raw, err := pgQueryRaw(ctx, cluster, pgid)
-			var sample pgProgress
-			if err == nil {
-				sample, err = parsePGProgress(raw)
-			}
+			sample, raw, read, err := readBarrierProgress(time.Now, func() ([]byte, error) { return pgQueryRaw(ctx, cluster, pgid) })
 			if err != nil {
 				out.SampleErrors++
 				// A failed read inside the credited window breaks it: it is
 				// kept as an inconclusive sample and the run fails.
-				if credited := recordFailedRead(samples, time.Now(), !firstHold.IsZero()); len(credited) != len(samples) {
+				if credited := recordFailedRead(samples, read, !firstHold.IsZero()); len(credited) != len(samples) {
 					out.Samples[barrierInconclusive]++
 					t.Fatalf("a PG read failed after backfill_toofull was first reported, so the window is not uninterrupted: %v", err)
 				}
@@ -389,9 +395,10 @@ func testOSDFullnessBarrier(t *testing.T) {
 			}
 			verdict, why := fullnessBarrierSample(base, sample)
 			out.Samples[verdict]++
-			samples = append(samples, barrierSample{Verdict: verdict, At: time.Now()})
+			read.Verdict = verdict
+			samples = append(samples, read)
 			if verdict == barrierHolds && firstHold.IsZero() {
-				firstHold = time.Now()
+				firstHold = read.End
 			}
 			if verdict != barrierHolds && verdict != barrierWaiting && !(verdict == barrierRunning && phase.revoke && firstHold.IsZero()) {
 				t.Fatalf("barrier sample %s: %s\n%.16384s", verdict, why, raw)

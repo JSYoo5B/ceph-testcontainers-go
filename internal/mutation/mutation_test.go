@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -86,6 +87,32 @@ func TestCanceledMutationKeepsLaterFailure(t *testing.T) {
 	if !Uncertain(original) || !errors.Is(original, late) {
 		t.Fatal("later failure became inaccessible")
 	}
+}
+
+// callbackBeforeSelection lets the callback finish before Run chooses between
+// callback completion and cancellation, so both events are ready.
+type callbackBeforeSelection struct{ context.Context }
+
+func (c callbackBeforeSelection) Done() <-chan struct{} {
+	synctest.Wait()
+	return c.Context.Done()
+}
+
+func TestCompletedUncertainMutationKeepsCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lost := errors.New("transport lost")
+		// Cover both select branches when completion and cancellation coincide.
+		for range 32 {
+			ctx, cancel := context.WithCancel(t.Context())
+			err := Run(callbackBeforeSelection{ctx}, time.Minute, func(context.Context) (bool, error) {
+				cancel()
+				return false, lost
+			})
+			if !Uncertain(err) || !errors.Is(err, lost) || !errors.Is(err, context.Canceled) {
+				t.Fatalf("uncertain result lost a cause: %v", err)
+			}
+		}
+	})
 }
 
 func TestPendingUnwrapOmitsNilErrors(t *testing.T) {

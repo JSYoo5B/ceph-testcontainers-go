@@ -14,7 +14,11 @@ import (
 
 // settleSyncWrite runs before policy readback: observing the desired value does
 // not prove that a dispatched writer has finished. topologyMu guards the fence.
-func (f *Fixture) settleSyncWrite(ctx context.Context) error { return f.syncWrites.Wait(ctx) }
+func (f *Fixture) settleSyncWrite(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	return f.syncWrites.Wait(ctx)
+}
 
 func (f *Fixture) syncPolicyWrite(ctx context.Context, zone *rgwZoneState, group string, args ...string) ([]byte, error) {
 	if err := f.settleSyncWrite(ctx); err != nil {

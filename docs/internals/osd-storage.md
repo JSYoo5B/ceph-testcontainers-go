@@ -404,8 +404,13 @@ mapping of the same kind is the control.
    new writes are acknowledged.
 6. Release. After `Terminate`, the keeper's evidence (the OSD container gone,
    no borrow, the kernel's open count of the mapping) and the claim table must
-   both be clear. Only then are the mapping removed, the loop detached and the
-   backing file deleted, each confirmed.
+   both be clear. Both chains also pass the same supervised release checks.
+   The recorded UUID and device number must still identify a settled, idle
+   mapping with its recorded table. Its absence is confirmed before the
+   loop can be detached, and file deletion requires the recorded inode and
+   a successful query showing no remaining loop associations. A missing
+   reply leaves creation pending until the keeper's terminal receipt can be
+   read, and inconclusive cleanup is reported with the resources retained.
 
 The fault spans the whole main device, which also carries BlueFS, so it is a
 shared BlueStore/BlueFS fault, never a data-only one. If a test dies before its

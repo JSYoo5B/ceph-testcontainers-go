@@ -7,7 +7,6 @@ package integration_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"testing"
 	"time"
@@ -15,239 +14,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
-
-const (
-	dmControlBytes   = int64(64 << 20)
-	dmControlSectors = dmControlBytes / 512
-	// dmStepWait bounds how long the control waits for one dmsetup step
-	// before it leaves the step to the kernel.
-	dmStepWait = 3 * time.Second
-)
-
-// dmKeeper runs blockControlScript in the privileged keeper.
-type dmKeeper struct{ ctr testcontainers.Container }
-
-func (k dmKeeper) exec(ctx context.Context, action, name string, args ...string) (dmControlReply, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	code, reader, err := k.ctr.Exec(ctx, append([]string{"python3", "-I", "-c", blockControlScript, action, name}, args...), tcexec.Multiplexed())
-	if err != nil {
-		return dmControlReply{}, err
-	}
-	raw, err := io.ReadAll(reader)
-	if err != nil {
-		return dmControlReply{}, err
-	}
-	if code != 0 {
-		return dmControlReply{}, fmt.Errorf("control %s %s exited %d: %s", action, name, code, raw)
-	}
-	return parseDMControlReply(raw, action)
-}
-
-func (k dmKeeper) do(t *testing.T, ctx context.Context, action, name string, args ...string) dmControlReply {
-	t.Helper()
-	r, err := k.exec(ctx, action, name, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-// dmControl is the supervised control of one owned node, with the receipts of
-// what it saw and did.
-type dmControl struct {
-	keeper dmKeeper
-	rec    dmRecord
-	// lower is the major:minor of the device the node maps onto.
-	lower string
-	log   []map[string]any
-	// refused is the kernel's reason for the last load it refused.
-	refused string
-}
-
-func (c *dmControl) observe(t *testing.T, ctx context.Context) dmControlReply {
-	t.Helper()
-	return c.keeper.do(t, ctx, "observe", c.rec.Name)
-}
-
-func (c *dmControl) note(entry map[string]any) { c.log = append(c.log, entry) }
-
-func (c *dmControl) dev() string { return fmt.Sprintf("%d:%d", c.rec.Major, c.rec.Minor) }
-
-// dispatch records the step with its table and the id of its status file,
-// then starts it and waits up to wait. The step may be running in the kernel
-// once the command is sent, so an error keeps it recorded as unsettled: its
-// outcome is unknown until its status file says otherwise.
-func (c *dmControl) dispatch(ctx context.Context, op, table string, wait time.Duration) (dmControlReply, error) {
-	id := randomName(op + "-")
-	c.rec.Begin(op, table, id)
-	args := []string{op, strconv.FormatFloat(wait.Seconds(), 'f', 1, 64), id}
-	if op == "load" {
-		args = append(args, table)
-	}
-	r, err := c.keeper.exec(ctx, "step", c.rec.Name, args...)
-	if err == nil && r.ID != id {
-		err = fmt.Errorf("step reply is for %q, want %q", r.ID, id)
-	}
-	if err != nil {
-		return r, err
-	}
-	c.rec.Settle(r)
-	return r, nil
-}
-
-// poll reads the status of the recorded unsettled step once and records it.
-func (c *dmControl) poll(ctx context.Context) (dmControlReply, error) {
-	r, err := c.keeper.exec(ctx, "settled", c.rec.Name, c.rec.UnsettledID)
-	if err == nil && r.ID != c.rec.UnsettledID {
-		err = fmt.Errorf("settled reply is for %q, want %q", r.ID, c.rec.UnsettledID)
-	}
-	if err != nil {
-		return r, err
-	}
-	c.rec.Settle(r)
-	return r, nil
-}
-
-func (c *dmControl) step(t *testing.T, ctx context.Context, op, table string) dmControlReply {
-	t.Helper()
-	r, err := c.dispatch(ctx, op, table, dmStepWait)
-	if err != nil {
-		c.note(map[string]any{"step": op, "unknown": err.Error()})
-		t.Fatalf("%s %s: outcome unknown, kept as unsettled: %v", op, c.rec.Name, err)
-	}
-	c.note(map[string]any{"step": op, "done": r.Done, "rc": r.RC, "error": r.Error})
-	if r.Done && r.RC != 0 && op != "load" {
-		t.Fatalf("%s %s failed: %s", op, c.rec.Name, r.Error)
-	}
-	return r
-}
-
-// apply moves the node toward want, one observed step at a time, and returns
-// the state it leaves the node in. It stops after the step stopAfter, as a
-// caller whose context ends there would, and whenever the state refuses
-// action. It never starts a step while one is unsettled. A table the kernel
-// refuses to load (a target it does not have) returns dmLoadRefused with the
-// node unchanged.
-func (c *dmControl) apply(t *testing.T, ctx context.Context, want, stopAfter string) string {
-	t.Helper()
-	for range 4 {
-		v := c.observe(t, ctx)
-		state := classifyDM(c.rec, want, v)
-		c.note(map[string]any{"want": want, "state": state, "live": v.Live, "inactive": v.Inactive, "dm_state": v.State, "open": v.Open, "in_flight": v.InFlight})
-		if state == dmApplied {
-			c.rec.Live = want
-		}
-		op := dmForward(state)
-		if op == "" {
-			return state
-		}
-		r := c.step(t, ctx, op, want)
-		if !r.Done {
-			return dmStepUnsettled
-		}
-		if r.RC != 0 {
-			c.refused = r.Error
-			if state := classifyDM(c.rec, c.rec.Live, c.observe(t, ctx)); state != dmApplied {
-				t.Fatalf("a refused load left %s %s", c.rec.Name, state)
-			}
-			return dmLoadRefused
-		}
-		if op == stopAfter {
-			return classifyDM(c.rec, want, c.observe(t, ctx))
-		}
-	}
-	t.Fatalf("%s did not reach %q in four steps", c.rec.Name, want)
-	return ""
-}
-
-// revert drops a table the control loaded and has not swapped in, resuming a
-// node it suspended, so the recorded table stays live.
-func (c *dmControl) revert(t *testing.T, ctx context.Context, want string) string {
-	t.Helper()
-	switch state := classifyDM(c.rec, want, c.observe(t, ctx)); state {
-	case dmLoaded:
-		c.step(t, ctx, "clear", "")
-	case dmSuspendedLoaded:
-		c.step(t, ctx, "clear", "")
-		c.step(t, ctx, "resume", "")
-	default:
-		return state
-	}
-	return classifyDM(c.rec, c.rec.Live, c.observe(t, ctx))
-}
-
-// settle waits for an unsettled step to finish, up to bound.
-func (c *dmControl) settle(t *testing.T, ctx context.Context, bound time.Duration) {
-	t.Helper()
-	for deadline := time.Now().Add(bound); c.rec.Unsettled != ""; time.Sleep(200 * time.Millisecond) {
-		op := c.rec.Unsettled
-		r, err := c.poll(ctx)
-		if err != nil {
-			t.Fatalf("%s %s: %v", c.rec.Name, op, err)
-		}
-		if r.Done {
-			c.note(map[string]any{"settled": op, "rc": r.RC, "error": r.Error})
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s %s did not finish within %s", c.rec.Name, op, bound)
-		}
-	}
-}
-
-// release removes the node only when judgeDMRelease allows it.
-func (c *dmControl) release(t *testing.T, ctx context.Context) (string, string) {
-	t.Helper()
-	verdict, why := judgeDMRelease(c.rec, c.observe(t, ctx))
-	c.note(map[string]any{"release": verdict, "why": why})
-	if verdict == dmReleasable {
-		if r := c.step(t, ctx, "remove", ""); !r.Done || r.RC != 0 {
-			t.Fatalf("remove %s: %+v", c.rec.Name, r)
-		}
-	}
-	return verdict, why
-}
-
-// dmFixture is the keeper and what the test created in it.
-type dmFixture struct {
-	keeper   dmKeeper
-	loops    []loopIdentity
-	controls []*dmControl
-}
-
-func (f *dmFixture) loop(t *testing.T, ctx context.Context, name string) (loopIdentity, string) {
-	t.Helper()
-	r := f.keeper.do(t, ctx, "loop", name, blockKeeperDir+"/"+name, strconv.FormatInt(dmControlBytes, 10))
-	if r.Loop == "" {
-		t.Fatalf("loop for %s: %s", name, r.Error)
-	}
-	id := loopIdentity{Loop: r.Loop, File: r.File, Inode: r.Inode, Dev: fmt.Sprintf("%d:%d", r.Major, r.Minor)}
-	f.loops = append(f.loops, id)
-	return id, id.Dev
-}
-
-// node creates a linear node over lower (major:minor) and the control that
-// owns it, recording the identity it observes.
-func (f *dmFixture) node(t *testing.T, ctx context.Context, name, lower string) *dmControl {
-	t.Helper()
-	uuid := "TC-CTL-" + name
-	if r := f.keeper.do(t, ctx, "create", name, uuid, lower, strconv.FormatInt(dmControlSectors, 10)); !r.Created {
-		t.Fatalf("create %s: %s", name, r.Error)
-	}
-	c := &dmControl{keeper: f.keeper, rec: dmRecord{Name: name, UUID: uuid}, lower: lower}
-	v := c.observe(t, ctx)
-	if !v.Exists || v.UUID != uuid || v.Live == nil || v.State != "ACTIVE" {
-		t.Fatalf("new node %s: %+v", name, v)
-	}
-	c.rec.Major, c.rec.Minor, c.rec.Live = v.Major, v.Minor, *v.Live
-	f.controls = append(f.controls, c)
-	return c
-}
-
-func errorTable() string { return fmt.Sprintf("0 %d error", dmControlSectors) }
 
 // TestBlockDeviceControlSupervision drives the supervised table control of
 // the block-device fault fixture through every way a table change can be left
@@ -295,14 +62,6 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 	f := &dmFixture{keeper: dmKeeper{ctr: keeper}}
 	prefix := randomName("tcctl-")
 	receipt := map[string]any{}
-	defer func() {
-		logs := map[string]any{}
-		for _, c := range f.controls {
-			logs[c.rec.Name] = c.log
-		}
-		receipt["controls"] = logs
-		t.Logf("BLOCK_CONTROL_RECEIPT %s", mustMarshal(receipt))
-	}()
 	// Registered before the keeper's Terminate, so it runs first: every node
 	// the gate allows is removed, in reverse order of creation, and then every
 	// loop that still backs its own file. A node that is kept, or whose state
@@ -323,45 +82,21 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 				keep(c, fmt.Sprintf("under kept mappings %v", over))
 				continue
 			}
-			if c.rec.Unsettled != "" {
-				if _, err := c.poll(cleanup); err != nil {
-					keep(c, fmt.Sprintf("unsettled %s: %v", c.rec.Unsettled, err))
-					continue
-				}
-			}
-			v, err := f.keeper.exec(cleanup, "observe", c.rec.Name)
-			if err != nil {
-				keep(c, "observe: "+err.Error())
-				continue
-			}
-			if !v.Exists {
-				continue
-			}
-			if verdict, why := judgeDMRelease(c.rec, v); verdict != dmReleasable {
+			if verdict, why := c.releaseOwned(cleanup); verdict != dmReleasable {
 				keep(c, why)
-				continue
-			}
-			if r, err := c.dispatch(cleanup, "remove", "", 10*time.Second); err != nil || !r.Done || r.RC != 0 {
-				keep(c, fmt.Sprintf("remove %v %+v", err, r))
 			}
 		}
 		for _, l := range f.loops {
-			seen, err := f.keeper.exec(cleanup, "loopid", "-", l.Loop)
-			if err != nil {
-				held = append(held, l.Loop+": "+err.Error())
-				continue
-			}
-			if ok, why := judgeLoopRelease(l, seen, kept[l.Dev]); !ok {
-				if seen.Error == "" {
-					held = append(held, why)
-				}
-				continue
-			}
-			if r, err := f.keeper.exec(cleanup, "unloop", "-", l.Loop, l.File); err != nil || !r.Detached || !r.FileRemoved {
-				held = append(held, fmt.Sprintf("%s: %v %+v", l.Loop, err, r))
+			if _, err := l.release(cleanup, f.keeper, kept[l.Dev]); err != nil {
+				held = append(held, l.name+": "+err.Error())
 			}
 		}
-		receipt["held_at_cleanup"] = held
+		logs := map[string]any{}
+		for _, c := range f.controls {
+			logs[c.rec.Name] = c.log
+		}
+		receipt["controls"], receipt["held_at_cleanup"] = logs, held
+		t.Logf("BLOCK_CONTROL_RECEIPT %s", mustMarshal(receipt))
 		if len(held) != 0 {
 			t.Errorf("owned block resources kept: %v", held)
 		}
@@ -510,23 +245,26 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 		if state := c.apply(t, ctx, errorTable(), ""); state != dmIdentityChanged {
 			t.Fatalf("the control acted on a reused name: %s", state)
 		}
-		if verdict, _ := judgeDMRelease(c.rec, v); verdict != dmReleaseHeld {
+		if verdict, _ := c.releaseOwned(ctx); verdict != dmReleaseHeld {
 			t.Fatal("a reused name was releasable")
 		}
-		theirs := &dmControl{keeper: f.keeper, rec: dmRecord{Name: c.rec.Name}}
+		if v := c.observe(t, ctx); !v.Exists || v.UUID != impostor {
+			t.Fatalf("cleanup touched the foreign node: %+v", v)
+		}
+		theirs := &dmControl{keeper: f.keeper, rec: dmRecord{Name: c.rec.Name, UUID: impostor}}
 		theirs.step(t, ctx, "remove", "")
 		// The loop is released and the kernel may give its number to the
 		// next file; the owned identity must not match that file.
-		if r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File); !r.Detached {
+		if r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File, strconv.FormatUint(loop.Inode, 10)); !r.Detached {
 			t.Fatalf("detach %s: %s", loop.Loop, r.Error)
 		}
 		f.loops = f.loops[:len(f.loops)-1]
 		next, _ := f.loop(t, ctx, prefix+"-n")
-		seen := f.keeper.do(t, ctx, "loopid", "-", loop.Loop)
-		ok, why := judgeLoopRelease(loop, seen, nil)
-		receipt["reused_loop"] = map[string]any{"owned": loop, "next": next, "seen": seen, "verdict": why}
-		if ok {
-			t.Fatalf("a loop number given to another file was releasable as the owned one: %s", why)
+		oldBacking := dmBacking{name: c.rec.Name, loopIdentity: loop}
+		seen, releaseErr := oldBacking.release(ctx, f.keeper, nil)
+		receipt["reused_loop"] = map[string]any{"owned": loop, "next": next, "seen": seen, "verdict": fmt.Sprint(releaseErr)}
+		if releaseErr == nil {
+			t.Fatal("a loop number given to another file was releasable as the owned one")
 		}
 		if next.Loop == loop.Loop && seen.Inode != next.Inode {
 			t.Fatalf("the reused loop %s reports inode %d, the new file has %d", loop.Loop, seen.Inode, next.Inode)
@@ -544,7 +282,7 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 		if ok, why := judgeLoopRelease(loop, seen, nil); !ok {
 			t.Fatalf("an open loop without holders: %s", why)
 		}
-		r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File)
+		r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File, strconv.FormatUint(loop.Inode, 10))
 		receipt["lazy_detach"] = r
 		if r.Detached || !r.Lazy || r.FileRemoved {
 			t.Fatalf("detach of a busy loop: %+v", r)
