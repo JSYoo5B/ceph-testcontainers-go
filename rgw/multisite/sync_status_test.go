@@ -146,3 +146,43 @@ func TestRGWSyncReadyStdoutDoesNotHideFailedRemoteComparisonOnStderr(t *testing.
 		t.Fatal("stderr comparison error satisfied readiness")
 	}
 }
+
+// A native data section can report an unavailable source while its metadata
+// comparison is healthy. Metadata-only readiness must keep that scope.
+func TestRGWMetadataOnlyReadinessScopesDataComparisonFailure(t *testing.T) {
+	for _, test := range []struct {
+		name, metadata, text, stderr string
+		sources                      []string
+		ready                        bool
+	}{
+		{name: "healthy", metadata: rgwReadyMetadata, text: rgwReadyText, ready: true},
+		{name: "unavailable data source", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "data is caught up with source", "failed to fetch source sync status: Connection refused", 1), ready: true},
+		{name: "selected unavailable source", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "data is caught up with source", "failed to fetch source sync status: Connection refused", 1), sources: []string{"source"}},
+		{name: "stale metadata period", metadata: strings.Replace(rgwReadyMetadata, "period-original", "old-period", 1), text: rgwReadyText},
+		{name: "metadata behind master", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "metadata is caught up with master", "metadata is behind on 1 shards", 1)},
+		{name: "ambiguous comparison stderr", metadata: rgwReadyMetadata, text: rgwReadyText, stderr: "ERROR: could not find remote sync shard status for shard_id=17\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, cli, _, _ := newRGWSyncTestFixture()
+			cli.metadataOutput, cli.humanOutput, cli.stderrOutput = test.metadata, test.text, test.stderr
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if !test.ready {
+				deadline := clustertest.NewSignalDeadline(ctx)
+				cli.onExec = expireAfterDestinationObservation(deadline)
+				ctx = deadline
+			}
+			status, err := f.WaitSyncReady(ctx, "destination", test.sources...)
+			if test.ready {
+				if err != nil || !status.Metadata.CaughtUp {
+					t.Fatalf("metadata readiness failed: %+v, %v", status, err)
+				}
+				if test.name == "unavailable data source" && (len(status.DataSources) != 1 || status.DataSources[0].CaughtUp) {
+					t.Fatalf("data failure became readiness: %+v", status.DataSources)
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("unready metadata or selected source was accepted: %+v, %v", status, err)
+			}
+		})
+	}
+}

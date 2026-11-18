@@ -52,6 +52,7 @@ type hooks interface {
 	LockTopology(ctx context.Context, c *ceph.Container) error
 	MonitorAddresses(status ceph.QuorumStatus) (string, error)
 	NativeFailure(program string, code int, stdout, stderr []byte) error
+	NativeInputClaimed(input *ceph.NativeInput) bool
 	NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error)
 	OnlyMissingHostResource(err error) bool
 	PoolMissing(err error) bool
@@ -172,6 +173,10 @@ func MonitorAddresses(status ceph.QuorumStatus) (string, error) {
 func NativeFailure(program string, code int, stdout, stderr []byte) error {
 	return get().NativeFailure(program, code, stdout, stderr)
 }
+
+// NativeInputClaimed reports whether command admission took a fresh input.
+// A claim allows dispatch but does not establish that the command ran.
+func NativeInputClaimed(input *ceph.NativeInput) bool { return get().NativeInputClaimed(input) }
 
 // NormalizePool validates a pool configuration and fills its defaults.
 func NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error) {

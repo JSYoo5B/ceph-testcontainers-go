@@ -43,7 +43,7 @@ func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
 			return errors.New("RGW fresh bootstrap stored zonegroup differs from the complete committed policy")
 		}
 	}
-	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
+	data, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "update")
 	if err != nil {
 		return err
 	}

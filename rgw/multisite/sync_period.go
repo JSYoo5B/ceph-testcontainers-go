@@ -17,7 +17,10 @@ import (
 // Bucket policy is dynamic and this method only checks its owned native snapshot.
 // Unrelated current, locally pending or staging-period edits are refused before
 // period update can overwrite them. Partial publication/reload is not rolled
-// back; retry the same handle after resolving an external failure. Serialize
+// back; retry the same handle after resolving an external failure. A retry
+// awaits any dispatched policy writer before reading native state. A lost
+// transport response retains the writer fence and requires fixture disposal.
+// Serialize
 // zonegroup publication with Placement.Apply in the same realm. After an
 // uncertain placement update or commit, successfully retry the original
 // placement handle before calling this method.
@@ -111,7 +114,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 	if staging != nil && !syncPeriodPolicyOwned(staging, current, want) {
 		return nil, multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
 	}
-	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
+	data, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "update")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +125,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 		// The staging period is already updated: a failed check, not a refusal.
 		return nil, errors.New("RGW generated staging period changed unrelated policy; refusing publication")
 	}
-	if _, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
+	if _, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
 		return nil, err
 	}
 	_, committed, err := f.syncPolicyMaster(ctx)
@@ -141,12 +144,9 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 // has arrived at a secondary and never enter returned errors.
 func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, states []*rgwZoneState, current map[string]any) error {
 	for _, zone := range states {
-		if zone.ID != master.ID {
-			if _, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
-				return err
-			}
-		}
+		// An earlier attempt may have imported this exact period before failing
+		// its gateway reload. Do not require the stopped master's HTTP endpoint
+		// merely to repeat an import already confirmed in the local store.
 		data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
 		if err != nil {
 			return err
@@ -155,10 +155,28 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 		if err != nil {
 			return err
 		}
+		if reflect.DeepEqual(actual, current) {
+			continue
+		}
+		if zone.ID != master.ID {
+			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
+				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				return err
+			}
+			data, err = f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
+			if err != nil {
+				return err
+			}
+			actual, err = syncJSON(data)
+			if err != nil {
+				return err
+			}
+		}
 		if !reflect.DeepEqual(actual, current) {
 			return errors.New("RGW owned zone has not imported the exact committed policy period")
 		}
 	}
+
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -59,6 +60,7 @@ type Fixture struct {
 	topologyMu  sync.Mutex
 	httpNetwork *testcontainers.DockerNetwork
 	closed      bool
+	syncWrites  mutation.Fence
 }
 
 // rgwRealmAccess runs radosgw-admin in the realm. The configuration, the
@@ -84,7 +86,7 @@ type rgwZoneTopology struct {
 	removed                 map[string]*rgwZoneRemoval
 	groupIDs                map[string]string
 	groupMasters            map[string]string
-	reloadNeeded            map[string]bool
+	reloadNeeded            map[string]*zoneReload
 	bootstrapStagingPending bool
 }
 
@@ -665,6 +667,9 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 		return err
 	}
 	defer f.topologyMu.Unlock()
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return err
+	}
 	if f.closed {
 		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
 	}

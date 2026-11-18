@@ -149,10 +149,10 @@ func validPolicyDocument(document string) bool {
 // with at least ten seconds for readback. No mutation is replayed:
 //
 //   - a nil error returns the role with all its policies;
-//   - a non-nil role with an error is tracked and its Remove removes what the
-//     fixture created: when native state showed the role, ARN returns it and
-//     the error says what failed, such as a policy whose outcome is unknown;
-//     otherwise whether the role exists is unknown and ARN refuses it;
+//   - a non-nil role with an error stays tracked. Remove settles unknown
+//     outcomes and removes only matching state. A mismatching creation
+//     readback or policy document is refused, because ownership cannot be
+//     established. ARN is available only after matching role creation;
 //   - a nil role with an error means that RGW shows that no role was created,
 //     or that nothing was attempted.
 //
@@ -234,10 +234,13 @@ func (s *roleState) create(ctx context.Context, g *gwbase.Core) error {
 		return errors.Join(cmdErr, errors.New("the RGW role creation may still run; the role is tracked and its Remove settles and removes it"))
 	}
 	s.unstopped = nil
-	s.bind(native)
 	if !s.created(native) {
-		return errors.Join(cmdErr, errors.New("RGW created a role whose name, path, trust policy or policies differ from the request; the role is tracked and its Remove removes it"))
+		// Remember the observed ID without confirming ownership or exposing
+		// its ARN. Later reconciliation cannot adopt a replacement role.
+		s.id = native.id
+		return errors.Join(cmdErr, errors.New("RGW role creation readback differs from the request; ownership is unconfirmed and Remove refuses mismatching state"))
 	}
+	s.bind(native)
 	if cmdErr != nil {
 		return errors.Join(cmdErr, errors.New("RGW shows that the role was created; it is tracked and its ARN is usable"))
 	}
@@ -272,7 +275,7 @@ func (s *roleState) putPolicy(ctx context.Context, g *gwbase.Core, policy RolePo
 	if err := s.check(native); err != nil {
 		return errors.Join(cmdErr, err)
 	}
-	document, present := native.policies[policy.Name]
+	_, present := native.policies[policy.Name]
 	switch {
 	case !present && s.unstopped == nil:
 		tracked.status = policyRemoved
@@ -285,10 +288,6 @@ func (s *roleState) putPolicy(ctx context.Context, g *gwbase.Core, policy RolePo
 	}
 	s.unstopped = nil
 	tracked.status = policyActive
-	if document != policy.Document {
-		tracked.document = document
-		return errors.Join(cmdErr, errors.New("RGW stored a role policy document that differs from the request; the role is tracked and its Remove removes it"))
-	}
 	if cmdErr != nil {
 		return errors.Join(cmdErr, errors.New("RGW shows that the role policy was put; the role is tracked"))
 	}
@@ -396,7 +395,7 @@ func (r *Role) Remove(ctx context.Context) error {
 		return nil
 	}
 	if !s.confirmed {
-		if !s.created(native) {
+		if !s.created(native) || (s.id != "" && s.id != native.id) {
 			return servicehook.Invalid(errors.New("RGW role of this name is not the role the fixture requested; refusing to remove it"))
 		}
 		s.bind(native)

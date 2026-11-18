@@ -44,6 +44,7 @@ type roleTestContainer struct {
 	settle *keyFault
 	silent bool
 	ids    int
+	mutate func(string, *testRole)
 }
 
 func (ctr *roleTestContainer) GetContainerID() string { return "gateway" }
@@ -124,6 +125,9 @@ func (ctr *roleTestContainer) Exec(_ context.Context, args []string, _ ...tcexec
 		}
 	default:
 		return 1, nil, errors.New("unexpected radosgw-admin invocation")
+	}
+	if ctr.mutate != nil && role != nil {
+		ctr.mutate(operation, role)
 	}
 	if fault.err != nil {
 		return 0, nil, fault.err
@@ -600,5 +604,54 @@ func TestRoleHandlesOfForeignOrUnconfirmedRoles(t *testing.T) {
 	}
 	if (&Role{}).Name() != "" || fmt.Sprint(Role{}) != "RGW role" {
 		t.Fatal("a zero role handle names a role")
+	}
+}
+
+func TestRoleMismatchingInitialReadbackRefusesOwnership(t *testing.T) {
+	for _, mismatch := range []string{"path", "trust", "policy"} {
+		t.Run(mismatch, func(t *testing.T) {
+			g, ctr := newRoleTestGateway()
+			ctr.mutate = func(op string, native *testRole) {
+				switch {
+				case mismatch == "path" && op == "role create":
+					native.path = "/other/"
+				case mismatch == "trust" && op == "role create":
+					native.trust = testRead
+				case mismatch == "policy" && op == "role-policy put":
+					native.policies[0][1] = testList
+				}
+			}
+			role, err := g.CreateRole(t.Context(), testRoleConfig())
+			if role == nil || err == nil {
+				t.Fatalf("mismatch returned %v, %v", role, err)
+			}
+			if mismatch != "policy" {
+				if _, err := role.ARN(); err == nil {
+					t.Fatal("unconfirmed role handed off ARN")
+				}
+			}
+			before := ctr.mutations()
+			if err := role.Remove(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Fatalf("Remove: %v", err)
+			}
+			if ctr.mutations() != before || len(ctr.roles) != 1 {
+				t.Fatal("mismatching native state was changed")
+			}
+			if mismatch != "policy" {
+				if !strings.Contains(err.Error(), "ownership is unconfirmed") {
+					t.Fatalf("misleading recovery promise: %v", err)
+				}
+				ctr.mutate = nil
+				cfg := testRoleConfig()
+				ctr.add(cfg.Name, cfg.Path, cfg.TrustPolicy)
+				if err := role.Remove(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
+					t.Fatalf("adopted replacement after initial mismatch: %v", err)
+				}
+				if ctr.mutations() != before {
+					t.Fatal("removed a replacement role")
+				}
+			}
+
+		})
 	}
 }

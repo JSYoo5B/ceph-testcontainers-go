@@ -7,15 +7,18 @@ package rgw_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -43,7 +46,32 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
-	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
+	var terminatingPID atomic.Int64
+	stopEvidence := make(chan error, 1)
+	observeBeforeRemoval := func(ctx context.Context, ctr testcontainers.Container) error {
+		pid := terminatingPID.Swap(0)
+		if pid == 0 {
+			return nil
+		}
+		code, reader, err := ctr.Exec(ctx, []string{"sh", "-c", rgwAdminProcessState, "rgw-admin-state", strconv.FormatInt(pid, 10)}, tcexec.Multiplexed())
+		if err == nil {
+			var out []byte
+			out, err = io.ReadAll(reader)
+			if err == nil {
+				var gone bool
+				gone, err = rgwAdminProcessGone(code, string(out))
+				if err == nil && !gone {
+					err = fmt.Errorf("admin PID %d still runs before gateway removal", pid)
+				}
+			}
+		}
+		stopEvidence <- err
+		return err
+	}
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true},
+		testcontainers.WithAdditionalLifecycleHooks(testcontainers.ContainerLifecycleHooks{
+			PreStops: []testcontainers.ContainerHook{observeBeforeRemoval},
+		}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,29 +184,36 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	setMode("ignore-term")
-	terminated := make(chan error, 1)
-	pid, took, err = call(ctx, func() {
-		go func() {
-			terminateCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
-			defer stop()
-			terminated <- cluster.Terminate(terminateCtx)
-		}()
-	})
-	if err == nil || !strings.Contains(err.Error(), "terminated") {
-		t.Fatalf("an Admin call that Terminate ended returned %v after %s", err, took)
-	}
-	// Terminate stops the command before it waits for the cluster mutex
-	// that Admin held, so the gateway still runs when Admin returns.
+	result := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := gateway.Admin(ctx, "user", "stats", "--uid", "tc-shim")
+		result <- err
+	}()
+	terminatingPID.Store(int64(shimPID()))
+	terminateCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+	defer stop()
+	// The pre-stop hook observes the process while its container
+	// still exists. Deliberately consume Admin's result only after teardown,
+	// so a fast removal cannot race a later Docker Exec from this goroutine.
+	terminateErr := cluster.Terminate(terminateCtx)
 	select {
-	case err := <-terminated:
-		t.Fatalf("Terminate returned before the gateway was checked: %v", err)
+	case observed := <-stopEvidence:
+		if observed != nil {
+			t.Fatal(observed)
+		}
 	default:
+		t.Fatal("gateway removal did not record command stop evidence")
 	}
-	if !gone(pid) {
-		t.Fatal("Admin returned while its radosgw-admin still ran")
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "terminated") {
+			t.Fatalf("an Admin call that Terminate ended returned %v", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("Admin did not return after teardown")
 	}
-	t.Logf("Terminate ended a running Admin after %s with its radosgw-admin gone", took)
-	// The test's client container still uses the cluster network, so this
-	// Terminate may leave the network to the cleanup's.
-	t.Logf("Terminate: %v", <-terminated)
+	t.Logf("Terminate ended Admin after %s; the pre-stop observation confirmed its process gone", time.Since(started))
+	// The test's client still uses the network, which final cleanup removes.
+	t.Logf("Terminate: %v", terminateErr)
 }

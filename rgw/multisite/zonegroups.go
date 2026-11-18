@@ -57,6 +57,9 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return nil, err
+	}
 	if _, exists := f.topology.groupIDs[config.Name]; exists {
 		return nil, fmt.Errorf("RGW zonegroup %s is already owned", config.Name)
 	}
@@ -129,6 +132,9 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 		return err
 	}
 	defer f.topologyMu.Unlock()
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return err
+	}
 	if f.closed {
 		return multisiteInvalid(errors.New("RGW multisite is terminated"))
 	}

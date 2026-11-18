@@ -48,7 +48,7 @@ type GatewayLink struct {
 }
 
 type linkState struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	dashboard *state
 	gateway   *rgw.Gateway
 	user      *rgw.User
@@ -58,7 +58,12 @@ type linkState struct {
 
 // String names the link by its RGW identity.
 func (l GatewayLink) String() string {
-	if l.linkState == nil || l.user == nil {
+	if l.linkState == nil {
+		return "Dashboard RGW link"
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.user == nil {
 		return "Dashboard RGW link"
 	}
 	return "Dashboard RGW link of " + l.user.ID()
@@ -96,8 +101,8 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	s := d.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.restored {
-		return nil, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the dashboard was restored")}
+	if err := s.ready(); err != nil {
+		return nil, err
 	}
 	if s.link != nil {
 		return nil, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the dashboard already has a gateway link")}
@@ -138,6 +143,9 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	for {
 		if last = link.check(ctx); last == nil {
 			return link, nil
+		}
+		if err := s.ready(); err != nil {
+			return link, errors.Join(last, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -202,6 +210,8 @@ func (l *GatewayLink) User() *rgw.User {
 	if l == nil || l.linkState == nil {
 		return nil
 	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.user
 }
 
@@ -221,10 +231,14 @@ func (l *GatewayLink) Check(ctx context.Context) error {
 	if l == nil || l.linkState == nil {
 		return errors.New("dashboard gateway link is unavailable")
 	}
-	l.mu.Lock()
-	removed := l.removed
-	l.mu.Unlock()
-	if removed {
+	l.dashboard.mu.RLock()
+	defer l.dashboard.mu.RUnlock()
+	if err := l.dashboard.ready(); err != nil {
+		return err
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.removed {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "dashboard gateway link", Err: errors.New("the link was removed")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(l.dashboard.cluster))
@@ -341,6 +355,9 @@ func (l *GatewayLink) Remove(ctx context.Context) error {
 	defer s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(s.cluster))
 	defer cancel()
+	if err := s.settleProbes(ctx); err != nil {
+		return err
+	}
 	if err := l.remove(ctx); err != nil {
 		return err
 	}

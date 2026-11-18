@@ -121,6 +121,8 @@ func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byt
 	return nativeFailure(program, code, stdout, stderr)
 }
 
+func (serviceHooks) NativeInputClaimed(input *NativeInput) bool { return input.claimed.Load() }
+
 // NormalizePool validates a pool configuration and fills its defaults.
 func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
 	return normalizePoolConfig(config)

@@ -18,8 +18,12 @@ Gateways, users and pools stay in the [rgw](../README.md) and
    does not activate them.
 3. **Activate it**: `Placement.Apply(ctx, gateway)` restarts a standalone
    gateway or publishes a realm period whose only change is this target. In
-   another cluster of the realm, import the period, then call
-   `Placement.Reload(ctx, gateway)` there. Resolve `S3Endpoint` again after
+   multi-cluster realm, first create a separate placement handle in each
+   cluster with its own zone-local pools, before publishing the source target.
+   Call `sourcePlacement.Apply(ctx, sourceGateway)`, import the resulting
+   period into the destination, then call
+   `destinationPlacement.Reload(ctx, destinationGateway)`. A source handle
+   cannot act on the destination cluster. Resolve `S3Endpoint` again after
    either, because a restarted gateway can get a new mapped port.
 4. **Hand it to the SUT**: pass `Placement.LocationConstraint` to S3
    `CreateBucket`, or make the target a user's default with

@@ -45,7 +45,9 @@ type RGWResultBody struct {
 // RGWClassifyResultBody classifies body by its XML root element: an Error
 // root, in any namespace, is an S3 error; the root named root, in any
 // namespace, is the operation's result. Any other root, or a body without
-// one, is an error, so a malformed answer is never taken for either.
+// one, is an error. The entire document must be well-formed, with no second
+// root or non-whitespace text outside it. Operation-specific fields remain
+// the caller's responsibility.
 func RGWClassifyResultBody(body []byte, root string) (RGWResultBody, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(body))
 	for {
@@ -58,8 +60,12 @@ func RGWClassifyResultBody(body []byte, root string) (RGWResultBody, error) {
 		}
 		start, ok := token.(xml.StartElement)
 		if !ok {
+			if text, ok := token.(xml.CharData); ok && len(bytes.TrimSpace(text)) != 0 {
+				return RGWResultBody{}, errors.New("text before XML root")
+			}
 			continue
 		}
+		var result RGWResultBody
 		switch start.Name.Local {
 		case "Error":
 			var failure struct {
@@ -69,11 +75,31 @@ func RGWClassifyResultBody(body []byte, root string) (RGWResultBody, error) {
 			if err := decoder.DecodeElement(&failure, &start); err != nil {
 				return RGWResultBody{}, fmt.Errorf("S3 Error document: %w", err)
 			}
-			return RGWResultBody{Error: true, Code: failure.Code, Message: failure.Message}, nil
+			result = RGWResultBody{Error: true, Code: failure.Code, Message: failure.Message}
 		case root:
-			return RGWResultBody{}, nil
+			if err := decoder.Skip(); err != nil {
+				return RGWResultBody{}, fmt.Errorf("incomplete result document: %w", err)
+			}
 		default:
 			return RGWResultBody{}, fmt.Errorf("XML root %q is neither %s nor Error", start.Name.Local, root)
+		}
+		for {
+			tail, err := decoder.Token()
+			if errors.Is(err, io.EOF) {
+				return result, nil
+			}
+			if err != nil {
+				return RGWResultBody{}, fmt.Errorf("invalid XML suffix: %w", err)
+			}
+			switch value := tail.(type) {
+			case xml.CharData:
+				if len(bytes.TrimSpace(value)) == 0 {
+					continue
+				}
+			case xml.Comment, xml.ProcInst:
+				continue
+			}
+			return RGWResultBody{}, errors.New("content after XML root")
 		}
 	}
 }

@@ -24,6 +24,7 @@ type SyncBucketIdentity struct{ Name, Tenant, ID string }
 // init, full, stopped, error, or
 // disabled_or_no_sources. Native markers and error text are never returned.
 type BucketSyncStatus struct {
+	periodEpoch                            uint64
 	RealmID, PeriodID, ZonegroupID         string
 	SourceZone, SourceZoneID, Zone, ZoneID string
 	SourceBucket, DestinationBucket        SyncBucketIdentity
@@ -242,6 +243,10 @@ func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucke
 		return result, err
 	}
 	result.PeriodID, result.RealmEpoch, err = syncCommittedPeriodIdentity(current)
+	if err != nil {
+		return result, err
+	}
+	result.periodEpoch, err = syncCommittedPeriodEpoch(current)
 	if err != nil {
 		return result, err
 	}
