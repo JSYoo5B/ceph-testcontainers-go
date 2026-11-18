@@ -89,6 +89,9 @@ if err != nil {
   needs to route, and leaves the routes members have within their zone alone.
   It removes only a route that still matches its record, so a route that the
   caller replaced or removed in the meantime stays as the caller left it.
+  Cleanup of a surviving namespace requires a successful route-table read
+  confirming that no boundary-protocol routes remain. A failed read or a
+  residual route keeps that verification pending for the next cleanup attempt.
 - **Partial enrollment.** A member is a member only once its agent, its own
   routes and the other members' routes to it are in place. Until then it is
   listed in `Unzoned`, and a retried start of the same container (for example
