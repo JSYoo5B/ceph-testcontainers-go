@@ -112,7 +112,7 @@ func newCephFSObserverDraft() (*Container, *cephFSObserverDraftControl, *cephFSO
 	mirror := &Container{
 		source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
 		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
-		filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
+		filesystemID: 1, destinationFilesystemID: 2, filesystemIdentityConfirmed: true, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
 		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
 		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
 	}
@@ -125,7 +125,7 @@ func TestCephFSObserverDraftExactOwnedWatcherAndSnapshotIdentity(t *testing.T) {
 	if err != nil || !status.Ready || status.Directory != "/owned" || status.InstanceID != "4262" || status.DaemonName != "a" || status.LastSyncedSnapshot == nil || status.LastSyncedSnapshot.ID != 120 || status.LastSyncedSnapshot.Name != "checkpoint" {
 		t.Fatalf("directory observer: %+v %v", status, err)
 	}
-	if len(source.mutations) != 0 || len(a.calls) != 2 {
+	if len(source.mutations) != 0 || len(a.calls) != 3 {
 		t.Fatal("observer mutated native policy or used wrong daemon")
 	}
 	if status, err := mirror.WaitSnapshotSynced(t.Context(), "/owned", Snapshot{ID: 120, Name: "checkpoint"}); err != nil || !status.Ready {
