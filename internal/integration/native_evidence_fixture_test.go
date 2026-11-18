@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -48,6 +49,23 @@ func TestNativeEvidenceRejectsIncompleteReaders(t *testing.T) {
 	}
 	if message := evidenceRejected(func() { readNativeEvidence(evidenceFailure{}, nil) }); !strings.Contains(message, "no output reader") {
 		t.Fatalf("nil reader was accepted: %q", message)
+	}
+}
+
+func TestMessengerListenersRequireCompleteSocketInventory(t *testing.T) {
+	const header = "sl local_address rem_address st\n"
+	const listening = "0: 00000000:ABCD 00000000:0000 0A\n"
+	for _, prefix := range []string{"", header, header + listening} {
+		reader := io.MultiReader(strings.NewReader(prefix), iotest.ErrReader(io.ErrUnexpectedEOF))
+		if message := evidenceRejected(func() { messengerListeners(evidenceFailure{}, reader) }); !strings.Contains(message, "read complete native observation") {
+			t.Fatalf("partial socket inventory became evidence: %q", message)
+		}
+	}
+	if got := messengerListeners(t, strings.NewReader(header+listening)); !slices.Equal(got, []string{"00000000:ABCD"}) {
+		t.Fatalf("complete socket inventory = %q", got)
+	}
+	if got := messengerListeners(t, strings.NewReader(header)); len(got) != 0 {
+		t.Fatalf("complete empty socket inventory = %q", got)
 	}
 }
 
