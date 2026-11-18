@@ -136,7 +136,10 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("read complete socket/client evidence:", err)
+	}
 	if code != 0 || !strings.Contains(string(output), "family-object") {
 		t.Fatalf("client object I/O over %s: exit %d: %s", family, code, output)
 	}
@@ -196,7 +199,10 @@ func checkMessengerSockets(t *testing.T, ctx context.Context, ctr testcontainers
 		if err != nil || code != 0 {
 			t.Fatalf("read %s: exit %d, %v", file, code, err)
 		}
-		output, _ := io.ReadAll(reader)
+		output, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal("read complete socket/client evidence:", err)
+		}
 		var local []string
 		for _, line := range strings.Split(string(output), "\n")[1:] {
 			fields := strings.Fields(line)

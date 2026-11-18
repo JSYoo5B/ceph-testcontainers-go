@@ -94,6 +94,30 @@ def parse_arguments(argv=None):
     return args
 
 
+def execution_evidence(text, selection):
+    """Require the selected scenario and every started mode to finish."""
+    top = "TestGoCephLinux"
+    started = re.findall(r"^=== RUN\s+(TestGoCephLinux(?:/[^\s]+)?)\s*$", text, re.M)
+    results = re.findall(r"^\s*--- (PASS|FAIL|SKIP): (TestGoCephLinux(?:/[^\s]+)?) \([^\n]*\)$", text, re.M)
+    modes = [name for name in started if name != top]
+    status = "no_execution" if top not in started else "incomplete"
+    passed = {name for outcome, name in results if outcome == "PASS"}
+    failed = any(outcome == "FAIL" for outcome, _ in results)
+    expected = {top + "/bridge", top + "/host"}
+    complete = (started.count(top) == 1 and modes and len(started) == len(set(started))
+                and set(modes) <= expected and set(started) == passed
+                and len(results) == len(started) and re.search(r"^PASS$", text, re.M))
+    if selection == "^TestGoCephLinux$":
+        complete = complete and set(modes) == expected
+    if failed:
+        status = "native_failure"
+    elif complete:
+        status = "completed"
+    return {"status": status, "started_tests": started,
+            "completed_modes": sorted(name.split("/")[1] for name in passed if "/" in name),
+            "selection": selection}
+
+
 def main(argv=None):
     args = parse_arguments(argv)
     fixture = Path(__file__).resolve().parent
@@ -160,6 +184,9 @@ def main(argv=None):
             arguments.extend(["-e", name + "=" + value])
         run([*arguments, images["runner"], "-test.v", "-test.failfast", "-test.timeout=40m", "-test.run=" + args.test_run],
             "integration.log")
+        summary["execution"] = execution_evidence((output / "integration.log").read_text(), args.test_run)
+        if summary["execution"]["status"] != "completed":
+            raise RuntimeError("go-ceph scenario " + summary["execution"]["status"])
         summary["passed"] = True
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         summary["error"] = str(error)
@@ -167,6 +194,8 @@ def main(argv=None):
     finally:
         # Inspect only containers created by this run; never prune other work.
         logpath = output / "integration.log"
+        summary.setdefault("execution", execution_evidence(
+            logpath.read_text() if logpath.exists() else "", args.test_run))
         ids = set(re.findall(r"Container (?:created|started|stopped|terminated): ([a-f0-9]{12,64})",
                              logpath.read_text() if logpath.exists() else ""))
         cidfile = output / "runner.cid"

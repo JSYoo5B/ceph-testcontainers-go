@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -211,32 +212,35 @@ func TestOSDAbruptWriterLedgerSchedules(t *testing.T) {
 			}
 			ledger := filepath.Join(dir, "ledger.jsonl")
 			// Both writers share one ledger, as in the scenario.
-			var writers []*exec.Cmd
-			var stderr bytes.Buffer
+			type writer struct {
+				cmd    *exec.Cmd
+				actor  *integrationActor[error]
+				stderr *bytes.Buffer
+			}
+			var writers []writer
 			for _, phase := range []string{"actor-fresh", "actor-replacement"} {
-				cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, abruptWriteScript, phase, "pool", ledger)
-				cmd.Env = append(os.Environ(), "FAKE_SCHEDULE="+tc.schedule)
-				cmd.Stderr = &stderr
-				if err := cmd.Start(); err != nil {
-					t.Fatal(err)
-				}
-				writers = append(writers, cmd)
+				cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, strings.Replace(abruptWriteScript, "signal.signal(signal.SIGTERM,lambda *_: stopping.__setitem__(0,True))", "signal.signal(signal.SIGTERM,lambda *_: stopping.__setitem__(0,True)); open(os.environ['FIXTURE_READY'], 'w').close()", 1), phase, "pool", ledger)
+				ready := filepath.Join(dir, phase+".ready")
+				cmd.Env = append(os.Environ(), "FAKE_SCHEDULE="+tc.schedule, "FIXTURE_READY="+ready)
+				stderr := new(bytes.Buffer)
+				cmd.Stderr = stderr
+				actor := startFixtureProcess(t, cmd)
+				writers = append(writers, writer{cmd, actor, stderr})
+				waitFixtureReady(t, actor, ready)
 			}
 			time.Sleep(tc.terminate)
-			for _, cmd := range writers {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
+			for _, w := range writers {
+				_ = w.cmd.Process.Signal(syscall.SIGTERM)
 			}
-			for _, cmd := range writers {
-				done := make(chan error, 1)
-				go func() { done <- cmd.Wait() }()
-				select {
-				case err := <-done:
-					if err != nil {
-						t.Fatalf("writer: %v %s", err, stderr.String())
-					}
-				case <-time.After(10 * time.Second):
-					_ = cmd.Process.Kill()
-					t.Fatal("writer did not acknowledge SIGTERM")
+			for _, w := range writers {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err, joinErr := w.actor.wait(ctx)
+				cancel()
+				if joinErr != nil {
+					t.Fatal("writer did not acknowledge SIGTERM:", joinErr)
+				}
+				if err != nil {
+					t.Fatalf("writer: %v %s", err, w.stderr.String())
 				}
 			}
 			data, err := os.ReadFile(ledger)
