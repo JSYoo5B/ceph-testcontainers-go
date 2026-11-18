@@ -352,9 +352,9 @@ never installs packages at run time. This has visible consequences:
   libcephfs in user space.
 - No privileged containers, host disks or LVM: OSDs default to sparse
   BlueStore files; MemStore and memory-backed BlueStore are opt-in alternatives.
-- Operation-only components of the official image, such as the dashboard,
-  cephadm, ceph-volume, NFS Ganesha and iSCSI gateways, are never used, so
-  custom images may omit them.
+- The default cluster can run without the Dashboard, cephadm, ceph-volume,
+  NFS Ganesha and iSCSI gateways. Include the Dashboard module in the MGR
+  image when using the explicit [Dashboard fixture](../../dashboard/README.md).
 
 Extra tools and services for your own tests (go-ceph programs, S3 SDKs, a
 Vault server for RGW server-side encryption, and so on) belong in their own

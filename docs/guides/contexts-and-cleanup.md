@@ -238,9 +238,10 @@ if err := watch.Stop(); err != nil {
   same name or another FSID, ends the watch with an error. Receive the
   baseline before you cause the change to observe.
 - An event is sent only when the compared fields differ from the previous
-  successful read. Each Watch documents the fields it compares. Epochs,
-  counters and status text travel with the events but cause none by
-  themselves.
+  successful read. Each Watch documents its comparison fields and which
+  additional fields travel with each sample. Health watches compare check and
+  mute counts. CephFS snapshot schedule watches compare creation and pruning
+  counts as well as the first and last snapshot times.
 - A failed read is a `WatchGap`, never an empty or healthy observation, and
   the next success is `WatchResumed` even when nothing changed. Two
   observations either side of a gap or of one interval do not show what
