@@ -2,7 +2,6 @@ package mirror
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"time"
 
@@ -164,13 +163,6 @@ func readRBDMirrorImageStatusForScope(ctx context.Context, client testcontainers
 	}
 	if err := rbdReceiverRead.json(data); err != nil {
 		return rbdObservedStatus{}, err
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(data, &fields) != nil {
-		return rbdObservedStatus{}, rbdImageGuardError("decode RBD namespace image status")
-	}
-	if service, exists := fields["daemon_service"]; exists && string(service) == "null" {
-		return rbdObservedStatus{}, rbdImageGuardError("decode RBD namespace image status: null daemon service")
 	}
 	return decodeRBDMirrorObservedStatus(data, name, globalID)
 }

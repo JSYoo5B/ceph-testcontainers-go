@@ -90,7 +90,7 @@ func (d *rbdImageStatusDaemon) State(context.Context) (*container.State, error) 
 	if d.state != nil || d.stateErr != nil {
 		return d.state, d.stateErr
 	}
-	return &container.State{Running: d.running}, nil
+	return &container.State{Running: d.running, Status: container.StateRunning, Pid: 42, StartedAt: "2026-10-07T09:00:00Z"}, nil
 }
 
 func (d *rbdImageStatusDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -106,7 +106,8 @@ func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS s
 	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	daemon := &rbdImageStatusDaemon{running: true, status: `{"pool_replayers":[{"pool":"images","peer":"peer","state":"running","instance_id":"123"}]}`}
+	link.receiver.peer = &rbdReceiverPeerIdentity{uuid: receiverPeerUUID, site: "source", client: receiverPeerClient}
+	daemon := &rbdImageStatusDaemon{running: true, status: receiverTestStatus(destinationNS, sourceNS, "123", "123", true, []string{"123"})}
 	link.roster.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
 	return link, source, destination, daemon
 }
