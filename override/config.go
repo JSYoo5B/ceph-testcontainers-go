@@ -82,8 +82,8 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 // starts. Check a running daemon's effective value with
 // ceph.Container.Ceph(ctx, "config", "show", "osd.0", name). Configuration
 // output can contain secrets; log only selected fields. Restore of an
-// originally absent MGR module key also reaches the running module (see
-// ConfigHandle.Restore).
+// originally absent MGR module key publishes an empty value before removal
+// (see ConfigHandle.Restore for the delivery limitation).
 //
 // Outcomes, as the handle it returns and the error:
 //   - Entry written and read back: real handle; nil.
@@ -196,16 +196,18 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // context that ends before the topology lock is free returns the context
 // error, and the entry stays registered.
 //
-// A removal does not reach a running MGR module: the MGR passes only the
-// mgr/ keys present in a configuration update to its modules and keeps a key
-// that disappears, while an empty value erases the key, so the module falls
-// back to its default (the config callback in src/mgr/MgrStandby.cc and
-// PyModuleRegistry::handle_config in src/mgr/PyModuleRegistry.cc, Squid
-// through Umbrella). Restoring an originally absent option whose name starts
-// with mgr/ therefore stores the empty value first, without option validation,
-// and then removes the entry. The stored state ends absent, and the running
-// MGR, active and standby, observes the option as unset. A retry after a lost
-// reply accepts that empty value as this override's own.
+// A removal alone does not clear a running MGR module's cached option.
+// Restoring an originally absent mgr/ option therefore stores an empty value
+// without option validation before removing the entry. A MGR that receives
+// that intermediate update erases the cached value.
+// Restore verifies database absence; it does not wait for active or standby
+// managers to acknowledge the intermediate update. A manager reconnecting
+// after removal can receive only the final snapshot and keep its cached
+// override. Check the module's effective value independently when the test
+// needs runtime restoration, including the original standby after promotion.
+// A retry after a lost reply accepts this override's intermediate empty value.
+// Once restoration has succeeded, retrying the handle is a no-op and does not
+// repair a manager that missed that update.
 //
 //purpose:condition,lifetime
 func (change *ConfigHandle) Restore(ctx context.Context) error {
