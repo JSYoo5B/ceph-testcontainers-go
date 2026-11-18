@@ -356,6 +356,7 @@ func (f osdFleet) reopenDetached(ctx context.Context, detached *DetachedOSD, ima
 	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return osd, err
 	}
+	osd.placementReady = true
 	return osd, nil
 }
 

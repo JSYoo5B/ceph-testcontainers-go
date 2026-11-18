@@ -225,7 +225,7 @@ func TestSingleReplicaPoolExplicitlyAcknowledgesFixtureSetting(t *testing.T) {
 func poolFixtureCluster(ctr testcontainers.Container, count int) *Container {
 	cluster := &Container{Container: ctr, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}}}
 	for id := range count {
-		cluster.fleet.osdHandles.register(id, &OSDContainer{ID: id, Container: ctr})
+		cluster.fleet.osdHandles.register(id, &OSDContainer{ID: id, Container: ctr, placementReady: true})
 	}
 	return cluster
 }

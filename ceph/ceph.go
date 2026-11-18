@@ -126,6 +126,9 @@ type OSDContainer struct {
 	owner      *Container
 	nativeUUID string
 	placement  OSDConfig
+	// placementReady records successful bring-up and device-class assignment.
+	// Cleanup ownership alone does not make a descriptor eligible for pools.
+	placementReady bool
 	// removing is set after removal admission, before fencing or draining.
 	// A failed attempt keeps membership changes and detach blocked for retry.
 	removing    bool
@@ -702,7 +705,11 @@ func (f osdFleet) bringUpOSD(ctx context.Context, launch osdLaunch) error {
 	if err := (osdMap{f.conn}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
 		return err
 	}
-	return osdMap{f.conn}.assignDeviceClass(ctx, launch.osd)
+	if err := (osdMap{f.conn}).assignDeviceClass(ctx, launch.osd); err != nil {
+		return err
+	}
+	launch.osd.placementReady = true
+	return nil
 }
 
 // osdLaunch is a registered, owned OSD and its immutable creation recipe.
