@@ -76,7 +76,7 @@ func (c *cacheStartupProbe) Exec(ctx context.Context, args []string, opts ...tce
 		c.deadline, _ = ctx.Deadline()
 		c.limit = args[5]
 		if c.shellStopped {
-			line := supervised.ShellDeadlineLine + "\n" + supervised.ShellEndPrefix + "143\n"
+			line := "\n" + supervised.ShellEndPrefix + "143 1\n"
 			header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
 			return 143, bytes.NewReader(append(header, line...)), nil
 		}

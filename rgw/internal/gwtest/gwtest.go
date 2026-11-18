@@ -46,9 +46,13 @@ func IsCancel(args []string) bool {
 // error of a call that original wrapped with the supervisor's end line.
 //
 //testdouble:shared-double
-func Reply(original []string, code int, stream *bytes.Buffer) (int, io.Reader, error) {
+func Reply(original []string, code int, stream *bytes.Buffer, stopped ...bool) (int, io.Reader, error) {
 	if len(original) > 2 && original[2] == supervised.ShellScript {
-		end := []byte(supervised.ShellEndPrefix + strconv.Itoa(code) + "\n")
+		deadline := "0"
+		if len(stopped) > 0 && stopped[0] {
+			deadline = "1"
+		}
+		end := []byte("\n" + supervised.ShellEndPrefix + strconv.Itoa(code) + " " + deadline + "\n")
 		header := [8]byte{byte(stdcopy.Stderr)}
 		binary.BigEndian.PutUint32(header[4:], uint32(len(end)))
 		stream.Write(header[:])

@@ -86,7 +86,7 @@ func (f *fakeCacheClient) Exec(ctx context.Context, args []string, opts ...tcexe
 		if err != nil {
 			return 0, nil, err
 		}
-		line := supervised.ShellEndPrefix + strconv.Itoa(code) + "\n"
+		line := "\n" + supervised.ShellEndPrefix + strconv.Itoa(code) + " 0\n"
 		header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
 		return code, io.MultiReader(raw, bytes.NewReader(append(header, line...))), nil
 	}

@@ -25,9 +25,10 @@ import (
 )
 
 type rgwAdminResponse struct {
-	data string
-	code int
-	err  error
+	stopped bool
+	data    string
+	code    int
+	err     error
 }
 
 type rgwAdminTestContainer struct {
@@ -87,7 +88,7 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(response.data)
-	return gwtest.Reply(original, response.code, &stream)
+	return gwtest.Reply(original, response.code, &stream, response.stopped)
 }
 
 func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gateway, *rgwAdminTestContainer) {
