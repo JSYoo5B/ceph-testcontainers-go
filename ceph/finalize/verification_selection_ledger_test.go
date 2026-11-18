@@ -153,8 +153,8 @@ func buildSelectionLedger(calls []ledgerCall, events []ledgerEvent, report *Veri
 	}
 	l.Logs.Rule = "engine-clock Since/Until, and each line's own stamp inside the window"
 	l.Crashes.Rule = "new raw crash identity since activation; the metadata timestamp is not filtered"
-	// A crash read spans the window from the start sample to now, not an
-	// interval that the rule filters on.
+	// Crash identities are compared across directory snapshots, which bracket
+	// both engine-clock samples. No timestamp interval filters these records.
 	l.Crashes.Start, l.Crashes.End = time.Time{}, time.Time{}
 	for _, finding := range report.Logs.Findings {
 		if m := ledgerIDText.FindStringSubmatch(finding.Text); m != nil {
