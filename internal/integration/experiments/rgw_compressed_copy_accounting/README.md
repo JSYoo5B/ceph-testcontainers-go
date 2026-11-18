@@ -125,7 +125,7 @@ each copy resolved (`RGW_CC trace`).
 
 ## Result line
 
-The test passes whatever the gateway did and prints one
+With the prerequisites and controls established, the test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_compressed_copy_accounting`.
 
@@ -143,30 +143,16 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 | 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: accounted_size, listed Size and bucket size 48905 for the 1048630-byte payload | 40.8 s |
 | 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 41.3 s |
 
-## Reading the result
+## Earlier shared recipe observations
 
-The results below ran on the images of the shared recipe: the 20.2.4
-role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`), the 20.2.5 aggregate `quay.io/ceph/ceph:v20.2.5`, the 21.2.0
-role images (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and the 19.2.5 role images (`official-19.2.5-essential`,
-`official-19.2.5-client`, `official-19.2.5-rgw`).
-
-- **Pass:** every subtest met the contract. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `compressed-source-uncompressed-destination` reports the
-  compressed length (48905 bytes for the 1048630-byte payload) as index
-  `accounted_size`, listed `Size` and bucket `size`, while the raw `size`,
-  `size_utilized` and GET are the logical length; both controls pass.
-  Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  trigger evidence in step 2.
-- **Unavailable prerequisite:** the cluster or the gateway does not start,
-  the zone edits are refused, or the gateway does not restart.
-- **Condition not established:** the zone does not read back the edits, the
-  source is not compressed, or the trigger destination carries compression
-  metadata. The test fails with `condition not established`. Squid 19.2.5
-  keeps the source's zlib metadata and compressed bytes in the `COLD` copy,
-  so the trigger is not reached there (its accounted size is the logical
-  length).
+The shared recipe ran on the 19.2.5, 20.2.4 and 21.2.0 role sets
+(`essential`, `client`, `rgw`) and the 20.2.5 official aggregate. Tentacle
+20.2.4 reported the compressed length of 48,905 bytes as index
+`accounted_size`, listed `Size` and bucket `size` for a 1,048,630-byte
+payload, while the raw `size`, `size_utilized` and GET used the logical
+length. Its controls held. The 20.2.5 and 21.2.0 runs used the logical size.
+Squid 19.2.5 retained the source's zlib metadata and compressed bytes in the
+COLD copy, so the uncompressed-copy trigger was unavailable there.
 
 ## Cleanup and limits
 

@@ -116,7 +116,7 @@ object's head and tail placement rules (`RGW_MP placement`), its whole read
 
 ## Result line
 
-The test passes whatever the gateway did and prints one
+With the prerequisites and controls established, the test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_multipart_part_storage_class`.
 
@@ -134,25 +134,15 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 | 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: GET and HEAD of both parts of the `COLD` object answer 400 (`InvalidPart` for GET) with the 238-byte error document | 39.3 s |
 | 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `REPRODUCED`, the same four symptoms | 38.3 s |
 
-## Reading the result
+## Earlier shared recipe observations
 
-The results below ran on the role images of the shared recipe: 20.2.4
-(`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`),
-21.2.0 (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and 19.2.5 (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-rgw`), and on the 20.2.5 official image
-`quay.io/ceph/ceph:v20.2.5` as the aggregate. Linux amd64, bridge.
-
-- **Observed bug:** `cold-storage-class` answers `400 InvalidPart` for GET of
-  parts 1 and 2 and 400 for their HEAD, with the 238-byte error document as
-  the length and no parts count, while the whole-object GET returns all
-  5,308,416 bytes; `standard-control` passes with 200, the exact lengths
-  (5,242,880 and 65,536), parts count 2 and the exact bytes. Squid 19.2.5,
-  Tentacle 20.2.4 and 20.2.5 and Umbrella 21.2.0 all do this (about 38 s
-  each).
-- **Pass:** both subtests meet the contract. No tested build passes.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  placement evidence in step 1.
-- **Unavailable prerequisite:** the cluster or the gateway does not start,
-  the zone edits are refused, or the gateway does not restart.
+On Linux amd64 in bridge mode, the shared recipe observed the COLD
+part-read symptom in about 38 seconds each on the 19.2.5, 20.2.4 and
+21.2.0 role sets (`essential`, `client`, `rgw`) and the 20.2.5 official
+aggregate. It returned the 238-byte error document without a parts count
+for both part GET and HEAD, while the whole-object GET returned all
+5,308,416 bytes. The STANDARD control returned both parts with their exact
+lengths, count and bytes.
 
 ## Cleanup and limits
 

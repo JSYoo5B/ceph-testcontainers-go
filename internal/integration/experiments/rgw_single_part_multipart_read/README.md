@@ -35,7 +35,7 @@ returns a count of at least 1 and stops the walk at the end of the manifest
 ([tracker 66705](https://tracker.ceph.com/issues/66705),
 [fix](https://github.com/ceph/ceph/pull/58288)). The defect was in the
 Squid release candidate 19.1.0; 19.2.0 and every later release contain the
-fix, so the case passes on all supported releases and guards the contract.
+fix. The supported builds observed so far returned the requested part.
 Reef 18.2.7 does not read by part number at all (see the results).
 [`rgw_multipart_part_storage_class`](../rgw_multipart_part_storage_class/README.md)
 covers numbered reads in a non-default storage class.
@@ -172,9 +172,9 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 | 19.1.0 official `quay.io/ceph/ceph:v19.1.0`, the default image when recorded | `REPRODUCED`: the GET of part 1 of both objects was written and got no response header in 30 s with the same gateway process running (1.00, then 2.00 of a core in the three seconds after each deadline, the second counting the first); HEAD of part 1 and GET of part 2 not sent; the control passed and the cleanup succeeded | 164.4 s |
 | 19.2.0 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.0-all` | `NOT_REPRODUCED` | 61.4 s |
 
-## Reading the result
+## Earlier shared recipe observations
 
-The results below ran on the role images of the shared recipe: 20.2.4
+The shared recipe ran on the 20.2.4 role images
 (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`),
 21.2.0 (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and 19.2.5 (`official-19.2.5-essential`, `official-19.2.5-client`, `official-19.2.5-rgw`), and on the official images of 19.2.0
 (`quay.io/ceph/ceph:v19.2.0`), 20.2.5 (`quay.io/ceph/ceph:v20.2.5`), the release
@@ -183,11 +183,10 @@ candidate 19.1.0 (`quay.io/ceph/ceph:v19.1.0`) and Reef 18.2.7
 supported release; they were run once each to see the answers of builds
 without the fix. Linux amd64, bridge, one run per build.
 
-- **Pass:** every read of part 1 answers 200 with the part's length (65,536
-  and 9,437,184), a part count of 1 and, for a GET, the exact bytes; part 2
-  is refused with `400 InvalidPart`; the two-part control answers with a
+- **Correct numbered reads:** part 1 answered 200 with its length (65,536
+  and 9,437,184), a part count of 1 and, for a GET, the exact bytes. The gateway refused part 2 with `400 InvalidPart`, and the two-part control reported a
   part count of 2. Squid 19.2.0 and 19.2.5, Tentacle 20.2.4 and 20.2.5 and
-  Umbrella 21.2.0 pass (31 to 38 s each).
+  Umbrella 21.2.0 gave these answers in 31 to 38 seconds.
 - **Observed defect:** a read of part 1 is answered with another status,
   length, body or part count, or is not answered at all. The release
   candidate 19.1.0 does not answer the GET: the two-part control passes,
@@ -210,9 +209,6 @@ without the fix. Linux amd64, bridge, one run per build.
   deadline, a read does not end and the gateway was restarted or
   cannot be read, the request fails in transport, or the gateway is not the
   same healthy process after a read.
-- **Not reproduced:** a pass on a build claimed to be affected. Check the
-  condition line of step 1: the ETag suffix and the manifest rules show that
-  the object has one part.
 - **Unavailable prerequisite:** the cluster or the gateway does not start,
   or the gateway's clock tick rate cannot be read.
 
