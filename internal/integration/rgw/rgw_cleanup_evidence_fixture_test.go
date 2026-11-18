@@ -5,6 +5,7 @@
 package rgw_test
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,6 +111,41 @@ func TestRGWAdminProcessProbeRejectsFailedReads(t *testing.T) {
 			}
 			gone, readErr := rgwAdminProcessGone(code, string(out))
 			if gone != tc.gone || (readErr == nil) != tc.valid {
+				t.Fatalf("probe output=%q error=%v: gone=%t evidence error=%v", out, err, gone, readErr)
+			}
+		})
+	}
+}
+
+func TestRGWAdminProcessProbeConfirmsExitAfterListing(t *testing.T) {
+	for _, removeProc := range []bool{false, true} {
+		t.Run(fmt.Sprintf("proc-unavailable=%t", removeProc), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "proc")
+			if err := os.MkdirAll(filepath.Join(root, "123"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// The probe reaches awk only after listing PID 123. This substitute
+			// completes its exit at that exact point, then reports the failed
+			// stat read. The second case also makes re-enumeration unavailable.
+			bin := t.TempDir()
+			awk := "#!/bin/sh\nfor arg do last=$arg; done\nrmdir -- \"${last%/stat}\" || exit\n"
+			if removeProc {
+				awk += "rmdir -- \"${last%/123/stat}\" || exit\n"
+			}
+			awk += "exit 1\n"
+			if err := os.WriteFile(filepath.Join(bin, "awk"), []byte(awk), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("sh", "-c", rgwAdminProcessState, "process-probe", "123", root)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			code := 0
+			if err != nil {
+				code = 1
+			}
+			gone, readErr := rgwAdminProcessGone(code, string(out))
+			wantGone := !removeProc
+			if gone != wantGone || (readErr == nil) != wantGone {
 				t.Fatalf("probe output=%q error=%v: gone=%t evidence error=%v", out, err, gone, readErr)
 			}
 		})

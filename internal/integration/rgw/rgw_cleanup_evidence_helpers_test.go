@@ -42,8 +42,9 @@ func notificationLogWhileStopped(prior, observed, queued []string) error {
 	return nil
 }
 
-// rgwAdminProcessState first enumerates proc successfully. A missing PID in
-// that listing proves absence; a failed stat read of a listed PID does not.
+// rgwAdminProcessState first enumerates proc successfully. If a listed PID
+// disappears before its stat is read, another successful enumeration must
+// establish its absence. A failed read while it remains listed is inconclusive.
 const rgwAdminProcessState = `proc=${2:-/proc}
 entries=$(ls -1 "$proc") || exit
 case "
@@ -51,7 +52,20 @@ $entries
 " in
 *"
 $1
-"*) awk '{sub(/.*\) /, ""); if (NF < 20) exit 1; print $1}' "$proc/$1/stat" ;;
+"*) ;;
+*) echo absent; exit 0 ;;
+esac
+if state=$(awk '{sub(/.*\) /, ""); if (NF < 20) exit 1; print $1}' "$proc/$1/stat" 2>/dev/null); then
+    printf '%s\n' "$state"
+    exit 0
+fi
+entries=$(ls -1 "$proc") || exit
+case "
+$entries
+" in
+*"
+$1
+"*) exit 1 ;;
 *) echo absent ;;
 esac
 `
