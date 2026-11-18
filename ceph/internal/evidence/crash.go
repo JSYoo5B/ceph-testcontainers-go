@@ -217,7 +217,7 @@ func CollectCrashes(ctx context.Context, config CrashConfig[Member], targets []M
 			}) {
 			continue
 		}
-		result := readCrashDirectory(ctx, config, target, docker, redact)
+		result, contextErr := readCrashDirectory(ctx, config, target, docker, redact)
 		switch result.Outcome {
 		case CrashRecordsFound, CrashDirectoryEmpty, CrashDirectoryAbsent:
 			report.Complete = report.Complete && len(result.Omitted) == 0
@@ -226,6 +226,7 @@ func CollectCrashes(ctx context.Context, config CrashConfig[Member], targets []M
 		default:
 			report.Complete = false
 			errs = append(errs, fmt.Errorf("%s %s: %s", result.Role, result.Name, result.Error))
+			errs = append(errs, contextErr)
 		}
 		report.Containers = append(report.Containers, result)
 	}
@@ -233,17 +234,21 @@ func CollectCrashes(ctx context.Context, config CrashConfig[Member], targets []M
 		report.Complete = false
 		errs = append(errs, fmt.Errorf("%d containers exceed the container limit", omitted))
 	}
+	if err := ctx.Err(); err != nil {
+		report.Complete = false
+		errs = append(errs, err)
+	}
 	report.FinishedAt = time.Now().UTC()
 	return report, errors.Join(errs...)
 }
 
 // readCrashDirectory reads the crash directory of one container.
-func readCrashDirectory(ctx context.Context, config CrashConfig[Member], target Member, docker CrashDocker, redact func(string) string) CrashContainer {
-	result := CrashContainer{Role: redact(target.Role), Name: redact(target.Name), CrashDir: CrashDir, Records: []CrashRecord{}}
-	fail := func(outcome CrashOutcome, err error) CrashContainer {
+func readCrashDirectory(ctx context.Context, config CrashConfig[Member], target Member, docker CrashDocker, redact func(string) string) (result CrashContainer, contextErr error) {
+	result = CrashContainer{Role: redact(target.Role), Name: redact(target.Name), CrashDir: CrashDir, Records: []CrashRecord{}}
+	fail := func(outcome CrashOutcome, err error) (CrashContainer, error) {
 		result.Outcome = outcome
 		result.Error, _ = ErrorText(err, redact, 1024)
-		return result
+		return result, nil
 	}
 	if target.Container == nil || target.Container.GetContainerID() == "" {
 		return fail(CrashContainerUnavailable, errors.New("container was not created"))
@@ -251,6 +256,22 @@ func readCrashDirectory(ctx context.Context, config CrashConfig[Member], target 
 	result.ContainerID = target.Container.GetContainerID()
 	opCtx, cancel := context.WithTimeout(ctx, config.OperationTimeout)
 	defer cancel()
+	archiveStarted := false
+	defer func() {
+		// A successful API or buffered read may finish after cancellation.
+		// Preserve collected records, but never publish a complete outcome.
+		if contextErr = opCtx.Err(); contextErr != nil {
+			result.Outcome = CrashReadFailed
+			if archiveStarted {
+				result.Outcome = CrashArchiveIncomplete
+			}
+			if result.Error == "" {
+				result.Error, _ = ErrorText(contextErr, redact, 1024)
+			} else {
+				result.Error, _ = ErrorText(errors.Join(errors.New(result.Error), contextErr), redact, 1024)
+			}
+		}
+	}()
 	inspection, err := docker.ContainerInspect(opCtx, result.ContainerID, mobycl.ContainerInspectOptions{})
 	switch {
 	case errdefs.IsNotFound(err):
@@ -274,11 +295,12 @@ func readCrashDirectory(ctx context.Context, config CrashConfig[Member], target 
 			return fail(CrashReadFailed, errors.Join(inspectErr, opCtx.Err()))
 		}
 		result.Outcome = CrashDirectoryAbsent
-		return result
+		return result, nil
 	}
 	if err != nil {
 		return fail(CrashReadFailed, errors.Join(err, opCtx.Err()))
 	}
+	archiveStarted = true
 	defer func() { _ = archive.Content.Close() }()
 	if err := readCrashArchive(archive.Content, config, &result, redact); err != nil {
 		return fail(CrashArchiveIncomplete, errors.Join(err, opCtx.Err()))
@@ -291,7 +313,7 @@ func readCrashDirectory(ctx context.Context, config CrashConfig[Member], target 
 	default:
 		result.Outcome = CrashDirectoryEmpty
 	}
-	return result
+	return result, nil
 }
 
 // countingReader counts the bytes read through it and records whether any
