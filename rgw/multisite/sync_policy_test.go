@@ -43,7 +43,7 @@ type rgwSyncCLI struct {
 	badSymmetry                                      bool
 	metadataOutput, humanOutput                      string
 	additionalBuckets                                map[string]string
-	lostReply, failBeforeMutation                    bool
+	completedFailure, failBeforeMutation             bool
 	readFailuresAfterMutation, remainingReadFailures int
 	stderrOutput                                     string
 	bucketStatusOutput                               string
@@ -137,9 +137,11 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 		result = c.staging
 	case syncTestCommand(args, "period", "commit"):
 		previousRealmEpoch := c.current["realm_epoch"]
+		previousID := c.current["id"]
+		previousEpoch, _ := c.current["epoch"].(json.Number).Int64()
 		c.current = syncJSONClone(c.staging)
-		c.current["id"] = "period-committed"
-		c.current["epoch"] = json.Number("2")
+		c.current["id"] = previousID
+		c.current["epoch"] = json.Number(fmt.Sprint(previousEpoch + 1))
 		c.current["realm_epoch"] = previousRealmEpoch
 		result = c.current
 	case syncTestCommand(args, "realm", "pull"):
@@ -178,7 +180,7 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 		result = map[string]any{"key": key, "ver": version, "data": map[string]any{"bucket_info": map[string]any{"bucket": map[string]any{"name": name, "tenant": tenant, "bucket_id": components[1]}, "zonegroup": "group-id", "sync_policy": c.bucketPolicy, "owner": "legacy-owner", "placement_rule": "tiered"}}}
 	case syncTestCommand(args, "sync", "group"):
 		if c.failBeforeMutation {
-			return 0, nil, errors.New("native command did not start; secret")
+			return 1, bytes.NewReader(nil), nil // Terminal native refusal before changing policy.
 		}
 		policy, _ := syncPolicyFromDocument(c.group)
 		if syncTestFlag(args, "--bucket") != "" {
@@ -262,9 +264,9 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 		result = policy
 		c.remainingReadFailures = c.readFailuresAfterMutation
 		c.readFailuresAfterMutation = 0
-		if c.lostReply {
-			c.lostReply = false
-			return 0, nil, errors.New("lost native mutation response; secret")
+		if c.completedFailure {
+			c.completedFailure = false
+			return 1, bytes.NewReader(nil), nil // Terminal native error after the policy write.
 		}
 	default:
 		return 0, nil, errors.New("unrecognized secret command")
@@ -317,7 +319,7 @@ func TestRGWOwnedSyncPolicyLifecycle(t *testing.T) {
 	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if a.starts != 1 || b.starts != 1 || cli.current["id"] != "period-committed" {
+	if a.starts != 1 || b.starts != 1 || cli.current["id"] != "period-original" || cli.current["epoch"] != json.Number("2") {
 		t.Fatal("publication did not reload owned running gateways")
 	}
 	if err := g.RemovePipe(t.Context(), "permit"); err != nil {
@@ -436,15 +438,15 @@ func TestRGWSyncPolicyCancelledAndUnownedHandlesDoNotMutate(t *testing.T) {
 	}
 }
 
-func TestRGWSyncMutationLostReplyConfirmsExactNativeIntent(t *testing.T) {
+func TestRGWSyncMutationTerminalFailureConfirmsExactNativeIntent(t *testing.T) {
 	f, cli, _, _ := newRGWSyncTestFixture()
 	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "lost-reply", Status: SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.lostReply = true
+	cli.completedFailure = true
 	if err := g.SetStatus(t.Context(), SyncEnabled); err != nil || g.state.pending != nil || g.state.group["status"] != "enabled" {
-		t.Fatalf("lost reply applied mutation was not reconciled: %v", err)
+		t.Fatalf("terminal failure after applied mutation was not reconciled: %v", err)
 	}
 	if err := g.Remove(t.Context()); err != nil {
 		t.Fatal(err)
@@ -492,7 +494,7 @@ func TestRGWSyncMutationRetainsPendingIntentAcrossReadbackOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.lostReply, cli.readFailuresAfterMutation = true, 1
+	cli.completedFailure, cli.readFailuresAfterMutation = true, 1
 	config := SyncPipeConfig{ID: "pending", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}
 	if err := g.CreatePipe(t.Context(), config); err == nil || g.state.pending == nil {
 		t.Fatal("ambiguous mutation lost its pending intent")
@@ -535,7 +537,7 @@ func TestRGWSyncPendingMutationRefusesForeignDeltasAndBeforeStatePublication(t *
 				t.Fatal(err)
 			}
 			if foreign {
-				cli.lostReply, cli.readFailuresAfterMutation = true, 1
+				cli.completedFailure, cli.readFailuresAfterMutation = true, 1
 			} else {
 				cli.failBeforeMutation = true
 			}

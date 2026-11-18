@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -59,6 +60,7 @@ type Fixture struct {
 	topologyMu  sync.Mutex
 	httpNetwork *testcontainers.DockerNetwork
 	closed      bool
+	syncWrites  mutation.Fence
 }
 
 // rgwRealmAccess runs radosgw-admin in the realm. The configuration, the

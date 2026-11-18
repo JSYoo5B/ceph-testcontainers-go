@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 
@@ -113,7 +114,9 @@ type SyncPipeConfig struct {
 // A group is stored on the zonegroup or on one existing bucket. Every mutation
 // compares the native policy before and after the change and refuses unrelated
 // or external changes; if the reply of a confirmed mutation is lost, the next
-// call on the same handle reconciles the pending change first. Group mutations
+// call first awaits the terminal writer response, then reconciles the pending change.
+// A lost transport response blocks policy operations until the disposable fixture
+// is terminated: readback alone cannot prove that the writer has finished. Group mutations
 // are bounded by two minutes.
 type SyncGroup struct {
 	owner                      *Fixture
@@ -543,6 +546,9 @@ func (g *SyncGroup) change(ctx context.Context, change rgwSyncMutation) error {
 
 func (g *SyncGroup) executePending(ctx context.Context, master *rgwZoneState) error {
 	_, commandErr := g.command(ctx, master, g.state.pending.args...)
+	if mutation.Uncertain(commandErr) {
+		return commandErr
+	}
 	readCtx := ctx
 	cancel := func() {}
 	if commandErr != nil || ctx.Err() != nil {
@@ -626,6 +632,9 @@ func (f *Fixture) syncPolicyMaster(ctx context.Context) (*rgwZoneState, map[stri
 }
 
 func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group string, args ...string) ([]byte, error) {
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return nil, err
+	}
 	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
 	status := (len(args) >= 2 && args[0] == "sync" && args[1] == "status") || (len(args) >= 3 && args[0] == "bucket" && args[1] == "sync" && args[2] == "status")
 	data, err := syncNativeExecMode(ctx, zone.client, status, append(argv, args...)...)
@@ -695,7 +704,7 @@ func (g *SyncGroup) command(ctx context.Context, master *rgwZoneState, args ...s
 	if g.scope.Bucket != "" {
 		args = append(args, "--bucket", syncScopedBucketName(g.scope), "--bucket-id", g.bucketID)
 	}
-	return f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, args...)
+	return f.syncPolicyWrite(ctx, master, g.scope.Zonegroup, args...)
 }
 
 func (g *SyncGroup) bucketInstanceID(ctx context.Context, master *rgwZoneState) (string, error) {

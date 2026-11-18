@@ -111,7 +111,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 	if staging != nil && !syncPeriodPolicyOwned(staging, current, want) {
 		return nil, multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
 	}
-	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
+	data, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "update")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 		// The staging period is already updated: a failed check, not a refusal.
 		return nil, errors.New("RGW generated staging period changed unrelated policy; refusing publication")
 	}
-	if _, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
+	if _, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
 		return nil, err
 	}
 	_, committed, err := f.syncPolicyMaster(ctx)
@@ -142,7 +142,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, states []*rgwZoneState, current map[string]any) error {
 	for _, zone := range states {
 		if zone.ID != master.ID {
-			if _, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
+			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
 				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
 				return err
 			}
