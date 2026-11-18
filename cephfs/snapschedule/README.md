@@ -104,3 +104,9 @@ The full contract of every type and function is in go doc:
 or `go doc -all github.com/JSYoo5B/ceph-testcontainers-go/cephfs/snapschedule`.
 See also [Contexts and cleanup](../../docs/guides/contexts-and-cleanup.md) and
 [Errors](../../docs/guides/errors.md).
+
+Lease identity uses the native repeat, start and creation timestamp. Ceph
+records creation at one-second resolution. An external remove and re-add
+with the same repeat and start within that second is indistinguishable to
+Watch and Restore. Keep external schedule writers off a leased path until
+Restore finishes, including between observations.
