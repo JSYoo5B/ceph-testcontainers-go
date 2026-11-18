@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -171,10 +172,15 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	}
 	recording, stopRecording := context.WithCancel(ctx)
 	windowResult := target.record(recording, baseline.Events)
-	defer stopRecording()
+	finishRecording := sync.OnceValue(func() daemonMemoryWindow {
+		stopRecording()
+		return <-windowResult
+	})
+	defer finishRecording()
 	updateErr := daemonMemoryUpdate(ctx, docker.Client, id, daemonMemoryPressure)
 	t.Logf("DAEMON_MEMORY_PRESSURE requested=%d update_error=%v", daemonMemoryPressure, updateErr)
 	var stopped, oomKilled, unchanged bool
+	var finished time.Time
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		state, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
 		if err != nil || state.Container.State == nil {
@@ -186,7 +192,14 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 		if !unchanged {
 			t.Fatal("pressure target generation changed unexpectedly")
 		}
-		if stopped || time.Now().After(deadline) {
+		if stopped {
+			finished, err = time.Parse(time.RFC3339Nano, s.FinishedAt)
+			if err != nil || finished.IsZero() {
+				t.Fatal("independent exit timestamp unavailable", err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
 			break
 		}
 		if err := target.fence(ctx, docker.Client); err != nil {
@@ -194,13 +207,10 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	stopRecording()
-	window := <-windowResult
-	oomErr := daemonMemoryOOM(baseline.Events, window.Events, unchanged, !window.OtherProcess, oomKilled, stopped)
-	if !window.PressureObserved {
-		oomErr = fmt.Errorf("effective pressure ceiling was not observed (OOM evidence: %v)", oomErr)
-	}
-	t.Logf("DAEMON_MEMORY_OOM before=%v after=%v stopped=%t docker_oom=%t local_window_error=%v verdict=%v", baseline.Events, window.Events, stopped, oomKilled, window.Error, oomErr)
+	window := finishRecording()
+	oomErr := window.qualify(baseline.Events, unchanged, oomKilled, stopped, finished)
+	t.Logf("DAEMON_MEMORY_OOM before=%v after=%v stopped=%t docker_oom=%t membership_gap_at=%s local_window_error=%v verdict=%v",
+		baseline.Events, window.Events, stopped, oomKilled, window.MembershipGapAt, window.Error, oomErr)
 	// Restore the finite configuration before an explicit restart. A successful
 	// update on a stopped container is only saved configuration, not runtime proof.
 	cleanup, done := context.WithTimeout(context.Background(), 30*time.Second)

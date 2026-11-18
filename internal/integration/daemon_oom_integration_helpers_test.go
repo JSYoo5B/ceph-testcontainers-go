@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -233,13 +234,59 @@ func daemonMemoryOOM(before, after map[string]uint64, sameGeneration, singleton,
 	return nil
 }
 
+// readOOMMembership brackets the member list with the frozen directory
+// identity. A missing victim means the sample can only be used after an
+// independently observed exit; it does not prove the live cgroup was empty.
+func readOOMMembership(group string, identity os.FileInfo, pid int) (other bool, err error) {
+	sameGroup := func() bool {
+		info, err := os.Stat(group)
+		return err == nil && os.SameFile(identity, info)
+	}
+	if !sameGroup() {
+		return false, errors.New("target cgroup identity unavailable during membership observation")
+	}
+	data, err := os.ReadFile(filepath.Join(group, "cgroup.procs"))
+	if err != nil {
+		return false, errors.New("target cgroup membership unreadable")
+	}
+	procs, err := parseCgroupProcs(string(data))
+	if err != nil {
+		return false, err
+	}
+	if !sameGroup() {
+		return false, errors.New("target cgroup identity changed during membership observation")
+	}
+	other = slices.ContainsFunc(procs.PIDs, func(member int) bool { return member != pid })
+	if !slices.Contains(procs.PIDs, pid) {
+		return other, errors.New("frozen process missing from the target cgroup")
+	}
+	return other, nil
+}
+
+// oomMembershipGap excludes only samples that started at or after the
+// independently reported exit. Reads are samples, not continuous coverage.
+func oomMembershipGap(firstGap, finished time.Time) bool {
+	return !firstGap.IsZero() && (finished.IsZero() || firstGap.Before(finished))
+}
+
 // A recorder runs outside the victim while the engine applies the limit. A
 // post-update inspect is not an effective-limit observation on a stopped task.
 type daemonMemoryWindow struct {
 	Events           map[string]uint64
 	PressureObserved bool
 	OtherProcess     bool
+	MembershipGapAt  time.Time
 	Error            error
+}
+
+func (w daemonMemoryWindow) qualify(baseline map[string]uint64, sameGeneration, oomKilled, stopped bool, finished time.Time) error {
+	if oomMembershipGap(w.MembershipGapAt, finished) {
+		return errors.New("target cgroup membership unavailable before the daemon exit")
+	}
+	if !w.PressureObserved {
+		return errors.New("effective pressure ceiling was not observed")
+	}
+	return daemonMemoryOOM(baseline, w.Events, sameGeneration, !w.OtherProcess, oomKilled, stopped)
 }
 
 func (target *daemonMemoryTarget) record(ctx context.Context, baseline map[string]uint64) <-chan daemonMemoryWindow {
@@ -257,19 +304,22 @@ func (target *daemonMemoryTarget) record(ctx context.Context, baseline map[strin
 				window.Error = err
 			}
 			sample, err := target.sample()
+			at := time.Now()
+			other, memberErr := readOOMMembership(target.Group, target.Identity, target.PID)
+			window.OtherProcess = window.OtherProcess || other
+			if memberErr != nil {
+				window.Error = memberErr
+				if window.MembershipGapAt.IsZero() {
+					window.MembershipGapAt = at
+				}
+			}
 			if err == nil {
 				window.Events = sample.Events
-				window.PressureObserved = window.PressureObserved || sample.Max == uint64(daemonMemoryPressure) && sample.Swap == 0
+				if memberErr == nil && sample.Max == uint64(daemonMemoryPressure) && sample.Swap == 0 {
+					window.PressureObserved = true
+				}
 			} else {
 				window.Error = err
-			}
-			// Record extra processes independently. Empty after exit is not a helper.
-			if data, err := os.ReadFile(filepath.Join(target.Group, "cgroup.procs")); err == nil {
-				for _, pid := range strings.Fields(string(data)) {
-					if pid != strconv.Itoa(target.PID) {
-						window.OtherProcess = true
-					}
-				}
 			}
 			select {
 			case <-ctx.Done():

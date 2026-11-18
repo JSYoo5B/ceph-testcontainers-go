@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -436,8 +437,12 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = handle.Close() })
 	recording, stopRecording := context.WithCancel(ctx)
-	defer stopRecording()
-	observed := recordOSDOOM(recording, target.group, handle, uint64(ceiling), target.PID, 2*time.Millisecond, time.Now)
+	observed := recordOSDOOM(recording, target.group, target.identity, handle, uint64(ceiling), target.PID, 2*time.Millisecond, time.Now)
+	finishRecording := sync.OnceValue(func() osdOOMObservation {
+		stopRecording()
+		return <-observed
+	})
+	defer finishRecording()
 
 	// The one pressure step.
 	run.Step.ExecStart = time.Now()
@@ -467,10 +472,9 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	}
 	run.Step.ExecEnd = time.Now()
 	time.Sleep(300 * time.Millisecond) // post-stop reads through the open handle
-	stopRecording()
-	obs := <-observed
+	obs := finishRecording()
 	recorderErrors = obs.Errors
-	run.Step.EffectiveAt, run.Step.OtherProcSeen = obs.EffectiveAt, obs.OtherProc
+	run.Step.EffectiveAt, run.Step.OtherProcSeen, run.Step.MembershipGapAt = obs.EffectiveAt, obs.OtherProc, obs.MembershipGapAt
 	run.Step.Final = obs.final(run.Step.ExecEnd)
 	run.Step.Exit = exit
 	stepVerdict, stepErr := classifyOSDOOMStep(run.Step, osdOOMStepChecks{})

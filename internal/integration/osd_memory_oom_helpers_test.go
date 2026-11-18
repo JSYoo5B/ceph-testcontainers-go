@@ -268,10 +268,11 @@ type osdOOMStep struct {
 	ProcessStart string
 	// OSD and Process identify the frozen process as the daemon of the
 	// selected OSD, as read outside the target before the step.
-	OSD           int
-	Process       osdOOMProcess
-	ProcsBefore   memoryProcs
-	OtherProcSeen bool
+	OSD             int
+	Process         osdOOMProcess
+	ProcsBefore     memoryProcs
+	OtherProcSeen   bool
+	MembershipGapAt time.Time
 
 	// Baseline is the finite memory.max that must be installed before the step
 	// and Ceiling the predeclared lower one.
@@ -452,6 +453,9 @@ func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, e
 	}
 	if !checks.skipExitWindow && (s.Exit.FinishedAt.IsZero() || s.Exit.FinishedAt.Before(s.ExecStart) || s.Exit.FinishedAt.After(s.ExecEnd)) {
 		return osdOOMIncompleteStep("the daemon exit time is missing or outside the observed window")
+	}
+	if oomMembershipGap(s.MembershipGapAt, s.Exit.FinishedAt) {
+		return osdOOMIncompleteStep("cgroup membership unavailable before the daemon exit")
 	}
 	if !s.ProcsBefore.Observed {
 		return osdOOMIncompleteStep("cgroup membership before the step is unobserved")
@@ -923,9 +927,10 @@ func osdOOMProcessIsOSD(p osdOOMProcess, osd int) error {
 type osdOOMObservation struct {
 	// Reads are the successful reads through the already-open event handle, in
 	// order; the cgroup path may be gone while the handle still answers.
-	Reads       []osdOOMRead
-	EffectiveAt time.Time
-	OtherProc   bool
+	Reads           []osdOOMRead
+	EffectiveAt     time.Time
+	OtherProc       bool
+	MembershipGapAt time.Time
 	// Errors keeps the distinct failure messages, not one per tick.
 	Errors []string
 }
@@ -954,7 +959,7 @@ func (o osdOOMObservation) final(end time.Time) *osdOOMFinal {
 // open event handle (so teardown of the path does not hide the counters), the
 // limit files by path, and the member list. It runs no process inside the
 // target.
-func recordOSDOOM(ctx context.Context, group string, handle *os.File, ceiling uint64, pid int, every time.Duration, now func() time.Time) <-chan osdOOMObservation {
+func recordOSDOOM(ctx context.Context, group string, identity os.FileInfo, handle *os.File, ceiling uint64, pid int, every time.Duration, now func() time.Time) <-chan osdOOMObservation {
 	out := make(chan osdOOMObservation, 1)
 	go func() {
 		var obs osdOOMObservation
@@ -972,23 +977,25 @@ func recordOSDOOM(ctx context.Context, group string, handle *os.File, ceiling ui
 			} else {
 				note(err)
 			}
+			var limitObserved bool
 			if obs.EffectiveAt.IsZero() {
 				maxData, errMax := os.ReadFile(filepath.Join(group, "memory.max"))
 				swapData, errSwap := os.ReadFile(filepath.Join(group, "memory.swap.max"))
 				if errMax == nil && errSwap == nil {
 					m, mErr := parseMemoryLimit(string(maxData), false)
 					sw, sErr := parseMemoryLimit(string(swapData), true)
-					if mErr == nil && sErr == nil && m == (memoryLimit{Bytes: ceiling}) && sw == (memoryLimit{}) {
-						obs.EffectiveAt = at
-					}
+					limitObserved = mErr == nil && sErr == nil && m == (memoryLimit{Bytes: ceiling}) && sw == (memoryLimit{})
 				}
 			}
-			if data, err := os.ReadFile(filepath.Join(group, "cgroup.procs")); err == nil {
-				if procs, perr := parseCgroupProcs(string(data)); perr != nil {
-					note(perr)
-				} else if slices.ContainsFunc(procs.PIDs, func(p int) bool { return p != pid }) {
-					obs.OtherProc = true
+			other, memberErr := readOOMMembership(group, identity, pid)
+			obs.OtherProc = obs.OtherProc || other
+			if memberErr != nil {
+				note(memberErr)
+				if obs.MembershipGapAt.IsZero() {
+					obs.MembershipGapAt = at
 				}
+			} else if limitObserved {
+				obs.EffectiveAt = at
 			}
 			select {
 			case <-ctx.Done():
@@ -1033,6 +1040,9 @@ func osdOOMEligible(before *memoryWitness, procs memoryProcs, usage osdOOMUsage,
 
 func osdOOMReceiptStep(s osdOOMStep) map[string]any {
 	out := map[string]any{"pid": s.PID, "process_start": s.ProcessStart, "osd": s.OSD, "comm": s.Process.Comm, "argv0": s.Process.Argv0, "exe_state": s.Process.ExeState, "other_process_seen": s.OtherProcSeen}
+	if !s.MembershipGapAt.IsZero() {
+		out["membership_gap_at"] = s.MembershipGapAt
+	}
 	if s.Before != nil {
 		out["before_events"], out["before_current"] = s.Before.Events, s.Before.Current
 	}
