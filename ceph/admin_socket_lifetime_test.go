@@ -5,25 +5,27 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
+	"testing"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"io"
-	"strings"
-	"testing"
 )
 
 // adminLifetimeModel emits supervisor replies without running a process.
 // Its callback observes admission invariants while an Exec is in progress.
 type adminLifetimeModel struct {
 	testcontainers.Container
+	id                         string
 	during                     func()
 	fail, killed, refuseCancel bool
 	cancels                    int
 }
 
-func (m *adminLifetimeModel) GetContainerID() string { return "admin-control" }
+func (m *adminLifetimeModel) GetContainerID() string { return m.id }
 func (m *adminLifetimeModel) State(context.Context) (*container.State, error) {
 	return &container.State{Running: true}, nil
 }
@@ -48,36 +50,54 @@ func (m *adminLifetimeModel) Exec(_ context.Context, args []string, _ ...tcexec.
 	return 0, strings.NewReader(fmt.Sprintf(`{"schema_version":1,"stdout":%q,"stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, raw)), nil
 }
 func TestAdminSocketHoldsAdmissionThroughDispatch(t *testing.T) {
-	for _, args := range [][]string{{"version"}, {"status"}, {"config", "set", "debug_osd", "1"}} {
-		t.Run(strings.Join(args, "-"), func(t *testing.T) {
-			c, _ := adminSocketCluster()
-			control := &adminLifetimeModel{}
-			c.Container = control
-			handle := c.fleet.osdHandles.get(0)
-			handle.owner = c
-			handle.Container = &adminLifetimeModel{}
-			control.during = func() {
-				if c.mu.TryLock() {
-					c.mu.Unlock()
-					t.Error("topology admission released before command completion")
+	for _, kind := range []string{"osd", "mon", "mgr"} {
+		for _, args := range [][]string{{"version"}, {"status"}, {"config", "set", "debug_ms", "1"}} {
+			t.Run(kind+"/"+strings.Join(args, "-"), func(t *testing.T) {
+				c, _ := adminSocketCluster()
+				control := &adminLifetimeModel{id: "admin-control"}
+				daemon := &adminLifetimeModel{id: "daemon-instance"}
+				c.Container = control
+				var handle interface {
+					Version(context.Context) (string, error)
+					AdminSocket(context.Context, ...string) ([]byte, error)
 				}
-				if c.native.calls.registered() != 1 {
-					t.Error("admin command not registered")
+				switch kind {
+				case "osd":
+					osd := c.fleet.osdHandles.get(0)
+					osd.owner, osd.Container = c, daemon
+					handle = osd
+				case "mon":
+					mon := &MonitorContainer{Container: daemon, DaemonName: "b", owner: c}
+					c.members.roster.addMonitor("b", mon)
+					handle = mon
+				case "mgr":
+					mgr := c.members.roster.manager("a")
+					mgr.owner, mgr.Container = c, daemon
+					handle = mgr
 				}
-			}
-			var err error
-			if args[0] == "version" {
-				_, err = handle.Version(t.Context())
-			} else {
-				_, err = handle.AdminSocket(t.Context(), args...)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if c.native.calls.registered() != 0 {
-				t.Fatal("completed invocation retained")
-			}
-		})
+				control.during = func() {
+					if c.mu.TryLock() {
+						c.mu.Unlock()
+						t.Error("topology admission released before command completion")
+					}
+					if c.native.calls.registered() != 1 {
+						t.Error("admin command not registered")
+					}
+				}
+				var err error
+				if args[0] == "version" {
+					_, err = handle.Version(t.Context())
+				} else {
+					_, err = handle.AdminSocket(t.Context(), args...)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if c.native.calls.registered() != 0 {
+					t.Fatal("completed invocation retained")
+				}
+			})
+		}
 	}
 }
 func TestAdminSocketRetainsUnconfirmedCleanup(t *testing.T) {
@@ -85,11 +105,11 @@ func TestAdminSocketRetainsUnconfirmedCleanup(t *testing.T) {
 		for _, refused := range []bool{false, true} {
 			t.Run(fmt.Sprintf("killed=%t/refused=%t", killed, refused), func(t *testing.T) {
 				c, _ := adminSocketCluster()
-				control := &adminLifetimeModel{fail: true, killed: killed, refuseCancel: refused}
+				control := &adminLifetimeModel{id: "admin-control", fail: true, killed: killed, refuseCancel: refused}
 				c.Container = control
 				handle := c.fleet.osdHandles.get(0)
 				handle.owner = c
-				handle.Container = &adminLifetimeModel{}
+				handle.Container = &adminLifetimeModel{id: "daemon-instance"}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				control.during = cancel
@@ -106,6 +126,12 @@ func TestAdminSocketRetainsUnconfirmedCleanup(t *testing.T) {
 				}
 				if c.native.calls.registered() != 1 {
 					t.Fatal("unconfirmed invocation lost")
+				}
+				if unstopped.invocation.target != control || unstopped.invocation.targetID != handle.GetContainerID() {
+					t.Fatal("cleanup executor and daemon ownership identity were conflated")
+				}
+				if err := unstopped.Stop(t.Context()); err == nil || c.native.calls.registered() != 1 {
+					t.Fatal("failed Stop lost the cleanup obligation")
 				}
 				if err := c.native.fence(t.Context(), handle.GetContainerID()); err == nil {
 					t.Fatal("removal admitted with unconfirmed cleanup")
