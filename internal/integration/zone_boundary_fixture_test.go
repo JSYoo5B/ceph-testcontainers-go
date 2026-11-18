@@ -17,6 +17,8 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
@@ -189,14 +191,28 @@ func TestZoneProbeAndRTT(t *testing.T) {
 	if err := checkZoneControl(base, summary(20.2, 20.21, 20.19, 20.2)); err == nil {
 		t.Fatal("accepted a delayed control")
 	}
-	if err := checkZoneCut(zoneRTT{Requested: 5}); err != nil {
-		t.Fatal(err)
+	for name, check := range map[string]struct {
+		errors  []string
+		timeout bool
+	}{
+		"two timeouts":       {[]string{"TimeoutError: timed out", "TimeoutError: timed out"}, true},
+		"missing evidence":   {[]string{"TimeoutError: timed out"}, false},
+		"connection refused": {[]string{"TimeoutError: timed out", "ConnectionRefusedError: [Errno 111] Connection refused"}, false},
+		"connection reset":   {[]string{"TimeoutError: timed out", "ConnectionResetError: [Errno 104] Connection reset by peer"}, false},
+		"no route":           {[]string{"TimeoutError: timed out", "OSError: [Errno 101] Network is unreachable"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := summarizeZoneRTT(zoneProbeResult{Requested: 2, Errors: check.errors})
+			if err := harness.CheckZoneCut(got); (err == nil) != check.timeout {
+				t.Fatalf("partition verdict: %v, want timeout=%t", err, check.timeout)
+			}
+			if out := classifyTwoSubnetPath(got); (out == "timed out") != check.timeout {
+				t.Fatalf("two-subnet outcome: %q, want timeout=%t", out, check.timeout)
+			}
+		})
 	}
-	if err := checkZoneCut(zoneRTT{Requested: 5, OK: 1}); err == nil {
+	if err := harness.CheckZoneCut(zoneRTT{Requested: 1, OK: 1}); err == nil {
 		t.Fatal("accepted a completed probe across a partition")
-	}
-	if got := classifyTwoSubnetPath(zoneRTT{Requested: 5}); got != "dropped" {
-		t.Fatal(got)
 	}
 	if got := classifyTwoSubnetPath(summary(1, 1, 1)); got != "forwarded" {
 		t.Fatal(got)

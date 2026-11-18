@@ -16,6 +16,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // A logical availability zone on one Docker engine is a set of endpoints of
@@ -275,22 +276,10 @@ func parseZoneProbe(requested int, out string) (zoneProbeResult, error) {
 	return zoneProbeResult{Requested: requested, Samples: raw.Samples, Errors: raw.Errors}, nil
 }
 
-// zoneRTT summarizes the completed samples of one probe run: count, median
-// and the 10th and 90th percentiles (nearest rank), in milliseconds.
-type zoneRTT struct {
-	Requested, OK    int
-	Median, P10, P90 float64
-}
-
-func (s zoneRTT) String() string {
-	if s.OK == 0 {
-		return fmt.Sprintf("0/%d", s.Requested)
-	}
-	return fmt.Sprintf("%d/%d median %.3f ms (p10 %.3f, p90 %.3f)", s.OK, s.Requested, s.Median, s.P10, s.P90)
-}
+type zoneRTT = harness.ZoneRTT
 
 func summarizeZoneRTT(r zoneProbeResult) zoneRTT {
-	s := zoneRTT{Requested: r.Requested, OK: len(r.Samples)}
+	s := zoneRTT{Requested: r.Requested, OK: len(r.Samples), Errors: r.Errors}
 	if s.OK == 0 {
 		return s
 	}
@@ -353,14 +342,6 @@ func checkZoneShaped(base, observed zoneRTT, added time.Duration) error {
 	return nil
 }
 
-// checkZoneCut says whether no probe on a path completed.
-func checkZoneCut(observed zoneRTT) error {
-	if observed.Requested == 0 || observed.OK != 0 {
-		return fmt.Errorf("%d of %d probes completed across a partitioned boundary", observed.OK, observed.Requested)
-	}
-	return nil
-}
-
 // entityAddrPort returns the address and port of the first entry of vector
 // with protocol typ ("v2" or "v1").
 func entityAddrPort(vector []ceph.EntityAddress, typ string) (netip.AddrPort, error) {
@@ -392,16 +373,18 @@ func actingZones(acting []int, zoneOf map[int]string) (map[string][]int, error) 
 }
 
 // classifyTwoSubnetPath names what a routed probe across two Docker bridges
-// observed. Only a probe that ran can be dropped; one that did not run is
-// "not executed".
+// observed. A run with no successful connection and only timeouts is
+// loss-compatible; other connect failures retain their distinct outcome.
 func classifyTwoSubnetPath(r zoneRTT) string {
 	switch {
 	case r.Requested == 0:
 		return "not executed"
 	case r.OK == r.Requested:
 		return "forwarded"
+	case harness.CheckZoneCut(r) == nil:
+		return "timed out"
 	case r.OK == 0:
-		return "dropped"
+		return "connect failed"
 	default:
 		return "partly forwarded"
 	}
