@@ -43,6 +43,14 @@ func (b *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		if state.Done == nil || !*state.Done {
 			return errPending
 		}
+		if state.BuildNotLaunched {
+			if b.ready || state.Error == "" || state.File != "" || state.Loop != "" {
+				return failure(ceph.ErrNativeFailure, "invalid failed build receipt; keeper retained")
+			}
+			b.backingReleased = true
+		}
+	}
+	if b.creationSent && !b.backingReleased {
 		if !b.ready && !b.mappingRemoved {
 			// A failed creation still owns every successfully created component.
 			file, err := b.owner(ctx, "file")
