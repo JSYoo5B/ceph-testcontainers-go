@@ -71,7 +71,7 @@ func TestShellScript(t *testing.T) {
 	t.Run("a command that ends keeps its output and status", func(t *testing.T) {
 		m := marker(t)
 		code, stdout, stderr, took := runShellScript(t, ShellScript, m, "5", "2", "sh", "-c", "echo native; echo detail >&2; exit 3")
-		if code != 3 || stdout != "native\n" || stderr != "detail\n\n"+ShellEndPrefix+"3 0\n" || took > 3*time.Second {
+		if code != 3 || stdout != "native\n" || stderr != "detail\n\n"+ShellEndPrefix+m+" 3 0\n" || took > 3*time.Second {
 			t.Fatalf("code %d stdout %q stderr %q in %s", code, stdout, stderr, took)
 		}
 		if _, err := os.Stat(m); !os.IsNotExist(err) {
@@ -85,8 +85,9 @@ func TestShellScript(t *testing.T) {
 	})
 	t.Run("a command that runs too long is stopped", func(t *testing.T) {
 		command, pid := recordedCommand(t, "exec sleep 30")
-		code, _, stderr, took := runShellScript(t, ShellScript, append([]string{marker(t), "1", "2"}, command...)...)
-		if code != 143 || stderr != "\n"+ShellEndPrefix+"143 1\n" || took > 5*time.Second {
+		m := marker(t)
+		code, _, stderr, took := runShellScript(t, ShellScript, append([]string{m, "1", "2"}, command...)...)
+		if code != 143 || stderr != "\n"+ShellEndPrefix+m+" 143 1\n" || took > 5*time.Second {
 			t.Fatalf("code %d stderr %q in %s", code, stderr, took)
 		}
 		if processRunning(pid()) {
@@ -95,8 +96,9 @@ func TestShellScript(t *testing.T) {
 	})
 	t.Run("a command that ignores SIGTERM is killed after the grace", func(t *testing.T) {
 		command, pid := recordedCommand(t, `trap "" TERM; while :; do :; done`)
-		code, _, stderr, took := runShellScript(t, ShellScript, append([]string{marker(t), "1", "1"}, command...)...)
-		if code != 137 || stderr != "\n"+ShellEndPrefix+"137 1\n" || took > 6*time.Second {
+		m := marker(t)
+		code, _, stderr, took := runShellScript(t, ShellScript, append([]string{m, "1", "1"}, command...)...)
+		if code != 137 || stderr != "\n"+ShellEndPrefix+m+" 137 1\n" || took > 6*time.Second {
 			t.Fatalf("code %d stderr %q in %s", code, stderr, took)
 		}
 		if processRunning(pid()) {
@@ -138,7 +140,7 @@ func TestShellCancel(t *testing.T) {
 		if processRunning(pid) {
 			t.Fatal("the canceler returned while the command still ran")
 		}
-		if stderr := <-done; stderr != "\n"+ShellEndPrefix+"137 0\n" {
+		if stderr := <-done; stderr != "\n"+ShellEndPrefix+m+" 137 0\n" {
 			t.Fatalf("a canceled supervisor reported %q", stderr)
 		}
 		if matches, _ := filepath.Glob(m + "*"); len(matches) != 0 {
@@ -241,17 +243,17 @@ func TestShellEnd(t *testing.T) {
 		stopped bool
 		native  string
 	}{
-		{"detail\n\n" + ShellEndPrefix + "3 0\n", 3, false, "detail\n"},
-		{"detail\n" + ShellEndPrefix + "0 1\n", 0, true, "detail"},
-		{"\n" + ShellEndPrefix + "0 0\n", 0, false, ""},
+		{"detail\n\n" + ShellEndPrefix + "invocation 3 0\n", 3, false, "detail\n"},
+		{"detail\n" + ShellEndPrefix + "invocation 0 1\n", 0, true, "detail"},
+		{"\n" + ShellEndPrefix + "invocation 0 0\n", 0, false, ""},
 		{"detail\n", -1, false, "detail\n"},
-		{ShellEndPrefix + "0 0\n", -1, false, ShellEndPrefix + "0 0\n"},
-		{"\n" + ShellEndPrefix + "x 0\n", -1, false, "\n" + ShellEndPrefix + "x 0\n"},
-		{"\n" + ShellEndPrefix + "-1 0\n", -1, false, "\n" + ShellEndPrefix + "-1 0\n"},
-		{"\n" + ShellEndPrefix + "0 deadline\n", -1, false, "\n" + ShellEndPrefix + "0 deadline\n"},
+		{ShellEndPrefix + "invocation 0 0\n", -1, false, ShellEndPrefix + "invocation 0 0\n"},
+		{"\n" + ShellEndPrefix + "invocation x 0\n", -1, false, "\n" + ShellEndPrefix + "invocation x 0\n"},
+		{"\n" + ShellEndPrefix + "invocation -1 0\n", -1, false, "\n" + ShellEndPrefix + "invocation -1 0\n"},
+		{"\n" + ShellEndPrefix + "invocation 0 deadline\n", -1, false, "\n" + ShellEndPrefix + "invocation 0 deadline\n"},
 	} {
 		buffer := bytes.NewBufferString(tc.stderr)
-		code, stopped := shellEnd(buffer)
+		code, stopped := shellEnd(buffer, "invocation")
 		if code != tc.code || stopped != tc.stopped || buffer.String() != tc.native {
 			t.Errorf("%q: code=%d stopped=%v native=%q", tc.stderr, code, stopped, buffer.String())
 		}
@@ -260,9 +262,23 @@ func TestShellEnd(t *testing.T) {
 
 // localShellContainer executes the real supervisor and command with the host
 // shell, then frames its streams as Docker does. It starts no container.
-type localShellContainer struct{ testcontainers.Container }
+type localShellContainer struct {
+	testcontainers.Container
+	// omitTrailer models a lost supervisor report after the native command ends.
+	// It changes only reporting; no process is signaled or substituted.
+	omitTrailer bool
+}
 
-func (localShellContainer) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c localShellContainer) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if c.omitTrailer && args[2] == ShellScript {
+		args = append([]string(nil), args...)
+		start := strings.Index(args[2], "printf '\\n"+ShellEndPrefix)
+		end := strings.Index(args[2][start:], "\n") + start
+		args[2] = args[2][:start] + ":" + args[2][end:]
+	}
+	if args[2] == ShellCancelScript {
+		defer os.Remove(args[4])
+	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -294,6 +310,23 @@ func TestRunShellRetainsNativeStderrAndDoesNotInferDeadlineFromIt(t *testing.T) 
 				"sh", "-c", `printf abcdef; printf '%s' "$1" >&2; exit "$2"`, "sh", native, strconv.Itoa(status))
 			if err != nil || report.ExitCode != status || report.Stopped || string(report.Stderr) != native || string(report.Stdout) != "abc" || !report.StdoutTruncated {
 				t.Fatalf("stderr %q status %d: report %+v error %v", native, status, report, err)
+			}
+		}
+	}
+}
+
+// Native output with the same status as the outer exec is not settlement proof
+// when the invocation-specific supervisor trailer was lost.
+func TestRunShellRefusesNativeTrailerWithoutSupervisorReport(t *testing.T) {
+	for _, code := range []int{0, 3} {
+		for _, deadline := range []int{0, 1} {
+			for _, marker := range []string{"", "another-invocation "} {
+				native := "\n" + ShellEndPrefix + marker + strconv.Itoa(code) + " " + strconv.Itoa(deadline) + "\n"
+				report, err := RunShell(t.Context(), localShellContainer{omitTrailer: true}, "missing report", 5,
+					"sh", "-c", `printf '%s' "$1" >&2; exit "$2"`, "sh", native, strconv.Itoa(code))
+				if err == nil || !strings.Contains(err.Error(), "without its report") || report.Stopped {
+					t.Fatalf("native trailer %q accepted as settlement: %+v, %v", native, report, err)
+				}
 			}
 		}
 	}

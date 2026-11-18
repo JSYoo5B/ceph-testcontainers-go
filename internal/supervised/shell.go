@@ -25,7 +25,7 @@ const (
 	// within CancelTimeout.
 	shellCancelWait = 8
 	// ShellEndPrefix starts the supervisor trailer's last line, which
-	// carries the command's exit status and deadline flag; RunShell removes it.
+	// carries the invocation marker, command exit status and deadline flag; RunShell removes it.
 	ShellEndPrefix = "tc-supervised-sh: end "
 )
 
@@ -49,7 +49,7 @@ const (
 // official image, reports a job that a signal ended there.
 //
 // Its trailer is a separating newline, ShellEndPrefix, the command's exit
-// status and an explicit deadline flag. RunShell removes exactly that trailer
+// status and an explicit deadline flag, bound to the invocation marker. RunShell removes exactly that trailer
 // so native stderr bytes cannot supply the deadline flag.
 const ShellScript = `marker=$1 limit=$2 grace=$3
 shift 3
@@ -89,7 +89,7 @@ wait "$watcher" 2>/dev/null
 stopped=0
 [ -e "$marker.deadline" ] && stopped=1
 rm -f "$marker.deadline" "$marker"
-printf '\n` + ShellEndPrefix + `%s %s\n' "$code" "$stopped" >&2
+printf '\n` + ShellEndPrefix + `%s %s %s\n' "$marker" "$code" "$stopped" >&2
 exit "$code"
 `
 
@@ -170,7 +170,7 @@ func RunShellLimited(ctx context.Context, ctr testcontainers.Container, label st
 	}
 	end, stopped := -1, false
 	if err == nil {
-		end, stopped = shellEnd(&stderr)
+		end, stopped = shellEnd(&stderr, marker)
 	}
 	if err == nil && ctx.Err() == nil && end == code {
 		report := ShellReport{Stdout: stdout.Bytes(), ExitCode: code, StdoutTruncated: stdout.truncated}
@@ -212,7 +212,7 @@ func (b *prefixBuffer) Write(p []byte) (int, error) {
 
 // shellEnd removes the supervisor trailer and returns its status and deadline
 // flag. A missing or malformed trailer returns -1 and leaves stderr intact.
-func shellEnd(stderr *bytes.Buffer) (int, bool) {
+func shellEnd(stderr *bytes.Buffer, marker string) (int, bool) {
 	data := stderr.Bytes()
 	if !bytes.HasSuffix(data, []byte("\n")) {
 		return -1, false
@@ -222,7 +222,7 @@ func shellEnd(stderr *bytes.Buffer) (int, bool) {
 		return -1, false
 	}
 	line := string(data[start+1 : len(data)-1])
-	status, ok := strings.CutPrefix(line, ShellEndPrefix)
+	status, ok := strings.CutPrefix(line, ShellEndPrefix+marker+" ")
 	if !ok {
 		return -1, false
 	}

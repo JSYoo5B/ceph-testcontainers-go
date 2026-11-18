@@ -52,7 +52,7 @@ func Reply(original []string, code int, stream *bytes.Buffer, stopped ...bool) (
 		if len(stopped) > 0 && stopped[0] {
 			deadline = "1"
 		}
-		end := []byte("\n" + supervised.ShellEndPrefix + strconv.Itoa(code) + " " + deadline + "\n")
+		end := []byte("\n" + supervised.ShellEndPrefix + original[4] + " " + strconv.Itoa(code) + " " + deadline + "\n")
 		header := [8]byte{byte(stdcopy.Stderr)}
 		binary.BigEndian.PutUint32(header[4:], uint32(len(end)))
 		stream.Write(header[:])
