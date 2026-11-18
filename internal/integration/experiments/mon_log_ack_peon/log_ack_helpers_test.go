@@ -5,6 +5,7 @@ package mon_log_ack_peon_test
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -161,18 +162,20 @@ var (
 
 // routedLogAck binds an OSD's acknowledgement to the peon path: in the peon's
 // log, an MLog of entity is forwarded under a tid, and the MLogAck routed
-// back under that tid covers sent and is not discarded. It returns the tid,
-// or why no forwarded MLog of entity was acknowledged through the peon.
-func routedLogAck(log []byte, entity string, sent uint64) (string, string) {
-	mine := map[string]bool{}
+// back under that tid covers sent. The caller states whether it observed the
+// covering sequence arrive at the client or is looking for a discarded route.
+func routedLogAck(log []byte, entity string, sent uint64, discarded bool) (string, string) {
+	senders := map[string]string{}
 	for _, m := range monLogQuery.FindAllSubmatch(log, -1) {
-		if string(m[2]) == entity {
-			mine[string(m[1])] = true
+		message, sender := string(m[1]), string(m[2])
+		if prior, ok := senders[message]; ok && prior != sender {
+			sender = ""
 		}
+		senders[message] = sender
 	}
 	tids := map[string]bool{}
 	for _, m := range peonForward.FindAllSubmatch(log, -1) {
-		if mine[string(m[2])] {
+		if senders[string(m[2])] == entity {
 			tids[string(m[1])] = true
 		}
 	}
@@ -188,14 +191,47 @@ func routedLogAck(log []byte, entity string, sent uint64) (string, string) {
 		tid := string(m[1])
 		last, err := strconv.ParseUint(string(m[2]), 10, 64)
 		switch {
-		case !tids[tid] || err != nil:
-		case lost[tid]:
-			why = "the MLogAck of tid " + tid + " was discarded"
-		case last >= sent:
+		case !tids[tid] || err != nil || last < sent:
+		case lost[tid] == discarded:
 			return tid, ""
+		default:
+			why = fmt.Sprintf("covering MLogAck tid %s has discarded=%t, want %t", tid, lost[tid], discarded)
 		}
 	}
 	return "", why
+}
+
+// judgeLogAcks interprets the captured window after the caller has confirmed
+// the scrub records and stable MON layout. Every participant needs positive
+// send evidence and the peon route must explain the client's observed outcome.
+func judgeLogAcks(roles map[string]string, sessions map[string]logAckSessionID, progress map[string]logClientProgress, peonLogs map[string][]byte) ([]string, map[string]string, error) {
+	routes := make(map[string]string)
+	var symptoms []string
+	for _, entity := range slices.Sorted(maps.Keys(roles)) {
+		p := progress[entity]
+		if p.Sent == 0 {
+			return nil, routes, fmt.Errorf("%s has no observed log send", entity)
+		}
+		outstanding := p.Acked < p.Sent
+		if roles[entity] == "leader" {
+			if outstanding {
+				return nil, routes, fmt.Errorf("leader-connected %s was not acknowledged through sequence %d", entity, p.Sent)
+			}
+			continue
+		}
+		mon := sessions[entity].Mon
+		tid, why := routedLogAck(peonLogs[mon], entity, p.Sent, outstanding)
+		if why != "" {
+			return nil, routes, fmt.Errorf("%s through mon.%s: %s", entity, mon, why)
+		}
+		if outstanding {
+			routes[entity] = "discarded by mon." + mon + " tid " + tid
+			symptoms = append(symptoms, fmt.Sprintf("%s remained unacknowledged at sequence %d after mon.%s discarded its MLogAck on tid %s", entity, p.Sent, mon, tid))
+		} else {
+			routes[entity] = "acknowledged through mon." + mon + " tid " + tid
+		}
+	}
+	return symptoms, routes, nil
 }
 
 // missingScrubCommits checks the cluster log's commit order within one

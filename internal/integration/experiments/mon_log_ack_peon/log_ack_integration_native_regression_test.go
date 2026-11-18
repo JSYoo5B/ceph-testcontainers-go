@@ -39,8 +39,9 @@ var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 // the MONs, when each OSD writes two cluster log entries (scrub_purged_snaps)
 // and they reach the cluster log, with the leader-connected OSD acknowledged
 // and the leader, election epoch and sessions unchanged over the window, then
-// the defect is REPRODUCED if a peon-connected OSD is never acknowledged, and
-// NOT_REPRODUCED if every OSD is acknowledged through its own MON. A leader
+// the defect is REPRODUCED when a peon discards a covering MLogAck bound to
+// the peon-connected OSD's outstanding send, and NOT_REPRODUCED when every
+// OSD is acknowledged through its own MON. A leader
 // that also calls no_reply for a forwarded MLog, such as 20.2.4's, routes an
 // empty reply first, and the peon discards the MLogAck that follows, so the
 // OSD's LogClient queue is never trimmed. Squid 19.2.2 does not.
@@ -125,7 +126,7 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 	}
 	for deadline := time.Now().Add(time.Minute); len(waiting()) != 0 && time.Now().Before(deadline); time.Sleep(2 * time.Second) {
 	}
-	unacked := waiting()
+	waiting()
 
 	// The window is valid only if no OSD's MON session changed in it, even
 	// to return to the same MON, and the leader and election epoch held.
@@ -136,25 +137,16 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 			transitions[entity] = found
 		}
 	}
-	routes := map[string]string{}
+	peonLogs := map[string][]byte{}
 	lost := map[string][]string{}
 	for _, m := range mons {
-		if m.DaemonName == leader {
-			continue
-		}
-		peonLog := since("mon."+m.DaemonName, m)
-		lost["mon."+m.DaemonName] = lostRoutedAcks(peonLog)
-		for entity, id := range sessions {
-			if id.Mon != m.DaemonName {
-				continue
-			}
-			if tid, why := routedLogAck(peonLog, entity, progress[entity].Sent); why != "" {
-				routes[entity] = why
-			} else {
-				routes[entity] = "acknowledged through mon." + m.DaemonName + " tid " + tid
-			}
+		if m.DaemonName != leader {
+			peonLog := since("mon."+m.DaemonName, m)
+			peonLogs[m.DaemonName] = peonLog
+			lost["mon."+m.DaemonName] = lostRoutedAcks(peonLog)
 		}
 	}
+	symptoms, routes, verdictErr := judgeLogAcks(roles, sessions, progress, peonLogs)
 	after, afterEpoch, afterSessions, layoutErr := readLogAckLayout(t, ctx, cluster, mons)
 	receipt, _ := json.Marshal(map[string]any{"leader": leader, "roles": roles, "sessions": fmt.Sprint(sessions), "progress": progress,
 		"routes": routes, "transitions": transitions, "lost_routed_acks": lost})
@@ -163,29 +155,8 @@ func TestMONLogAckThroughPeon(t *testing.T) {
 		t.Fatalf("the window changed, so the comparison is invalid: leader mon.%s -> mon.%s, election epoch %d -> %d, sessions %v -> %v, session transitions %v: %v",
 			leader, after, epoch, afterEpoch, sessions, afterSessions, transitions, layoutErr)
 	}
-	var peonless []string
-	for _, entity := range unacked {
-		if roles[entity] == "leader" {
-			peonless = append(peonless, entity)
-		}
-	}
-	if len(peonless) != 0 {
-		t.Fatalf("the leader-connected OSDs %v were not acknowledged, so the oracle is invalid: %v", peonless, progress)
-	}
-	// Each symptom observed by the then step; none means NOT_REPRODUCED.
-	var symptoms []string
-	if len(unacked) != 0 {
-		counts := map[string]int{}
-		for mon, acks := range lost {
-			counts[mon] = len(acks)
-		}
-		symptoms = append(symptoms, fmt.Sprintf("the cluster log entries of the peon-connected OSDs %v were committed but never acknowledged (%v); the peons discarded routed MLogAcks %v", unacked, routes, counts))
-	} else {
-		for entity, role := range roles {
-			if role == "peon" && !strings.HasPrefix(routes[entity], "acknowledged through") {
-				t.Fatalf("%s was acknowledged, but not through its peon: %s", entity, routes[entity])
-			}
-		}
+	if verdictErr != nil {
+		t.Fatal(verdictErr)
 	}
 	if t.Failed() {
 		return

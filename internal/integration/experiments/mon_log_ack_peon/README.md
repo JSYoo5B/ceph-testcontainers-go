@@ -99,18 +99,20 @@ The test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=mon_log_ack_peon`.
 
 - **REPRODUCED:** the leader-connected control is acknowledged, a
-  peon-connected OSD is not, and the symptom names the peons' discarded
-  routes ("don't have routed request").
+  peon-connected OSD has an observed outstanding send, and its peon log
+  ties a forwarded request from that OSD to a covering MLogAck discarded
+  under the same route ID ("don't have routed request").
 - **NOT_REPRODUCED:** every OSD was acknowledged in a stable window, each
   peon-connected one through its own peon.
 - **Test failure (no result):** three MONs or OSDs do not start, no layout
   with a leader and a peon session is reached, the entries do not reach the
   cluster log, the leader-connected control is not acknowledged, the window
   is rejected for a leader, epoch or session change, or a peon-connected OSD
-  is acknowledged other than through its peon. A plain timeout is not a
-  reproduction.
+  lacks send evidence or a route attributable to its observed outcome.
+  A timeout without an attributed discarded acknowledgement leaves the
+  outcome inconclusive.
 
-Native results (Linux amd64 host, Docker, aggregate images, one run each):
+Recorded results using the original oracle (Linux amd64, Docker, aggregate images, one run each). Its discarded-route counts were diagnostic:
 
 | Image | Result | Time |
 | --- | --- | --- |
