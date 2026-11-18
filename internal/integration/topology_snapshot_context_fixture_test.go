@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -30,6 +31,13 @@ func TestTopologySnapshotUnjoinedActorKeepsRejectingHandles(t *testing.T) {
 			pending.Add(-1)
 			return err
 		})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		defer func() {
+			unblock()
+			_, _ = actor.wait(context.Background())
+			actor.cancel()
+		}()
 		joinCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if _, err := actor.wait(joinCtx); !errors.Is(err, context.DeadlineExceeded) {
@@ -41,7 +49,7 @@ func TestTopologySnapshotUnjoinedActorKeepsRejectingHandles(t *testing.T) {
 		if cluster.Container != barrier {
 			t.Fatal("unjoined worker lost the rejecting handle")
 		}
-		close(release)
+		unblock()
 		err, joinErr := actor.wait(context.Background())
 		if joinErr != nil || !errors.Is(err, errTopologySnapshotBarrier) || barrier.queries.Load() != 1 {
 			t.Fatalf("late native work was not rejected: %v %v", err, joinErr)

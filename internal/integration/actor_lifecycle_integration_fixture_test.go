@@ -46,6 +46,9 @@ func TestIntegrationActorCleanup(t *testing.T) {
 					}
 					return nil
 				})
+				var finishOnce sync.Once
+				unblock := func() { finishOnce.Do(func() { close(finish) }) }
+				defer func() { unblock(); a.cancel(); _, _ = a.wait(context.Background()) }()
 				synctest.Wait()
 				report := new(actorCleanupReport)
 				a.cleanup(report, func(context.Context) error { close(release); return nil })
@@ -56,7 +59,7 @@ func TestIntegrationActorCleanup(t *testing.T) {
 				} else if len(report.errors) != 0 {
 					t.Fatal(report.errors)
 				}
-				close(finish)
+				unblock()
 				synctest.Wait()
 				for range 2 {
 					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
