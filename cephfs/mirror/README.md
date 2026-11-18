@@ -95,8 +95,11 @@ shares (baseline, gaps, overflow and `Stop`) is in
   the other owned paths when the native policy is idle, and forgets the
   removed path once its absence is confirmed. The
   MGR's mirroring module can hang for good when a directory is removed while
-  another assignment is changing; `RebalanceDirectories` waits for an idle
-  policy, plain removals do not, and `ceph mgr fail` recovers.
+  another assignment is changing. `RebalanceDirectories`, `RemoveDirectory`
+  and `BeginDirectoryRemoval` wait for an idle native policy before dispatching
+  a removal, for up to two minutes. This admission does not prove daemon
+  release or fence independent native policy/topology changes. `ceph mgr fail`
+  recovers a hung MGR.
 - Plain calls only change Ceph's policy; tracked calls return receipts whose
   `Released` or `Drained` proves the daemons' side. Neither proves remote
   unlock, checkpoint completion or unchanged destination metadata. A tracked

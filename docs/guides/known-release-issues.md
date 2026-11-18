@@ -289,8 +289,11 @@ daemons joining or leaving, can trigger it.
 
 - Affected: Squid and Tentacle; the patches that were run are not recorded,
   and Umbrella was not run.
-- Guidance: `cephfsmirror.Container.RebalanceDirectories` waits for an idle
-  policy, plain removals do not, and `ceph mgr fail` recovers; see
+- Guidance: `cephfsmirror.Container.RebalanceDirectories`, `RemoveDirectory`
+  and `BeginDirectoryRemoval` wait up to two minutes for an idle native policy
+  before dispatching a removal. This admission neither proves daemon release
+  nor fences independent native topology/policy changes. `ceph mgr fail`
+  recovers a hung MGR; see
   [`cephfs/mirror`](../../cephfs/mirror/README.md).
 
 ### CephFS mirror of a file whose object stayed empty
