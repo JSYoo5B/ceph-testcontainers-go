@@ -238,8 +238,9 @@ func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tls
 	if err != nil {
 		return fmt.Errorf("inspect RGW before replacing its TLS certificate: %w", err)
 	}
+	invalidState := servicehook.Invalid(errors.New("RGW gateway is not running; its TLS certificate is replaced only in a running gateway"))
 	if state == nil || state.Paused || state.Restarting {
-		return errors.New("RGW run state is unavailable for TLS replacement")
+		return invalidState
 	}
 	if listener.stopStart != nil {
 		same := state.StartedAt == *listener.stopStart
@@ -259,7 +260,7 @@ func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tls
 		listener.stopStart = nil
 	}
 	if !state.Running {
-		return servicehook.Invalid(errors.New("RGW gateway is not running; its TLS certificate is replaced only in a running gateway"))
+		return invalidState
 	}
 	if err := listener.reconcile(ctx); err != nil {
 		return err
