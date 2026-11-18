@@ -133,8 +133,8 @@ username, password := d.Credentials()
 - **Restoration.** `Restore` verifies the Dashboard account's display name
   before deletion. Keep the generated display name unchanged because it
   marks the account as owned by this fixture. It keeps the module enabled until the gateway link,
-  account, multi-cluster record and certificate steps succeed. It still
-  attempts the listener options, retains the fixture slot on error and
+  account, multi-cluster record and certificate steps succeed. After settling
+  observations, it still attempts the listener options, retains the fixture slot on error and
   retries the unfinished steps on the next call. The module keeps its access database and token
   signing key (`mgr/dashboard/accessdb_v2`, `mgr/dashboard/jwt_secret`) after
   `Restore`; they hold no fixture account.

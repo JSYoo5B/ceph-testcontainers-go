@@ -776,7 +776,8 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // An outside change to a certificate, key, listener option or
 // module state that would be overwritten is refused. External account
 // changes must not race the native read and delete commands.
-// Restore still attempts the listener options. It keeps the module enabled
+// Once observations are settled, Restore still attempts the listener options.
+// It keeps the module enabled
 // until the preceding steps succeed, retains the fixture slot on error, and
 // retries unfinished steps on the next call. When it disables the module it
 // waits for the MGR map to withdraw the service. A deleted account is not an
