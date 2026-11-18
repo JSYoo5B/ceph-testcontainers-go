@@ -17,8 +17,10 @@ import (
 // selected source and destination namespaces. State, Description and LastUpdate
 // are the destination's native local status, not its remote peer status.
 // ReplayReady means an owned receiving process is currently replaying this
-// source-primary/destination-secondary pair. It proves neither completion of a
-// particular write nor completion of a mirror snapshot. Verify application data
+// source-primary/destination-secondary pair, with its selected peer and namespace
+// discovered and the same process generation around the socket read. This is
+// not an atomic snapshot or a whole-cohort election verdict. It proves neither
+// completion of a particular write nor completion of a mirror snapshot. Verify application data
 // or the application's explicit checkpoint separately.
 //
 // GlobalID is the native global mirror image ID, equal on both sides.
@@ -225,7 +227,8 @@ func (o *rbdImageObservation) attributeScoped(ctx context.Context, service *rbdO
 }
 
 // attributeOwned matches the reporting service to a fixture daemon and
-// requires that running process to replay the pool with the same instance.
+// requires a stable running process to discover the selected peer and namespace
+// with the same instance. Other receivers and election readiness are not required.
 func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdObservedService) error {
 	for _, daemon := range o.m.roster.daemons {
 		if daemon == nil || daemon.Container == nil {
@@ -239,20 +242,32 @@ func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdOb
 			continue
 		}
 		o.result.DaemonName, o.result.InstanceID = daemon.DaemonName, service.InstanceID
-		state, err := daemon.State(ctx)
+		if o.m.receiver.peer == nil {
+			return nil // No recorded peer can attribute this discovery report.
+		}
+		before, err := daemon.State(ctx)
 		if err != nil {
 			return rbdImageQueryError("inspect RBD receiving process", err)
 		}
-		if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+		if !normalRBDReceiverProcess(before) {
 			return nil
 		}
-		native, err := rbdObservedRead.daemonStatus(ctx, daemon.Container, "read RBD receiving process status")
+		// Copy generation fields before another container inspection can update
+		// an implementation's reused State value.
+		pid, started := before.Pid, before.StartedAt
+		data, err := rbdObservedRead.exec(ctx, daemon.Container, "read RBD receiving process status", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 		if err != nil {
 			return err
 		}
-		o.result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
-			return pool.Pool == o.m.pair.config.Pool && pool.State == "running" && pool.InstanceID == service.InstanceID
-		})
+		native, present, err := decodeRBDReceiverDiscovery(data, o.m.pair.config.Pool, o.m.receiver.peer)
+		if err != nil {
+			return rbdImageGuardError("decode RBD receiving process discovery")
+		}
+		after, err := daemon.State(ctx)
+		if err != nil {
+			return rbdImageQueryError("recheck RBD receiving process", err)
+		}
+		o.result.ReplayReady = normalRBDReceiverProcess(after) && pid == after.Pid && started == after.StartedAt && present && native.state == "running" && native.instance == service.InstanceID && slices.Contains(native.namespaces, rbdReceiverNamespace{o.m.pair.config.DestinationNamespace, o.m.pair.config.SourceNamespace})
 		return nil
 	}
 	return nil
@@ -467,6 +482,12 @@ func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Contai
 
 func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObservedInfo, error) {
 	var result rbdObservedInfo
+	if err := rbdObservedRead.json(data); err != nil {
+		return result, err
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+
 	// Explicit native key tags matter: global_id is not Go's GlobalID.
 	var tagged struct {
 		Name      *string `json:"name"`
@@ -480,6 +501,17 @@ func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObserv
 	}
 	if json.Unmarshal(data, &tagged) != nil || tagged.Name == nil || tagged.ID == nil || *tagged.Name != name || *tagged.ID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing name/identity")
+	}
+	if raw, present := fields["mirroring"]; present {
+		var mirrorFields map[string]json.RawMessage
+		if string(raw) == "null" || json.Unmarshal(raw, &mirrorFields) != nil {
+			return result, rbdImageGuardError("decode RBD mirror image info: null mirroring")
+		}
+		for _, key := range []string{"mode", "state", "global_id", "primary"} {
+			if value, exists := mirrorFields[key]; exists && string(value) == "null" {
+				return result, rbdImageGuardError("decode RBD mirror image info: null mirroring field")
+			}
+		}
 	}
 	mirror := tagged.Mirroring
 	// rbd info prints mirroring for a disabled image only when it has the
@@ -521,6 +553,12 @@ func readRBDMirrorObservedStatus(ctx context.Context, client testcontainers.Cont
 
 func decodeRBDMirrorObservedStatus(data []byte, name, globalID string) (rbdObservedStatus, error) {
 	var result rbdObservedStatus
+	if err := rbdObservedRead.json(data); err != nil {
+		return result, err
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+
 	var native struct {
 		Name        *string             `json:"name"`
 		GlobalID    *string             `json:"global_id"`
@@ -532,11 +570,12 @@ func decodeRBDMirrorObservedStatus(data []byte, name, globalID string) (rbdObser
 	if json.Unmarshal(data, &native) != nil || native.Name == nil || *native.Name != name || native.GlobalID == nil || *native.GlobalID != globalID {
 		return result, rbdImageGuardError("decode RBD mirror image status: missing, malformed or differing identity")
 	}
+	if service, present := fields["daemon_service"]; present && string(service) == "null" {
+		return result, rbdImageGuardError("decode RBD mirror image status: null daemon service")
+	}
 	// Ceph omits all local fields when no local site report exists yet.
 	// This supported initial state is non-ready, not a malformed schema.
 	if native.State == nil && native.Description == nil && native.LastUpdate == nil && native.Service == nil {
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(data, &fields)
 		for _, key := range []string{"state", "description", "last_update", "daemon_service"} {
 			if _, exists := fields[key]; exists {
 				return result, rbdImageGuardError("decode RBD mirror image status: null local fields")

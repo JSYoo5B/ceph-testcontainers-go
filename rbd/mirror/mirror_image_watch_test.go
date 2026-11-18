@@ -134,7 +134,7 @@ func TestRBDImageWatchIgnoresStatusProseAndReportsAssignment(t *testing.T) {
 	if instance.Kind != ceph.WatchChanged || instance.Err != nil || !instance.Status.ReplayReady || instance.Status.InstanceID != "124" || instance.Status.LastUpdate != "2026-10-07 00:01:00" {
 		t.Fatalf("new native instance = %+v", instance)
 	}
-	other := &rbdImageStatusDaemon{running: true, status: `{"pool_replayers":[{"pool":"images","peer":"peer","state":"running","instance_id":"300"}]}`}
+	other := &rbdImageStatusDaemon{running: true, status: receiverTestStatus(link.pair.config.DestinationNamespace, link.pair.config.SourceNamespace, "300", "300", true, []string{"300"})}
 	changeMirror(link, func() {
 		link.roster.daemons = append(link.roster.daemons, &Daemon{Container: other, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
 		destination.imageStatus = rbdWatchImageStatus("300", "tc-other", "up+replaying", "2026-10-07 00:02:00")

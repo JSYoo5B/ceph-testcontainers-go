@@ -32,13 +32,8 @@ func RBDScopeCreate(t *testing.T, ctx context.Context, client testcontainers.Con
 
 func RBDScopeAssertUnmirrored(t *testing.T, ctx context.Context, client testcontainers.Container, image string) {
 	t.Helper()
-	var info struct {
-		Mirroring *struct {
-			State string `json:"state"`
-		} `json:"mirroring"`
-	}
-	if err := json.Unmarshal(RBDOutput(t, ctx, client, "info", image, "--format", "json"), &info); err != nil || (info.Mirroring != nil && info.Mirroring.State != "" && info.Mirroring.State != "disabled") {
-		t.Fatalf("unselected image was enrolled: %s info=%+v error=%v", image, info, err)
+	if err := RBDRequireUnmirrored(RBDOutput(t, ctx, client, "info", image, "--format", "json"), image); err != nil {
+		t.Fatal(err)
 	}
 }
 

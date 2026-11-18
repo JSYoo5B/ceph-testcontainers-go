@@ -57,7 +57,8 @@ type ImmutableObjectCache struct {
 type ImmutableObjectCacheStatus struct {
 	// Running means that the daemon the lease started still runs.
 	Running bool
-	// PID is the daemon's process ID in the client container.
+	// PID is the owned daemon's observed process ID in the client container,
+	// including after an unconfirmed start. It is zero when Running is false.
 	PID int
 	// CachedObjects and CachedBytes count the daemon's object files and
 	// their bytes. Lease ownership records are excluded.
@@ -510,14 +511,19 @@ status)
     test "$pid" -gt 0 || pid=$(cat "$private_pid" 2>/dev/null)
     if ours "$pid" "$private_pid" "$private_sock"; then
         echo running=1
+        echo "pid=$pid"
         echo "perf=$(ceph --admin-daemon "$private_admin" perf dump objecter 2>/dev/null | tr -d '\n')"
     else
         echo running=0
+        echo pid=0
     fi
     if test -d "$path/$marker/objects"; then
         test "$(readlink "$path/$marker/owner")" = "$0:$control" || exit 1
         echo dir=1
-        find "$path/$marker/objects" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { printf "files=%d\nbytes=%.0f\n", n, b }'
+        { find "$path/$marker/objects" -type f -printf '%s\n'; printf 'status=%s\n' "$?"; } |
+            awk '/^status=/ { complete=($0 == "status=0"); next }
+                 { n++; b += $1 }
+                 END { if (!complete) exit 1; printf "files=%d\nbytes=%.0f\n", n, b }' || exit 1
     else
         echo dir=0
     fi
@@ -950,7 +956,7 @@ func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObject
 	if err != nil {
 		return ImmutableObjectCacheStatus{}, fmt.Errorf("read the immutable object cache: %w", err)
 	}
-	return parseImmutableObjectCacheStatus(out, l.pid)
+	return parseImmutableObjectCacheStatus(out)
 }
 
 // Stop stops the daemon, with SIGTERM and then SIGKILL, and keeps the cache

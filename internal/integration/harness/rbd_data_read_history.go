@@ -34,6 +34,9 @@ func RBDDataReadsInHistory(out []byte, objects map[string]bool) (map[string]stri
 	}
 	reads := map[string]string{}
 	for _, op := range *history.Ops {
+		if strings.TrimSpace(op.Description) == "" {
+			return nil, errors.New("OSD history operation is missing its description")
+		}
 		if !strings.HasPrefix(op.Description, "osd_op(") || !rbdDataReadOp.MatchString(op.Description) {
 			continue
 		}

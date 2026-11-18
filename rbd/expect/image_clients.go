@@ -38,7 +38,10 @@ const (
 // handoff an observation can report the new owner without its watch, so an
 // owner-watch mismatch is a possible observed state, not proof of a fault;
 // the test decides whether and when to read again. A match does not prove
-// that the owner can write.
+// that the owner can write. OwnerWatches does not compare watch cookies: two
+// image handles on the same client connection can watch at the same address
+// with different cookies. Matching a specific watch instance requires comparing
+// the managed lock ID with the watcher cookie in the observed records.
 type ImageClients struct {
 	Lock         ExclusiveLock
 	Owner        string

@@ -151,9 +151,9 @@ func (f *fakeCacheClient) cacheCommand(args []string) (int, io.Reader, error) {
 		out = append(out, fmt.Sprintf("pid=%d", d.pid), "ready="+ready)
 	case "status":
 		if d := f.daemon(a[0], a[1], a[4]); d != nil {
-			out = append(out, "running=1", fmt.Sprintf(`perf={"objecter": {"op_r": %d}}`, d.reads))
+			out = append(out, "running=1", fmt.Sprintf("pid=%d", d.pid), fmt.Sprintf(`perf={"objecter": {"op_r": %d}}`, d.reads))
 		} else {
-			out = append(out, "running=0")
+			out = append(out, "running=0", "pid=0")
 		}
 		if f.files[a[3]] == "dir" {
 			out = append(out, "dir=1", fmt.Sprintf("files=%d", f.objects[a[3]][0]), fmt.Sprintf("bytes=%d", f.objects[a[3]][1]))
@@ -395,7 +395,7 @@ func TestImmutableObjectCacheUnconfirmedStartKeepsTheLease(t *testing.T) {
 	if err == nil || lease == nil || client.running() != 1 {
 		t.Fatalf("an exec failure of start: %v, %v, %d daemons", lease, err, client.running())
 	}
-	if status, err := lease.Status(t.Context()); err != nil || !status.Running {
+	if status, err := lease.Status(t.Context()); err != nil || !status.Running || status.PID != client.daemons[0].pid {
 		t.Fatalf("status of the unconfirmed daemon %+v, %v", status, err)
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -477,13 +477,13 @@ func TestImmutableObjectCacheStatusOutput(t *testing.T) {
 		lines []string
 		want  ImmutableObjectCacheStatus
 	}{
-		"zero values":    {[]string{"running=1", perf, "dir=1", "files=0", "bytes=0"}, ImmutableObjectCacheStatus{Running: true, PID: 7}},
-		"no directory":   {[]string{"running=0", "dir=0"}, ImmutableObjectCacheStatus{PID: 7}},
-		"stopped counts": {[]string{"running=0", "dir=1", "files=2", "bytes=9223372036854775807"}, ImmutableObjectCacheStatus{PID: 7, CachedObjects: 2, CachedBytes: 1<<63 - 1}},
-		"reads":          {[]string{"running=1", `perf={"objecter": {"op_r": 18446744073709551615}}`, "dir=0"}, ImmutableObjectCacheStatus{Running: true, PID: 7, RADOSReads: 1<<64 - 1}},
+		"zero values":    {[]string{"running=1", "pid=7", perf, "dir=1", "files=0", "bytes=0"}, ImmutableObjectCacheStatus{Running: true, PID: 7}},
+		"no directory":   {[]string{"running=0", "pid=0", "dir=0"}, ImmutableObjectCacheStatus{}},
+		"stopped counts": {[]string{"running=0", "pid=0", "dir=1", "files=2", "bytes=9223372036854775807"}, ImmutableObjectCacheStatus{CachedObjects: 2, CachedBytes: 1<<63 - 1}},
+		"reads":          {[]string{"running=1", "pid=7", `perf={"objecter": {"op_r": 18446744073709551615}}`, "dir=0"}, ImmutableObjectCacheStatus{Running: true, PID: 7, RADOSReads: 1<<64 - 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := parseImmutableObjectCacheStatus(cacheOutput("status", test.lines...), 7)
+			got, err := parseImmutableObjectCacheStatus(cacheOutput("status", test.lines...))
 			if err != nil || got != test.want {
 				t.Fatalf("%+v, %v", got, err)
 			}
@@ -493,26 +493,29 @@ func TestImmutableObjectCacheStatusOutput(t *testing.T) {
 		lines []string
 		want  string
 	}{
-		"no output":         {nil, "status output: running: the field is missing"},
-		"missing files":     {[]string{"running=0", "dir=1", "bytes=0"}, "files: the field is missing"},
-		"missing bytes":     {[]string{"running=0", "dir=1", "files=0"}, "bytes: the field is missing"},
-		"missing dir":       {[]string{"running=0", "files=0", "bytes=0"}, "dir: the field is missing"},
-		"missing perf":      {[]string{"running=1", "dir=0"}, "perf: the field is missing"},
-		"empty files":       {[]string{"running=0", "dir=1", "files=", "bytes=0"}, `files: "" is not an unsigned decimal`},
-		"malformed bytes":   {[]string{"running=0", "dir=1", "files=0", "bytes=1e+09"}, `bytes: "1e+09" is not an unsigned decimal`},
-		"negative files":    {[]string{"running=0", "dir=1", "files=-1", "bytes=0"}, `files: "-1" is not an unsigned decimal`},
-		"bytes overflow":    {[]string{"running=0", "dir=1", "files=0", "bytes=9223372036854775808"}, "bytes: 9223372036854775808 does not fit in 63 bits"},
-		"files overflow":    {[]string{"running=0", "dir=1", "files=99999999999999999999", "bytes=0"}, "does not fit in"},
-		"malformed running": {[]string{"running=yes", "dir=0"}, `running: "yes" is neither 0 nor 1`},
-		"repeated field":    {[]string{"running=0", "dir=0", "dir=1"}, "dir: the field is repeated"},
-		"unknown field":     {[]string{"running=0", "dir=0", "pid=1"}, "pid: the field is not one of"},
-		"stray line":        {[]string{"running=0", "dir=0", "warning"}, `the line "warning" is not key=value`},
-		"missing op_r":      {[]string{"running=1", `perf={"objecter": {}}`, "dir=0"}, "objecter.op_r is missing"},
-		"malformed perf":    {[]string{"running=1", "perf=", "dir=0"}, "parse the immutable object cache counters"},
-		"op_r overflow":     {[]string{"running=1", `perf={"objecter": {"op_r": 18446744073709551616}}`, "dir=0"}, "parse the immutable object cache counters"},
+		"no output":            {nil, "status output: running: the field is missing"},
+		"missing pid":          {[]string{"running=1", "dir=0"}, "pid: the field is missing"},
+		"zero running pid":     {[]string{"running=1", "pid=0", "dir=0"}, "must be positive"},
+		"positive stopped pid": {[]string{"running=0", "pid=7", "dir=0"}, "must be positive"},
+		"missing files":        {[]string{"running=0", "pid=0", "dir=1", "bytes=0"}, "files: the field is missing"},
+		"missing bytes":        {[]string{"running=0", "pid=0", "dir=1", "files=0"}, "bytes: the field is missing"},
+		"missing dir":          {[]string{"running=0", "pid=0", "files=0", "bytes=0"}, "dir: the field is missing"},
+		"missing perf":         {[]string{"running=1", "pid=7", "dir=0"}, "perf: the field is missing"},
+		"empty files":          {[]string{"running=0", "pid=0", "dir=1", "files=", "bytes=0"}, `files: "" is not an unsigned decimal`},
+		"malformed bytes":      {[]string{"running=0", "pid=0", "dir=1", "files=0", "bytes=1e+09"}, `bytes: "1e+09" is not an unsigned decimal`},
+		"negative files":       {[]string{"running=0", "pid=0", "dir=1", "files=-1", "bytes=0"}, `files: "-1" is not an unsigned decimal`},
+		"bytes overflow":       {[]string{"running=0", "pid=0", "dir=1", "files=0", "bytes=9223372036854775808"}, "bytes: 9223372036854775808 does not fit in 63 bits"},
+		"files overflow":       {[]string{"running=0", "pid=0", "dir=1", "files=99999999999999999999", "bytes=0"}, "does not fit in"},
+		"malformed running":    {[]string{"running=yes", "dir=0"}, `running: "yes" is neither 0 nor 1`},
+		"repeated field":       {[]string{"running=0", "pid=0", "dir=0", "dir=1"}, "dir: the field is repeated"},
+		"unknown field":        {[]string{"running=0", "pid=0", "dir=0", "unknown=1"}, "unknown: the field is not one of"},
+		"stray line":           {[]string{"running=0", "pid=0", "dir=0", "warning"}, `the line "warning" is not key=value`},
+		"missing op_r":         {[]string{"running=1", "pid=7", `perf={"objecter": {}}`, "dir=0"}, "objecter.op_r is missing"},
+		"malformed perf":       {[]string{"running=1", "pid=7", "perf=", "dir=0"}, "parse the immutable object cache counters"},
+		"op_r overflow":        {[]string{"running=1", "pid=7", `perf={"objecter": {"op_r": 18446744073709551616}}`, "dir=0"}, "parse the immutable object cache counters"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := parseImmutableObjectCacheStatus(cacheOutput("status", test.lines...), 7)
+			_, err := parseImmutableObjectCacheStatus(cacheOutput("status", test.lines...))
 			if err == nil || !strings.Contains(err.Error(), test.want) || errors.Is(err, ceph.ErrNativeFailure) {
 				t.Fatalf("got %v, want %q", err, test.want)
 			}
