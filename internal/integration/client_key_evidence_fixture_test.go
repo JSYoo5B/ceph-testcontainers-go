@@ -1,5 +1,7 @@
 //go:build all || (integration && (!ci || (ci_code && (!ci_batch || ci_batch_pure))))
 
+//ci: timeout=20m job-timeout=30
+
 package integration_test
 
 import (
