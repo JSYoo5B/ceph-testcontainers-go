@@ -81,6 +81,15 @@ func TestClientMetricsSectionReader(t *testing.T) {
 		"label not a string":    metricsDump(`{"labels":{"client":4101,"rank":"0"},"counters":{}}`),
 		"rank label not string": metricsDump(`{"labels":{"client":"client.4101","rank":0},"counters":{}}`),
 	}
+	for _, name := range []string{"client", "rank"} {
+		for _, value := range []string{"null", `""`, `" "`} {
+			row := strings.Replace(metricsRow(9, "0", totals(0, 0)), `"client":"client.9"`, `"client":`+value, 1)
+			if name == "rank" {
+				row = strings.Replace(metricsRow(9, "0", totals(0, 0)), `"rank":"0"`, `"rank":`+value, 1)
+			}
+			rejects[name+" "+value+" beside selected rows"] = metricsDump(metricsRow(metricsWriter, "0", totals(1, 131072)), metricsRow(metricsIdle, "0", totals(0, 0)), row)
+		}
+	}
 	for name, dump := range rejects {
 		t.Run("rejects "+name, func(t *testing.T) {
 			if got, err := parseClientMetricsSection(dump, metricsFS, 0, metricsWriter, metricsIdle); err == nil {
