@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -276,6 +277,18 @@ type upgradeMonReceipt struct {
 	CleanupErr error // cleanup failures, never merged into Err
 }
 
+// clone gives each receipt recipient independent mutable evidence.
+func (r upgradeMonReceipt) clone() upgradeMonReceipt {
+	r.Events = slices.Clone(r.Events)
+	r.Instances = slices.Clone(r.Instances)
+	r.Writes = slices.Clone(r.Writes)
+	r.Workload.Classes = maps.Clone(r.Workload.Classes)
+	r.Workload.Violations = slices.Clone(r.Workload.Violations)
+	r.Workload.Inconclusive = slices.Clone(r.Workload.Inconclusive)
+	r.Workload.Unknown = slices.Clone(r.Workload.Unknown)
+	return r
+}
+
 type upgradeMonStep struct {
 	cfg upgradeMonStepConfig
 
@@ -305,11 +318,7 @@ func (s *upgradeMonStep) firstReceipt() (upgradeMonReceipt, bool) {
 	if s.first == nil {
 		return upgradeMonReceipt{}, false
 	}
-	rc := *s.first
-	rc.Events = slices.Clone(rc.Events)
-	rc.Instances = slices.Clone(rc.Instances)
-	rc.Writes = slices.Clone(rc.Writes)
-	return rc, true
+	return s.first.clone(), true
 }
 
 func newUpgradeMonStep(cfg upgradeMonStepConfig) (*upgradeMonStep, error) {
@@ -338,10 +347,7 @@ func (s *upgradeMonStep) run(ctx context.Context) upgradeMonReceipt {
 	}
 	rc := s.execute(ctx)
 	s.mu.Lock()
-	kept := rc
-	kept.Events = slices.Clone(rc.Events)
-	kept.Instances = slices.Clone(rc.Instances)
-	kept.Writes = slices.Clone(rc.Writes)
+	kept := rc.clone()
 	s.first = &kept
 	s.mu.Unlock()
 	return rc
@@ -492,11 +498,7 @@ func (s *upgradeMonStep) Finish(ctx context.Context, rc upgradeMonReceipt, ledge
 		rc.Writes = append(rc.Writes, *r)
 	}
 	if s.cfg.OnReceipt != nil {
-		snapshot := rc
-		snapshot.Events = slices.Clone(rc.Events)
-		snapshot.Instances = slices.Clone(rc.Instances)
-		snapshot.Writes = slices.Clone(rc.Writes)
-		s.cfg.OnReceipt(snapshot)
+		s.cfg.OnReceipt(rc.clone())
 	}
 	if len(rc.Instances) > 0 {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
