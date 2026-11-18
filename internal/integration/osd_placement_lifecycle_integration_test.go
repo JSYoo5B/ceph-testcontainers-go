@@ -36,7 +36,7 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	location := ceph.OSDConfig{Host: "retained-host", Rack: "retained-rack", Root: "default"}
+	location := ceph.OSDConfig{Host: "retained-host", Rack: "retained-rack", Root: "default", DeviceClass: "fixture-fast"}
 	original, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithPlacement(location))
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +60,7 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 		return state.Location
 	}
 	oldLocation, neighborLocation := find(original.ID), find(neighbor.ID)
+	identities := osdMemoryIdentities(t, ctx, cluster)
 	detached, err := original.Detach(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +87,10 @@ func TestOSDPlacementLifecycle(t *testing.T) {
 	}
 	if reopened.ID != original.ID || !maps.Equal(oldLocation, find(reopened.ID)) || !maps.Equal(oldLocation, find(shared.ID)) || !maps.Equal(neighborLocation, find(neighbor.ID)) {
 		t.Fatal("same-parent sharing or reopen changed the native hierarchy")
+	}
+	after := osdMemoryIdentities(t, ctx, cluster)
+	if after[original.ID] != identities[original.ID] || after[neighbor.ID] != identities[neighbor.ID] || after[shared.ID] == "" {
+		t.Fatal("retained or neighboring native identity changed")
 	}
 	// The fixture's shared volume makes this an ordinary fresh-store refusal,
 	// after native registration but before any daemon can use the directory.

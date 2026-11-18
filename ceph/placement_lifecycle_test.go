@@ -96,3 +96,19 @@ func TestDetachedPlacementRemainsReserved(t *testing.T) {
 		})
 	}
 }
+
+func TestReopenedPlacementRequiresDeviceClassConfirmation(t *testing.T) {
+	f := newRetainedFixture(t)
+	osd := osdHandle(t, t.Context(), f.cluster, 3)
+	osd.placement.DeviceClass = "fast"
+	detached, err := osd.Detach(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lifecycle control refuses the class command. A started reopened
+	// daemon still cannot publish a class that this fixture has not confirmed.
+	reopened, err := detached.Reopen(t.Context())
+	if err == nil || reopened == nil || reopened.Container == nil || reopened.placementReady {
+		t.Fatalf("unconfirmed reopened class became eligible: %v, %v", reopened, err)
+	}
+}
