@@ -194,8 +194,9 @@ func TestConcurrentRecoverableBridges(t *testing.T) {
 		wg.Go(func() { bridges[i], errs[i] = dockerbridge.New(ctx) })
 	}
 	wg.Wait()
-	var subnets []netip.Prefix
-	for i, bridge := range bridges {
+	// Register every owned result before reporting any allocation or
+	// inspection failure. An error may accompany an owned partial bridge.
+	for _, bridge := range bridges {
 		if bridge != nil {
 			t.Cleanup(func() {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
@@ -205,8 +206,14 @@ func TestConcurrentRecoverableBridges(t *testing.T) {
 				}
 			})
 		}
+	}
+	var subnets []netip.Prefix
+	for i, bridge := range bridges {
 		if errs[i] != nil {
 			t.Fatalf("bridge %d of %d created at once: %v", i+1, count, errs[i])
+		}
+		if bridge == nil {
+			t.Fatalf("bridge %d of %d lacks an allocation", i+1, count)
 		}
 		inspection, err := docker.NetworkInspect(ctx, bridge.ID, mobycl.NetworkInspectOptions{})
 		if err != nil || len(inspection.Network.IPAM.Config) != 1 {
