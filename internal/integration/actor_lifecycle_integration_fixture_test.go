@@ -94,6 +94,9 @@ func (c *actorLifecycleContainer) Exec(ctx context.Context, args []string, _ ...
 		}
 		return 0, strings.NewReader(""), nil
 	case "touch":
+		if c.mode == "ignore" {
+			return 0, strings.NewReader(""), nil
+		}
 		c.once.Do(func() { close(c.release) })
 		return 0, strings.NewReader(""), nil
 	case "cat":
@@ -117,7 +120,7 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 			}
 		})
 		switch mode {
-		case "early", "malformed":
+		case "early", "malformed", "ignore":
 			startDualStackSession(t, t.Context(), c, "script", "control")
 		case "retained":
 			r := startRetainedClient(t, t.Context(), c, "control", "pool", "fs")
@@ -128,7 +131,7 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 		}
 		t.Fatal("injected intermediate assertion")
 	}
-	for _, mode := range []string{"early", "malformed", "retained", "family"} {
+	for _, mode := range []string{"early", "malformed", "retained", "family", "ignore"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()

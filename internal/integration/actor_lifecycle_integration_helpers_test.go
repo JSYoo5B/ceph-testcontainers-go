@@ -73,6 +73,7 @@ func startFixtureProcess(t *testing.T, cmd *exec.Cmd) *integrationActor[error] {
 	}
 	a := launchIntegrationActor(context.Background(), func(context.Context) error { return cmd.Wait() })
 	t.Cleanup(func() {
+		defer a.cancel()
 		select {
 		case <-a.done:
 			return
