@@ -31,10 +31,22 @@ type cephFSMirrorSessionBoundary struct {
 	oldAddress, newAddress        string
 	beforeMapping, afterMapping   []byte
 	failure                       error
+	replayObserved                bool
+	replayCode                    int
+	replayRaw                     []byte
+	replayErr                     error
 }
 
 func (b *cephFSMirrorSessionBoundary) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, reader, err := b.Container.Exec(ctx, args, opts...)
+	if b.fired && len(args) == 9 && slices.Equal(args[:7], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status"}) {
+		b.replayObserved, b.replayCode, b.replayErr = true, code, err
+		if err != nil {
+			return code, reader, err
+		}
+		b.replayRaw, b.replayErr = io.ReadAll(reader)
+		return code, bytes.NewReader(bytes.Clone(b.replayRaw)), b.replayErr
+	}
 	if b.fired || err != nil || code != 0 || len(args) != 7 || !slices.Equal(args[:6], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status"}) {
 		return code, reader, err
 	}
@@ -105,15 +117,24 @@ type cephFSBoundarySessionIdentity struct {
 	}
 }
 
+// cephFSBoundaryOutput decodes a copy for logging and identity checks without
+// changing the exact plain or framed bytes returned to the original caller.
+func cephFSBoundaryOutput(raw []byte) ([]byte, error) {
+	if json.Valid(raw) {
+		return bytes.Clone(raw), nil
+	}
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, bytes.NewReader(raw)); err != nil {
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
 func cephFSBoundarySession(raw []byte, peerID string) (cephFSBoundarySessionIdentity, error) {
 	var result cephFSBoundarySessionIdentity
-	data := raw
-	if !json.Valid(data) {
-		var stdout, stderr bytes.Buffer
-		if _, err := stdcopy.StdCopy(&stdout, &stderr, bytes.NewReader(raw)); err != nil {
-			return result, err
-		}
-		data = stdout.Bytes()
+	data, err := cephFSBoundaryOutput(raw)
+	if err != nil {
+		return result, err
 	}
 	var native struct {
 		Address string          `json:"rados_inst"`
@@ -165,6 +186,8 @@ func checkCephFSMirrorSessionBoundary(t *testing.T, ctx context.Context, mirror 
 	}
 	staleMapping := before.State == "mapped" && before.Instance != "" && before == after
 	t.Logf("CEPHFS_SESSION_READ_BOUNDARY old_session=%s new_session=%s old_mapping=%+v new_mapping=%+v unchanged_mapping_with_new_session=%t observed_ready=%t observation_error=%v", boundary.oldAddress, boundary.newAddress, before, after, staleMapping, status.Ready, err)
+	replay, replayDecodeErr := cephFSBoundaryOutput(boundary.replayRaw)
+	t.Logf("CEPHFS_SESSION_BOUNDARY_REPLAY queried=%t exit=%d read_error=%v framing_error=%v native_peer_status=%s", boundary.replayObserved, boundary.replayCode, boundary.replayErr, replayDecodeErr, replay)
 	if err == nil || status.Ready || status.LastSyncedSnapshot != nil || status.CurrentSnapshot != nil || status.SnapshotsSynced != 0 {
 		t.Fatalf("native mid-read restart published mixed replay evidence: %+v error=%v", status, err)
 	}
