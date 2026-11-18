@@ -63,8 +63,11 @@ its native status in one goroutine and sends changes on one channel, Progress
 included, exactly as Ceph reports it. Receive the baseline before you cancel
 the clone or inject the fault. A complete, failed or canceled status is the
 last event, and `Stop` then returns nil: a failed clone is an outcome in that
-event, not a watch error. A replaced or removed target, source or filesystem
-and cluster termination end the watch. Stopping the watch never cancels the
+event, not a watch error. A changed target incarnation, changed source names, fixture-tracked target
+removal, filesystem identity loss and cluster termination end the watch.
+Native target disappearance produces a read gap. Samples do not revalidate
+the source snapshot incarnation under unchanged names. A completed target
+remains observable after its source is removed. Stopping the watch never cancels the
 clone, and `Clone.Wait` stays the readiness result. The lifecycle that every
 Watch shares (baseline, gaps, overflow and `Stop`) is in
 [watching state](../../docs/guides/contexts-and-cleanup.md#watching-state).

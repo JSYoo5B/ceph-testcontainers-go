@@ -2,6 +2,8 @@ package subvolume
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"io"
 	"slices"
 	"strings"
@@ -260,5 +262,72 @@ func TestCephFSCloneLifecycleCanceledContextAndClosedClusterRefuseMutation(t *te
 	}
 	if len(ctr.Calls) != 0 {
 		t.Fatal("unavailable cluster reached native commands", ctr.Calls)
+	}
+}
+
+// blockedCloneRemoval holds the native removal reply while sibling operations
+// enter the public API. All fake mutations stay inside the filesystem gate.
+type blockedCloneRemoval struct {
+	*cloneLifecycleFixtureContainer
+	entered, release chan struct{}
+}
+
+func (c *blockedCloneRemoval) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if strings.Join(clustertest.ModuleArgs(args), " ") == "fs subvolume rm fixture copy --group_name restores --force" {
+		close(c.entered)
+		<-c.release
+	}
+	return c.cloneLifecycleFixtureContainer.Exec(ctx, args, opts...)
+}
+func TestCloneEntryWaitsForPartialRemoval(t *testing.T) {
+	for _, op := range []string{"Status", "Wait", "Cancel", "Watch"} {
+		t.Run(op, func(t *testing.T) {
+			fs, base, clone := cloneLifecycleFixture(t)
+			if err := clone.Cancel(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			control := &blockedCloneRemoval{base, make(chan struct{}), make(chan struct{})}
+			fs.Core.Cluster().Container = control
+			removal := make(chan error, 1)
+			go func() { removal <- clone.RemovePartial(t.Context()) }()
+			<-control.entered
+			copied := *clone
+			started := make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				close(started)
+				var err error
+				switch op {
+				case "Status":
+					_, err = copied.Status(t.Context())
+				case "Wait":
+					_, err = copied.Wait(t.Context())
+				case "Cancel":
+					err = copied.Cancel(t.Context())
+				case "Watch":
+					var w *CloneWatch
+					w, err = copied.Watch(t.Context(), ceph.WatchConfig{})
+					if w != nil {
+						_ = w.Stop()
+					}
+				}
+				result <- err
+			}()
+			<-started
+			// Exercise the pre-admission validator while removal is still pending.
+			if err := validateCloneHandle(fs.Core, &copied); err != nil {
+				t.Fatal(err)
+			}
+			close(control.release)
+			if err := <-removal; err != nil {
+				t.Fatal(err)
+			}
+			if err := <-result; err == nil {
+				t.Fatal("removed clone accepted by queued operation")
+			}
+			if !clone.identity.removed {
+				t.Fatal("removal did not complete")
+			}
+		})
 	}
 }

@@ -69,7 +69,7 @@ func readCloneIncarnation(ctx context.Context, v fsbase.VolumeCommands, identity
 }
 
 // cloneIdentityError is a successful native read that shows this request's
-// filesystem, target incarnation or source is no longer the one it captured,
+// filesystem, target incarnation or source names no longer match its record,
 // or that its target was removed. A later read cannot undo it, so a clone
 // watch ends on it instead of reporting a gap. It keeps the message of the
 // refusal it marks.
@@ -112,6 +112,9 @@ func checkCloneIncarnation(ctx context.Context, fs *fsbase.Core, identity *clone
 // checkedStatus verifies the captured native incarnation and then reads the
 // native status. The caller holds the subvolume operation gate.
 func (identity *cloneRecord) checkedStatus(ctx context.Context, fs *fsbase.Core, fsID int64) (*CloneStatus, error) {
+	if identity.removed {
+		return nil, cloneIdentityRefusal("partial clone target was removed by Clone.RemovePartial")
+	}
 	if err := checkCloneIncarnation(ctx, fs, identity); err != nil {
 		return nil, err
 	}

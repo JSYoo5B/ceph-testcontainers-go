@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fstest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -319,5 +320,53 @@ func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing
 	_, err := groupNames(t.Context(), fs.Core)
 	if err == nil {
 		t.Fatal("closed filesystem accepted")
+	}
+}
+
+func TestCreationPreflightLeavesFreshAttachmentUnused(t *testing.T) {
+	for _, mode := range []string{"group duplicate", "volume duplicate", "listing failure", "clone duplicate", "source replaced", "dispatched failure", "success"} {
+		t.Run(mode, func(t *testing.T) {
+			fs, c, _, snapshot := snapshotFixture(t)
+			record := &fsbase.PoolAttachment{Name: "additional", ID: 3, Confirmed: true}
+			fs.Core.Native().Attachments["additional"] = record
+			c.Calls = nil
+			var err error
+			switch mode {
+			case "group duplicate":
+				c.Output["fs subvolumegroup ls fixture --format json"] = `[{"name":"group"}]`
+				_, err = createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", DataPool: "additional"})
+			case "volume duplicate":
+				c.Output["fs subvolume ls fixture --group_name group --format json"] = `[{"name":"volume"}]`
+				_, err = create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", DataPool: "additional"})
+			case "listing failure":
+				c.Fail = "fs subvolume ls fixture --group_name group --format json"
+				_, err = create(t.Context(), fs.Core, Config{Name: "volume", GroupName: "group", DataPool: "additional"})
+			case "clone duplicate":
+				c.Output["fs subvolume ls fixture --group_name restores --format json"] = `[{"name":"copy"}]`
+				_, err = snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores", DataPool: "additional"})
+			case "source replaced":
+				snapshot.identity.createdAt = "other"
+				_, err = snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores", DataPool: "additional"})
+			case "dispatched failure":
+				c.Fail = "fs subvolumegroup create fixture group --pool_layout additional"
+				_, err = createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", DataPool: "additional"})
+			case "success":
+				_, err = createGroup(t.Context(), fs.Core, GroupConfig{Name: "group", SizeBytes: 65536, DataPool: "additional"})
+			}
+			wantUsed := mode == "dispatched failure" || mode == "success"
+			if record.Used != wantUsed {
+				t.Fatalf("Used=%t, want %t, error=%v", record.Used, wantUsed, err)
+			}
+			if mode == "success" && err != nil || mode != "success" && err == nil {
+				t.Fatalf("unexpected result %v", err)
+			}
+			if !wantUsed {
+				for _, call := range c.Calls {
+					if slices.Contains(call, "create") || slices.Contains(call, "clone") {
+						t.Fatalf("preflight sent %v", call)
+					}
+				}
+			}
+		})
 	}
 }
