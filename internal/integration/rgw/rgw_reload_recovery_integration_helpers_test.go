@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,43 +14,61 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// reloadStopReplyLoss is a package-local container double. It delegates every
-// lifecycle effect to Docker and substitutes one lost reply after Stop succeeds.
-// It proves recovery from a completed stop, not ordering of an outstanding stop.
-type reloadStopReplyLoss struct {
+// reloadStopCancellation is a package-local container double. It completes a
+// real Docker Stop, cancels its caller and holds the successful reply until
+// released. It models caller cancellation while terminal evidence is pending.
+type reloadStopCancellation struct {
 	testcontainers.Container
-	reply error
+	cancel  context.CancelFunc
+	release <-chan struct{}
 }
 
-func (c *reloadStopReplyLoss) Stop(ctx context.Context, timeout *time.Duration) error {
+func (c *reloadStopCancellation) Stop(ctx context.Context, timeout *time.Duration) error {
 	if err := c.Container.Stop(ctx, timeout); err != nil {
 		return err
 	}
-	err := c.reply
-	c.reply = nil
-	return err
+	if c.cancel != nil {
+		cancel, release := c.cancel, c.release
+		c.cancel = nil
+		cancel()
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 func checkNativeReloadRecovery(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup) {
 	t.Helper()
 	original := link.Source.Container
-	wrapped := &reloadStopReplyLoss{Container: original}
+	wrapped := &reloadStopCancellation{Container: original}
 	link.Source.Container = wrapped
 	t.Cleanup(func() { link.Source.Container = original })
-	lost := errors.New("completed Docker Stop reply lost")
+	arm := func() (context.Context, func()) {
+		callCtx, cancel := context.WithCancel(ctx)
+		release := make(chan struct{})
+		var once sync.Once
+		finish := func() { once.Do(func() { close(release) }); cancel() }
+		t.Cleanup(finish)
+		wrapped.cancel, wrapped.release = cancel, release
+		return callCtx, finish
+	}
 	state, err := original.State(ctx)
 	if err != nil || state == nil || !state.Running || state.StartedAt == "" {
 		t.Fatalf("running gateway before reload: %+v %v", state, err)
 	}
 	initialStart := state.StartedAt
-	wrapped.reply = lost
-	if err := group.Apply(ctx); !errors.Is(err, lost) {
-		t.Fatalf("first reload did not report the lost Stop reply: %v", err)
+	firstCtx, finishFirst := arm()
+	if err := group.Apply(firstCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first reload did not report caller cancellation: %v", err)
 	}
 	state, err = original.State(ctx)
 	if err != nil || state == nil || state.Running || state.StartedAt != initialStart {
 		t.Fatalf("completed Stop did not retain the original stopped generation: %+v %v", state, err)
 	}
+	finishFirst()
 	if err := group.Apply(ctx); err != nil {
 		t.Fatalf("resume fixture-owned stopped generation: %v", err)
 	}
@@ -59,15 +78,16 @@ func checkNativeReloadRecovery(t *testing.T, ctx context.Context, link *multisit
 	}
 	reloadedStart := state.StartedAt
 
-	wrapped.reply = lost
-	if err := group.Apply(ctx); !errors.Is(err, lost) {
-		t.Fatalf("second reload did not report the lost Stop reply: %v", err)
+	secondCtx, finishSecond := arm()
+	if err := group.Apply(secondCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("second reload did not report caller cancellation: %v", err)
 	}
 	state, err = original.State(ctx)
 	if err != nil || state == nil || state.Running || state.StartedAt != reloadedStart {
 		t.Fatalf("second Stop changed the recorded generation: %+v %v", state, err)
 	}
 	// Simulate the caller starting and then fencing a different generation.
+	finishSecond()
 	if err := original.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -94,5 +114,5 @@ func checkNativeReloadRecovery(t *testing.T, ctx context.Context, link *multisit
 	if err != nil || state == nil || state.Running || state.StartedAt != fencedStart {
 		t.Fatalf("subsequent reload revived or changed the external fence: %+v %v", state, err)
 	}
-	t.Log("completed Docker Stop with a lost reply resumed its original generation; an externally restarted and fenced generation stayed stopped across Apply retries")
+	t.Log("caller cancellation with retained successful Docker Stop completion resumed its original generation; an externally restarted and fenced generation stayed stopped across Apply retries")
 }

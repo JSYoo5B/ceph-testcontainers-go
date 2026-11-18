@@ -3,6 +3,8 @@ package multisite
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,14 +14,16 @@ import (
 )
 
 // reloadGatewayModel records a finite Docker request and generation history.
-// A pending stop affects only its original generation when the test settles it.
+// A stopped state can be observed before its pending Stop callback completes.
 type reloadGatewayModel struct {
 	testcontainers.Container
-	id, generation            string
-	running                   bool
-	stopError, startError     error
-	stopPending, startApplied bool
-	stops, starts             int
+	id, generation        string
+	running               bool
+	stopError, startError error
+	startApplied          bool
+	stopCanceled          context.CancelFunc
+	stopRelease           <-chan struct{}
+	stops, starts         int
 }
 
 func (m *reloadGatewayModel) GetContainerID() string { return m.id }
@@ -28,8 +32,10 @@ func (m *reloadGatewayModel) State(context.Context) (*container.State, error) {
 }
 func (m *reloadGatewayModel) Stop(context.Context, *time.Duration) error {
 	m.stops++
-	if !m.stopPending {
-		m.running = false
+	m.running = false
+	if m.stopCanceled != nil {
+		m.stopCanceled()
+		<-m.stopRelease
 	}
 	return m.stopError
 }
@@ -42,52 +48,79 @@ func (m *reloadGatewayModel) Start(context.Context) error {
 	return m.startError
 }
 
-func TestZoneReloadRecoversLostStopAndStartReplies(t *testing.T) {
-	for _, action := range []string{"stop", "pending-stop", "start", "applied-start"} {
-		t.Run(action, func(t *testing.T) {
-			m := &reloadGatewayModel{id: "owned", generation: "initial", running: true}
+func TestZoneReloadWaitsForCanceledStopCompletion(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	finish := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(finish)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	m := &reloadGatewayModel{id: "owned", generation: "initial", running: true, stopCanceled: cancel, stopRelease: release}
+	zone := &rgwZoneState{Zone: Zone{Name: "a", Gateway: &rgw.Gateway{Container: m}}}
+	topology := &rgwZoneTopology{}
+	if err := topology.reloadZoneGateways(ctx, []*rgwZoneState{zone}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller cancellation: %v", err)
+	}
+	// Stop changed Running=false, but has not completed its request.
+	if m.running {
+		t.Fatal("test Stop did not stop the generation")
+	}
+	retry, end := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer end()
+	if err := topology.reloadZoneGateways(retry, []*rgwZoneState{zone}, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unfinished Stop was inferred complete from stopped state: %v", err)
+	}
+	if m.stops != 1 || m.starts != 0 {
+		t.Fatalf("overlapping reload: stops=%d starts=%d", m.stops, m.starts)
+	}
+	finish()
+	if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !m.running || m.stops != 1 || m.starts != 1 || len(topology.reloadNeeded) != 0 {
+		t.Fatalf("recovery state: %+v", m)
+	}
+}
+
+func TestZoneReloadTransportLossRetainsStopFence(t *testing.T) {
+	lost := errors.New("Docker response lost")
+	m := &reloadGatewayModel{id: "owned", generation: "initial", running: true, stopError: lost}
+	zone := &rgwZoneState{Zone: Zone{Name: "a", Gateway: &rgw.Gateway{Container: m}}}
+	topology := &rgwZoneTopology{}
+	if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); !errors.Is(err, lost) {
+		t.Fatal(err)
+	}
+	for _, generation := range []string{"initial", "external"} {
+		m.generation = generation
+		if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); !errors.Is(err, lost) {
+			t.Fatalf("lost Stop reply settled: %v", err)
+		}
+		if m.running || m.stops != 1 || m.starts != 0 {
+			t.Fatalf("uncertain stop overlapped: %+v", m)
+		}
+	}
+}
+
+func TestZoneReloadRecoversInterruptedStart(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprint(applied), func(t *testing.T) {
+			lost := errors.New("Start response lost")
+			m := &reloadGatewayModel{id: "owned", generation: "initial", running: true, startError: lost, startApplied: applied}
 			zone := &rgwZoneState{Zone: Zone{Name: "a", Gateway: &rgw.Gateway{Container: m}}}
 			topology := &rgwZoneTopology{}
-			lost := errors.New("reply lost")
-			switch action {
-			case "stop":
-				m.stopError = lost
-			case "pending-stop":
-				m.stopError = lost
-				m.stopPending = true
-			case "start":
-				m.startError = lost
-			case "applied-start":
-				m.startError = lost
-				m.startApplied = true
-			}
 			if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); !errors.Is(err, lost) {
-				t.Fatalf("lost reply: %v", err)
+				t.Fatal(err)
 			}
-			if m.stopPending {
-				if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); err == nil {
-					t.Fatal("pending stop accepted")
-				}
-				if m.stops != 1 || m.starts != 0 {
-					t.Fatalf("pending stop overlapped: stops=%d starts=%d", m.stops, m.starts)
-				}
-				m.running = false
-				m.stopPending = false
-			}
-			m.stopError = nil
 			m.startError = nil
 			if err := topology.reloadZoneGateways(t.Context(), []*rgwZoneState{zone}, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !m.running || m.stops != 1 || len(topology.reloadNeeded) != 0 {
-				t.Fatalf("recovery state: %+v", m)
+			want := 2
+			if applied {
+				want = 1
 			}
-			wantStarts := 1
-			if action == "start" {
-				wantStarts = 2
-			}
-			if m.starts != wantStarts {
-				t.Fatalf("starts=%d want=%d", m.starts, wantStarts)
+			if !m.running || m.stops != 1 || m.starts != want || len(topology.reloadNeeded) != 0 {
+				t.Fatalf("Start recovery: %+v", m)
 			}
 		})
 	}
