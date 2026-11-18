@@ -172,13 +172,18 @@ func ClassifyAuthBundle(bundle AuthBundle) AuthVerdict {
 		}
 		return managers[index], true
 	}
-	if len(bundle.Managers) > 0 && len(bundle.ManagersAfter) > 0 {
-		before, okBefore := find(bundle.Managers)
-		after, okAfter := find(bundle.ManagersAfter)
+	mapComplete := func(phase string) bool {
+		return slices.ContainsFunc(bundle.Queries, func(q AuthQuery) bool { return q.Name == "mgr dump "+phase && q.Status == StatusComplete })
+	}
+	before, okBefore := find(bundle.Managers)
+	after, okAfter := find(bundle.ManagersAfter)
+	if mapComplete("before") && mapComplete("after") && okBefore && okAfter {
 		switch {
-		case !okBefore || !okAfter || before.GID == 0 || after.GID == 0:
+		case after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt:
+			verdict.Target = TargetChanged
+		case before.GID == 0:
 			verdict.Target = TargetAbsent
-		case before.GID != bundle.Expected.GID || after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt:
+		case before.GID != bundle.Expected.GID:
 			verdict.Target = TargetChanged
 		default:
 			verdict.Target = TargetRegistered

@@ -170,7 +170,8 @@ with opaque run-scoped labels and the epochs their issuer connection showed
 The collection has one total budget and a bound per query, runs from its own
 context, and does not retry or stop on a failed query. Empty or non-JSON
 output, or a status without name, FSID or MonMap epoch, is a failed query; an
-empty session list is an answer. An unknown command is `unsupported`. Only
+empty session list is an answer. A null list or a row missing its selected
+identity fields is incomplete, not evidence of absence. An unknown command is `unsupported`. Only
 the cleanup of a `RunNativeCommand` that could not be confirmed stopped has a
 separate allowance; its failures go to `cleanup_errors`.
 
@@ -178,7 +179,10 @@ separate allowance; its failures go to `cleanup_errors`.
 was `registered`, `changed`, `absent` or `unavailable`; which client a MON's
 refusal named (registered MGR, module client or unknown); secret IDs shared
 across runs (a wipe restarts them, so equal IDs are not the same key); and the
-controls and rejection. It never reports generation equality: no stock command
+controls and rejection. Target classification covers both collection phases:
+a change of GID or process instance is `changed`; an owned target absent from
+both successfully read maps is `absent`; an unreadable map or missing owned
+handle is `unavailable`. It never reports generation equality: no stock command
 shows which rotating key a MON or MGR used without the keys themselves.
 
 `checkAuthBundleSecrecy` refuses a bundle holding a secret you pass or a field

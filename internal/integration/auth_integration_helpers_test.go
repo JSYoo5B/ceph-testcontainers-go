@@ -43,7 +43,9 @@ cluster.conf_set("rados_osd_op_timeout", "5")
 if phase == "bad-auth":
     try:
         cluster.connect(timeout=10)
-    except rados.Error:
+    except rados.Error as error:
+        if abs(error.errno or 0) not in (1, 13):
+            raise
         print("fresh authentication rejected")
     else:
         raise AssertionError("invalid or revoked credentials authenticated")

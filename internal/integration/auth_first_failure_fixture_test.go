@@ -63,7 +63,7 @@ const retainedAuthFailureBundle = `{
  "generation_equality": "unavailable/unverified"
 }`
 
-func retainedBundle(t *testing.T) authFirstFailureBundle {
+func modeledRetainedBundle(t *testing.T) authFirstFailureBundle {
 	t.Helper()
 	if err := checkAuthBundleSecrecy([]byte(retainedAuthFailureBundle)); err != nil {
 		t.Fatal(err)
@@ -72,15 +72,19 @@ func retainedBundle(t *testing.T) authFirstFailureBundle {
 	if err := json.Unmarshal([]byte(retainedAuthFailureBundle), &bundle); err != nil {
 		t.Fatal(err)
 	}
+	// Complete phase records are synthetic inputs for classifier controls;
+	// they are not added to the retained historical document above.
+	bundle.Queries = append(bundle.Queries, authQuery{Name: "mgr dump before", Status: authQueryComplete}, authQuery{Name: "mgr dump after", Status: authQueryComplete})
 	return bundle
 }
 
-// The retained failure classifies as the preserved -13 with its target still
-// registered and successful controls, and leaves generation equality and the
+// The retained rejection with synthetic complete map-phase records classifies
+// as the preserved -13 with its target registered and successful controls,
+// and leaves generation equality and the
 // cause unverified: the classification draws no conclusion from the controls
 // or from the epochs.
 func TestAuthBundleRetainedFailure(t *testing.T) {
-	verdict := classifyAuthBundle(retainedBundle(t))
+	verdict := classifyAuthBundle(modeledRetainedBundle(t))
 	if !verdict.Complete || verdict.Result != -13 || verdict.Target != "registered" || verdict.RefusedClient != "unknown" || !verdict.ControlsSucceeded ||
 		len(verdict.ReusedSecretIDs) != 0 || verdict.GenerationEquality != authGenerationUnavailable {
 		t.Fatalf("verdict %+v", verdict)
@@ -118,14 +122,14 @@ func TestAuthBundleClassification(t *testing.T) {
 		}, func(v authBundleVerdict) bool { return v.Target == "changed" }, "target mgr.a is changed"},
 		"MGR restarted during the collection": {func(b *authFirstFailureBundle) {
 			b.Managers[0].StartedAt, b.ManagersAfter[0].StartedAt = "start-1", "start-2"
-		}, nil, "mgr.a changed during the collection"},
+		}, func(v authBundleVerdict) bool { return v.Target == "changed" }, "mgr.a changed during the collection"},
 		// A successful query that found no MGR in the MgrMap is not a
 		// registered target.
 		"empty but successful MGR object": {func(b *authFirstFailureBundle) {
 			b.Managers[0].GID, b.ManagersAfter[0].GID = 0, 0
-		}, func(v authBundleVerdict) bool { return v.Target == "unavailable" }, "target mgr.a is unavailable"},
-		"target absent from a complete MgrMap": {func(b *authFirstFailureBundle) { b.Managers, b.ManagersAfter = nil, nil },
-			func(v authBundleVerdict) bool { return v.Target == "absent" }, "target mgr.a is absent"},
+		}, func(v authBundleVerdict) bool { return v.Target == "absent" }, "target mgr.a is absent"},
+		"target handle removed despite a complete MgrMap": {func(b *authFirstFailureBundle) { b.Managers, b.ManagersAfter = nil, nil },
+			func(v authBundleVerdict) bool { return v.Target == "unavailable" }, "target mgr.a is unavailable"},
 		"later successful control": {func(b *authFirstFailureBundle) {
 			b.Controls = append(b.Controls, authControl{Target: "mgr.a", Command: "version", Phase: "after first failure", ExitCode: 0, Complete: true})
 		}, func(v authBundleVerdict) bool { return v.Complete && v.ControlsSucceeded }, ""},
@@ -160,7 +164,7 @@ func TestAuthBundleClassification(t *testing.T) {
 			b.Rejection.RefusedGlobalID = &id
 		}, func(v authBundleVerdict) bool { return v.RefusedClient == "unknown" }, ""},
 	} {
-		bundle := retainedBundle(t)
+		bundle := modeledRetainedBundle(t)
 		test.edit(&bundle)
 		verdict := classifyAuthBundle(bundle)
 		if verdict.GenerationEquality != authGenerationUnavailable || name != "no tested rejection" && verdict.Result != -13 {
@@ -314,7 +318,7 @@ func (h *heldSources) RedactSecrets(ctx context.Context, data []byte, _ ...strin
 // query incomplete: the inventory and the queries wait no longer than the
 // budget, and so does the redaction of their errors.
 func TestAuthCollectionWithinItsBudget(t *testing.T) {
-	retained := retainedBundle(t)
+	retained := modeledRetainedBundle(t)
 	for name, failFast := range map[string]bool{"held queries": false, "held redaction": true} {
 		sources := &heldSources{gate: make(chan struct{}), failFast: failFast}
 		returned := make(chan authFirstFailureBundle, 1)
@@ -346,5 +350,28 @@ func TestAuthCollectionWithinItsBudget(t *testing.T) {
 				t.Fatalf("%s: query %+v", name, query)
 			}
 		}
+	}
+}
+
+func TestIncompleteSessionProducerBoundaries(t *testing.T) {
+	for _, data := range []string{`null`, `[{}]`, `[null]`, `[{"entity_name":"mgr.a","global_id":7}]`, `[{"entity_name":"mgr.a","con_type":"mgr"}]`, `[{"entity_name":"mgr.a","con_type":"client","global_id":0}]`} {
+		if _, err := parseMonSessions([]byte(data)); err == nil {
+			t.Errorf("auth collector accepted %s", data)
+		}
+		if _, err := decodeMgrSessions("a", []byte(data)); err == nil {
+			t.Errorf("transition collector accepted %s", data)
+		}
+	}
+}
+
+// A historical single-phase record cannot establish a two-phase target identity.
+func TestAuthRetainedDocumentPreservesObservationLimits(t *testing.T) {
+	var b authFirstFailureBundle
+	if err := json.Unmarshal([]byte(retainedAuthFailureBundle), &b); err != nil {
+		t.Fatal(err)
+	}
+	v := classifyAuthBundle(b)
+	if v.Target != "unavailable" || v.Complete || v.Result != -13 || v.GenerationEquality != authGenerationUnavailable {
+		t.Fatalf("historical verdict %+v", v)
 	}
 }

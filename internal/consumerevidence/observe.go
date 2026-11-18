@@ -221,9 +221,9 @@ func decodeSessions(monitor string, data []byte) (MonitorSessions, error) {
 		return MonitorSessions{}, errMissing
 	}
 	var list []struct {
-		EntityName string `json:"entity_name"`
-		ConType    string `json:"con_type"`
-		GlobalID   uint64 `json:"global_id"`
+		EntityName *string `json:"entity_name"`
+		ConType    *string `json:"con_type"`
+		GlobalID   *uint64 `json:"global_id"`
 	}
 	if err := json.Unmarshal(data, &list); err != nil {
 		return MonitorSessions{}, err
@@ -233,11 +233,17 @@ func decodeSessions(monitor string, data []byte) (MonitorSessions, error) {
 	}
 	observed := MonitorSessions{Monitor: monitor, Query: Query{Name: "sessions of mon." + monitor, Status: StatusComplete}, Beacons: []Session{}, Modules: []Session{}}
 	for _, session := range list {
-		if !strings.HasPrefix(session.EntityName, "mgr.") {
+		if session.EntityName == nil || session.ConType == nil || *session.ConType == "" || session.GlobalID == nil {
+			return MonitorSessions{}, errMissing
+		}
+		if !strings.HasPrefix(*session.EntityName, "mgr.") {
 			continue
 		}
-		entry := Session{Entity: session.EntityName, GlobalID: session.GlobalID}
-		if session.ConType == "mgr" {
+		if *session.GlobalID == 0 || len(*session.EntityName) == 4 || (*session.ConType != "mgr" && *session.ConType != "client") {
+			return MonitorSessions{}, errMalformed
+		}
+		entry := Session{Entity: *session.EntityName, GlobalID: *session.GlobalID}
+		if *session.ConType == "mgr" {
 			observed.Beacons = append(observed.Beacons, entry)
 		} else {
 			observed.Modules = append(observed.Modules, entry)

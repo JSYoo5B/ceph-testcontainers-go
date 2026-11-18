@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/monsession"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -142,7 +143,8 @@ type authMonitorObservation struct {
 // authManagerObservation is one MGR: its MgrMap GID, its container instance,
 // and the global IDs of its MON sessions, split into the beacon
 // session (con_type "mgr") and the clients of its modules. GID 0 means that
-// the MgrMap could not be read.
+// the manager is absent from a successfully read map, or that the map query
+// failed. The phase-specific query status distinguishes those cases.
 type authManagerObservation struct {
 	Name            string   `json:"name"`
 	GID             uint64   `json:"gid"`
@@ -207,8 +209,9 @@ type authBundleVerdict struct {
 	Problems []string
 	// Target is "registered" when the MGR that the client dialed still had
 	// the GID and container instance that the caller froze, "changed" when
-	// either differs, "absent" when the MgrMap was read without it, and
-	// "unavailable" when its observation is missing.
+	// either differs across the two phases or from the frozen identity,
+	// "absent" when both complete maps omit the owned target, and
+	// "unavailable" when a map or owned-handle observation is missing.
 	Target string
 	// RefusedClient is "registered-mgr" when a MON's refusal named the
 	// target's GID, "module-client" when it named another global ID of that
@@ -231,7 +234,8 @@ type authBundleVerdict struct {
 	GenerationEquality string
 }
 
-// classifyAuthBundle checks a bundle's completeness and associations. It
+// classifyAuthBundle checks a bundle's completeness and associations across
+// both collection phases. It
 // never establishes generation equality: a stock bundle cannot.
 func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 	rejection := bundle.Rejection
@@ -300,23 +304,41 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 				before.Name, before.GID, after.GID, before.ContainerID, before.StartedAt, after.ContainerID, after.StartedAt)
 		}
 	}
-	if index := slices.IndexFunc(bundle.Managers, func(m authManagerObservation) bool { return "mgr."+m.Name == rejection.Target }); index >= 0 && bundle.Managers[index].GID != 0 {
-		target := bundle.Managers[index]
-		verdict.Target = "registered"
-		if target.GID != rejection.TargetGID || target.GID != expected.GID ||
-			expected.ContainerID != "" && (target.ContainerID != expected.ContainerID || target.StartedAt != expected.StartedAt) {
-			verdict.Target = "changed"
+	// Target summarizes both phases, not only the first sample. A missing
+	// owned handle supplies no container identity; it is not an empty map.
+	findTarget := func(rows []authManagerObservation) (authManagerObservation, bool) {
+		i := slices.IndexFunc(rows, func(m authManagerObservation) bool { return "mgr."+m.Name == rejection.Target })
+		if i < 0 {
+			return authManagerObservation{}, false
 		}
+		return rows[i], true
+	}
+	mapComplete := func(phase string) bool {
+		return slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Name == "mgr dump "+phase && q.Status == authQueryComplete })
+	}
+	before, haveBefore := findTarget(bundle.Managers)
+	after, haveAfter := findTarget(bundle.ManagersAfter)
+	if mapComplete("before") && mapComplete("after") && haveBefore && haveAfter {
+		switch {
+		case before.GID != after.GID || before.ContainerID != after.ContainerID || before.StartedAt != after.StartedAt:
+			verdict.Target = "changed"
+		case before.GID == 0:
+			verdict.Target = "absent"
+		case before.GID != rejection.TargetGID || before.GID != expected.GID || expected.ContainerID != "" && (before.ContainerID != expected.ContainerID || before.StartedAt != expected.StartedAt):
+			verdict.Target = "changed"
+		default:
+			verdict.Target = "registered"
+		}
+	}
+	if haveBefore && mapComplete("before") && before.GID != 0 {
 		if refused := rejection.RefusedGlobalID; refused != nil {
 			switch {
-			case *refused == target.GID:
+			case *refused == before.GID:
 				verdict.RefusedClient = "registered-mgr"
-			case slices.Contains(target.ModuleGlobalIDs, *refused):
+			case slices.Contains(before.ModuleGlobalIDs, *refused):
 				verdict.RefusedClient = "module-client"
 			}
 		}
-	} else if index < 0 && slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Name == "mgr dump" && q.Status == authQueryComplete }) {
-		verdict.Target = "absent"
 	}
 	if verdict.Target != "registered" {
 		problem("target %s is %s", rejection.Target, verdict.Target)
@@ -422,8 +444,8 @@ func parseMonSessions(data []byte) (map[string][]monSession, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("sessions printed nothing")
 	}
-	var list []monSession
-	if err := json.Unmarshal(data, &list); err != nil {
+	list, err := monsession.Decode(data)
+	if err != nil {
 		return nil, fmt.Errorf("sessions is not a JSON list: %w", err)
 	}
 	managers := map[string][]monSession{}
@@ -495,7 +517,7 @@ func (c *authCollector) query(name, kind string, run func(context.Context) ([]by
 // instance, and, when sessions is set, the global IDs of its MON sessions.
 func (c *authCollector) observeManagers(phase string, sessions map[string][]monSession) []authManagerObservation {
 	var status ceph.ManagerStatus
-	c.query("mgr dump", "observation", func(ctx context.Context) ([]byte, error) {
+	c.query("mgr dump "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 		var err error
 		status, err = c.sources.ManagerStatus(ctx)
 		return nil, err
@@ -521,6 +543,9 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 			ContainerID: manager.GetContainerID()}
 		c.query("container of mgr."+manager.DaemonName+" "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 			state, err := manager.State(ctx)
+			if err == nil && state == nil {
+				err = errors.New("container state unavailable")
+			}
 			if err == nil {
 				entry.StartedAt = state.StartedAt
 			}
