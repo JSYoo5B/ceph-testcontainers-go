@@ -642,8 +642,9 @@ func (t *rgwZoneTopology) reloadZoneGateway(ctx context.Context, zone *rgwZoneSt
 		record = &zoneReload{containerID: id, originalStart: status.StartedAt}
 		t.reloadNeeded[zone.Name] = record
 		stop := 3 * time.Second
+		stopTarget := gateway.Container
 		err := record.stop.Record(mutation.Run(ctx, time.Minute, func(stopCtx context.Context) (bool, error) {
-			err := gateway.Stop(stopCtx, &stop)
+			err := stopTarget.Stop(stopCtx, &stop)
 			return err == nil, err
 		}))
 		if err != nil {
