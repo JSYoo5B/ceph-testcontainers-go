@@ -143,9 +143,11 @@ recovery need the default two OSDs or more.
   only the fixture's policies and role: it refuses a role that was replaced,
   whose trust policy, tags or metadata changed, or that holds a policy the
   fixture did not put, and leaves it as it is. A failed `CreateRole` is never
-  retried: a returned role whose outcome is unknown is only removable, and
-  a role whose policy RGW refused is returned with the error so that its
-  `Remove` cleans it up. Policy and trust edits reach RGW through metadata
+  retried. A returned role whose outcome is unknown can ask `Remove` to
+  settle it and remove matching state. A mismatching initial role or policy
+  readback remains refused because ownership is unconfirmed. A role whose
+  policy RGW refused is returned with the error so that its `Remove` cleans
+  up the matching role. Policy and trust edits reach RGW through metadata
   caches, so poll with new requests.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
