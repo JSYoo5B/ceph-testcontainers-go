@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -437,7 +438,9 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = handle.Close() })
 	recording, stopRecording := context.WithCancel(ctx)
-	observed := recordOSDOOM(recording, target.group, target.identity, handle, uint64(ceiling), target.PID, 2*time.Millisecond, time.Now)
+	membership := oomMembershipTarget{group: target.group, identity: target.identity, pid: target.PID,
+		processStat: filepath.Join(target.roots.Proc, strconv.Itoa(target.PID), "stat"), processStart: target.ProcessStart}
+	observed := recordOSDOOM(recording, membership, handle, uint64(ceiling), 2*time.Millisecond, time.Now)
 	finishRecording := sync.OnceValue(func() osdOOMObservation {
 		stopRecording()
 		return <-observed
@@ -478,7 +481,8 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	run.Step.Final = obs.final(run.Step.ExecEnd)
 	run.Step.Exit = exit
 	stepVerdict, stepErr := classifyOSDOOMStep(run.Step, osdOOMStepChecks{})
-	t.Logf("OSD_OOM_STEP verdict=%s error=%v reads=%d final=%+v exit=%+v", stepVerdict, stepErr, len(obs.Reads), run.Step.Final, run.Step.Exit)
+	t.Logf("OSD_OOM_STEP verdict=%s error=%v reads=%d membership_gap_at=%s teardown_observed=%t final=%+v exit=%+v",
+		stepVerdict, stepErr, len(obs.Reads), obs.MembershipGapAt, obs.TeardownObserved, run.Step.Final, run.Step.Exit)
 	// A daemon that is stopped on the frozen generation still gets the outage,
 	// restoration and recovery path, whatever the step verdict, so one run
 	// gives the whole outcome; the verdict stays what the step said. A daemon

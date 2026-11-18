@@ -927,10 +927,11 @@ func osdOOMProcessIsOSD(p osdOOMProcess, osd int) error {
 type osdOOMObservation struct {
 	// Reads are the successful reads through the already-open event handle, in
 	// order; the cgroup path may be gone while the handle still answers.
-	Reads           []osdOOMRead
-	EffectiveAt     time.Time
-	OtherProc       bool
-	MembershipGapAt time.Time
+	Reads            []osdOOMRead
+	EffectiveAt      time.Time
+	OtherProc        bool
+	MembershipGapAt  time.Time
+	TeardownObserved bool
 	// Errors keeps the distinct failure messages, not one per tick.
 	Errors []string
 }
@@ -959,7 +960,7 @@ func (o osdOOMObservation) final(end time.Time) *osdOOMFinal {
 // open event handle (so teardown of the path does not hide the counters), the
 // limit files by path, and the member list. It runs no process inside the
 // target.
-func recordOSDOOM(ctx context.Context, group string, identity os.FileInfo, handle *os.File, ceiling uint64, pid int, every time.Duration, now func() time.Time) <-chan osdOOMObservation {
+func recordOSDOOM(ctx context.Context, target oomMembershipTarget, handle *os.File, ceiling uint64, every time.Duration, now func() time.Time) <-chan osdOOMObservation {
 	out := make(chan osdOOMObservation, 1)
 	go func() {
 		var obs osdOOMObservation
@@ -979,22 +980,23 @@ func recordOSDOOM(ctx context.Context, group string, identity os.FileInfo, handl
 			}
 			var limitObserved bool
 			if obs.EffectiveAt.IsZero() {
-				maxData, errMax := os.ReadFile(filepath.Join(group, "memory.max"))
-				swapData, errSwap := os.ReadFile(filepath.Join(group, "memory.swap.max"))
+				maxData, errMax := os.ReadFile(filepath.Join(target.group, "memory.max"))
+				swapData, errSwap := os.ReadFile(filepath.Join(target.group, "memory.swap.max"))
 				if errMax == nil && errSwap == nil {
 					m, mErr := parseMemoryLimit(string(maxData), false)
 					sw, sErr := parseMemoryLimit(string(swapData), true)
 					limitObserved = mErr == nil && sErr == nil && m == (memoryLimit{Bytes: ceiling}) && sw == (memoryLimit{})
 				}
 			}
-			other, memberErr := readOOMMembership(group, identity, pid)
+			other, afterExit, memberErr := target.sample()
+			obs.TeardownObserved = obs.TeardownObserved || afterExit
 			obs.OtherProc = obs.OtherProc || other
 			if memberErr != nil {
 				note(memberErr)
 				if obs.MembershipGapAt.IsZero() {
 					obs.MembershipGapAt = at
 				}
-			} else if limitObserved {
+			} else if !afterExit && limitObserved {
 				obs.EffectiveAt = at
 			}
 			select {

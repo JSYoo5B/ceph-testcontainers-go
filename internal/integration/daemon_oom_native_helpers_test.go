@@ -209,8 +209,8 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	}
 	window := finishRecording()
 	oomErr := window.qualify(baseline.Events, unchanged, oomKilled, stopped, finished)
-	t.Logf("DAEMON_MEMORY_OOM before=%v after=%v stopped=%t docker_oom=%t membership_gap_at=%s local_window_error=%v verdict=%v",
-		baseline.Events, window.Events, stopped, oomKilled, window.MembershipGapAt, window.Error, oomErr)
+	t.Logf("DAEMON_MEMORY_OOM before=%v after=%v stopped=%t docker_oom=%t membership_gap_at=%s teardown_observed=%t local_window_error=%v verdict=%v",
+		baseline.Events, window.Events, stopped, oomKilled, window.MembershipGapAt, window.TeardownObserved, window.Error, oomErr)
 	// Restore the finite configuration before an explicit restart. A successful
 	// update on a stopped container is only saved configuration, not runtime proof.
 	cleanup, done := context.WithTimeout(context.Background(), 30*time.Second)
