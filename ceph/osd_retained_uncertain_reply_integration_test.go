@@ -71,7 +71,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	retainedUncertainBytes(t, ctx, client, pool.Name, "seed")
 	// The cluster is new, so noout is unset; the flag is set and cleared
 	// directly because a test of package ceph cannot import package override.
-	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, true); err != nil {
+	if _, err := c.Ceph(ctx, "osd", "set", string(OSDFlagNoOut)); err != nil {
 		t.Fatal(err)
 	}
 	detached, err := original.Detach(ctx)
@@ -152,7 +152,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	retainedUncertainBytes(t, ctx, client, pool.Name, "readback")
-	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, false); err != nil {
+	if _, err := c.Ceph(ctx, "osd", "unset", string(OSDFlagNoOut)); err != nil {
 		t.Fatal(err)
 	}
 	// The module knows no container handle for this candidate. Only its normal
