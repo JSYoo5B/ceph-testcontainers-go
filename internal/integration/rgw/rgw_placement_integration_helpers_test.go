@@ -390,8 +390,12 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if err != nil || json.Unmarshal(data, &bucketStats) != nil || bucketStats.PlacementRule != target.Name {
 		t.Fatalf("bucket did not retain named placement target: %s %v", data, err)
 	}
-	payload := bytes.Repeat([]byte("tiered-data-actual-pool\n"), 4096)
+	payloads := map[string][]byte{
+		"STANDARD":    bytes.Repeat([]byte("tiered-STANDARD-actual-pool\n"), 4096),
+		"STANDARD_IA": bytes.Repeat([]byte("tiered-STANDARD_IA-actual-pool\n"), 4096),
+	}
 	for _, class := range []string{"STANDARD", "STANDARD_IA"} {
+		payload := payloads[class]
 		path := tieredBucket + "/" + strings.ToLower(class)
 		rgwPlacementRequest(t, ctx, client, http.MethodPut, path, payload, class, http.StatusOK)
 		if actual := client.Request(t, ctx, http.MethodGet, path, nil, http.StatusOK); !bytes.Equal(actual, payload) {
@@ -413,7 +417,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 		}
 	}
 	for _, mapping := range []struct{ pool, key string }{{"tc-rgw-standard", "standard"}, {"tc-rgw-ec", "standard_ia"}} {
-		harness.RGWPlacementPoolPayload(t, ctx, control, mapping.pool, strings.ToUpper(mapping.key), payload)
+		harness.RGWPlacementPoolPayload(t, ctx, control, mapping.pool, strings.ToUpper(mapping.key), payloads[strings.ToUpper(mapping.key)])
 	}
 	// A new bucket created without a location still follows the untouched
 	// zonegroup default, while the preexisting default object remains readable.

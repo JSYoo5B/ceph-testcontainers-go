@@ -130,7 +130,9 @@ var topicNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 // creates, changes, purges or removes a topic, its policy or its queue, and
 // the result is plain data, not a handle: observing a SUT-created topic does
 // not adopt its lifetime. The call is bounded by ctx and the cluster's startup
-// timeout; no radosgw-admin outlives it.
+// timeout. If command termination cannot be confirmed, the returned error
+// preserves *ceph.NativeCommandUnstoppedError. Call its Stop method or
+// terminate the disposable cluster before considering that command settled.
 //
 //purpose:observation,evidence
 func Queue(ctx context.Context, g *rgw.Gateway, topic Topic, sample Sample) (QueueSnapshot, error) {
