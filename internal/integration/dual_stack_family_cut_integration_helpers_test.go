@@ -611,6 +611,9 @@ func testDualStackFamilyCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, err = io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("incomplete family-cut oracle evidence:", err)
+	}
 	var oracle map[string]string
 	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &oracle) != nil || oracle[objects[0]] != want[objects[0]] || oracle[objects[1]] != want[objects[1]] {
 		t.Fatalf("oracle read: exit %d: %s, want %v", code, output, want)
