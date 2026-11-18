@@ -400,15 +400,77 @@ func TestSecondFaultLedgerRules(t *testing.T) {
 func TestSecondFaultWriterAdvanceNeedsTheConfirmedBaseline(t *testing.T) {
 	// Two acknowledgments arrived between the pre-stop read and the confirmed
 	// outage, and nothing after it.
-	pre, confirmed, now := secondFaultMark{Acked: 3}, secondFaultMark{Acked: 5}, secondFaultMark{Acked: 5}
+	pre, now := secondFaultMark{Acked: 3}, secondFaultMark{Acked: 5}
 	if !secondFaultAdvanced(pre, now, 2) {
 		t.Fatal("the control must show that the pre-stop baseline is satisfied by pre-outage acknowledgments")
 	}
-	if secondFaultAdvanced(confirmed, now, 2) {
-		t.Fatal("no acknowledgment after the confirmed outage was accepted")
+	mark := pre
+	confirmed, after := secondFaultAfterConfirmation(func() { mark = now }, func() secondFaultMark { return mark }, func(baseline secondFaultMark) secondFaultMark {
+		if secondFaultAdvanced(baseline, now, 2) {
+			t.Fatal("only acknowledgments before the confirmed outage were accepted")
+		}
+		return secondFaultMark{Acked: now.Acked + 2}
+	})
+	if confirmed != now || !secondFaultAdvanced(confirmed, after, 2) {
+		t.Fatalf("confirmed %+v, after %+v", confirmed, after)
 	}
 	if !secondFaultAdvanced(confirmed, secondFaultMark{Acked: 7}, 2) || secondFaultAdvanced(confirmed, secondFaultMark{Acked: 6}, 2) {
 		t.Fatal("exactly two acknowledgments after the baseline are required")
+	}
+}
+
+func TestSecondFaultReplicatedDispatchRequiresFreshUnfinishedTransfer(t *testing.T) {
+	initial := newProgressSample()
+	base, err := backfillHeld(initial.parse(t), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligible := initial
+	eligible.cursor, eligible.inFlight = "3:2c4b7d11::::live-0003:head", []string{"3:2c4b7d11::::live-0004:head"}
+	completed, changed := eligible, eligible
+	completed.cursor, changed.interval = "MAX", eligible.interval+1
+	if verdict, why := backfillProgress(base, eligible.parse(t)); verdict != progressReached {
+		t.Fatalf("earlier gate is not reached: %s: %s", verdict, why)
+	}
+	captured := secondFaultInstance{Running: true, Pid: 40, StartedAt: "t0"}
+	for _, tc := range []struct {
+		name    string
+		fresh   progressSample
+		current secondFaultInstance
+		wantErr string
+	}{
+		{"still in progress", eligible, captured, ""},
+		{"completed during the ledger read", completed, captured, "unfinished progress"},
+		{"interval changed during the ledger read", changed, captured, "unfinished progress"},
+		{"restarted during the progress query", eligible, secondFaultInstance{Running: true, Pid: 41, StartedAt: "t1"}, "post-query Stop admission"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := tc.fresh.json(t)
+			queried, inspected, stopped := false, false, false
+			err := secondFaultReplicatedDispatch(base, captured, func() ([]byte, error) {
+				queried = true
+				return doc, nil
+			}, func() secondFaultInstance {
+				if !queried {
+					t.Fatal("instance checked before the fresh progress query")
+				}
+				inspected = true
+				return tc.current
+			}, func(admitted secondFaultInstance, raw []byte) error {
+				if !inspected || admitted != captured || string(raw) != string(doc) {
+					t.Fatalf("Stop lacks fresh admission or readback: %+v %s", admitted, raw)
+				}
+				stopped = true
+				return nil
+			})
+			if tc.wantErr == "" {
+				if err != nil || !stopped {
+					t.Fatalf("eligible dispatch: stopped %t: %v", stopped, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) || stopped {
+				t.Fatalf("inadmissible dispatch: stopped %t: %v, want %q", stopped, err, tc.wantErr)
+			}
+		})
 	}
 }
 
