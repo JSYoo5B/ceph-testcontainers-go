@@ -14,7 +14,10 @@ import "context"
 // and in, not which. To establish that one particular OSD has returned, read
 // OSDStates and compare its entry, for example with the expect package.
 //
-// Call it after creating pools and after topology changes, before client I/O.
+// The expected owned count is captured once at the start of the wait. Finish
+// topology changes before calling it. If the owned OSD count changes during
+// the wait, start a new wait after the change completes.
+// Call it after creating pools and before client I/O.
 // An OSD registered outside the fixture blocks the wait only while it makes
 // one of the three numbers differ from the owned count; one that stands in
 // for a missing owned registration does not. A pool whose replica count

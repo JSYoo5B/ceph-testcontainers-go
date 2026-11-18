@@ -933,7 +933,7 @@ Neither wait looks at an individual OSD:
 
 | Wait | OSD condition | PG condition |
 | --- | --- | --- |
-| [`WaitForClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForClean) | The cluster status counts as many OSDs in total, up and in as the fixture owns. These are three cluster-wide numbers; no OSD ID or UUID is read. | At least one PG, all exactly `active+clean`. |
+| [`WaitForClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForClean) | The cluster status counts as many OSDs in total, up and in as the fixture owned at the start of the wait. These are three cluster-wide numbers; no OSD ID or UUID is read. | At least one PG, all exactly `active+clean`. |
 | [`WaitForPGClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForPGClean) | None. | At least one PG, all exactly `active+clean`. |
 
 Both also need an available MGR. Choose by what the test has to establish:
