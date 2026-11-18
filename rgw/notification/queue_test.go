@@ -47,9 +47,10 @@ type reply struct {
 // line. Any other command fails the call.
 type topicContainer struct {
 	testcontainers.Container
-	calls   [][]string
-	replies map[string][]reply
-	onExec  func(args []string)
+	calls         [][]string
+	replies       map[string][]reply
+	onExec        func(args []string)
+	cancelFailure bool
 }
 
 func (f *topicContainer) State(context.Context) (*container.State, error) {
@@ -60,6 +61,9 @@ func (f *topicContainer) GetContainerID() string { return "gateway" }
 
 func (f *topicContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if gwtest.IsCancel(args) {
+		if f.cancelFailure {
+			return 0, nil, errors.New("stop unconfirmed")
+		}
 		return 0, nil, nil
 	}
 	original := args
@@ -390,5 +394,22 @@ func TestQueueCancellationReturnsNoPartialSnapshot(t *testing.T) {
 				t.Fatalf("canceled observation continued: %v", got)
 			}
 		})
+	}
+}
+
+func TestQueuePreservesUnconfirmedCommandStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	g, f := newFixture(persistentReplies(""))
+	f.cancelFailure = true
+	f.onExec = func(args []string) { cancel() }
+	snapshot, err := queue(ctx, g.Core, Topic{Name: "tc-persistent"}, Sample{})
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if !errors.As(err, &unstopped) || !reflectZero(snapshot) {
+		t.Fatalf("unconfirmed stop: %+v %v", snapshot, err)
+	}
+	f.cancelFailure = false
+	if err := unstopped.Stop(t.Context()); err != nil {
+		t.Fatalf("stop retry: %v", err)
 	}
 }
