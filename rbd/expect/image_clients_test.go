@@ -45,6 +45,23 @@ func TestImageClientsMatchesTheOwnerAndKeepsUnrelatedClients(t *testing.T) {
 	}
 }
 
+// The expectation compares addresses, not the identity of a watch instance.
+func TestImageClientsOwnerWatchesIgnoresCookie(t *testing.T) {
+	for _, cookie := range []uint64{92, 94} {
+		observed := lockedImage()
+		observed.Watchers[1].Cookie = cookie
+		got, err := (ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}).Evaluate(observed)
+		if err != nil || !got.Matched {
+			t.Fatalf("watch cookie %d: %+v %v", cookie, got, err)
+		}
+		observed.Watchers[1].Address = formerAddress
+		got, err = (ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}).Evaluate(observed)
+		if err != nil || got.Matched || len(got.Mismatches) != 1 || got.Mismatches[0].Reason != ImageClientsMismatchOwnerWatch {
+			t.Fatalf("different address with cookie %d: %+v %v", cookie, got, err)
+		}
+	}
+}
+
 func TestImageClientsReportsAWrongOwnerWithoutComparingItsWatch(t *testing.T) {
 	observed := lockedImage()
 	observed.Watchers = observed.Watchers[:1]
