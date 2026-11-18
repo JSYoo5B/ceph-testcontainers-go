@@ -124,3 +124,49 @@ func TestAdminSocketRetainsUnconfirmedCleanup(t *testing.T) {
 		}
 	}
 }
+
+func TestMemberRemovalStopsBeforeUnsettledAdminCommands(t *testing.T) {
+	t.Run("monitor", func(t *testing.T) {
+		control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
+		c := monitorLifecycleFixture(control)
+		daemon := &monitorLifecycleDaemon{}
+		handle := &MonitorContainer{Container: daemon, DaemonName: "b"}
+		c.members.roster.addMonitor("b", handle)
+		topology := c.monitorTopology()
+		blocked := errors.New("admin command remains unsettled")
+		calls := 0
+		topology.fenceNative = func(_ context.Context, id string) error {
+			calls++
+			if id != daemon.GetContainerID() {
+				t.Errorf("wrong daemon instance %q", id)
+			}
+			return blocked
+		}
+		if err := topology.retireMonitor(t.Context(), handle); !errors.Is(err, blocked) {
+			t.Fatal(err)
+		}
+		if calls != 1 || daemon.terminations != 0 || control.removals != 0 {
+			t.Fatal("removal passed unsettled invocation")
+		}
+	})
+	t.Run("manager", func(t *testing.T) {
+		c, control, daemon, _ := managerLifecycleFixture()
+		handle := managerHandle(t, t.Context(), c, "a")
+		topology := c.monitorTopology()
+		blocked := errors.New("admin command remains unsettled")
+		calls := 0
+		topology.fenceNative = func(_ context.Context, id string) error {
+			calls++
+			if id != daemon.GetContainerID() {
+				t.Errorf("wrong daemon instance %q", id)
+			}
+			return blocked
+		}
+		if err := topology.retireManager(t.Context(), handle); !errors.Is(err, blocked) {
+			t.Fatal(err)
+		}
+		if calls != 1 || daemon.terminations != 0 || len(control.events) != 0 {
+			t.Fatal("removal passed unsettled invocation")
+		}
+	})
+}
