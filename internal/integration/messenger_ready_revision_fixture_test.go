@@ -103,3 +103,44 @@ func TestReadyRevisionRequiresBinding(t *testing.T) {
 		t.Error("non-READY lines selected")
 	}
 }
+
+func TestReadyRevisionRefusesMalformedFramingBesideValidLines(t *testing.T) {
+	line := readyLogSample[0]
+	for name, malformed := range map[string]string{
+		"connection":  strings.Replace(line, "conn(", "conn?", 1),
+		"crypto":      strings.Replace(line, " crypto rx=", " crypto missing=", 1),
+		"compression": strings.Replace(line, " comp rx=", " comp missing=", 1),
+		"entity":      strings.Split(line, ").ready")[0],
+	} {
+		t.Run(name, func(t *testing.T) {
+			lines := append(append([]string{}, readyLogSample...), malformed)
+			observations := harness.ParseReadyRevisionLines(readyRevisionBound, lines)
+			if len(observations) != len(harness.ParseReadyRevisionLines(readyRevisionBound, readyLogSample))+1 || observations[len(observations)-1].Revision != harness.ReadyRevisionUnavailable {
+				t.Fatalf("malformed READY vanished: %+v", observations)
+			}
+			if len(harness.ReadyRevision1Problems(observations)) == 0 {
+				t.Fatal("valid rows hid unavailable READY evidence")
+			}
+		})
+	}
+	if got := harness.ParseReadyRevisionLines(readyRevisionBound, []string{strings.Replace(line, "s=READY", "s=STANDBY", 1), "unrelated log"}); len(got) != 0 {
+		t.Fatalf("unrelated lines selected: %+v", got)
+	}
+}
+
+// Saved native Ceph 20.2.4 diagnostics carry s=READY but are not ready events.
+func TestReadyRevisionIgnoresNativeReadyStateDiagnostics(t *testing.T) {
+	lines := []string{
+		`2026-11-18T11:39:00.426+0000 7419205a5640  1 --2- v2:172.18.0.5:6800/632839410 >> 172.18.0.2:0/3436711500 conn(0x5d7208166000 0x5d7207dd3600 secure :-1 s=READY pgs=3 gs=22 cs=0 l=1 c_cookie=0 s_cookie=0 reconnecting=0 rev1=1 crypto rx=0x5d72087bf170 tx=0x5d7207bbb4a0 comp rx=0 tx=0).handle_read_frame_preamble_main read frame preamble failed r=-1`,
+		`2026-11-18T11:39:00.426+0000 7419205a5640  1 --2- v2:172.18.0.5:6800/632839410 >> 172.18.0.2:0/3436711500 conn(0x5d7208166000 0x5d7207dd3600 secure :-1 s=READY pgs=3 gs=22 cs=0 l=1 c_cookie=0 s_cookie=0 reconnecting=0 rev1=1 crypto rx=0x5d72087bf170 tx=0x5d7207bbb4a0 comp rx=0 tx=0).stop`,
+	}
+	for _, line := range lines {
+		if harness.IsReadySessionLine(line) {
+			t.Errorf("diagnostic classified as ready event: %s", line)
+		}
+	}
+	observations := harness.ParseReadyRevisionLines(readyRevisionBound, append(lines, readyLogSample...))
+	if len(observations) != 4 || len(harness.ReadyRevision1Problems(observations)) != 0 {
+		t.Fatalf("normal diagnostics poisoned ready events: %+v", observations)
+	}
+}

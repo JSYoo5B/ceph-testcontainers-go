@@ -43,7 +43,11 @@ type DirectoryStatus struct {
 }
 
 // DirectoryStatus uses current owned processes and exact native filesystem,
-// peer, directory and watcher identities. It never rebalances or edits policy.
+// peer, directory and watcher identities. It confirms the selected session and
+// watcher association after reading replay data; a change makes the observation
+// non-ready with a retryable query error and no replay checkpoint. These reads
+// do not form a transaction with subsequent native changes. It never rebalances
+// or edits policy.
 // An unassigned owner is non-ready. Stopped or unavailable owned members return
 // a partial error and DaemonProblems even if this directory's owner is ready.
 // This method accepts only currently owned directory policies; removal-drain and
@@ -80,7 +84,7 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 			return result, err
 		}
 	}
-	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.pendingPeerImport != nil || mirror.peerID == "" || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 {
+	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.pendingPeerImport != nil || mirror.peerID == "" || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 || !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 {
 		return result, cephFSObserveGuard("CephFS mirror filesystem and peer identities are not confirmed")
 	}
 	if !mirror.directories.owns(directory) {
@@ -119,14 +123,16 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 		}
 		return result, cephFSObserveQuery("CephFS directory has no current owned filesystem session", nil)
 	}
-	result.DaemonName = selected.DaemonName
-	if err := mirror.readDirectoryReplay(ctx, selected, directory, &result); err != nil {
+	result.DaemonName = selected.daemon.DaemonName
+	confirmed := result
+	if err := mirror.readDirectoryReplay(ctx, selected.daemon, directory, &confirmed); err != nil {
 		return result, err
 	}
-	if err := mirror.confirmDirectoryUnchanged(ctx, directory, mapping); err != nil {
+	if err := mirror.confirmDirectoryUnchanged(ctx, directory, mapping, *selected); err != nil {
 		result.Ready = false
 		return result, err
 	}
+	result = confirmed
 	if len(observationErrors) != 0 {
 		return result, &cephFSObservationPartialError{problems: observationErrors}
 	}
@@ -154,12 +160,17 @@ func (mirror *Container) readFilesystemWatchers(ctx context.Context) (map[string
 	return watchers, nil
 }
 
+type cephFSDirectorySession struct {
+	daemon  *Daemon
+	address string
+}
+
 // selectDirectoryDaemon finds the one owned daemon whose filesystem session
 // watches the mapped instance and checks its peer. A daemon that cannot be
 // observed is recorded in result.DaemonProblems and returned among the
 // observation errors; a contradiction is returned as err. Container.mu is held.
-func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID string, watchers map[string]string, result *DirectoryStatus) (*Daemon, []error, error) {
-	var selected *Daemon
+func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID string, watchers map[string]string, result *DirectoryStatus) (*cephFSDirectorySession, []error, error) {
+	var selected *cephFSDirectorySession
 	var observationErrors []error
 	problem := func(name string, err error) {
 		if result.DaemonProblems == nil {
@@ -190,7 +201,7 @@ func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID s
 		if selected != nil {
 			return nil, nil, cephFSObserveGuard("CephFS directory maps to more than one owned filesystem session")
 		}
-		selected = daemon
+		selected = &cephFSDirectorySession{daemon: daemon, address: address}
 	}
 	return selected, observationErrors, nil
 }
@@ -248,9 +259,9 @@ func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daem
 }
 
 // confirmDirectoryUnchanged rereads the directory mapping and the filesystem
-// and peer identities after the observation, so that a status assembled
-// across a reassignment or replacement is never reported.
-func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping) error {
+// and peer identities, then the selected session and watcher association.
+// Replay is published only after those identities agree with the selection.
+func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping, selected cephFSDirectorySession) error {
 	after, err := mirror.readCephFSObservedMapping(ctx, directory)
 	if err != nil {
 		return err
@@ -260,6 +271,23 @@ func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, director
 	}
 	if err := mirror.checkCephFSObservedIdentities(ctx); err != nil {
 		return err
+	}
+	address, peer, unavailable, err := mirror.observeDaemonSession(ctx, selected.daemon)
+	if err != nil {
+		return err
+	}
+	if unavailable != nil {
+		return unavailable
+	}
+	if address != selected.address || peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+		return cephFSObserveQuery("CephFS selected filesystem session changed during observation", nil)
+	}
+	watchers, err := mirror.readFilesystemWatchers(ctx)
+	if err != nil {
+		return err
+	}
+	if watchers[address] != mapping.InstanceID {
+		return cephFSObserveQuery("CephFS selected watcher association changed during observation", nil)
 	}
 	return ctx.Err()
 }

@@ -47,6 +47,11 @@ func ParseObjecterOps(data []byte) ([]ObjecterOp, error) {
 	if dump.Ops == nil {
 		return nil, fmt.Errorf("objecter_requests has no ops")
 	}
+	for _, op := range *dump.Ops {
+		if _, ok := op.Pool(); !ok || op.TID == 0 || op.Object == "" {
+			return nil, fmt.Errorf("objecter_requests has an unattributable op: %+v", op)
+		}
+	}
 	return *dump.Ops, nil
 }
 

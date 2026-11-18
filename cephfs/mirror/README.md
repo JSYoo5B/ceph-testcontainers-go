@@ -83,7 +83,9 @@ shares (baseline, gaps, overflow and `Stop`) is in
 
 - The mirror owns only its daemon containers and the network attachments it
   adds. `Terminate` leaves the Ceph principals, the peer, directory policies and
-  all data in the clusters.
+  all data in the clusters. Once cleanup starts, the fixture refuses policy
+  and daemon mutations, including after a cleanup error; cleanup itself remains
+  retryable. A live fixture with zero daemons still accepts policy changes.
 - One way, one peer per source filesystem: several daemons share one peer and
   do not fan out. Active-active writes and automatic site failover are not
   provided. Both clusters must use the same network mode;
@@ -95,8 +97,11 @@ shares (baseline, gaps, overflow and `Stop`) is in
   the other owned paths when the native policy is idle, and forgets the
   removed path once its absence is confirmed. The
   MGR's mirroring module can hang for good when a directory is removed while
-  another assignment is changing; `RebalanceDirectories` waits for an idle
-  policy, plain removals do not, and `ceph mgr fail` recovers.
+  another assignment is changing. `RebalanceDirectories`, `RemoveDirectory`
+  and `BeginDirectoryRemoval` wait for an idle native policy before dispatching
+  a removal, for up to two minutes. This admission does not prove daemon
+  release or fence independent native policy/topology changes. `ceph mgr fail`
+  recovers a hung MGR.
 - Plain calls only change Ceph's policy; tracked calls return receipts whose
   `Released` or `Drained` proves the daemons' side. Neither proves remote
   unlock, checkpoint completion or unchanged destination metadata. A tracked

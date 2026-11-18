@@ -85,7 +85,7 @@ var runDirCallers = map[string]stateCaller{
 	"clearAdminSocket":    {"free", []string{"published"}},
 	"clearStaleOSDSocket": {"free", []string{"published"}},
 	"newOSDLaunchRecipe":  {"free", []string{"volumeName"}},
-	"adminSocket":         {"takes", []string{"shared"}},
+	"admitAdminSocket":    {"takes", []string{"shared"}},
 	"execTarget":          {"holds", []string{"shared"}},
 	"incarnationLocked":   {"holds", nil},
 	"generationLocked":    {"holds", nil},

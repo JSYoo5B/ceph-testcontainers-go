@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // readySession is the session state that ProtocolV2 prints when a session
@@ -14,8 +16,8 @@ import (
 // Conn is the connection object's address in the logging process, Lossy the
 // connection policy, ConnectSeq and PeerGlobalSeq the "cs" and "pgs" fields.
 // The cookies identify the session: a lossless session keeps both across
-// reconnects, a lossy one has no server cookie and each new session has a
-// new client cookie. InSeq and OutSeq are the sequence numbers of the last
+// reconnects. A lossy session has no server cookie and may reuse its client
+// cookie across resets. InSeq and OutSeq are the sequence numbers of the last
 // message received from and sent to the peer when the session became READY.
 // Every field is required; a line without one is not a readySession.
 type readySession struct {
@@ -62,6 +64,9 @@ func parseReadySessions(lines []string) ([]readySession, []string) {
 	for _, line := range lines {
 		match := readySessionPattern.FindStringSubmatch(line)
 		if match == nil {
+			if harness.IsReadySessionLine(line) {
+				unusable = append(unusable, "incomplete or unsupported READY framing: "+line)
+			}
 			continue
 		}
 		session, err := parseReadySession(line, match)
@@ -136,4 +141,24 @@ func parseReadySession(line string, match []string) (readySession, error) {
 		return readySession{}, err
 	}
 	return session, nil
+}
+
+var readyEntityPattern = regexp.MustCompile(`\bentity=(\w+)\.([^\s]*)`)
+
+// clientReadySessions refuses unusable records of this client and records
+// whose identity is unavailable, so neither can disappear from its window.
+func clientReadySessions(lines []string, client uint64) ([]readySession, error) {
+	sessions, unusable := parseReadySessions(lines)
+	for _, line := range unusable {
+		entity := readyEntityPattern.FindStringSubmatch(line)
+		unattributable := entity == nil || entity[2] == ""
+		if !unattributable && entity[1] == "client" {
+			id, err := strconv.ParseUint(entity[2], 10, 64)
+			unattributable = err != nil || id == client
+		}
+		if unattributable {
+			return nil, fmt.Errorf("READY evidence unavailable for client.%d: %s", client, line)
+		}
+	}
+	return sessions, nil
 }

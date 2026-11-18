@@ -9,8 +9,8 @@ import "testing"
 // A libcephfs client mounted at debug_ms 20 writes, fsyncs and idles in
 // cycles. Its log shows it sending KEEPALIVE2 frames, receiving
 // KEEPALIVE2_ACK and exchanging ACK frames with the MDS, and the MDS's log
-// shows it receiving those keepalives and acknowledging the client's
-// messages.
+// shows it acknowledging the client's messages. The MON log records receipt
+// of the client's keepalives.
 func TestCephFSMessengerKeepalive(t *testing.T) {
 	testCephFSMessengerKeepalive(t)
 }

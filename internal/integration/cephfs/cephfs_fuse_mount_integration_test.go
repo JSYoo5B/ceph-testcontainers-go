@@ -256,6 +256,11 @@ func startFuseMount(t *testing.T, ctx context.Context, m *cephFSSingleMDS, ctr t
 
 // exited describes how ceph-fuse ended, with its redacted stderr tail.
 func (f *fuseMount) exited(ctx context.Context) string {
+	select {
+	case <-f.done:
+	default:
+		return "ceph-fuse command is still outstanding"
+	}
 	stderr := f.result.Stderr
 	if len(stderr) > 2048 {
 		stderr = stderr[len(stderr)-2048:]

@@ -690,3 +690,28 @@ func TestLeaseConcurrentRestoresRemoveOnce(t *testing.T) {
 		t.Fatalf("after concurrent Restores: %q, restored %t, %d reservations", state, lease.restored, len(lease.leases.paths))
 	}
 }
+
+func TestLeaseSameSecondReplacementIdentityLimit(t *testing.T) {
+	for _, same := range []bool{false, true} {
+		t.Run(fmt.Sprint(same), func(t *testing.T) {
+			f := newFakeSnapSchedule()
+			lease, err := add(t.Context(), snapScheduleFilesystem(f), Config{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.native(t, "fs snap-schedule remove / 1h 2030-01-01T00:00:00")
+			if same {
+				f.clock = f.clock.Add(-time.Second)
+			}
+			f.native(t, "fs snap-schedule add / 1h 2030-01-01T00:00:00")
+			_, statusErr := lease.Status(t.Context())
+			restoreErr := lease.Restore(t.Context())
+			if (statusErr == nil) != same || (restoreErr == nil) != same {
+				t.Fatalf("same=%t status=%v restore=%v", same, statusErr, restoreErr)
+			}
+			if (f.state() == "") != same {
+				t.Fatal("unexpected replacement preservation", f.state())
+			}
+		})
+	}
+}

@@ -166,3 +166,33 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet and newFilesystem", bindings)
 	}
 }
+
+func TestFilesystemObservationsRefuseReplacedIdentity(t *testing.T) {
+	for _, edit := range []string{"filesystem", "metadata", "data", "registration"} {
+		t.Run(edit, func(t *testing.T) {
+			fs, control, _, _ := cephFSContextAdmissionFixture()
+			if err := fs.WaitReady(t.Context()); err != nil {
+				t.Fatalf("original readiness: %v", err)
+			}
+			original := control.Output["fs dump --format json"]
+			switch edit {
+			case "filesystem":
+				control.Output["fs dump --format json"] = strings.ReplaceAll(original, `"id":41`, `"id":42`)
+			case "metadata":
+				control.Output["fs dump --format json"] = strings.ReplaceAll(original, `"metadata_pool":1`, `"metadata_pool":9`)
+			case "data":
+				control.Output["fs dump --format json"] = strings.ReplaceAll(original, `"data_pools":[2,3]`, `"data_pools":[9,3]`)
+			case "registration":
+				delete(filesystems(fs.base().Cluster()).byName, fs.base().Name())
+			}
+			if status, err := fs.MDSStatus(t.Context()); err == nil {
+				t.Fatalf("replacement accepted: %+v, original %s", status, original)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+			if err := fs.WaitReady(ctx); err == nil {
+				t.Fatal("replacement became ready")
+			}
+		})
+	}
+}

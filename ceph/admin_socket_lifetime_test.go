@@ -49,7 +49,7 @@ func (m *adminLifetimeModel) Exec(_ context.Context, args []string, _ ...tcexec.
 	raw := base64.StdEncoding.EncodeToString([]byte(`{"version":"20.2.4"}`))
 	return 0, strings.NewReader(fmt.Sprintf(`{"schema_version":1,"stdout":%q,"stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, raw)), nil
 }
-func TestAdminSocketHoldsAdmissionThroughDispatch(t *testing.T) {
+func TestAdminSocketRegistersBeforeDispatchWithoutHoldingTopologyLock(t *testing.T) {
 	for _, kind := range []string{"osd", "mon", "mgr"} {
 		for _, args := range [][]string{{"version"}, {"status"}, {"config", "set", "debug_ms", "1"}} {
 			t.Run(kind+"/"+strings.Join(args, "-"), func(t *testing.T) {
@@ -76,9 +76,10 @@ func TestAdminSocketHoldsAdmissionThroughDispatch(t *testing.T) {
 					handle = mgr
 				}
 				control.during = func() {
-					if c.mu.TryLock() {
+					if !c.mu.TryLock() {
+						t.Error("topology lock held during native command")
+					} else {
 						c.mu.Unlock()
-						t.Error("topology admission released before command completion")
 					}
 					if c.native.calls.registered() != 1 {
 						t.Error("admin command not registered")

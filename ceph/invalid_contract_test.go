@@ -64,7 +64,7 @@ var invalidCallSites = map[string]int{
 	"cephfs/subvolume": 33, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 17, "cephfs/snapschedule": 16,
 	"rgw/account": 11, "rgw/placement": 22, "rgw/notification": 6, "rgw/internal/gwbase": 15,
-	"rbd/mirror": 34, "cephfs/mirror": 21,
+	"rbd/mirror": 34, "cephfs/mirror": 24,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare

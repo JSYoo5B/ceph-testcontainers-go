@@ -3,6 +3,9 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -111,7 +114,7 @@ func TestCephFSSetsReplayAndAffinityOnlyAfterFilesystemCreation(t *testing.T) {
 		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`, "osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`},
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
-	cluster := poolFixtureCluster(ctr, 2)
+	cluster := poolFixtureCluster(&filesystemCreationCLI{poolFixtureContainer: ctr}, 2)
 	fs, err := startFilesystem(t.Context(), cluster, Config{Name: "tenant", ActiveMDS: 2, StandbyMDS: 1, StandbyReplay: true})
 	if err == nil || fs == nil || len(fs.MDSs()) != 0 {
 		t.Fatalf("configuration failure did not preserve filesystem before MDS startup: fs=%+v error=%v", fs, err)
@@ -142,7 +145,7 @@ func TestCephFSSetsRankCountsSeparatelyOnCeph19(t *testing.T) {
 		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`, "osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`},
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
-	cluster := poolFixtureCluster(ctr, 2)
+	cluster := poolFixtureCluster(&filesystemCreationCLI{poolFixtureContainer: ctr}, 2)
 	testhelper.TestSetCephVersion(cluster, "19.2.6")
 	if _, err := startFilesystem(t.Context(), cluster, Config{Name: "tenant", ActiveMDS: 2, StandbyMDS: 1}); err == nil {
 		t.Fatal("injected configuration failure was ignored")
@@ -351,4 +354,62 @@ func btoi(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+// filesystemCreationCLI publishes the native identity once fs new succeeds.
+type filesystemCreationCLI struct {
+	*poolFixtureContainer
+	publishOnFailure, failCapture bool
+}
+
+func (c *filesystemCreationCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := c.poolFixtureContainer.Exec(ctx, args, opts...)
+	if words := clustertest.ModuleArgs(args); (code == 0 || c.publishOnFailure) && err == nil && len(words) > 2 && words[0] == "fs" && words[1] == "new" {
+		c.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[2]}}]}`
+		if c.failCapture {
+			c.Output["fs dump --format json"] = "invalid"
+		}
+	}
+	return code, out, err
+}
+
+func TestPartialStartNeverAdoptsReplacementFilesystem(t *testing.T) {
+	for _, mode := range []string{"refused new", "lost new reply", "failed setting", "failed identity read"} {
+		t.Run(mode, func(t *testing.T) {
+			control := &poolFixtureContainer{Output: map[string]string{
+				"fs dump --format json":            `{"filesystems":[]}`,
+				"osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`,
+			}}
+			wire := &filesystemCreationCLI{poolFixtureContainer: control}
+			switch mode {
+			case "refused new", "lost new reply":
+				control.Fail = "fs new tenant tenant-metadata tenant-data set max_mds 1 standby_count_wanted 0"
+				wire.publishOnFailure = mode == "lost new reply"
+			case "failed setting":
+				control.Fail = "fs set tenant allow_standby_replay false"
+			case "failed identity read":
+				wire.failCapture = true
+			}
+			cluster := poolFixtureCluster(wire, 2)
+			fs, err := Start(t.Context(), cluster, Config{Name: "tenant"})
+			if fs == nil || err == nil {
+				t.Fatalf("Start=%v, %v", fs, err)
+			}
+			if (fs.base().Native() != nil) != (mode == "failed setting") {
+				t.Fatalf("unexpected captured identity %v", fs.base().Native())
+			}
+			control.Fail = ""
+			control.Output["fs ls --format json"] = `[{"name":"tenant","metadata_pool":"replacement-meta","data_pools":["replacement-data"]}]`
+			control.Output["fs get tenant --format json"] = strings.ReplaceAll(shutdownMap(99, 0, `{}`), "app", "tenant")
+			control.Calls = nil
+			if err := fs.Remove(t.Context()); err == nil {
+				t.Fatal("partial handle accepted replacement")
+			}
+			for _, call := range control.Calls {
+				if len(call) > 1 && ((call[0] == "fs" && (call[1] == "set" || call[1] == "rm")) || slices.Contains(call, "rm")) {
+					t.Fatalf("replacement mutated: %v", call)
+				}
+			}
+		})
+	}
 }

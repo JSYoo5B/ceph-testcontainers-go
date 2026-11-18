@@ -589,12 +589,12 @@ func TestCloneWatchEndsWhenTheFixtureEndsOrTheTargetChanges(t *testing.T) {
 				c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], `"inode":71`, `"inode":72`)
 			})
 		},
-		"replaced source": func(_ *fstest.Filesystem, c *lockedCloneControl, _ *Clone) {
+		"changed source snapshot name": func(_ *fstest.Filesystem, c *lockedCloneControl, _ *Clone) {
 			c.edit(func(c *cloneLifecycleFixtureContainer) {
 				c.Output[cloneStatusQuery] = strings.Replace(cloneLifecycleStatus("pending"), `"snapshot":"checkpoint"`, `"snapshot":"other"`, 1)
 			})
 		},
-		"removed target": func(fs *fstest.Filesystem, _ *lockedCloneControl, clone *Clone) {
+		"fixture-recorded target removal": func(fs *fstest.Filesystem, _ *lockedCloneControl, clone *Clone) {
 			fs.SetupMu.Lock()
 			clone.identity.removed = true
 			fs.SetupMu.Unlock()
@@ -650,5 +650,39 @@ func TestCloneWatchRefusesInvalidConfigAndUnownedClones(t *testing.T) {
 	got, err := watch.Validate(0, 0, 0, cloneWatchDefaultInterval)
 	if err != nil || got != (watch.Settings{Interval: 3 * time.Second, Timeout: 30 * time.Second, Buffer: 16}) {
 		t.Fatalf("defaults = %+v, %v", got, err)
+	}
+}
+
+func TestCloneWatchMetadataReadFailureIsAGap(t *testing.T) {
+	_, control, clone := newCloneWatchFixture(t)
+	w, err := clone.Watch(t.Context(), ceph.WatchConfig{Interval: 100 * time.Millisecond, Buffer: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+	nextCloneEvent(t, w)
+	control.edit(func(c *cloneLifecycleFixtureContainer) { c.Fail = "fixture /volumes/restores/copy" })
+	gap := nextCloneEvent(t, w)
+	if gap.Kind != ceph.WatchGap || gap.Err == nil {
+		t.Fatalf("metadata failure=%+v", gap)
+	}
+	control.edit(func(c *cloneLifecycleFixtureContainer) {
+		c.Fail = ""
+		c.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = "invalid"
+		c.Output[cloneStatusQuery] = cloneLifecycleStatus("complete")
+	})
+	for {
+		event := nextCloneEvent(t, w)
+		if event.Kind == ceph.WatchGap {
+			continue
+		}
+		if event.Kind != ceph.WatchResumed || event.Status.State != "complete" {
+			t.Fatalf("completed target without source revalidation=%+v", event)
+		}
+		break
+	}
+	awaitCloneWatchDone(t, w)
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
 	}
 }

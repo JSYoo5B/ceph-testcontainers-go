@@ -19,6 +19,48 @@ import (
 // can lag behind the acknowledged writes. The judge therefore bounds the
 // overshoot instead of requiring the write that crosses the limit to fail.
 
+// The byte actor owns the same synchronous-call watchdog as the file-quota
+// actor. Observation gets 90 seconds; each complete write/fsync series gets
+// 120 seconds, including the final quota denial or relaxed write.
+const cephFSByteQuotaOperations = cephFSQuotaObservation + `
+def observe_byte_quota(sample, want, timeout=90, clock=time.monotonic, sleep=time.sleep):
+    started, samples = clock(), 0
+    deadline = started + timeout
+    while True:
+        value = quota_sample_before(sample, deadline, clock)
+        samples += 1
+        observed = clock()
+        if observed >= deadline:
+            raise TimeoutError("byte quota observation expired before readiness")
+        if value == want:
+            return dict(samples=samples, observed_ms=int((observed-started)*1000))
+        sleep(min(0.2, max(0, deadline-clock())))
+def byte_quota_pattern(offset, size):
+    return bytes((offset + i) % 251 for i in range(size))
+def byte_quota_write(fs, fd, offset, chunk, deadline, clock):
+    def operation():
+        try:
+            written = fs.write(fd, byte_quota_pattern(offset, chunk), offset)
+            if written != chunk:
+                raise RuntimeError("short write of %d bytes" % written)
+            fs.fsync(fd, 0)
+            return written, 0
+        except cephfs.Error as error:
+            return 0, error.errno
+    return quota_sample_before(operation, deadline, clock)
+def byte_quota_series(fs, fd, limit, chunk, overshoot, timeout=120, clock=time.monotonic, sleep=time.sleep):
+    started, acked, attempts, failure = clock(), 0, 0, 0
+    deadline = started + timeout
+    while acked <= limit + overshoot:
+        attempts += 1
+        written, failure = byte_quota_write(fs, fd, acked, chunk, deadline, clock)
+        if failure:
+            break
+        acked += written
+        sleep(min(0.05, max(0, deadline-clock())))
+    return dict(acked=acked, attempts=attempts, errno=failure, elapsed_ms=int((clock()-started)*1000))
+`
+
 // byteQuotaPattern returns n bytes of the pattern that the actor writes from
 // offset 0: byte i is i mod 251, so a shifted or truncated readback differs.
 func byteQuotaPattern(n int64) []byte {
@@ -39,12 +81,14 @@ func byteQuotaDigest(n int64) string {
 // the limit it observed before writing, the bytes acknowledged by write and
 // fsync, the attempts made and the errno that stopped them (0 when none did).
 type byteQuotaSeries struct {
-	Limit    *uint64 `json:"limit"`
-	Samples  uint64  `json:"samples"`
-	Acked    *int64  `json:"acked"`
-	Attempts uint64  `json:"attempts"`
-	Errno    *int    `json:"errno"`
-	Size     *int64  `json:"size"`
+	Limit      *uint64 `json:"limit"`
+	Samples    uint64  `json:"samples"`
+	ObservedMS *int64  `json:"observed_ms"`
+	ElapsedMS  *int64  `json:"elapsed_ms"`
+	Acked      *int64  `json:"acked"`
+	Attempts   uint64  `json:"attempts"`
+	Errno      *int    `json:"errno"`
+	Size       *int64  `json:"size"`
 }
 
 // judgeByteQuotaSeries accepts a series that observed limit before writing,
@@ -54,8 +98,10 @@ type byteQuotaSeries struct {
 // before the limit or lacks a field is refused.
 func judgeByteQuotaSeries(s byteQuotaSeries, limit uint64, chunk, overshoot int64) error {
 	switch {
-	case s.Limit == nil || s.Acked == nil || s.Errno == nil || s.Size == nil || s.Samples == 0:
+	case s.Limit == nil || s.Acked == nil || s.Errno == nil || s.Size == nil || s.Samples == 0 || s.ObservedMS == nil || s.ElapsedMS == nil:
 		return errors.New("byte quota series is incomplete")
+	case *s.ObservedMS < 0 || *s.ObservedMS >= 90_000 || *s.ElapsedMS < 0 || *s.ElapsedMS >= 120_000:
+		return errors.New("byte quota series exceeded its observation or write deadline")
 	case *s.Limit != limit:
 		return fmt.Errorf("series observed limit %d, want %d", *s.Limit, limit)
 	case *s.Errno == 0:

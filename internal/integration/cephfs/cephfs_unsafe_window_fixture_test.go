@@ -241,9 +241,10 @@ func TestParseClientCache(t *testing.T) {
 			t.Errorf("%s: %+v found=%t err=%v", name, caps, found, err)
 		}
 	}
-	// A flushing cap without a flush TID is no pending flush.
-	if caps, _, _ := parseClientCache([]byte(`{"cache": [{"ino": "0x10000000001", "snapid": "head", "flushings_caps": "Fw"}]}`), inode); caps.Flushing() {
-		t.Errorf("flushing caps without a TID: %+v", caps)
+	for _, fields := range []string{`"flushings_caps":"Fw"`, `"flushing_cap_tid":{"Fw":3}`, `"flushings_caps":null,"flushing_cap_tid":{"Fw":3}`, `"flushings_caps":"Fw","flushing_cap_tid":null`, `"flushings_caps":"Fw","flushing_cap_tid":{}`} {
+		if _, _, err := parseClientCache([]byte(`{"cache":[{"ino":"0x10000000001","snapid":"head",`+fields+`}]}`), inode); err == nil {
+			t.Errorf("partial flushing evidence admitted: %s", fields)
+		}
 	}
 	for _, malformed := range []string{`{}`, `{"other": []}`, `"cache"`, `{"cache": [1]}`, `{"cache": [{"ino": 1}]}`} {
 		if _, _, err := parseClientCache([]byte(malformed), inode); err == nil {

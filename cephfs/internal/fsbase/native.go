@@ -23,7 +23,8 @@ type NativeIdentity struct {
 
 // PoolAttachment is the record of one additional data pool attachment. Every
 // copy of a data pool handle shares it. Used is sticky: a subvolume, group or
-// clone that selected the pool once, even in a partial creation, keeps it set.
+// clone whose creation was dispatched with this pool, even if its reply was
+// lost, keeps it set. Preflight refusals leave it unchanged.
 type PoolAttachment struct {
 	Name                                       string
 	ID                                         int64
@@ -193,8 +194,9 @@ func (state *NativePools) PoolByName(name string) (ceph.PoolState, error) {
 
 // CheckSubvolumeDataPool refuses a data pool name that is not currently
 // registered to this filesystem and marks a recorded attachment used. It runs
-// while the setup gate is held. Selection is sticky even after a partial
-// native create, so removal never assumes unknown partial resources are safe.
+// immediately before dispatch, after preflight, while the setup gate is held.
+// Selection is sticky even after a partial native create, so removal never
+// assumes unknown partial resources are safe.
 func (c *Core) CheckSubvolumeDataPool(ctx context.Context, name string) error {
 	if c.native == nil {
 		return errors.New("filesystem has no confirmed creation identity")

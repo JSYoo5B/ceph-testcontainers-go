@@ -75,6 +75,10 @@ type Status struct {
 // Lease owns one snapshot schedule of a directory and the retention rules
 // that it added. Restore removes them; the snapshots stay. Retain a non-nil
 // lease returned with an error: the schedule may have been added.
+// Native identity has one-second timestamp resolution. A same-repeat, same-start
+// external replacement within that second is indistinguishable to Watch and
+// Restore. External schedule writers must leave the leased path alone until
+// Restore completes, including between calls.
 type Lease struct {
 	// Path, Repeat, Start and Retention are copies of the request that Add
 	// accepted, Start in UTC. The lease's operations and Restore use the

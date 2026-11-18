@@ -226,14 +226,34 @@ var readyRevisionLinePattern = regexp.MustCompile(`conn\(\S+ \S+ (\w+) :\S+ s=RE
 
 var readyRevisionFieldPattern = regexp.MustCompile(`(?:^|\s)rev1=(\S*)`)
 
+var readyStatePattern = regexp.MustCompile(`\bs=(\w+)`)
+var connectionEventPattern = regexp.MustCompile(`\)\.([a-zA-Z_][a-zA-Z_0-9]*)`)
+
+// IsReadySessionLine identifies a READY record independently of its detailed
+// connection framing. Other events can log the READY state too; an explicit
+// non-ready event or another state is not a session-ready observation.
+func IsReadySessionLine(line string) bool {
+	if event := connectionEventPattern.FindStringSubmatch(line); event != nil && event[1] != "ready" {
+		return false
+	}
+	if state := readyStatePattern.FindStringSubmatch(line); state != nil {
+		return state[1] == "READY"
+	}
+	return strings.Contains(line, ".ready entity=")
+}
+
 // ParseReadyRevisionLines returns one observation per READY line. A rev1 field
 // that is absent, repeated, empty or not exactly 0 or 1 is unavailable; it is
 // never read as revision 0 and never inferred from crypto or compression.
+// Recognizable READY records with unsupported framing are also unavailable.
 func ParseReadyRevisionLines(binding ReadyRevisionBinding, lines []string) []ReadyRevisionObservation {
 	var result []ReadyRevisionObservation
 	for _, line := range lines {
 		match := readyRevisionLinePattern.FindStringSubmatch(line)
 		if match == nil {
+			if IsReadySessionLine(line) {
+				result = append(result, ReadyRevisionObservation{Binding: binding, Line: line, Revision: ReadyRevisionUnavailable, Reason: "incomplete or unsupported READY framing"})
+			}
 			continue
 		}
 		observation := ReadyRevisionObservation{Binding: binding, Line: line, Mode: match[1], PeerType: match[3], PeerID: match[4]}

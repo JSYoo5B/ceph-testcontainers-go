@@ -50,7 +50,7 @@ func TestParseObjecterOps(t *testing.T) {
 			t.Errorf("pool of %q = %d, %t", locator.locator, pool, ok)
 		}
 	}
-	for _, bad := range []string{`{}`, `{"ops": null}`, `[]`} {
+	for _, bad := range []string{`{}`, `{"ops": null}`, `[]`, `{"ops":[{}]}`, `{"ops":[{"tid":4,"object_id":"file"}]}`, `{"ops":[{"tid":4,"object_id":"file","object_locator":"@x"}]}`, `{"ops":[{"tid":4,"object_locator":"@3"}]}`, `{"ops":[{"object_id":"file","object_locator":"@3"}]}`} {
 		if _, err := harness.ParseObjecterOps([]byte(bad)); err == nil {
 			t.Errorf("parseObjecterOps(%s) accepted it", bad)
 		}

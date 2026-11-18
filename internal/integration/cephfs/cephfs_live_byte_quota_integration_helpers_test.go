@@ -37,7 +37,7 @@ const (
 // chunk and publishes receipt 3. It closes after the "finish" gate and
 // publishes receipt 4. Arguments: filesystem, work directory, token,
 // directory, file, limit, chunk size, overshoot bound.
-const cephFSByteQuotaActor harness.CephFSActorScript = harness.CephFSActorHelpers + `
+const cephFSByteQuotaActor harness.CephFSActorScript = harness.CephFSActorHelpers + cephFSByteQuotaOperations + `
 import errno
 directory, path = sys.argv[4].encode(), sys.argv[5].encode()
 limit, chunk, overshoot = (int(arg) for arg in sys.argv[6:9])
@@ -51,16 +51,6 @@ def quota():
         if error.errno == errno.ENODATA:
             return 0
         raise
-def pattern(offset, size):
-    return bytes((offset + i) % 251 for i in range(size))
-def observe(want, timeout=90):
-    deadline, samples = time.monotonic() + timeout, 0
-    while time.monotonic() < deadline:
-        samples += 1
-        if quota() == want:
-            return samples
-        time.sleep(0.2)
-    sys.exit("the client did not read max_bytes=%d" % want)
 fs.mkdir(directory, 0o755)
 fd = fs.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
 fs.fsync(fd, 0)
@@ -69,27 +59,17 @@ def state(phase, **extra):
     publish(phase, client=fs.get_instance_id(), inode=stat.st_ino, dir_inode=fs.stat(directory).st_ino, size=stat.st_size, **extra)
 state(1)
 gate("limited")
-samples = observe(limit)
-acked, attempts, failure = 0, 0, 0
-started = time.monotonic()
-while acked <= limit + overshoot and time.monotonic() - started < 120:
-    attempts += 1
-    try:
-        written = fs.write(fd, pattern(acked, chunk), acked)
-        if written != chunk:
-            sys.exit("short write of %d bytes" % written)
-        fs.fsync(fd, 0)
-    except cephfs.Error as error:
-        failure = error.errno
-        break
-    acked += written
-    time.sleep(0.05)
-state(2, ops=dict(limit=limit, samples=samples, acked=acked, attempts=attempts, errno=failure, size=fs.fstat(fd).st_size))
+observation = observe_byte_quota(quota, limit)
+series = byte_quota_series(fs, fd, limit, chunk, overshoot)
+acked = series["acked"]
+state(2, ops=dict(series, **observation, limit=limit, size=fs.fstat(fd).st_size))
 gate("relaxed")
-samples = observe(0)
-written = fs.write(fd, pattern(acked, chunk), acked)
-fs.fsync(fd, 0)
-state(3, ops=dict(samples=samples, written=written, size=fs.fstat(fd).st_size))
+observation = observe_byte_quota(quota, 0)
+started = time.monotonic()
+written, failure = byte_quota_write(fs, fd, acked, chunk, started+120, time.monotonic)
+if failure:
+    raise RuntimeError("relaxed write failed with errno %d" % failure)
+state(3, ops=dict(observation, written=written, elapsed_ms=int((time.monotonic()-started)*1000), size=fs.fstat(fd).st_size))
 gate("finish")
 fs.close(fd)
 fs.unmount()
@@ -252,12 +232,15 @@ func testCephFSLiveByteQuota(t *testing.T) {
 	actor.Open(t, ctx, "relaxed")
 	relaxed := actor.Receipt(t, ctx, 3)
 	var after struct {
-		Samples uint64 `json:"samples"`
-		Written int64  `json:"written"`
-		Size    int64  `json:"size"`
+		Samples    uint64 `json:"samples"`
+		ObservedMS *int64 `json:"observed_ms"`
+		ElapsedMS  *int64 `json:"elapsed_ms"`
+		Written    int64  `json:"written"`
+		Size       int64  `json:"size"`
 	}
 	if err := json.Unmarshal(relaxed.Ops, &after); err != nil || relaxed.PID != first.PID || relaxed.Client != first.Client ||
-		after.Samples == 0 || after.Written != byteQuotaChunk || after.Size != *series.Acked+byteQuotaChunk {
+		after.Samples == 0 || after.ObservedMS == nil || *after.ObservedMS < 0 || *after.ObservedMS >= 90_000 ||
+		after.ElapsedMS == nil || *after.ElapsedMS < 0 || *after.ElapsedMS >= 120_000 || after.Written != byteQuotaChunk || after.Size != *series.Acked+byteQuotaChunk {
 		t.Fatalf("relaxed write: %+v %s, %v", relaxed, relaxed.Ops, err)
 	}
 	read := admin("inspect", 0)
