@@ -22,12 +22,18 @@ func (p *pending) Error() string {
 	return "native mutation completion is uncertain; retain ownership or terminate the cluster"
 }
 func (p *pending) Unwrap() []error {
+	var causes []error
+	if p.cause != nil {
+		causes = append(causes, p.cause)
+	}
 	select {
 	case <-p.done:
-		return []error{p.cause, p.err}
+		if p.err != nil {
+			causes = append(causes, p.err)
+		}
 	default:
-		return []error{p.cause}
 	}
+	return causes
 }
 
 // Run lets a dispatched write finish under its own bound after the caller

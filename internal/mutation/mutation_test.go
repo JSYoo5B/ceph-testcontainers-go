@@ -87,3 +87,32 @@ func TestCanceledMutationKeepsLaterFailure(t *testing.T) {
 		t.Fatal("later failure became inaccessible")
 	}
 }
+
+func TestPendingUnwrapOmitsNilErrors(t *testing.T) {
+	for _, cause := range []error{nil, context.Canceled} {
+		for _, result := range []error{nil, errors.New("late failure")} {
+			p := &pending{done: make(chan struct{}), cause: cause, err: result}
+			for _, completed := range []bool{false, true} {
+				if completed {
+					close(p.done)
+				}
+				got := p.Unwrap()
+				want := 0
+				if cause != nil {
+					want++
+				}
+				if completed && result != nil {
+					want++
+				}
+				if len(got) != want {
+					t.Fatalf("completed=%v: got %v, want %d errors", completed, got, want)
+				}
+				for _, err := range got {
+					if err == nil {
+						t.Fatal("Unwrap returned a nil error")
+					}
+				}
+			}
+		}
+	}
+}
