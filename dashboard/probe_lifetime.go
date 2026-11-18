@@ -19,6 +19,9 @@ func (s *state) trackProbe(report probeReport, err error) {
 	s.loginUncertain = s.loginUncertain || report.LoginPending
 	var command *ceph.NativeCommandUnstoppedError
 	if errors.As(err, &command) {
+		// An unconfirmed process takes precedence over any admission error
+		// joined to its failure; it may already have sent the login.
+		s.loginUncertain = true
 		s.probeCommands = append(s.probeCommands, command)
 	}
 }

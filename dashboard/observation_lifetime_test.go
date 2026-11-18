@@ -185,3 +185,12 @@ func TestGatewayLinkIdentityReadersJoinRemoval(t *testing.T) {
 	}
 	<-done
 }
+
+func TestUnstoppedProbeCannotDeclareServerCompletion(t *testing.T) {
+	s := &state{}
+	command := &ceph.NativeCommandUnstoppedError{}
+	s.trackProbe(probeReport{Finished: true}, errors.Join(ceph.ErrInvalidRequest, command))
+	if !s.loginUncertain || len(s.probeCommands) != 1 || s.probeCommands[0] != command {
+		t.Fatal("unconfirmed native process was treated as completed server work")
+	}
+}
