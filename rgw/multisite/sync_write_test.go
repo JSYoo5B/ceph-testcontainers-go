@@ -143,3 +143,27 @@ func TestSyncPolicyLaterAssignmentWaitsForEarlierWriter(t *testing.T) {
 		t.Fatal("settled earlier assignment replaced later policy")
 	}
 }
+
+func TestSyncWriterFencePrecedesTopologyPublication(t *testing.T) {
+	f, _, _, _ := newRGWSyncTestFixture()
+	cli := &syncWriterBoundary{lost: true}
+	zone := &rgwZoneState{Zone: Zone{ID: "source-id", Zonegroup: "group"}, client: cli}
+	if _, err := f.syncPolicyWrite(t.Context(), zone, "group", "period", "commit"); !mutation.Uncertain(err) {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() error{
+		"add-zone": func() error { _, err := f.AddZone(t.Context(), "image", ZoneConfig{Name: "third"}); return err },
+		"add-zonegroup": func() error {
+			_, err := f.AddZonegroup(t.Context(), "image", ZonegroupConfig{Name: "other", Zones: []ZoneConfig{{Name: "third"}}})
+			return err
+		},
+		"remove-zone": func() error { return f.RemoveZone(t.Context(), "destination") },
+		"pull-period": func() error { return f.PullDestinationPeriod(t.Context()) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := run(); !mutation.Uncertain(err) {
+				t.Fatalf("topology bypassed unresolved writer: %v", err)
+			}
+		})
+	}
+}

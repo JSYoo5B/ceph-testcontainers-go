@@ -667,6 +667,9 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 		return err
 	}
 	defer f.topologyMu.Unlock()
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return err
+	}
 	if f.closed {
 		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
 	}

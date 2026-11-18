@@ -371,6 +371,9 @@ func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, 
 }
 
 func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, createGroup bool, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return nil, err
+	}
 	addition, err := f.admitZoneAddition(ctx, image, config, createGroup)
 	if err != nil {
 		return nil, err
