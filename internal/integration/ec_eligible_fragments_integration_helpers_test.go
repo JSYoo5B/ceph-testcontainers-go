@@ -351,7 +351,7 @@ func testECEligibleFragments(t *testing.T) {
 	head, clone := ecClassify(t, degraded, overwritten.Writer, overwritten.Snap, true)
 	ecExpect(t, "degraded", head, ecSufficient, ecEligible, others)
 	ecExpect(t, "degraded", clone, ecSufficient, ecEligible, others)
-	ecExpect(t, "degraded", head, ecSufficient, ecUnobserved, []int{victimIndex})
+	ecExpect(t, "degraded", head, ecSufficient, ecAbsent, []int{victimIndex})
 	if degraded.Unfound.NumUnfound != 0 || len(degraded.Unfound.Objects) != 0 {
 		t.Fatalf("degraded list_unfound: %+v", degraded.Unfound)
 	}

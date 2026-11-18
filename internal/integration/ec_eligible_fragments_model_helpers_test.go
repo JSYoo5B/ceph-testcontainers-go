@@ -346,6 +346,7 @@ const (
 	// the cursor with the object, so the fragment is neither proven nor excluded.
 	ecCursor     = "backfill-cursor-unresolved"
 	ecUnobserved = "unobserved"
+	ecAbsent     = "no-acting-holder"
 )
 
 type ecFragment struct {
@@ -464,9 +465,9 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 	clean := slices.Contains(states, "clean")
 	candidates := 0
 	for fragment := range acting {
-		entry := ecFragment{Index: fragment, OSD: -1, Status: ecUnobserved}
-		if acting[fragment] != ecFragmentNone {
-			entry.OSD = acting[fragment]
+		entry := ecFragment{Index: fragment, OSD: acting[fragment], Status: ecUnobserved}
+		if entry.OSD == ecFragmentNone {
+			entry.OSD, entry.Status = -1, ecAbsent
 		}
 		for _, l := range locations[fragment] {
 			lastComplete, _ := parseEversion(l.info.LastComplete)
@@ -486,7 +487,7 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 				entry.OSD, entry.Status = l.osd, status
 			}
 		}
-		if entry.Status == ecBehind || entry.Status == ecCursor {
+		if entry.Status == ecBehind || entry.Status == ecCursor || entry.Status == ecUnobserved {
 			candidates++
 		}
 		result.Fragments = append(result.Fragments, entry)
@@ -496,7 +497,7 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 	case eligible >= k:
 		result.Verdict = ecSufficient
 	case eligible+candidates >= k:
-		return incomplete("%d eligible and %d lagging or partially backfilled fragments; whether they can supply the object is not observed", eligible, candidates)
+		return incomplete("%d eligible and %d unreported, lagging or partially backfilled fragments; whether they can supply the object is not observed", eligible, candidates)
 	default:
 		result.Verdict = ecInsufficient
 	}
