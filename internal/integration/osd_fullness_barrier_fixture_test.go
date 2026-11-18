@@ -282,7 +282,7 @@ func TestBarrierReadTiming(t *testing.T) {
 		{"slow reply", []barrierSample{read(0, 1), read(2, 23)}, "took"},
 		{"slow first read", []barrierSample{read(0, 21), read(22, 23)}, "took"},
 		{"short reads across large gap", []barrierSample{read(0, 1), read(5, 6), read(21, 22)}, "previous one"},
-		{"wall time only", []barrierSample{read(0, 4), read(6, 8), read(12, 15), read(17, 19), read(20, 23)}, "at least"},
+		{"wall time only", []barrierSample{read(0, 4), read(6, 8), read(12, 15), read(17, 19), read(20, 22), read(23, 25)}, "at least"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			judged, err := judgeBarrier(test.samples, span, false)
