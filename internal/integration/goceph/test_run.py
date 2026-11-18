@@ -111,6 +111,25 @@ class SuppliedImagesTests(unittest.TestCase):
             self.assertEqual(report["client_image"]["Id"], CLIENT_ID)
             self.assertEqual(report["runner_image"]["Id"], RUNNER_ID)
 
+    def test_zero_exit_without_completed_scenario_fails(self):
+        for text in ("PASS\n", "=== RUN   TestGoCephLinux\n--- SKIP: TestGoCephLinux (0.00s)\nPASS\n"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "output"
+                process = mock.Mock()
+                process.stdout = io.StringIO(text)
+                process.wait.return_value = 0
+                with mock.patch.dict(os.environ, {}, clear=True), \
+                        mock.patch.object(runner.subprocess, "check_output", side_effect=self.capture), \
+                        mock.patch.object(runner.subprocess, "Popen", return_value=process), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    result = runner.main(["--client-image", "client", "--runner-image", "runner",
+                                          "--output-dir", str(output)])
+                report = json.loads((output / "summary.json").read_text())
+                self.assertEqual(result, 1)
+                self.assertFalse(report["passed"])
+                self.assertIn(report["execution"]["status"], ("no_execution", "incomplete"))
+                self.assertEqual(report["remaining_owned_container_ids"], [])
+
     def test_missing_local_image_does_not_start_runner(self):
         def capture(command, **kwargs):
             if command[1:3] == ["image", "inspect"]:
