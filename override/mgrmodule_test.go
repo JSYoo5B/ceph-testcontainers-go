@@ -223,7 +223,7 @@ func TestOverrideMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
 	}
 }
 
-func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
+func TestOverrideMGRModuleTerminalNativeFailuresAndReadbackReconcile(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctr.failAfter = "enable"
 	c := mgrModuleCluster(ctr)

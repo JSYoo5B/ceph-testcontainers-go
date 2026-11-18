@@ -44,13 +44,12 @@ func TestSetFullRatiosOrderingNormalizationAndSharedRestore(t *testing.T) {
 	}
 }
 
-func TestSetFullRatiosPartialApplyAndRestoreLostReplies(t *testing.T) {
+func TestSetFullRatiosTransportFailuresKeepOwnership(t *testing.T) {
 	for _, phase := range []string{"apply", "restore"} {
 		for step := 1; step <= 3; step++ {
 			for _, committed := range []bool{false, true} {
 				t.Run(phase+"/"+strconv.Itoa(step)+"/"+strconv.FormatBool(committed), func(t *testing.T) {
 					c, ctr := newFullRatiosFixture(t)
-					previous := ctr.ratios
 					at := step
 					if phase == "restore" {
 						at += 3
@@ -73,8 +72,8 @@ func TestSetFullRatiosPartialApplyAndRestoreLostReplies(t *testing.T) {
 						}
 					}
 					ctr.failBefore, ctr.failAfter = 0, 0
-					if err := change.Restore(t.Context()); err != nil || ctr.ratios != previous || len(heldFullRatios(c)) != 0 || !ctr.observedOrdered {
-						t.Fatal("partial owned tuple did not safely restore", err, ctr.ratios)
+					if err := change.Restore(t.Context()); err == nil || len(heldFullRatios(c)) != 1 || !ctr.observedOrdered {
+						t.Fatal("transport loss released uncertain ownership", err, ctr.ratios)
 					}
 				})
 			}

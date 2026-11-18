@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 )
 
@@ -38,6 +39,7 @@ type OSDFlagHandle struct {
 }
 
 type osdFlagState struct {
+	command                     mutation.Fence
 	previous, applied, restored bool
 	// token is the entry in the owner's registry of held overrides.
 	token overridehook.Token
@@ -66,7 +68,7 @@ func notAppliedOSDFlag(flag ceph.OSDFlag, cause error) (*OSDFlagHandle, error) {
 // handle whose Restore is a no-op (see OSDFlagHandle). A nil cluster is
 // refused with ceph.ErrInvalidRequest and Op "override.SetOSDFlag". A
 // handle returned together with an error for an uncertain outcome is real and
-// still restorable.
+// keeps restoration ownership.
 //
 // Outcomes, as the handle it returns and the error:
 //   - Flag set or cleared and read back: real handle; nil.
@@ -131,7 +133,7 @@ func setOSDFlagLocked(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag,
 	if change.state.previous == enabled {
 		return change, nil
 	}
-	if err := overridehook.SetOSDFlag(ctx, c, flag, enabled); err != nil {
+	if err := change.state.command.Record(overridehook.SetOSDFlag(ctx, c, flag, enabled)); err != nil {
 		return change, err
 	}
 	flags, err = overridehook.OSDMapFlags(ctx, c)
@@ -145,7 +147,7 @@ func setOSDFlagLocked(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag,
 }
 
 // Restore returns only this flag to its original state. It is idempotent and
-// reconciles a lost restoration reply before another native mutation. A no-op
+// waits for earlier native completion before another mutation. A no-op
 // lease refuses an outside change rather than overwriting it. Outside writes
 // indistinguishable from applied/prior boolean states cannot be detected.
 // A handle of a call that was not applied returns nil without taking a lock.
@@ -153,6 +155,11 @@ func setOSDFlagLocked(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag,
 // operation on a terminated cluster, and the flag stays registered. A context
 // that ends before the topology lock is free returns the context error, and the
 // flag stays registered.
+//
+// A canceled call leaves its native write running under a separate bounded
+// wait. Restore waits for its terminal reply before reconciling state.
+// If transport failure or that bound loses completion evidence, Restore keeps
+// ownership and returns an error; terminate the disposable cluster in that case.
 //
 //purpose:condition,lifetime
 func (change *OSDFlagHandle) Restore(ctx context.Context) error {
@@ -181,6 +188,10 @@ func (change *OSDFlagHandle) restoreLocked(ctx context.Context, c *ceph.Containe
 	}
 	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
 	defer cancel()
+	if err := change.state.command.Wait(ctx); err != nil {
+		return err
+	}
+
 	flags, err := overridehook.OSDMapFlags(ctx, c)
 	if err != nil {
 		return err
@@ -193,7 +204,7 @@ func (change *OSDFlagHandle) restoreLocked(ctx context.Context, c *ceph.Containe
 	if current != change.state.applied {
 		return overridehook.Invalid(errors.New("OSD flag changed outside this override; refusing restoration"))
 	}
-	if err := overridehook.SetOSDFlag(ctx, c, change.flag, change.state.previous); err != nil {
+	if err := change.state.command.Record(overridehook.SetOSDFlag(ctx, c, change.flag, change.state.previous)); err != nil {
 		return err
 	}
 	flags, err = overridehook.OSDMapFlags(ctx, c)

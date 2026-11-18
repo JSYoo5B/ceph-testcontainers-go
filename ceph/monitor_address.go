@@ -34,12 +34,14 @@ var newMonitorAddressDocker = func(ctx context.Context) (networkLinkClient, erro
 // it with the recorded address requested explicitly, as
 // NetworkInterruption.Restore does; the bridge's explicit subnet permits this.
 //
-// The hooks never attach a detached endpoint: a network interruption stays in
+// Except while retrying their own incomplete reconnect, the hooks never attach
+// a detached endpoint. A network interruption stays in
 // force until its owner restores it, and the MON does not start meanwhile.
 // An endpoint attached with another explicit address is not replaced either.
 func keepMonitorAddress(network string) testcontainers.CustomizeRequestOption {
 	var mu sync.Mutex
 	var recorded *dockernetwork.EndpointSettings
+	var reconnectPending bool
 	return testcontainers.WithLifecycleHooks(testcontainers.ContainerLifecycleHooks{
 		PostReadies: []testcontainers.ContainerHook{func(ctx context.Context, ctr testcontainers.Container) error {
 			if err := lockTopologyMutex(ctx, &mu); err != nil {
@@ -72,20 +74,31 @@ func keepMonitorAddress(network string) testcontainers.CustomizeRequestOption {
 			_, err := monitorEndpoint(ctx, ctr.GetContainerID(), network, func(docker networkLinkClient, running bool, current *dockernetwork.EndpointSettings) error {
 				switch {
 				case running:
+					reconnectPending = false
 					// Start does nothing to a running container.
 					return nil
-				case current == nil:
+				case current == nil && !reconnectPending:
 					return invalid(fmt.Errorf("MON container is detached from %s, as by InterruptNetwork; restore its endpoint before starting it", network))
-				case current.IPAMConfig != nil && (current.IPAMConfig.IPv4Address.IsValid() || current.IPAMConfig.IPv6Address.IsValid()):
+				case current != nil && current.IPAMConfig != nil && (current.IPAMConfig.IPv4Address.IsValid() || current.IPAMConfig.IPv6Address.IsValid()):
 					if current.IPAMConfig.IPv4Address == recorded.IPAMConfig.IPv4Address && current.IPAMConfig.IPv6Address == recorded.IPAMConfig.IPv6Address {
+						reconnectPending = false
 						return nil
 					}
+					reconnectPending = false
 					return fmt.Errorf("MON endpoint on %s requests %s, not the monmap address %s", network, current.IPAMConfig.IPv4Address, recorded.IPAMConfig.IPv4Address)
 				}
-				if _, err := docker.NetworkDisconnect(ctx, network, mobycl.NetworkDisconnectOptions{Container: ctr.GetContainerID()}); err != nil {
-					return err
+				if current != nil {
+					// Claim before dispatch: a lost reply can leave the endpoint
+					// detached even when Disconnect returns an error.
+					reconnectPending = true
+					if _, err := docker.NetworkDisconnect(ctx, network, mobycl.NetworkDisconnectOptions{Container: ctr.GetContainerID()}); err != nil {
+						return err
+					}
 				}
 				_, err := docker.NetworkConnect(ctx, network, mobycl.NetworkConnectOptions{Container: ctr.GetContainerID(), EndpointConfig: recorded.Copy()})
+				if err == nil {
+					reconnectPending = false
+				}
 				return err
 			})
 			if err != nil {

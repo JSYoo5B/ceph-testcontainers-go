@@ -31,42 +31,71 @@ type osdIdentityEntry struct {
 	InCrush         bool    `json:"-"`
 }
 
-// parseOSDIdentityView decodes "osd dump" and "osd tree" in JSON.
+// parseOSDIdentityView requires the evidence used by the no-side-effect verdict.
+// Explicit empty collections and zero weights are valid observations. Missing
+// or null fields cannot establish that the corresponding state is unchanged.
 func parseOSDIdentityView(dump, tree []byte) (osdIdentityView, error) {
 	var d struct {
 		Epoch *int `json:"epoch"`
 		OSDs  []struct {
-			ID *int `json:"osd"`
-			osdIdentityEntry
+			ID              *int     `json:"osd"`
+			UUID            *string  `json:"uuid"`
+			Up              *int     `json:"up"`
+			In              *int     `json:"in"`
+			Weight          *float64 `json:"weight"`
+			PrimaryAffinity *float64 `json:"primary_affinity"`
 		} `json:"osds"`
 	}
-	if err := json.Unmarshal(dump, &d); err != nil || d.Epoch == nil {
-		return osdIdentityView{}, fmt.Errorf("osd dump: %v: %.256s", err, dump)
+	if err := json.Unmarshal(dump, &d); err != nil {
+		return osdIdentityView{}, fmt.Errorf("osd dump: %w", err)
+	}
+	if d.Epoch == nil || d.OSDs == nil {
+		return osdIdentityView{}, fmt.Errorf("osd dump requires epoch and osds: %.256s", dump)
 	}
 	v := osdIdentityView{Epoch: *d.Epoch, OSDs: map[int]osdIdentityEntry{}}
 	for _, o := range d.OSDs {
-		if o.ID == nil {
-			return osdIdentityView{}, fmt.Errorf("osd dump has an OSD without an ID: %.256s", dump)
+		if o.ID == nil || o.UUID == nil || o.Up == nil || o.In == nil || o.Weight == nil || o.PrimaryAffinity == nil {
+			return osdIdentityView{}, fmt.Errorf("osd dump has incomplete identity evidence: %.256s", dump)
 		}
-		v.OSDs[*o.ID] = o.osdIdentityEntry
+		if _, exists := v.OSDs[*o.ID]; exists {
+			return osdIdentityView{}, fmt.Errorf("osd dump repeats osd.%d", *o.ID)
+		}
+		v.OSDs[*o.ID] = osdIdentityEntry{UUID: *o.UUID, Up: *o.Up, In: *o.In, Weight: *o.Weight, PrimaryAffinity: *o.PrimaryAffinity}
 	}
 	var tr struct {
 		Nodes []struct {
-			ID          int     `json:"id"`
-			Type        string  `json:"type"`
-			CrushWeight float64 `json:"crush_weight"`
+			ID          *int     `json:"id"`
+			Type        *string  `json:"type"`
+			CrushWeight *float64 `json:"crush_weight"`
 		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(tree, &tr); err != nil {
-		return osdIdentityView{}, fmt.Errorf("osd tree: %v: %.256s", err, tree)
+		return osdIdentityView{}, fmt.Errorf("osd tree: %w", err)
 	}
+	if tr.Nodes == nil {
+		return osdIdentityView{}, fmt.Errorf("osd tree requires nodes: %.256s", tree)
+	}
+	seen := map[int]bool{}
 	for _, n := range tr.Nodes {
-		if n.Type != "osd" {
+		if n.ID == nil || n.Type == nil || *n.Type == "" {
+			return osdIdentityView{}, fmt.Errorf("osd tree has a node without identity: %.256s", tree)
+		}
+		if seen[*n.ID] {
+			return osdIdentityView{}, fmt.Errorf("osd tree repeats node %d", *n.ID)
+		}
+		seen[*n.ID] = true
+		if *n.Type != "osd" {
+			if *n.ID >= 0 {
+				return osdIdentityView{}, fmt.Errorf("osd tree node %d has non-OSD type %q", *n.ID, *n.Type)
+			}
 			continue
 		}
-		e := v.OSDs[n.ID]
-		e.CrushWeight, e.InCrush = n.CrushWeight, true
-		v.OSDs[n.ID] = e
+		e, exists := v.OSDs[*n.ID]
+		if !exists || *n.ID < 0 || n.CrushWeight == nil {
+			return osdIdentityView{}, fmt.Errorf("osd tree node %d lacks registration or CRUSH weight evidence", *n.ID)
+		}
+		e.CrushWeight, e.InCrush = *n.CrushWeight, true
+		v.OSDs[*n.ID] = e
 	}
 	return v, nil
 }

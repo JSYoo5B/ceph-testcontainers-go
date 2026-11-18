@@ -52,7 +52,7 @@ func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout t
 		c.nets.public = &testcontainers.DockerNetwork{Name: networkName}
 	}
 	for id := range osds {
-		c.fleet.osdHandles.register(id, &OSDContainer{ID: id, owner: c, Container: control, placement: placement})
+		c.fleet.osdHandles.register(id, &OSDContainer{ID: id, owner: c, Container: control, placement: placement, placementReady: true})
 	}
 	return c
 }
