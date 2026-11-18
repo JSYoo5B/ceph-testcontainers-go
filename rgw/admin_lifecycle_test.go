@@ -122,11 +122,16 @@ func (ctr *hostGateway) Exec(ctx context.Context, args []string, _ ...tcexec.Pro
 		if err != nil && !errors.As(err, &exit) {
 			return 0, nil, err
 		}
+		// The host double remaps marker paths on input; translate only the
+		// supervisor trailer back to the container path visible to its caller.
+		reported := bytes.ReplaceAll(stderr.Bytes(),
+			[]byte(supervised.ShellEndPrefix+filepath.Join(ctr.dir, "markers")),
+			[]byte(supervised.ShellEndPrefix+supervised.ShellMarkerDir))
 		var stream bytes.Buffer
 		for _, part := range []struct {
 			kind byte
 			data []byte
-		}{{byte(stdcopy.Stdout), stdout.Bytes()}, {byte(stdcopy.Stderr), stderr.Bytes()}} {
+		}{{byte(stdcopy.Stdout), stdout.Bytes()}, {byte(stdcopy.Stderr), reported}} {
 			header := [8]byte{part.kind}
 			binary.BigEndian.PutUint32(header[4:], uint32(len(part.data)))
 			stream.Write(header[:])

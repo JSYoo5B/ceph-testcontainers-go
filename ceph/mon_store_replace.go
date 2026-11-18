@@ -86,6 +86,9 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	}
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
+	if err := c.native.fence(ctx, cur.GetContainerID()); err != nil {
+		return nil, fmt.Errorf("settle monitor %s native commands: %w", name, err)
+	}
 	id, err := store.ReplaceGeneration(ctx, gens, image)
 	next, err := t.recordMonitorReplacement(cur, store.Attachment, gens.created[id], image, err)
 	if err != nil {

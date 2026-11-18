@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
@@ -58,7 +59,7 @@ func (barrier *topologySnapshotBarrier) Terminate(context.Context, ...testcontai
 // All embedded handle assignments happen before workers start and after they
 // join. The wrapper is for default single-MON fixtures only, whose stable CLI
 // handle is the embedded container. Never use it after ensureControlPlane.
-func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ceph.Container, busy *ceph.Container) (func(), func(), []*topologySnapshotBarrier) {
+func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ceph.Container, busy *ceph.Container) (func(), func(), []*topologySnapshotBarrier, *atomic.Int32) {
 	t.Helper()
 	originals := make([]testcontainers.Container, len(clusters))
 	for i, cluster := range clusters {
@@ -79,36 +80,39 @@ func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ce
 		}
 		cluster.Container = wrappers[i]
 	}
+	pending := new(atomic.Int32)
+	pending.Add(1)
 	ownerCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	type outcome struct {
 		osd *ceph.OSDContainer
 		err error
 	}
 	done := make(chan outcome, 1)
-	go func() { osd, err := busy.AddOSD(ownerCtx); done <- outcome{osd, err} }()
+	go func() { osd, err := busy.AddOSD(ownerCtx); pending.Add(-1); done <- outcome{osd, err} }()
 	var releaseOnce sync.Once
 	releaseOwner := func() { releaseOnce.Do(func() { close(blocker.release) }) }
 	var finishOnce sync.Once
 	finish := func() {
 		finishOnce.Do(func() {
 			releaseOwner()
+			defer cancel()
 			select {
 			case result := <-done:
 				if result.osd != nil || !errors.Is(result.err, errTopologySnapshotBarrier) {
 					t.Errorf("owner unexpectedly created native/container state: osd=%v err=%v", result.osd, result.err)
 				}
 			case <-time.After(3 * time.Second):
-				t.Error("owner did not leave the released pre-native barrier")
+				t.Error("owner cleanup incomplete; rejecting wrappers retained")
+				return
 			}
-			cancel()
-			for i, cluster := range clusters {
-				cluster.Container = originals[i]
+			if err := restoreTopologySnapshotHandles(clusters, originals, pending); err != nil {
+				t.Error(err)
 			}
 		})
 	}
 	select {
 	case <-blocker.entered:
-		return releaseOwner, finish, wrappers
+		return releaseOwner, finish, wrappers, pending
 	case result := <-done:
 		cancel()
 		for i, cluster := range clusters {
@@ -119,14 +123,14 @@ func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ce
 		finish()
 		t.Fatal("owner did not enter the pre-native barrier")
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
 }
 
 type topologySnapshotPartial interface {
 	Terminate(context.Context, ...testcontainers.TerminateOption) error
 }
 
-func topologySnapshotQueue(t *testing.T, releaseOwner func(), operation func(context.Context) (topologySnapshotPartial, error)) {
+func topologySnapshotQueue(t *testing.T, releaseOwner func(), pending *atomic.Int32, operation func(context.Context) (topologySnapshotPartial, error)) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
@@ -135,7 +139,8 @@ func topologySnapshotQueue(t *testing.T, releaseOwner func(), operation func(con
 		err     error
 	}
 	done := make(chan outcome, 1)
-	go func() { fixture, err := operation(ctx); done <- outcome{fixture, err} }()
+	pending.Add(1)
+	go func() { fixture, err := operation(ctx); pending.Add(-1); done <- outcome{fixture, err} }()
 	cleanupPartial := func(result outcome) {
 		if result.fixture == nil {
 			return
@@ -166,7 +171,21 @@ func topologySnapshotQueue(t *testing.T, releaseOwner func(), operation func(con
 		case result := <-done:
 			cleanupPartial(result)
 		case <-time.After(3 * time.Second):
+			t.Error("consumer cleanup incomplete; rejecting wrappers must remain installed")
 		}
 		t.Fatal("consumer remained queued past the caller deadline")
 	}
+}
+
+// restoreTopologySnapshotHandles changes the exported handles only after every
+// admitted actor has stopped accessing them. An unresolved actor retains the
+// rejecting wrappers, even if it later exceeds the test's drainage budget.
+func restoreTopologySnapshotHandles(clusters []*ceph.Container, originals []testcontainers.Container, pending *atomic.Int32) error {
+	if pending.Load() != 0 {
+		return fmt.Errorf("queued consumer cleanup incomplete; rejecting wrappers retained")
+	}
+	for i, cluster := range clusters {
+		cluster.Container = originals[i]
+	}
+	return nil
 }

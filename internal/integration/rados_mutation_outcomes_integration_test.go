@@ -143,13 +143,28 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	restore = holdDispatchDelay(t, ctx, cluster, osdName, 3*time.Second)
 	writerCtx, stopWriter := context.WithCancel(ctx)
 	defer stopWriter()
-	done := make(chan error, 1)
-	go func() {
+	actor := launchIntegrationActor(writerCtx, func(writerCtx context.Context) error {
 		_, err := cluster.RunNativeCommand(writerCtx, client, ceph.NativeCommand{
 			Argv:    []string{"python3", "-c", radosMutationOutcomeScript, "late", pool, namespace, "killed", "0", "600"},
 			Timeout: 5 * time.Minute, MaxStdout: 1 << 20, MaxStderr: 1 << 20, Label: "mutation outcome killed writer",
 		})
-		done <- err
+		return err
+	})
+	defer func() {
+		stopWriter()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := actor.wait(cleanupCtx)
+		if err != nil {
+			t.Errorf("writer cleanup incomplete: %v", err)
+			return
+		}
+		var unstopped *ceph.NativeCommandUnstoppedError
+		if errors.As(result, &unstopped) {
+			if err := unstopped.Stop(cleanupCtx); err != nil {
+				t.Errorf("writer stop unconfirmed: %v", err)
+			}
+		}
 	}()
 	var held osdTrackedOp
 	for deadline := time.Now().Add(time.Minute); ; {
@@ -161,7 +176,8 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 			break
 		}
 		select {
-		case err := <-done:
+		case <-actor.done:
+			err := actor.result
 			t.Fatalf("the writer ended before %s held its write: %v", osdName, err)
 		default:
 		}
@@ -172,7 +188,13 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	}
 	stopWriter()
 	var unstopped *ceph.NativeCommandUnstoppedError
-	if err := <-done; !errors.Is(err, context.Canceled) || errors.As(err, &unstopped) {
+	joinCtx, cancelJoin := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelJoin()
+	writerErr, joinErr := actor.wait(joinCtx)
+	if joinErr != nil {
+		t.Fatal("writer join incomplete:", joinErr)
+	}
+	if err := writerErr; !errors.Is(err, context.Canceled) || errors.As(err, &unstopped) {
 		t.Fatalf("the writer was not confirmed stopped: %v", err)
 	}
 	writer := trackedClient(held.Description)

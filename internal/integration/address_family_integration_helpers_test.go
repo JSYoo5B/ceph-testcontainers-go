@@ -136,7 +136,10 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("read complete socket/client evidence:", err)
+	}
 	if code != 0 || !strings.Contains(string(output), "family-object") {
 		t.Fatalf("client object I/O over %s: exit %d: %s", family, code, output)
 	}
@@ -196,16 +199,7 @@ func checkMessengerSockets(t *testing.T, ctx context.Context, ctr testcontainers
 		if err != nil || code != 0 {
 			t.Fatalf("read %s: exit %d, %v", file, code, err)
 		}
-		output, _ := io.ReadAll(reader)
-		var local []string
-		for _, line := range strings.Split(string(output), "\n")[1:] {
-			fields := strings.Fields(line)
-			// The fourth field is the state; 0A is LISTEN.
-			if len(fields) > 3 && fields[3] == "0A" {
-				local = append(local, fields[1])
-			}
-		}
-		return local
+		return messengerListeners(t, reader)
 	}
 	for _, local := range listening("/proc/net/tcp") {
 		// 7F is 127 in the low byte of a little-endian IPv4 address.
@@ -224,6 +218,20 @@ func checkMessengerSockets(t *testing.T, ctx context.Context, ctr testcontainers
 			t.Fatalf("%s listens on IPv6 socket %s", family, local)
 		}
 	}
+}
+
+func messengerListeners(t testing.TB, reader io.Reader) []string {
+	t.Helper()
+	output := readNativeEvidence(t, reader)
+	var local []string
+	for _, line := range strings.Split(string(output), "\n")[1:] {
+		fields := strings.Fields(line)
+		// The fourth field is the state; 0A is LISTEN.
+		if len(fields) > 3 && fields[3] == "0A" {
+			local = append(local, fields[1])
+		}
+	}
+	return local
 }
 
 // monitorBannerReachable reports whether an IPv4 connection to MON a's

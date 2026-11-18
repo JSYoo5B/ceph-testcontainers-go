@@ -454,6 +454,15 @@ CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
 ```
 
+The default selection requires completed `TestGoCephLinux/bridge` and
+`TestGoCephLinux/host` runs and a passing parent test. A custom `--test-run`
+selection must complete at least one supported mode and every mode it starts.
+Its result covers only the modes in `execution.completed_modes`, recorded
+alongside the selection. A missing test or wrong build tag is `no_execution`;
+skipped modes, an empty mode selection and unfinished runs are `incomplete`;
+a failing scenario is `native_failure`. These outcomes cannot report PASS,
+even when Docker exits zero and container cleanup succeeds.
+
 The harness compares the probe's linked go-ceph version with the probe
 module's `go.mod`, so rebuild the client image after a go-ceph update.
 

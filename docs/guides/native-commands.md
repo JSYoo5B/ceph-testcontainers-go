@@ -487,6 +487,12 @@ owned daemon whatever its image, without the Messenger or Cephx:
 status, err := osd.AdminSocket(ctx, "status") // osd is the *ceph.OSDContainer of osd.0
 ```
 
+The handle keeps topology admission until the admin command returns.
+A command whose termination cannot be confirmed remains registered against
+the daemon instance. Its error contains `*ceph.NativeCommandUnstoppedError`;
+call `Stop` with a fresh context to retry cleanup. Removal, MON replacement
+and cluster termination also settle registered commands before proceeding.
+
 `ceph tell` from the control container works for MON, MGR, OSD and MDS
 daemons, but travels over the Messenger like any client request:
 

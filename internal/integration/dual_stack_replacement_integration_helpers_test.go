@@ -120,21 +120,22 @@ print('files',rounds,'objects',len(sys.argv[6:]))
 
 // retainedClient is a running dualStackRetained process.
 type retainedClient struct {
-	ctr  testcontainers.Container
-	tag  string
-	done chan heldResult
+	ctr   testcontainers.Container
+	tag   string
+	actor *integrationActor[heldResult]
 }
 
-func startRetainedClient(ctx context.Context, ctr testcontainers.Container, tag, pool, filesystem string) *retainedClient {
-	client := &retainedClient{ctr: ctr, tag: tag, done: make(chan heldResult, 1)}
-	go func() {
+func startRetainedClient(t *testing.T, ctx context.Context, ctr testcontainers.Container, tag, pool, filesystem string) *retainedClient {
+	client := &retainedClient{ctr: ctr, tag: tag}
+	client.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := ctr.Exec(ctx, []string{"timeout", "1500", "python3", "-c", dualStackRetained, tag, pool, filesystem}, tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
-			output, _ = io.ReadAll(reader)
+			output, err = io.ReadAll(reader)
 		}
-		client.done <- heldResult{code, output, err}
-	}()
+		return heldResult{code, output, err}
+	})
+	t.Cleanup(func() { cleanupHeldActor(t, client.actor, ctr, tag) })
 	return client
 }
 
@@ -157,13 +158,17 @@ func (r *retainedClient) round(t *testing.T, ctx context.Context, n int, objects
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
 		select {
-		case result := <-r.done:
+		case <-r.actor.done:
+			result := r.actor.result
 			t.Fatalf("retained client ended in round %d: exit %d: %s %v", n, result.code, result.output, result.err)
 		default:
 		}
 		code, reader, err := r.ctr.Exec(ctx, []string{"cat", fmt.Sprintf("/tmp/%s.%d.json", r.tag, n)}, tcexec.Multiplexed())
 		if err == nil && code == 0 {
-			output, _ := io.ReadAll(reader)
+			output, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				t.Fatal("incomplete actor/socket evidence:", readErr)
+			}
 			return &dualStackSession{client: r.ctr, tag: tag, sockets: parseSocketListing(t, tag, output)}
 		}
 		if time.Now().After(deadline) {
@@ -180,7 +185,12 @@ func (r *retainedClient) release(t *testing.T, ctx context.Context) {
 	if code, _, err := r.ctr.Exec(ctx, []string{"touch", "/tmp/" + r.tag + ".release"}); err != nil || code != 0 {
 		t.Fatalf("release %s: exit %d: %v", r.tag, code, err)
 	}
-	result := <-r.done
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := r.actor.wait(joinCtx)
+	if err != nil {
+		t.Fatal("actor command reader did not join:", err)
+	}
 	if result.err != nil || result.code != 0 {
 		t.Fatalf("retained client: exit %d: %s %v", result.code, result.output, result.err)
 	}
@@ -194,7 +204,10 @@ func listeningSockets(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 	if err != nil || code != 0 {
 		t.Fatalf("read the socket table of %s: exit %d: %v", ctr.GetContainerID(), code, err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	var listeners []string
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -426,7 +439,7 @@ func testDualStackReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained := startRetainedClient(ctx, retainedCtr, "retained", pool, filesystem)
+	retained := startRetainedClient(t, ctx, retainedCtr, "retained", pool, filesystem)
 	var rounds []string
 	var lastObjects []string
 	// round runs round n of the retained client and checks its connections:
@@ -709,7 +722,10 @@ func testDualStackReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	if code != 0 {
 		t.Fatalf("fresh readback: exit %d: %s", code, output)
 	}

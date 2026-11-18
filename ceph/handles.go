@@ -10,6 +10,7 @@ import (
 // handles: the Ceph daemon name and whether the cluster still owns this very
 // instance. ownedBy runs with c.mu held.
 type daemonHandle interface {
+	GetContainerID() string
 	daemonRef() (kind, id string)
 	ownedBy(c *Container) bool
 }
@@ -251,9 +252,11 @@ func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 // daemon, or one that Remove or Detach has begun to remove, returns an error.
 // A paused daemon accepts the connection but does not answer, so the call
 // waits for ctx or the cluster's startup timeout, which also bounds every call.
-// When the call ends early, AdminSocket stops its CLI in the control container
-// before it returns, including one that Docker has not started yet. A nonzero
-// exit returns the output with an error.
+// An early return attempts to stop the CLI, including a pending Docker exec.
+// If termination cannot be confirmed, the error contains a
+// NativeCommandUnstoppedError. Call its Stop with a fresh context to retry
+// cleanup. The cluster retains the command for removal or Terminate cleanup.
+// A nonzero exit returns the output with an error.
 //
 //purpose:native
 func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
@@ -277,9 +280,11 @@ func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte,
 // own image contains. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
-// also bounds every call. When the call ends early, AdminSocket stops its CLI
-// in the control container before it returns, including one that Docker has
-// not started yet. A nonzero exit returns the output with an error.
+// also bounds every call. An early return attempts to stop the CLI, including
+// a pending Docker exec. If termination cannot be confirmed, the error
+// contains a NativeCommandUnstoppedError. Call its Stop with a fresh context
+// to retry cleanup. Removal or Terminate also settles retained commands.
+// A nonzero exit returns the output with an error.
 //
 //purpose:native
 func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
@@ -303,9 +308,11 @@ func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]b
 // own image contains. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
-// also bounds every call. When the call ends early, AdminSocket stops its CLI
-// in the control container before it returns, including one that Docker has
-// not started yet. A nonzero exit returns the output with an error.
+// also bounds every call. An early return attempts to stop the CLI, including
+// a pending Docker exec. If termination cannot be confirmed, the error
+// contains a NativeCommandUnstoppedError. Call its Stop with a fresh context
+// to retry cleanup. Removal or Terminate also settles retained commands.
+// A nonzero exit returns the output with an error.
 //
 //purpose:native
 func (m *ManagerContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {

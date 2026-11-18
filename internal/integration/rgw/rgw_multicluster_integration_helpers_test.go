@@ -168,7 +168,7 @@ func waitMultisiteObject(t *testing.T, ctx context.Context, client harness.S3HTT
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			_ = response.Body.Close()
-			if readErr == nil && response.StatusCode == wantStatus && (wantStatus != http.StatusOK || bytes.Equal(body, payload)) {
+			if readErr == nil && multisiteObjectMatches(response.StatusCode, body, wantStatus, payload) {
 				t.Logf("multisite %s returned %d with expected payload after %s", path, wantStatus, time.Since(started).Round(time.Millisecond))
 				return
 			}

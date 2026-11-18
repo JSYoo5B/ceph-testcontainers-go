@@ -183,9 +183,13 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					harness.RBDScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, tc.destinationNamespace, "volume", after)
 					harness.RBDScopeAssertReplicaIdentity(t, ctx, sourceClient, destinationClient, pool, tc.sourceNamespace, tc.destinationNamespace, "volume", mode)
 					harness.RBDScopeAssertUnmirrored(t, ctx, sourceClient, harness.RBDScopeImage(pool, tc.sourceNamespace, "plain"))
-					code, _, err := harness.RBDMultiClusterExec(ctx, destinationClient, "rbd", "info", harness.RBDScopeImage(pool, tc.destinationNamespace, "plain"), "--format", "json")
-					if err != nil || code == 0 {
-						t.Fatalf("plain image unexpectedly appeared in receiving namespace: exit=%d error=%v", code, err)
+					args := []string{"rbd", "ls", "--pool", pool, "--format", "json"}
+					if tc.destinationNamespace != "" {
+						args = append(args, "--namespace", tc.destinationNamespace)
+					}
+					code, listing, err := harness.RBDMultiClusterExec(ctx, destinationClient, args...)
+					if err := rbdNamespaceExcludesImage(code, listing, err, "plain"); err != nil {
+						t.Fatal(err)
 					}
 					for _, site := range []struct {
 						client         testcontainers.Container

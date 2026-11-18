@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -589,6 +590,10 @@ func runBinaryProbe(ctx context.Context, ctr testcontainers.Container, args ...s
 	if err != nil {
 		return binaryProbeResult{}, err
 	}
+	return decodeBinaryProbe(code, out)
+}
+
+func decodeBinaryProbe(code int, out []byte) (binaryProbeResult, error) {
 	if code != 0 {
 		return binaryProbeResult{}, fmt.Errorf("probe exited %d: %.4000s", code, out)
 	}
@@ -796,20 +801,58 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		result binaryProbeResult
 		err    error
 	}
-	done := make(chan outcome, 1)
-	go func() {
-		result, err := runBinaryProbe(ctx, control, targetedCancelProbe, work, "1", "5")
-		done <- outcome{result, err}
+	actor := launchIntegrationActor(ctx, func(runCtx context.Context) outcome {
+		result, err := cluster.RunNativeCommand(runCtx, control, ceph.NativeCommand{
+			Argv:    []string{"python3", "-c", targetedCancelProbe, work, "1", "5"},
+			Timeout: 6 * time.Minute, MaxStdout: 16 << 20, MaxStderr: 16 << 20, Label: "targeted cancellation probe",
+		})
+		if err != nil {
+			return outcome{err: err}
+		}
+		if !result.Complete() {
+			return outcome{err: fmt.Errorf("targeted probe incomplete")}
+		}
+		decoded, err := decodeBinaryProbe(result.ExitCode, append(result.Stderr, result.Stdout...))
+		return outcome{decoded, err}
+	})
+	resume := func(context.Context) error { return nil }
+	restoreFlag := func(context.Context) error { return nil }
+	defer func() {
+		actor.cancel()
+		cleanupCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		out, joinErr := actor.wait(cleanupCtx)
+		if joinErr != nil {
+			t.Errorf("targeted probe reader join incomplete: %v", joinErr)
+		}
+		var unstopped *ceph.NativeCommandUnstoppedError
+		if errors.As(out.err, &unstopped) {
+			if err := unstopped.Stop(cleanupCtx); err != nil {
+				t.Errorf("targeted probe stop unconfirmed: %v", err)
+			}
+		}
+		restoreCtx, cancelRestore := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelRestore()
+		if err := resume(restoreCtx); err != nil {
+			t.Errorf("restore targeted OSD pause: %v", err)
+		}
+		if err := restoreFlag(restoreCtx); err != nil {
+			t.Errorf("restore targeted nodown: %v", err)
+		}
 	}()
+
 	turn := func(script string) { harness.ExecOutput(t, ctx, control, "sh", "-c", script, "sh", work) }
 	turn(`cat "$1/ready"`)
 	nodown, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
+	if nodown != nil {
+		restoreFlag = nodown.Restore
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	pause, err := fault.Pause(ctx, cluster, osd)
 	if pause != nil {
-		defer func() { _ = pause.Resume(ctx) }()
+		resume = pause.Resume
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -823,7 +866,10 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		t.Fatal(err)
 	}
 	turn(`echo resumed > "$1/resumed"`)
-	out := <-done
+	out, joinErr := actor.wait(ctx)
+	if joinErr != nil {
+		t.Fatal("targeted probe join incomplete:", joinErr)
+	}
 	if out.err != nil {
 		t.Fatal(out.err)
 	}

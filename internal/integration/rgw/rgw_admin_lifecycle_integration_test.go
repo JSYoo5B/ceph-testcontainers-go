@@ -91,8 +91,12 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	// /proc/<pid>/stat names a live process, or a zombie (Z) that ended.
 	gone := func(pid int) bool {
 		t.Helper()
-		code, out := exec("sh", "-c", "awk '{sub(/.*\\) /, \"\"); print $1}' /proc/"+strconv.Itoa(pid)+"/stat 2>/dev/null")
-		return code != 0 || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "Z"
+		code, out := exec("sh", "-c", rgwAdminProcessState, "rgw-admin-state", strconv.Itoa(pid))
+		exited, err := rgwAdminProcessGone(code, out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return exited
 	}
 	call := func(ctx context.Context, act func()) (int, time.Duration, error) {
 		t.Helper()

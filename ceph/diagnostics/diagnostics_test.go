@@ -805,3 +805,68 @@ func TestDiagnosticLogArtifactsMaskPartialPrivateKeys(t *testing.T) {
 		})
 	}
 }
+
+// The synthetic Exec accepts a query before losing its reply. Its cancellation
+// result models settlement only; this test starts no native process.
+func TestDiagnosticsPreservesUnconfirmedSettlementAfterRedaction(t *testing.T) {
+	for _, callerCanceled := range []bool{false, true} {
+		for _, cancelFails := range []bool{false, true} {
+			t.Run(strconv.FormatBool(callerCanceled)+"/cancel-fails="+strconv.FormatBool(cancelFails), func(t *testing.T) {
+				const secret = "private-diagnostic-transport"
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				running, cancels := false, 0
+				control := &diagnosticsTestContainer{exec: func(cleanupCtx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+					switch args[2] {
+					case supervised.Script:
+						running = true
+						if callerCanceled {
+							cancel()
+							return 0, nil, context.Canceled
+						}
+						return 0, nil, errors.New("transport lost " + secret)
+					case supervised.CancelScript:
+						cancels++
+						if cleanupCtx.Err() != nil {
+							t.Fatal("cleanup inherited the canceled caller")
+						}
+						if _, ok := cleanupCtx.Deadline(); !ok {
+							t.Fatal("cleanup is unbounded")
+						}
+						if cancelFails {
+							return 0, nil, errors.New("cleanup unavailable " + secret)
+						}
+						running = false
+						return 0, strings.NewReader(""), nil
+					default:
+						t.Fatal("unexpected supervisor command")
+						return 0, nil, nil
+					}
+				}}
+				config, err := normalizeDiagnosticsConfig(Config{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: []string{secret}}, redact: evidence.Redactor([]string{secret})}
+				artifact := Artifact{Kind: "ceph", Name: "status"}
+				task := diagnosticTask{collect: func(queryCtx context.Context) (string, bool, error) {
+					return diagnosticCephCommand(queryCtx, control, []string{"status"}, config.MaxOutputBytes)
+				}}
+				run.collectOne(ctx, task, &artifact)
+				report, aggregate := run.finish(ctx, &Report{Artifacts: []Artifact{artifact}})
+				if aggregate == nil || report.Complete || cancels != 1 || running != cancelFails {
+					t.Fatalf("settlement model: complete=%t running=%t cancels=%d err=%v", report.Complete, running, cancels, aggregate)
+				}
+				const uncertain = "diagnostic query settlement unconfirmed"
+				if strings.Contains(report.Artifacts[0].Error, uncertain) != cancelFails ||
+					strings.Contains(aggregate.Error(), uncertain) != cancelFails {
+					t.Fatalf("settlement uncertainty lost or invented: artifact=%q aggregate=%v", report.Artifacts[0].Error, aggregate)
+				}
+				raw, err := json.Marshal(report)
+				if err != nil || strings.Contains(string(raw), secret) || strings.Contains(aggregate.Error(), secret) {
+					t.Fatalf("unredacted diagnostic failure: %s, %v, %v", raw, aggregate, err)
+				}
+			})
+		}
+	}
+}

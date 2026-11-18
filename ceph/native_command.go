@@ -189,7 +189,7 @@ func (r NativeCommandResult) Complete() bool {
 }
 
 // NativeCommandUnstoppedError reports a native command that RunNativeCommand,
-// or rgw.Gateway.Admin, could not confirm as stopped after its call ended
+// a daemon AdminSocket, or rgw.Gateway.Admin, could not confirm as stopped after its call ended
 // early: it may still run in its container. Stop retries the confirmation;
 // Terminate also tries it.
 type NativeCommandUnstoppedError struct {

@@ -20,6 +20,33 @@ CLIENT_ID = "sha256:" + "1" * 64
 RUNNER_ID = "sha256:" + "2" * 64
 
 
+SUCCESS = """=== RUN   TestGoCephLinux
+=== RUN   TestGoCephLinux/bridge
+=== RUN   TestGoCephLinux/host
+--- PASS: TestGoCephLinux (1.00s)
+    --- PASS: TestGoCephLinux/bridge (0.50s)
+    --- PASS: TestGoCephLinux/host (0.50s)
+PASS
+"""
+
+
+class ExecutionTests(unittest.TestCase):
+    def test_completion_controls(self):
+        for text, selection, want in (
+            ("testing: warning: no tests to run\nPASS\n", "^TestGoCephLinux$", "no_execution"),
+            ("ok integration.test 1.00s\n", "^TestGoCephLinux$", "no_execution"),
+            ("=== RUN   TestGoCephLinux\n--- PASS: TestGoCephLinux (0.00s)\nPASS\n", "^TestGoCephLinux$/missing", "incomplete"),
+            (SUCCESS.replace("PASS: TestGoCephLinux/host", "SKIP: TestGoCephLinux/host"), "^TestGoCephLinux$", "incomplete"),
+            (SUCCESS.replace("    --- PASS: TestGoCephLinux/host (0.50s)\n", ""), "^TestGoCephLinux$", "incomplete"),
+            (SUCCESS.replace("PASS: TestGoCephLinux/host", "FAIL: TestGoCephLinux/host"), "^TestGoCephLinux$", "native_failure"),
+            (SUCCESS, "^TestGoCephLinux$", "completed"),
+            ("\n".join(line for line in SUCCESS.splitlines() if "/host" not in line), "^TestGoCephLinux$/bridge", "completed"),
+            ("\n".join(line for line in SUCCESS.splitlines() if "/host" not in line), "^TestGoCephLinux$", "incomplete"),
+        ):
+            with self.subTest(selection=selection, text=text):
+                self.assertEqual(runner.execution_evidence(text, selection)["status"], want)
+
+
 class SuppliedImagesTests(unittest.TestCase):
     def test_missing_image_inputs_fail_before_docker_or_output_creation(self):
         for arguments in ([], ["--client-image", "client"], ["--runner-image", "runner"]):
@@ -58,7 +85,7 @@ class SuppliedImagesTests(unittest.TestCase):
 
     def test_run_uses_inspected_ids_and_never_builds_or_pulls(self):
         process = mock.Mock()
-        process.stdout = io.StringIO("ok integration.test 1.00s\n")
+        process.stdout = io.StringIO(SUCCESS)
         process.wait.return_value = 0
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "output"
@@ -83,6 +110,25 @@ class SuppliedImagesTests(unittest.TestCase):
             self.assertEqual(report["expected_go_ceph"], pinned)
             self.assertEqual(report["client_image"]["Id"], CLIENT_ID)
             self.assertEqual(report["runner_image"]["Id"], RUNNER_ID)
+
+    def test_zero_exit_without_completed_scenario_fails(self):
+        for text in ("PASS\n", "=== RUN   TestGoCephLinux\n--- SKIP: TestGoCephLinux (0.00s)\nPASS\n"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "output"
+                process = mock.Mock()
+                process.stdout = io.StringIO(text)
+                process.wait.return_value = 0
+                with mock.patch.dict(os.environ, {}, clear=True), \
+                        mock.patch.object(runner.subprocess, "check_output", side_effect=self.capture), \
+                        mock.patch.object(runner.subprocess, "Popen", return_value=process), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    result = runner.main(["--client-image", "client", "--runner-image", "runner",
+                                          "--output-dir", str(output)])
+                report = json.loads((output / "summary.json").read_text())
+                self.assertEqual(result, 1)
+                self.assertFalse(report["passed"])
+                self.assertIn(report["execution"]["status"], ("no_execution", "incomplete"))
+                self.assertEqual(report["remaining_owned_container_ids"], [])
 
     def test_missing_local_image_does_not_start_runner(self):
         def capture(command, **kwargs):

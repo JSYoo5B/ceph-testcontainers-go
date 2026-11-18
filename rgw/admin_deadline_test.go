@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
@@ -39,7 +38,7 @@ func TestRGWAdminBudgetIsTheCallersContext(t *testing.T) {
 }
 
 func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
-	gateway, _ := newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 143, data: supervised.ShellDeadlineLine + "\n"})
+	gateway, _ := newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 143, stopped: true})
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	_, err := gateway.Admin(ctx, "user", "stats", "--uid", "u", "--sync-stats")

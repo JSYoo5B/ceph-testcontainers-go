@@ -159,7 +159,7 @@ type dualStackSession struct {
 	client  testcontainers.Container
 	tag     string
 	sockets []tcpSocket
-	done    chan heldResult
+	actor   *integrationActor[heldResult]
 }
 
 type heldResult struct {
@@ -168,29 +168,55 @@ type heldResult struct {
 	err    error
 }
 
+// cleanupHeldActor joins the Exec reader and reports a transport/read failure
+// as unconfirmed command completion, even when readiness already saw it.
+func cleanupHeldActor(t *testing.T, actor *integrationActor[heldResult], client testcontainers.Container, tag string) {
+	t.Helper()
+	actor.cleanup(t, func(ctx context.Context) error {
+		code, _, err := client.Exec(ctx, []string{"touch", "/tmp/" + tag + ".release"})
+		if err != nil || code != 0 {
+			return fmt.Errorf("release %s: exit %d: %v", tag, code, err)
+		}
+		return nil
+	})
+	select {
+	case <-actor.done:
+		if actor.result.err != nil {
+			t.Errorf("%s actor command completion unconfirmed: %v", tag, actor.result.err)
+		}
+	default:
+		// The bounded cleanup already reported the unjoined reader.
+	}
+}
+
 // StartHeldSession runs script in client and waits until it has listed its
 // established connections.
 func startDualStackSession(t *testing.T, ctx context.Context, client testcontainers.Container, script, tag string, args ...string) *dualStackSession {
 	t.Helper()
-	session := &dualStackSession{client: client, tag: tag, done: make(chan heldResult, 1)}
-	go func() {
+	session := &dualStackSession{client: client, tag: tag}
+	session.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := client.Exec(ctx, append([]string{"timeout", "150", "python3", "-c", script, tag}, args...), tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
-			output, _ = io.ReadAll(reader)
+			output, err = io.ReadAll(reader)
 		}
-		session.done <- heldResult{code, output, err}
-	}()
+		return heldResult{code, output, err}
+	})
+	t.Cleanup(func() { cleanupHeldActor(t, session.actor, client, tag) })
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		select {
-		case result := <-session.done:
+		case <-session.actor.done:
+			result := session.actor.result
 			t.Fatalf("%s client ended before holding its session: exit %d: %s %v", tag, result.code, result.output, result.err)
 		default:
 		}
 		code, reader, err := client.Exec(ctx, []string{"cat", "/tmp/" + tag + ".json"}, tcexec.Multiplexed())
 		if err == nil && code == 0 {
-			output, _ := io.ReadAll(reader)
+			output, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				t.Fatal("incomplete actor/socket evidence:", readErr)
+			}
 			session.sockets = parseSocketListing(t, tag, output)
 			return session
 		}
@@ -238,7 +264,12 @@ func (s *dualStackSession) release(t *testing.T, ctx context.Context) {
 	if code, _, err := s.client.Exec(ctx, []string{"touch", "/tmp/" + s.tag + ".release"}); err != nil || code != 0 {
 		t.Fatalf("release %s: exit %d: %v", s.tag, code, err)
 	}
-	result := <-s.done
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := s.actor.wait(joinCtx)
+	if err != nil {
+		t.Fatal("session command reader did not join:", err)
+	}
 	if result.err != nil || result.code != 0 {
 		t.Fatalf("%s client: exit %d: %s %v", s.tag, result.code, result.output, result.err)
 	}
@@ -266,7 +297,10 @@ func containerSockets(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 	if err != nil || code != 0 {
 		t.Fatalf("read the socket table of %s: exit %d: %v", ctr.GetContainerID(), code, err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	var sockets []tcpSocket
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -530,7 +564,10 @@ func gatewayListeners(t *testing.T, ctx context.Context, gateway *rgw.Gateway) [
 	if err != nil || code != 0 {
 		t.Fatalf("read the gateway's socket table: exit %d: %v", code, err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	var listeners []string
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -669,7 +706,10 @@ func testDualStackServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	s3 := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if code != 0 || len(s3) != 6 {
 		t.Fatalf("S3 over %s and %s: exit %d: %s", v4, v6, code, output)

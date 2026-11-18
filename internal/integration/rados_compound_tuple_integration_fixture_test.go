@@ -383,22 +383,23 @@ class Rados:
 
 func tupleFixtureRun(t *testing.T, dir string, env []string, phase, ledger string, terminateAfter time.Duration) string {
 	t.Helper()
-	cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, tupleScript, phase, "pool", ledger)
-	cmd.Env = append(os.Environ(), env...)
+	cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, strings.Replace(tupleScript, "signal.signal(signal.SIGTERM,lambda *_: stopping.__setitem__(0,True))", "signal.signal(signal.SIGTERM,lambda *_: stopping.__setitem__(0,True)); open(os.environ['FIXTURE_READY'], 'w').close()", 1), phase, "pool", ledger)
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd.Env = append(append(os.Environ(), env...), "FIXTURE_READY="+ready)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+	a := startFixtureProcess(t, cmd)
+	if terminateAfter > 0 {
+		waitFixtureReady(t, a, ready)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
 	var terminate <-chan time.Time
 	if terminateAfter > 0 {
 		terminate = time.After(terminateAfter)
 	}
 	for {
 		select {
-		case err := <-done:
+		case <-a.done:
+			err := a.result
 			if err != nil {
 				t.Fatalf("%s: %v %s", phase, err, stderr.String())
 			}
@@ -407,8 +408,7 @@ func tupleFixtureRun(t *testing.T, dir string, env []string, phase, ledger strin
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 			terminate = nil
 		case <-time.After(15 * time.Second):
-			_ = cmd.Process.Kill()
-			t.Fatalf("%s did not end: %s", phase, stderr.String())
+			t.Fatalf("%s did not end; cleanup will kill and join it", phase)
 		}
 	}
 }

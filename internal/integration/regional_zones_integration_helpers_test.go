@@ -972,9 +972,8 @@ func testRegionalZoneFailedSetup(t *testing.T) {
 		t.Fatalf("labelled resources before %v, after the teardown %v", before, after)
 	}
 	for _, name := range []string{facts.NetworkName, facts.ClusterNetworkName} {
-		if _, err := docker.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{}); err == nil {
-			t.Fatalf("bridge %s is left", name)
-		}
+		_, err := docker.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{})
+		requireNetworkAbsent(t, name, err)
 	}
 	if state, err := bystander.State(ctx); err != nil || !state.Running {
 		t.Fatalf("the bystander with the boundary label key was touched: %+v %v", state, err)
