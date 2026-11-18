@@ -257,12 +257,22 @@ func TestCephFSRetainedSnapshotRemovalOnAFullPool(t *testing.T) {
 	t.Logf("CEPHFS_RETAINED_SNAPSHOT_FULL_POOL_RECEIPT full: health %s with %v", full.Status, healthCodes(full))
 	epoch := waitFullMap(t, ctx, cluster)
 	t.Logf("CEPHFS_RETAINED_SNAPSHOT_FULL_POOL_RECEIPT full: every pool is flagged full at osdmap epoch %d, and every OSD has that map", epoch)
-	removal := command("rm", fs.FilesystemName, retainedName, "--retain-snapshots")
-	t.Logf("CEPHFS_RETAINED_SNAPSHOT_FULL_POOL_RECEIPT removal on the full cluster: %s", removal)
-	if removal.OK {
+	removal, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv:    []string{"ceph", "--connect-timeout", "5", "fs", "subvolume", "rm", fs.FilesystemName, retainedName, "--retain-snapshots"},
+		Timeout: 3 * time.Minute, MaxStdout: 16 << 10, MaxStderr: 16 << 10, Label: "CephFS full-pool retained snapshot removal",
+	})
+	t.Logf("CEPHFS_RETAINED_SNAPSHOT_FULL_POOL_RECEIPT removal on the full cluster: exit=%d error=%v stderr=%s",
+		removal.ExitCode, err, removal.Stderr)
+	if err != nil || !removal.Complete() {
+		t.Fatalf("condition not established: unavailable observation of the removal: %v", err)
+	}
+	report.Trigger = fullRemovalTrigger{exitCode: removal.ExitCode, stderr: string(removal.Stderr)}
+	if removal.ExitCode == 0 {
 		var unexpected observed
 		t.Logf("CEPHFS_RETAINED_SNAPSHOT_FULL_POOL_RECEIPT after a removal that succeeded: %s", run("observe", spec, &unexpected))
-		t.Fatal("condition not established: the removal with retained snapshots succeeded while OSD_FULL was raised")
+	}
+	if err := report.Trigger.verify(); err != nil {
+		t.Fatal(err)
 	}
 	if err := handle.Restore(ctx); err != nil {
 		t.Fatalf("condition not established: restore the full ratios: %v", err)

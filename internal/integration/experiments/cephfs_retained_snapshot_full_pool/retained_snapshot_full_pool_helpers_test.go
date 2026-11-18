@@ -52,6 +52,38 @@ func (o cephOutcome) String() string {
 	return fmt.Sprintf("%s (%s)", o.Errno, o.Reason)
 }
 
+// fullRemovalTrigger records the initial command's exit and complete error
+// output. The traceback can exceed the ordinary NativeFailure reason bound.
+type fullRemovalTrigger struct {
+	exitCode int
+	stderr   string
+}
+
+func (r fullRemovalTrigger) verify() error {
+	if r.exitCode == 0 {
+		return fmt.Errorf("condition not established: the removal with retained snapshots succeeded while OSD_FULL was raised")
+	}
+	for line := range strings.SplitSeq(r.stderr, "\n") {
+		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), "Error ENOSPC:"); ok {
+			switch strings.TrimSpace(reason) {
+			case "fsync failed", "error in write":
+				return nil
+			}
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Error EINVAL:") {
+			// Affected volumes modules leave the metadata write's exception
+			// uncaught. Correlate the no-space exception with that write.
+			if strings.Contains(r.stderr, "metadata_manager.py") && strings.Contains(r.stderr, "in flush") &&
+				(strings.Contains(r.stderr, "cephfs.NoSpace: fsync failed") ||
+					strings.Contains(r.stderr, "cephfs.NoSpace: error in write")) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("condition not established: the full-cluster removal did not report a descriptor write failing with no space (exit %d)", r.exitCode)
+}
+
 // fileSeen is what the client read of one file: errno 0 with its size and
 // SHA-256, or the errno of the open or read.
 type fileSeen struct {
@@ -78,6 +110,7 @@ type dirSeen struct {
 // and after the removal was retried. LivePath, SnapshotPath and the two
 // digests are what the subvolume held before the removal.
 type removalReport struct {
+	Trigger                fullRemovalTrigger
 	LivePath, SnapshotPath string
 	LiveSHA, SnapshotSHA   string
 	// Meta is the persisted metadata; Live and Snapshot are direct reads of
@@ -121,6 +154,9 @@ func unrelated(stage string, o cephOutcome) error {
 // neither, including a command or read that fails with another errno than
 // the missing path that the stage expects.
 func judgeRemoval(r removalReport) ([]string, error) {
+	if err := r.Trigger.verify(); err != nil {
+		return nil, err
+	}
 	enoent := int(syscall.ENOENT)
 	if r.Meta.Errno != 0 {
 		return nil, fmt.Errorf("another fault: the persisted metadata is unreadable after the thresholds were restored: errno %d", r.Meta.Errno)

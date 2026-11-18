@@ -20,6 +20,7 @@ const (
 func contractReport() removalReport {
 	live, snapshot := retainedDigest(liveLabel), retainedDigest(snapshotLabel)
 	return removalReport{
+		Trigger:  fullRemovalTrigger{exitCode: 28, stderr: "Error ENOSPC: fsync failed"},
 		LivePath: testLivePath, SnapshotPath: testSnapshotPath, LiveSHA: live, SnapshotSHA: snapshot,
 		Meta: metaSeen{Sections: map[string]map[string]string{"GLOBAL": {
 			"version": "2", "type": "subvolume", "path": testLivePath, "state": "complete",
@@ -151,5 +152,36 @@ func TestJudgeRemoval(t *testing.T) {
 	}
 	if retainedDigest(liveLabel) == retainedDigest(snapshotLabel) {
 		t.Fatal("the live and snapshot contents are not distinguishable")
+	}
+}
+
+func TestRetainedSnapshotRequiresDescriptorWriteFailure(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		exit   int
+		stderr string
+		admit  bool
+	}{
+		{"corrected fsync failure", 28, "Error ENOSPC: fsync failed", true},
+		{"corrected write failure", 28, "Error ENOSPC: error in write", true},
+		{"affected fsync failure", 22, "Error EINVAL: Traceback (most recent call last):\n  File \"metadata_manager.py\", line 105, in flush\ncephfs.NoSpace: fsync failed [Errno 28]", true},
+		{"affected write failure", 22, "Error EINVAL: Traceback (most recent call last):\n  File \"metadata_manager.py\", line 104, in flush\ncephfs.NoSpace: error in write [Errno 28]", true},
+		{"permission refused", 13, "Error EACCES: Permission denied", false},
+		{"ENOSPC without operation", 28, "Error ENOSPC: No space left on device", false},
+		{"wrapped exception from another operation", 22, "Error EINVAL: Traceback (most recent call last):\ncephfs.NoSpace: fsync failed", false},
+		{"unrelated invalid argument", 22, "Error EINVAL: missing command argument", false},
+		{"no error output", 22, "", false},
+		{"unexpected success", 0, "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := contractReport()
+			report.Trigger = fullRemovalTrigger{test.exit, test.stderr}
+			// All later state and the retry are healthy. They can establish
+			// absence of the defect only after the actual trigger was observed.
+			symptoms, err := judgeRemoval(report)
+			if (err == nil) != test.admit || len(symptoms) != 0 {
+				t.Fatalf("judgement = %v, %v, want admit=%t and no symptoms", symptoms, err, test.admit)
+			}
+		})
 	}
 }

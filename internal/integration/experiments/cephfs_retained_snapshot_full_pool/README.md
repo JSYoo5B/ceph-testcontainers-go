@@ -110,8 +110,10 @@ the removal's error and the volumes interface's answers.
    status`), so that no OSD that has not seen the full map can accept the
    metadata write. Without this wait a removal on 20.2.0 once succeeded
    right after `OSD_FULL` appeared. It then runs
-   `fs subvolume rm --retain-snapshots`, which must fail; a success does not
-   establish the condition.
+   `fs subvolume rm --retain-snapshots` and captures its complete error output.
+   The trigger needs `ENOSPC` identifying the write or fsync, or an `EINVAL`
+   traceback that locates the `cephfs.NoSpace` exception in the metadata
+   flush. The full map establishes the environment for the command.
 4. The thresholds are restored and read back equal to the originals, and the
    case waits until no fullness check (`OSD_FULL`, `OSD_NEARFULL`,
    `OSD_BACKFILLFULL`, `POOL_FULL` and the pool variants) remains.
@@ -166,7 +168,7 @@ content.
   `condition not established`: the subvolume is not a complete v2 subvolume,
   the thresholds could not be lowered or restored, the fullness checks did
   not appear or clear, the full map did not reach every OSD, or the removal
-  succeeded on the full cluster. It is not a reproduction and not a pass.
+  lacked evidence of a no-space error during the descriptor write.
 - **Control failed:** the failure starts with `control failed`: the paths or
   contents before the removal were not the ones written.
 - **Another fault:** the failure starts with `another fault:`: after the
