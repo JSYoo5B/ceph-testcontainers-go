@@ -370,19 +370,14 @@ func testOSDFullnessLiveClient(t *testing.T) {
 			if !firstHold.IsZero() && len(live) > 0 && live[len(live)-1].Start.Sub(firstHold) >= fullnessWindow {
 				break
 			}
-			at := time.Now()
-			raw, err := pgQueryRaw(ctx, cluster, pgid)
-			var sample pgProgress
-			if err == nil {
-				sample, err = parsePGProgress(raw)
-			}
+			sample, raw, read, err := readBarrierProgress(time.Now, func() ([]byte, error) { return pgQueryRaw(ctx, cluster, pgid) })
 			if err != nil {
 				out.SampleErrors++
 				// A failed read inside the credited window breaks it: it is
 				// kept as an inconclusive sample and the run fails.
-				if credited := recordFailedRead(samples, time.Now(), !firstHold.IsZero()); len(credited) != len(samples) {
+				if credited := recordFailedRead(samples, read, !firstHold.IsZero()); len(credited) != len(samples) {
 					out.Samples[barrierInconclusive]++
-					live = append(live, fullnessLiveSample{Start: at, End: time.Now(), Verdict: barrierInconclusive, Err: err})
+					live = append(live, fullnessLiveSample{Start: read.Start, End: read.End, Verdict: barrierInconclusive, Err: err})
 					fail("a PG read failed after backfill_toofull was first reported, so the window is not uninterrupted: %v", err)
 				}
 				if out.SampleErrors > 10 {
@@ -417,7 +412,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 			}
 			verdict, why := fullnessBarrierSample(base, sample)
 			events, eventsErr := minSizeLedger(ctx, cluster, client, fullnessLiveLedger)
-			ls := fullnessLiveSampleOf(base, at, time.Now(), raw, nil, events, eventsErr)
+			ls := fullnessLiveSampleOf(base, read.Start, time.Now(), raw, nil, events, eventsErr)
 			if verdict == barrierHolds && ls.Err != nil {
 				// The primary's report is conclusive, the ledger is not: the
 				// sample is kept, and inside the credited window it fails the run.
@@ -432,7 +427,8 @@ func testOSDFullnessLiveClient(t *testing.T) {
 			}
 			out.Samples[verdict]++
 			// The barrier is timed by the PG query, the live window by both bounds.
-			samples = append(samples, barrierSample{Verdict: verdict, At: ls.Start})
+			read.Verdict = verdict
+			samples = append(samples, read)
 			live = append(live, ls)
 			if verdict == barrierHolds && firstHold.IsZero() {
 				firstHold = ls.End
