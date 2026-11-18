@@ -134,7 +134,9 @@ and the unlink request's `unlink_peer: not mirror snapshot (snap_id=<S1>)`,
 snap_id=<S1>`. A failure line counts for S1 only between the replayer's
 unlink from S1 and its next unlink. The request's lines come from another
 logging thread than the replayer's, so their order against the replayer's
-is not used.
+is not used. After the fourth payload arrives, the test judges the accumulated
+receiver log again. This gives the replayer time to record a failure after an
+earlier skip line.
 
 - **REPRODUCED:** the replayer started the unlink from S1, the request
   refused S1 as not a mirror snapshot and the replayer failed with `(22)

@@ -138,15 +138,13 @@ func testRBDMirrorUnlinkFromTrashedSnapshot(t *testing.T) {
 	harness.RBDScenarioCommand(t, ctx, forward.SourceRBD, "mirror", "image", "snapshot", unlinkImage)
 
 	daemon := forward.Daemons()[0]
-	var symptoms []string
 	judged, err := harness.Observe(ctx, 4*time.Minute, 30*time.Second, 2*time.Second, func(probeCtx context.Context) (unlinkOutcome, bool, error) {
 		log, err := unlinkReceiverLog(probeCtx, daemon)
 		if err != nil {
 			return unlinkOutcome{}, false, nil
 		}
 		got := readUnlinkOutcome(log, s1.ID)
-		found, ready, err := judgeUnlink(s1.ID, got)
-		symptoms = found
+		_, ready, err := judgeUnlink(s1.ID, got)
 		return got, ready, err
 	})
 	if err != nil {
@@ -173,6 +171,16 @@ func testRBDMirrorUnlinkFromTrashedSnapshot(t *testing.T) {
 		t.Fatalf("a later write did not replicate: %v", err)
 	}
 	t.Logf("a later write replicated %s after its snapshot: sha256=%x", time.Since(started).Round(time.Second), sha256.Sum256(fourth))
+	logCtx, cancelLog := context.WithTimeout(ctx, 30*time.Second)
+	finalLog, err := unlinkReceiverLog(logCtx, daemon)
+	cancelLog()
+	if err != nil {
+		t.Fatalf("read receiver log after the later write replicated: %v", err)
+	}
+	symptoms, err := finalUnlinkSymptoms(s1.ID, finalLog)
+	if err != nil {
+		t.Fatalf("verify the unlink after the later write replicated: %v", err)
+	}
 	result := "NOT_REPRODUCED"
 	if len(symptoms) > 0 {
 		result = "REPRODUCED"
