@@ -131,6 +131,7 @@ var osdRegistryMethods = map[string][]string{
 	"park":       {"make", "delete"},
 	"unpark":     {"delete", "r.register"},
 	"replace":    nil,
+	"placements": {"make", "len", "len", "append", "append"},
 	// The lookups that need only the registry: the caller holds Container.mu,
 	// as for every other method.
 	"current":          {"r.get", "r.detachedOf", "invalid", "invalid", "invalid", "fmt.Errorf", "fmt.Errorf", "fmt.Errorf"},
@@ -193,7 +194,7 @@ var osdRegistryCallers = map[string]stateCaller{
 	"generationLocked":                 {"holds", nil},
 	"ownedLocked":                      {"holds", nil},
 	"daemonKeyrings":                   {"holds", []string{"get"}},
-	"validateOSDPlacement":             {"holds", []string{"count", "each"}},
+	"validateOSDPlacement":             {"holds", []string{"placements"}},
 	"nativePoolDomains":                {"holds", []string{"get"}},
 	"ownsNativeTarget":                 {"holds", []string{"each"}},
 	"monitorConfigTargets":             {"holds", []string{"each"}},

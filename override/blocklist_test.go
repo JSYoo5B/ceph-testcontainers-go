@@ -78,7 +78,7 @@ func TestAddBlocklistRefusesExistingAndOutsideRenewal(t *testing.T) {
 	}
 }
 
-func TestAddBlocklistLostRepliesAndCanceledApplyAreRecoverable(t *testing.T) {
+func TestAddBlocklistNativeFailuresAndCanceledApplyAreRecoverable(t *testing.T) {
 	c, native := newBlocklistFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	native.cancelAfterAdd, native.loseAdd = cancel, true

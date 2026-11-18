@@ -15,6 +15,9 @@ import (
 	"github.com/moby/moby/api/types/volume"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -89,6 +92,13 @@ func (c *osdMemoryContainerFake) Terminate(context.Context, ...testcontainers.Te
 }
 
 func (c *osdMemoryContainerFake) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	supervisedRun := len(args) > 6 && args[0] == "python3" && args[2] == supervised.Script
+	if supervisedRun {
+		args = args[6:]
+	}
+	if len(args) > 3 && args[0] == "python3" && args[2] == supervised.CancelScript {
+		return 0, bytes.NewReader(nil), c.execErr
+	}
 	c.commands = append(c.commands, slices.Clone(args))
 	if c.execErr != nil {
 		return 0, nil, c.execErr
@@ -103,6 +113,9 @@ func (c *osdMemoryContainerFake) Exec(_ context.Context, args []string, _ ...tce
 		delete(c.directories, args[3])
 	default:
 		return 0, nil, fmt.Errorf("unexpected memory-storage command %q", args)
+	}
+	if supervisedRun {
+		return 0, bytes.NewReader(clustertest.QuorumEnvelope(nil, nil, code, false, false)), nil
 	}
 	return code, bytes.NewReader(nil), nil
 }

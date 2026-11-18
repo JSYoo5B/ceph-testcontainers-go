@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 )
 
 // PGPrimary selects the acting primary that Pool.OverridePGPrimary gives one
@@ -49,8 +51,9 @@ type PGPrimaryOverrideHandle struct {
 // pgPrimaryState is the state of one PG primary override; the cluster's mutex
 // guards it.
 type pgPrimaryState struct {
-	pool *Pool
-	name string
+	command mutation.Fence
+	pool    *Pool
+	name    string
 	// poolID is the native ID of the pool that the override binds.
 	poolID int64
 	pg     PGID
@@ -71,6 +74,7 @@ type pgPrimaryState struct {
 // minCompatLease is one raise of require_min_compat_client that PG primary
 // overrides share: the last holder to restore lowers it to prior.
 type minCompatLease struct {
+	command       mutation.Fence
 	prior, raised string
 	holders       map[*pgPrimaryState]bool
 	token         *faultEntry
@@ -214,7 +218,13 @@ func (p *Pool) applyPGPrimaryLocked(ctx context.Context, c *Container, name stri
 	}
 	state.applied = osd
 	lease := c.minCompatLease()
-	setErr := c.upmapPrimary(ctx, primary.PG, osd)
+	if lease != nil {
+		if err := lease.command.Wait(ctx); err != nil {
+			c.faults.settle(token, "", nil, nil, nil)
+			return nil, err
+		}
+	}
+	setErr := state.command.Record(c.upmapPrimary(ctx, primary.PG, osd))
 	if need, have, refused := compatRefusal(setErr); refused {
 		if lease != nil || !primary.RaiseMinCompatClient {
 			c.faults.settle(token, "", nil, nil, nil)
@@ -237,7 +247,7 @@ func (p *Pool) applyPGPrimaryLocked(ctx context.Context, c *Container, name stri
 		if err != nil {
 			return handle, err
 		}
-		setErr = c.upmapPrimary(ctx, primary.PG, osd)
+		setErr = state.command.Record(c.upmapPrimary(ctx, primary.PG, osd))
 	} else {
 		if definiteRefusal(setErr) {
 			c.faults.settle(token, "", nil, nil, nil)
@@ -370,9 +380,11 @@ func (h *PGPrimaryOverrideHandle) ready(ctx context.Context) (bool, error) {
 // Restore reads the stored OSDMap state back; it does not wait for the PG to
 // be served by the prior primary, because a test may restore while that OSD
 // is stopped. Use Observer.WaitForClean and Pool.PGs for that. It is
-// idempotent across copies and reconciles a lost reply before any further
-// change; retry with a fresh context. A terminated cluster refuses it with
-// ErrInvalidRequest.
+// idempotent across copies and waits for earlier native completion before
+// any further change; retry with a fresh context. A terminated cluster refuses it with
+// ErrInvalidRequest. A canceled native write is awaited before reconciliation.
+// If its completion reply is lost to a transport failure, ownership stays held
+// and Restore returns an error; terminate the disposable cluster.
 //
 //purpose:condition,lifetime
 func (h *PGPrimaryOverrideHandle) Restore(ctx context.Context) error {
@@ -415,6 +427,9 @@ func (h *PGPrimaryOverrideHandle) Restore(ctx context.Context) error {
 }
 
 func (c *Container) restorePGPrimaryEntry(ctx context.Context, fsid string, s *pgPrimaryState) error {
+	if err := s.command.Wait(ctx); err != nil {
+		return err
+	}
 	dump, err := c.readPGPrimaryMap(ctx, fsid)
 	if err != nil {
 		return err
@@ -434,9 +449,9 @@ func (c *Container) restorePGPrimaryEntry(ctx context.Context, fsid string, s *p
 		return invalid(fmt.Errorf("the pg-upmap-primary entry of PG %s changed outside this override; refusing restoration", s.pg))
 	}
 	if s.prior == noUpmapPrimary {
-		_, err = c.conn().ceph(ctx, "osd", "rm-pg-upmap-primary", string(s.pg))
+		err = s.command.Record(c.overrideCommand(ctx, "osd", "rm-pg-upmap-primary", string(s.pg)))
 	} else {
-		err = c.upmapPrimary(ctx, s.pg, s.prior)
+		err = s.command.Record(c.upmapPrimary(ctx, s.pg, s.prior))
 	}
 	if err != nil {
 		return err
@@ -456,6 +471,9 @@ func (c *Container) restorePGPrimaryEntry(ctx context.Context, fsid string, s *p
 // is the last holder. The caller holds c.mu.
 func (c *Container) leaveMinCompatLease(ctx context.Context, fsid string, s *pgPrimaryState) error {
 	lease := s.lease
+	if err := lease.command.Wait(ctx); err != nil {
+		return err
+	}
 	if len(lease.holders) > 1 || !lease.holders[s] {
 		delete(lease.holders, s)
 		return nil
@@ -467,7 +485,7 @@ func (c *Container) leaveMinCompatLease(ctx context.Context, fsid string, s *pgP
 	switch dump.requireMinCompat {
 	case lease.prior:
 	case lease.raised:
-		if _, err := c.conn().ceph(ctx, "osd", "set-require-min-compat-client", lease.prior); err != nil {
+		if err := lease.command.Record(c.overrideCommand(ctx, "osd", "set-require-min-compat-client", lease.prior)); err != nil {
 			return err
 		}
 		dump, err = c.readPGPrimaryMap(ctx, fsid)
@@ -501,19 +519,20 @@ func (c *Container) raiseMinCompat(ctx context.Context, have, need string) (*min
 	if err != nil {
 		return nil, err
 	}
-	_, err = c.conn().ceph(ctx, "osd", "set-require-min-compat-client", need)
+	err = c.overrideCommand(ctx, "osd", "set-require-min-compat-client", need)
 	if definiteRefusal(err) {
 		c.faults.settle(token, "", nil, nil, nil)
 		return nil, err
 	}
 	lease := &minCompatLease{prior: have, raised: need, holders: map[*pgPrimaryState]bool{}, token: token}
+	_ = lease.command.Record(err)
 	c.faults.settle(token, "", lease, nil, nil)
 	return lease, err
 }
 
 // upmapPrimary sets the pg-upmap-primary entry of pg to osd.
 func (c *Container) upmapPrimary(ctx context.Context, pg PGID, osd int) error {
-	_, err := c.conn().ceph(ctx, "osd", "pg-upmap-primary", string(pg), strconv.Itoa(osd))
+	err := c.overrideCommand(ctx, "osd", "pg-upmap-primary", string(pg), strconv.Itoa(osd))
 	return err
 }
 
@@ -534,6 +553,9 @@ func compatRefusal(err error) (need, have string, refused bool) {
 // definiteRefusal reports a native failure in which Ceph named its error
 // code: the MON answered and refused, so nothing changed.
 func definiteRefusal(err error) bool {
+	if mutation.Uncertain(err) {
+		return false
+	}
 	var failure *NativeFailure
 	return errors.As(err, &failure) && failure.Errno != ""
 }

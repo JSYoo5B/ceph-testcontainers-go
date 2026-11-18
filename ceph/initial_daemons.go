@@ -63,6 +63,7 @@ func (c *Container) startInitialOSDs(ctx context.Context) error {
 		if err := (osdMap{c.conn()}).assignDeviceClass(ctx, launch.osd); err != nil {
 			return err
 		}
+		launch.osd.placementReady = true
 	}
 	return nil
 }

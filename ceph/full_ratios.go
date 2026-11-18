@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -29,6 +30,7 @@ type FullRatioSnapshot struct {
 type fullRatiosCLISession struct {
 	control testcontainers.Container
 	fsid    string
+	bound   time.Duration
 }
 
 // The caller holds the topology gate. Capture both control and original
@@ -52,7 +54,7 @@ func (c *Container) fullRatiosSession(ctx context.Context) (fullRatiosCLISession
 	if identityErr != nil || !identity.confirmed {
 		return fullRatiosCLISession{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
 	}
-	return fullRatiosCLISession{control: control, fsid: fsid}, nil
+	return fullRatiosCLISession{control: control, fsid: fsid, bound: c.settings.startupTimeout}, nil
 }
 
 func (session fullRatiosCLISession) command(ctx context.Context, args ...string) ([]byte, error) {

@@ -80,7 +80,7 @@ func prepareInitialComposition(settings *options) error {
 		if config.Host == "" {
 			config.Host = fmt.Sprintf("osd-%d", i)
 		}
-		planned.fleet.osdHandles.register(i, &OSDContainer{ID: i, placement: config})
+		planned.fleet.osdHandles.register(i, &OSDContainer{ID: i, placement: config, placementReady: true})
 		if len(settings.initialOSDs) != 0 {
 			// Keep host omission until a real OSD ID is assigned at startup.
 			config.Host = settings.initialOSDs[i].Host

@@ -45,8 +45,10 @@ if err != nil {
 - Every function returns a non-nil handle, so it can be deferred before the
   error is checked. A refused call returns a handle that owns nothing; an
   uncertain one (the change may have been applied) returns a real handle
-  whose `Restore` still undoes it. `Restore` undoes only what the call did, is
-  shared by copies of the handle and is retryable with a fresh context.
+  whose `Restore` first waits for its outstanding native write. `Restore` undoes only what the call did, is
+  shared by copies of the handle and is retryable with a fresh context. A lost
+  native completion reply keeps ownership held and makes restoration return
+  an error. Terminate the disposable cluster when completion cannot be proven.
 - `Terminate` does not undo overrides: the change ends with the disposable
   cluster. There is no expiry or scope-exit restoration.
 - One override per target: a second handle for the same session, flag,

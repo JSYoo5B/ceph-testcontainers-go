@@ -115,14 +115,14 @@ func (overrideHooks) BlocklistEntries(ctx context.Context, c *Container) ([]Bloc
 // BlocklistAdd adds one exact session to the native blocklist for duration.
 // The caller holds the mutex.
 func (overrideHooks) BlocklistAdd(ctx context.Context, c *Container, address string, duration time.Duration) error {
-	_, err := c.conn().ceph(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
+	err := c.overrideCommand(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
 	return err
 }
 
 // BlocklistRemove removes one exact session from the native blocklist. The
 // caller holds the mutex.
 func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address string) error {
-	_, err := c.conn().ceph(ctx, "osd", "blocklist", "rm", address)
+	err := c.overrideCommand(ctx, "osd", "blocklist", "rm", address)
 	return err
 }
 
@@ -163,7 +163,11 @@ func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, e
 // SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
 // mutex.
 func (overrideHooks) SetOSDFlag(ctx context.Context, c *Container, flag OSDFlag, enabled bool) error {
-	return osdMap{c.conn()}.setFlag(ctx, flag, enabled)
+	op := "unset"
+	if enabled {
+		op = "set"
+	}
+	return c.overrideCommand(ctx, "osd", op, string(flag))
 }
 
 // ValidMGRModuleName reports whether name can be a Ceph manager module name.
@@ -232,7 +236,7 @@ func (overrideHooks) SetMGRModule(ctx context.Context, c *Container, name string
 	if enabled {
 		op = "enable"
 	}
-	_, err := c.conn().ceph(ctx, "mgr", "module", op, name)
+	err := c.overrideCommand(ctx, "mgr", "module", op, name)
 	return err
 }
 
@@ -298,7 +302,7 @@ func (session fullRatiosCLISession) SetRatio(ctx context.Context, name string, v
 	default:
 		return invalidRequest("unknown full ratio %q", name)
 	}
-	_, err := session.command(ctx, "osd", "set-"+name+"-ratio", strconv.FormatFloat(value, 'g', -1, 64))
+	err := overrideMutation(ctx, session.control, session.bound, "osd", "set-"+name+"-ratio", strconv.FormatFloat(value, 'g', -1, 64))
 	return err
 }
 
@@ -343,7 +347,7 @@ func (overrideHooks) ConfigEntries(ctx context.Context, c *Container) ([]ConfigE
 
 // ConfigSet stores value for a normalized setting. The caller holds the mutex.
 func (overrideHooks) ConfigSet(ctx context.Context, c *Container, setting ConfigSetting, value string) error {
-	_, err := runConfigCommand(ctx, c.conn().ceph, "set", configWho(setting), setting.Name, value)
+	err := c.overrideCommand(ctx, "config", "set", configWho(setting), setting.Name, value)
 	return err
 }
 
@@ -351,14 +355,14 @@ func (overrideHooks) ConfigSet(ctx context.Context, c *Container, setting Config
 // MON's option validation (config set --force), which an empty value of a
 // typed or enumerated option would fail. The caller holds the mutex.
 func (overrideHooks) ConfigSetEmpty(ctx context.Context, c *Container, setting ConfigSetting) error {
-	_, err := runConfigCommand(ctx, c.conn().ceph, "set", configWho(setting), setting.Name, "", "--force")
+	err := c.overrideCommand(ctx, "config", "set", configWho(setting), setting.Name, "", "--force")
 	return err
 }
 
 // ConfigRemove removes the entry of a normalized setting. The caller holds the
 // mutex.
 func (overrideHooks) ConfigRemove(ctx context.Context, c *Container, setting ConfigSetting) error {
-	_, err := runConfigCommand(ctx, c.conn().ceph, "rm", configWho(setting), setting.Name)
+	err := c.overrideCommand(ctx, "config", "rm", configWho(setting), setting.Name)
 	return err
 }
 

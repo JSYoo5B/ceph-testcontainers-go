@@ -27,7 +27,7 @@ type osdFlagFixture struct {
 	calls [][]string
 	// raw replaces the output of osd dump while it is not empty.
 	raw string
-	// failAfter names the verb ("set" or "unset") whose native reply is lost
+	// failAfter names the verb ("set" or "unset") that reports a terminal EINVAL reply
 	// after the command took effect.
 	failAfter string
 	// breakDumpAfterSet makes osd dump undecodable once a flag was set.
@@ -74,7 +74,7 @@ func (f *osdFlagFixture) Exec(ctx context.Context, argv []string, _ ...tcexec.Pr
 			f.raw = "not json"
 		}
 		if f.failAfter == args[1] {
-			code, output = 1, "uncertain native reply"
+			code, output = 1, "Error EINVAL: native failure"
 		}
 	default:
 		return 0, nil, fmt.Errorf("unexpected command %v", args)

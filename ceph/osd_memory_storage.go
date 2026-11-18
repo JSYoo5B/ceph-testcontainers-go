@@ -37,6 +37,7 @@ type osdMemoryStorage struct {
 	keeperStarted string
 	ready         bool
 	volumeRemoved bool
+	discard       osdStoreDiscard
 	newClient     func(context.Context) (osdMemoryVolumeClient, error)
 }
 
@@ -155,6 +156,9 @@ func (s *osdMemoryStorage) checkKeeper(ctx context.Context) error {
 }
 
 func (s *osdMemoryStorage) requireFreshOSD(ctx context.Context, id int) error {
+	if s.discard.marker != "" {
+		return errors.New("an earlier OSD store discard is unconfirmed; retry removal before reusing storage")
+	}
 	if id < 0 {
 		return errors.New("OSD memory directory ID must be nonnegative")
 	}
@@ -175,7 +179,7 @@ func (s *osdMemoryStorage) discardOSD(ctx context.Context, id int) error {
 	if err := s.checkKeeper(ctx); err != nil {
 		return err
 	}
-	_, err := command(ctx, s.keeper, "rm", "-rf", "--", osdMemoryKeeperPath+"/ceph-"+strconv.Itoa(id))
+	err := s.discard.run(ctx, s.keeper, osdMemoryKeeperPath+"/ceph-"+strconv.Itoa(id))
 	if err != nil {
 		return fmt.Errorf("discard purged osd.%d memory storage: %w", id, err)
 	}

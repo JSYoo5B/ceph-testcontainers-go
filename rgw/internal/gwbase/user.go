@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -490,4 +491,30 @@ func DecodeQuota(data json.RawMessage) (Quota, error) {
 		size = *raw.MaxSizeKB * 1024
 	}
 	return Quota{Enabled: raw.Enabled, MaxSizeBytes: size, MaxObjects: *raw.MaxObjects}, nil
+}
+
+// MutateUser retains a rate-limit write's completion across caller cancellation.
+// The caller holds the cluster mutex during admission. Only the captured
+// container and immutable command arguments are used after admission.
+func (g *Core) MutateUser(ctx context.Context, u *User, args ...string) error {
+	target, err := g.AdmitAdmin()
+	if err != nil {
+		return err
+	}
+	argv := AdminArgv(g.scope, append([]string{"--format", "json"}, args...)...)
+	if u.State.NativeScope != nil {
+		scope, err := g.RuntimeScope(ctx)
+		if err != nil {
+			return err
+		}
+		if scope != *u.State.NativeScope {
+			return errors.New("RGW user's native runtime scope changed")
+		}
+		argv = CommandArgs(scope, args...)
+	}
+	return mutation.Run(ctx, servicehook.StartupTimeout(g.cluster), func(runCtx context.Context) (bool, error) {
+		_, err := g.supervised(runCtx, target, argv)
+		var failure *ceph.NativeFailure
+		return err == nil || (errors.As(err, &failure) && slices.Contains([]string{"EINVAL", "EPERM", "EACCES", "ENOENT"}, failure.Errno)), err
+	})
 }

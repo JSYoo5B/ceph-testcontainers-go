@@ -110,7 +110,7 @@ func TestSetOSDFlagInRequestedStateIsANoWriteLease(t *testing.T) {
 	}
 }
 
-func TestSetOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
+func TestSetOSDFlagTerminalNativeFailuresReconcile(t *testing.T) {
 	c, native := newOSDFlagFixture(t)
 	native.failAfter = "set"
 	change, err := SetOSDFlag(t.Context(), c, "norecover", true)

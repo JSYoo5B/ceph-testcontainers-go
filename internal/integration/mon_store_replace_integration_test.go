@@ -6,13 +6,16 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/expect"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -41,9 +44,10 @@ func monStoreMount(t *testing.T, ctx context.Context, docker *mobycl.Client, mon
 // keep the monmap exactly (epoch, members, address vectors), mount the same
 // volume in a new container, rejoin the quorum, and leave every acknowledged
 // object readable; new writes are acknowledged after each one. Removing a
-// replaced MON then releases its store: MON c added again gets a new volume,
-// and the removed MON a is no longer listed. Before that, a
-// replacement on a one-MON cluster is refused without touching the MON, and a
+// replaced MON then releases its store, confirmed by volume inspection: MON c
+// added again gets a new volume, and the removed MON a is no longer listed.
+// Before that, replacement on a one-MON cluster is refused without touching
+// the MON, and a
 // cluster without MON volume storage refuses Replace. On the host network the
 // MON address includes its ports, which each replacement must keep.
 func TestMonitorStoreReplace(t *testing.T) {
@@ -96,8 +100,8 @@ func monitorStoreReplace(t *testing.T, host bool) {
 		t.Fatalf("%d monitors: %v", len(mons), err)
 	}
 	before := mons[0].GetContainerID()
-	if _, err := mons[0].Replace(ctx); err == nil {
-		t.Fatal("the only MON was replaced")
+	if _, err := mons[0].Replace(ctx); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "would leave 0 of 1 monitors in quorum") {
+		t.Fatalf("only-MON admission: %v", err)
 	}
 	if state, err := mons[0].State(ctx); err != nil || !state.Running || mons[0].GetContainerID() != before {
 		t.Fatalf("a refused replacement touched the MON: %+v %v", state, err)
@@ -137,8 +141,8 @@ func monitorStoreReplace(t *testing.T, host bool) {
 		if got := monStoreMount(t, ctx, docker.Client, replaced); got != volume {
 			t.Fatalf("mon.%s mounts %s after the replacement, not %s", old.DaemonName, got, volume)
 		}
-		if _, err := old.Replace(ctx); err == nil {
-			t.Fatalf("the stale handle of mon.%s was accepted", old.DaemonName)
+		if _, err := old.Replace(ctx); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "this handle is stale") {
+			t.Fatalf("stale mon.%s admission: %v", old.DaemonName, err)
 		}
 		if got := monmapIdentity(t, ctx, cluster); got != identity {
 			t.Fatalf("mon.%s replacement changed the monmap:\n%s\n%s", old.DaemonName, identity, got)
@@ -168,6 +172,9 @@ func monitorStoreReplace(t *testing.T, host bool) {
 	if err := current["c"].Remove(ctx); err != nil {
 		t.Fatal("remove the replaced mon.c:", err)
 	}
+	if _, err := docker.VolumeInspect(ctx, oldC, mobycl.VolumeInspectOptions{}); !errdefs.IsNotFound(err) {
+		t.Fatalf("removed mon.c store %s remains or cannot be inspected: %v", oldC, err)
+	}
 	readded, err := cluster.AddMonitor(ctx, "c")
 	if err != nil {
 		t.Fatal("add mon.c again:", err)
@@ -175,22 +182,26 @@ func monitorStoreReplace(t *testing.T, host bool) {
 	if got := monStoreMount(t, ctx, docker.Client, readded); got == oldC {
 		t.Fatalf("the re-added mon.c mounts the removed member's store %s", got)
 	}
+	oldA := monStoreMount(t, ctx, docker.Client, current["a"])
 	if err := current["a"].Remove(ctx); err != nil {
 		t.Fatal("remove the replaced mon.a:", err)
+	}
+	if _, err := docker.VolumeInspect(ctx, oldA, mobycl.VolumeInspectOptions{}); !errdefs.IsNotFound(err) {
+		t.Fatalf("removed mon.a store %s remains or cannot be inspected: %v", oldA, err)
 	}
 	if monitors, err = cluster.Monitors(ctx); err != nil || len(monitors) != 2 || slices.ContainsFunc(monitors, func(m *ceph.MonitorContainer) bool { return m.DaemonName == "a" }) {
 		t.Fatalf("monitors after removing the replaced a: %v %v", monitors, err)
 	}
 	u.step(t, ctx, "removed-and-readded", upgradeCheckpoint{"mon": map[string]int{onlyRelease(same["mon"]): 2}, "mgr": same["mgr"], "osd": same["osd"]})
 
-	// Without the volume the call is refused.
-	plain := run(1, false)
+	// Keep a quorum available so only storage admission can explain refusal.
+	plain := run(3, false)
 	mons, err = plain.Monitors(ctx)
-	if err != nil || len(mons) != 1 {
+	if err != nil || len(mons) != 3 {
 		t.Fatalf("%d monitors: %v", len(mons), err)
 	}
-	if _, err := mons[0].Replace(ctx); err == nil {
-		t.Fatal("Replace without MonitorStorage.WithVolume was accepted")
+	if _, err := mons[0].Replace(ctx); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "needs MonitorStorage.WithVolume") {
+		t.Fatalf("storage admission: %v", err)
 	}
 }
 
