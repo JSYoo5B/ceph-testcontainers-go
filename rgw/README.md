@@ -172,7 +172,14 @@ recovery need the default two OSDs or more.
   with an unknown outcome. Only new connections see the new certificate, and
   every later start of the container, including a caller's own Stop and
   Start, is ready only when it serves that certificate. A failed restart
-  leaves the new certificate installed; nothing rolls it back.
+  leaves the new certificate installed. An uncertain install keeps its
+  candidate and completion record for readback on a retry or ordinary startup.
+  A missing completion record prevents another installation and prevents
+  readiness from claiming a certificate. If completion cannot be established,
+  terminate the disposable container. After an uncertain Stop, the new file
+  stays installed while the old process may still serve its previous leaf.
+  Confirm that generation has stopped before starting it, or retry the same
+  replacement after it stops.
 - Printing a handle never writes keys; `Gateway.Admin` output can contain
   keys, and a failed call never includes native output. Every key the
   fixture created or tried to create, revoked ones included, is masked in
