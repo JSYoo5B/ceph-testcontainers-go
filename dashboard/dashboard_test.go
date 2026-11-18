@@ -126,7 +126,7 @@ func TestFormattingHidesSecrets(t *testing.T) {
 const summaryBody = `{"health_status": "HEALTH_WARN", "mgr_id": "a", "mgr_host": "https://172.18.0.3:8443/", "have_mon_connection": true}`
 
 func readyReport() probeReport {
-	return probeReport{Rejected: probeResult{Status: 400, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
+	return probeReport{Rejected: probeResult{Status: 401, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
 		Login: probeResult{Status: 201}, Token: "token", Results: []probeResult{{Path: summaryPath, Status: 200, Body: summaryBody}}}
 }
 
@@ -140,7 +140,7 @@ func TestCheckReadiness(t *testing.T) {
 			r.Rejected = probeResult{Error: "ConnectionRefusedError: [Errno 111] Connection refused"}
 		},
 		"standby redirect": func(r *probeReport) { r.Rejected = probeResult{Status: 303, Location: "https://172.18.0.5:8443/"} },
-		"wrong password accepted": func(r *probeReport) {
+		"unauthenticated request accepted": func(r *probeReport) {
 			r.Rejected = probeResult{Status: 201}
 		},
 		"login refused":   func(r *probeReport) { r.Login, r.Token = probeResult{Status: 400}, "" },
@@ -160,7 +160,7 @@ func TestCheckReadiness(t *testing.T) {
 }
 
 func TestDecodeProbeReport(t *testing.T) {
-	report, err := decodeProbeReport([]byte(`{"results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "rejected": {"status": 400}, "login": {"status": 201}, "token": "t"}`))
+	report, err := decodeProbeReport([]byte(`{"finished": true, "login_pending": false, "results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "rejected": {"status": 401}, "login": {"status": 201}, "token": "t"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -76,7 +76,7 @@ type Dashboard struct {
 
 // state is the shared state of a Dashboard.
 type state struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	cluster  *ceph.Container
 	registry *registry
 	username string
@@ -86,6 +86,10 @@ type state struct {
 	leaf string
 	cert []byte
 	key  []byte
+
+	probesMu       sync.Mutex
+	probeCommands  []*ceph.NativeCommandUnstoppedError
+	loginUncertain bool
 
 	// Restoration state, in the order Restore undoes it.
 	accountMarker string
@@ -429,15 +433,10 @@ func (p *pendingMutation) settle(ctx context.Context) error {
 // runWithInput runs a ceph CLI command in the control container with input as
 // its standard input, so that secrets stay out of its arguments.
 func runWithInput(ctx context.Context, c *ceph.Container, label string, input []byte, args ...string) error {
-	stdin := ceph.NewNativeInput()
-	go func() {
-		_ = stdin.Write(ctx, input)
-		_ = stdin.Close()
-	}()
-	result, err := c.RunNativeCommand(ctx, servicehook.CLI(c), ceph.NativeCommand{
+	result, err := runInputCommand(ctx, c, ceph.NativeCommand{
 		Argv: append([]string{"ceph", "--connect-timeout", "10"}, args...), Timeout: time.Minute,
-		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: label, Input: stdin, MaxInput: len(input),
-	})
+		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: label,
+	}, input)
 	if err != nil {
 		return err
 	}
@@ -461,7 +460,7 @@ func (d *Dashboard) Credentials() (username, password string) {
 // Endpoint returns the HTTPS URL of the active manager's Dashboard, as the
 // MGR map advertises it, once that listener passed the readiness check: it
 // presents the installed certificate on every connection of the check, it
-// refuses the account with a wrong password, it accepts the account's
+// refuses an unauthenticated summary request, it accepts the account's
 // password, and GET /api/summary with the session token is answered by the
 // manager that the MGR map names active. The check compares the certificate
 // of each connection before it sends a password or the session token, and
@@ -469,7 +468,9 @@ func (d *Dashboard) Credentials() (username, password string) {
 // the active manager, which the check refuses, so the call waits, within the
 // cluster's startup timeout, until a failover settles. That timeout starts
 // after admission. The initial state check can wait behind AddGateway or
-// Restore even after the caller's context expires.
+// Restore even after the caller's context expires. Concurrent observations
+// can proceed together; Restore and link removal wait for admitted
+// observations to finish.
 //
 // The URL is the one the MGR map advertises: in bridge mode the active
 // manager's address on the cluster network, in host mode the cluster's
@@ -482,6 +483,8 @@ func (d *Dashboard) Endpoint(ctx context.Context) (string, error) {
 	if d == nil || d.state == nil {
 		return "", errors.New("dashboard is unavailable")
 	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	if err := d.ready(); err != nil {
 		return "", err
 	}
@@ -490,11 +493,15 @@ func (d *Dashboard) Endpoint(ctx context.Context) (string, error) {
 	return d.endpoint(ctx, nil)
 }
 
+// ready requires the Dashboard lifetime lock.
 func (s *state) ready() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.restored {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "dashboard", Err: errors.New("the dashboard was restored")}
+	}
+	s.probesMu.Lock()
+	defer s.probesMu.Unlock()
+	if s.loginUncertain {
+		return errLoginUnsettled
 	}
 	return nil
 }
@@ -516,6 +523,9 @@ func (s *state) endpoint(ctx context.Context, report *probeReport, paths ...stri
 			return listener.url, nil
 		}
 		last = err
+		if readyErr := s.ready(); readyErr != nil {
+			return "", errors.Join(err, readyErr)
+		}
 		select {
 		case <-ctx.Done():
 			return "", errors.Join(ctx.Err(), last)
@@ -553,6 +563,7 @@ func (s *state) probeActive(ctx context.Context, observer *ceph.Observer, paths 
 		return activeListener{}, probeReport{}, fmt.Errorf("the MGR map advertises a dashboard service that is not HTTPS: %s", url)
 	}
 	report, err := runProbe(ctx, s.cluster, url, s.leaf, s.username, s.password, append([]string{summaryPath}, paths...)...)
+	s.trackProbe(report, err)
 	if err != nil {
 		return activeListener{}, probeReport{}, err
 	}
@@ -607,6 +618,8 @@ func (d *Dashboard) HostEndpoint(ctx context.Context) (string, error) {
 	if d == nil || d.state == nil {
 		return "", errors.New("dashboard is unavailable")
 	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	if err := d.ready(); err != nil {
 		return "", err
 	}
@@ -627,6 +640,9 @@ func (d *Dashboard) HostEndpoint(ctx context.Context) (string, error) {
 			return target, err
 		}
 		last = err
+		if readyErr := d.ready(); readyErr != nil {
+			return "", errors.Join(err, readyErr)
+		}
 		select {
 		case <-ctx.Done():
 			return "", errors.Join(ctx.Err(), last)
@@ -744,6 +760,14 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // owned account wrote it, restores the module's enabled state and the
 // listener options.
 //
+// Restore waits for admitted observations and refuses new observations after
+// successful restoration. It also stops an unconfirmed native probe before
+// cleanup. A login without a definitive server response prevents restoration:
+// stopping the HTTP client cannot prove that the server finished writing its
+// multi-cluster record. Such uncertainty retains ownership and requires
+// terminating the disposable cluster; Restore cannot clear server uncertainty.
+// Retrying Restore retries command stopping, not the missing server response.
+//
 // For an interrupted account, TLS or gateway API key write, Restore confirms
 // the command has stopped before using the resource's state to complete that step. It
 // verifies the account's display name against the ownership marker set at
@@ -775,6 +799,9 @@ func (s *state) restore(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(s.cluster))
 	defer cancel()
+	if err := s.settleProbes(ctx); err != nil {
+		return err
+	}
 	var errs []error
 	if s.link != nil {
 		if err := s.link.remove(ctx); err != nil {

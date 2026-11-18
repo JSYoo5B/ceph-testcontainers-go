@@ -158,13 +158,13 @@ func TestProbeSendsNoCredentialsToAnotherCertificate(t *testing.T) {
 func TestProbeSendsNoTokenAfterTheCertificateChanges(t *testing.T) {
 	installed, want := probeCertificate(t)
 	other, otherPrint := probeCertificate(t)
-	// The wrong-password and login connections present the installed
+	// The unauthenticated and login connections present the installed
 	// certificate; the bearer request's connection presents another one.
 	l := newProbeListener(t, installed, other, 2)
 	report := runLocalProbe(t, l.server.URL, want)
 	seen := l.seen()
-	if len(seen) != 2 || seen[0].path != "/api/auth" || seen[1].path != "/api/auth" {
-		t.Fatalf("the listener received %+v, want only the two logins", seen)
+	if len(seen) != 2 || seen[0].path != summaryPath || seen[1].path != "/api/auth" {
+		t.Fatalf("the listener received %+v, want only the unauthenticated summary and login", seen)
 	}
 	for _, s := range seen {
 		if s.authorization != "" {
@@ -182,12 +182,12 @@ func TestProbeSendsNoTokenAfterTheCertificateChanges(t *testing.T) {
 func TestProbeSendsNoPasswordAfterTheCertificateChanges(t *testing.T) {
 	installed, want := probeCertificate(t)
 	other, _ := probeCertificate(t)
-	// Only the wrong-password connection presents the installed certificate.
+	// Only the unauthenticated connection presents the installed certificate.
 	l := newProbeListener(t, installed, other, 1)
 	report := runLocalProbe(t, l.server.URL, want)
 	seen := l.seen()
 	if len(seen) != 1 {
-		t.Fatalf("the listener received %+v, want only the wrong-password login", seen)
+		t.Fatalf("the listener received %+v, want only the unauthenticated summary", seen)
 	}
 	if err := checkReadiness(report, "a"); err == nil || report.Token != "" {
 		t.Fatalf("readiness after the certificate changed: %v (%+v)", err, report)
