@@ -36,44 +36,25 @@ func NewMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 		cluster, err := ceph.Run(ctx, image, opts...)
 		if cluster != nil {
 			t.Cleanup(func() {
-				if t.Failed() {
+				ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
 					// The current MONs and MGRs too: after a MON replacement the
 					// first MON is gone, and MGR modules serve mirror commands.
-					serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
-					services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
-					cancelServices()
-					if inventoryErr != nil {
-						t.Logf("service inventory unavailable: %v", inventoryErr)
-					}
-					ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, services...)
-					for _, monitor := range clusteraccess.Monitors(t, cluster) {
-						if monitor != nil && monitor.Container != nil {
-							ctrs = append(ctrs, monitor.Container)
-						}
-					}
-					ctrs = append(ctrs, OSDContainers(t, cluster)...)
-					ctrs = append(ctrs, clusteraccess.InitialManager(t, cluster))
-					for _, mgr := range clusteraccess.Managers(t, cluster) {
-						if mgr != nil && mgr.Container != nil {
-							ctrs = append(ctrs, mgr.Container)
-						}
-					}
+					ctrs := diagnosticContainers(t, ctx, cluster)
 					seen := make(map[string]bool)
 					for _, ctr := range ctrs {
 						if ctr == nil || seen[ctr.GetContainerID()] {
 							continue
 						}
 						seen[ctr.GetContainerID()] = true
-						logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						logCtx, logCancel := context.WithTimeout(ctx, 5*time.Second)
 						MultiClusterLogContainer(t, logCtx, ctr)
 						logCancel()
 					}
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-				defer cancel()
-				if err := cluster.Terminate(ctx); err != nil {
-					t.Errorf("terminate multicluster fixture: %v", err)
-				}
+				}, func(ctx context.Context) {
+					if err := cluster.Terminate(ctx); err != nil {
+						t.Errorf("terminate multicluster fixture: %v", err)
+					}
+				})
 			})
 		}
 		if err != nil {

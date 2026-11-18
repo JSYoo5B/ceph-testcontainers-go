@@ -61,7 +61,11 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 				return
 			}
 			harness.ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
-				for _, osd := range clusteraccess.OSDs(t, cluster) {
+				osds, inventoryErr := cluster.OSDs(ctx)
+				if inventoryErr != nil {
+					t.Logf("diagnostic OSD inventory unavailable: %v", inventoryErr)
+				}
+				for _, osd := range osds {
 					if osd.Container == nil {
 						continue
 					}

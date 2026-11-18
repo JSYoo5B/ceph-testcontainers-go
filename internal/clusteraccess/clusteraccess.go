@@ -15,7 +15,8 @@ import (
 )
 
 // ctx detaches from the test's cancellation, which ends before t.Cleanup
-// functions run, so the helpers also work inside cleanups.
+// functions run. Failure diagnostics must instead pass their bounded cleanup
+// context directly to accessors and report errors without Fatal.
 func ctx(tb testing.TB) context.Context { return context.WithoutCancel(tb.Context()) }
 
 // OSDs returns the owned OSDs of c sorted by ID.
