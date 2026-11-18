@@ -18,8 +18,9 @@ import (
 )
 
 // VerificationConfig selects what Finalization.Verify checks after the test:
-// the log lines and the new crashes of the cluster's daemons since
-// activation, each against its own expectations. Zero fields select a two
+// the log lines in an engine-clock interval and the crash identities newly
+// visible since the activation directory reads, each against its own
+// expectations. Zero fields select a two
 // minute timeout for the activation and for each evaluation (at most five),
 // 20 seconds per Docker operation (at most one minute), 32 MiB of log stream
 // per container (at most 256 MiB) and 256 retained findings per check (at
@@ -234,9 +235,12 @@ type LogExpectation struct {
 	Pattern string
 }
 
-// CrashExpectation permits, or with Required requires, new crashes that
-// match all of its non-empty criteria; at least one of Daemon, Process and
-// Signature is required.
+// CrashExpectation permits, or with Required requires, crash identities newly
+// visible in the evaluation directory reads, compared with activation. Their
+// metadata timestamps are not filtered by VerificationWindow. A required match
+// proves observed new metadata, not occurrence inside the log interval. All
+// non-empty criteria must match; at least one of Daemon, Process and Signature
+// is required.
 type CrashExpectation struct {
 	Name     string
 	Required bool
@@ -309,9 +313,12 @@ type verificationLogLine struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// VerificationWindow is the observed interval, on the Docker engine's clock.
-// Phase is "test": bootstrap before the activation and the cleanups and
-// termination after the evaluation are outside it.
+// VerificationWindow is the log interval on the Docker engine's clock.
+// StartedAt is sampled after the activation crash-directory reads; EndedAt
+// before the evaluation reads. Crash selection instead compares directory
+// identities across those reads, including records becoming visible in either
+// gap around these samples. Metadata timestamps are not an engine-clock bound.
+// Phase is "test": finalization cleanups and termination follow evaluation.
 type VerificationWindow struct {
 	Phase     string    `json:"phase"`
 	StartedAt time.Time `json:"started_at"`
@@ -406,6 +413,8 @@ type Verification struct {
 
 	mu       sync.Mutex
 	baseline *verificationBaseline
+	// knownSecrets retains every value observed by serialized evaluations.
+	knownSecrets []string
 	// evaluating admits one evaluation at a time, since evaluations count
 	// matches in the shared rules; waiting for it is bounded by the
 	// evaluation's own timeout and context.
@@ -694,8 +703,10 @@ func (v *Verification) activate(ctx context.Context) error {
 	return nil
 }
 
-// Evaluate evaluates the window from the activation until now and returns
-// its report. It changes nothing and can be repeated; each evaluation starts
+// Evaluate reads the log interval from activation until now and compares the
+// current crash directories with their activation snapshots. Crash metadata
+// becoming visible after the end-clock sample can be selected. It changes
+// nothing and can be repeated; each evaluation starts
 // from the activation's baseline. Gaps make a report incomplete instead of
 // returning an error: Evaluate returns an error only when it cannot evaluate
 // at all.
@@ -725,15 +736,24 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 	if baseline == nil {
 		return nil, invalid(errors.New("verification was not activated"))
 	}
-	observation := &verificationObservation{}
-	if snapshot, err := v.snapshot(ctx); err != nil {
-		observation.gap("", "list the cluster's containers: "+err.Error())
+	snapshot, snapshotErr := v.snapshot(ctx)
+	for _, values := range [][]string{baseline.secrets, snapshot.secrets} {
+		for _, secret := range values {
+			if secret != "" && !slices.Contains(v.knownSecrets, secret) {
+				v.knownSecrets = append(v.knownSecrets, secret)
+			}
+		}
+	}
+	observation := &verificationObservation{secrets: slices.Clone(v.knownSecrets)}
+	redact := evidence.Redactor(observation.secrets)
+	if snapshotErr != nil {
+		observation.gap("", verificationReason("list the cluster's containers and secrets: "+snapshotErr.Error(), redact))
 	} else {
 		observation.current = &snapshot
 	}
 	docker, closeDocker, err := v.docker(ctx)
 	if err != nil {
-		observation.gap("", "connect to Docker: "+err.Error())
+		observation.gap("", verificationReason("connect to Docker: "+err.Error(), redact))
 	} else {
 		defer closeDocker()
 		observeVerification(ctx, v.config, baseline, docker, observation)
@@ -774,6 +794,7 @@ func (g *verificationGeneration) same(other *verificationGeneration) bool {
 
 // verificationObservation is what one evaluation observed.
 type verificationObservation struct {
+	secrets  []string
 	end      time.Time
 	current  *clusterSnapshot
 	sources  []VerificationSource
@@ -870,9 +891,10 @@ func evaluateVerificationCheck(events []verificationEvent, rules []*verification
 }
 
 var verificationNotes = []string{
-	"The window starts at the activation and ends at the evaluation, on the Docker engine's clock; bootstrap before it and the cleanups and termination after it are outside the window.",
+	"The log window uses Docker engine timestamps: its start is sampled after the activation crash-directory reads, and its end before evaluation evidence reads. Finalization cleanups and termination follow evaluation.",
 	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered. A cluster log entry is an event by the severity of its log envelope, and only the daemon log and cluster log forms of the pinned Tentacle source are recognized, with a MON's cluster log entries restored when its daemon lines split their header; a line with a severity marker in another form is a gap.",
-	"A crash is new when its crash ID was not in that container's crash directory at activation. Crashes of removed containers and of containers added after the activation are not covered, and are reported as gaps.",
+	"Crash selection compares identities visible in the activation and evaluation directory reads, not metadata timestamps. Records becoming visible between the baseline reads and the start sample, or after the end sample but before evaluation reads, can count. A required crash proves new observed metadata, not occurrence during the log interval. Delayed visibility and removed or added containers can leave gaps.",
+	"Sources identify the activation generations. Evidence reads are bracketed by generation checks; a change leaves a coverage gap. Positive observations are retained with that gap and are not proof that each event belongs to the activation generation.",
 	"Clean is evidence for these sources and this window, not proof that no daemon failed. Scrub results and recovery waits are not verified.",
 	"The bug compatibility selection is a build property that the library does not see.",
 }

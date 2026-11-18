@@ -437,8 +437,8 @@ Limits:
 
 ### Verify
 
-Opt-in post-test verification of a dedicated cluster: the log lines and the
-new crashes of its daemons between the activation and the end of the test,
+Opt-in post-test verification of a dedicated cluster: log lines in an
+engine-clock interval and crash identities newly visible since activation,
 each against its own expected events. `Verify` activates it on a
 `Finalization` from [finalize.TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize#TerminateOnCleanup) and adds a check
 named `verification <name>`, so it runs before the failure archive and the
@@ -467,8 +467,16 @@ The activation records the baseline: the selected container generations
 (the cluster's daemon containers and `AdditionalContainers`, not the control
 container or the toolkit client), with their container ID, start time and
 restart count; the crash IDs already in their crash directories; and the
-window's start on the Docker engine's clock. A crash is new when its crash ID
-was not in that container's directory at activation. `Verify` returns an
+log window's start on the Docker engine's clock. The crash directories are
+read before that start sample; evaluation samples the end before reading
+logs and crash directories. A crash is new when its raw identity was absent
+from the baseline directory and is visible at evaluation. Records becoming
+visible between the baseline read and the start sample, or after the end
+sample but before the evaluation read, can therefore count. Metadata
+timestamps are not filtered against the engine clock. Delayed metadata
+visibility can cause an earlier crash to be selected later, and metadata not
+yet visible cannot be observed. A required crash expectation proves new
+observed metadata, not that the crash occurred inside the log interval. `Verify` returns an
 error for an invalid configuration, when the engine's clock cannot be read,
 after the finalization has started, or for a name already active on the
 finalization. `Evaluate` returns the report of the window until now without failing
@@ -533,6 +541,19 @@ The defaults and limits of
 and the fields of `finalize.VerificationReport`, its sources, checks,
 findings, expectation results and gaps are in their godoc.
 
+Each evaluation adds the cluster secrets returned by its current inventory
+to those known at activation and in earlier evaluations. This includes
+tracked credentials created, attempted, replaced or revoked during the test.
+The combined values mask log text, crash metadata, findings, summaries and
+the verification JSON and log JSONL kept in an archive. Configured
+`RedactValues` and recognized credential patterns also apply.
+
+An inventory failure makes the report incomplete. Values returned before
+that failure are still added, and previously known values stay masked.
+Opaque values never returned by any inventory and not supplied through
+`RedactValues` have no exact-value masking guarantee. Credentials introduced
+after the evaluation snapshot need a later evaluation to be discovered.
+
 A log line's redacted text, which expectations match and findings and the
 archived lines keep, is redacted one line at a time with two additions that
 per-line redaction alone would miss. A private key block is followed across
@@ -591,12 +612,15 @@ not kept anywhere, and the file stays only as long as the archive directory.
 
 Limits:
 
-- The window starts at the activation and ends at the check; bootstrap before
-  it and the cleanups and termination after it are outside it. Only the
+- The log window starts at the activation clock sample and ends at the check
+  clock sample; crash selection instead uses the directory snapshots described
+  above. Finalization cleanups and termination follow evaluation. Only the
   daemons' output is observed, not lines below their log level.
-- Only the container generations selected at activation are covered. A
-  removed or replaced container takes its logs and crash records along and is
-  reported as a gap, not covered.
+- Only the container generations selected at activation are covered. Generation
+  checks bracket log and crash reads; a change or unreadable generation leaves
+  a gap. Positive observations remain useful, but with that gap they are not
+  proof of attribution to the activation generation. A removed or replaced
+  container is also reported as a gap, not covered.
 - Clean is evidence for the reported sources and window, not proof that no
   daemon failed. Native evidence currently includes one Ceph 20.2.4 / Linux
   amd64 cohort with unchanged generations and a non-rotating `json-file`
