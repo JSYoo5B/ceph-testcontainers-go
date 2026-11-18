@@ -443,17 +443,6 @@ finally: fs.shutdown()
 print("diagnostics native RADOS/CephFS retained bytes verified")`, phase)
 }
 
-// diagnosticsProcessScript prints the PID and command line of every process
-// whose command line contains the token in argv[1], except itself.
-const diagnosticsProcessScript = `import os,sys
-for name in os.listdir("/proc"):
- if not name.isdigit() or int(name)==os.getpid(): continue
- try:
-  with open("/proc/"+name+"/cmdline","rb") as f: argv=f.read().split(b"\0")
- except FileNotFoundError: continue
- if any(sys.argv[1].encode() in a for a in argv): print(name, b" ".join(argv[:2]+argv[-4:]).decode(errors="replace"))
-`
-
 func diagnosticsProcesses(t *testing.T, ctx context.Context, control testcontainers.Container, token string) []string {
 	t.Helper()
 	code, reader, err := control.Exec(ctx, []string{"python3", "-c", diagnosticsProcessScript, token}, tcexec.Multiplexed())
