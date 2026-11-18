@@ -109,3 +109,13 @@ func TestCephFSTerminalPublicationRejectsInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestCephFSTerminalPublicationMissing(t *testing.T) {
+	ctr := &cephFSCommandRecorder{code: 1, reader: strings.NewReader("missing")}
+	run := &cephFSActorRun{client: ctr, Done: make(chan struct{})}
+	close(run.Done)
+	_, present, terminal, err := run.readPublished(context.Background(), "/owned/receipt-3")
+	if err == nil || !strings.Contains(err.Error(), "actor ended without") || present || !terminal || len(ctr.received) != 1 {
+		t.Fatalf("terminal absence was not established by a final read: present=%t terminal=%t err=%v reads=%d", present, terminal, err, len(ctr.received))
+	}
+}
