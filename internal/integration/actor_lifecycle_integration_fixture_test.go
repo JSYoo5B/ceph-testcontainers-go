@@ -138,7 +138,7 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestIntegrationActorStartFailurePaths$", "-test.v")
 			cmd.Env = append(os.Environ(), "CTG_ACTOR_FAILURE_CONTROL="+mode)
 			output, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(output), "ACTOR_READER_JOINED") || strings.Contains(string(output), "cleanup incomplete") {
+			if err == nil || !strings.Contains(string(output), "ACTOR_READER_JOINED") || strings.Contains(string(output), "cleanup incomplete") != (mode == "ignore") {
 				t.Fatalf("failure-path cleanup: %v\n%s", err, output)
 			}
 		})
