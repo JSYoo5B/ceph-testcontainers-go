@@ -88,6 +88,9 @@ func (c *actorLifecycleContainer) Exec(ctx context.Context, args []string, _ ...
 	switch args[0] {
 	case "timeout":
 		defer close(c.joined)
+		if c.mode == "transport" {
+			return 0, nil, fmt.Errorf("injected reader failure")
+		}
 		if c.mode == "early" {
 			return 4, strings.NewReader("early actor exit"), nil
 		}
@@ -103,7 +106,7 @@ func (c *actorLifecycleContainer) Exec(ctx context.Context, args []string, _ ...
 		c.once.Do(func() { close(c.release) })
 		return 0, strings.NewReader(""), nil
 	case "cat":
-		if c.mode == "early" {
+		if c.mode == "early" || c.mode == "transport" {
 			<-c.joined
 			return 1, strings.NewReader(""), nil
 		}
@@ -123,7 +126,7 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 			}
 		})
 		switch mode {
-		case "early", "malformed", "ignore":
+		case "early", "malformed", "ignore", "transport":
 			startDualStackSession(t, t.Context(), c, "script", "control")
 		case "retained":
 			r := startRetainedClient(t, t.Context(), c, "control", "pool", "fs")
@@ -134,14 +137,14 @@ func TestIntegrationActorStartFailurePaths(t *testing.T) {
 		}
 		t.Fatal("injected intermediate assertion")
 	}
-	for _, mode := range []string{"early", "malformed", "retained", "family", "ignore"} {
+	for _, mode := range []string{"early", "malformed", "retained", "family", "ignore", "transport"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestIntegrationActorStartFailurePaths$", "-test.v")
 			cmd.Env = append(os.Environ(), "CTG_ACTOR_FAILURE_CONTROL="+mode)
 			output, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(output), "ACTOR_READER_JOINED") || strings.Contains(string(output), "cleanup incomplete") != (mode == "ignore") {
+			if err == nil || !strings.Contains(string(output), "ACTOR_READER_JOINED") || strings.Contains(string(output), "cleanup incomplete") != (mode == "ignore") || strings.Contains(string(output), "command completion unconfirmed") != (mode == "transport") {
 				t.Fatalf("failure-path cleanup: %v\n%s", err, output)
 			}
 		})
