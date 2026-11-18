@@ -100,6 +100,8 @@ func runCephFSMirrorDirectoryWatch(t *testing.T) {
 	// Settle the seeded checkpoint first, so that the baseline is a known
 	// state and every later change comes from this test's own steps.
 	harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, cephFSWatchScript, expected, "/federation", seeded)
+	checkCephFSMirrorSessionBoundary(t, ctx, mirror, source, expected)
+	harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, cephFSWatchScript, expected, "/federation", seeded)
 
 	w, err := mirror.WatchDirectory(ctx, ceph.WatchConfig{Interval: 2 * time.Second, Buffer: 64}, "/federation")
 	if err != nil {
@@ -150,6 +152,7 @@ func runCephFSMirrorDirectoryWatch(t *testing.T) {
 	if err := w.Stop(); err != nil {
 		t.Fatalf("CephFS directory watch ended with: %v", err)
 	}
+	cephFSCheckClosedPolicyAdmission(t, ctx, mirror, source, destination, peers[0])
 }
 
 // cephFSAwaitDirectoryWatch receives events until a successful read matches
