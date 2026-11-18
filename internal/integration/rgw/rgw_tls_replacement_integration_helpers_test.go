@@ -12,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
@@ -196,7 +195,7 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 }
 
 // lostTLSReply loses the acknowledgement only after the real mutation
-// completes. The retained container still runs the production supervisor.
+// completes. The retained container runs the production install script.
 type lostTLSReply struct {
 	testcontainers.Container
 	rename, stop bool
@@ -204,7 +203,7 @@ type lostTLSReply struct {
 
 func (c *lostTLSReply) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, out, err := c.Container.Exec(ctx, args, opts...)
-	if c.rename && err == nil && code == 0 && slices.Contains(args, "mv") {
+	if c.rename && err == nil && code == 0 && len(args) > 3 && args[3] == "rgw-tls-install" {
 		c.rename = false
 		if _, err := io.Copy(io.Discard, out); err != nil {
 			return code, nil, err

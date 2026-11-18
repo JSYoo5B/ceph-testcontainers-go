@@ -70,7 +70,7 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	}
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true},
 		testcontainers.WithAdditionalLifecycleHooks(testcontainers.ContainerLifecycleHooks{
-			PreTerminates: []testcontainers.ContainerHook{observeBeforeRemoval},
+			PreStops: []testcontainers.ContainerHook{observeBeforeRemoval},
 		}))
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	terminatingPID.Store(int64(shimPID()))
 	terminateCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	defer stop()
-	// The pre-termination hook observes the process while its container
+	// The pre-stop hook observes the process while its container
 	// still exists. Deliberately consume Admin's result only after teardown,
 	// so a fast removal cannot race a later Docker Exec from this goroutine.
 	terminateErr := cluster.Terminate(terminateCtx)
@@ -213,7 +213,7 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	case <-time.After(time.Minute):
 		t.Fatal("Admin did not return after teardown")
 	}
-	t.Logf("Terminate ended Admin after %s; the pre-removal observation confirmed its process gone", time.Since(started))
+	t.Logf("Terminate ended Admin after %s; the pre-stop observation confirmed its process gone", time.Since(started))
 	// The test's client still uses the network, which final cleanup removes.
 	t.Logf("Terminate: %v", terminateErr)
 }

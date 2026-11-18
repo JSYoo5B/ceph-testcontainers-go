@@ -12,12 +12,12 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -103,10 +103,10 @@ type tlsListener struct {
 type tlsInstallation struct {
 	container      testcontainers.Container
 	previous, next *TLSConfig
-	marker         string
+	receipt        string
 }
 
-// reconcile settles an uncertain installer before reading the live PEM.
+// reconcile confirms that an uncertain installer completed before reading the live PEM.
 // Both replacement retries and ordinary startup readiness pass this boundary.
 func (l *tlsListener) reconcile(ctx context.Context) error {
 	l.mu.Lock()
@@ -115,11 +115,13 @@ func (l *tlsListener) reconcile(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
-	if p.marker != "" {
-		if err := supervised.CancelShell(ctx, p.container, "RGW TLS install", p.marker); err != nil {
-			return err
-		}
-		p.marker = ""
+	completed, err := servicehook.Command(ctx, p.container, "cat", p.receipt)
+	if err != nil {
+		return fmt.Errorf("RGW TLS installation completion is unknown; retry when its completion record is available: %w", err)
+	}
+	exit, err := strconv.Atoi(strings.TrimSpace(string(completed)))
+	if err != nil || exit < 0 || exit > 255 {
+		return errors.New("RGW TLS installation completion record is incomplete")
 	}
 	data, err := servicehook.Command(ctx, p.container, "cat", rgwTLSFile)
 	if err != nil {
@@ -178,13 +180,21 @@ func (l *tlsListener) fingerprint() string {
 // container expects it too.
 //
 // In bridge mode the restarted gateway can get new mapped host ports: call
+const rgwTLSInstall = `mv -f "$1" "$2"
+result=$?
+printf '%s\n' "$result" > "$3" || exit 1
+exit "$result"
+`
+
 // S3SecureEndpoint and S3Endpoint again afterwards. In host mode it keeps its
 // selected ports. The gateway must be running, and config must hold a valid
 // PEM chain and its unencrypted private key; the bytes are copied. Trust is
 // the SUT's own: ReplaceTLS changes no client configuration, so a test
 // supplies the new CA to the SUT the way it reads its configuration.
 // An uncertain installation is settled and read back before replacement
-// retries or startup readiness. If that recovery fails, the error retains
+// retries or startup readiness. A command interrupted before recording
+// completion remains unknown, even if it changed the file. If its completion
+// cannot be established, terminate the disposable container. If recovery fails, the error retains
 // the uncertainty and later calls retry it. Once installed, new material
 // remains installed even if Stop or Start fails. A Stop error does not prove
 // whether the gateway stopped. While its original generation still runs,
@@ -271,31 +281,25 @@ func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tls
 }
 
 // installTLSFile gives each upload its own staging path. A late upload can
-// only change its own candidate, and the supervised mv is fenced before a
-// readback can establish which material subsequent starts should expect.
+// only change its own candidate. The completion record proves that its mv
+// finished before readback establishes which material later starts expect.
+// No signal is sent to a command whose completion is unknown.
 func installTLSFile(ctx context.Context, ctr testcontainers.Container, listener *tlsListener, config *TLSConfig) error {
 	staged := rgwTLSFile + "." + uuid.NewString()
 	if err := ctr.CopyToContainer(ctx, rgwTLSFileContent(config), staged, 0o600); err != nil {
 		return fmt.Errorf("copy the RGW TLS certificate: %w", err)
 	}
-	pending := &tlsInstallation{container: ctr, previous: listener.material(), next: config}
+	pending := &tlsInstallation{container: ctr, previous: listener.material(), next: config, receipt: staged + ".done"}
 	listener.mu.Lock()
 	listener.pending = pending
 	listener.mu.Unlock()
-	report, err := supervised.RunShell(ctx, ctr, "RGW TLS install", 30, "mv", "-f", staged, rgwTLSFile)
-	if err == nil && report.ExitCode == 0 && !report.Stopped {
+	_, err := servicehook.Command(ctx, ctr, "sh", "-c", rgwTLSInstall, "rgw-tls-install", staged, rgwTLSFile, pending.receipt)
+	if err == nil {
 		listener.mu.Lock()
 		listener.config, listener.pending = config, nil
 		listener.mu.Unlock()
 		return nil
 	}
-	if err == nil {
-		err = fmt.Errorf("installer exit=%d stopped=%t", report.ExitCode, report.Stopped)
-	}
-	marker, _ := supervised.Unconfirmed(err)
-	listener.mu.Lock()
-	pending.marker = marker
-	listener.mu.Unlock()
 	recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	return errors.Join(fmt.Errorf("install the RGW TLS certificate: %w", err), listener.reconcile(recovery))

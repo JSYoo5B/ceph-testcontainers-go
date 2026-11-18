@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
@@ -26,12 +25,12 @@ import (
 // and fails the step named by fail.
 type rgwTLSGatewayContainer struct {
 	testcontainers.Container
-	state                container.State
-	fail                 string
-	steps                []string
-	copied               map[string][]byte
-	listener             *tlsListener
-	readFail, cancelFail bool
+	state    container.State
+	fail     string
+	steps    []string
+	copied   map[string][]byte
+	listener *tlsListener
+	readFail bool
 }
 
 func (c *rgwTLSGatewayContainer) GetContainerID() string { return "rgw-tls" }
@@ -53,33 +52,30 @@ func (c *rgwTLSGatewayContainer) CopyToContainer(_ context.Context, content []by
 }
 
 func (c *rgwTLSGatewayContainer) Exec(_ context.Context, cmd []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-	original := cmd
-	if len(cmd) > 2 && cmd[2] == supervised.ShellCancelScript {
-		if c.cancelFail {
-			return 0, nil, errors.New("cancel unavailable")
-		}
-		return 0, nil, nil
-	}
-	if len(cmd) > 2 && cmd[2] == supervised.ShellScript {
-		cmd = cmd[7:]
-	}
 	c.steps = append(c.steps, strings.Join(cmd, " "))
 	if cmd[0] == "cat" {
 		if c.readFail {
 			return 0, nil, errors.New("read unavailable")
 		}
-		return gwtest.Reply(original, 0, gwtest.Stream(false, c.copied[rgwTLSFile]))
+		data, ok := c.copied[cmd[1]]
+		if !ok {
+			return 1, nil, errors.New("completion record missing")
+		}
+		return gwtest.Reply(cmd, 0, gwtest.Stream(false, data))
 	}
-	if len(cmd) == 4 && cmd[0] == "mv" {
-		if c.fail != "rename-before" {
-			c.copied[cmd[3]] = c.copied[cmd[2]]
-			delete(c.copied, cmd[2])
+	if len(cmd) == 7 && cmd[3] == "rgw-tls-install" {
+		if c.fail != "rename-before" && c.fail != "rename-pending" {
+			c.copied[cmd[5]] = c.copied[cmd[4]]
+			delete(c.copied, cmd[4])
+		}
+		if c.fail != "rename-pending" {
+			c.copied[cmd[6]] = []byte("0\n")
 		}
 		if strings.HasPrefix(c.fail, "rename-") {
 			return 0, nil, errors.New("rename reply lost")
 		}
 	}
-	return gwtest.Reply(original, 0, gwtest.Stream(false, nil))
+	return gwtest.Reply(cmd, 0, gwtest.Stream(false, nil))
 }
 
 func (c *rgwTLSGatewayContainer) Stop(context.Context, *time.Duration) error {
@@ -139,7 +135,7 @@ func TestRGWReplaceTLSInstallsMaterialAndRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ctr.steps) != 4 || !strings.HasPrefix(ctr.steps[0], "copy /tc/rgw-tls.pem.") ||
-		!strings.HasPrefix(ctr.steps[1], "mv -f /tc/rgw-tls.pem.") || ctr.steps[2] != "stop" || ctr.steps[3] != "start" {
+		!strings.Contains(ctr.steps[1], "rgw-tls-install /tc/rgw-tls.pem.") || ctr.steps[2] != "stop" || ctr.steps[3] != "start" {
 		t.Fatalf("replacement steps %q", ctr.steps)
 	}
 	if !bytes.Equal(ctr.copied[rgwTLSFile], rgwTLSFileContent(second)) {
@@ -302,21 +298,28 @@ func TestRGWTLSCompletedStopReplyLossResumesSameReplacement(t *testing.T) {
 	}
 }
 
-func TestRGWTLSUnstoppedInstallerKeepsReadinessUnconfirmed(t *testing.T) {
+func TestRGWTLSUnfinishedInstallerKeepsReadinessUnconfirmed(t *testing.T) {
 	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
-	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "rename-before", cancelFail: true}
+	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "rename-pending"}
 	gateway := tlsReplacementGateway(t, ctr, first)
 	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || gateway.tls.pending == nil {
 		t.Fatalf("uncertain installer: %v", err)
 	}
 	if err := ctr.Start(t.Context()); err == nil {
-		t.Fatal("readiness ignored unconfirmed installer")
+		t.Fatal("readiness ignored unfinished installer")
 	}
-	ctr.cancelFail, ctr.fail = false, ""
+	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil {
+		t.Fatal("retry bypassed unfinished installer")
+	}
+	// The original delayed command finishes after both refusals. A later
+	// startup now has completion evidence before it reads the live PEM.
+	pending := gateway.tls.pending
+	ctr.copied[rgwTLSFile] = rgwTLSFileContent(second)
+	ctr.copied[pending.receipt] = []byte("0\n")
 	if err := ctr.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if gateway.tls.fingerprint() != newTLSListener(first).fingerprint() {
-		t.Fatal("canceled installer changed expected material")
+	if gateway.tls.fingerprint() != newTLSListener(second).fingerprint() {
+		t.Fatal("completed installer did not reconcile material")
 	}
 }
