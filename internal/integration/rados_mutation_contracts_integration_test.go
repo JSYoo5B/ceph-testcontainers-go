@@ -187,13 +187,13 @@ func TestRADOSMutationContracts(t *testing.T) {
 	// ran exactly once.
 	last := before["late-compound"].Version
 	truncated, compound := after["late-truncate"], after["late-compound"]
-	if truncated.Size != 10 || truncated.Data != "30313233343536373839" || truncated.Version != last+1 {
+	if !truncated.exists() || truncated.Size != 10 || truncated.Data != "30313233343536373839" || truncated.Version != last+1 {
 		t.Fatalf("the late truncate was not applied once at version %d: %+v", last+1, truncated)
 	}
 	if err := requireContractAbsence(after, "late-remove"); err != nil {
 		t.Fatal(err)
 	}
-	if compound.Data != "636f6d706f756e64" || compound.XAttr == nil || *compound.XAttr != "v2" || compound.Version != last+3 {
+	if !compound.exists() || compound.Data != "636f6d706f756e64" || compound.XAttr == nil || *compound.XAttr != "v2" || compound.Version != last+3 {
 		t.Fatalf("the late compound write was not applied once and whole at version %d: %+v", last+3, compound)
 	}
 	t.Logf("contracts: zero, create, guarded compound refusals (cmpext %d, omap_cmp %d, cmpxattr %d); osd.0 started the late truncate, remove and compound of %s after its ETIMEDOUT and applied each once",
