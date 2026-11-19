@@ -118,7 +118,7 @@ func TestFatalSignalReport(t *testing.T) {
 
 func TestAdminRunFailureNamesTheSignalWithoutOutput(t *testing.T) {
 	stdout := []byte(`{"bucket":"tc-user-existing","placement_rule":"default-placement","owner":"tc-placement-writer","secret_key":"stdout-secret"}` + "\n")
-	err := adminRunFailure(supervised.ShellReport{Stdout: stdout, Stderr: []byte(crashStderr), ExitCode: 139})
+	err := adminRunFailure(supervised.Report{Stdout: stdout, Stderr: []byte(crashStderr), ExitCode: 139})
 	text := err.Error()
 	for _, leaked := range []string{"stdout-secret", "tc-user-existing", "AQBsecret", "0x73c994a8ee86", "/lib64", "0123456789abcdef", "std::"} {
 		if strings.Contains(text, leaked) {
@@ -144,13 +144,13 @@ func TestAdminRunFailureNamesTheSignalWithoutOutput(t *testing.T) {
 		{`{"bucket":`, false, "it wrote 10 bytes of standard output, not a complete JSON document"},
 		{`{"bucket":`, true, "it wrote more than 10 bytes of standard output"},
 	} {
-		got := adminRunFailure(supervised.ShellReport{Stdout: []byte(c.stdout), StdoutTruncated: c.truncated, Stderr: []byte(crashStderr), ExitCode: 139}).Error()
+		got := adminRunFailure(supervised.Report{Stdout: []byte(c.stdout), StdoutTruncated: c.truncated, Stderr: []byte(crashStderr), ExitCode: 139}).Error()
 		if !strings.HasSuffix(got, "; "+c.want+"; native output is redacted") {
 			t.Errorf("stdout %q truncated=%v: %s", c.stdout, c.truncated, got)
 		}
 	}
 	// Without a signal report the text keeps its exit and errno shape.
-	plain := adminRunFailure(supervised.ShellReport{Stdout: stdout, Stderr: []byte("ERROR: failed to sync bucket: (5) Input/output error\n"), ExitCode: 5}).Error()
+	plain := adminRunFailure(supervised.Report{Stdout: stdout, Stderr: []byte("ERROR: failed to sync bucket: (5) Input/output error\n"), ExitCode: 5}).Error()
 	if plain != "radosgw-admin exited 5 (EIO); native output is redacted" {
 		t.Fatalf("plain failure: %s", plain)
 	}

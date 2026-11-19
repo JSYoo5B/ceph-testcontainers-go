@@ -30,7 +30,7 @@ const (
 )
 
 // ShellScript is a supervisor for containers that have a POSIX shell but no
-// python3, such as the RGW role image: it needs only sh, its kill builtin,
+// python3, such as journal diagnostic images: it needs only sh, its kill builtin,
 // sleep, cat, awk, mkdir and rm, and a writable /tmp. Its arguments are the
 // invocation's marker, a limit in seconds (0 for none), the stop grace in
 // seconds and the command.

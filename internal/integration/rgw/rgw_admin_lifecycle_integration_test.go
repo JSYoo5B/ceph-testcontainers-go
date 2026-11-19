@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -167,7 +168,7 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(out)) != `{"shim":true}` {
 		t.Fatalf("a command that ignores SIGTERM and ends: %q, %v", out, err)
 	}
-	if code, out := exec("sh", "-c", "ls -A /tmp/tc-supervised-sh"); code != 0 || strings.TrimSpace(out) != "" {
+	if code, out := exec("ls", "-A", supervised.MarkerDir); code != 0 || strings.TrimSpace(out) != "" {
 		t.Fatalf("the supervisor left markers: %q", out)
 	}
 	if code, out := exec("rm", "/usr/local/sbin/radosgw-admin"); code != 0 {

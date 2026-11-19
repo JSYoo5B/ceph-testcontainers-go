@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
@@ -32,7 +33,7 @@ func TestRGWAdminBudgetIsTheCallersContext(t *testing.T) {
 	if limit, err := strconv.Atoi(ctr.limits[0]); err != nil || limit < 460 || limit > 465 {
 		t.Fatalf("an 8-minute caller deadline gave the command %s s", ctr.limits[0])
 	}
-	if ctr.limits[1] != "0" {
+	if ctr.limits[1] != "inf" {
 		t.Fatalf("a caller without a deadline gave the command %s s", ctr.limits[1])
 	}
 }
@@ -51,7 +52,7 @@ func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
 		t.Fatalf("an ordinary failure: %v", err)
 	}
 	// A gateway image without radosgw-admin lacks a capability.
-	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 127, data: "sh: radosgw-admin: not found\n"})
+	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{launchExit: supervised.LaunchFailedExit})
 	if _, err := gateway.Admin(ctx, "user", "list"); !errors.Is(err, ceph.ErrImageCapability) {
 		t.Fatalf("a missing radosgw-admin: %v", err)
 	}

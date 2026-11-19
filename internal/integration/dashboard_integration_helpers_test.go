@@ -28,6 +28,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/dashboard"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -727,16 +728,20 @@ func testDashboardRGWGateway(t *testing.T) {
 type delayedDashboardUserCreate struct {
 	testcontainers.Container
 	command      []string
+	options      []tcexec.ProcessOption
+	marker       string
 	refusedStops int
 }
 
 func (f *delayedDashboardUserCreate) Exec(ctx context.Context, args []string, options ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if len(args) > 7 && args[2] == supervised.ShellScript && len(f.command) == 0 &&
-		slices.Contains(args[7:], "create") && slices.Contains(args[7:], "user") {
+	if len(args) > 6 && args[2] == supervised.Script && len(f.command) == 0 &&
+		slices.Contains(args[6:], "create") && slices.Contains(args[6:], "user") {
 		f.command = slices.Clone(args)
+		f.options = slices.Clone(options)
+		f.marker = clustertest.ExecEnv(options, supervised.MarkerVariable)
 		return 0, nil, errors.New("lost gateway user create reply")
 	}
-	if len(args) > 4 && args[2] == supervised.ShellCancelScript && len(f.command) != 0 && args[4] == f.command[4] && f.refusedStops < 2 {
+	if len(args) > 4 && args[2] == supervised.CancelScript && f.marker != "" && args[3] == f.marker && f.refusedStops < 2 {
 		f.refusedStops++
 		return 0, nil, errors.New("gateway user create stop unavailable")
 	}
@@ -760,7 +765,7 @@ func testDashboardUnconfirmedGatewayUser(t *testing.T, ctx context.Context, d *d
 	}
 	// Dispatch the exact held exec. Check its resulting native state without
 	// handing the generated credentials to the unconfirmed user handle.
-	code, output, err := transport.Container.Exec(ctx, transport.command)
+	code, output, err := transport.Container.Exec(ctx, transport.command, transport.options...)
 	if err != nil || code != 0 || output == nil {
 		t.Fatalf("delayed gateway user create: exit=%d, error=%v", code, err)
 	}

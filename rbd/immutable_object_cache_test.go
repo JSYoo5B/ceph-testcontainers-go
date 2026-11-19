@@ -3,19 +3,19 @@ package rbd
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
+
 	"errors"
 	"fmt"
 	"io"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -78,17 +78,19 @@ func (f *fakeCacheClient) daemon(pid, sock, pidfile string) *fakeCacheDaemon {
 }
 
 func (f *fakeCacheClient) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if len(args) > 2 && args[2] == supervised.ShellCancelScript {
-		return clustertest.Reply(args, 0, nil)
+	if len(args) > 2 && args[2] == supervised.CancelScript {
+		return 0, nil, nil
 	}
-	if len(args) > 11 && args[2] == supervised.ShellScript {
-		code, raw, err := f.cacheCommand(args[7:])
+	if len(args) > 10 && args[2] == supervised.Script {
+		code, raw, err := f.cacheCommand(args[6:])
 		if err != nil {
 			return 0, nil, err
 		}
-		line := "\n" + supervised.ShellEndPrefix + args[4] + " " + strconv.Itoa(code) + " 0\n"
-		header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
-		return code, io.MultiReader(raw, bytes.NewReader(append(header, line...))), nil
+		var stdout, stderr bytes.Buffer
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, raw); err != nil {
+			return 0, nil, err
+		}
+		return 0, bytes.NewReader(clustertest.QuorumEnvelope(stdout.Bytes(), stderr.Bytes(), code, false, false)), nil
 	}
 	return f.cacheCommand(args)
 }

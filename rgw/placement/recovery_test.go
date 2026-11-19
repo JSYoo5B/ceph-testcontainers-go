@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -78,7 +79,7 @@ func (c *placementControl) GetContainerID() string { return "control" }
 
 func (c *placementControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if c.missingAdmin && gwtest.Argv(args)[0] == "radosgw-admin" {
-		return gwtest.Reply(args, 127, gwtest.Stream(true, []byte("radosgw-admin unavailable\n")))
+		return supervised.LaunchFailedExit, nil, nil
 	}
 	return c.PlacementContainer.Exec(ctx, args, opts...)
 }

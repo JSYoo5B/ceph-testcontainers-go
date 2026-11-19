@@ -679,6 +679,9 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   uses them. A role created with `CreateRole` may be edited natively, for
   example to revoke a permission, but `Role.Remove` refuses it until the
   role is back as the fixture created it.
+- Gateway-local administration requires `python3` with Linux process group
+  support in the gateway image. Missing support is reported as
+  `ceph.ErrImageCapability` when the command is requested.
 - The call is bounded by `ctx` alone, not by the cluster's startup timeout.
   Give a slow maintenance command, such as `user stats --sync-stats` or
   `reshard process`, a deadline that fits it. When the deadline is near, the
