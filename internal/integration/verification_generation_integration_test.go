@@ -72,7 +72,10 @@ func TestVerificationGenerationRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verification, err := finalization.Verify(ctx, finalize.VerificationConfig{Name: "restart"})
+	verification, err := finalization.Verify(ctx, finalize.VerificationConfig{
+		Name: "restart",
+		Logs: []finalize.LogExpectation{restartNoDownWarning()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
