@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdexpect "github.com/JSYoo5B/ceph-testcontainers-go/rbd/expect"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
@@ -243,11 +244,12 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			if index == 2 {
 				mode = "journal"
 			}
-			waited, err := view.WaitReplayReady(ctx, "volume")
+			scopedCtx := rbdNamespaceObservationContext(t, ctx, "scoped/"+phase+"/"+mappings[index][0])
+			waited, err := view.WaitReplayReady(scopedCtx, "volume")
 			if err != nil || !waited.ReplayReady {
 				t.Fatalf("%s scoped wait: %+v %v", phase, waited, err)
 			}
-			report, err := view.ImageStatus(ctx, "volume")
+			report, err := view.ImageStatus(scopedCtx, "volume")
 			if err != nil || !report.ReplayReady {
 				t.Fatalf("%s scoped status: %+v %v", phase, report, err)
 			}
@@ -278,13 +280,14 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			encoded, _ := json.Marshal(map[string]any{"phase": phase, "mapping": mappings[index], "report": report, "worker_cid": worker.GetContainerID(), "worker_started_at": process.startedAt, "native_instance": report.InstanceID, "source_fsid": sourceStatus.FSID, "destination_fsid": destinationStatus.FSID, "source_pool_id": sourcePool.ID, "destination_pool_id": destinationPool.ID, "source_client_cid": sourceClient.GetContainerID(), "destination_client_cid": destinationClient.GetContainerID()})
 			t.Logf("RBD_NAMESPACE_IMAGE_READY %s", encoded)
 		}
-		legacy, err := owner.ImageStatus(ctx, "volume")
-		var result rbdexpect.MirrorImageEvaluation
-		if err == nil {
-			result, err = rbdexpect.MirrorImage{Select: reports[0], Replaying: true}.Evaluate(legacy)
+		legacy, err := owner.ImageStatus(rbdNamespaceObservationContext(t, ctx, "owner/"+phase), "volume")
+		if err != nil {
+			t.Fatalf("%s legacy owner image observation failed: deadline=%t canceled=%t", phase,
+				errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled))
 		}
+		result, err := rbdexpect.MirrorImage{Select: reports[0], Replaying: true}.Evaluate(legacy)
 		if err != nil || !result.Matched {
-			t.Fatalf("legacy owner escaped original mapping/mode: %v %v", result, err)
+			t.Fatalf("%s legacy owner escaped original mapping/mode: %v %v", phase, result, err)
 		}
 		checkPolicies()
 		return reports
@@ -353,7 +356,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	// room for all three baselines and the stop before the next poll.
 	cfg := ceph.WatchConfig{Interval: 2 * time.Minute, Buffer: 64}
 	began := time.Now()
-	rw, err := views[1].WatchReceivers(ctx, cfg, receiver.DaemonName)
+	rw, err := views[1].WatchReceivers(rbdNamespaceObservationContext(t, ctx, "receiver-watch/"+mappings[1][0]), cfg, receiver.DaemonName)
 	t.Logf("receiver %s watch baseline: elapsed=%s deadline=%t err=%v", mappings[1][0], time.Since(began), errors.Is(err, context.DeadlineExceeded), err)
 	if err != nil {
 		t.Fatal(err)
@@ -372,7 +375,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	watches := make([]*rbdMirrorWatchStream[rbdmirror.ImageWatchEvent], 2)
 	for i := range watches {
 		began := time.Now()
-		w, err := views[i].WatchImage(ctx, cfg, "volume")
+		w, err := views[i].WatchImage(rbdNamespaceObservationContext(t, ctx, "image-watch/"+mappings[i][0]), cfg, "volume")
 		t.Logf("image %s watch baseline: elapsed=%s deadline=%t err=%v", mappings[i][0], time.Since(began), errors.Is(err, context.DeadlineExceeded), err)
 		if err != nil {
 			t.Fatal(err)
@@ -741,4 +744,21 @@ func rbdScopedImageFullCID(cid string) bool {
 		}
 	}
 	return true
+}
+
+// One record contains absolute endpoints so overlapping reads can be reconstructed
+// even if an attempt only completes while the test is unwinding.
+func rbdNamespaceObservationContext(t *testing.T, ctx context.Context, label string) context.Context {
+	return rbdobservation.WithRecorder(ctx, func(sample rbdobservation.Sample) {
+		var wait, hold time.Duration
+		if sample.Acquired.IsZero() {
+			wait = sample.Finished.Sub(sample.Started)
+		} else {
+			wait = sample.Acquired.Sub(sample.Started)
+			hold = sample.Released.Sub(sample.Acquired)
+		}
+		t.Logf("RBD_OBSERVATION_TIMING caller=%s operation=%s stage=%s started=%s wait=%s hold=%s outcome=%s caller_context=%s attempt_context=%s",
+			label, sample.Operation, sample.Stage, sample.Started.UTC().Format(time.RFC3339Nano), wait, hold,
+			sample.Outcome, sample.CallerContext, sample.AttemptContext)
+	})
 }

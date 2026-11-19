@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"slices"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -202,17 +203,25 @@ func (m *Container) receiverStatus(ctx context.Context, names []string, previous
 	return m.receiverStatusForScope(ctx, nil, names, previous)
 }
 
-func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
+func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (_ ReceiverStatus, _ *rbdReceiverWitness, observationErr error) {
 	var result ReceiverStatus
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	observation := rbdobservation.Begin(caller, "receiver")
+	defer func() { observation.Finish(ctx, observationErr) }()
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return result, previous, rbdReceiverQuery(ctx, "admit RBD receiver observation", err)
 	}
-	defer m.mu.Unlock()
+	defer func() {
+		observation.Releasing()
+		m.mu.Unlock()
+	}()
+	observation.Acquired()
+	observation.Stage("capture-receiver-witness")
 	if scope == nil {
 		scope = m.pair.originalReceiverScope()
 	}
@@ -225,12 +234,14 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		SourceFSID: w.clusters.source, DestinationFSID: w.clusters.destination, SourcePoolID: w.pools.source, DestinationPoolID: w.pools.destination, PeerID: w.peer.uuid,
 		ExpectedDaemons: slices.Clone(w.names), Daemons: make(map[string]ReceiverDaemonStatus), DaemonProblems: make(map[string]string),
 	}
+	observation.Stage("validate-original-identities")
 	if err := m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
 		return result, w, err
 	}
 	var failures []error
 	first := make(map[string]rbdReceiverNativeObservation)
 	second := make(map[string]rbdReceiverNativeObservation)
+	observation.Stage("read-receiving-processes")
 	for pass, observations := range []map[string]rbdReceiverNativeObservation{first, second} {
 		for _, name := range w.names {
 			member := w.members[name]
@@ -253,6 +264,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		}
 	}
 	deriveRBDReceiverElection(&result, second)
+	observation.Stage("confirm-original-identities")
 	if err := m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
 		return result, w, errors.Join(append(failures, err)...)
 	}
@@ -263,6 +275,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		return result, w, rbdReceiverQuery(ctx, "confirm RBD receiver observation", errors.Join(append(failures, err)...))
 	}
 	if len(failures) != 0 {
+		observation.Stage("read-receiving-processes")
 		return result, w, errors.Join(failures...)
 	}
 	result.Ready = len(w.names) > 0 && result.LeaderDaemonName != "" && len(result.ForeignInstances) == 0 && len(result.DaemonProblems) == 0
