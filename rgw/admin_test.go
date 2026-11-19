@@ -25,10 +25,11 @@ import (
 )
 
 type rgwAdminResponse struct {
-	stopped bool
-	data    string
-	code    int
-	err     error
+	stopped    bool
+	launchExit int
+	data       string
+	code       int
+	err        error
 }
 
 type rgwAdminTestContainer struct {
@@ -44,8 +45,9 @@ type rgwAdminTestContainer struct {
 	stopped, paused, restarting bool
 	// onExec, when set, runs in each radosgw-admin invocation before it
 	// answers.
-	onExec       func()
-	stopFailures int
+	onExec         func()
+	stopFailures   int
+	supervisorExit int
 }
 
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
@@ -63,7 +65,10 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 		return 0, nil, nil
 	}
 	original := args
-	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
+	if len(args) > 6 && args[0] == "python3" && args[2] == supervised.Script {
+		if ctr.supervisorExit != 0 {
+			return ctr.supervisorExit, nil, nil
+		}
 		ctr.limits = append(ctr.limits, args[5])
 	}
 	args = gwtest.Argv(args)
@@ -76,6 +81,9 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 	}
 	response := ctr.responses[0]
 	ctr.responses = ctr.responses[1:]
+	if response.launchExit != 0 {
+		return response.launchExit, nil, nil
+	}
 	if response.err != nil {
 		return 0, nil, response.err
 	}
@@ -89,6 +97,21 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 	stream.Write(header[:])
 	stream.WriteString(response.data)
 	return gwtest.Reply(original, response.code, &stream, response.stopped)
+}
+
+func TestAdminRequiresPythonOnlyAtCommandDispatch(t *testing.T) {
+	for _, code := range []int{127, supervised.PythonCapabilityExit} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			gateway, ctr := newRGWAdminTestGateway(Config{})
+			ctr.supervisorExit = code
+			_, err := gateway.Admin(t.Context(), "user", "list")
+			var capability *ceph.OperationError
+			if !errors.Is(err, ceph.ErrImageCapability) || !errors.As(err, &capability) || capability.Capability != "python3" ||
+				len(ctr.calls) != 0 {
+				t.Fatalf("unsupported Python runtime: calls=%v, error=%v", ctr.calls, err)
+			}
+		})
+	}
 }
 
 func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gateway, *rgwAdminTestContainer) {

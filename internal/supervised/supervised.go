@@ -26,6 +26,7 @@ const (
 	// InputVariable gives the supervisor its input limit in bytes and makes
 	// it pass its own standard input to the command; see Script.
 	InputVariable = "TC_SUPERVISED_INPUT"
+	roleTermGrace = "TC_SUPERVISED_TERM_GRACE"
 	// CancelTimeout bounds one Cancel.
 	CancelTimeout = 10 * time.Second
 	// ExecCushion is the default reporting allowance for short control reads.
@@ -43,6 +44,8 @@ const (
 	// and reap the command's group; it then keeps its marker, so that no
 	// cancellation is confirmed and the command may still run.
 	CleanupFailedExit = 121
+	// PythonCapabilityExit means that Python cannot supervise a process group.
+	PythonCapabilityExit = 123
 )
 
 // Script is the supervisor. It runs its arguments after the three limits
@@ -79,7 +82,10 @@ const (
 // bytes it wrote into the pipe and whether the command got the end of input.
 const Script = `import base64,errno,json,os,select,signal,subprocess,sys,time
 ` + instanceFunction + `limits=[int(sys.argv[1]),int(sys.argv[2])]; deadline=time.monotonic()+float(sys.argv[3])
+if not all(hasattr(os, name) for name in ("waitid","P_PID","WEXITED","WNOHANG","WNOWAIT","killpg","setsid")):
+ sys.exit(123)
 marker=os.environ["TC_SUPERVISED"]; cancel_marker=marker+".cancel"
+term_grace=float(os.environ.get("TC_SUPERVISED_TERM_GRACE","0"))
 input_limit=int(os.environ.get("TC_SUPERVISED_INPUT","-1")); source_open=input_limit>=0; pending=bytearray(); received=0; delivered=0; input_eof=False; child_in=None
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
 try: fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
@@ -131,9 +137,20 @@ def pump(streams,timeout):
  if writable: write_input()
  if 0 in ready: read_input()
  return [stream for stream in ready if stream!=0]
-def kill_owned_group():
+def child_exited():
+ return os.waitid(os.P_PID,p.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is not None
+def kill_owned_group(graceful=False):
  global group_signaled
  if group_signaled: return
+ if graceful and term_grace>0:
+  try:
+   os.killpg(p.pid,signal.SIGTERM)
+   stop=time.monotonic()+term_grace
+   while time.monotonic()<stop:
+    if child_exited():
+     break
+    time.sleep(0.01)
+  except ProcessLookupError: pass
  try: os.killpg(p.pid,signal.SIGKILL)
  except ProcessLookupError: pass
  group_signaled=True
@@ -149,17 +166,17 @@ try:
    remaining=deadline-time.monotonic()
    if remaining<=0:
     timed_out=True
-    kill_owned_group()
+    kill_owned_group(graceful=True)
     break
    if os.path.exists(cancel_marker):
-    kill_owned_group()
+    kill_owned_group(graceful=True)
     break
    for stream in (pump(streams,min(remaining,0.1)) if input_limit>=0 else select.select(list(streams),[],[],min(remaining,0.1))[0]):
     data=os.read(stream.fileno(),32768)
     if not data:
      del streams[stream]
      continue
-    channel=streams[stream]; room=max(0,limits[channel]-len(output[channel]))
+    channel=streams[stream]; room=len(data) if limits[channel]<0 else max(0,limits[channel]-len(output[channel]))
     output[channel].extend(data[:room]); clipped[channel]=clipped[channel] or len(data)>room
   # Observe exit without releasing the child's PID/PGID identity. Reaping or
   # Popen.poll() before group cleanup could signal a subsequently reused group.
@@ -167,10 +184,12 @@ try:
    remaining=deadline-time.monotonic()
    if remaining<=0:
     timed_out=True
+    kill_owned_group(graceful=True)
     break
    if os.path.exists(cancel_marker):
+    kill_owned_group(graceful=True)
     break
-   if os.waitid(os.P_PID,p.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is not None:
+   if child_exited():
     break
    if input_limit>=0: pump((),min(remaining,0.01))
    else: time.sleep(min(remaining,0.01))
@@ -341,16 +360,69 @@ func RunWithExecCushion(ctx context.Context, ctr testcontainers.Container, label
 	if seconds <= 0 {
 		return Report{}, context.DeadlineExceeded
 	}
-	command := append([]string{"python3", "-c", Script,
-		strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), strconv.FormatFloat(seconds, 'f', 9, 64)}, argv...)
+	return run(ctx, attempt, ctr, label, strconv.FormatFloat(seconds, 'f', 9, 64), stdoutLimit, stderrLimit, false, argv...)
+}
+
+// RunRoleCommand supervises a command in its feature's role container. A zero
+// limit leaves the process deadline to ctx. A zero stdout limit retains all
+// stdout, and stderr is retained for the caller's native diagnostics.
+func RunRoleCommand(ctx context.Context, ctr testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	if ctr == nil {
+		return Report{}, errors.New(label + " container is unavailable")
+	}
+	seconds := "inf"
+	if limit > 0 {
+		seconds = strconv.Itoa(limit)
+	}
+	if stdoutLimit == 0 {
+		stdoutLimit = -1
+	}
+	report, err := run(ctx, ctx, ctr, label, seconds, stdoutLimit, -1, true, argv...)
+	if report.ExitCode < 0 {
+		report.ExitCode = 128 - report.ExitCode
+	}
+	return report, err
+}
+
+// MissingPython reports a missing interpreter or required Linux process API.
+func MissingPython(err error) bool {
+	var exit *ExitError
+	return errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127 || exit.Code == PythonCapabilityExit)
+}
+
+func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seconds string, stdoutLimit, stderrLimit int, confirm bool, argv ...string) (_ Report, err error) {
+	command := append([]string{"python3", "-c", Script, strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), seconds}, argv...)
 	marker := MarkerDir + "/" + uuid.NewString()
-	code, reader, err := ctr.Exec(attempt, command, tcexec.Multiplexed(), tcexec.WithEnv([]string{MarkerVariable + "=" + marker}))
+	if confirm {
+		defer func() {
+			if err == nil || MissingPython(err) {
+				return
+			}
+			var exit *ExitError
+			if errors.As(err, &exit) && (exit.Code == LaunchFailedExit || exit.Code == LaunchUnavailableExit) {
+				return
+			}
+			if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
+				err = &NotStoppedError{Marker: marker, Err: errors.Join(err, cancelErr)}
+			}
+		}()
+	}
+	env := []string{MarkerVariable + "=" + marker}
+	if confirm {
+		env = append(env, roleTermGrace+"=2")
+	}
+	code, reader, err := ctr.Exec(attempt, command, tcexec.Multiplexed(), tcexec.WithEnv(env))
 	if err != nil {
 		// Exec stops waiting when attempt ends, but Docker may already have
 		// accepted the exec and start or keep running the supervisor.
 		err = &BackendError{Op: "exec " + label + " supervisor", Err: err}
-		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
-			return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr})
+		if !confirm {
+			if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
+				return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr})
+			}
 		}
 		return Report{}, err
 	}
@@ -363,14 +435,19 @@ func RunWithExecCushion(ctx context.Context, ctr testcontainers.Container, label
 		return Report{}, err
 	}
 	if reader == nil {
+		if code != 0 {
+			return Report{}, &ExitError{Label: label, Code: code, Marker: marker}
+		}
 		return Report{}, fmt.Errorf("%s supervisor returned no output", label)
 	}
 	if closer, ok := reader.(io.Closer); ok {
 		defer func() { _ = closer.Close() }()
 	}
 	// Both streams are bounded inside the container before Testcontainers buffers.
-	envelopeLimit := envelopeLimit(stdoutLimit, stderrLimit)
-	data, err := io.ReadAll(io.LimitReader(reader, int64(envelopeLimit)+1))
+	if stdoutLimit >= 0 && stderrLimit >= 0 {
+		reader = io.LimitReader(reader, int64(envelopeLimit(stdoutLimit, stderrLimit))+1)
+	}
+	data, err := io.ReadAll(reader)
 	if ctxErr := attempt.Err(); ctxErr != nil {
 		return Report{}, ctxErr
 	}
@@ -394,8 +471,9 @@ type inputOutcome struct {
 // its report. input is set for a RunInput call, whose envelope must account
 // for the input.
 func parseReport(attempt context.Context, label, marker string, code int, data []byte, stdoutLimit, stderrLimit int, input *inputOutcome) (Report, error) {
-	if len(data) > envelopeLimit(stdoutLimit, stderrLimit) || code != 0 {
-		return Report{}, &ExitError{Label: label, Code: code, Oversized: len(data) > envelopeLimit(stdoutLimit, stderrLimit), Marker: marker}
+	oversized := stdoutLimit >= 0 && stderrLimit >= 0 && len(data) > envelopeLimit(stdoutLimit, stderrLimit)
+	if oversized || code != 0 {
+		return Report{}, &ExitError{Label: label, Code: code, Oversized: oversized, Marker: marker}
 	}
 	var envelope struct {
 		SchemaVersion   *int    `json:"schema_version"`
@@ -429,11 +507,11 @@ func parseReport(attempt context.Context, label, marker string, code int, data [
 		return Report{}, err
 	}
 	report := Report{Stdout: stdout, Stderr: stderr, ExitCode: *envelope.ExitCode, TimedOut: *envelope.TimedOut,
-		StdoutTruncated: *envelope.StdoutTruncated || len(stdout) > stdoutLimit, StderrTruncated: *envelope.StderrTruncated || len(stderr) > stderrLimit}
-	if len(report.Stdout) > stdoutLimit {
+		StdoutTruncated: *envelope.StdoutTruncated || stdoutLimit >= 0 && len(stdout) > stdoutLimit, StderrTruncated: *envelope.StderrTruncated || stderrLimit >= 0 && len(stderr) > stderrLimit}
+	if stdoutLimit >= 0 && len(report.Stdout) > stdoutLimit {
 		report.Stdout = report.Stdout[:stdoutLimit]
 	}
-	if len(report.Stderr) > stderrLimit {
+	if stderrLimit >= 0 && len(report.Stderr) > stderrLimit {
 		report.Stderr = report.Stderr[:stderrLimit]
 	}
 	if input != nil {

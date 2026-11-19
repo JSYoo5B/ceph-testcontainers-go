@@ -272,25 +272,26 @@ type delayedCacheReservation struct {
 	claim      string
 	delay      string
 	saved      []string
+	marker     string
 	failCancel bool
 }
 
 func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	switch args[2] {
-	case supervised.ShellScript:
-		if args[11] != c.delay || c.saved != nil {
+	case supervised.Script:
+		if args[10] != c.delay || c.saved != nil {
 			return c.fakeCacheClient.Exec(ctx, args, opts...)
 		}
 		c.saved = append([]string(nil), args...)
-		c.saved[4] = filepath.Join(c.root, filepath.Base(args[4]))
+		c.marker = filepath.Join(c.root, filepath.Base(clustertest.ExecEnv(opts, supervised.MarkerVariable)))
 		return 0, nil, context.Canceled
-	case supervised.ShellCancelScript:
+	case supervised.CancelScript:
 		if c.failCancel {
 			c.failCancel = false
 			return 0, nil, errors.New("first cancellation lost its reply")
 		}
 		args = append([]string(nil), args...)
-		args[4] = filepath.Join(c.root, filepath.Base(args[4]))
+		args[3] = filepath.Join(c.root, filepath.Base(args[3]))
 	default:
 		if args[4] == "inspect" {
 			return clustertest.Reply(args, 0, []byte("binary=1\nplugin=1\nflock=1\nrename=1\nsocket=0\npath=none\nclaim="+c.claim+"\n"))
@@ -312,7 +313,7 @@ func TestCacheReservationReplyLossFencesLateDispatch(t *testing.T) {
 			f := newCacheShellFixture(t)
 			c := &delayedCacheReservation{fakeCacheClient: newFakeCacheClient(), root: f.root, claim: f.claimPath(t), delay: delay, failCancel: true}
 			lease, err := StartImmutableObjectCache(t.Context(), c, ImmutableObjectCache{Path: f.cache, Socket: f.sock})
-			if lease == nil || err == nil || lease.reserveMarker == "" || lease.launchSent || len(c.saved) <= 12 || c.saved[11] != delay {
+			if lease == nil || err == nil || lease.reserveMarker == "" || lease.launchSent || len(c.saved) <= 11 || c.saved[10] != delay {
 				t.Fatalf("lost %s: %+v, %v", delay, lease, err)
 			}
 			t.Cleanup(func() {
@@ -324,8 +325,8 @@ func TestCacheReservationReplyLossFencesLateDispatch(t *testing.T) {
 			if delay == "reserve" {
 				requested = lease.pidFile + ".lease"
 			}
-			if c.saved[12] != requested {
-				t.Fatalf("saved %s target %s, want %s", delay, c.saved[12], requested)
+			if c.saved[11] != requested {
+				t.Fatalf("saved %s target %s, want %s", delay, c.saved[11], requested)
 			}
 			if err := os.WriteFile(f.cache, []byte("foreign"), 0600); err != nil {
 				t.Fatal(err)
@@ -333,7 +334,9 @@ func TestCacheReservationReplyLossFencesLateDispatch(t *testing.T) {
 			if err := lease.Restore(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err := exec.CommandContext(t.Context(), c.saved[0], c.saved[1:]...).Run(); err != nil {
+			command := exec.CommandContext(t.Context(), c.saved[0], c.saved[1:]...)
+			command.Env = append(os.Environ(), supervised.MarkerVariable+"="+c.marker)
+			if err := command.Run(); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Lstat(requested); !errors.Is(err, os.ErrNotExist) {

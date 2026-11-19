@@ -171,23 +171,23 @@ func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
 	return resolvePoolDefaults(c.settings, config)
 }
 
-// RunOwnedShell runs argv in target, a container of c that the caller
-// admitted while it holds the cluster mutex, under the shell supervisor with
+// RunOwnedRoleCommand runs argv in target, a container of c that the caller
+// admitted while it holds the cluster mutex, under the process supervisor with
 // limit seconds (0 for none). The invocation is tracked like a
 // RunNativeCommand's: when ctx ends first, the command is stopped before
-// RunOwnedShell returns, and a stop that cannot be confirmed returns a
+// RunOwnedRoleCommand returns, and a stop that cannot be confirmed returns a
 // NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
 // cancels a running call. label names the command in errors.
-func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error) {
+func (serviceHooks) RunOwnedRoleCommand(ctx context.Context, c *Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
-	// An owned shell has no target instance, which no fence can name, so the
+	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
+	// An owned role command has no target instance, which no fence can name, so the
 	// fence check of admit never refuses it.
 	if c.native.calls.admit(inv, nil) == nativeRefusedClosed {
-		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
+		return supervised.Report{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
-	report, err := supervised.RunShellLimited(runCtx, target, label, limit, stdoutLimit, argv...)
+	report, err := supervised.RunRoleCommand(runCtx, target, label, limit, stdoutLimit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
 	c.native.calls.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
@@ -195,8 +195,11 @@ func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target test
 		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
 	}
 	err = safeNativeError(err)
+	if supervised.MissingPython(err) {
+		return supervised.Report{}, &OperationError{Kind: ErrImageCapability, Op: label, Capability: "python3", Err: err}
+	}
 	if unstopped != "" {
-		return supervised.ShellReport{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
+		return supervised.Report{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
 	}
 	return report, err
 }

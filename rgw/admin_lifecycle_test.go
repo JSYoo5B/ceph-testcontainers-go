@@ -3,7 +3,7 @@ package rgw
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
+
 	"errors"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
@@ -21,7 +21,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
-	"github.com/moby/moby/api/pkg/stdcopy"
+
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -57,8 +57,8 @@ exec sleep 30
 
 func newHostGateway(t *testing.T) (*Gateway, *hostGateway) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the gateway's POSIX shell is unavailable on Windows")
+	if runtime.GOOS != "linux" {
+		t.Skip("the role command supervisor uses Linux process APIs")
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "radosgw-admin"), []byte(hostRadosgwAdmin), 0o755); err != nil {
@@ -78,12 +78,12 @@ func newHostGateway(t *testing.T) (*Gateway, *hostGateway) {
 
 func (ctr *hostGateway) GetContainerID() string { return "gateway" }
 
-func (ctr *hostGateway) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (ctr *hostGateway) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	args = append([]string(nil), args...)
 	for i := range args {
-		args[i] = strings.ReplaceAll(args[i], supervised.ShellMarkerDir, filepath.Join(ctr.dir, "markers"))
+		args[i] = strings.ReplaceAll(args[i], supervised.MarkerDir, filepath.Join(ctr.dir, "markers"))
 	}
-	canceler := len(args) > 2 && args[2] == supervised.ShellCancelScript
+	canceler := len(args) > 2 && args[2] == supervised.CancelScript
 	ctr.mu.Lock()
 	if canceler && ctr.failCancels > 0 {
 		ctr.failCancels--
@@ -93,6 +93,13 @@ func (ctr *hostGateway) Exec(ctx context.Context, args []string, _ ...tcexec.Pro
 	ctr.mu.Unlock()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), "PATH="+ctr.dir+":"+os.Getenv("PATH"), "TC_PID_FILE="+filepath.Join(ctr.dir, "pid"))
+	process := tcexec.NewProcessOptions(nil)
+	for _, opt := range opts {
+		opt.Apply(process)
+	}
+	for _, env := range process.ExecConfig.Env {
+		cmd.Env = append(cmd.Env, strings.ReplaceAll(env, supervised.MarkerDir, filepath.Join(ctr.dir, "markers")))
+	}
 	if ctr.ignoreTerm {
 		cmd.Env = append(cmd.Env, "TC_IGNORE_TERM=1")
 	}
@@ -122,22 +129,7 @@ func (ctr *hostGateway) Exec(ctx context.Context, args []string, _ ...tcexec.Pro
 		if err != nil && !errors.As(err, &exit) {
 			return 0, nil, err
 		}
-		// The host double remaps marker paths on input; translate only the
-		// supervisor trailer back to the container path visible to its caller.
-		reported := bytes.ReplaceAll(stderr.Bytes(),
-			[]byte(supervised.ShellEndPrefix+filepath.Join(ctr.dir, "markers")),
-			[]byte(supervised.ShellEndPrefix+supervised.ShellMarkerDir))
-		var stream bytes.Buffer
-		for _, part := range []struct {
-			kind byte
-			data []byte
-		}{{byte(stdcopy.Stdout), stdout.Bytes()}, {byte(stdcopy.Stderr), reported}} {
-			header := [8]byte{part.kind}
-			binary.BigEndian.PutUint32(header[4:], uint32(len(part.data)))
-			stream.Write(header[:])
-			stream.Write(part.data)
-		}
-		return cmd.ProcessState.ExitCode(), &stream, nil
+		return cmd.ProcessState.ExitCode(), &stdout, nil
 	}
 }
 

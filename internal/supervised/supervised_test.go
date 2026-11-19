@@ -367,6 +367,41 @@ func TestCancelConfirmsAnInvocationOfAnEarlierInstance(t *testing.T) {
 	}
 }
 
+func TestSupervisorSignalsBeforeReapingItsExitedChild(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the role command supervisor uses Linux process APIs")
+	}
+	python := installedPython(t)
+	dir := t.TempDir()
+	const checkBeforeSignal = `import os, signal
+send = os.killpg
+def check(group, sig):
+ if sig == signal.SIGKILL:
+  child = os.waitid(os.P_PID, group, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+  if child is None or child.si_pid != group:
+   raise RuntimeError("the process group leader was not held through signaling")
+  with open(os.environ["SIGNAL_RECEIPT"], "w") as receipt:
+   receipt.write(str(child.si_status))
+ return send(group, sig)
+os.killpg = check
+`
+	receipt := filepath.Join(dir, "signal")
+	cmd := exec.CommandContext(t.Context(), python, "-c", checkBeforeSignal+Script, "-1", "-1", "inf",
+		python, "-c", "import sys; print('native output'); sys.exit(7)")
+	cmd.Env = append(os.Environ(), MarkerVariable+"="+filepath.Join(dir, "markers", "exited"), "SIGNAL_RECEIPT="+receipt)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("supervisor: %v, %q", err, output)
+	}
+	report, err := parseReport(t.Context(), "child identity", "", 0, output, -1, -1, nil)
+	if err != nil || report.ExitCode != 7 || string(report.Stdout) != "native output\n" {
+		t.Fatalf("child report: %+v, %v", report, err)
+	}
+	if result, err := os.ReadFile(receipt); err != nil || string(result) != "7" {
+		t.Fatalf("child was not held through signaling: %q, %v", result, err)
+	}
+}
+
 // Members of the killed group whose parent died are reaped by the supervisor
 // itself, so they leave no zombie in a container whose PID 1 never reaps.
 func TestSupervisorReapsItsKilledGroup(t *testing.T) {
