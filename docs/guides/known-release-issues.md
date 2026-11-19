@@ -277,6 +277,9 @@ Ceph's Tentacle documentation also marks deployments with several CephFS
 mirror daemons as untested upstream.
 
 - Affected: Tentacle 20.2.4, 20.2.5 and Umbrella 21.2.0.
+- Historical control: Pacific 16.2.6 redistributed the directories after
+  the replacement joined. This release is outside the support matrix and
+  the run used temporary compatibility adjustments described in the evidence.
 - Guidance: call `cephfsmirror.Container.RebalanceDirectories` after
   `AddDaemon`; see [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - Evidence: [`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md).

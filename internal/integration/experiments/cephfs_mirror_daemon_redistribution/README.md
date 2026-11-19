@@ -21,9 +21,12 @@ The defect: on Tentacle 20.2.4, when another daemon joins, the module fails to
 redistribute directories that are already assigned (`'DirectoryState' object
 is not subscriptable` in the MGR log). Failover to a surviving daemon still
 works. Tentacle's documentation also marks deployments with several mirror
-daemons as untested. No upstream issue or fix is recorded for the
-redistribution failure; the `cephfs/mirror` README documents the fixture's
-workaround.
+daemons as untested. The [Ceph main fix](https://github.com/ceph/ceph/pull/70942)
+corrects the state access and schedules redistribution after the 300-second
+throttle expires. The tested supported-series release images still reproduce
+the defect. [Squid 19.2.5 source](https://github.com/ceph/ceph/blob/v19.2.5/src/pybind/mgr/mirroring/fs/dir_map/policy.py)
+also contains the faulty access. The native results below cover Tentacle and
+Umbrella. The `cephfs/mirror` README documents the fixture's workaround.
 
 ## Requirements
 
@@ -47,8 +50,8 @@ batch `native_shuffle` with a 60-minute budget; no automatic run includes it.
 Each variant prints its own result,
 `case=cephfs_mirror_daemon_redistribution/bridge` or `/host`. On its default
 image, Tentacle 20.2.4, both print `REPRODUCED` (357 s bridge, 351 s host),
-and they still do on 20.2.5 and 21.2.0. No release is fixed, so its
-`Experiments` dispatch has only the default run. The comment run is
+and the bridge variant does on 20.2.5 and 21.2.0. The `Experiments` dispatch
+runs the default image. The comment run is
 `/ci run native_shuffle`. The shared triggers, result checks and image
 injection are in [Running an experiment case](../../../../docs/contributing/testing.md#running-an-experiment-case).
 
@@ -62,7 +65,7 @@ CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=30m \
   ./internal/integration/experiments/cephfs_mirror_daemon_redistribution
 ```
 
-No release is fixed. Another image runs the same way, for example Umbrella
+To run another supported-series release image, such as the affected Umbrella
 21.2.0:
 
 ```sh
@@ -126,6 +129,40 @@ Native results, Linux amd64 host, one run per image and variant:
   `REPRODUCED` (372 s), the same distribution and MGR error.
 - Umbrella 21.2.0 `quay.io/ceph/ceph:v21.2.0`, bridge:
   `REPRODUCED` (379 s), the same distribution and MGR error.
+
+### Historical control before the defect
+
+Pacific 16.2.6 predates the faulty throttle access introduced in Pacific
+16.2.7 and is outside the module's [supported releases](../../../../docs/guides/releases-and-images.md#supported-releases).
+A temporary checkout of `50ff53d83c14e69e48f38bcf4a96ba41f23dac12` ran
+the upstream Pacific aggregate `quay.io/ceph/ceph:v16.2.6` on Linux amd64
+with Docker 29.9.1, using bridge networking. The run pinned the image by
+digest, recorded in the documenting pull request.
+
+The initial run reached filesystem setup, where Pacific rejected
+`fs set ... refuse_standby_for_another_fs true`. With that setting omitted,
+both filesystems and both mirror daemons started. Registration polling then
+failed because Pacific's `fs snapshot mirror daemon status` requires a
+filesystem name.
+
+The successful run applied two compatibility adjustments to that temporary
+checkout:
+
+- Omitted `refuse_standby_for_another_fs` during setup. Each test cluster
+  has one filesystem, one active MDS and no standby.
+- Passed the filesystem name to the existing daemon-status reads for mirror
+  setup, assignment observation and replacement membership.
+
+The existing membership, distribution and payload checks all ran. The initial
+distribution was 2/2. Stopping one daemon moved all four directories to the
+survivor. After the replacement registered, redistribution restored a 2/2
+split and all four subsequent snapshots arrived with exact payload bytes.
+The test passed in 231.36 seconds and emitted `NOT_REPRODUCED`. The
+temporary adjustments were discarded after the run.
+
+The Ceph main fix retains the 300-second throttle. A comparison against a
+build containing that fix needs to observe redistribution after the
+throttle expires. The current three-minute window can end earlier.
 
 ## Cleanup and limits
 
