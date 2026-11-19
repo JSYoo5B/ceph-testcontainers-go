@@ -305,6 +305,19 @@ type Report struct {
 	InputEOF                     bool
 }
 
+// ProcessTimeoutError records a complete report of the native process timing
+// out. Docker exec or report failures do not produce this error.
+type ProcessTimeoutError struct {
+	Label    string
+	ExitCode int
+}
+
+func (e *ProcessTimeoutError) Error() string {
+	return fmt.Sprintf("%s process timed out: %v", e.Label, context.DeadlineExceeded)
+}
+
+func (e *ProcessTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
 // Command runs argv like Run and returns its result only for a run that
 // completed within its deadline and output limits; a timed-out or truncated
 // run is an error. A nonzero exit is returned in the result.
@@ -314,7 +327,7 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 		return Result{}, err
 	}
 	if report.TimedOut {
-		return Result{}, fmt.Errorf("%s process timed out: %w", label, context.DeadlineExceeded)
+		return Result{}, &ProcessTimeoutError{Label: label, ExitCode: report.ExitCode}
 	}
 	if report.StdoutTruncated || report.StderrTruncated {
 		return Result{}, fmt.Errorf("%s process output was truncated", label)

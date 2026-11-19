@@ -613,7 +613,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 		calls = append(calls, "native-fsid")
 		return peerRemovalSourceFSID, nil
 	}
-	id, err := readCephFSRemovalClusterIdentity(t.Context(), bootstrap, quorum, native)
+	id, err := readCephFSRemovalClusterIdentity(t.Context(), "source", bootstrap, quorum, native)
 	if err != nil || id != peerRemovalSourceFSID || !slices.Equal(calls, []string{"common-original", "monmap", "native-fsid", "common-original"}) {
 		t.Fatalf("original attestation sequencing: %v %v %s", calls, err, id)
 	}
@@ -641,9 +641,18 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 			if fault == "native-mismatch" {
 				n = func(context.Context) (string, error) { return peerRemovalDestinationFSID, nil }
 			}
-			id, err := readCephFSRemovalClusterIdentity(t.Context(), common, q, n)
+			id, err := readCephFSRemovalClusterIdentity(t.Context(), "destination", common, q, n)
 			if id != "" || err == nil {
 				t.Fatalf("unattested native identity adopted: %s %v", id, err)
+			}
+			if fault == "context" || fault == "post-common" {
+				phase := "before"
+				if fault == "post-common" {
+					phase = "after"
+				}
+				if !strings.Contains(err.Error(), "destination monitor bootstrap "+phase+" FSID readback (elapsed ") {
+					t.Fatalf("bootstrap observation did not identify the site and phase: %v", err)
+				}
 			}
 			if fault == "context" {
 				if !errors.Is(err, context.Canceled) || errors.Is(err, errCephFSObservationGuard) {
@@ -657,7 +666,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
 	r.scope.readClusters = func(ctx context.Context) ([2]string, error) {
-		_, err := readCephFSRemovalClusterIdentity(ctx, func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
+		_, err := readCephFSRemovalClusterIdentity(ctx, "source", func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
 		return [2]string{}, err
 	}
 	status, err := r.WaitDrained(t.Context())
