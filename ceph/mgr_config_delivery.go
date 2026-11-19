@@ -39,13 +39,6 @@ func (overrideHooks) WaitMGRConfigDelivery(ctx context.Context, c *Container, na
 	if manager == nil {
 		return errors.New("owned MGR configuration target is unavailable")
 	}
-	if !c.runDir.shared() {
-		return errors.New("MGR configuration delivery needs a shared admin socket directory")
-	}
-	control, err := c.conn().controlContainer(ctx)
-	if err != nil {
-		return err
-	}
 	for {
 		state, err := manager.State(ctx)
 		if err != nil {
@@ -55,10 +48,11 @@ func (overrideHooks) WaitMGRConfigDelivery(ctx context.Context, c *Container, na
 			if !state.Running && !state.Restarting {
 				return nil
 			}
-			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
-			data, err := c.adminSocketCommand(probe, control, "mgr."+name, "config", "diff")
-			cancel()
-			if err == nil && mgrConfigMONValue(data, key, want) {
+			matched, err := c.probeMGRConfigDelivery(ctx, manager, key, want)
+			if err != nil {
+				return err
+			}
+			if matched {
 				return nil
 			}
 		}
@@ -68,6 +62,26 @@ func (overrideHooks) WaitMGRConfigDelivery(ctx context.Context, c *Container, na
 		case <-time.After(150 * time.Millisecond):
 		}
 	}
+}
+
+// probeMGRConfigDelivery runs one registered admin-socket invocation with
+// c.mu held. A read failure permits retry only after confirmed cleanup.
+func (c *Container) probeMGRConfigDelivery(ctx context.Context, manager *ManagerContainer, key string, want float64) (bool, error) {
+	probe, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	runCtx, cancelCommand := context.WithCancelCause(probe)
+	defer cancelCommand(nil)
+	daemon := "mgr." + manager.DaemonName
+	inv, err := c.admitAdminSocketLocked(runCtx, manager, daemon, cancelCommand)
+	if err != nil {
+		return false, err
+	}
+	data, err := c.runAdminSocketInvocation(runCtx, inv, daemon, "config", "diff")
+	var unstopped *NativeCommandUnstoppedError
+	if errors.As(err, &unstopped) {
+		return false, err
+	}
+	return err == nil && mgrConfigMONValue(data, key, want), nil
 }
 
 func mgrConfigMONValue(data []byte, key string, want float64) bool {

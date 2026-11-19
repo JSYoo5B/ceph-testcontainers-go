@@ -2,6 +2,7 @@ package override
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"strconv"
@@ -55,6 +56,10 @@ func (change *ConfigHandle) waitMGRDelivery(ctx context.Context, c *ceph.Contain
 			return fmt.Errorf("mgr.%s configuration delivery marker changed during publication", name)
 		}
 		if err := overridehook.WaitMGRConfigDelivery(ctx, c, name, marker.Name, handle.state.applied); err != nil {
+			var unstopped *ceph.NativeCommandUnstoppedError
+			if errors.As(err, &unstopped) {
+				change.state.mgrProbe = unstopped
+			}
 			return err
 		}
 		if err := change.restoreMGRDelivery(ctx, c); err != nil {
@@ -80,6 +85,12 @@ func nextMGRDeliveryValue(used map[float64]bool) (float64, error) {
 }
 
 func (change *ConfigHandle) restoreMGRDelivery(ctx context.Context, c *ceph.Container) error {
+	if probe := change.state.mgrProbe; probe != nil {
+		if err := probe.Stop(ctx); err != nil {
+			return errors.Join(probe, err)
+		}
+		change.state.mgrProbe = nil
+	}
 	if marker := change.state.mgrDelivery; marker != nil && marker.state.refused == nil {
 		if err := marker.restoreLocked(ctx, c); err != nil {
 			return err

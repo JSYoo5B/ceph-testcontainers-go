@@ -41,6 +41,8 @@ type configState struct {
 	// mgrDelivery owns a temporary per-manager setting until its restoration
 	// succeeds. A retry settles it before changing the module entry again.
 	mgrDelivery *ConfigHandle
+	// mgrProbe must settle before retry can change the delivery marker.
+	mgrProbe *ceph.NativeCommandUnstoppedError
 	// token is the override's entry in the owner's registry of held overrides.
 	token overridehook.Token
 	// refused is why the call was not applied. A handle with it owns nothing

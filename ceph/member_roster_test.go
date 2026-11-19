@@ -273,6 +273,8 @@ var memberRosterCallers = map[string]stateCaller{
 	"Managers":                 {"takes", []string{"eachManager", "managerCount"}},
 	"MGRConfigTargets":         {"holds", []string{"eachManager"}},
 	"WaitMGRConfigDelivery":    {"holds", []string{"manager"}},
+	"admitAdminSocketLocked":   {"holds", nil},
+	"probeMGRConfigDelivery":   {"holds", nil},
 	"AddMonitor":               {"takes", []string{"addMonitor", "monitor"}},
 	"replaceMonitor":           {"takes", nil},
 	"recordMonitorReplacement": {"holds", []string{"addMonitor", "dropMonitor"}},

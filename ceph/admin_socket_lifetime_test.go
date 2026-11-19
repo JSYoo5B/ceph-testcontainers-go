@@ -20,6 +20,7 @@ import (
 type adminLifetimeModel struct {
 	testcontainers.Container
 	id                         string
+	stdout                     string
 	during                     func()
 	fail, killed, refuseCancel bool
 	cancels                    int
@@ -46,7 +47,11 @@ func (m *adminLifetimeModel) Exec(_ context.Context, args []string, _ ...tcexec.
 	if m.fail {
 		return 0, nil, errors.New("transport unavailable")
 	}
-	raw := base64.StdEncoding.EncodeToString([]byte(`{"version":"20.2.4"}`))
+	output := m.stdout
+	if output == "" {
+		output = `{"version":"20.2.4"}`
+	}
+	raw := base64.StdEncoding.EncodeToString([]byte(output))
 	return 0, strings.NewReader(fmt.Sprintf(`{"schema_version":1,"stdout":%q,"stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, raw)), nil
 }
 func TestAdminSocketRegistersBeforeDispatchWithoutHoldingTopologyLock(t *testing.T) {
