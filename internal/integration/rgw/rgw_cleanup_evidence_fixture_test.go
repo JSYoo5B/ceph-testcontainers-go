@@ -39,6 +39,30 @@ func TestMultisiteDeletionRequiresNoSuchKey(t *testing.T) {
 	}
 }
 
+func TestMultisiteObjectMatchesExpectedRedirect(t *testing.T) {
+	redirect := `<Error><Code>PermanentRedirect</Code></Error>`
+	for _, tc := range []struct {
+		name               string
+		status, wantStatus int
+		body               string
+		want               bool
+	}{
+		{"expected redirect", 301, 301, redirect, true},
+		{"expected redirect without body", 301, 301, ``, true},
+		{"object served where a redirect is expected", 200, 301, `payload`, false},
+		{"other redirect status", 307, 301, redirect, false},
+		{"redirect where the object is expected", 301, 200, redirect, false},
+		{"redirect where absence is expected", 301, 404, redirect, false},
+		{"status the matcher does not know", 403, 403, `<Error><Code>AccessDenied</Code></Error>`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := multisiteObjectMatches(tc.status, []byte(tc.body), tc.wantStatus, []byte("payload")); got != tc.want {
+				t.Fatalf("HTTP %d observed while waiting for %d matched=%t, want %t", tc.status, tc.wantStatus, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoppedNotificationLogRetainsPriorEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
