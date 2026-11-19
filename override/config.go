@@ -38,6 +38,9 @@ type configState struct {
 	// option stored the empty value that precedes its removal, so a retry
 	// recognizes that value as this override's own.
 	cleared bool
+	// mgrDelivery owns a temporary per-manager setting until its restoration
+	// succeeds. A retry settles it before changing the module entry again.
+	mgrDelivery *ConfigHandle
 	// token is the override's entry in the owner's registry of held overrides.
 	token overridehook.Token
 	// refused is why the call was not applied. A handle with it owns nothing
@@ -205,14 +208,14 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // Restoring an originally absent mgr/ option therefore stores an empty value
 // without option validation before removing the entry. A MGR that receives
 // that intermediate update erases the cached value.
-// Restore verifies database absence; it does not wait for active or standby
-// managers to acknowledge the intermediate update. A manager reconnecting
-// after removal can receive only the final snapshot and keep its cached
-// override. Check the module's effective value independently when the test
-// needs runtime restoration, including the original standby after promotion.
-// A retry after a lost reply accepts this override's intermediate empty value.
-// Once restoration has succeeded, retrying the handle is a no-op and does not
-// repair a manager that missed that update.
+// Restore waits for each affected running owned manager to apply a MON
+// snapshot before removing the empty entry. It temporarily uses
+// mon_lease_ack_timeout_factor in the manager's exact section to observe
+// delivery and restores that setting before proceeding. External writes to
+// those entries must stay outside the restoration. A stopped manager will
+// load the current configuration when it starts. If delivery is interrupted,
+// retry Restore to settle the temporary setting and confirm delivery.
+// Check the module's own effective value independently when it matters.
 //
 // A canceled call leaves its native write running under a separate bounded
 // wait. Restore waits for its terminal reply before reconciling state.
@@ -249,6 +252,9 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 	if err := change.state.command.Wait(ctx); err != nil {
 		return err
 	}
+	if err := change.restoreMGRDelivery(ctx, c); err != nil {
+		return err
+	}
 
 	entries, err := overridehook.ConfigEntries(ctx, c)
 	if err != nil {
@@ -279,6 +285,11 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 		if mgrModuleOption(change.setting.Name) && current.Value != "" {
 			change.state.cleared = true
 			if err := change.state.command.Record(overridehook.ConfigSetEmpty(ctx, c, change.setting)); err != nil {
+				return err
+			}
+		}
+		if mgrModuleOption(change.setting.Name) {
+			if err := change.waitMGRDelivery(ctx, c); err != nil {
 				return err
 			}
 		}

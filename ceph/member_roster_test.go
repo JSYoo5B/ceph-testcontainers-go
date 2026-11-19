@@ -271,6 +271,8 @@ var memberRosterCallers = map[string]stateCaller{
 
 	"serviceContainers":        {"takes", []string{"sortedServices"}},
 	"Managers":                 {"takes", []string{"eachManager", "managerCount"}},
+	"MGRConfigTargets":         {"holds", []string{"eachManager"}},
+	"WaitMGRConfigDelivery":    {"holds", []string{"manager"}},
 	"AddMonitor":               {"takes", []string{"addMonitor", "monitor"}},
 	"replaceMonitor":           {"takes", nil},
 	"recordMonitorReplacement": {"holds", []string{"addMonitor", "dropMonitor"}},
