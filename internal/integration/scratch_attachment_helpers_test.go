@@ -10,7 +10,8 @@ import (
 
 // Outcome of one attached-OSD capacity run on the owned tmpfs (issue 63). The
 // judge below only combines receipts that earlier slices already classify; it
-// observes nothing itself and has no native producer yet.
+// observes nothing itself. TestScratchTmpfsAttachedOSD collects the native
+// inputs and builds the receipt before calling it.
 const (
 	attachNotAttached      = "not-attached"                // the OSD store is not shown to be on the owned filesystem
 	attachAllocUnproved    = "allocation-unproved"         // the block backing may already cover its length

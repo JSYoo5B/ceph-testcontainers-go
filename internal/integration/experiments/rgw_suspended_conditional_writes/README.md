@@ -33,7 +33,7 @@ versioning was enabled, or a key with a delete marker), the precondition is
 checked against the OLH head instead of the current version. Tentacle 20.2.4
 has it; Umbrella 21.2.0 follows the OLH whenever the head is one and checks an
 empty state when there is no current version. Tentacle 20.2.5 has the same
-code as 21.2.0 (source only, not run).
+code as 21.2.0 and reported the same verdict in the standalone run below.
 
 Upstream references:
 
@@ -146,24 +146,17 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
 ## Reading the result
 
-- **Pass:** every step on both buckets followed AWS semantics. Tentacle
-  20.2.5 and Umbrella 21.2.0 pass (about 35 seconds).
-- **Observed bug:** `never-versioned` passes and `suspended/put` and
-  `suspended/multipart` fail at `existing-if-match` (412), `deleted-if-match`
-  (412 instead of 404) and `deleted-if-none-match` (412); the later steps are
-  not reached. Tentacle 20.2.4 does this (about 35 seconds). The refused writes
-  change nothing: the listing keeps the original version and the null delete
-  marker.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the condition in step 3 was logged.
-- **Unavailable prerequisite:** a gateway or user does not start, or the
-  `never-versioned` control fails. Squid 19.2.5 fails the control at
-  `existing-if-match` (put) and at the multipart create-once control (the
-  duplicate completion answers 200).
-- **Condition not established:** versioning does not read back as set, a key
-  has no non-null version ID, a GET answers 200 without a quoted strong ETag,
-  or the DELETE writes no null delete marker. The
-  test fails with `condition not established`.
+The successful exit of this case means the controls held and a result was
+recorded. Read `EXPERIMENT_RESULT` for the symptom. In the recorded Tentacle
+20.2.4 run, the suspended-bucket writers reported 412 at
+`existing-if-match`, `deleted-if-match` and `deleted-if-none-match`. The
+refused writes preserved the original version and the null delete marker.
+
+A failed control or missing prerequisite fails the test. For example, the
+earlier shared recipe on Squid 19.2.5 stopped at the never-versioned
+`existing-if-match` PUT and at the multipart create-once control. Without
+versioning readback, a non-null seed version ID, a strong ETag and a null
+delete marker, the case cannot classify the suspended-bucket sequence.
 
 ## Cleanup and limits
 

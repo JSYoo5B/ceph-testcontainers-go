@@ -6,7 +6,9 @@ package rgw_encrypted_multipart_transition_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 )
@@ -32,9 +34,8 @@ func TestFirstDifference(t *testing.T) {
 }
 
 // A read is exact only with the expected status, range header and every
-// expected byte, without a transport failure. A corrupted byte, a cut body,
-// an error answer or a wrong Content-Range is a symptom; the first
-// mismatch is reported as an object offset.
+// expected byte. The first mismatch is reported as an object offset, and
+// failures of the read are separate from observed plaintext corruption.
 func TestExact(t *testing.T) {
 	whole := bytes.Repeat([]byte("0123456789"), 40)
 	full := fullWant(whole)
@@ -67,5 +68,37 @@ func TestExact(t *testing.T) {
 		if test.read.Mismatch != test.mismatch {
 			t.Errorf("%s: first mismatch %d, want %d", name, test.read.Mismatch, test.mismatch)
 		}
+	}
+}
+
+func TestJudgeTransitionRead(t *testing.T) {
+	full := fullWant([]byte("abcdef"))
+	rangeRead := rangeWant([]byte("abcdef"), 1, 3)
+	for _, tc := range []struct {
+		name                  string
+		want                  etWant
+		status                int
+		contentRange, body    string
+		err                   error
+		reproduced, wantError bool
+	}{
+		{"exact", full, http.StatusOK, "", "abcdef", nil, false, false},
+		{"corruption", full, http.StatusOK, "", "abcXYZ", nil, true, false},
+		{"range corruption", rangeRead, http.StatusPartialContent, rangeRead.ContentRange, "bXd", nil, true, false},
+		{"wrong range", rangeRead, http.StatusPartialContent, "bytes 2-4/6", "cde", nil, false, true},
+		{"short body", full, http.StatusOK, "", "ab", nil, false, true},
+		{"body interrupted", full, http.StatusOK, "", "ab", io.ErrUnexpectedEOF, false, true},
+		{"expired read", full, http.StatusOK, "", "abcXYZ", context.DeadlineExceeded, false, true},
+		{"canceled request", full, 0, "", "", context.Canceled, false, true},
+		{"reset before headers", full, 0, "", "", errors.New("connection reset"), false, true},
+		{"authentication failure", full, http.StatusForbidden, "", "<Error/>", nil, false, true},
+		{"server failure", full, http.StatusInternalServerError, "", "<Error/>", nil, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := judgeTransitionRead(observe(tc.name, tc.want, tc.status, tc.contentRange, []byte(tc.body), tc.err), tc.want)
+			if got != tc.reproduced || (err != nil) != tc.wantError {
+				t.Fatalf("reproduced=%t err=%v, want reproduced=%t error=%t", got, err, tc.reproduced, tc.wantError)
+			}
+		})
 	}
 }

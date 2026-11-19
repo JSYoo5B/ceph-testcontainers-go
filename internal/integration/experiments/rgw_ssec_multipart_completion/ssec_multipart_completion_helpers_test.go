@@ -68,3 +68,18 @@ func ssecClassifyCompletion(status int, body []byte) (ssecCompletion, error) {
 	result.ETag, result.ChecksumSHA256 = parsed.ETag, parsed.ChecksumSHA256
 	return result, nil
 }
+
+// judgeOmittedKey distinguishes the recorded missing-algorithm check from
+// other refusals. The caller checks absence or encrypted readback separately.
+func judgeOmittedKey(r ssecCompletion) (bool, error) {
+	const missingAlgorithm = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+	switch {
+	case r.completed():
+		return false, nil
+	case !r.Embedded && r.Status == http.StatusBadRequest && r.Failure == (ssecFailure{Code: "InvalidArgument", Message: missingAlgorithm}):
+		return true, nil
+	default:
+		return false, fmt.Errorf("completion without the customer key: unqualified status=%d embedded-error=%t code=%s message=%q",
+			r.Status, r.Embedded, r.Failure.Code, r.Failure.Message)
+	}
+}

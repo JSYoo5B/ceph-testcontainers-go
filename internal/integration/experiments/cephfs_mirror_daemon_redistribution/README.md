@@ -83,10 +83,14 @@ distribution after the replacement joined.
 2. Failover control: one daemon is stopped; all four directories move to the
    survivor and new snapshots arrive.
 3. Trigger: the stopped daemon is removed and a replacement joins with
-   `AddDaemon`. The MGR must list the replacement with the peer (a new
-   daemon ID in `fs snapshot mirror daemon status`), spread the directories
-   over both daemons within three minutes (`fs snapshot mirror show
-   distribution`), and the next snapshots must arrive.
+   `AddDaemon`. The MGR has up to three minutes to list a new daemon ID
+   with the peer alongside the survivor in `fs snapshot mirror daemon
+   status`. Each owned daemon's admin-socket `rados_inst` must also match
+   a watcher on the filesystem's metadata pool. The distribution window
+   begins once both sets are established. Each distribution read must
+   account for all four directories across the watcher IDs. The service
+   registrations and watcher membership must both survive the reads that
+   bracket the distribution sample.
 
 The fixture scenario continues with a zero-daemon outage and a peer-link
 interruption; they are not part of this defect and this case stops after
@@ -94,20 +98,23 @@ step 3.
 
 ## Reading the result
 
-- **REPRODUCED:** steps 1 and 2 held, the replacement registered, and the
-  distribution still names one instance three minutes later. The symptoms
-  give that distribution and up to three MGR log lines with
-  `'DirectoryState' object is not subscriptable`.
-- **NOT_REPRODUCED:** the MGR spread the directories over both daemons, and
-  the snapshots taken after it arrived with exact bytes.
+- **REPRODUCED:** after the replacement registered, a valid distribution
+  still assigns all four directories to the survivor at the end of the
+  three-minute window. The MGR log may provide up to three diagnostic lines
+  with `'DirectoryState' object is not subscriptable`.
+- **NOT_REPRODUCED:** the MGR assigned directories to both daemons during
+  the window, and the next snapshots arrived with exact bytes.
 - **Failure, unavailable prerequisite:** a cluster, a filesystem or the
   mirror link does not start; the failure names the setup step.
 - **Failure, condition not established:** step 1 or 2 fails, or the
   replacement never registers with the peer. Step 3 then says nothing about
   redistribution.
-- **Failure, another fault:** the directories were spread, but the native
-  map disagrees with the mirror's status or the next snapshots do not
-  arrive.
+- **Failure, unavailable observation:** the registered pair disappears or
+  changes, or the distribution omits an instance, fails to account for all
+  directories or contains an unreadable count.
+- **Failure, another fault:** the replacement gains every directory, the
+  native map disagrees with the mirror's status, or the next snapshots do
+  not arrive.
 
 Native results, Linux amd64 host, one run per image and variant:
 

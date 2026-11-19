@@ -130,12 +130,14 @@ The test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=rgw_ssec_multipart_completion`.
 
 `REPRODUCED`: the completion of the SSE-C upload without a checksum and
-without the customer key (`no-checksum-omitted-key`) is refused, and no
-object is left; `symptoms` names its status, code and message.
+without the customer key (`no-checksum-omitted-key`) answers 400
+`InvalidArgument` with the missing encryption algorithm message, and no
+object is left. `symptoms` names its status, code and message.
 `NOT_REPRODUCED`: it completes and the object reads back encrypted with the
 key. A completion that succeeds and stores something else, or a refused one
-that leaves an object, fails the test. The other subtests are controls and
-must pass for any result to print.
+that leaves an object, fails the test. Other refusals, including an
+embedded `Error` after HTTP 200, fail the test without a result. The controls
+must hold for any result to print.
 
 Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 
@@ -144,30 +146,16 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 | 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: 400 `InvalidArgument` "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm." | 33.6 s |
 | 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 32.3 s |
 
-## Reading the result
+## Earlier shared recipe observations
 
-The results below ran on the images of the shared recipe: the 20.2.4
-role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`), the 20.2.5 aggregate `quay.io/ceph/ceph:v20.2.5`, the 21.2.0
-role images (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and the 19.2.5 role images (`official-19.2.5-essential`,
-`official-19.2.5-client`, `official-19.2.5-rgw`).
-
-- **Pass:** every subtest followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** `no-checksum-omitted-key` fails with 400
-  `InvalidArgument` "Requests specifying Server Side Encryption with Customer
-  provided keys must provide a valid encryption algorithm." and every other
-  subtest passes. Tentacle 20.2.4 does this.
-- **Not reproduced:** a pass on a build claimed to be affected. Check that
-  the condition in step 2 was logged.
-- **Unavailable prerequisite:** the cluster, the gateway or its HTTPS listener
-  does not start, or `unencrypted-control` fails.
-- **Condition not established:** an SSE-C initiation does not report SSE-C,
-  `ListParts` reports another checksum algorithm, or a part checksum is not
-  echoed. The test fails with `condition not established`.
-- Squid 19.2.5 cannot run the contract: `no-checksum-omitted-key` passes, but
-  `no-checksum-wrong-key` completes with 200 (the completion validates no
-  key), and a `SHA256` part answers without its checksum, so both `sha256`
-  subtests stop with `condition not established`.
+The shared recipe ran on the 19.2.5, 20.2.4 and 21.2.0 role sets
+(`essential`, `client`, `rgw`) and the 20.2.5 official aggregate. Tentacle
+20.2.4 refused the omitted-key completion with the missing encryption
+algorithm message, with the controls established. On 20.2.5 and 21.2.0
+the completion and encrypted readback succeeded. On Squid 19.2.5 both
+no-checksum completions without the correct key answered 200 and the
+SHA256 part lacked its checksum. Those responses prevented the controls
+from establishing the prerequisite for the subject verdict.
 
 ## Cleanup and limits
 

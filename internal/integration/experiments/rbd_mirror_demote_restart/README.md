@@ -112,10 +112,11 @@ The test logs the image and the clusters' Ceph versions.
    container. Without this the trigger is not established.
 3. While the receiver is down the demoted `removed` primary is force-disabled
    and deleted, the rate limit is lifted and the same container is started.
-4. `demotion-resume`: the same snapshot ID completes with the same
-   `primary_snap_id`, and the destination `removed` image disappears.
-5. `resumed-bytes`, only when the snapshot completed: the `resumed` image
-   exports the source's exact bytes.
+4. `demotion-resume` observes the original local snapshot ID and the source
+   snapshot identity it copies, and separately checks whether the destination
+   still lists the `removed` image.
+5. `resumed-bytes`, only when the snapshot completed, compares a successful
+   destination export with the source's exact bytes.
 6. Only when neither unit reproduced: non-forced promotion succeeds, and the
    next write and snapshot replicate back through the reverse link. A
    failure here fails the test.
@@ -125,21 +126,21 @@ object as new, old or neither, so the skipped object number is in the log.
 
 ## Reading the result
 
-- **`demotion-resume` REPRODUCED:** the copy does not complete after the
-  restart (19.2.3: status `up+unknown`, "remote image is not primary"), or
-  the destination keeps the `removed` replica. When the copy did not
+- **`demotion-resume` REPRODUCED:** a fresh observation after the full
+  five-minute window shows the original copy still incomplete or the
+  destination still lists the `removed` replica. When the copy did not
   complete, `resumed-bytes` is not evaluated (`resumed-bytes not evaluated`).
 - **`demotion-resume` NOT_REPRODUCED:** the same snapshot completed and the
   `removed` replica is gone.
-- **`resumed-bytes` REPRODUCED:** the copy completed, but the destination
-  does not read back the demotion snapshot's bytes; the symptom names one
-  old object at the recorded progress number.
+- **`resumed-bytes` REPRODUCED:** the copy completed and a successful
+  export after four minutes still differs from the demotion snapshot's
+  bytes. The symptom reports the export length or its object classes.
 - **`resumed-bytes` NOT_REPRODUCED:** the destination holds the exact bytes.
   No published image does this today.
-- **Test failure (no result):** the netem helper is missing, a cluster or
-  link does not start, the control read-back fails, or the copy was already
-  complete, or not yet started, at the kill (step 2; a timeout there is not
-  a reproduction).
+- **Test failure before the affected result:** a setup, control or trigger
+  fails, a command or export cannot be observed, a listing is malformed,
+  the tracked snapshot disappears or changes identity, or the parent
+  deadline interrupts the observation window.
 
 Native results (Linux amd64 host, Docker, aggregate images, one run each):
 

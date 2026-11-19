@@ -123,15 +123,15 @@ the bucket record in each zone (`RGW_LOCK stored`).
 4. Oracle, per step: zone `b` is read until it answers the same
    configuration, for at most 2 minutes after the checkpoint. The last read
    is judged by meaning (enabled, mode, days, years), not by its XML
-   (`judgeDestination`). Only an answer about the configuration is the
-   defect: `404 ObjectLockConfigurationNotFoundError`, or another
-   configuration. A transport failure, a refusal such as `403 AccessDenied`,
-   `NoSuchBucket` or an unsupported operation is `another fault`. The
-   response body of zone `a`'s read-back and of zone `b`'s last read is
-   logged as received, cut to 1024 bytes and without any request header
-   (`RGW_LOCK raw`), because the parsed fields cannot tell every body
-   apart: a rule in a layout the reader does not know parses like no rule.
-   The bodies of the other polls are not logged.
+   (`judgeDestination`). A configuration-specific 404 or a different
+   recognized configuration establishes the symptom. The reader accepts
+   the observed S3 layout with or without its standard namespace. A rule
+   can be absent or empty. A default retention must specify one recognized
+   mode and one positive period in days or years. Unknown layouts and
+   ambiguous elements are `another fault`, as are a transport failure,
+   `AccessDenied`, `NoSuchBucket` and unsupported operations. The raw
+   response bodies of zone `a`'s read-back and zone `b`'s last read are
+   logged without request headers, capped at 1024 bytes (`RGW_LOCK raw`).
 5. Control, per step: `tc-plain` must answer
    `404 ObjectLockConfigurationNotFoundError` in both zones, and zone `a` is
    read once more after the wait. Otherwise `control failed` or
@@ -156,7 +156,7 @@ the bucket record in each zone (`RGW_LOCK stored`).
   the source read-back or the versioning prerequisite does not hold),
   `control failed` (the control bucket does not answer
   `404 ObjectLockConfigurationNotFoundError`), `another fault` (a checkpoint
-  is not reached, or zone b does not answer about the configuration at all),
+  is not reached, or zone b returns an unavailable or uninterpretable configuration),
   or the clusters or the realm do not start.
 
 Native results (Linux amd64 host, Docker, aggregate images, one run each):

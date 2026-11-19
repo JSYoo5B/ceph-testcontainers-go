@@ -19,7 +19,7 @@ type targetedReply struct {
 	JSON   json.RawMessage `json:"json"`
 }
 
-// targetedCLI is one "ceph tell" run: its exit status and the first line of
+// targetedCLI is one "ceph tell" run: its exit status and the last nonempty line of
 // its standard error.
 type targetedCLI struct {
 	Argv   []string `json:"argv"`
@@ -117,7 +117,7 @@ finally:
 `
 
 // targetedCLIProbe runs each argv (a JSON list) with the ceph CLI and
-// prints the exit status and first standard-error line of each.
+// prints the exit status and last nonempty standard-error line of each.
 const targetedCLIProbe = `import json,subprocess,sys
 result=[]
 for argv in json.loads(sys.argv[1]):

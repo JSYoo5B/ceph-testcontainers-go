@@ -17,11 +17,11 @@ Three handle methods take an OSD out of service, with different outcomes:
 | `OSDContainer.Detach` (only with `OSDStorage.WithVolume`) | removed | store kept in the owned volume, registration kept; Ceph marks the OSD down, then out unless `noout` is held | `DetachedOSD.Reopen` starts a new container on the store and returns a new handle |
 | `OSDContainer.Remove` | removed | drained, purged from Ceph, directory discarded | none; `AddOSD` creates a new OSD |
 
-All three fence or keep the OSD's identity: every step checks the registration
-UUID, `Remove` and `Detach` fence the Docker instance against new native
-commands and drain its tracked ones, and `Remove` refuses an OSD that is being
-detached or is detached. After `Detach` and `Reopen` the old handle is stale;
-use the handle `Reopen` returns. `Reopen` starts the OSD from the image its
+`Stop` and `Start` act on the Docker container embedded in the OSD handle.
+`Remove` and `Detach` check the Ceph registration UUID, fence the Docker
+instance against new native commands and drain tracked commands. `Remove`
+refuses an OSD during and after detachment. Use the handle returned by
+`Reopen` for the replacement container. `Reopen` starts the OSD from the image its
 launch recipe recorded, or from the image of `OSDOptions.WithImage`; it refuses
 `WithPlacement`. See [OSD storage](../internals/osd-storage.md) for the store
 checks.

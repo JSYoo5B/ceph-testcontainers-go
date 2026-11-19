@@ -84,3 +84,32 @@ func TestSSECClassifyCompletionRejectsUnclassified200(t *testing.T) {
 		}
 	}
 }
+
+func TestJudgeOmittedKey(t *testing.T) {
+	const missing = "<Error><Code>InvalidArgument</Code><Message>Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm.</Message></Error>"
+	for _, tc := range []struct {
+		name                  string
+		status                int
+		body                  string
+		reproduced, wantError bool
+	}{
+		{"completed", http.StatusOK, "<CompleteMultipartUploadResult><ETag>etag</ETag></CompleteMultipartUploadResult>", false, false},
+		{"missing algorithm refusal", http.StatusBadRequest, missing, true, false},
+		{"embedded missing algorithm", http.StatusOK, missing, false, true},
+		{"different invalid argument", http.StatusBadRequest, "<Error><Code>InvalidArgument</Code><Message>Bad XML</Message></Error>", false, true},
+		{"wrong key", http.StatusBadRequest, "<Error><Code>InvalidArgument</Code><Message>Key MD5 mismatch</Message></Error>", false, true},
+		{"authentication failure", http.StatusForbidden, "<Error><Code>AccessDenied</Code></Error>", false, true},
+		{"server failure without XML", http.StatusInternalServerError, "unavailable", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			completion, err := ssecClassifyCompletion(tc.status, []byte(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := judgeOmittedKey(completion)
+			if got != tc.reproduced || (err != nil) != tc.wantError {
+				t.Fatalf("reproduced=%t err=%v, want reproduced=%t error=%t", got, err, tc.reproduced, tc.wantError)
+			}
+		})
+	}
+}
