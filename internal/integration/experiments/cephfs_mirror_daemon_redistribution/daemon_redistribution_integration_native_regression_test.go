@@ -28,8 +28,8 @@ import (
 //
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_daemon_redistribution_test.image=<image>"
 //
-// No fixed release is known: no upstream fix is recorded, and Tentacle
-// 20.2.5 and Umbrella 21.2.0 reproduce it too.
+// Tentacle 20.2.5 and Umbrella 21.2.0 reproduce it too. The case README
+// records the historical Pacific control and its setup adjustments.
 var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // Tentacle describes multiple mirror instances but still labels that deployment
