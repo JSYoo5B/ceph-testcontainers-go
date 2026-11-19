@@ -7,14 +7,18 @@ package cephfs_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/snapschedule"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // The timestamps are read on an isolated root schedule with a future start,
@@ -63,18 +67,10 @@ func TestCephFSScheduleCreationTimestampResolution(t *testing.T) {
 	}
 	collided := false
 	for attempt := 0; attempt < 8; attempt++ {
-		lease, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1h", Start: start})
+		lease, before, after, err := replaceCephFSSchedule(ctx, cluster, clusteraccess.ControlContainer(t, cluster), fs, start)
 		if err != nil {
 			t.Fatal(err)
 		}
-		before := stamp()
-		if _, err := command("fs", "snap-schedule", "remove", "/", "1h"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := command("fs", "snap-schedule", "add", "/", "1h", start.Format("2006-01-02T15:04:05")); err != nil {
-			t.Fatal(err)
-		}
-		after := stamp()
 		t.Logf("attempt %d creation timestamp before=%s after=%s", attempt, before, after)
 		if before == after {
 			collided = true
@@ -88,17 +84,26 @@ func TestCephFSScheduleCreationTimestampResolution(t *testing.T) {
 			if err := w.Stop(); err != nil {
 				t.Fatal(err)
 			}
+			// This is a disposable future schedule with no snapshots. With
+			// identical native identity fields the lease also accepts Restore.
+			if err := lease.Restore(ctx); err != nil {
+				t.Fatalf("restore of identical native identity: %v", err)
+			}
+			entries, err := command("fs", "snap-schedule", "status", "/", "--format", "json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var schedules []json.RawMessage
+			if err := json.Unmarshal(entries, &schedules); err != nil || len(schedules) != 0 {
+				t.Fatalf("the indistinguishable future schedule remained: %s (%v)", entries, err)
+			}
+			break
 		}
-		// Release the lease after raw removal, so this qualification never
-		// asks Restore to delete an indistinguishable replacement.
 		if _, err := command("fs", "snap-schedule", "remove", "/", "1h"); err != nil {
 			t.Fatal(err)
 		}
 		if err := lease.Restore(ctx); err != nil {
 			t.Fatal(err)
-		}
-		if collided {
-			break
 		}
 	}
 	if !collided {
@@ -127,6 +132,10 @@ func TestCephFSScheduleCreationTimestampResolution(t *testing.T) {
 	if _, err := lease.Status(ctx); err == nil {
 		t.Fatal("different creation timestamp accepted")
 	}
+	if w, err := lease.Watch(ctx, ceph.WatchConfig{}); err == nil {
+		_ = w.Stop()
+		t.Fatal("watch accepted a different creation timestamp")
+	}
 	if err := lease.Restore(ctx); err == nil {
 		t.Fatal("different creation timestamp restored")
 	}
@@ -140,4 +149,76 @@ func TestCephFSScheduleCreationTimestampResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("distinct timestamp control before=%s after=%s; same-second observed=%t", before, after, collided)
+}
+
+// Warm the MGR connection before Add, then replace the schedule without
+// starting a CLI for every command. The future schedule never fires.
+const replaceScheduleProbe = `
+import json
+import rados
+import sys
+
+fs, start = sys.argv[1:]
+with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={
+    "keyring": "/etc/ceph/ceph.client.admin.keyring",
+    "rados_mon_op_timeout": "10",
+}) as cluster:
+    def command(action, **params):
+        rc, data, err = cluster.mgr_command(json.dumps({
+            "prefix": "fs snap-schedule " + action,
+            "fs": fs, "path": "/", **params,
+        }), b"")
+        if rc:
+            raise RuntimeError(f"{action}: {rc} {err}")
+        return data
+
+    def status():
+        return json.loads(command("status", format="json"))
+
+    status()
+    if sys.stdin.readline() != "replace\n":
+        raise RuntimeError("missing replacement signal")
+    before, = status()
+    command("remove", repeat="1h", start=start)
+    command("add", snap_schedule="1h", start=start)
+    after, = status()
+    print(json.dumps([before["created"], after["created"]]))
+`
+
+func replaceCephFSSchedule(ctx context.Context, cluster *ceph.Container, control testcontainers.Container, fs *cephfs.Filesystem, start time.Time) (*snapschedule.Lease, string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	const signal = "replace\n"
+	input := ceph.NewNativeInput()
+	type outcome struct {
+		result ceph.NativeCommandResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := cluster.RunNativeCommand(ctx, control, ceph.NativeCommand{
+			Argv:    []string{"python3", "-c", replaceScheduleProbe, fs.FilesystemName, start.Format("2006-01-02T15:04:05")},
+			Timeout: 25 * time.Second, MaxStdout: 8192, MaxStderr: 8192, Label: "schedule replacement probe",
+			Input: input, MaxInput: len(signal),
+		})
+		done <- outcome{result, err}
+	}()
+	lease, err := snapschedule.Add(ctx, fs, snapschedule.Config{Path: "/", Repeat: "1h", Start: start})
+	if err == nil {
+		err = input.Write(ctx, []byte(signal))
+	}
+	err = errors.Join(err, input.Close())
+	out := <-done
+	if err := errors.Join(err, out.err); err != nil {
+		return nil, "", "", err
+	}
+	result := out.result
+	if result.ExitCode != 0 || !result.Complete() || !result.InputEOF || result.InputDelivered != int64(len(signal)) {
+		return nil, "", "", fmt.Errorf("schedule replacement probe failed: exit=%d stdout=%q stderr=%q", result.ExitCode, result.Stdout, result.Stderr)
+	}
+	var timestamps []string
+	if err := json.Unmarshal(result.Stdout, &timestamps); err != nil || len(timestamps) != 2 || timestamps[0] == "" || timestamps[1] == "" {
+		return nil, "", "", fmt.Errorf("replacement status missing creation identity: %s (%v)", result.Stdout, err)
+	}
+	return lease, timestamps[0], timestamps[1], nil
 }
