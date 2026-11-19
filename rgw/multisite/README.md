@@ -23,10 +23,10 @@ quotas) stays in [`rgw`](../README.md), accounts in
    its endpoint and credentials to a SUT that sends signed requests. `Run`
    creates the user on the master and exposes its keys on the gateways. Call
    `WaitSyncReady(ctx, secondaryZone)` with no source arguments to wait for
-   metadata to catch up. These are metadata-only readiness criteria, but the
-   observation still reads native combined sync status. An unavailable data
-   peer can delay that command and prevent the metadata-only wait from
-   completing.
+   metadata to catch up. With Python and curl in the zone's setup image,
+   this compares metadata shard progress with the master without contacting
+   data peers. Otherwise it uses combined sync status, which can be delayed
+   by an unavailable data peer. Use `SyncStatus` to inspect data streams.
 4. **Hand the endpoints to the SUT**: each `Zone`'s `rgw.Gateway`
    (`Source`, `Destination`, `Zones()`) gives `S3Endpoint`, `Region` and the
    test user's `AccessKey` / `SecretKey`. Create users through the master.
