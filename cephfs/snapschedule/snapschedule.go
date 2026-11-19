@@ -53,8 +53,8 @@ type Status struct {
 	Path, Schedule string
 	Active         bool
 	// Start is the schedule's first time slot and Added the time the module
-	// added it, both in UTC; with Path and Schedule they identify one
-	// schedule, since a directory can have several with the same repeat.
+	// added it, both in UTC. The module records Added to the second.
+	// With Path and Schedule these are the available identity fields.
 	Start, Added time.Time
 	// Retention is the module's retention specification. The module keeps it
 	// per directory: every schedule of the directory shares it, and it stays
@@ -547,6 +547,9 @@ print(json.dumps(names))
 //
 // Restore refuses a lease whose filesystem was removed or replaced, even by
 // one of the same name.
+// The module provides no distinct identity for a schedule re-created with
+// the same path, repeat, start and creation second. Restore can remove it.
+// Keep external writers off the leased path until Restore completes.
 //
 //purpose:construction,lifetime
 func (l *Lease) Restore(ctx context.Context) error {

@@ -705,9 +705,15 @@ func TestLeaseSameSecondReplacementIdentityLimit(t *testing.T) {
 			}
 			f.native(t, "fs snap-schedule add / 1h 2030-01-01T00:00:00")
 			_, statusErr := lease.Status(t.Context())
+			stream, watchErr := lease.Watch(t.Context(), ceph.WatchConfig{})
+			if stream != nil {
+				if err := stream.Stop(); err != nil {
+					t.Fatal(err)
+				}
+			}
 			restoreErr := lease.Restore(t.Context())
-			if (statusErr == nil) != same || (restoreErr == nil) != same {
-				t.Fatalf("same=%t status=%v restore=%v", same, statusErr, restoreErr)
+			if (statusErr == nil) != same || (watchErr == nil) != same || (restoreErr == nil) != same {
+				t.Fatalf("same=%t status=%v watch=%v restore=%v", same, statusErr, watchErr, restoreErr)
 			}
 			if (f.state() == "") != same {
 				t.Fatal("unexpected replacement preservation", f.state())
