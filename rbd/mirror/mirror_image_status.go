@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -54,35 +55,48 @@ func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageSta
 	if m == nil {
 		return result, rbdImageGuardError("RBD mirror fixture is unavailable")
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	observation := rbdobservation.Begin(caller, "owner-image")
+	var observationErr error
+	defer func() { observation.Finish(ctx, observationErr) }()
 	// Hold the mutation lock for one bounded observation, never across a poll.
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
-		return result, err
+	if observationErr = multicluster.LockObservation(ctx, &m.mu); observationErr != nil {
+		return result, observationErr
 	}
-	defer m.mu.Unlock()
+	defer func() {
+		observation.Releasing()
+		m.mu.Unlock()
+	}()
+	observation.Acquired()
 	if m.closed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil {
-		return result, rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
+		observationErr = rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
+		return result, observationErr
 	}
 	// Do not allow a hand-constructed or partially bootstrapped public handle
 	// to claim readiness without a confirmed pool/policy identity.
 	if m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
-		return result, rbdImageGuardError("RBD mirror pool and policies are not confirmed")
+		observationErr = rbdImageGuardError("RBD mirror pool and policies are not confirmed")
+		return result, observationErr
 	}
-	return m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil)
+	result, observationErr = m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil, observation)
+	return result, observationErr
 }
 
 // The original owner's gate is held throughout this bounded read. A non-nil
 // scope belongs to a retained view; it never replaces the owner's config.
-func (m *Container) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
+func (m *Container) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness, observation *rbdobservation.Attempt) (ImageStatus, error) {
 	o := m.imageObservation(imageName, scope, witness)
-	source, destination, settled, err := o.readSites(ctx)
+	source, destination, settled, err := o.readSites(ctx, observation)
 	if err != nil || settled {
 		return o.result, err
 	}
-	if err := o.readReplay(ctx, source, destination); err != nil {
+	observation.Stage("read-replay-status")
+	if err := o.readReplay(ctx, source, destination, observation); err != nil {
 		return o.result, err
 	}
+	observation.Stage("confirm-image-identities")
 	if err := o.confirm(ctx, source, destination); err != nil {
 		o.result.ReplayReady = false
 		return o.result, err
@@ -135,7 +149,8 @@ func (o *rbdImageObservation) readInfo(ctx context.Context, client testcontainer
 // settled reports a final result without a replay status: an unscoped image
 // whose mirroring is still being enabled or disabled is valid but never
 // replay-ready, and its identities are kept so a wait can pin them.
-func (o *rbdImageObservation) readSites(ctx context.Context) (source, destination rbdObservedInfo, settled bool, err error) {
+func (o *rbdImageObservation) readSites(ctx context.Context, observation *rbdobservation.Attempt) (source, destination rbdObservedInfo, settled bool, err error) {
+	observation.Stage("validate-original-identities")
 	if err := o.checkIdentities(ctx); err != nil {
 		return source, destination, false, err
 	}
@@ -146,6 +161,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 		}
 		o.mode, o.result.Mode = mode, mode
 	}
+	observation.Stage("read-source-image-info")
 	source, err = o.readInfo(ctx, o.m.pair.sourceClient, o.sourceSpec())
 	if err != nil {
 		return source, destination, false, err
@@ -158,6 +174,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 			return source, destination, false, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
 		}
 	}
+	observation.Stage("read-destination-image-info")
 	destination, err = o.readInfo(ctx, o.m.pair.destinationClient, o.destinationSpec())
 	if errors.Is(err, errRBDImageMirroringDisabled) {
 		// rbd-mirror creates the destination image first and enables mirroring
@@ -176,6 +193,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 	// Creating/disabling are valid transitions, never replay-ready. Native status
 	// refuses these states. Preserve identities and let Wait retry.
 	if o.scope == nil && (source.State != "enabled" || destination.State != "enabled") {
+		observation.Stage("confirm-transition-identities")
 		if err := o.checkIdentities(ctx); err != nil {
 			return source, destination, false, err
 		}
@@ -187,7 +205,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 // readReplay reads the destination's replay status and, for an up/replaying
 // report, attributes it to a running owned process. A native "up" entry may
 // outlive the process, so the report alone never makes the image ready.
-func (o *rbdImageObservation) readReplay(ctx context.Context, source, destination rbdObservedInfo) error {
+func (o *rbdImageObservation) readReplay(ctx context.Context, source, destination rbdObservedInfo, observation *rbdobservation.Attempt) error {
 	var status rbdObservedStatus
 	if source.State == "enabled" && destination.State == "enabled" {
 		var err error
@@ -200,6 +218,7 @@ func (o *rbdImageObservation) readReplay(ctx context.Context, source, destinatio
 	if !source.Primary || destination.Primary || status.State != "up+replaying" || status.Service == nil {
 		return nil
 	}
+	observation.Stage("attribute-receiving-process")
 	if o.scope != nil {
 		return o.attributeScoped(ctx, status.Service)
 	}

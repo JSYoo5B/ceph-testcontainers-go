@@ -8,6 +8,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
@@ -43,12 +44,17 @@ var errRBDWatchTerminated = errors.New("terminated")
 // errRBDWatchTerminated and is ceph.ErrInvalidRequest; a lock that ctx
 // outlasts is a query error.
 func (m *Container) checkWatchOpen(ctx context.Context, operation string) error {
+	observation := rbdobservation.Begin(ctx, "watch-open")
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+		observation.Finish(ctx, err)
 		return rbdReceiverQuery(ctx, "admit "+operation, err)
 	}
+	observation.Acquired()
 	closed := m.closed
 	sites := [2]*ceph.Container{m.pair.config.Source, m.pair.config.Destination}
+	observation.Releasing()
 	m.mu.Unlock()
+	observation.Finish(ctx, nil)
 	if closed {
 		return servicehook.Invalid(fmt.Errorf("%s: the RBD mirror is %w", operation, errRBDWatchTerminated))
 	}
