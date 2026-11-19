@@ -133,7 +133,13 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	if err != nil {
 		return nil, err
 	}
-	output, err := c.adminSocketCommand(runCtx, inv.target, daemon, args...)
+	return c.runAdminSocketInvocation(runCtx, inv, daemon, args...)
+}
+
+// runAdminSocketInvocation settles the registered invocation or leaves its
+// cleanup obligation in the cluster's registry.
+func (c *Container) runAdminSocketInvocation(ctx context.Context, inv *nativeInvocation, daemon string, args ...string) ([]byte, error) {
+	output, err := c.adminSocketCommand(ctx, inv.target, daemon, args...)
 	marker, unconfirmed := supervised.Unconfirmed(err)
 	var notStopped *supervised.NotStoppedError
 	if unconfirmed && !errors.As(err, &notStopped) {
@@ -161,6 +167,11 @@ func (c *Container) admitAdminSocket(ctx context.Context, handle daemonHandle, d
 		return nil, err
 	}
 	defer c.mu.Unlock()
+	return c.admitAdminSocketLocked(ctx, handle, daemon, cancelCommand)
+}
+
+// admitAdminSocketLocked registers the command while the caller holds c.mu.
+func (c *Container) admitAdminSocketLocked(ctx context.Context, handle daemonHandle, daemon string, cancelCommand context.CancelCauseFunc) (*nativeInvocation, error) {
 	closed, shared, owned := c.closed, c.runDir.shared(), handle.ownedBy(c)
 	switch {
 	case closed:
