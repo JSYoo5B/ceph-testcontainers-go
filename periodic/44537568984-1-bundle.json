@@ -1,0 +1,215 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 551.061,
+  "execution": "44537568984-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "ca692ea8306d2e8afbdc681fbc8f80f48e00ebb92ecee5f9846c2d5e49a38d7e",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "6902d8d2575e436e26e97485afb79d7423c111bfcda210bc503cd8e0ec9c032e",
+        "cell": "19.2.5/68e05de30b3b",
+        "entries": [
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_master_failover-5c08687d-4c5fe3e219",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_master_failover",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_master_failover-5c08687d",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_master_failover/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_scenarios_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_master_failover",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterRGWMetadataMasterFailover"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_journal_restore-6279d2c0-a6c1ffa384",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_journal_restore",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_journal_restore-6279d2c0",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 30,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "recovery/cephfs_journal_restore/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs_journal_restore_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_journal_restore",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSJournalHeaderRestore"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "b2c6cd8c23c15f1459e9be95539ee633fc4a04506d8817d79d07287720d4ac60",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-19T13:51:29.042107+00:00",
+        "source_sha": "8818ec7dcdb6604b2bc914b281ee64c8d3907f52"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "6902d8d2575e436e26e97485afb79d7423c111bfcda210bc503cd8e0ec9c032e",
+        "cell": "20.2.4/68e05de30b3b",
+        "entries": [
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_master_failover-5c08687d-4c5fe3e219",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_master_failover",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_master_failover-5c08687d",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_master_failover/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_scenarios_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_master_failover",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterRGWMetadataMasterFailover"
+            ]
+          },
+          {
+            "core": false,
+            "id": "recovery-cephfs_journal_restore-6279d2c0-a6c1ffa384",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "cephfs_journal_restore",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "recovery",
+              "checker": "none",
+              "id": "recovery-cephfs_journal_restore-6279d2c0",
+              "image_roles": "essential,client,cephfs",
+              "job_timeout": 30,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "recovery/cephfs_journal_restore/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/cephfs_journal_restore_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_cephfs_journal_restore",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSJournalHeaderRestore"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "348d3a3d69cbf37f2d05281e1336bf47ffbbee7c8b7d55d02ac52920ab9b21b5",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-19T13:51:29.042107+00:00",
+        "source_sha": "8818ec7dcdb6604b2bc914b281ee64c8d3907f52"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "8818ec7dcdb6604b2bc914b281ee64c8d3907f52:44537568984:1",
+    "selected_at": "2026-11-19T13:51:29.042107+00:00",
+    "source_sha": "8818ec7dcdb6604b2bc914b281ee64c8d3907f52"
+  },
+  "receipt_sha256": "1b59a49d44db691e1ba8419bb25c6cb1ea71939f3faaa586510b13052617be5d",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "8818ec7dcdb6604b2bc914b281ee64c8d3907f52",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    }
+  ]
+}
