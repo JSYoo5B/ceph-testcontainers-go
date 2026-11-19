@@ -201,7 +201,7 @@ func (f *Fixture) watchSyncRead(ctx context.Context, zoneName string, sources []
 	if _, err := f.syncStatusZones(zoneName, sources); err != nil {
 		return SyncStatus{}, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, err))
 	}
-	return f.syncStatus(ctx, zoneName)
+	return f.syncStatus(ctx, zoneName, false)
 }
 
 // syncWatchPinned refuses a successful read whose identities or committed

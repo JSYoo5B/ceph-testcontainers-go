@@ -113,7 +113,7 @@ These commands do not give usable JSON:
 | --- | --- | --- |
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `Observer.ObjectWatchers` |
 | `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.SyncGroup.BucketSyncStatus`, `WaitBucketSyncReady` |
-| `radosgw-admin sync status` | The comparison with remote logs appears only in the text output | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
+| `radosgw-admin sync status` | Combined metadata and data comparisons use the text output. A metadata-only wait can read the master metadata log directly. | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
 | `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Container.PolicyStatus` |
 
 ## Bounded commands with confirmed cleanup

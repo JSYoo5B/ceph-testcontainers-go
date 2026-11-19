@@ -11,6 +11,32 @@ import (
 )
 
 const rgwReadyMetadata = `{"sync_status":{"info":{"status":"sync","num_shards":2,"period":"period-original","realm_epoch":1},"markers":[{"key":0,"val":{"state":1}},{"key":1,"val":{"state":1}}]},"full_sync":{"total":0,"complete":0}}`
+
+func TestMetadataLogComparisonRequiresEveryShard(t *testing.T) {
+	empty, current := "", "marker-2"
+	local := map[int]*string{0: &empty, 1: &current}
+	for _, tt := range []struct {
+		name, remote string
+		caughtUp     bool
+		bad          bool
+	}{
+		{"current, including empty shard", `{"num_objects":2} {"marker":""} {"marker":"marker-2"}`, true, false},
+		{"behind on populated shard", `{"num_objects":2} {"marker":""} {"marker":"marker-3"}`, false, false},
+		{"behind on previously empty shard", `{"num_objects":2} {"marker":"marker-1"} {"marker":"marker-2"}`, false, false},
+		{"unexpected inventory", `{"num_objects":1} {"marker":""}`, false, true},
+		{"missing shard", `{"num_objects":2} {"marker":""}`, false, true},
+		{"null marker", `{"num_objects":2} {"marker":null} {"marker":"marker-2"}`, false, true},
+		{"extra shard", `{"num_objects":2} {"marker":""} {"marker":"marker-2"} {"marker":""}`, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compareMetadataLog([]byte(tt.remote), local)
+			if got != tt.caughtUp || (err != nil) != tt.bad {
+				t.Fatalf("caught up = %t, error = %v", got, err)
+			}
+		})
+	}
+}
+
 const rgwReadyText = `          realm realm (fixture)
       zonegroup group-id (group)
            zone dest-id (destination)
@@ -74,7 +100,7 @@ func TestRGWSyncStatusRejectsIncompleteAndMisleadingNativeReadiness(t *testing.T
 		}
 	}
 	for _, metadata := range []string{strings.Replace(rgwReadyMetadata, `"key":1`, `"key":0`, 1), strings.Replace(rgwReadyMetadata, `"key":1`, `"key":2`, 1), "{}", "not json"} {
-		if _, err := decodeSyncMetadata([]byte(metadata)); err == nil {
+		if _, _, err := decodeSyncMetadata([]byte(metadata)); err == nil {
 			t.Fatal("invalid native metadata shard state was accepted")
 		}
 	}
@@ -147,9 +173,7 @@ func TestRGWSyncReadyStdoutDoesNotHideFailedRemoteComparisonOnStderr(t *testing.
 	}
 }
 
-// A native data section can report an unavailable source while its metadata
-// comparison is healthy. Metadata-only readiness must keep that scope.
-func TestRGWMetadataOnlyReadinessScopesDataComparisonFailure(t *testing.T) {
+func TestRGWCombinedStatusScopesDataComparisonFailure(t *testing.T) {
 	for _, test := range []struct {
 		name, metadata, text, stderr string
 		sources                      []string
@@ -165,23 +189,12 @@ func TestRGWMetadataOnlyReadinessScopesDataComparisonFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f, cli, _, _ := newRGWSyncTestFixture()
 			cli.metadataOutput, cli.humanOutput, cli.stderrOutput = test.metadata, test.text, test.stderr
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			if !test.ready {
-				deadline := clustertest.NewSignalDeadline(ctx)
-				cli.onExec = expireAfterDestinationObservation(deadline)
-				ctx = deadline
+			status, err := f.SyncStatus(t.Context(), "destination")
+			if (err != nil) != (test.stderr != "") || syncStatusReady(status, test.sources) != test.ready {
+				t.Fatalf("combined status gave the wrong readiness: %+v, %v", status, err)
 			}
-			status, err := f.WaitSyncReady(ctx, "destination", test.sources...)
-			if test.ready {
-				if err != nil || !status.Metadata.CaughtUp {
-					t.Fatalf("metadata readiness failed: %+v, %v", status, err)
-				}
-				if test.name == "unavailable data source" && (len(status.DataSources) != 1 || status.DataSources[0].CaughtUp) {
-					t.Fatalf("data failure became readiness: %+v", status.DataSources)
-				}
-			} else if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("unready metadata or selected source was accepted: %+v, %v", status, err)
+			if test.name == "unavailable data source" && (len(status.DataSources) != 1 || status.DataSources[0].CaughtUp) {
+				t.Fatalf("data failure became readiness: %+v", status.DataSources)
 			}
 		})
 	}
