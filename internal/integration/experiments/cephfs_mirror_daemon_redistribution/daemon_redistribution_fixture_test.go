@@ -28,6 +28,7 @@ func TestRedistributionCandidate(t *testing.T) {
 
 func TestRedistributionRequiresCompleteCurrentEvidence(t *testing.T) {
 	paired := map[string]bool{"2": true, "3": true}
+	admitted := redistributionMembership{services: map[string]bool{"42": true, "43": true}, watchers: paired}
 	stuck := `{"mapping":{"2":"4 directories","3":"0 directories"}}`
 	for _, tc := range []struct {
 		name, raw string
@@ -50,10 +51,36 @@ func TestRedistributionRequiresCompleteCurrentEvidence(t *testing.T) {
 		{"everything moved to replacement", `{"mapping":{"2":"0 directories","3":"4 directories"}}`, paired, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := judgeRedistribution([]byte(tc.raw), paired, tc.after, "2", "3", 4)
+			after := redistributionMembership{services: admitted.services, watchers: tc.after}
+			got, err := judgeRedistribution([]byte(tc.raw), admitted, admitted, after, "2", "3", 4)
 			if got != tc.spread || (err != nil) != tc.invalid {
 				t.Fatalf("spread=%t error=%v, want spread=%t invalid=%t", got, err, tc.spread, tc.invalid)
 			}
 		})
+	}
+}
+
+func TestRedistributionJoinsSeparateServiceAndWatcherIdentities(t *testing.T) {
+	dump := []byte(`{"services":{"cephfs-mirror":{"daemons":{"4273":{"metadata":{"id":"owned"}},"4301":{"metadata":{"id":"owned"}},"5000":{"metadata":{"id":"other"}}}}}}`)
+	status := []byte(`[{"daemon_id":4273,"filesystems":[{"name":"source","peers":[{"uuid":"peer"}]}]},{"daemon_id":4301,"filesystems":[{"name":"source","peers":[{"uuid":"peer"}]}]}]`)
+	services, err := redistributionRegisteredServices(dump, status, "owned", "source", "peer")
+	if err != nil || len(services) != 2 || !services["4273"] || !services["4301"] {
+		t.Fatalf("registered services %v: %v", services, err)
+	}
+	watchers, err := redistributionWatchers(map[string]string{"4288": "address-a", "4311": "address-b"}, map[string][]byte{
+		"survivor":    []byte(`{"rados_inst":"address-a","peers":{"peer":{}}}`),
+		"replacement": []byte(`{"rados_inst":"address-b","peers":{"peer":{}}}`),
+	}, "peer")
+	if err != nil || !watchers["4288"] || !watchers["4311"] {
+		t.Fatalf("filesystem watchers %v: %v", watchers, err)
+	}
+	admitted := redistributionMembership{services: services, watchers: watchers}
+	raw := []byte(`{"mapping":{"4288":"4 directories","4311":"0 directories"}}`)
+	if spread, err := judgeRedistribution(raw, admitted, admitted, admitted, "4288", "4311", 4); err != nil || spread {
+		t.Fatalf("four directories at the survivor: spread=%t, %v", spread, err)
+	}
+	changedService := redistributionMembership{watchers: watchers, services: map[string]bool{"4273": true, "4302": true}}
+	if _, err := judgeRedistribution(raw, admitted, admitted, changedService, "4288", "4311", 4); err == nil {
+		t.Fatal("admitted a different service session with the same watchers")
 	}
 }

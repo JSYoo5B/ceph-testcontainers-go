@@ -85,10 +85,12 @@ distribution after the replacement joined.
 3. Trigger: the stopped daemon is removed and a replacement joins with
    `AddDaemon`. The MGR has up to three minutes to list a new daemon ID
    with the peer alongside the survivor in `fs snapshot mirror daemon
-   status`. The distribution window begins at registration. Each read of
-   `fs snapshot mirror show distribution` must account for all four
-   directories across those IDs, and both IDs must remain registered at
-   the observations before and after that read.
+   status`. Each owned daemon's admin-socket `rados_inst` must also match
+   a watcher on the filesystem's metadata pool. The distribution window
+   begins once both sets are established. Each distribution read must
+   account for all four directories across the watcher IDs. The service
+   registrations and watcher membership must both survive the reads that
+   bracket the distribution sample.
 
 The fixture scenario continues with a zero-daemon outage and a peer-link
 interruption; they are not part of this defect and this case stops after
