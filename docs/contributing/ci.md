@@ -850,8 +850,9 @@ here. The next job that pulls the tag uses it.
 
 ### Release candidate validation
 
-The release matrix runs independently for each PR targeting `main`,
-`release/*` or `support/*` and for a push to `main` or `support/*`.
+The release matrix runs for each PR targeting `main`, `release/*` or
+`support/*` and for a push to `main` or `support/*`; a push to `main` that
+is the merge of a validated promotion PR [reuses that PR's run](#promotion-reuse).
 A push to `release/*` runs none: a release line follows `develop`, and
 its candidate is validated once, by its promotion PR to `main`, instead of a
 second time on the same tree.
@@ -865,7 +866,56 @@ check name. The six Code checks also apply to each candidate.
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
 qualifies that proposed merge. Tag the protected commit only after its own
-validation succeeds. See the [cutover and branch rules](git-flow.md).
+validation succeeds, by its own matrix or by a verified
+[promotion reuse](#promotion-reuse). See the
+[cutover and branch rules](git-flow.md).
+
+### Promotion reuse
+
+A promotion PR to `main` runs the full matrix on GitHub's test merge. The
+protected merge that follows usually has the same tree and the same two
+parents, and a second matrix on its push would test the same content again
+with hundreds of native jobs. The push run therefore asks first whether the
+promotion run already qualifies the pushed commit:
+
+1. `Releases` plans the matrix as always and writes its coverage: the
+   required cells, the image references, and one digest of both.
+2. On a pull request, `Release candidate validated (<branch>)` writes the
+   candidate receipt `release-candidate-receipt-<attempt>` once the complete
+   matrix has passed: the commit that the workflow checked out with its tree
+   and parents, the PR, its head and target, the run and attempt, the
+   coverage, the image references and the jobs whose first failure a
+   [release retry](#release-retry) passed.
+3. On a push to `main`, `Promotion reuse` runs
+   `scripts/release/promotion_reuse.py verify` and writes
+   `promotion-reuse-receipt-<attempt>` with its decision.
+
+The push reuses the promotion run only when all of this holds:
+
+| Check | Source |
+| --- | --- |
+| The pushed commit is a merge of two parents, the merge commit of exactly one merged PR that targeted this branch from a branch of this repository, and its second parent is that PR's head. | Repository and PR API |
+| A pull request run of `release-matrix.yml` for that head, of that head branch and repository, passed in its latest attempt, with the target's `Release candidate validated` job and every other job successful. | Actions API |
+| That attempt's candidate receipt exists, is not expired, and names the same run, attempt, PR, target and head. | Artifact |
+| The receipt's tested commit, read from the repository, has the tree and parents that the receipt records, and they equal the pushed merge's tree and parents. | Repository API |
+| The receipt's coverage digest equals the digest that `Releases` computed for the pushed tree. | This run |
+
+The run's reported head alone proves nothing about what was tested; the
+receipt's tested commit, checked against the repository, does. The receipt
+is trusted because the workflow that wrote it came from the merged PR's head
+merged into the protected branch. A failed retry, a cancelled or incomplete
+run and a skipped job never qualify.
+
+When the push reuses the run, the runtime and environment callers are
+skipped and `Release candidate validated (main)` passes on the reuse receipt.
+In every other case, including an unreadable fact, an expired receipt or a
+failure of the `Promotion reuse` job itself, the full matrix runs and the
+gate needs it to pass; the reuse receipt then lists the reasons. The image
+references are those of the tested tree; the images that the jobs resolved
+and the builds they observed stay in the promotion run's artifacts.
+
+A push to `support/*` always runs its full matrix. The six Code checks run
+on the pushed commit in either case.
 
 ### Release retry
 

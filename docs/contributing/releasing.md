@@ -155,7 +155,10 @@ way.
    of the testing guide. Check local Markdown links
    and compile new examples. Compilation is not a native run.
 4. Verify Code checks and the complete release matrix for the exact
-   production or support branch push commit that will receive the tag.
+   production or support branch push commit that will receive the tag. On
+   `main` the matrix is either the push run's own or the promotion PR's,
+   through a verified [promotion reuse](ci.md#promotion-reuse); the
+   `git_flow.py evidence` command says which and names the source run.
    Record the branch, full SHA, workflow runs, attempts, job conclusions and
    image references. Check the six [Code checks](ci.md#code-checks) and
    [release candidate validation](ci.md#release-candidate-validation),
