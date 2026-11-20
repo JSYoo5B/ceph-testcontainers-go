@@ -534,7 +534,9 @@ process timeout.
 ### Runner budget
 
 The account runs at most 40 hosted jobs at once, across all of its
-repositories. `tag_scenarios.py` allocates them by what a run is for:
+repositories: over three days with 4524 executed jobs in its active
+repositories, 40 jobs ran at once for 48 minutes in total and never more.
+`tag_scenarios.py` allocates them by what a run is for:
 
 | Run | Allocation | Reason |
 | --- | --- | --- |
