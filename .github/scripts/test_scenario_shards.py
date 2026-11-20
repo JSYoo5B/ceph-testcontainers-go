@@ -4,6 +4,7 @@ The Go AST catalog reads source only. Compiled profile verification belongs to
 `tag_scenarios.py plan --verify`; this suite does not compile every batch again.
 """
 
+from collections import Counter
 import contextlib
 import io
 from pathlib import Path
@@ -206,7 +207,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(command[command.index("--github-output") + 1], "$GITHUB_OUTPUT")
         self.assertIn("matrix: ${{ steps.releases.outputs.matrix }}", releases)
         self.assertIn("uses: ./.github/workflows/tagged-runtime.yml", runtime)
-        self.assertEqual(scalar(runtime, "needs"), "releases")
+        self.assertEqual(scalar(runtime, "needs"), {"Periodic": "releases", "Release matrix": "[releases, reuse]"}[prefix])
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.releases.outputs.matrix) }}")
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
         self.assertEqual(scalar(runtime.split("    strategy:", 1)[0], "name"), "${{ matrix.title }}")
@@ -478,7 +479,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertNotIn("paths", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
             jobs = self.jobs[self.RELEASE_MATRIX]
-            self.assertEqual(set(jobs), {"releases", "runtime", "environment", "validated"})
+            self.assertEqual(set(jobs), {"releases", "reuse", "runtime", "environment", "validated"})
             for caller in ("runtime", "environment"):
                 self.assertNotIn("      ref:", jobs[caller])
                 self.assertEqual(scalar(jobs[caller], "networks"), "all")
@@ -487,8 +488,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(jobs["releases"], "ref"), "${{ github.sha }}")
             self.assert_release_caller(jobs, "all", "Release matrix")
             gate = jobs["validated"]
-            self.assertEqual(scalar(gate, "needs"), "[releases, runtime, environment]")
-            self.assertEqual(scalar(gate, "if"), "always()")
+            self.assertEqual(scalar(gate, "needs"), "[releases, reuse, runtime, environment]")
+            self.assertEqual(scalar(gate.split("    steps:", 1)[0], "if"), "always()")
             name = scalar(gate.split("    steps:", 1)[0], "name")
             for event, base, ref, want in (
                 ("pull_request", "release/1.0", "7/merge", "Release candidate validated (release/1.0)"),
@@ -498,10 +499,56 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             ):
                 self.assertEqual(interpolate(name, {"github": {"event_name": event, "base_ref": base, "ref_name": ref}}), want)
             check = run_command(steps(gate)[0])
-            success = dict(PLANNER="success", RUNTIME="success", ENVIRONMENT="success", COUNT="1")
+            success = dict(PLANNER="success", RUNTIME="success", ENVIRONMENT="success", COUNT="1",
+                           REUSE="skipped", REUSED="")
             for overrides in ({}, {"PLANNER": "failure"}, {"RUNTIME": "skipped"}, {"ENVIRONMENT": "cancelled"}, {"COUNT": "0"}):
                 result = subprocess.run(["bash", "-e", "-c", check], env={**success, **overrides})
                 self.assertEqual(result.returncode == 0, not overrides)
+            # A verified promotion reuse passes the gate without the
+            # matrix; nothing short of it does, and it never replaces the
+            # planner.
+            reused = dict(success, REUSE="success", REUSED="true", RUNTIME="skipped", ENVIRONMENT="skipped")
+            for overrides, passes in (({}, True), ({"REUSED": "false"}, False), ({"REUSED": ""}, False),
+                                      ({"REUSE": "failure"}, False), ({"REUSE": "skipped"}, False),
+                                      ({"REUSE": "cancelled"}, False), ({"PLANNER": "failure"}, False),
+                                      ({"COUNT": "0"}, False),
+                                      ({"REUSED": "false", "RUNTIME": "success", "ENVIRONMENT": "success"}, True),
+                                      ({"REUSE": "failure", "REUSED": "", "RUNTIME": "success",
+                                        "ENVIRONMENT": "success"}, True)):
+                with self.subTest(overrides=overrides):
+                    result = subprocess.run(["bash", "-e", "-c", check], env={**reused, **overrides},
+                                            capture_output=True)
+                    self.assertEqual(result.returncode == 0, passes)
+            # Only a push to main asks for a reuse, after the planner; the
+            # matrix runs unless the reuse was verified, also when the reuse
+            # job failed or was skipped.
+            reuse = jobs["reuse"]
+            header = reuse.split("    steps:", 1)[0]
+            self.assertEqual(scalar(header, "needs"), "releases")
+            self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && github.ref == 'refs/heads/main'")
+            self.assertEqual(scalar(header, "reused"), "${{ steps.verify.outputs.reused }}")
+            self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json", reuse)
+            self.assertIn("name: promotion-reuse-receipt-${{ github.run_attempt }}", reuse)
+            condition = ("${{ !cancelled() && needs.releases.result == 'success' && "
+                         "needs.reuse.outputs.reused != 'true' }}")
+            for caller in ("runtime", "environment"):
+                self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "if"), condition)
+                self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "needs"),
+                                 "[releases, reuse]")
+            # The candidate receipt is written only after the gate's check,
+            # and only by a pull request run.
+            record = [step for step in steps(gate) if "promotion_reuse.py record" in step]
+            self.assertEqual(len(record), 1)
+            self.assertGreater(steps(gate).index(record[0]), 0)
+            for step in steps(gate)[1:-1]:
+                self.assertEqual(scalar(step, "if"), "github.event_name == 'pull_request'")
+            # A failed gate leaves no receipt: the upload then finds no file.
+            self.assertIn("if-no-files-found: ignore", steps(gate)[-1])
+            self.assertNotIn("always()", record[0])
+            self.assertIn("name: release-candidate-receipt-${{ github.run_attempt }}", gate)
+            self.assertEqual(scalar(workflow.split("\nconcurrency:", 1)[0], "actions"), "read")
+            self.assertIn("name: release-coverage-${{ github.run_attempt }}", jobs["releases"])
+            self.assertIn("set -o pipefail", jobs["releases"])
         for source in self.workflows.values():
             self.assertNotIn("vars.CI_RELEASE_PHASE", source)
         reusable = self.workflows["tagged-runtime.yml"]
@@ -1122,6 +1169,38 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(release["runtime"], "max_parallel"), "${{ matrix.max_parallel }}")
         self.assertNotIn("max-parallel", release["runtime"])
         self.assertEqual(scalar(release["environment"], "max_parallel"), str(engine.ENVIRONMENT_MAX_PARALLEL))
+
+    def test_release_report_digests_its_cells_and_images(self):
+        """The coverage digest changes with a required cell, with a cell's
+        multiplicity and with an image reference, and with nothing else."""
+        report = engine.releases_report(self.plan, "all", "Release matrix")
+        self.assertEqual(report["coverage"]["cells"], report["cells"])
+        self.assertEqual(report["coverage"]["callers"], len(report["include"]) + 1)
+        self.assertRegex(report["coverage"]["digest"], r"^[a-f0-9]{64}$")
+        self.assertEqual(set(report["images"]), {release for release, _, _ in runner.SUPPORTED_RELEASES})
+        for release, references in report["images"].items():
+            self.assertEqual(references["official"], runner.RELEASES[release])
+            self.assertEqual(references["roles"], runner.image_references("official", "roles", release))
+        # The allocation bounds jobs and is no part of what was covered.
+        self.assertEqual(engine.releases_report(self.plan, "all", "Periodic", "periodic")["coverage"],
+                         report["coverage"])
+        releases = [release for release, _, _ in runner.SUPPORTED_RELEASES]
+        cells, references = engine.required_cells(self.plan, releases), engine.release_images(releases)
+        digest = engine.coverage_digest(cells, references)
+        self.assertEqual(digest, report["coverage"]["digest"])
+        cell = next(iter(cells))
+        fewer = Counter(cells)
+        del fewer[cell]
+        doubled = Counter(cells)
+        doubled[cell] += 1
+        renamed = Counter(fewer)
+        renamed[(cell[0], cell[1] + "x")] = cells[cell]
+        moved = {release: dict(value, official=value["official"] + "-r1") for release, value in references.items()}
+        variants = [engine.coverage_digest(fewer, references), engine.coverage_digest(doubled, references),
+                    engine.coverage_digest(renamed, references), engine.coverage_digest(cells, moved),
+                    engine.coverage_digest(cells, engine.release_images(releases[:-1]))]
+        self.assertEqual(len({digest, *variants}), len(variants) + 1)
+        self.assertEqual(engine.coverage_digest(Counter(dict(reversed(list(cells.items())))), references), digest)
 
     def test_release_share_follows_each_callers_runner_time(self):
         """A caller's share is proportional to its category's runner time, so

@@ -15,6 +15,9 @@ on:
 
 permissions:
   contents: read
+  # The promotion receipts read this and the promotion run's jobs and
+  # artifacts.
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
@@ -47,10 +50,56 @@ jobs:
       # release exactly once.
       - name: Expand supported releases and prove required coverage
         id: releases
-        run: python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT" | tee artifacts/release-coverage.json
+      # The coverage digest and image references of this tree, for the
+      # promotion receipts.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-coverage-${{ github.run_attempt }}
+          path: artifacts/release-coverage.json
+          retention-days: 14
+          if-no-files-found: warn
+  # A push to main that is the protected merge of a promotion PR, with the
+  # tree and parents that the PR's Release matrix tested, reuses that run
+  # instead of a second matrix (docs/contributing/ci.md, "Promotion reuse").
+  # Anything else, a failure of this job included, runs the full matrix.
+  reuse:
+    name: Promotion reuse
+    needs: releases
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      reused: ${{ steps.verify.outputs.reused }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-coverage-${{ github.run_attempt }}
+          path: artifacts
+      - name: Qualify the push with its promotion run
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json --output artifacts/promotion-reuse-receipt.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-reuse-receipt-${{ github.run_attempt }}
+          path: artifacts/promotion-reuse-receipt.json
+          retention-days: 90
+          if-no-files-found: warn
   runtime:
     name: ${{ matrix.title }}
-    needs: releases
+    needs: [releases, reuse]
+    if: ${{ !cancelled() && needs.releases.result == 'success' && needs.reuse.outputs.reused != 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.releases.outputs.matrix) }}
@@ -67,6 +116,8 @@ jobs:
       max_parallel: ${{ matrix.max_parallel }}
   environment:
     name: Environment
+    needs: [releases, reuse]
+    if: ${{ !cancelled() && needs.releases.result == 'success' && needs.reuse.outputs.reused != 'true' }}
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: environment
@@ -78,18 +129,50 @@ jobs:
   validated:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Manual release matrix' || 'Release candidate validated' }} (${{ github.base_ref || github.ref_name }})
     if: always()
-    needs: [releases, runtime, environment]
+    needs: [releases, reuse, runtime, environment]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require the complete matrix
+      - name: Require the complete matrix or a verified promotion reuse
         env:
           PLANNER: ${{ needs.releases.result }}
+          REUSE: ${{ needs.reuse.result }}
+          REUSED: ${{ needs.reuse.outputs.reused }}
           RUNTIME: ${{ needs.runtime.result }}
           ENVIRONMENT: ${{ needs.environment.result }}
           COUNT: ${{ needs.releases.outputs.count }}
         run: |
           test "$PLANNER" = success
           test "$COUNT" -gt 0
+          if [ "$REUSE" = success ] && [ "$REUSED" = true ]; then
+            echo "The promotion run of this merge qualifies it; see the promotion-reuse-receipt artifact."
+            exit 0
+          fi
           test "$RUNTIME" = success
           test "$ENVIRONMENT" = success
+      # The candidate receipt of a validated promotion run: what the workflow
+      # checked out, what it covered and which first failures a retry passed.
+      # The push of the protected merge reads it.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
+        if: github.event_name == 'pull_request'
+        with:
+          name: release-coverage-${{ github.run_attempt }}
+          path: artifacts
+      - name: Record the candidate receipt
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/release-coverage.json --output artifacts/release-candidate-receipt.json
+      # Nothing to upload after a failed gate or outside a pull request.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-candidate-receipt-${{ github.run_attempt }}
+          path: artifacts/release-candidate-receipt.json
+          retention-days: 90
+          if-no-files-found: ignore

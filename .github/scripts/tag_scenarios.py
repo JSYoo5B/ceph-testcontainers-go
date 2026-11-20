@@ -938,9 +938,31 @@ def releases_report(plan, scope, check_prefix, allocation="release"):
         expected = expected - runtime_cells(plan, [(None, "environment")])
     difference = coverage_difference(expected, runtime_cells(plan, callers + environment))
     budget = periodic_runner_budget(entries) if allocation == "periodic" else runner_budget(entries)
+    references = release_images(releases)
     return {"schema": SCHEMA, "scope": scope, "allocation": allocation, "include": entries, "releases": releases,
-            "cells": sum(expected.values()), "runner_budget": budget,
+            "cells": sum(expected.values()), "runner_budget": budget, "images": references,
+            "coverage": {"cells": sum(expected.values()), "callers": len(entries) + len(environment),
+                         "digest": coverage_digest(expected, references)},
             "passed": not difference["missing"] and not difference["extra"] and budget["passed"], **difference}
+
+
+def release_images(releases):
+    """The image references that the matrix of releases pulls: each
+    release's official image and its published role images."""
+    return {release: {"official": images.RELEASES[release],
+                      "roles": images.image_references("official", "roles", release)}
+            for release in releases}
+
+
+def coverage_digest(cells, references):
+    """One digest of what a release matrix covers: every required cell
+    (release, profile ID) with its multiplicity and every image reference.
+    Two matrices with the same digest ran the same profiles on the same
+    releases with the same image references. A profile ID carries the hash
+    of its batch declaration, so a changed batch changes the digest."""
+    canonical = {"cells": sorted([release or "", profile, count] for (release, profile), count in cells.items()),
+                 "images": references}
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def runtime_cells(plan, callers):
