@@ -15,7 +15,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Multicluster | `multicluster.yml` | development PR, manual | The `multicluster` category on Tentacle 20.2.4 |
 | Recovery | `recovery.yml` | development PR, manual | The `recovery` category on Tentacle 20.2.4 |
 | Periodic | `periodic.yml` | daily at 04:41 UTC; manual | Random flaky samples on supported releases or historical patches; explicit full matrices and repeated investigations |
-| Release matrix | `release-matrix.yml` | push or PR targeting `main`, `release/*` or `support/*`; manual | Environment and every required runtime category on every supported Ceph release |
+| Release matrix | `release-matrix.yml` | PR targeting `main`, `release/*` or `support/*`, push to `main` or `support/*`; manual | Environment and every required runtime category on every supported Ceph release |
 | Structural review evidence | `structural-collect.yml` | pull request | Report-only structure and lint deltas of library changes, published as one PR comment by `structural-review.yml`; not a required check |
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
 | Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
@@ -799,7 +799,10 @@ here. The next job that pulls the tag uses it.
 ### Release candidate validation
 
 The release matrix runs independently for each PR targeting `main`,
-`release/*` or `support/*` and for a push to one of those branches.
+`release/*` or `support/*` and for a push to `main` or `support/*`.
+A push to `release/*` runs none: a release line follows `develop`, and
+its candidate is validated once, by its promotion PR to `main`, instead of a
+second time on the same tree.
 It runs the environment profile and the required release-bound profiles on
 every supported Ceph release. Neither documentation-only selection nor an
 ordinary development PR changes this matrix. The target-specific check (for example,
@@ -811,6 +814,42 @@ For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
 qualifies that proposed merge. Tag the protected commit only after its own
 validation succeeds. See the [cutover and branch rules](git-flow.md).
+
+### Release retry
+
+A release candidate is judged by more than five hundred native jobs, and the
+validation passes only when every one of them does. A rare intermittent
+failure in any of them would block every candidate. Each job of a release
+matrix (a caller with `require_profiles`) therefore runs the parent tests
+that failed once more, in the same job and on the same runner, and the job's
+result is that second run's:
+
+- `tag_scenarios.py retry` reads the first run's `native/report.json` and
+  `native.log`. It retries only a failure of named tests
+  (`native-test-failure` or `native-registry-transport`) and refuses one
+  after a build or process failure, a skipped test, a panic (which ends the
+  binary, so later tests never ran) or a parent that neither failed nor
+  passed. A checker profile retries its whole run, because its checker
+  validates one complete run.
+- Before it starts it waits up to 120 s for the first run's testcontainers
+  containers, Ryuk aside, to be gone.
+- Its timeout is the profile's process timeout, bounded by the second budget
+  that the job keeps: a release job's `timeout-minutes` is
+  `retry_job_timeout`, twice the source's `job-timeout` up to 360 minutes,
+  and the retry uses what lies beyond `job-timeout`, less five minutes for
+  the steps after it.
+- The retry writes `native-retry/report.json` and its run under
+  `native-retry/attempt/`. The first run's receipts stay in `native/`, the
+  history row records the first failure, the native phase annotation becomes
+  a warning, the failure reports still run, and the artifact is kept for 14
+  days.
+- A refused or failed retry fails the job. The owned-resource cleanup check
+  runs after the retry and covers both runs.
+
+A first failure that its retry passed is still a failure of that test. It is
+recorded in an issue like any other (see
+[Releasing](releasing.md#candidate-failures)), and it does not block the
+candidate. Development workflows, Periodic and the CI command never retry.
 
 ### Representative campaign
 
@@ -1405,7 +1444,9 @@ job's result.
 
 ### Reproducing and re-running
 
-Re-run only the failed jobs when the failure looks unrelated to the change:
+A release matrix job already retries its failed tests once (see
+[Release retry](#release-retry)). Re-run only the failed jobs when the
+failure looks unrelated to the change:
 
 ```sh
 gh run rerun <run-id> --failed
