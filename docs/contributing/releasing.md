@@ -16,26 +16,78 @@ Project planning calls the three positions **product.major.minor**. In a Go
 tag such as `v1.3.2` they are the Go major (1), minor (3) and patch (2).
 A new stable feature release increments the middle number for new features
 or compatible public APIs. A patch increments the last number for bug or
-security fixes. Reserve a new product for a substantial redesign or accumulated
-compatibility costs that justify coordinating a breaking release with consumers.
+security fixes. Reserve a new product for a substantial redesign of the
+product itself. A planned API removal does not need one.
 
-Throughout a product line, preserve import paths, public signatures and
-documented behavior. Move implementation behind the existing entry point
-when possible. To replace an API, ship the replacement alongside the old
-entry point, add a Go `Deprecated:` paragraph naming the replacement to the
-old API's documentation, and keep tests covering the old entry point.
+By default, preserve import paths, public signatures and documented behavior
+throughout a product line. Move implementation behind the existing entry
+point when possible. The one exception is the removal of a deprecated API
+after its grace period, described below.
 
-The grace period starts with the first stable release containing both the
-replacement and the deprecation notice. Before removal can ship, three
-calendar months must elapse **and** two subsequent stable feature releases
-in that product must ship. Patches and prereleases do not count. Meeting
-both conditions makes removal eligible for a later product release. It
-never schedules removal or permits it within the existing product.
+This is the project's compatibility policy, and it differs from conventional
+[Go module semantic versioning](https://go.dev/ref/mod#versions), under which
+every incompatible removal of a public API needs a new major version and
+module path. Here an eligible removal ships in a stable feature release of
+the same product line, so that release is a breaking change for consumers
+that still use the removed API: they move to its replacement before
+upgrading. Requiring a new product for each planned removal would turn
+routine API maintenance into repeated major releases and module-path
+migrations; the announced grace period gives consumers the time to move
+instead.
 
-For example, an API deprecated in v1.1.0 remains usable in v1.2.x, v1.3.x
-and every later v1 release. Once v1.2.0 and v1.3.0 have shipped and three
-months have elapsed since v1.1.0, v2 may omit it. A routine package move
-alone does not justify v2. Published tags remain immutable.
+### Deprecation and grace period
+
+To replace an API, ship the replacement alongside the old entry point, add a
+Go `Deprecated:` paragraph naming the replacement to the old API's
+documentation, and keep the old API, its documented behavior and its tests.
+
+The grace period starts with the declaration release: the first stable
+release that contains both the replacement and the deprecation notice. The
+old API stays through the next two stable feature releases of that product
+line. Removal becomes eligible in a later stable feature release only when
+both conditions hold at that release's publication:
+
+- three calendar months have elapsed since the declaration release, and
+- two stable feature releases after the declaration release have already
+  shipped with the old API still present.
+
+Patches and prereleases do not count as feature releases, and a patch never
+removes an API. Eligibility is not a schedule: it only permits the removal
+decision below.
+
+### Removal after the grace period
+
+At an eligible stable feature release, the cost of keeping the compatibility
+layer decides:
+
+| The deprecated API | Removal |
+| --- | --- |
+| Materially blocks development, a needed correctness fix or a design change | May be removed in the first eligible stable feature release. Record the concrete blocker and the replacement in the GitHub Release notes. |
+| Can stay as a thin compatibility layer | Stays until an eligible stable feature release raises the module's minimum supported Go version, the `go` directive in `go.mod`. A change of the `toolchain` directive or of the Go version that CI uses does not count. While the minimum is unchanged, the layer stays. |
+
+A raised Go minimum never shortens the grace period: a release that raises
+it before removal is eligible keeps the API. Record every removal in the
+GitHub Release notes of the release that ships it.
+
+### Worked example
+
+An API is deprecated in v1.1.0, the declaration release.
+
+| Situation | Result |
+| --- | --- |
+| v1.1.0 (declaration) | The old API and its tests stay beside the replacement. |
+| v1.1.1, v1.2.0-rc.1 | Patches and prereleases neither count nor remove anything. |
+| v1.2.0 and v1.3.0 | The old API is still present in both. They are the two feature releases that must ship with it. |
+| Three months have elapsed, but only v1.2.0 has shipped | Not eligible. v1.3.0 keeps the API. |
+| v1.2.0 and v1.3.0 have shipped, but v1.4.0 would be published before three months have elapsed | Not eligible. v1.4.0 keeps the API; reconsider at v1.5.0. |
+| v1.2.0 and v1.3.0 have shipped and three months have elapsed when v1.4.0 is published | v1.4.0 is the first eligible release. |
+| v1.4.0 is eligible and the API blocks a needed change | v1.4.0 may remove it, with the blocker and the replacement in its release notes. |
+| v1.4.0 is eligible, the API is a thin layer and `go.mod` keeps its `go` directive | v1.4.0 keeps it, and so does every later release until one raises the directive. |
+| v1.4.0 is eligible, the API is a thin layer and v1.4.0 raises the `go` directive | v1.4.0 may remove it. |
+| v1.3.0 raised the `go` directive | Not eligible yet, so v1.3.0 keeps the API. The raise is spent: a thin layer then waits for the next raise at or after v1.4.0. |
+| v1.5.0 updates only the `toolchain` directive or CI's Go version | A thin layer stays. |
+
+No v2.0.0 is needed for this removal. Published tags remain immutable.
 
 ## Supported lines and backports
 
@@ -64,8 +116,9 @@ any release under stabilization and ongoing development. The
 
 A line retires when two newer stable lines have been introduced. Retirement
 ends new patch releases on that line. Its tags remain available, and later
-releases in the same product still owe consumers the public API compatibility
-described above.
+releases in the same product follow the compatibility policy above: they keep
+its public APIs except for a deprecated API whose removal has become
+eligible.
 
 ## Candidate checklist
 
