@@ -632,6 +632,19 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 ) zoneObject {
 	t.Helper()
 	requirePartitionStat(t, ctx, clientB, zonePool, "zone-object-1", zoneObjectSize, false)
+	// The router each cross-zone path leaves through, read before the cut:
+	// CheckZoneCut accepts a failed neighbour resolution of that router only.
+	gateways := map[string]netip.Addr{}
+	for _, p := range paths {
+		if !p.Cross {
+			continue
+		}
+		lookup, err := b.routeLookup(ctx, p.From, p.To.Addr())
+		if err != nil || !lookup.Via.IsValid() {
+			t.Fatalf("%s before the partition: route %+v, %v", p.Name, lookup, err)
+		}
+		gateways[p.Name] = lookup.Via
+	}
 	zoneShapeAll(t, ctx, b, []string{"a", "b"}, fault.NetworkProfile{HelperImage: helperImage, Loss: 100})
 	cutAt := time.Now()
 	zoneLeaseStatus(t, ctx, b, "partitioned")
@@ -645,7 +658,7 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 			t.Fatal(err)
 		}
 		if p.Cross {
-			err = harness.CheckZoneCut(s)
+			err = harness.CheckZoneCut(s, gateways[p.Name])
 		} else {
 			err = checkZoneControl(base[p.Name], s)
 		}

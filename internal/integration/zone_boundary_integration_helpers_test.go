@@ -333,7 +333,7 @@ func classifyTwoSubnetPath(r zoneRTT) string {
 		return "not executed"
 	case r.OK == r.Requested:
 		return "forwarded"
-	case harness.CheckZoneCut(r) == nil:
+	case harness.CheckZoneCut(r, netip.Addr{}) == nil:
 		return "timed out"
 	case r.OK == 0:
 		return "connect failed"
