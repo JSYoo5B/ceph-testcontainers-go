@@ -880,15 +880,22 @@ promotion run already qualifies the pushed commit:
 
 1. `Releases` plans the matrix as always and writes its coverage: the
    required cells, the image references, and one digest of both.
-2. On a pull request, `Release candidate validated (<branch>)` writes the
-   candidate receipt `release-candidate-receipt-<attempt>` once the complete
-   matrix has passed: the commit that the workflow checked out with its tree
-   and parents, the PR, its head and target, the run and attempt, the
-   coverage, the image references and the jobs whose first failure a
-   [release retry](#release-retry) passed.
+2. On a promotion PR to `main`, once `Release candidate validated (main)` has
+   passed, the `Candidate receipt` job writes the artifact
+   `release-candidate-receipt-<attempt>` with two files. The receipt names
+   the commit that the workflow checked out with its tree and parents, the
+   PR, its head and target, the run and attempt, the coverage, the image
+   references and the jobs whose first failure a
+   [release retry](#release-retry) passed. The evidence file holds the
+   history row of every runtime job (what it checked out, built and pulled,
+   the image IDs and digests it resolved, each phase's result, its cleanup
+   check and the hashes of its logs and reports) and the report of each
+   retry. The jobs' own artifacts expire after 7 to 14 days; the receipt and
+   this evidence are kept for 90.
 3. On a push to `main`, `Promotion reuse` runs
    `scripts/release/promotion_reuse.py verify` and writes
-   `promotion-reuse-receipt-<attempt>` with its decision.
+   `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
+   own copy of the evidence file.
 
 The push reuses the promotion run only when all of this holds:
 
@@ -899,6 +906,12 @@ The push reuses the promotion run only when all of this holds:
 | That attempt's candidate receipt exists, is not expired, and names the same run, attempt, PR, target and head. | Artifact |
 | The receipt's tested commit, read from the repository, has the tree and parents that the receipt records, and they equal the pushed merge's tree and parents. | Repository API |
 | The receipt's coverage digest equals the digest that `Releases` computed for the pushed tree. | This run |
+| The evidence file is the one that the receipt records, and it has exactly one unaltered history row for every runtime job of the run. Each row is of this run and the tested commit, has complete records and a passed cleanup check, names the images it ran if it needed Ceph, and either passed or failed only its native phase and passed its one retry, by the retry's own report and the job's retry step. | Artifact and Actions API |
+
+A live receipt therefore never qualifies a run by itself. Without the
+evidence file, or with an entry that is missing, foreign, altered, failed or
+uncleaned, the full matrix runs. The run's shorter-lived artifacts are not
+read, so their expiry changes nothing.
 
 The run's reported head alone proves nothing about what was tested; the
 receipt's tested commit, checked against the repository, does. The receipt
@@ -910,9 +923,11 @@ When the push reuses the run, the runtime and environment callers are
 skipped and `Release candidate validated (main)` passes on the reuse receipt.
 In every other case, including an unreadable fact, an expired receipt or a
 failure of the `Promotion reuse` job itself, the full matrix runs and the
-gate needs it to pass; the reuse receipt then lists the reasons. The image
-references are those of the tested tree; the images that the jobs resolved
-and the builds they observed stay in the promotion run's artifacts.
+gate needs it to pass; the reuse receipt then lists the reasons. On a reuse
+the receipt also summarizes what the jobs ran: every image reference with
+the image IDs and digests it resolved to, and the Go toolchains. The full
+native logs are not kept beyond their own artifacts' retention; the evidence
+holds their hashes.
 
 A push to `support/*` always runs its full matrix. The six Code checks run
 on the pushed commit in either case.
