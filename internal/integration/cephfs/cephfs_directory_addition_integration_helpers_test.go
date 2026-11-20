@@ -53,6 +53,29 @@ func directoryAdditionObservationDiagnostics(ctx context.Context, err error, ela
 		elapsed.Round(time.Millisecond), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), ctx.Err(), outcome, stopUnconfirmed)
 }
 
+// retryDirectoryAdditionObservation returns the first observation that is not
+// an expired observation deadline, or the last expired one once limit or the
+// caller's context ends. retried receives every failure that is repeated.
+func retryDirectoryAdditionObservation(ctx context.Context, limit, interval time.Duration,
+	observe func(context.Context) (cephfsmirror.DirectoryAdditionStatus, error), retried func(error, time.Duration),
+) (cephfsmirror.DirectoryAdditionStatus, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	for {
+		started := time.Now()
+		status, err := observe(waitCtx)
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) || waitCtx.Err() != nil {
+			return status, err
+		}
+		retried(err, time.Since(started))
+		select {
+		case <-waitCtx.Done():
+			return status, err
+		case <-time.After(interval):
+		}
+	}
+}
+
 func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
