@@ -5,11 +5,12 @@ package integration_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -72,20 +73,28 @@ func rbdExportResult(image string, code int, stdout, stderr []byte) (string, err
 	return fields[0], nil
 }
 
-func immutableCacheReadDelta(before, after map[string]string, want int) error {
-	seen := map[string]bool{}
-	for key := range before {
-		if _, ok := after[key]; !ok {
-			return errors.New("OSD history lost a previously observed parent read")
+// immutableCacheParentReplies returns the parent data objects of objects
+// whose reads the OSD answered successfully to client within window, a part
+// of its debug_ms 1 log.
+func immutableCacheParentReplies(window []byte, client netip.Addr, objects map[string]bool) (map[string]bool, error) {
+	replied := map[string]bool{}
+	for object := range objects {
+		replies, err := harness.RBDDataReadReplies(window, object, client)
+		if err != nil {
+			return nil, err
+		}
+		if len(replies) > 0 {
+			replied[object] = true
 		}
 	}
-	for key, object := range after {
-		if _, ok := before[key]; !ok {
-			seen[object] = true
-		}
-	}
-	if len(seen) != want {
-		return fmt.Errorf("OSD read %d distinct parent data objects, want %d: %v", len(seen), want, seen)
+	return replied, nil
+}
+
+// immutableCacheReadCount requires the OSD to have answered reads of exactly
+// want distinct parent data objects.
+func immutableCacheReadCount(replied map[string]bool, want int) error {
+	if len(replied) != want {
+		return fmt.Errorf("the OSD answered reads of %d distinct parent data objects, want %d: %v", len(replied), want, replied)
 	}
 	return nil
 }

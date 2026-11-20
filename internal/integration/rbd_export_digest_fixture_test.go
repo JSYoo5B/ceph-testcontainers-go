@@ -7,7 +7,6 @@ package integration_test
 import (
 	"bytes"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -15,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestRBDExportDigestReportsEveryFailure runs rbdExportDigest in a local
@@ -95,38 +96,64 @@ exec `+realRM+` "$@"`)
 	}
 }
 
-func TestRBDParentReadHistoryRejectsCacheBypass(t *testing.T) {
-	objects := map[string]bool{"rbd_data.12.0000": true}
-	read := func(out string) map[string]string {
+// TestImmutableCacheReadsCountRepliesBeforeTheMarker covers the judgement of
+// TestImmutableObjectCache with debug_ms 1 reply lines: replies to the
+// client's reads of parent objects before its marker count, other objects,
+// other clients, failed replies and replies after the marker do not. The
+// interleaving in which the marker already reached the op history while an
+// earlier parent read has not is judged by the replies, so a cache-hit read
+// that reached RADOS fails and a fallback read is counted.
+func TestImmutableCacheReadsCountRepliesBeforeTheMarker(t *testing.T) {
+	const marker = "tc-reply-marker-1"
+	objects := map[string]bool{"rbd_data.12.0000000000000000": true, "rbd_data.12.0000000000000001": true}
+	line := func(peer, tid, object, ops, result string) string {
+		return "2026-11-20T01:02:46.408+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> " + peer + " -- osd_op_reply(" + tid + " " + object + " [" + ops + "] v0'0 uv5 ondisk = " + result + ") -- 0x1 con 0x2\n"
+	}
+	const client, other = "10.0.0.9:0/41", "10.0.0.8:0/50"
+	read := func(peer, tid, object string) string {
+		return line(peer, tid, object, "sparse-read 0~4194304 out=4194304b", "0")
+	}
+	markerReply := line("10.0.0.9:0/42", "7", marker, "stat", "-2 ((2) No such file or directory)")
+	judge := func(log string) map[string]bool {
 		t.Helper()
-		ops, err := harness.RBDDataReadsInHistory([]byte(out), objects)
+		window, from, found, err := harness.OSDLogBeforeMarker([]byte(log), marker)
+		if err != nil || !found {
+			t.Fatalf("marker reply in %q: %t, %v", log, found, err)
+		}
+		replied, err := immutableCacheParentReplies(window, from, objects)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return ops
+		return replied
 	}
-	before := read(`{"ops":[
-        {"description":"osd_op(client.1 ::rbd_data.12.0000:head [write 0~1])","initiated_at":"1"},
-        {"description":"osd_op(client.1 ::rbd_data.12.00000:head [read 0~1])","initiated_at":"2"}
-    ]}`)
-	after := read(`{"ops":[{"description":"osd_op(client.1 ::rbd_data.12.0000:head [sparse-read 0~1])","initiated_at":"3"}]}`)
-	if err := immutableCacheReadDelta(before, before, 0); err != nil {
+	both := read(client, "27", "rbd_data.12.0000000000000000") + read(client, "28", "rbd_data.12.0000000000000001")
+	if err := immutableCacheReadCount(judge(both+markerReply), 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := immutableCacheReadDelta(before, after, 0); err == nil {
-		t.Fatal("accepted a parent OSD read during a cache hit")
-	}
-	if err := immutableCacheReadDelta(before, after, 1); err != nil {
+	ignored := read(client, "29", "rbd_data.12.00000000000000010") + // another object
+		read(other, "30", "rbd_data.12.0000000000000000") + // another client
+		line(client, "31", "rbd_data.12.0000000000000000", "sparse-read 0~4194304", "-2") + // a failed read
+		line(client, "32", "rbd_data.12.0000000000000000", "stat", "0") // not a read
+	if err := immutableCacheReadCount(judge(ignored+markerReply+both), 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := immutableCacheReadDelta(after, before, 0); err == nil {
-		t.Fatal("accepted truncated history")
+	// The history already holds the marker's stat, but not the earlier read
+	// of object 0, whose request reference was released later. The history
+	// alone would report no parent read; the reply before the marker
+	// counts it.
+	history := `{"ops":[{"description":"osd_op(client.4.0:7 2.3 2:abc:::` + marker + `:head [stat] ondisk+read e20)","initiated_at":"2"}]}`
+	if reads, err := harness.RBDDataReadsInHistory([]byte(history), objects); err != nil || len(reads) != 0 {
+		t.Fatalf("history control: %v, %v", reads, err)
 	}
-	for _, report := range []string{`{}`, `{"ops":[{}]}`, `{"ops":[{"description":null}]}`,
-		`{"ops":[{"description":"osd_op(client.1 ::rbd_data.12.0000:head [sparse-read 0~1])","initiated_at":"3"},{}]}`} {
-		if _, err := harness.RBDDataReadsInHistory([]byte(report), objects); err == nil {
-			t.Fatalf("accepted incomplete cache-hit evidence %s", report)
-		}
+	early := read(client, "27", "rbd_data.12.0000000000000000") + markerReply
+	if err := immutableCacheReadCount(judge(early), 0); err == nil {
+		t.Fatal("a cache hit accepted a parent read that the history had not recorded yet")
+	}
+	if err := immutableCacheReadCount(judge(early), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, err := harness.OSDLogBeforeMarker([]byte(both), marker); err != nil || found {
+		t.Fatalf("judged a window without the marker reply: %t, %v", found, err)
 	}
 }
 

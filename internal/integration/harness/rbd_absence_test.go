@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestRBDAbsenceRequiresCompleteObservation(t *testing.T) {
 	for _, tc := range []struct {
@@ -51,25 +54,23 @@ func TestRBDHistoryRequiresDescriptionsBeforeExcludingOperations(t *testing.T) {
 	}
 }
 
-func TestOSDHistoryNamesObjectRequiresTheExactObject(t *testing.T) {
-	const marker = "tc-history-barrier-1"
-	for _, input := range []string{`{}`, `null`, `{"ops":null}`, `{"ops":[{}]}`, `{"ops":[{"description":" "}]}`} {
-		if _, err := OSDHistoryNamesObject([]byte(input), marker); err == nil {
-			t.Fatalf("accepted %s", input)
+func TestOSDLogBeforeMarkerCutsAtTheMarkerReply(t *testing.T) {
+	const marker = "tc-reply-marker-1"
+	read := "2026-11-20T01:02:46.408+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/41 -- osd_op_reply(27 rbd_data.1.0000 [sparse-read 0~4194304 out=4194304b] v0'0 uv5 ondisk = 0) -- 0x1 con 0x2\n"
+	other := "2026-11-20T01:02:46.409+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/43 -- osd_op_reply(3 tc-reply-marker-10 [stat] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) -- 0x3 con 0x4\n"
+	reply := "2026-11-20T01:02:46.410+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/42 -- osd_op_reply(7 tc-reply-marker-1 [stat] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) -- 0x5 con 0x6\n"
+	late := "2026-11-20T01:02:46.411+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/44 -- osd_op_reply(28 rbd_data.1.0001 [sparse-read 0~4194304 out=4194304b] v0'0 uv5 ondisk = 0) -- 0x7 con 0x8\n"
+	for _, window := range []string{"", read, read + other} {
+		if _, _, found, err := OSDLogBeforeMarker([]byte(window), marker); err != nil || found {
+			t.Fatalf("found the marker in %q: %t, %v", window, found, err)
 		}
 	}
-	for _, input := range []string{
-		`{"ops":[]}`,
-		`{"ops":[{"description":"osd_op(client.1 2.0 2:abc:::tc-history-barrier-10:head [stat])"}]}`,
-		`{"ops":[{"description":"osd_op(client.1 2.0 2:abc:::tc-history-barrier-1x:head [stat])"}]}`,
-		`{"ops":[{"description":"pg_update_log tc-history-barrier-1"}]}`,
-	} {
-		if seen, err := OSDHistoryNamesObject([]byte(input), marker); err != nil || seen {
-			t.Fatalf("another object in %s: %t, %v", input, seen, err)
-		}
+	before, client, found, err := OSDLogBeforeMarker([]byte(read+other+reply+late), marker)
+	if err != nil || !found || client != netip.MustParseAddr("10.0.0.9") || string(before) != read+other {
+		t.Fatalf("cut %q at %v: %t, %v", before, client, found, err)
 	}
-	input := `{"ops":[{"description":"osd_op(client.1 rbd_data.1.0000 [read 0~1])","initiated_at":"t0"},{"description":"osd_op(client.1.0:7 2.0 2:abc:::tc-history-barrier-1:head [stat] snapc 0=[] ondisk+read+known_if_redirected e20)"}]}`
-	if seen, err := OSDHistoryNamesObject([]byte(input), marker); err != nil || !seen {
-		t.Fatalf("marker: %t, %v", seen, err)
+	broken := "x -- a --> not-an-address -- osd_op_reply(7 tc-reply-marker-1 [stat] v0'0 uv0 ondisk = -2) -- 0x5\n"
+	if _, _, _, err := OSDLogBeforeMarker([]byte(broken), marker); err == nil {
+		t.Fatal("accepted a marker reply without a client address")
 	}
 }
