@@ -1,0 +1,121 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 355.558,
+  "execution": "44645323467-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "targeted",
+    "plan_sha256": "3a9b774d7b97d79ff6d36b115a1ef984dc009ae9fbe3c8b27c01679a702085e1",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "b71be241258643448fc3dec97ad343104f94da4602f5e15c95e75c78be3c97e2",
+        "cell": "21.2.0/e51a5de66942",
+        "entries": [
+          {
+            "core": false,
+            "id": "topology-topology_extensions_rgw_removal_bridge-a07f83f3-cacec20bbb",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "topology_extensions_rgw_removal_bridge",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-topology_extensions_rgw_removal_bridge-a07f83f3",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "topology/topology_extensions_rgw_removal_bridge/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/rgw_zonegroups_topology_multicluster_integration_ci_topology_topology_extensions_rgw_removal_bridge_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_topology_extensions_rgw_removal_bridge",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestMultiClusterRGWZonegroupsAndRemovalTopology"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-topology_extensions_rgw_removal_host-d10a400b-aeae1fedc2",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "topology_extensions_rgw_removal_host",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-topology_extensions_rgw_removal_host-d10a400b",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 50,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "topology/topology_extensions_rgw_removal_host/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "sources": [
+                "internal/integration/rgw/host_network_rgw_zonegroups_topology_multicluster_integration_ci_topology_topology_extensions_rgw_removal_host_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_topology_extensions_rgw_removal_host",
+              "timeout": "40m"
+            },
+            "tests": [
+              "TestHostNetworkRGWZonegroupsAndRemovalTopology"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "targeted",
+        "plan_sha256": "77ee5f381bc32c7071c662cff3f3585c66ff5f9ace6cc5149c19b347b5841674",
+        "platform": "linux/amd64",
+        "reason": "explicit_target",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-20T00:22:45.874060+00:00",
+        "source_sha": "b673fabb8b263dde88475251b4e0ff4bc72ab056"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "b673fabb8b263dde88475251b4e0ff4bc72ab056:44645323467:1",
+    "selected_at": "2026-11-20T00:22:45.874060+00:00",
+    "source_sha": "b673fabb8b263dde88475251b4e0ff4bc72ab056"
+  },
+  "receipt_sha256": "bfcd272ebabb8f086c9ba840034413aaa0e5263c4fd1877169c73ded55d8e86e",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "b673fabb8b263dde88475251b4e0ff4bc72ab056",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    }
+  ]
+}
