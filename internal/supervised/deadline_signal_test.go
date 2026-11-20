@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -110,5 +113,70 @@ func TestDeadlineSignalReachesOnlyARoleCommandThatAsksForIt(t *testing.T) {
 	const variable = deadlineSignalVariable + "=6"
 	if len(ctr.env) != 3 || !slices.Contains(ctr.env[0], variable) || slices.Contains(ctr.env[1], variable) || slices.Contains(ctr.env[2], variable) {
 		t.Fatalf("supervisor environments: %v", ctr.env)
+	}
+}
+
+// escapedWriter starts a descendant in a session of its own, which the
+// supervisor's group kill does not reach, that writes to both inherited pipes
+// without pause, records the descendant's PID and waits.
+const escapedWriter = `import os,subprocess,sys,time
+writer="import os\nwhile True:\n os.write(1,b'o'*4096); os.write(2,b'e'*4096)"
+child=subprocess.Popen([sys.executable,"-c",writer],start_new_session=True)
+with open(sys.argv[1]+".tmp","w") as f: f.write(str(child.pid))
+os.rename(sys.argv[1]+".tmp",sys.argv[1])
+time.sleep(30)`
+
+// A descendant that left the command's group and keeps writing into the
+// command's pipes does not hold the supervisor: at the deadline it stops the
+// command, reads what is there for a bounded time, reports and removes its
+// marker.
+func TestSupervisorDeadlineStopIsBoundedUnderAnEscapedWriter(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("signaling the group of an exited, unreaped child is refused outside Linux")
+	}
+	python := installedPython(t)
+	for name, env := range map[string][]string{
+		"deadline signal": {roleTermGrace + "=0.3", deadlineSignalVariable + "=6"},
+		"signal ignored":  {roleTermGrace + "=0.3", deadlineSignalVariable + "=28"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			pidPath, marker := filepath.Join(dir, "writer.pid"), filepath.Join(dir, "markers", "writer")
+			// The writer ends on its own once the supervisor closed its
+			// pipes; a supervisor that failed to return leaves it running.
+			t.Cleanup(func() {
+				if data, err := os.ReadFile(pidPath); err == nil {
+					if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+						_ = syscall.Kill(pid, syscall.SIGKILL)
+					}
+				}
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, python, "-c", Script, "4096", "4096", "0.5", python, "-c", escapedWriter, pidPath)
+			cmd.Env = append(append(os.Environ(), MarkerVariable+"="+marker), env...)
+			started := time.Now()
+			output, err := cmd.Output()
+			took := time.Since(started)
+			// Deadline 0.5 s, grace 0.3 s, drain and reaping 0.2 s each.
+			if err != nil || took > 3*time.Second {
+				t.Fatalf("supervisor returned after %s: %v; %.200q", took, err, output)
+			}
+			var envelope struct {
+				Stdout, Stderr  string
+				TimedOut        bool `json:"timed_out"`
+				StdoutTruncated bool `json:"stdout_truncated"`
+			}
+			if err := json.Unmarshal(output, &envelope); err != nil || !envelope.TimedOut || !envelope.StdoutTruncated ||
+				len(envelope.Stdout) > 8192 || len(envelope.Stderr) > 8192 {
+				t.Fatalf("envelope: %.300q, %v", output, err)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the supervisor kept its marker: %v", err)
+			}
+			if _, err := os.Stat(pidPath); err != nil {
+				t.Fatalf("the writer did not start: %v", err)
+			}
+		})
 	}
 }

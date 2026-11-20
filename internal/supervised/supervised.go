@@ -78,7 +78,9 @@ const (
 // With a deadline signal (WithDeadlineSignal) and a termination grace, the
 // supervisor stops a command that reaches the deadline with that signal in
 // place of SIGTERM, keeps reading both streams for the grace or until the
-// command ends, kills the group and reads what the group left in the pipes.
+// command ends, kills the group and reads what the group left in the pipes
+// for at most 200 ms more, also when a descendant that left the group keeps
+// writing into them.
 // The command then runs without core files. A cancellation is unchanged.
 //
 // With InputVariable set to a byte limit, the supervisor gives the command a
@@ -181,9 +183,13 @@ def stop_at_deadline():
   if not streams: time.sleep(0.01)
   for stream in (select.select(list(streams),[],[],0.01)[0] if streams else ()): take(stream)
  kill_owned_group()
- # The group is gone. A descendant that left it may keep a pipe open.
+ # The group is gone. A descendant that left it may keep a pipe open, and
+ # may keep writing: read what is there until a fixed time, not until quiet.
+ until=time.monotonic()+0.2
  while streams:
-  ready=select.select(list(streams),[],[],0.2)[0]
+  remaining=until-time.monotonic()
+  if remaining<=0: break
+  ready=select.select(list(streams),[],[],remaining)[0]
   if not ready: break
   for stream in ready: take(stream)
 def without_core():
