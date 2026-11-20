@@ -26,24 +26,26 @@ import (
 
 // rgwAdminShim stands in for radosgw-admin, ahead of it on the gateway's
 // PATH. It records its PID and then, by the mode file, sleeps (sleep),
-// ignores SIGTERM while it sleeps (ignore-term), or ignores SIGTERM and
-// answers after a second (complete). It sends no request to Ceph.
+// ignores the stop signals while it sleeps (ignore-term), or ignores them and
+// answers after a second (complete). The stop signals are SIGTERM and
+// SIGABRT, the first signal at the supervisor's own limit. It sends no
+// request to Ceph.
 const rgwAdminShim = `#!/bin/sh
 mode=$(cat /tmp/tc-shim.mode)
 echo $$ > /tmp/tc-shim.pid.tmp && mv /tmp/tc-shim.pid.tmp /tmp/tc-shim.pid
 case $mode in
-ignore-term) trap '' TERM; exec sleep 60 ;;
-complete) trap '' TERM; sleep 1; echo '{"shim":true}' ;;
+ignore-term) trap '' TERM ABRT; exec sleep 60 ;;
+complete) trap '' TERM ABRT; sleep 1; echo '{"shim":true}' ;;
 *) exec sleep 60 ;;
 esac
 `
 
 // TestRGWAdminCommandLifetime checks through the public Admin, in a real
 // gateway, that no radosgw-admin outlives its call: a caller that cancels,
-// and a deadline shorter than SIGTERM's grace with a command that ignores
-// SIGTERM, return only after the command is gone. A command that ignores
-// SIGTERM but ends in time keeps its output, and a real radosgw-admin runs
-// before and after.
+// and a deadline shorter than the stop's grace with a command that ignores
+// the stop signals, return only after the command is gone. A command that
+// ignores them but ends in time keeps its output, and a real radosgw-admin
+// runs before and after.
 func TestRGWAdminCommandLifetime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
@@ -162,12 +164,12 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || !gone(pid) {
 		t.Fatalf("a 1.5 s call returned %v after %s with the command gone %t", err, took, gone(pid))
 	}
-	t.Logf("a 1.5 s call with a radosgw-admin that ignores SIGTERM returned after %s with it gone", took)
+	t.Logf("a 1.5 s call with a radosgw-admin that ignores its stop signals returned after %s with it gone", took)
 
 	setMode("complete")
 	out, err := gateway.Admin(ctx, "user", "stats", "--uid", "tc-shim")
 	if err != nil || strings.TrimSpace(string(out)) != `{"shim":true}` {
-		t.Fatalf("a command that ignores SIGTERM and ends: %q, %v", out, err)
+		t.Fatalf("a command that ignores its stop signals and ends: %q, %v", out, err)
 	}
 	if code, out := exec("ls", "-A", supervised.MarkerDir); code != 0 || strings.TrimSpace(out) != "" {
 		t.Fatalf("the supervisor left markers: %q", out)
@@ -259,19 +261,20 @@ func TestRGWAdminStoppedCommandSaysWhereItWas(t *testing.T) {
 	}
 	t.Cleanup(resume)
 
-	// A 30 s bound leaves the supervisor 15 s before it stops the command.
+	// A 30 s bound leaves the supervisor about 15 s, in whole seconds of
+	// what remains at the call, before it stops the command.
 	const bound = 30 * time.Second
 	step, stop := context.WithTimeout(ctx, bound)
 	started := time.Now()
 	_, err = gateway.Admin(step, "user", "list")
 	took := time.Since(started)
 	stop()
-	const stopped, where = "radosgw-admin still ran after 15s and was stopped", "; when it was stopped, thread radosgw-admin was in "
-	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.Contains(err.Error(), stopped+where) || took >= bound {
+	const stopped, where = "radosgw-admin still ran after 1", "s and was stopped; when it was stopped, thread radosgw-admin was in "
+	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.Contains(err.Error(), stopped) || !strings.Contains(err.Error(), where) || took >= bound {
 		t.Fatalf("a radosgw-admin that waits for a paused OSD returned after %s: %v", took, err)
 	}
 	_, frames, _ := strings.Cut(err.Error(), where)
-	if len(strings.Split(frames, " < ")) < 4 || strings.Contains(frames, "0x7") || strings.Contains(frames, "/lib") {
+	if len(strings.Split(frames, " < ")) < 4 || strings.Contains(frames, "[0x") || strings.Contains(frames, "/") {
 		t.Fatalf("the stop report is not a bounded list of frames: %q", frames)
 	}
 	t.Logf("a hung radosgw-admin returned after %s: %v", took, err)
